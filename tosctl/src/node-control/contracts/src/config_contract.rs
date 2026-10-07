@@ -10,8 +10,11 @@
 mod config_impl;
 /// Messages for configuration contract
 pub mod messages;
+/// Decoding of `get_proposal` as the node serves it
+mod proposal_read;
 /// Wrapper trait for configuration contract get-methods
 mod wrapper;
 
 pub use config_impl::ConfigContractImpl;
+pub use proposal_read::{PROPOSAL_FIELDS, decode_proposal, decode_proposal_expiry};
 pub use wrapper::{ConfigContractWrapper, ConfigProposal, ProposalHash, ProposedParam};

@@ -706,6 +706,14 @@ if (WINGETOPT_FOUND)
   target_link_libraries_system(test-weight-distr wingetopt)
 endif()
 
+# The node's storage fee function against the shared vector file the tosctl executor
+# also reads, so the Rust side's expected values are the node's answers.
+add_executable(test-storage-fee-vectors block/test-storage-fee-vectors.cpp)
+target_link_libraries(test-storage-fee-vectors PRIVATE tos_crypto)
+target_compile_definitions(test-storage-fee-vectors PRIVATE
+  STORAGE_FEE_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/block/storage-fee-vectors.tsv")
+tos_test(test-storage-fee-vectors)
+
 install(TARGETS fift func create-state tlbc RUNTIME DESTINATION bin)
 install(DIRECTORY fift/lib/ DESTINATION lib/fift)
 install(DIRECTORY smartcont DESTINATION share/tos)

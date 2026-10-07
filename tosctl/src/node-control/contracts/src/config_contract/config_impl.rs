@@ -62,61 +62,7 @@ impl ConfigContractWrapper for ConfigContractImpl {
             .provider
             .get_method(self.config_addr.clone(), "get_proposal", vec![stack_entry])
             .await?;
-
-        if stack.stack.is_empty() {
-            return Ok(None);
-        }
-
-        // The result is a tuple: [expires, critical?, [param_id, param_val, param_hash],
-        // vset_id, voters_list, weight_remaining, rounds_remaining, losses, wins]
-        let parse_proposal = || -> anyhow::Result<ConfigProposal> {
-            let tuple = stack.tuple(0)?;
-
-            let expires = tuple.i64(0)? as u32;
-            let is_critical = tuple.bool(1)?;
-
-            // Parse param tuple [param_id, param_val, param_hash]
-            let param_tuple = tuple.tuple(2)?;
-            let id = param_tuple.i64(0)? as i32;
-            let cell = param_tuple.cell(1).ok();
-            let hash = param_tuple.number_bytes(2, 32).ok().map(|h| {
-                let mut hash = [0u8; 32];
-                hash.copy_from_slice(&h);
-                hash
-            });
-
-            let mut vset_id = [0u8; 32];
-            vset_id.copy_from_slice(&tuple.number_bytes(3, 32)?);
-
-            // Parse voters list
-            let voters_list = tuple.list(4)?;
-            let mut voters = Vec::new();
-            for i in 0..voters_list.stack.len() {
-                let voter_idx =
-                    u16::try_from(voters_list.i64(i)?).context("voter index out of u16 range")?;
-                voters.push(voter_idx);
-            }
-
-            let weight_remaining = tuple.i64(5)?;
-            let rounds_remaining = tuple.i64(6)? as u8;
-            let losses = tuple.i64(7)? as u8;
-            let wins = tuple.i64(8)? as u8;
-
-            Ok(ConfigProposal {
-                hash: phash,
-                expires,
-                is_critical,
-                param: ProposedParam { id, cell, hash },
-                vset_id,
-                voters,
-                weight_remaining,
-                rounds_remaining,
-                losses,
-                wins,
-            })
-        };
-
-        parse_proposal().map(Some).context("parse proposal")
+        super::decode_proposal(phash, &stack).context("parse proposal")
     }
 
     async fn list_proposals(&self) -> anyhow::Result<Vec<ConfigProposal>> {
@@ -347,6 +293,102 @@ mod tests {
         ])
     }
 
+    /// A TVM cons list as the node serves it: nested `[head, tail]` tuples ending
+    /// in the empty list, because its serializer tests for a tuple before a list.
+    fn create_cons_entry(items: &[u16]) -> StackEntry {
+        items.iter().rev().fold(create_list_entry(vec![]), |tail, item| {
+            create_tuple_entry(vec![create_number_entry(&item.to_string()), tail])
+        })
+    }
+
+    /// The same proposal with its voter field replaced by the served cons chain.
+    fn with_served_voters(proposal: StackEntry, voters: &[u16]) -> StackEntry {
+        let StackEntry::Tvm_StackEntryTuple(mut tuple) = proposal else {
+            panic!("a proposal is a tuple");
+        };
+        let Tuple::Tvm_Tuple(inner) = &mut tuple.tuple;
+        inner.elements[4] = create_cons_entry(voters);
+        StackEntry::Tvm_StackEntryTuple(tuple)
+    }
+
+    /// `get_proposal` end to end through the wrapper: absent, present without voters,
+    /// present with voters, and the voter shapes the node never serves.
+    #[tokio::test]
+    async fn test_get_proposal_voter_shapes() {
+        let served = |voters: StackEntry| {
+            let mut fields = match create_proposal_tuple(
+                1_793_250_000,
+                false,
+                7,
+                None,
+                None,
+                &[0x01; 32],
+                &[],
+                10,
+                3,
+                0,
+                1,
+            ) {
+                StackEntry::Tvm_StackEntryTuple(tuple) => tuple.tuple.only().elements,
+                other => panic!("a proposal is a tuple: {other:?}"),
+            };
+            fields[4] = voters;
+            create_tuple_entry(fields)
+        };
+        let read = |entry: StackEntry| async move {
+            let provider = MockContractProvider::new()
+                .on_method("get_proposal", move |_| Ok(TvmStackParser::new(vec![entry.clone()])));
+            ConfigContractImpl::new(Arc::new(provider)).get_proposal([0x42; 32]).await
+        };
+
+        let none = read(served(create_list_entry(vec![]))).await.unwrap().unwrap();
+        assert_eq!(none.expires, 1_793_250_000);
+        assert!(none.voters.is_empty());
+        let some = read(served(create_cons_entry(&[0, 9, 65535]))).await.unwrap().unwrap();
+        assert_eq!(some.voters, vec![0, 9, 65535]);
+
+        let pair = |head: StackEntry, tail: StackEntry| create_tuple_entry(vec![head, tail]);
+        for (case, voters) in [
+            ("numeric tail", pair(create_number_entry("1"), create_number_entry("0"))),
+            (
+                "unsupported tail",
+                pair(create_number_entry("1"), StackEntry::Tvm_StackEntryUnsupported),
+            ),
+            ("flat list", create_list_entry(vec![create_number_entry("1")])),
+            ("index above uint16", pair(create_number_entry("65536"), create_list_entry(vec![]))),
+        ] {
+            assert!(read(served(voters)).await.is_err(), "{case} was accepted");
+        }
+    }
+
+    /// The wrapper over the node's real answers (`tests/fixtures/get_proposal`), through
+    /// the same stack conversion the chain provider applies.
+    #[tokio::test]
+    async fn test_get_proposal_live_answers() {
+        fn served(response: &'static str) -> TvmStackParser {
+            let value: serde_json::Value = serde_json::from_str(response).unwrap();
+            let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
+                serde_json::from_value(value["result"].clone()).unwrap();
+            crate::chain_provider::stack_from_rpc(result.stack)
+        }
+        let read = |response: &'static str| async move {
+            let provider = MockContractProvider::new()
+                .on_method("get_proposal", move |_| Ok(served(response)));
+            ConfigContractImpl::new(Arc::new(provider)).get_proposal([0x47; 32]).await
+        };
+        let absent = include_str!("../../tests/fixtures/get_proposal/absent-live.json");
+        let present = include_str!("../../tests/fixtures/get_proposal/present-live.json");
+        assert!(read(absent).await.unwrap().is_none());
+        let proposal = read(present).await.unwrap().unwrap();
+        assert_eq!(proposal.expires, 1_792_321_804);
+        assert!(!proposal.is_critical);
+        assert_eq!(proposal.param.id, 1000);
+        assert!(proposal.param.cell.is_none(), "a removal carries no value");
+        assert!(proposal.param.hash.is_none(), "an unbound proposal carries no hash");
+        assert!(proposal.voters.is_empty());
+        assert_eq!((proposal.rounds_remaining, proposal.losses, proposal.wins), (3, 0, 0));
+    }
+
     // ===== Tests for seqno() =====
 
     #[tokio::test]
@@ -392,15 +434,21 @@ mod tests {
 
     // ===== Tests for get_proposal() =====
 
+    /// An absent proposal is the getter's `null()`, which the node serves as an empty
+    /// list. An empty stack is not an answer and is refused.
     #[tokio::test]
-    async fn test_get_proposal_returns_none_for_empty_stack() {
+    async fn test_get_proposal_returns_none_for_null() {
+        let provider = MockContractProvider::new().on_method("get_proposal", |_| {
+            Ok(TvmStackParser::new(vec![create_list_entry(vec![])]))
+        });
+        let config = ConfigContractImpl::new(Arc::new(provider));
+        let proposal = config.get_proposal([0x11u8; 32]).await.expect("Failed to get proposal");
+        assert!(proposal.is_none());
+
         let provider = MockContractProvider::new()
             .on_method("get_proposal", |_| Ok(TvmStackParser::new(vec![])));
-
         let config = ConfigContractImpl::new(Arc::new(provider));
-        let phash = [0x11u8; 32];
-        let proposal = config.get_proposal(phash).await.expect("Failed to get proposal");
-        assert!(proposal.is_none());
+        assert!(config.get_proposal([0x11u8; 32]).await.is_err(), "an empty stack is not null");
     }
 
     #[tokio::test]
@@ -409,18 +457,21 @@ mod tests {
         let param_hash = [0xCDu8; 32];
 
         let provider = MockContractProvider::new().on_method("get_proposal", move |_| {
-            let tuple = create_proposal_tuple(
-                1700000000, // expires
-                true,       // is_critical
-                15,         // param_id
-                None,       // param_cell
-                Some(&param_hash),
-                &vset_id,
-                &[1, 2, 3], // voters
-                1000,       // weight_remaining
-                5,          // rounds_remaining
-                2,          // losses
-                3,          // wins
+            let tuple = with_served_voters(
+                create_proposal_tuple(
+                    1700000000, // expires
+                    true,       // is_critical
+                    15,         // param_id
+                    None,       // param_cell
+                    Some(&param_hash),
+                    &vset_id,
+                    &[],  // voters, replaced below with the served cons chain
+                    1000, // weight_remaining
+                    5,    // rounds_remaining
+                    2,    // losses
+                    3,    // wins
+                ),
+                &[1, 2, 3],
             );
             Ok(TvmStackParser::new(vec![tuple]))
         });

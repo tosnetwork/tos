@@ -16,9 +16,9 @@ use anyhow::Context;
 use chain_block::MsgAddressInt;
 use colored::Colorize;
 use contracts::validator_controller::{
-    ControllerOperations, OperatingAssessment, OperatingInputs, OperatingThresholds, RenewalPlan,
-    RenewalRequest, assess, authorization_valid_until, funds_for_runway, plan_renewal,
-    read_controller_operations,
+    CapitalCosts, ControllerOperations, OperatingAssessment, OperatingInputs, OperatingThresholds,
+    RenewalPlan, RenewalRequest, assess, authorization_valid_until, capital_costs,
+    funds_for_runway, plan_renewal, read_controller_operations,
 };
 
 const NANO: u128 = 1_000_000_000;
@@ -117,7 +117,18 @@ pub struct ControllerOperationsStatusCmd {
         is a zero-deposit renewal. The command prints the kind 4 payload, the exact \
         `tos-pq-controller fund-operations` command line to run where the root seed is \
         held, and the value the payer wallet must send. It signs and sends nothing, and \
-        refuses while a relay is pending or when the payer would change."
+        refuses while a relay is pending or when the payer would change.\n\n\
+        Each relay requires the controller's balance to keep funds + floor, and the \
+        deposit cannot supply that: it raises the balance and the funds alike. The plan \
+        therefore also requires a storage forecast: the storage the controller will be \
+        charged from its last payment through the expiry, plus recorded debt, at the \
+        occupancy and prices of the block it read. That is a forecast, not a guarantee: \
+        the request rewrites the controller's data and relays add state. While the balance \
+        is short of funds + floor + forecast, the plan is BLOCKING: it prints a plain \
+        transfer (the net amount to retain, plus --capital-margin-nanotos, plus the fee \
+        the controller pays to receive it) and only a payload preview. Send the transfer, \
+        then run the plan again; it reads the balance afresh and prints the signing and \
+        send commands once the capital is there."
 )]
 pub struct ControllerOperationsPlanCmd {
     /// Validator controller address (-1:<hex>)
@@ -158,6 +169,11 @@ pub struct ControllerOperationsPlanCmd {
     /// Value in nanoTOS sent above the contract's requirement; refunded to the payer
     #[arg(long, default_value_t = 1_000_000_000)]
     margin_nanotos: u128,
+    /// Discretionary headroom in nanoTOS added to a capital top-up, so that re-running
+    /// the plan after the transfer lands still finds the capital sufficient (default:
+    /// one live control_value). Not an availability guarantee
+    #[arg(long)]
+    capital_margin_nanotos: Option<u128>,
     /// Allow the renewal to move sponsorship to a different payer
     #[arg(long)]
     allow_payer_change: bool,
@@ -414,6 +430,30 @@ impl ControllerOperationsPlanCmd {
         })
     }
 
+    /// The capital costs of `request` at the block `operations` was read at. A node that
+    /// does not serve the controller's storage metadata makes planning fail closed: the
+    /// storage forecast cannot be bounded without it.
+    fn capital_costs(
+        &self,
+        operations: &ControllerOperations,
+        request: &RenewalRequest,
+    ) -> anyhow::Result<CapitalCosts> {
+        let storage = operations.storage.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "the node did not return the controller's storage metadata (storage_stat), so \
+                 the storage it will be charged through the expiry cannot be forecast; use a \
+                 node that serves it"
+            )
+        })?;
+        capital_costs(
+            &operations.gas_prices,
+            &operations.storage_prices,
+            storage,
+            request.expires_at,
+            self.capital_margin_nanotos.unwrap_or(operations.fees.control_value),
+        )
+    }
+
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         let controller = parse_controller(&self.controller)?;
         let thresholds = self.thresholds.thresholds()?;
@@ -428,6 +468,7 @@ impl ControllerOperationsPlanCmd {
             "the controller's root nonce is exhausted"
         );
         let request = self.request(&controller, &operations, now)?;
+        let costs = self.capital_costs(&operations, &request)?;
         let plan = plan_renewal(
             &controller,
             &operations.state,
@@ -436,6 +477,7 @@ impl ControllerOperationsPlanCmd {
             operations.relay_pending,
             now,
             &request,
+            &costs,
         )?;
         let valid_until = authorization_valid_until(now, self.valid_for)?;
         let assessment = operations.assess(&controller, now, &thresholds)?;
@@ -502,11 +544,16 @@ pub(crate) fn shell_quote(word: &str) -> String {
 }
 
 /// The offline signing command and what the payer then sends, exactly as printed.
+/// While the controller's capital is short of what the plan requires, neither command
+/// is printed: the payload is shown as a preview only, with the transfer that must land
+/// first, and the plan has to be run again once it has.
 pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPlan> {
     use base64::Engine;
     let plan = output.plan;
+    let costs = &plan.capital_costs;
     let authority = &output.operations.authority;
     let checkpoint = &output.operations.checkpoint;
+    let ready = plan.capital_ready();
     let payload_b64 =
         base64::engine::general_purpose::STANDARD.encode(chain_block::write_boc(&plan.payload)?);
     let controller_hex = hex::encode(output.controller.address().get_bytestring(0));
@@ -527,13 +574,27 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
         ),
         Err(_) => "the message value exceeds what a wallet transfer can carry".to_string(),
     };
+    let capital_send_command = match u64::try_from(plan.capital_transfer_value) {
+        Ok(value) => format!(
+            "tosctl wallet send --from <FUNDING_WALLET> --to {} --amount-nanotos {}",
+            output.controller, value
+        ),
+        Err(_) => "the capital transfer exceeds what a wallet transfer can carry".to_string(),
+    };
     let staleness = format!(
         "read at masterchain block {} (root hash {}); a relay or root action after that \
          block changes the funds, epoch or nonce and invalidates this plan, so re-run it \
          immediately before signing",
         checkpoint.seqno, checkpoint.root_hash
     );
-    let json = serde_json::json!({
+    let forecast_note = format!(
+        "a forecast of the storage charged from the controller's last payment through the \
+         expiry {}, plus any recorded storage debt, at the occupancy and prices of block {}; \
+         the request rewrites the controller's data and relays add state, so actual charges \
+         can differ. It is not a guarantee",
+        plan.expires_at, checkpoint.seqno
+    );
+    let mut json = serde_json::json!({
         "controller": output.controller.to_string(),
         "block": {
             "seqno": checkpoint.seqno,
@@ -551,34 +612,38 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
         "required_value": plan.required_value.to_string(),
         "message_value": plan.message_value.to_string(),
         "capital_after": plan.capital_after.to_string(),
-        "capital_top_up": plan.capital_top_up.to_string(),
+        "capital": {
+            "ready": ready,
+            "shortfall": plan.capital_shortfall.to_string(),
+            "required": plan.capital_required.to_string(),
+            "storage_forecast": costs.storage_forecast.to_string(),
+            "storage_forecast_note": forecast_note.clone(),
+            "receive_fee": costs.receive_fee.to_string(),
+            "margin": costs.margin.to_string(),
+            "top_up_net": plan.capital_top_up_net.to_string(),
+            "transfer_value": plan.capital_transfer_value.to_string(),
+        },
         "projected_warnings": output.projected.warnings,
         "projected_blocks_next_stake": output.projected.blocks_next_stake(),
         "global_id": output.global_id,
         "epoch": authority.epoch,
         "nonce": authority.nonce,
         "valid_until": output.valid_until,
-        "payload_boc_base64": payload_b64,
-        "sign_command": sign_command.clone(),
-        "send_command": send_command.clone(),
     });
-    let top_up_step = if plan.capital_top_up > 0 {
-        format!(
-            "0. The new floor is not covered by the controller's balance, and the deposit\n\
-             \x20  cannot cover it (it raises balance and funds alike). Send {} to the\n\
-             \x20  controller as a plain transfer, separate from the request below, or every\n\
-             \x20  relay fails the capital check (balance >= funds + floor).\n\n",
-            tos(plan.capital_top_up)
-        )
+    if ready {
+        json["payload_boc_base64"] = payload_b64.clone().into();
+        json["sign_command"] = sign_command.clone().into();
+        json["send_command"] = send_command.clone().into();
     } else {
-        String::new()
-    };
+        json["payload_preview_boc_base64"] = payload_b64.clone().into();
+        json["capital_send_command"] = capital_send_command.clone().into();
+    }
     let mut projected_lines = String::new();
     for warning in &output.projected.warnings {
         let label = if warning.blocks_next_stake() { "[BLOCKING]" } else { "[WARNING]" };
         projected_lines.push_str(&format!("  {label} after renewal: {warning}\n"));
     }
-    let text = format!(
+    let summary = format!(
         "Kind 4 renewal (deposit by deficit; every other field replaces the stored one)\n\
          {rule}\n\
          \x20 Inputs:              {staleness}\n\
@@ -592,20 +657,11 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
          \x20 Required value:      {required} (deposit + gas_fee(-1, 200000) + control_value)\n\
          \x20 Message value:       {value}\n\
          \x20 Balance after:       {capital_after}\n\
-         \x20 Capital top-up:      {top_up}\n\
+         \x20 Storage forecast:    {forecast} ({forecast_note})\n\
+         \x20 Capital required:    {capital_required} (funds + floor + storage forecast)\n\
          \x20 Root epoch / nonce:  {epoch} / {nonce}\n\
          \x20 Valid until:         {valid_until}\n\
-         \x20 Payload (kind 4):    {payload_b64}\n\
-         {projected_lines}\n\
-         {top_up_step}\
-         1. Where the controller root seed is held (offline), run:\n\n\
-         \x20  {sign_command}\n\n\
-         2. Send its output as the body of a bounceable message from the payer wallet\n\
-         \x20  ({payer}) to the controller, with exactly the message value, before\n\
-         \x20  valid_until. For a wallet configured in tosctl:\n\n\
-         \x20  {send_command}\n\n\
-         3. Run `tosctl controller operations status --controller {controller}` and check\n\
-         \x20  that the nonce advanced and the recorded values are the ones above.\n",
+         {projected_lines}\n",
         rule = "\u{2500}".repeat(72),
         payer = plan.payer,
         deposit = tos(plan.deposit),
@@ -617,12 +673,51 @@ pub(crate) fn render_plan(output: &PlanOutput<'_>) -> anyhow::Result<RenderedPla
         required = tos(plan.required_value),
         value = tos(plan.message_value),
         capital_after = tos(plan.capital_after),
-        top_up = tos(plan.capital_top_up),
+        forecast = tos(costs.storage_forecast),
+        capital_required = tos(plan.capital_required),
         epoch = authority.epoch,
         nonce = authority.nonce,
         valid_until = output.valid_until,
-        controller = output.controller,
     );
+    let steps = if ready {
+        format!(
+            "1. Where the controller root seed is held (offline), run:\n\n\
+             \x20  {sign_command}\n\n\
+             2. Send its output as the body of a bounceable message from the payer wallet\n\
+             \x20  ({payer}) to the controller, with exactly the message value, before\n\
+             \x20  valid_until. For a wallet configured in tosctl:\n\n\
+             \x20  {send_command}\n\n\
+             3. Run `tosctl controller operations status --controller {controller}` and check\n\
+             \x20  that the nonce advanced, the recorded values are the ones above, and no\n\
+             \x20  [BLOCKING] capital warning remains.\n",
+            payer = plan.payer,
+            controller = output.controller,
+        )
+    } else {
+        format!(
+            "[BLOCKING] The controller's capital is short of what this renewal requires\n\
+             \x20 (balance after {capital_after}, required {capital_required}). The deposit cannot\n\
+             \x20 cover it: it raises the balance and the recorded funds by the same amount.\n\
+             \x20 Shortfall against funds + floor now: {shortfall}.\n\n\
+             0. Send {transfer} to the controller as a plain transfer: {net} to retain\n\
+             \x20  (capital required + margin {margin} - balance after) plus {fee} the controller\n\
+             \x20  pays from its balance to receive it. The margin is discretionary headroom, not\n\
+             \x20  a guarantee. For a wallet configured in tosctl:\n\n\
+             \x20  {capital_send_command}\n\n\
+             Then run this plan again. It reads the balance, the storage metadata and the\n\
+             authorization afresh; sign only what that run prints. Nothing below is ready to\n\
+             sign or send.\n\n\
+             Payload preview (kind 4, NOT ready to sign): {payload_b64}\n",
+            capital_after = tos(plan.capital_after),
+            capital_required = tos(plan.capital_required),
+            shortfall = tos(plan.capital_shortfall),
+            transfer = tos(plan.capital_transfer_value),
+            net = tos(plan.capital_top_up_net),
+            margin = tos(costs.margin),
+            fee = tos(costs.receive_fee),
+        )
+    };
+    let text = format!("{summary}{steps}");
     Ok(RenderedPlan { json, text })
 }
 
@@ -631,10 +726,13 @@ mod tests {
     use super::*;
     use clap::{Args, Command, FromArgMatches};
     use contracts::validator_controller::{
-        ControllerAuthority, OperatingState, RelayFees, plan_renewal,
+        ControllerAuthority, OperatingState, PLAIN_RECEIVE_GAS, RelayFees, gas_fee, plan_renewal,
     };
+    use contracts::wallet::send_fees::AccountStorage;
 
     const NOW: u64 = 1_791_250_000;
+    /// No receive fee, no storage and no margin: the plan's arithmetic alone.
+    const NO_COSTS: CapitalCosts = CapitalCosts { receive_fee: 0, storage_forecast: 0, margin: 0 };
 
     fn controller() -> MsgAddressInt {
         MsgAddressInt::standard(-1, [0xC0; 32])
@@ -651,12 +749,31 @@ mod tests {
             relay_pending: false,
             retry_fees_held: false,
             balance: 1_000 * NANO,
+            storage: Some(AccountStorage {
+                cells: 9,
+                bits: 5000,
+                last_paid: (NOW - 100) as u32,
+                due_payment: 0,
+            }),
             fees: RelayFees {
                 control_value: 1_000_000_000,
                 callback_value: 2_000_000_000,
                 grant: 6_000_000_000,
                 funding_processing: 3_000_000_000,
             },
+            gas_prices: chain_block::GasLimitsPrices {
+                gas_price: 10_000 * 65_536,
+                gas_limit: 1_000_000,
+                special_gas_limit: 1_000_000,
+                ..Default::default()
+            },
+            storage_prices: vec![chain_block::StoragePrices {
+                utime_since: 0,
+                bit_price_ps: 1,
+                cell_price_ps: 500,
+                mc_bit_price_ps: 1,
+                mc_cell_price_ps: 65_536,
+            }],
             elections_interval_secs: 65_536,
             checkpoint: contracts::MasterchainCheckpoint {
                 seqno: 777,
@@ -711,9 +828,17 @@ mod tests {
         assert_eq!(request.limit, 20 * NANO, "a limit that admits the grant is kept");
         assert_eq!(request.floor, 10 * NANO, "the floor is kept");
         assert_eq!(u64::from(request.expires_at), NOW + 30 * DAY);
-        let plan =
-            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
-                .unwrap();
+        let plan = plan_renewal(
+            &controller(),
+            &ops.state,
+            ops.balance,
+            &ops.fees,
+            false,
+            NOW,
+            &request,
+            &NO_COSTS,
+        )
+        .unwrap();
         assert_eq!(plan.deposit, 240 * NANO - 30 * NANO);
     }
 
@@ -725,9 +850,17 @@ mod tests {
             .unwrap();
         assert_eq!(request.funds_target, 30 * NANO);
         assert_eq!(request.allowance, 30 * NANO);
-        let plan =
-            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
-                .unwrap();
+        let plan = plan_renewal(
+            &controller(),
+            &ops.state,
+            ops.balance,
+            &ops.fees,
+            false,
+            NOW,
+            &request,
+            &NO_COSTS,
+        )
+        .unwrap();
         assert_eq!(plan.deposit, 0);
         assert_eq!(u64::from(plan.expires_at), NOW + 90 * DAY);
         assert_eq!(plan.message_value, ops.fees.funding_processing + NANO);
@@ -775,9 +908,17 @@ mod tests {
     fn the_offline_command_line_carries_the_live_authority() {
         let ops = operations(funded(30 * NANO));
         let request = plan_cmd(&[]).request(&controller(), &ops, NOW).unwrap();
-        let plan =
-            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
-                .unwrap();
+        let plan = plan_renewal(
+            &controller(),
+            &ops.state,
+            ops.balance,
+            &ops.fees,
+            false,
+            NOW,
+            &request,
+            &NO_COSTS,
+        )
+        .unwrap();
         let rendered = render_plan(&PlanOutput {
             controller: &controller(),
             operations: &ops,
@@ -824,9 +965,17 @@ mod tests {
 
         let ops = operations(funded(30 * NANO));
         let request = plan_cmd(&[]).request(&controller(), &ops, NOW).unwrap();
-        let plan =
-            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
-                .unwrap();
+        let plan = plan_renewal(
+            &controller(),
+            &ops.state,
+            ops.balance,
+            &ops.fees,
+            false,
+            NOW,
+            &request,
+            &NO_COSTS,
+        )
+        .unwrap();
         let rendered = render_plan(&PlanOutput {
             controller: &controller(),
             operations: &ops,
@@ -845,20 +994,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_plan_names_its_block_and_the_capital_a_new_floor_needs() {
-        // Balance equals the recorded funds, and the renewal raises the floor.
-        let mut state = funded(30 * NANO);
-        state.floor = 0;
-        let mut ops = operations(state);
-        ops.balance = 30 * NANO;
-        let request = plan_cmd(&["--floor-nanotos", "10000000000"])
-            .request(&controller(), &ops, NOW)
-            .unwrap();
-        let plan =
-            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
-                .unwrap();
-        assert_eq!(plan.capital_top_up, 10 * NANO);
+    fn render(ops: &ControllerOperations, plan: &RenewalPlan) -> RenderedPlan {
         let projected = assess(
             &OperatingInputs {
                 controller: &controller(),
@@ -872,24 +1008,122 @@ mod tests {
             &OperatingThresholds::default(),
         )
         .unwrap();
-        assert!(projected.blocks_next_stake(), "{:?}", projected.warnings);
-        let rendered = render_plan(&PlanOutput {
+        render_plan(&PlanOutput {
             controller: &controller(),
-            operations: &ops,
-            plan: &plan,
+            operations: ops,
+            plan,
             projected: &projected,
             global_id: 3,
             valid_until: (NOW + 60) as u32,
             root_seed: "ROOTSEED",
         })
+        .unwrap()
+    }
+
+    /// While capital is short the plan is BLOCKING: it prices the transfer, shows the
+    /// payload only as a preview, and prints neither the signing nor the send command.
+    #[test]
+    fn a_capital_shortfall_withholds_the_signing_and_send_commands() {
+        // Balance equals the recorded funds, and the renewal raises the floor.
+        let mut state = funded(30 * NANO);
+        state.floor = 0;
+        let mut ops = operations(state);
+        ops.balance = 30 * NANO;
+        let cmd = plan_cmd(&["--floor-nanotos", "10000000000"]);
+        let request = cmd.request(&controller(), &ops, NOW).unwrap();
+        let costs = cmd.capital_costs(&ops, &request).unwrap();
+        assert_eq!(costs.margin, ops.fees.control_value, "default margin: one control_value");
+        assert_eq!(costs.receive_fee, gas_fee(&ops.gas_prices, PLAIN_RECEIVE_GAS).unwrap());
+        assert!(costs.storage_forecast > 0);
+        let plan = plan_renewal(
+            &controller(),
+            &ops.state,
+            ops.balance,
+            &ops.fees,
+            false,
+            NOW,
+            &request,
+            &costs,
+        )
         .unwrap();
-        assert_eq!(rendered.json["capital_top_up"], (10 * NANO).to_string());
+        assert_eq!(plan.capital_shortfall, 10 * NANO);
+        assert_eq!(
+            plan.capital_transfer_value,
+            10 * NANO + costs.storage_forecast + costs.margin + costs.receive_fee
+        );
+        let rendered = render(&ops, &plan);
+        let capital = &rendered.json["capital"];
+        assert_eq!(capital["ready"], false);
+        assert_eq!(capital["shortfall"], (10 * NANO).to_string());
+        assert_eq!(capital["transfer_value"], plan.capital_transfer_value.to_string());
+        assert_eq!(capital["top_up_net"], plan.capital_top_up_net.to_string());
+        assert_eq!(capital["receive_fee"], costs.receive_fee.to_string());
+        assert!(capital["storage_forecast_note"].as_str().unwrap().contains("not a guarantee"));
+        assert!(rendered.json.get("sign_command").is_none());
+        assert!(rendered.json.get("send_command").is_none());
+        assert!(rendered.json.get("payload_boc_base64").is_none());
+        assert!(rendered.json["payload_preview_boc_base64"].is_string());
+        assert!(
+            rendered.json["capital_send_command"]
+                .as_str()
+                .unwrap()
+                .ends_with(&format!("--amount-nanotos {}", plan.capital_transfer_value))
+        );
         assert_eq!(rendered.json["projected_blocks_next_stake"], true);
         assert_eq!(rendered.json["block"]["seqno"], 777);
-        assert!(rendered.text.contains("masterchain block 777"));
-        assert!(rendered.text.contains("invalidates this plan"));
-        assert!(rendered.text.contains("0. The new floor is not covered"));
-        assert!(rendered.text.contains("[BLOCKING] after renewal"));
+        let text = &rendered.text;
+        assert!(text.contains("masterchain block 777"));
+        assert!(text.contains("invalidates this plan"));
+        assert!(text.contains("[BLOCKING] The controller's capital is short"));
+        assert!(text.contains(&format!("0. Send {}", tos(plan.capital_transfer_value))));
+        assert!(text.contains("Then run this plan again"));
+        assert!(text.contains("NOT ready to sign"));
+        assert!(text.contains("not a guarantee"));
+        assert!(!text.contains("tos-pq-controller fund-operations"));
+        assert!(!text.contains("--body-boc"));
+    }
+
+    /// Once the balance covers funds + floor + forecast, the plan prints the commands
+    /// and no transfer, and charges no receive fee.
+    #[test]
+    fn a_funded_controller_gets_the_commands_and_no_transfer() {
+        let ops = operations(funded(30 * NANO));
+        let cmd = plan_cmd(&["--capital-margin-nanotos", "5"]);
+        let request = cmd.request(&controller(), &ops, NOW).unwrap();
+        let costs = cmd.capital_costs(&ops, &request).unwrap();
+        assert_eq!(costs.margin, 5);
+        let plan = plan_renewal(
+            &controller(),
+            &ops.state,
+            ops.balance,
+            &ops.fees,
+            false,
+            NOW,
+            &request,
+            &costs,
+        )
+        .unwrap();
+        assert!(plan.capital_ready());
+        let rendered = render(&ops, &plan);
+        assert_eq!(rendered.json["capital"]["ready"], true);
+        assert_eq!(rendered.json["capital"]["transfer_value"], "0");
+        assert!(rendered.json["sign_command"].is_string());
+        assert!(rendered.json["send_command"].is_string());
+        assert!(rendered.json.get("capital_send_command").is_none());
+        assert!(rendered.text.contains("no\n   [BLOCKING] capital warning remains"));
+        assert!(!rendered.text.contains("0. Send"));
+    }
+
+    /// Without the controller's storage metadata the forecast cannot be made, and the
+    /// plan refuses rather than quoting a capital requirement without it.
+    #[test]
+    fn a_plan_without_storage_metadata_fails_closed() {
+        let mut ops = operations(funded(30 * NANO));
+        ops.storage = None;
+        let cmd = plan_cmd(&[]);
+        let request = cmd.request(&controller(), &ops, NOW).unwrap();
+        let error = cmd.capital_costs(&ops, &request).unwrap_err();
+        assert!(error.to_string().contains("storage_stat"), "{error}");
     }
 
     /// The send command the plan prints must parse as printed, with the controller's
@@ -899,9 +1133,17 @@ mod tests {
         use super::super::wallet_cmd::WalletSendCmd;
         let ops = operations(funded(30 * NANO));
         let request = plan_cmd(&[]).request(&controller(), &ops, NOW).unwrap();
-        let plan =
-            plan_renewal(&controller(), &ops.state, ops.balance, &ops.fees, false, NOW, &request)
-                .unwrap();
+        let plan = plan_renewal(
+            &controller(),
+            &ops.state,
+            ops.balance,
+            &ops.fees,
+            false,
+            NOW,
+            &request,
+            &NO_COSTS,
+        )
+        .unwrap();
         let rendered = render_plan(&PlanOutput {
             controller: &controller(),
             operations: &ops,
