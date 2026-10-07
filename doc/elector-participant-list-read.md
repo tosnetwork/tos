@@ -1,12 +1,11 @@
-# Reading the elector's participant list beyond 38 entries
+# Reading election participants and proposals for operator automation
 
-- Opened: 2026-10-07. Status: **design for review — no code written.**
+- Opened: 2026-10-07. Status: **design for review — no code written.** Revision 2:
+  the owner redirected the design from "harden the public RPC path" to "operator
+  automation uses the node's authenticated control channel, not the public RPC".
 - Repository: `tosnetwork/tos`, base `main` at `6da705c8a` (includes PR #151).
-- Planned branch: `fix/elector-participant-list`.
+- Branch / PR: `fix/elector-participant-list`, draft PR #152.
 - Also kept in the team notes (`memo/elector-participant-list/`).
-- Purpose of this document: describe the symptom, the root cause and a solution
-  derived from first principles, so an independent reviewer can judge the design
-  before implementation.
 
 ## 1. Symptom
 
@@ -14,276 +13,220 @@
 participants have registered a stake.
 
 - The elections runner reads the elector getter `participant_list_extended` on every
-  tick (`tosctl/src/node-control/contracts/src/elector/elector_impl.rs` ~85,
-  `elections_info`).
-- With 39 or more registrations the read fails with
-  `recursion limit exceeded` while parsing the JSON-RPC response.
-- `runner.rs:373` propagates that error (`elections_info().await?`), so the **whole
-  tick aborts**: the node neither stakes, nor confirms acceptance, nor recovers
-  returned stakes.
+  tick through the node's public JSON-RPC method `runGetMethodStd`
+  (`tosctl/src/node-control/contracts/src/elector/elector_impl.rs` ~85).
+- With 39 or more registrations the read fails (`recursion limit exceeded`).
+  `runner.rs:373` propagates the error, so the **whole tick aborts**: the node neither
+  stakes, nor confirms acceptance, nor recovers returned stakes.
 - The same read backs stake confirmation in `config_wallet_cmd`, `vote participants`
-  and `vote cast`, and the explorer's `/staking` endpoint; all fail the same way.
+  and `vote cast`.
 
-Who is affected: every operator running `tosctl` automation, at once. The chain and
-the elector contract are unaffected; elections still conclude correctly on chain.
+Registering a stake is permissionless. The elector admits up to 256 participants
+(`pq_participant_limit = 256`, `elector-code.fc:235`; registration 257 refused at
+`:536`; `conduct_elections` throws above 256 at `:1370`). Anyone can push the count
+past 38 with minimum-stake registrations and stop every operator's automation for
+that election. Only the number of *elected* validators is capped at 21 (`:1277`).
 
-Why it matters: registering a stake is permissionless. The elector admits up to 256
-participants (`pq_participant_limit = 256`, `elector-code.fc:235`; registration 257 is
-refused at `:536`; `conduct_elections` throws above 256 at `:1370`). Anyone can push
-the count from 21 to 39 with minimum-stake registrations and blind every operator's
-automation for that election. Only the number of *elected* validators is capped at
-21 (`n = min(n, max_validators)` at election end, `:1277`).
+The same class of defect affects `vote offer ls` / `vote offer cast`
+(`list_proposals`), which PR #151 moved to a hardened public-RPC path: the node stops
+serving that getter at 49 proposals (§3.3).
 
 ## 2. Measurements
 
-Taken with the real elector contract in the sandbox, rendered exactly as the node
-renders it, plus a native probe linked to the node's VM libraries and read-only
-captures from the local development network.
+Real elector in the sandbox, rendered exactly as the node renders it; a native probe
+linked to the node's VM libraries; read-only captures from the local development
+network.
 
-| Participants | Getter gas (limit 300,000) | Served JSON bytes | JSON nesting depth | `tosctl` today |
+| Participants | Getter gas | Served JSON bytes | JSON nesting depth | Today |
 | ---: | ---: | ---: | ---: | --- |
 | 0 | 2,503 | 763 | 6 | ok |
 | 21 | 30,175 | 21,415 | 74 | ok |
 | 38 | 53,594 | 38,211 | 125 | ok |
-| 39 | 54,926 | 39,199 | 128 | **fails** |
-| 76 | 106,735 | 75,778 | 239 | fails |
-| 77 | — | — | — | node refuses (see below) |
-| 212 | 299,987 | 210,512 | 647 | fails |
-| 214 | exit 13 (out of gas) | — | — | fails |
-| 256 | exit 13 | (254,122 with ample gas) | 779 | fails |
+| 39 | 54,926 | 39,199 | 128 | **fails** (client) |
+| 77 | — | — | — | **node refuses** (serialization) |
+| 214 | > 300,000 | — | — | **node refuses** (exit 13) |
+| 256 | 368,795 | 254,122 | 779 | — |
 
-- Gas grows by about 1.33k and nesting depth by exactly 3 per participant.
-- The elector **account** (code + data) at 256 participants is about 140 KB in base64.
-- Response size is never the binding limit.
+Gas grows by about 1.33k and depth by exactly 3 per participant.
+`list_proposals` (no voters): ~2,270 gas per proposal; the node stops serializing
+at 49 proposals.
 
 ## 3. Root cause
 
-Three independent ceilings sit below the protocol's own cap of 256. The client hits
-the lowest one first.
+**Internal automation is built on an interface designed for the public.**
+`runGetMethodStd` is the node's public query surface. Every limit we hit exists to
+protect the node from anonymous callers, and none of them is a property of the data.
 
 ### 3.1 The answer is a linked list, rendered as nested JSON
 
-The getter builds its result with `cons`, walking the member dictionary downward from
-`2^256 − 1` (`elector-code.fc:1667–1683`):
+`participant_list_extended` builds its result with `cons`
+(`elector-code.fc:1667–1683`). The JSON-RPC renderer
+(`validator-engine/json-rpc-server-runmethod.cpp`, `serialize_stack_entry_std`) emits
+each cons cell as a two-element tuple, so a list of *n* entries becomes JSON nested
+about 3·*n* levels deep.
 
-```
-(elect_at, elect_close, min_stake, total_stake, l, failed, finished)
-l = [id, [stake, max_factor, id, adnl_addr, algorithm_id, key_id]] :: … :: nil
-```
+### 3.2 Public-surface limit 1 — the client's JSON recursion limit (38)
 
-The node's JSON-RPC renderer (`validator-engine/json-rpc-server-runmethod.cpp`,
-`serialize_stack_entry_std`) tests for a tuple before a list, so every cons cell is
-emitted as a two-element `tvm.stackEntryTuple` `[head, tail]`, and `nil` as an empty
-`tvm.stackEntryList`. A list of *n* entries therefore becomes JSON nested about 3·*n*
-levels deep. The list's **length** turns into the document's **depth**.
+`tosctl` parses with `serde_json` (recursion limit 128). Raising it is unsafe on a
+public surface: a deep response from any endpoint could overflow the reader's stack.
 
-### 3.2 Ceiling 1 — the client's recursive JSON parser (38 participants)
+### 3.3 Public-surface limit 2 — result serialization (76 participants, 49 proposals)
 
-The generic `tosctl` read path parses with `serde_json`, whose default recursion limit
-is 128. At 39 participants the document is 128 levels deep and parsing stops. Simply
-raising the limit is not safe: `serde_json`, the `Value` tree, the stack-entry
-conversion and dropping the tree are all recursive, so a deep enough response from any
-endpoint can overflow the thread's stack and abort the process.
+The lite server serializes a getter's result under `vm::FakeVmStateLimits
+fstate(1000)` (`validator/impl/liteserver.cpp:1556`); larger stacks fail with
+`cannot serialize resulting stack` (`:1580`, `:1587`), returned as HTTP 500 with a
+generic `-32603` envelope.
 
-### 3.3 Ceiling 2 — the node's result serialization limit (76 participants)
+### 3.4 Public-surface limit 3 — getter gas (≈ 212 participants)
 
-The lite server serializes a getter's result stack under
-`vm::FakeVmStateLimits fstate(1000)` (`validator/impl/liteserver.cpp:1556`). A larger
-stack fails with `cannot serialize resulting stack` (`:1580`, `:1587`). The JSON-RPC server returns it as HTTP 500 with a generic `-32603` error
-envelope, observed as
-`{"ok":false,…,"error":"runSmcMethod: [Error : -400 : cannot serialize resulting stack]","code":-32603}`
-(the `-400` is the lite server's default `fatal_error` code, carried through
-`validator/manager.cpp`; the `runSmcMethod: ` prefix and `-32603` come from
-`validator-engine/json-rpc-server*.cpp`). No client change can make
-the node serve more than 76 participants through this getter.
-
-### 3.4 Ceiling 3 — the node's getter gas limit (about 212 participants)
-
-Getters run in the node's TVM under `client_method_gas_limit = 300000`
-(`validator/impl/liteserver.hpp:83`). At about 213 participants the getter runs out of
-gas (exit 13). This is a per-query computation budget protecting the node from
-denial of service, not a fee.
-
-### 3.5 The same defect class exists in the code merged with PR #151
-
-PR #151 made `vote offer ls` read the config contract's `list_proposals` through a
-bounded, stack-safe path with a stored-state fallback for "answer too large" and
-exit 13. Its capacity evidence checked gas only. Measured with the same native probe,
-the node's serialization limit stops `list_proposals` at **49 proposals** (no voters).
-Above that the node returns an error envelope; #151 classifies error envelopes as an
-endpoint fault, tries the next endpoint, and finally fails — the stored-state fallback
-is never reached. Practical risk is low (49 simultaneous configuration proposals), but
-the documented capacity is wrong.
+`client_method_gas_limit = 300000` (`validator/impl/liteserver.hpp:83`) bounds every
+anonymous getter call. The elector's own 256-member cap needs ≈ 369k.
 
 ## 4. Solution from first principles
 
 ### 4.1 What must be true
 
-1. **The authoritative data is the elector account's state at a known block.** The
-   getter is a convenience that renders part of that state; it is not the source of
-   truth.
-2. **A client's read capacity must not be below the protocol's own bound.** The
-   contract admits 256 participants, so every component on the read path must handle
-   256. Anything less is a denial-of-service lever.
-3. **A list read is all or nothing.** A partial participant list must never reach a
-   staking decision; a failure must be explicit.
-4. **Untrusted input must not be able to crash the reader.** Any endpoint, honest or
-   not, can send arbitrarily deep or malformed data; the reader's memory, stack and
-   time must be bounded independently of what it receives.
-5. **Prefer the node's interpretation when it is available.** Decoding contract
-   storage ourselves duplicates the contract's layout and can drift after an upgrade;
-   use it only when the getter cannot answer.
+1. **The operator's automation talks to its own node.** It does not need, and should
+   not inherit, limits whose purpose is to defend that node against strangers.
+2. **The contract is the authority on its own data layout.** Run the contract's getter;
+   do not re-implement its storage format in the client.
+3. **Read capacity must cover the protocol's own bounds** (256 participants; every
+   proposal the config contract can hold).
+4. **A list read is all or nothing**; a partial list never reaches a staking decision.
+5. **Bounded cost even for an authenticated caller**: a bug in a client must not make
+   the node do unbounded work.
 
-### 4.2 Consequences
+### 4.2 Consequence
 
-- From (4): parse responses on a dedicated worker thread with an explicit stack, a
-  byte cap and a depth preflight; convert and drop the tree iteratively; let only flat
-  domain results cross back. PR #151 already built exactly this for proposals.
-- From (2) and (3.3/3.4): the getter alone can never reach 256. The client therefore
-  needs a second path for large states — reading the elector account at the same
-  pinned block and decoding the member dictionary itself.
-- From (5): use the getter whenever it answers; fall back to stored state only when
-  the node signals that it *cannot* render the answer (serialization limit, gas
-  exhaustion, or an oversized response), never on other errors.
-- From (1) and (5): the stored-state decoder must reproduce the getter's semantics
-  exactly (including its omission of the key `2^256 − 1`), must check the account's
-  code hash against the supported elector before interpreting storage, and must be
-  cross-checked field for field against the getter where both can answer.
-- From (3): strict decoding everywhere — exact tuple arities, canonical decimal
-  numbers, checked integer conversions, strictly ascending ids, the 256 bound — and
-  any violation rejects the whole answer.
+Add read-only queries to the validator engine's **control interface** — the
+authenticated ADNL channel `tosctl` already uses for its node (`ControlClientAdnl`;
+e.g. `getPqConsensusKeys`, `getStats`). The node runs the contract's getter in process
+against its own masterchain state, with a budget sized for the protocol rather than
+for anonymous traffic, and returns a **flat** TL structure. No JSON, no nesting, no
+public serialization limit, no client-side stack-safety machinery, no stored-state
+decoder.
 
-## 5. Proposed design
+The public RPC path stays as it is for the public (explorers, wallets), with its
+documented limits.
 
-### 5.1 Share PR #151's bounded reader
+## 5. Design
 
-Move the machinery from `contracts/src/config_contract/proposal_transport.rs` into a
-read-agnostic module (`contracts/src/bounded_read/`), behaviour-neutral, as its own
-commit: depth preflight, strict JSON with iterative drop, envelope and answered-block
-checks, iterative stack conversion and dismantling, admission (one global pool of two
-workers, permit taken before buffering), endpoint failover, checkpoint pinning.
-
-Supported reads become a closed set:
+### 5.1 New control queries (TL, `tl/generate/scheme/tos_api.tl`)
 
 ```
-enum BoundedRead   { Proposals(ProposalRead), Elections }
-enum BoundedAnswer { Proposals(ProposalAnswer), Elections(ElectionsInfo) }
+engine.validator.electionParticipant
+    id:int256 stake:bytes max_factor:int adnl:int256 algorithm:int key_id:int256
+    = engine.validator.ElectionParticipant;
+engine.validator.electionParticipants
+    block:tosNode.blockIdExt elect_at:int elect_close:int
+    min_stake:bytes total_stake:bytes failed:Bool finished:Bool
+    participants:(vector engine.validator.electionParticipant)
+    = engine.validator.ElectionParticipants;
+engine.validator.getElectionParticipants
+    flags:# block:flags.0?tosNode.blockIdExt = engine.validator.ElectionParticipants;
+
+engine.validator.configProposal
+    hash:int256 expires:int critical:Bool param_id:int param_hash:int256
+    vset_id:int256 voters:(vector int) weight_remaining:long
+    rounds_remaining:int wins:int losses:int
+    = engine.validator.ConfigProposal;
+engine.validator.configProposals
+    block:tosNode.blockIdExt proposals:(vector engine.validator.configProposal)
+    = engine.validator.ConfigProposals;
+engine.validator.getConfigProposals
+    flags:# block:flags.0?tosNode.blockIdExt = engine.validator.ConfigProposals;
 ```
 
-Each variant fixes its method and arguments, its own depth limit (elections:
-3 · 256 + 64 = 832; proposals unchanged), its fallback triggers and its stored-state
-decoder. The generic `get_method` path and every other getter are unchanged.
+- Amounts are carried as canonical big-endian bytes (Coins can exceed 64 bits); the
+  Rust side converts with checked arithmetic into its existing types and refuses
+  explicitly what does not fit.
+- `getConfigProposals` returns proposal metadata only (what `vote offer ls`/`cast`
+  use), not parameter values, so its size is independent of proposal payloads.
+- Without `flags.0` the query reads the latest masterchain state the node has applied;
+  the answer always names the block it was computed at.
 
-### 5.2 Fallback triggers
+### 5.2 Node implementation (`validator-engine/validator-engine.cpp`)
 
-For a read of the participant list (and, fixing §3.5, for `list_proposals`), fall back
-to the stored-state path when, at the pinned checkpoint:
+- Permission: `vep_default` (read-only), like `getStats`.
+- Resolve the masterchain state (requested or latest) through the validator manager,
+  as `getShardOutQueueSize` does; read the elector / config contract account from it.
+- Run the getter in process with `SmartContract::run_get_method` and the same VM
+  context the lite server builds (config, libraries, previous blocks, `now`), but with
+  a **control-query gas budget** (`kControlGetterGasLimit`, proposed 10,000,000: ~27×
+  the elector's 256-member worst case and ~4,400 proposals; a named constant with the
+  rationale beside it).
+- Walk the result cons list **iteratively** in C++ into the flat TL vector; validate
+  every field (exact tuple arities, integer ranges, strictly ascending ids, at most
+  256 participants for the elector); any violation is a control-query error.
+- Bound the reply to the control channel's frame (16 MiB, `adnl-ext-limits.h`); the
+  elector's worst case is a few tens of KB.
+- Run in the engine's existing control-query actor context; the getter is CPU-bound and
+  bounded by the gas budget.
 
-1. the getter answered with exit 13; or
-2. the node returned its result-serialization error — recognized **only** as a valid
-   error envelope with the matching request id, the server's error code and the known
-   `runSmcMethod` message form; near matches and other errors stay ordinary retryable
-   failures; or
-3. the response exceeded the transport byte limit with a successful HTTP status.
+### 5.3 tosctl
 
-Endpoint policy: try every configured endpoint once first; fall back only if a
-trigger was observed and no endpoint produced a terminal answer. The stored-state
-read must still match the pinned checkpoint and the supported code hash. The error
-text is treated as a signal to try a checked path, not as proof of a limit.
-`get_proposal` keeps no fallback for this trigger.
+- `ElectorWrapperImpl::elections_info` and the config-proposal reads used by
+  `vote offer ls` / `cast` call the new control queries over `ControlClientAdnl`.
+- `ElectionsInfo` / `Participant` / `ConfigProposal` keep their shape, so every
+  consumer's output is unchanged.
+- If the node does not know the query (pre-upgrade engine), fail with an explicit
+  "upgrade the node" error; TOS is pre-launch, so no compatibility path is kept.
+- The hardened public-RPC proposal path from #151 is no longer used by operator
+  commands; it is either kept for callers without a control key or removed — a
+  review question (§9).
 
-Implementation note: because this error arrives with HTTP 500, and the current raw
-read path keeps only the status category of a non-2xx answer and discards its body
-(`RawAttempt::Failed` in `chain-rpc-client/src/v2/client_json_rpc.rs`), recognizing it
-requires keeping a bounded copy of non-success bodies for classification on the worker
-(never logged or quoted).
+### 5.4 Out of scope
 
-### 5.3 Strict participant decoder
+- The explorer's public `/staking` endpoint and other public consumers keep the public
+  path and its limits (76 participants / 49 proposals), documented; a paginated public
+  query can be designed separately.
+- A distinct JSON-RPC error code for result-serialization failures; the node's silent
+  `"stack":[]` on result-parse failure (`json-rpc-server-runmethod.cpp:642–660`).
 
-- Exactly seven stack entries; `elect_at`/`elect_close` as `u32`; stakes as canonical
-  decimals converted with checked `u64` (the Rust API's width — amounts the contract
-  admits but `u64` cannot hold are refused explicitly); `failed`/`finished` exactly
-  `-1` or `0`; no election ⇒ all fields zero and an empty list.
-- The list may end only in an empty `tvm.stackEntryList`; each cell is a 2-tuple, each
-  head a 2-tuple holding a 6-tuple; ids, ADNL addresses and key ids are canonical
-  decimal `u256`; the inner id must equal the head id; ids strictly ascending; at most
-  256 entries.
-- `ElectionsInfo`/`Participant` stay unchanged, so every consumer's output is
-  byte-identical for lists the old code could read.
+## 6. Capacity after the change
 
-### 5.4 Stored-state decoder
-
-Mirror `unpack_elect` and `pq::unpack_member`: the account root including its own
-optional recovery reference and the election's optional `failed_inputs`; exact
-consumption of bits and references; members walked in ascending order; the getter's
-omission of `2^256 − 1` reproduced; the 256 bound enforced on the underlying book
-including the omitted key; refusal on an unsupported code hash.
-
-### 5.5 Capacity after the change
-
-| Participants | Path |
+| Read | Bound |
 | --- | --- |
-| 0–76 | getter |
-| 77–~212 | node serialization error → stored state |
-| ~213–256 | exit 13 → stored state |
+| Election participants | the elector's own 256 cap; gas ≈ 369k ≪ 10M |
+| Config proposals | ≈ 4,400 at 10M gas; metadata only |
+| Reply size | ≪ 16 MiB control frame |
 
-The stored account stays far below the 1 MiB transport cap; beyond it the error names
-both limits. Proposals gain the same serialization fallback above 49.
+## 7. Verification plan
 
-## 6. Verification plan
+- **Native**: a test that builds a masterchain state with the real elector holding
+  0, 1, 21, 76, 77, 212, 256 participants (and the config contract with 0, 49, 50,
+  several hundred proposals) and runs the new control-query handler: exact field
+  equality with the getter's own result; 256 succeeds; a malformed result stack is
+  refused; the iterative walk survives the deepest list; gas-budget exhaustion is an
+  explicit error.
+- **TL / client**: round-trip tests of the new TL types; tosctl decoding with checked
+  conversions (amount overflow per field refused).
+- **Command level**: runner snapshot, stake confirmation, `vote participants`,
+  `vote offer ls`/`cast` produce byte-identical output to today for lists today's code
+  can read, and succeed at 100 and 256 participants.
+- **Live**: the local development network (7 nodes, elections running) answers the new
+  queries over each node's control channel, read-only; results equal the public
+  getter's for the current (small) election.
+- **Mutation testing** per the project's rules (isolated worktrees, run in parallel).
+- Full local gate: native build (no target) incl. `-Werror`; `ctest`; `cargo test
+  --workspace --no-run`; touched crates; fmt; clippy.
 
-- Unit table of accepted and refused shapes (terminators, arities, number forms, id
-  equality and order, the 256 bound, amount overflow per field, no-election record).
-- Sandbox with the real elector for 0, 1, 21, 38, 39, 76, 77, 100, 212, 214 and 256
-  participants: getter decode equals stored-state decode field for field; above the
-  getter's limits the stored state equals a high-gas getter run.
-- A native test in `crypto/test/vm.cpp` that exercises the **production** serialization
-  path and limit (no copied constant): 76 participants serialize, 77 do not; 49/50 for
-  proposals.
-- Read-only captures from the local development network (empty election and a live
-  election) committed as fixtures with block, hash and command.
-- Command-level tests over HTTP: snapshot and `vote participants --format json` are
-  byte-identical to the old decoder for ≤ 38 participants; 100 participants fail on the
-  old path and succeed on the new; the runner tick no longer aborts.
-- Failover tests reusing #151's harness, including a transient serialization error on
-  one endpoint followed by a healthy answer, mixed error orders, wrong request id or
-  code on the serialization error, and supported vs unsupported code hash under every
-  trigger.
-- Mutation testing per the project's rules; each mutant must turn its suite red.
-- Full local gate: native build including `test-vm`; `cargo test --workspace --no-run`;
-  the `contracts`, `elections`, `commands` and `service` suites; `fmt`; `clippy`.
-
-## 7. Alternatives rejected
+## 8. Alternatives rejected
 
 | Alternative | Why not |
 | --- | --- |
-| Raise `serde_json`'s limit on the generic path | Every getter's depth becomes unbounded and the reader can overflow its stack; still stops at 76 on the node |
-| Read stored state only | Every elector upgrade would break all operators until a client release |
-| Raise the lite server's 1000-operation limit, or render lists without nesting | A fleet-wide node upgrade that changes every getter; the gas ceiling would remain |
-| Cap or paginate in the elector | A contract change; the 256 cap already exists |
-| A separate worker pool for elections | Doubles the worker-memory reservation without a measured benefit |
-| Tighten the shared `list_or_empty` helper in place | Other callers depend on it and have not been audited |
-
-## 8. Scope and follow-ups
-
-In scope: the participant-list read; the #151 proposal ceiling and the correction of
-its capacity evidence; the shared reader module; the native serialization test.
-
-Out of scope, recorded:
-- Other elector getters (`past_elections`, etc.) keep the generic path; their limits
-  are to be measured and recorded separately.
-- A distinct JSON-RPC error code for result-serialization failures, so clients need
-  not match message text.
-- The node serves `"stack":[]` when result-stack parsing fails
-  (`json-rpc-server-runmethod.cpp:642–660`); it should be an explicit error.
+| Harden the public RPC path and fall back to decoding stored state (revision 1) | Builds operator automation on anti-DoS limits; needs a Rust copy of the contract's storage layout that drifts on upgrade; much more machinery |
+| Raise the lite server's gas / serialization limits | Weakens the public surface for everyone to serve one internal consumer |
+| Read raw account state over the control channel and decode in Rust | Duplicates the contract's layout in the client; the getter already defines it |
+| Cap or paginate in the elector | Contract change; the 256 cap already exists |
 
 ## 9. Questions for the reviewer
 
-1. Is reading the elector's stored state (with a code-hash gate) an acceptable second
-   source of truth for operator automation, or should the fix instead change the node
-   so the getter can always answer?
-2. Is a tightly matched error message an acceptable fallback trigger until the node
-   emits a distinct error code?
-3. Should the #151 proposal ceiling be fixed in this PR or separately?
-4. Is the 256 participant bound the right capacity target, or should the reader be
-   designed for a future increase of `pq_participant_limit`?
+1. Is the control interface (authenticated, loopback, `vep_default`) the right
+   boundary for these reads, and is `vep_default` the right permission?
+2. Is 10,000,000 gas an appropriate budget for an authenticated control query, or
+   should each query get its own budget derived from the contract's cap?
+3. Should #151's hardened public proposal path stay for callers without a control key,
+   or be removed now that operator commands no longer use it?
+4. Is returning metadata only from `getConfigProposals` sufficient for `vote offer
+   cast` (which today shows the parameter id and voter count)?
