@@ -290,16 +290,37 @@ impl Fixture {
                 });
             }
         });
-        let temporary = std::net::TcpListener::bind("127.0.0.1:0")?;
-        let control_addr = temporary.local_addr()?;
-        drop(temporary);
-        let server_config = AdnlServerConfig::from_json(&serde_json::json!({"address":control_addr.to_string(),"clients":{"any":null},
-            "server_key":{"type_id":1209251014,"pvt_key":"3CFeiTSlGkJf3D8w3ZXS4QS+6/0p+MFZGuv0XYMvMRo="}}).to_string())?;
-        let server = AdnlServer::listen(
-            server_config,
-            vec![Arc::new(ControlReplies { counts: counts.clone(), reply: reply.clone() })],
-        )
-        .await?;
+        // The control server binds an address it is given, so a free port is
+        // probed first. A test running in parallel can take that port before
+        // the server binds it; then probe another.
+        let mut attempts = 0;
+        let (control_addr, server) = loop {
+            let temporary = std::net::TcpListener::bind("127.0.0.1:0")?;
+            let control_addr = temporary.local_addr()?;
+            drop(temporary);
+            let server_config = AdnlServerConfig::from_json(&serde_json::json!({"address":control_addr.to_string(),"clients":{"any":null},
+                "server_key":{"type_id":1209251014,"pvt_key":"3CFeiTSlGkJf3D8w3ZXS4QS+6/0p+MFZGuv0XYMvMRo="}}).to_string())?;
+            match AdnlServer::listen(
+                server_config,
+                vec![Arc::new(ControlReplies { counts: counts.clone(), reply: reply.clone() })],
+            )
+            .await
+            {
+                Ok(server) => break (control_addr, server),
+                Err(error) => {
+                    let error = anyhow::Error::from(error);
+                    let in_use = error.chain().any(|cause| {
+                        cause
+                            .downcast_ref::<std::io::Error>()
+                            .is_some_and(|io| io.kind() == std::io::ErrorKind::AddrInUse)
+                    }) || format!("{error:#}").contains("Address already in use");
+                    attempts += 1;
+                    if !in_use || attempts >= 20 {
+                        return Err(error.context("start the control server"));
+                    }
+                }
+            }
+        };
         let directory = tempfile::tempdir()?;
         let config = serde_json::json!({"nodes":{"test":{"server_address":control_addr.to_string(),
             "server_key":{"type_id":1209251014,"pub_key":"BBKmgGAxz4ZofRgMO2qhYt+K1bGlGeowukPONVAkOcU="},
