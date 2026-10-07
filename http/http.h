@@ -64,6 +64,20 @@ namespace util {
 
 td::Result<std::string> get_line(td::ChainBufferReader &input, std::string &cur_line, bool &read, size_t max_line_size);
 td::Result<HttpHeader> get_header(std::string line);
+// Size of a chunk from its chunk-size line: 1 to 15 hex digits, optionally
+// followed by chunk extensions, which are discarded.
+td::Result<td::uint64> parse_chunk_size(td::Slice line);
+
+// The options of one Connection or Proxy-Connection header: a comma-separated
+// list of tokens. "close" and "keep-alive" set the connection's persistence;
+// every other token names a hop-by-hop header to remove.
+struct ConnectionOptions {
+  bool close = false;
+  bool keep_alive = false;
+  std::vector<std::string> nominated;
+};
+td::Result<ConnectionOptions> parse_connection_options(td::Slice lower_case_value);
+void remove_nominated_headers(std::vector<HttpHeader> &headers, const std::vector<std::string> &nominated);
 
 }  // namespace util
 
@@ -155,7 +169,11 @@ class HttpPayload {
  public:
   enum class PayloadType { pt_empty, pt_eof, pt_chunked, pt_content_length, pt_tunnel };
   HttpPayload(PayloadType t, size_t low_watermark, size_t high_watermark, td::uint64 size)
-      : type_(t), low_watermark_(low_watermark), high_watermark_(high_watermark), cur_chunk_size_(size) {
+      : type_(t)
+      , low_watermark_(low_watermark)
+      , high_watermark_(high_watermark)
+      , cur_chunk_size_(size)
+      , framed_remaining_(size) {
     CHECK(t == PayloadType::pt_content_length);
     state_ = ParseState::reading_chunk_data;
   }
@@ -222,6 +240,13 @@ class HttpPayload {
   void confirm_read(size_t s);
   void add_trailer(HttpHeader header);
   void add_chunk(td::BufferSlice data);
+  // Body bytes that arrive already framed by another transport (the RLDP
+  // proxy's payload parts) rather than parsed from an HTTP stream. The
+  // declared Content-Length is enforced: bytes beyond it, data for a payload
+  // that has no body or has already completed, and an end before every
+  // declared byte arrived are all refused.
+  td::Status add_framed_chunk(td::BufferSlice data);
+  td::Status complete_framed_parse();
   td::BufferSlice get_slice(size_t max_size);
   void slice_gc();
   HttpHeader get_header();
@@ -267,6 +292,8 @@ class HttpPayload {
   size_t trailer_size_ = 0;
   size_t ready_bytes_ = 0;
   td::uint64 cur_chunk_size_ = 0;
+  // Declared Content-Length bytes not yet received through add_framed_chunk.
+  td::uint64 framed_remaining_ = 0;
   size_t last_chunk_free_ = 0;
   size_t chunk_size_ = 1 << 14;
   bool written_zero_chunk_ = false;
@@ -446,6 +473,12 @@ class HttpRequest {
 
   bool parse_header_completed_ = false;
   bool keep_alive_ = false;
+  // A "close" option in any Connection header ends the connection, whatever
+  // other Connection headers say.
+  bool connection_close_ = false;
+  // Header names nominated as hop-by-hop by Connection; removed when the
+  // header block is complete.
+  std::vector<std::string> connection_nominated_;
 
   std::vector<HttpHeader> options_;
   std::string peer_ip_;
@@ -521,6 +554,10 @@ class HttpResponse {
   bool found_content_length() const {
     return found_content_length_;
   }
+  // A body is announced by a non-zero Content-Length or by chunked coding.
+  bool announces_body() const {
+    return found_transfer_encoding_ || (found_content_length_ && content_length_ > 0);
+  }
 
  private:
   std::string proto_version_;
@@ -536,6 +573,8 @@ class HttpResponse {
 
   bool parse_header_completed_ = false;
   bool keep_alive_ = false;
+  bool connection_close_ = false;
+  std::vector<std::string> connection_nominated_;
   // Running total of header bytes, capped in parse() the same way the
   // request side is; a server cannot stream headers without bound.
   size_t total_headers_size_ = 0;

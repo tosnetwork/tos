@@ -342,6 +342,15 @@ class CoreActor : public CoreActorInterface {
       prefix = url_s.substr(0, pos + 1);
       command = url_s.substr(pos + 1);
     }
+    if (!is_safe_path_prefix(prefix)) {
+      static const char bad_path[] = "bad request path\n";
+      auto R =
+          MHD_create_response_from_buffer(sizeof(bad_path) - 1, const_cast<char*>(bad_path), MHD_RESPMEM_PERSISTENT);
+      MHD_add_response_header(R, "Content-Type", "text/plain");
+      ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, R);
+      MHD_destroy_response(R);
+      return ret;
+    }
 
     MHD_get_connection_values(connection, MHD_GET_ARGUMENT_KIND, get_arg_iterate, static_cast<void*>(&opts));
 

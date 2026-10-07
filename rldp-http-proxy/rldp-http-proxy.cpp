@@ -223,12 +223,14 @@ class HttpRldpPayloadReceiver : public td::actor::Actor {
     auto f = F.move_as_ok();
     LOG(INFO) << "HttpPayloadReceiver: received answer datasize=" << f->data_.size()
               << " trailers_cnt=" << f->trailer_.size() << " last=" << f->last_;
-    if (f->data_.size() != 0) {
-      payload_->add_chunk(std::move(f->data_));
+    auto S = payload_->add_framed_chunk(std::move(f->data_));
+    if (S.is_error()) {
+      abort_query(std::move(S));
+      return;
     }
     for (auto &x : f->trailer_) {
       tos::http::HttpHeader h{x->name_, x->value_};
-      auto S = h.basic_check();
+      S = h.basic_check();
       if (S.is_error()) {
         abort_query(S.move_as_error());
         return;
@@ -237,7 +239,11 @@ class HttpRldpPayloadReceiver : public td::actor::Actor {
     }
     sent_ = false;
     if (f->last_) {
-      payload_->complete_parse();
+      S = payload_->complete_framed_parse();
+      if (S.is_error()) {
+        abort_query(std::move(S));
+        return;
+      }
       LOG(INFO) << "received HTTP payload";
       stop();
     } else {
@@ -493,6 +499,15 @@ class TcpToRldpRequestSender : public td::actor::Actor {
       abort_query(S.move_as_error());
       return;
     }
+    // A remote that sends no payload must not announce one: the client would
+    // wait for the announced bytes and read the next response as this body.
+    // HEAD answers and 204/304 responses keep their metadata lengths.
+    const bool body_allowed =
+        !request_->no_payload_in_answer() && f->status_code_ >= 200 && f->status_code_ != 204 && f->status_code_ != 304;
+    if (f->no_payload_ && !is_tunnel() && body_allowed && response_->announces_body()) {
+      abort_query(td::Status::Error("remote announced a body it did not send"));
+      return;
+    }
 
     response_payload_ = response_->create_empty_payload().move_as_ok();
 
@@ -504,7 +519,11 @@ class TcpToRldpRequestSender : public td::actor::Actor {
       }
     });
     if (f->no_payload_) {
-      response_payload_->complete_parse();
+      S = response_payload_->complete_framed_parse();
+      if (S.is_error()) {
+        abort_query(S.move_as_error());
+        return;
+      }
     } else {
       td::actor::create_actor<HttpRldpPayloadReceiver>("HttpPayloadReceiver", response_payload_, id_, dst_, local_id_,
                                                        adnl_, rldp_, is_tunnel())

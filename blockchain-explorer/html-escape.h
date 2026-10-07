@@ -27,3 +27,28 @@ inline std::string escape_html(std::string_view value) {
   }
   return out;
 }
+
+// The URL path before the command is written into links and form actions on
+// every page. Only unreserved path characters are accepted, and no empty
+// segment, so the prefix cannot leave its attribute or form a
+// scheme-relative URL.
+inline bool is_safe_path_prefix(std::string_view prefix) {
+  for (char c : prefix) {
+    const bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' ||
+                      c == '.' || c == '_' || c == '~' || c == '-';
+    if (!safe) {
+      return false;
+    }
+  }
+  return prefix.find("//") == std::string_view::npos;
+}
+
+// Content-Security-Policy of every explorer HTML page. Scripts are allowed
+// only from this origin and from the exact files the page header loads.
+inline constexpr const char *kExplorerHtmlPolicy =
+    "default-src 'self'; "
+    "script-src 'self' https://ajax.googleapis.com/ajax/libs/jquery/3.4.0/jquery.min.js "
+    "https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js "
+    "https://maxcdn.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js; "
+    "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css; "
+    "img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";

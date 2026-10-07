@@ -173,11 +173,7 @@ void HttpQueryCommon::abort_query(td::Status error) {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -273,11 +269,7 @@ void HttpQueryBlockView::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -477,11 +469,7 @@ void HttpQueryBlockInfo::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -705,11 +693,7 @@ void HttpQueryBlockSearch::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -798,11 +782,7 @@ void HttpQueryViewAccount::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -903,11 +883,7 @@ void HttpQueryViewTransaction::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -991,11 +967,7 @@ void HttpQueryViewTransaction2::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -1202,11 +1174,7 @@ void HttpQueryConfig::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -1240,11 +1208,7 @@ void HttpQuerySendForm::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -1308,11 +1272,7 @@ void HttpQuerySend::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -1444,11 +1404,7 @@ void HttpQueryRunMethod::got_result(td::BufferSlice data) {
   auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
   MHD_add_response_header(R, "Content-Type", "text/html");
   MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-  MHD_add_response_header(R, "Content-Security-Policy",
-                          "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                          "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                          "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                          "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+  MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
   promise_.set_value(std::move(R));
   stop();
 }
@@ -1527,11 +1483,7 @@ void HttpQueryStatus::finish_query() {
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
     MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
-    MHD_add_response_header(R, "Content-Security-Policy",
-                            "default-src 'self'; script-src 'self' https://ajax.googleapis.com "
-                            "https://cdnjs.cloudflare.com https://maxcdn.bootstrapcdn.com; "
-                            "style-src 'self' 'unsafe-inline' https://maxcdn.bootstrapcdn.com; img-src 'self' data:; "
-                            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
