@@ -384,8 +384,10 @@ def main():
                     time.sleep(1)
                 require(all(v.get("ok") is True and v.get("result") for v in observations.values()),
                         "four-account transaction observation deadline exceeded")
-                # Raw RPC observations are retained for a separate transaction-chain verifier.
-                # Nonempty histories and sendBoc success do not prove intended delivery.
+                from v5r2_transaction_chain import verify as verify_transaction_chain
+                execution = verify_transaction_chain(exported, message, observations)
+                (out / "transaction-chain.json").write_text(json.dumps(execution, indent=2) + "\n")
+                # Execution linkage still requires authenticated block inclusion/finality.
             report = {
                 "scope": "Disposable candidate boot and live config/account proofs; genesis allocation is not deployment transaction, signing or lifecycle acceptance",
                 "source": subprocess.check_output(
