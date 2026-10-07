@@ -201,6 +201,23 @@ jobs:
       - name: Run the complete Python suite
         run: uv run pytest
 
+      - name: Read back the disposable V5R2 admission candidate
+        timeout-minutes: 5
+        run: |
+          uv run python scripts/test_v5r2_candidate_network.py
+          uv run python scripts/check-v5r2-candidate-network.py --build-dir build --out "$RUNNER_TEMP/v5r2-candidate"
+
+      - name: Retain V5R2 candidate configuration and boot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: v5r2-candidate-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/v5r2-candidate/report.json
+            ${{ runner.temp }}/v5r2-candidate/network.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       # C09: X02 Config34 is accepted only through the anchored verifier built
       # above. These production-path tests need that binary and fail without it.
       - name: Check X02 Config34 authentication through the anchored verifier
