@@ -117,6 +117,62 @@ TEST(JsonRpcParse, result_stack_rejects_slice_over_exotic_cell) {
   ASSERT_TRUE(parsed.is_error());
 }
 
+TEST(JsonRpcParse, run_method_inactive_account_resolves_to_an_empty_stack) {
+  auto resolved = tos::resolve_run_method_result_stack(tos::kInactiveAccountExitCode, td::Slice());
+  ASSERT_TRUE(resolved.is_ok());
+  ASSERT_EQ(0, resolved.ok()->depth());
+}
+
+TEST(JsonRpcParse, run_method_missing_result_is_an_error_for_any_other_exit_code) {
+  for (td::int32 exit_code : {0, 11}) {
+    auto resolved = tos::resolve_run_method_result_stack(exit_code, td::Slice());
+    ASSERT_TRUE(resolved.is_error());
+    ASSERT_STREQ(PSTRING() << "liteserver returned no result stack for exit code " << exit_code,
+                 resolved.error().message().str());
+  }
+}
+
+TEST(JsonRpcParse, run_method_zero_depth_stack_is_a_result_not_a_missing_one) {
+  auto resolved = tos::resolve_run_method_result_stack(0, serialize_stack(vm::Stack{}).as_slice());
+  ASSERT_TRUE(resolved.is_ok());
+  ASSERT_EQ(0, resolved.ok()->depth());
+}
+
+TEST(JsonRpcParse, run_method_returned_stack_round_trips_for_success_and_failure_exits) {
+  vm::Stack stack;
+  stack.push_smallint(42);
+  stack.push_cell(vm::CellBuilder().finalize());
+  auto boc = serialize_stack(stack);
+  for (td::int32 exit_code : {0, 11}) {
+    auto resolved = tos::resolve_run_method_result_stack(exit_code, boc.as_slice());
+    ASSERT_TRUE(resolved.is_ok());
+    auto stk = resolved.move_as_ok();
+    ASSERT_EQ(2, stk->depth());
+    ASSERT_TRUE(stk->at(1).is_int());
+    ASSERT_EQ(42, stk->at(1).as_int()->to_long());
+    ASSERT_TRUE(stk->at(0).is_cell());
+  }
+}
+
+TEST(JsonRpcParse, run_method_unparsable_result_keeps_the_parser_error) {
+  td::Slice garbage("\xff\xff\xff\xff\x00\x01");
+  auto library = vm::std_boc_serialize(make_library_cell()).move_as_ok();
+  for (td::Slice result : {garbage, td::Slice(library.as_slice())}) {
+    auto expected = tos::parse_get_method_result_stack(result);
+    ASSERT_TRUE(expected.is_error());
+    auto resolved = tos::resolve_run_method_result_stack(0, result);
+    ASSERT_TRUE(resolved.is_error());
+    ASSERT_EQ(expected.error().code(), resolved.error().code());
+    ASSERT_STREQ(expected.error().message().str(), resolved.error().message().str());
+  }
+}
+
+TEST(JsonRpcParse, run_method_inactive_exit_code_does_not_excuse_unparsable_bytes) {
+  auto resolved =
+      tos::resolve_run_method_result_stack(tos::kInactiveAccountExitCode, td::Slice("\xff\xff\xff\xff\x00\x01"));
+  ASSERT_TRUE(resolved.is_error());
+}
+
 TEST(JsonRpcParse, multisig_keys_happy_path) {
   vm::CellBuilder key1;
   key1.store_ones(256);

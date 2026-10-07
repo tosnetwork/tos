@@ -364,25 +364,23 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
           }
           auto f = F.move_as_ok();
 
-          // Parse result stack
-          std::string stack_json = "[]";
-          if (!f->result_.empty()) {
-            auto stk_r = parse_get_method_result_stack(f->result_.as_slice());
-            if (stk_r.is_ok()) {
-              auto stk = stk_r.move_as_ok();
-              {
-                // Convert stack to JSON array of ["type", value] entries
-                td::StringBuilder sb;
-                sb << "[";
-                for (int i = 0; i < (int)stk->depth(); i++) {
-                  if (i > 0) sb << ",";
-                  serialize_stack_entry_legacy(sb, stk->at(i));
-                }
-                sb << "]";
-                stack_json = sb.as_cslice().str();
-              }
-            }
+          // An unreadable result is an error, never an empty stack.
+          auto stk_r = resolve_run_method_result_stack(f->exit_code_, f->result_.as_slice());
+          if (stk_r.is_error()) {
+            slot->settle_error(-32603, PSTRING() << "result stack (exit_code " << f->exit_code_ << ", result_bytes "
+                                                 << f->result_.size() << "): " << stk_r.error());
+            return;
           }
+          auto stk = stk_r.move_as_ok();
+          // Convert stack to JSON array of ["type", value] entries
+          td::StringBuilder stack_sb;
+          stack_sb << "[";
+          for (int i = 0; i < (int)stk->depth(); i++) {
+            if (i > 0) stack_sb << ",";
+            serialize_stack_entry_legacy(stack_sb, stk->at(i));
+          }
+          stack_sb << "]";
+          std::string stack_json = stack_sb.as_cslice().str();
 
           // Build block_id from liteserver response
           std::string block_id_json = "null";
@@ -639,25 +637,23 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
           }
           auto f = F.move_as_ok();
 
-          // Parse result stack into standardized typed format
-          std::string stack_json = "[]";
-          if (!f->result_.empty()) {
-            auto stk_r = parse_get_method_result_stack(f->result_.as_slice());
-            if (stk_r.is_ok()) {
-              auto stk = stk_r.move_as_ok();
-              {
-                // Convert stack to standardized TVM stack entries
-                td::StringBuilder sb;
-                sb << "[";
-                for (int i = 0; i < (int)stk->depth(); i++) {
-                  if (i > 0) sb << ",";
-                  serialize_stack_entry_std(sb, stk->at(i));
-                }
-                sb << "]";
-                stack_json = sb.as_cslice().str();
-              }
-            }
+          // An unreadable result is an error, never an empty stack.
+          auto stk_r = resolve_run_method_result_stack(f->exit_code_, f->result_.as_slice());
+          if (stk_r.is_error()) {
+            slot->settle_error(-32603, PSTRING() << "result stack (exit_code " << f->exit_code_ << ", result_bytes "
+                                                 << f->result_.size() << "): " << stk_r.error());
+            return;
           }
+          auto stk = stk_r.move_as_ok();
+          // Convert stack to standardized TVM stack entries
+          td::StringBuilder stack_sb;
+          stack_sb << "[";
+          for (int i = 0; i < (int)stk->depth(); i++) {
+            if (i > 0) stack_sb << ",";
+            serialize_stack_entry_std(stack_sb, stk->at(i));
+          }
+          stack_sb << "]";
+          std::string stack_json = stack_sb.as_cslice().str();
 
           // Note: liteServer.runMethodResult does not include gas_used;
           // report 0 for compatibility (same as existing runGetMethod handler).

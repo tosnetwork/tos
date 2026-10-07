@@ -140,6 +140,16 @@ td::Result<td::Ref<vm::Stack>> parse_get_method_result_stack(td::Slice result_bo
   });
 }
 
+td::Result<td::Ref<vm::Stack>> resolve_run_method_result_stack(td::int32 exit_code, td::Slice result_boc) {
+  if (result_boc.empty()) {
+    if (exit_code == kInactiveAccountExitCode) {
+      return td::make_ref<vm::Stack>();
+    }
+    return td::Status::Error(PSTRING() << "liteserver returned no result stack for exit code " << exit_code);
+  }
+  return parse_get_method_result_stack(result_boc);
+}
+
 td::Result<std::vector<std::string>> parse_multisig_public_keys(td::Ref<vm::Cell> dict_root) {
   return guard_vm([&]() -> td::Result<std::vector<std::string>> {
     std::vector<std::string> principals;
