@@ -3002,6 +3002,7 @@ void ValidatorEngine::start_control_interface() {
 
 void ValidatorEngine::started_control_interface(td::actor::ActorOwn<tos::adnl::AdnlExtServer> control_ext_server) {
   control_ext_server_ = std::move(control_ext_server);
+  start_control_getters();
   for (auto &s : config_.controls) {
     add_control_interface(s.second.key, static_cast<td::uint16>(s.first));
 

@@ -25,6 +25,8 @@ REQUIRED_NATIVE_TARGETS = {
     "test-get-method-context",
     "test-control-getter",
     "test-control-getter-budget",
+    "test-control-getter-query",
+    "test-control-getter-transport",
     "proof-verify-fs-shim",
     "test-n5-manager-db-fixture",
     "test-consensus",
@@ -111,6 +113,11 @@ def main() -> int:
         "ctest --test-dir build --output-on-failure --no-tests=error "
         "-R '^control-getter-(executor|shutdown|limits|actor|vm|context|delete|budget)$'" in text,
         "bounded control-getter behavior and budget gate is absent",
+    )
+    require(
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^control-getter-(query-(service|boundary|admission|completion)|transport)$'" in text,
+        "authenticated control-getter query and transport gate is absent",
     )
     c09_pytest = (
         "uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py "

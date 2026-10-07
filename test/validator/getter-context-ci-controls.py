@@ -35,8 +35,8 @@ CASES = {
     ),
     "core-target": (
         ".github/workflows/branch-chain-python.yml",
-        "test-control-getter test-control-getter-budget \\",
-        "test-control-getter \\",
+        "test-control-getter-budget test-control-getter-query",
+        "test-control-getter-query",
         "native fixture targets are missing: ['test-control-getter-budget']",
     ),
     "oracle": (

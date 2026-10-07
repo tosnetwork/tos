@@ -240,7 +240,8 @@ inline td::BitArray<256> proposal_key(int index, int count, bool deep) {
   return key;
 }
 
-inline Ref<Cell> config_proposals(int count, bool deep, int voters) {
+inline Ref<Cell> config_proposals(int count, bool deep, int voters, Ref<Cell> parameter_value = {},
+                                  td::optional<td::Bits256> parameter_hash = {}) {
   Dictionary book{256};
   Dictionary voter_book{16};
   for (int index = 0; index < voters; ++index) {
@@ -248,7 +249,15 @@ inline Ref<Cell> config_proposals(int count, bool deep, int voters) {
     key.bits().store_uint(static_cast<unsigned>(index), 16);
     require(voter_book.set_builder(key.cbits(), 16, CellBuilder{}), "voter entry");
   }
-  auto proposal = CellBuilder{}.store_long(0xf3, 8).store_long(1001, 32).store_long(0, 2).finalize_novm();
+  CellBuilder parameter;
+  require(parameter.store_long_bool(0xf3, 8) && parameter.store_long_bool(1001, 32) &&
+              parameter.store_maybe_ref(parameter_value) &&
+              parameter.store_bool_bool(static_cast<bool>(parameter_hash)),
+          "proposal parameter");
+  if (parameter_hash) {
+    require(parameter.store_bits_bool(parameter_hash.value().cbits(), 256), "proposal parameter hash");
+  }
+  auto proposal = parameter.finalize_novm();
   CellBuilder value;
   require(value.store_long_bool(0xce, 8) && value.store_long_bool(1900000000, 32) && value.store_ref_bool(proposal) &&
               value.store_bool_bool(false) && value.store_maybe_ref(voter_book.get_root_cell()) &&

@@ -5,6 +5,8 @@
 #include <mutex>
 #include <thread>
 
+#include "td/utils/logging.h"
+
 #include "control-getter-executor.h"
 
 namespace tos::control_getter {
@@ -58,7 +60,11 @@ struct Executor::State {
       }
       work = {};
       if (completion) {
-        completion(std::move(result));
+        try {
+          completion(std::move(result));
+        } catch (...) {
+          LOG(ERROR) << "control getter completion exception";
+        }
       }
       completion = {};
       {

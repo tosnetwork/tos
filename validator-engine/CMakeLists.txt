@@ -1,6 +1,6 @@
-add_library(control-getter STATIC control-getter.h control-getter.cpp control-getter-executor.h control-getter-executor.cpp)
+add_library(control-getter STATIC control-getter.h control-getter.cpp control-getter-executor.h control-getter-executor.cpp control-getter-read.h control-getter-read.cpp control-getter-service.h control-getter-service.cpp)
 target_include_directories(control-getter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../crypto)
-target_link_libraries(control-getter PUBLIC tos_crypto tdutils)
+target_link_libraries(control-getter PUBLIC tos_crypto tdutils tl_api tdactor)
 
 # Pure, actor-free parsers for chain data served through JSON-RPC. Kept in a
 # separate library so they can be unit tested with hostile inputs
@@ -45,6 +45,7 @@ set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
 set(VALIDATOR_ENGINE_SOURCE
   validator-engine.hpp
   validator-engine.cpp
+  validator-engine-control-getters.cpp
 )
 
 add_library(json-rpc-account-model STATIC
@@ -75,7 +76,7 @@ target_link_libraries(validator-engine validator-engine-json-rpc metrics overlay
   rldp2 quic full-node validator tos_validator validator
   fift-lib memprof git tos_pq_consensus_signer ${JEMALLOC_LIBRARIES})
 
-target_link_libraries(validator-engine smc-envelope json-rpc-parse json-rpc-account-model)
+target_link_libraries(validator-engine smc-envelope json-rpc-parse json-rpc-account-model control-getter)
 if (JEMALLOC_FOUND)
   # Name the jemalloc header by full path instead of adding JEMALLOC_INCLUDE_DIR to the
   # search path: that directory is often a shared prefix (e.g. /opt/homebrew/include)

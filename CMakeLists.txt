@@ -965,6 +965,16 @@ target_include_directories(test-wallet-index-apply PRIVATE ${CMAKE_CURRENT_SOURC
 target_link_libraries(test-wallet-index-apply PRIVATE validator-disk validator-common validator-db
                       tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
 
+add_executable(test-control-getter-transport test/validator/control-getter-transport-test.cpp)
+target_include_directories(test-control-getter-transport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_BINARY_DIR}/crypto)
+target_link_libraries(test-control-getter-transport PRIVATE control-getter fift-lib adnl keyring dht tl_lite_api tl-lite-utils)
+add_dependencies(test-control-getter-transport gen_fif)
+
+add_executable(test-control-getter-query test/validator/control-getter-query-test.cpp)
+target_include_directories(test-control-getter-query PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_BINARY_DIR}/crypto)
+target_link_libraries(test-control-getter-query PRIVATE control-getter fift-lib)
+add_dependencies(test-control-getter-query gen_fif)
+
 add_executable(test-control-getter test/validator/control-getter-test.cpp)
 target_include_directories(test-control-getter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-control-getter PRIVATE control-getter fift-lib tdactor)
@@ -1649,6 +1659,17 @@ add_test(NAME control-getter-budget
   COMMAND test-control-getter-budget ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
     ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/fixtures/control-getter)
 set_tests_properties(control-getter-budget PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 180)
+foreach(query_case service boundary admission completion)
+  add_test(NAME control-getter-query-${query_case}
+    COMMAND test-control-getter-query ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/fixtures/control-getter ${query_case})
+  set_tests_properties(control-getter-query-${query_case} PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 120)
+endforeach()
+add_test(NAME control-getter-transport
+  COMMAND test-control-getter-transport ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/fixtures/control-getter)
+set_tests_properties(control-getter-transport PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 90)
+add_dependencies(all-tests test-control-getter-query test-control-getter-transport)
 add_dependencies(all-tests test-control-getter test-control-getter-budget)
 add_dependencies(all-tests test-get-method-context create-state)
 
