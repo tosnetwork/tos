@@ -165,6 +165,37 @@ pub trait ChainProvider: Send + Sync {
     /// Query the balance (in nanotos) of an address.
     async fn get_balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64>;
 
+    /// The balance as of one masterchain checkpoint. Like the pinned get-method,
+    /// the block identity comes from the endpoint: informational reads only.
+    async fn get_balance_at_unverified(
+        &self,
+        _address: &MsgAddressInt,
+        _checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<u64> {
+        anyhow::bail!("checkpoint-pinned balance reads are unsupported")
+    }
+
+    /// The account as of one masterchain checkpoint; the block the endpoint reports
+    /// must be that checkpoint. Informational reads only.
+    async fn get_address_info_at_unverified(
+        &self,
+        _address: &MsgAddressInt,
+        _checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<AddressInfo> {
+        anyhow::bail!("checkpoint-pinned account reads are unsupported")
+    }
+
+    /// A configuration parameter as of one masterchain checkpoint. The block the
+    /// endpoint reports must be that checkpoint, in full; the proofs are not
+    /// checked, so informational reads only.
+    async fn get_config_param_at_unverified(
+        &self,
+        _param_id: u32,
+        _checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<ConfigParamEnum> {
+        anyhow::bail!("checkpoint-pinned configuration reads are unsupported")
+    }
+
     /// Broadcast a serialized BOC (bag-of-cells) message to the network.
     async fn send_boc(&self, boc: &[u8]) -> anyhow::Result<()>;
 
@@ -298,10 +329,7 @@ impl ChainProvider for DefaultChainProvider {
         if result.exit_code != 0 {
             anyhow::bail!("get-method {} error: exit_code={}", method, result.exit_code);
         }
-        // The JSON-RPC server serializes the TVM stack top-first (vm::Stack::at(0)
-        // is the top). Decoders index entries in get-method return order, so
-        // reverse to bottom-first at the RPC boundary.
-        Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
+        Ok(stack_from_rpc(result.stack))
     }
 
     async fn run_get_method_at_unverified(
@@ -337,7 +365,7 @@ impl ChainProvider for DefaultChainProvider {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("checkpoint get-method omitted block identity"))?;
         validate_masterchain_checkpoint(block, checkpoint)?;
-        Ok(TvmStackParser::new(result.stack.into_iter().rev().map(Into::into).collect::<Vec<_>>()))
+        Ok(stack_from_rpc(result.stack))
     }
 
     async fn get_balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64> {
@@ -351,6 +379,37 @@ impl ChainProvider for DefaultChainProvider {
 
     async fn send_boc(&self, boc: &[u8]) -> anyhow::Result<()> {
         self.client.send_boc(&boc.to_vec()).await
+    }
+
+    async fn get_balance_at_unverified(
+        &self,
+        address: &MsgAddressInt,
+        checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<u64> {
+        let info = self.client.get_address_information_at(address, checkpoint.seqno).await?;
+        validate_masterchain_checkpoint(&info.block_id, checkpoint)
+            .context("pinned balance read returned another block")?;
+        Ok(info.balance)
+    }
+
+    async fn get_config_param_at_unverified(
+        &self,
+        param_id: u32,
+        checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<ConfigParamEnum> {
+        let (param, block) = self.client.get_config_param_at(param_id, checkpoint.seqno).await?;
+        config_param_at_checkpoint(param, &block, checkpoint)
+    }
+
+    async fn get_address_info_at_unverified(
+        &self,
+        address: &MsgAddressInt,
+        checkpoint: &MasterchainCheckpoint,
+    ) -> anyhow::Result<AddressInfo> {
+        let info = self.client.get_address_information_at(address, checkpoint.seqno).await?;
+        validate_masterchain_checkpoint(&info.block_id, checkpoint)
+            .context("pinned account read returned another block")?;
+        Ok(info)
     }
 
     async fn get_config_param(&self, param_id: u32) -> anyhow::Result<ConfigParamEnum> {
@@ -464,7 +523,27 @@ impl ChainProvider for DefaultChainProvider {
     }
 }
 
-fn validate_masterchain_checkpoint(
+/// A parameter read at `block` is accepted only if `block` is the checkpoint itself:
+/// the same height on another endpoint can be another block.
+fn config_param_at_checkpoint(
+    param: ConfigParamEnum,
+    block: &chain_rpc_client::v2::data_models::BlockIdExt,
+    checkpoint: &MasterchainCheckpoint,
+) -> anyhow::Result<ConfigParamEnum> {
+    validate_masterchain_checkpoint(block, checkpoint)
+        .context("pinned configuration read returned another block")?;
+    Ok(param)
+}
+
+/// A `runGetMethodStd` stack in get-method return order. The JSON-RPC server
+/// serializes the TVM stack top-first (`vm::Stack::at(0)` is the top), and decoders
+/// index entries in return order, so the order is reversed at this boundary.
+pub fn stack_from_rpc(entries: Vec<RPCStackEntry>) -> TvmStackParser {
+    TvmStackParser::new(entries.into_iter().rev().map(Into::into).collect::<Vec<_>>())
+}
+
+/// Refuses a pinned read answered from any block but the checkpoint.
+pub fn validate_masterchain_checkpoint(
     block: &chain_rpc_client::v2::data_models::BlockIdExt,
     expected: &MasterchainCheckpoint,
 ) -> anyhow::Result<()> {
@@ -481,6 +560,37 @@ fn validate_masterchain_checkpoint(
 #[cfg(test)]
 mod checkpoint_tests {
     use super::*;
+
+    /// An endpoint answers a pinned configuration read from a different block at the
+    /// same height (another fork, or a failover endpoint behind the first).
+    #[test]
+    fn a_configuration_read_from_another_block_at_the_same_height_is_refused() {
+        use chain_rpc_client::v2::client_json_rpc::decode_config_param_with_block;
+        let checkpoint = MasterchainCheckpoint {
+            seqno: 42,
+            root_hash: hex::encode([0x11; 32]),
+            file_hash: hex::encode([0x22; 32]),
+        };
+        let answer = |root: u8, file: u8| {
+            serde_json::json!({
+                "@type": "configInfo",
+                "config": {"@type": "tvm.cell", "bytes": "te6ccgEBAQEAEgAAIAAAAlgAAAEsAAAAPAAAALQ="},
+                "block_id": serde_json::to_value(block(root, file)).unwrap(),
+            })
+        };
+        let read = |value: serde_json::Value| {
+            let (param, block) = decode_config_param_with_block(value, 15)?;
+            config_param_at_checkpoint(param, &block, &checkpoint)
+        };
+        assert!(matches!(read(answer(0x11, 0x22)), Ok(ConfigParamEnum::ConfigParam15(_))));
+        for (root, file) in [(0x33, 0x22), (0x11, 0x33)] {
+            let error = read(answer(root, file)).unwrap_err();
+            assert!(format!("{error:#}").contains("another block"), "{error:#}");
+        }
+        let mut unnamed = answer(0x11, 0x22);
+        unnamed.as_object_mut().unwrap().remove("block_id");
+        assert!(read(unnamed).is_err(), "an answer that names no block is refused");
+    }
     use chain_rpc_client::v2::data_models::BlockIdExt;
 
     fn block(root: u8, file: u8) -> BlockIdExt {

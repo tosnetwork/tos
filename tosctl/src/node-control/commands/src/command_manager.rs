@@ -68,6 +68,10 @@ impl CommandManager {
                 cmd.run().await?;
                 Ok(None)
             }
+            Commands::Controller(cmd) => {
+                cmd.run().await?;
+                Ok(None)
+            }
             Commands::Vote(cmd) => {
                 cmd.run().await?;
                 Ok(None)

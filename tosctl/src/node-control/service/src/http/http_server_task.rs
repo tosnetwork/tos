@@ -1212,6 +1212,7 @@ impl utoipa::Modify for BearerAuthAddon {
         common::snapshot::StakeSubmission,
         common::snapshot::ValidatorsSnapshot,
         common::snapshot::ValidatorNodeSnapshot,
+        common::snapshot::OperatingAuthorizationSnapshot,
         common::snapshot::TimeRange
     )),
     info(

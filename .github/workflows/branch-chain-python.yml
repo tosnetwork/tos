@@ -63,7 +63,7 @@ jobs:
           ccache --zero-stats
           cmake --build build --parallel 4 --target \
             gen_fif create-state toslibjson \
-            generate-random-id tos-pq-consensus-key \
+            generate-random-id tos-pq-consensus-key tos-pq-controller \
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim \

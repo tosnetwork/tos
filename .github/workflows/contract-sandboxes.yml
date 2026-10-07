@@ -192,10 +192,16 @@ jobs:
       # a provisioning run reported as written becomes one the node refuses at startup.
       - name: Consensus key file
         run: |
-          cmake --build build --target test-consensus-key-file tos-pq-consensus-key -j2
+          cmake --build build --target test-consensus-key-file tos-pq-consensus-key tos-pq-controller \
+            test-fsync-dir-failure-shim -j2
           ./build/crypto/pq/test-consensus-key-file
           python3 test/pq-mldsa44/consensus_key_tool_test.py \
-            --tool build/crypto/pq/tos-pq-consensus-key
+            --tool build/crypto/pq/tos-pq-consensus-key \
+            --fsync-shim build/crypto/pq/libtest-fsync-dir-failure-shim.so
+          # The controller's deployment commands, which take what the key tool prints.
+          python3 test/pq-mldsa44/controller_tool_test.py \
+            --controller build/crypto/tos-pq-controller \
+            --consensus-key build/crypto/pq/tos-pq-consensus-key
 
       # `REGRESSION_VERIFY` compares nothing unless the binary is given `--regression`,
       # and until this step nothing gave it. The recorded answers had drifted for as long

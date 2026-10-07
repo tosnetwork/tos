@@ -3348,6 +3348,7 @@ mod refresh_drain_tests {
                 extra_currencies: Vec::new(),
                 state: AccountState::default(),
                 frozen_hash: String::new(),
+                storage_stat: None,
             })
         }
         async fn get_extended_address_info(

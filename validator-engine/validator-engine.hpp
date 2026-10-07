@@ -43,6 +43,7 @@
 #include "rldp2/rldp.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
+#include "td/utils/port/FileFd.h"
 #include "tos/tos-types.h"
 #include "validator/full-node-master.h"
 #include "validator/full-node-slave-key.h"
@@ -207,6 +208,8 @@ class ValidatorEngine : public td::actor::Actor {
   std::string local_config_ = "";
   std::string global_config_ = "tos-global.config";
   std::string config_file_;
+  // Held from before the configuration is read until the process exits; see run().
+  td::FileFd config_lock_;
   std::string temp_config_file() const {
     return config_file_ + ".tmp";
   }
@@ -268,7 +271,9 @@ class ValidatorEngine : public td::actor::Actor {
   std::map<CI_key, td::uint32> control_permissions_;
 
   double state_ttl_ = 0;
-  bool enable_validator_consensus_cleanup_ = false;
+  // Deletion of retired validator consensus-DB directories; on unless
+  // --disable-validator-consensus-cleanup is given.
+  bool validator_consensus_cleanup_ = true;
   bool test_crash_cleanup_before_erase_ = false;
   size_t max_mempool_num_ = 0;
   double block_ttl_ = 0;
@@ -341,8 +346,8 @@ class ValidatorEngine : public td::actor::Actor {
   void set_state_ttl(double t) {
     state_ttl_ = t;
   }
-  void set_enable_validator_consensus_cleanup(bool v) {
-    enable_validator_consensus_cleanup_ = v;
+  void set_validator_consensus_cleanup(bool v) {
+    validator_consensus_cleanup_ = v;
   }
   void set_test_crash_cleanup_before_erase(bool v) {
     test_crash_cleanup_before_erase_ = v;

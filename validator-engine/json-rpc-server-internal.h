@@ -18,8 +18,9 @@
 */
 #pragma once
 
-#include "json-rpc-server.h"
 #include "json-rpc-server-parse.h"
+#include "json-rpc-server-storage.h"
+#include "json-rpc-server.h"
 
 // Minimal shared includes — each .cpp adds its own heavy deps
 #include "auto/tl/lite_api.h"
@@ -64,6 +65,9 @@ struct ParsedAccountState {
   td::Ref<vm::Cell> state_cell;
   tos::UnixTime storage_last_paid{0};
   block::StorageUsed storage_used;
+  // The account's storage metadata, served as "storage_stat"; empty for an
+  // account that does not exist.
+  td::optional<AccountStorageStat> storage_stat;
 
   td::int32 blk_workchain = -1;
   td::int64 blk_shard = static_cast<td::int64>(0x8000000000000000ULL);

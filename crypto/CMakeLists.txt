@@ -720,6 +720,16 @@ install(DIRECTORY smartcont DESTINATION share/tos)
 
 add_subdirectory(pq)
 
+# The controller's deployment commands. Seeds for the test are placed with the
+# consensus-key tool, which writes the same 32-byte seed file the root is loaded from.
+if(TARGET tos-pq-consensus-key)
+  add_test(NAME controller-tool
+           COMMAND "${CMAKE_COMMAND}" -E env python3
+                   "${CMAKE_CURRENT_SOURCE_DIR}/../test/pq-mldsa44/controller_tool_test.py"
+                   --controller "$<TARGET_FILE:tos-pq-controller>"
+                   --consensus-key "$<TARGET_FILE:tos-pq-consensus-key>")
+endif()
+
 if(TARGET tos_crypto)
   add_executable(test-poseidon2 "${CMAKE_CURRENT_SOURCE_DIR}/../test/poseidon2/test.cpp")
   target_link_libraries(test-poseidon2 PRIVATE tos_crypto)

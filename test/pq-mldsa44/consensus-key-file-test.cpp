@@ -42,6 +42,11 @@ void write_file(const std::string& path, const std::string& contents, mode_t mod
 }  // namespace
 
 int main() {
+  // The one form identities are printed and logged in: lowercase hexadecimal, two digits
+  // a byte, every byte, nothing else.
+  assert(identity_hex(std::string_view("\x00\x0a\xab\xff", 4)) == "000aabff");
+  assert(identity_hex(std::string_view()).empty());
+
   const std::string dir = scratch_directory();
   const std::string key = dir + "/consensus.key";
 
@@ -87,6 +92,14 @@ int main() {
   const std::string inner = dir + "/inner";
   assert(::mkdir(inner.c_str(), 0700) == 0);
   assert(refusal(load_consensus_key(inner)) == ConsensusKeyFileError::not_a_regular_file);
+
+  // A FIFO with no writer: refused at once, not waited on. The alarm turns a loader that
+  // blocks in open into a failed test instead of one that never ends.
+  const std::string fifo = dir + "/fifo.key";
+  assert(::mkfifo(fifo.c_str(), 0600) == 0);
+  ::alarm(20);
+  assert(refusal(load_consensus_key(fifo)) == ConsensusKeyFileError::not_a_regular_file);
+  ::alarm(0);
 
   // Readable by the group: the right size, the right owner, one bit too many.
   const std::string shared = dir + "/shared.key";

@@ -1,6 +1,10 @@
 # Running a TOS Validator
 
 This guide describes the operator view of the validator stack in this repository.
+The step-by-step path for a post-quantum validator (consensus key, controller,
+node binding, elections, operating authorization, key rotation, configuration
+votes and global config refresh) is in
+[validator-operator-guide.md](validator-operator-guide.md).
 
 Validators are the verification backbone for AI actor workflows. Agent runners, service operators, and verifier processes may query validators, but validator nodes remain responsible only for protocol validation, consensus, and serving verified chain state.
 
@@ -17,9 +21,13 @@ Validators are the verification backbone for AI actor workflows. Agent runners, 
 
 ## Required Artifacts
 
-- global config
-- local validator config
-- validator keys
+- global config, with a recent `validator.init_block`
+  ([refresh](validator-operator-guide.md#11-refresh-the-global-configs-init-block))
+- local validator config (read only to create `<db>/config.json`)
+- the ML-DSA-44 consensus key file, owned by the node's service account
+  (`tos-pq-consensus-key generate`), bound in `<db>/config.json` as
+  `extraconfig.pq_consensus` (`tos-pq-consensus-key bind-node`)
+- a deployed validator controller, whose root key stays offline
 - persistent database directory
 - Fift scripts directory
 
@@ -30,10 +38,17 @@ it can relay a pool stake. Account balance alone is not spending authorization.
 Keep operator capital for the storage floor and fees separate from the recorded
 operating funds and pool principal. The controller root key signs an
 operating authorization (action kind 4, `tos-pq-controller fund-operations`)
-offline; the payload encoder is `controller_operating_payload` in
-`tosctl/src/node-control/contracts`. A deposit is added to the recorded funds
-and every other field is replaced, so renew by deficit and read
-`operating_state` back after each change.
+offline. A deposit is added to the recorded funds and every other field is
+replaced, so renew by deficit and read the state back after each change.
+`tosctl controller operations status --controller <addr>` reports funds,
+allowance, expiry and runway; `tosctl controller operations plan` prepares the
+renewal by deficit and prints the offline signing command and the bounceable
+`tosctl wallet send ... --bounce` that delivers it. When the balance is short of
+funds + floor + a storage forecast through the expiry, the plan is blocking: it
+prints the plain capital transfer to send first and withholds both commands
+until a re-run reads the funded balance. The elections task of
+`tosctl service` warns when the authorization is missing, expiring or low. See
+[validator-operator-guide.md](validator-operator-guide.md#8-fund-the-controllers-operations).
 
 ## Production Hardware Requirements
 
@@ -107,6 +122,55 @@ Garbage collection requires free disk space and a healthy database. Monitor
 the GC masterchain position, database size, archive size, and free space; a
 validator that is behind the GC watermark must catch up before old state can
 be deleted.
+
+### Retired consensus databases
+
+Every validator-set session a validator takes part in opens its own RocksDB
+directory under `<db>/consensus/`. A new session starts roughly every 250
+seconds per validated shard and on every key block, so these directories add
+up to gigabytes per day. When a session retires, the engine first writes a
+durable cleanup record (in the same synced write as the retirement itself) and
+only then stops the group and closes its database. The directory is deleted
+later, once all of the following hold against the durable GC masterchain block:
+
+- the block at which the session retired is an ancestor of the GC block;
+- the GC state shows the session's shard on a strictly newer catchain, so the
+  session is obsolete on-chain;
+- no current or next validator group uses or can recreate the session;
+- the retiring group has closed its database.
+
+Deletion therefore trails the GC watermark, i.e. `--state-ttl`. A crash at any
+point is recovered on the next start: the record is kept until the directory
+is confirmed gone, and a record whose directory is already gone is simply
+erased.
+
+```text
+--enable-validator-consensus-cleanup    delete retired consensus databases (default)
+--disable-validator-consensus-cleanup   keep them, e.g. for forensics
+```
+
+Cleanup is on by default; the engine logs `validator consensus cleanup:
+enabled` at start-up, and refuses to start if both flags are given. Running a
+validator with `--disable-validator-consensus-cleanup` grows its disk without
+bound; records accumulate meanwhile. The choice is made at start-up; there is no
+runtime switch. After a restart without the flag nothing is loaded at start-up:
+every 10 seconds a tick reads the next 256 stored records, deletes at most 16 of
+them (with at most 64 deletions in flight), and moves on; at the end of the
+store it starts again from the beginning, so the scan never stops. Each record is
+reclaimed only once it passes the conditions above, so a large backlog drains
+gradually and memory does not grow with it. Each record is re-read just before
+its deletion, so a copy that changed or disappeared since the scan is skipped. A
+failed read or delete is simply tried again by a later tick; with nothing to
+delete, the cost is one read of 256 keys every 10 seconds.
+
+Each deletion is logged as `VALCLEANUP reserve`, `VALCLEANUP delete_done ...
+confirmed_gone=1` and `VALCLEANUP erase_ack`. These lines are logged at INFO,
+which the default verbosity includes; at a lower verbosity (`-v 2` or less)
+they are not written, so their absence proves nothing about whether cleanup
+runs. A failed delete is logged as a `VALCLEANUP delete_done ...
+confirmed_gone=0` warning at any verbosity and is retried.
+`--test-consensus-cleanup-crash-before-erase` is a test-only fault injection
+that makes the engine exit on purpose; never set it on a real node.
 
 ### CellDB and memory policy
 
@@ -367,6 +431,15 @@ cd build
   -l /data/tos/logs/validator-engine.log
 ```
 
+The engine reads its configuration from `<db>/config.json`; `-c` is read only
+when that file does not exist yet, to create it (the engine then exits so that
+the new file can be checked). The engine holds `<db>/config.json.lock` while it
+runs, and exits with status 2 if another process holds it. A validator's
+`config.json` names its consensus key and controller in
+`extraconfig.pq_consensus`; the engine logs `post-quantum consensus custody:
+validator_id <hex> key_id <hex>` at start-up and refuses to start if the key cannot
+be loaded.
+
 ### Required Launch Parameters
 
 | Parameter | Value | Purpose |
@@ -410,7 +483,9 @@ Use the console for:
 
 ## Operating Guidelines
 
-- rotate keys deliberately and document every change
+- rotate keys deliberately and document every change; a consensus-key rotation
+  is safe only in a verified interval in which the old key has no signing
+  obligation (see [validator-operator-guide.md](validator-operator-guide.md#10-rotate-the-consensus-key))
 - separate node identity, validator keys, and operator credentials
 - pin logs and DB paths explicitly
 - monitor sync status before attempting validator operations
@@ -463,7 +538,9 @@ For a single validator in a cluster of `N`:
 # 1. Stop the validator process (its stake stays put).
 sudo systemctl stop tos-validator@<N>
 
-# 2. Upgrade the binaries / config / data as needed.
+# 2. Upgrade the binaries / config / data as needed. Edit config.json only
+#    while the process is stopped (tos-pq-consensus-key bind-node refuses
+#    otherwise).
 sudo install -m755 build/validator-engine/validator-engine \
                    /usr/local/bin/tos-validator-engine
 # ...
@@ -473,8 +550,14 @@ sudo systemctl start tos-validator@<N>
 
 # 4. Confirm it is producing or signing blocks again.
 sudo journalctl -u tos-validator@<N> --since "1 min ago" | tail
-tos-lite-client -C /data/tos-global.json -v 0 -c "last" -c "quit"
+lite-client -C /data/tos-global.json -v 0 -c "last" -c "quit"
 ```
+
+Wait for the old process to exit before starting the new one: while it still
+holds `<db>/config.json.lock`, the new engine exits with status 2. Check the
+release notes for changed defaults before restarting; for example, retired
+consensus databases are now deleted unless
+`--disable-validator-consensus-cleanup` is given.
 
 The cluster keeps producing blocks throughout, provided the remaining
 online validators still meet the BFT-2/3 quorum
@@ -500,5 +583,8 @@ be added on top — there is no built-in equivalent today.
 
 ## Related Docs
 
+- [validator-operator-guide.md](validator-operator-guide.md)
 - [FullNode.md](FullNode.md)
 - [ConfigParam.md](ConfigParam.md)
+- [tos-upgrade-process.md](tos-upgrade-process.md)
+- [docker/README.md](../docker/README.md)

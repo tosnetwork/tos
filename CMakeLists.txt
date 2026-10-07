@@ -976,6 +976,8 @@ target_link_libraries(test-validator-cleanup-integration PRIVATE tos_validator v
 
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
+add_executable(test-json-rpc-storage test/test-td-main.cpp test/test-json-rpc-storage.cpp)
+target_link_libraries(test-json-rpc-storage PRIVATE validator-engine-json-rpc json-rpc-storage tos_block tos_crypto tdutils)
 add_executable(test-account-model-detection test/test-td-main.cpp test/test-account-model-detection.cpp)
 target_link_libraries(test-account-model-detection PRIVATE json-rpc-account-model tos_crypto tdutils)
 add_executable(test-json-rpc-source-ip test/test-json-rpc-source-ip.cpp)
@@ -1634,6 +1636,9 @@ add_test(NAME full-node-master-startup
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/full-node-master-startup-test.py
           $<TARGET_FILE:validator-engine>)
 set_tests_properties(full-node-master-startup PROPERTIES LABELS "security-findings")
+add_test(NAME validator-consensus-cleanup-flags
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validator-consensus-cleanup-flags-test.py
+          $<TARGET_FILE:validator-engine>)
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
@@ -1688,6 +1693,12 @@ set_tests_properties(llvm-apt-key-pin PROPERTIES LABELS "source-guard")
 add_test(NAME snapshot-import-offline
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_import_snapshot.py)
 set_tests_properties(snapshot-import-offline PROPERTIES LABELS "source-guard")
+add_test(NAME docker-validator-role
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_docker_validator_role.py)
+set_tests_properties(docker-validator-role PROPERTIES LABELS "source-guard")
+add_test(NAME global-config-init-block-refresh
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_refresh_global_config_init_block.py)
+set_tests_properties(global-config-init-block-refresh PROPERTIES LABELS "source-guard")
 add_test(NAME dns-pq-vote-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-dns-pq-vote-source.py
           ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1799,6 +1810,7 @@ tos_test(test-rate-limiter)
 tos_test(test-full-node-shard-admission)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
+tos_test(test-json-rpc-storage)
 tos_test(test-account-model-detection)
 tos_test(test-json-rpc-source-ip)
 tos_test(test-json-rpc-listen-policy)
