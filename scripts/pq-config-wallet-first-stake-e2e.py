@@ -32,7 +32,6 @@ sys.path.insert(0, str(REPO / "test/tostester/src"))
 from pytosiq_core import Address, Cell  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.pq_election_fixture import make_pool_fixture  # noqa: E402
-from tostester.private_dir import make_private_dir  # noqa: E402
 
 spec = importlib.util.spec_from_file_location(
     "nominator_pool_lifecycle", REPO / "scripts/nominator-pool-lifecycle-e2e.py"
@@ -169,6 +168,8 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
     )
     # tosctl refuses to write its configuration and vault under a
     # group-writable checkout; evidence stays in run_dir.
+    from tostester.private_dir import make_private_dir
+
     private_dir = make_private_dir("pq-config-wallet-first-stake")
     report["tosctl_private_dir"] = str(private_dir)
     config = private_dir / "tosctl-config.json"

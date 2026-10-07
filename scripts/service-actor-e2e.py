@@ -90,7 +90,6 @@ from pathlib import Path
 
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 from tostester.install import Install
-from tostester.private_dir import make_private_dir
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 
@@ -1148,6 +1147,10 @@ def use_private_dir() -> Path:
     tosctl refuses to write configuration or vault files.
     """
     global PRIVATE_DIR, CONFIG
+    # Imported here: evidence tests load this module with tostester stubbed
+    # and never call this function.
+    from tostester.private_dir import make_private_dir
+
     PRIVATE_DIR = make_private_dir("service-actor-e2e")
     CONFIG = PRIVATE_DIR / "tosctl-e2e-config.json"
     return PRIVATE_DIR

@@ -44,7 +44,6 @@ from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessa
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
-from tostester.private_dir import make_private_dir
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
@@ -76,6 +75,10 @@ def use_private_dir() -> Path:
     tosctl refuses to write configuration or vault files.
     """
     global PRIVATE_DIR, CONFIG
+    # Imported here: evidence tests load this module with tostester stubbed
+    # and never call this function.
+    from tostester.private_dir import make_private_dir
+
     PRIVATE_DIR = make_private_dir("dispute-e2e")
     CONFIG = PRIVATE_DIR / "tosctl-e2e-config.json"
     return PRIVATE_DIR
