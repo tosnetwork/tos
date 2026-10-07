@@ -254,10 +254,15 @@ impl ClientJsonRpc {
     }
 
     /// A side-effect-free read whose response is returned unparsed, for a caller
-    /// that parses it under its own depth and ownership rules. Endpoints fail over
-    /// on transport errors only. A body above the transport limit ends the read at
-    /// once as [`RawReadError::TooLarge`]: it is a property of the answer, not of
-    /// the endpoint, and is never retried into a smaller or partial one.
+    /// that parses it under its own depth and ownership rules. Each endpoint is
+    /// tried at most once with the same request id and parameters: a transport
+    /// error or a non-success HTTP status moves on to the next endpoint, and so
+    /// does a successful answer above the transport limit, since another endpoint
+    /// may serve the same state within it. The first bounded successful answer is
+    /// returned. If none arrives, the read ends as [`RawReadError::TooLarge`] only
+    /// when some endpoint answered successfully with an oversized body, and as
+    /// [`RawReadError::Failed`] otherwise; an answer is never cut down to a
+    /// smaller or partial one.
     async fn json_rpc_read_text(
         &self,
         method: &'static str,
@@ -281,7 +286,7 @@ impl ClientJsonRpc {
                     return Ok(RawRpcResponse { status, text, request_id });
                 }
                 // A non-success status is this endpoint's failure, whatever its body
-                // says or how large it is: the body is never read or logged.
+                // says or how large it is: the body is not interpreted or logged here.
                 Ok((status, _)) => http_status_category(status),
                 Err(ToscenterError::HttpStatus { code }) => http_status_category(code),
                 // An oversized successful answer is a property of the answer, but
