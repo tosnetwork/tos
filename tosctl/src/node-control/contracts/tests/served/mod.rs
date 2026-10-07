@@ -308,19 +308,38 @@ pub fn masterchain_info(seqno: u32) -> Reply {
     }))
 }
 
+/// How long a gated handler waits for its gate before answering anyway: a test
+/// that never opens its gate still ends.
+#[allow(dead_code)]
+pub const GATE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// A test hook a handler blocks on until the test opens it, in place of a sleep.
+/// Take it with [`Gate::guarded`]: the guard opens the gate when it is dropped,
+/// so a failing assertion or a cancelled test never leaves a handler blocked.
 #[allow(dead_code)]
 #[derive(Clone, Default)]
 pub struct Gate(std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
 
 #[allow(dead_code)]
 impl Gate {
-    /// Blocks the calling thread (a handler, off the runtime) until opened.
+    /// A new gate and the guard that owns it.
+    pub fn guarded() -> (Gate, GateGuard) {
+        let gate = Gate::default();
+        (gate.clone(), GateGuard(gate))
+    }
+
+    /// Blocks the calling thread (a handler, off the runtime) until the gate is
+    /// opened or [`GATE_DEADLINE`] passes, whichever is first.
     pub fn wait(&self) {
         let (open, signal) = &*self.0;
+        let deadline = std::time::Instant::now() + GATE_DEADLINE;
         let mut opened = open.lock().expect("gate");
         while !*opened {
-            opened = signal.wait(opened).expect("gate");
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return;
+            }
+            opened = signal.wait_timeout(opened, deadline - now).expect("gate").0;
         }
     }
 
@@ -328,5 +347,22 @@ impl Gate {
         let (open, signal) = &*self.0;
         *open.lock().expect("gate") = true;
         signal.notify_all();
+    }
+}
+
+/// Opens its gate when dropped: on the test's normal end, a panic, or cancellation.
+#[allow(dead_code)]
+pub struct GateGuard(Gate);
+
+#[allow(dead_code)]
+impl GateGuard {
+    pub fn open(&self) {
+        self.0.open();
+    }
+}
+
+impl Drop for GateGuard {
+    fn drop(&mut self) {
+        self.0.open();
     }
 }

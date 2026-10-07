@@ -426,8 +426,7 @@ fn an_exhausted_admission_refuses_as_busy() {
     runtime.block_on(async {
         // The getter is held until the test opens the gate, so the first read keeps
         // its permit for as long as the test needs, with no sleep to tune.
-        let gate = served::Gate::default();
-        let hold = gate.clone();
+        let (hold, gate) = served::Gate::guarded();
         let slow = ServedNode::start(move |method, _| match method {
             "getMasterchainInfo" => masterchain_info(SEQNO),
             _ => {
@@ -1178,8 +1177,7 @@ fn cancellation_releases_the_permit_only_when_no_work_is_running() {
 
         // Between attempts: the second endpoint is slow to answer HTTP, no worker runs.
         let failing = endpoint(small_error(503)).await;
-        let gate = served::Gate::default();
-        let hold = gate.clone();
+        let (hold, gate) = served::Gate::guarded();
         let slow = ServedNode::start(move |method, _| match method {
             "getMasterchainInfo" => masterchain_info(SEQNO),
             _ => {
@@ -1225,4 +1223,84 @@ fn cancellation_releases_the_permit_only_when_no_work_is_running() {
                 .is_ok()
         );
     });
+}
+
+// ─── Gated test cleanup ───────────────────────────────────────────────────────
+
+const GATED_CHILD: &str = "PROPOSAL_READ_GATED_CHILD";
+const INTENDED_FAILURE: &str = "intended failure before the gate opens";
+
+/// The child half: holds a read on a gated handler, then fails an assertion before
+/// opening the gate. Does nothing when run as an ordinary test.
+#[test]
+fn gated_child() {
+    if std::env::var(GATED_CHILD).is_err() {
+        return;
+    }
+    let runtime = runtime();
+    runtime.block_on(async {
+        let (hold, _gate) = served::Gate::guarded();
+        let node = Arc::new(
+            ServedNode::start(move |method, _| match method {
+                "getMasterchainInfo" => masterchain_info(SEQNO),
+                _ => {
+                    hold.wait();
+                    Reply::raw(200, list_answer(1, 0))
+                }
+            })
+            .await,
+        );
+        let admission = Arc::new(production());
+        let reading = {
+            let (node, admission) = (node.clone(), admission.clone());
+            tokio::spawn(async move { read(&node, &admission).await.map(|_| ()) })
+        };
+        wait_until("the read to reach the gated handler", || {
+            node.calls().contains(&"runGetMethodStd".to_string())
+        })
+        .await;
+        let _keep = reading;
+        panic!("{INTENDED_FAILURE}");
+    });
+}
+
+/// A gated test that fails before it opens its gate ends promptly with that
+/// failure: the guard opens the gate as the test unwinds, so the blocked handler
+/// returns and the runtime shuts down, well inside the gate's own deadline.
+#[test]
+fn a_gated_test_that_fails_early_ends_promptly() {
+    use std::io::Read;
+    let started = Instant::now();
+    let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", "gated_child", "--nocapture", "--test-threads=1"])
+        .env(GATED_CHILD, "1")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("child runs");
+    let mut stderr = child.stderr.take().expect("stderr");
+    let reader = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stderr.read_to_string(&mut text);
+        text
+    });
+    let watchdog = served::GATE_DEADLINE * 3;
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("child status") {
+            break status;
+        }
+        if started.elapsed() > watchdog {
+            let _ = child.kill();
+            panic!("the gated child hung past {watchdog:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let elapsed = started.elapsed();
+    let stderr = reader.join().expect("stderr");
+    assert_eq!(status.code(), Some(101), "the child did not fail as a test: {stderr}");
+    assert!(stderr.contains(INTENDED_FAILURE), "the child failed for another reason: {stderr}");
+    assert!(
+        elapsed < served::GATE_DEADLINE / 3,
+        "the child took {elapsed:?} to end: its handler waited out the gate deadline"
+    );
 }
