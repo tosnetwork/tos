@@ -1,0 +1,18 @@
+{
+  "android_commit": "71d0bb5",
+  "scope": "Real Android JNI LMS verification and durable cache component; no live proof, signing custody or complete wallet acceptance",
+  "baseline_tests": 2,
+  "control": "Native verifier callback replaced with unconditional success: named cache test failed",
+  "restored_tests": 2,
+  "artifacts": {
+    "verification-control.log": {
+      "sha256": "8667b7145b6bacf9f81c647bbe9c4f33cbf1bd2be8bc65c75a3f2be798471c7f",
+      "bytes": 21588
+    },
+    "restored.log": {
+      "sha256": "ff3322607bf506c4a74635a0ab6376b60b8e07311a5607036d45326711306904",
+      "bytes": 19595
+    }
+  },
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-lms-cache"
+}
