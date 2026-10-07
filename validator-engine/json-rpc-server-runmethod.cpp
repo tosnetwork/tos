@@ -376,7 +376,8 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
           td::StringBuilder stack_sb;
           stack_sb << "[";
           for (int i = 0; i < (int)stk->depth(); i++) {
-            if (i > 0) stack_sb << ",";
+            if (i > 0)
+              stack_sb << ",";
             serialize_stack_entry_legacy(stack_sb, stk->at(i));
           }
           stack_sb << "]";
@@ -649,7 +650,8 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
           td::StringBuilder stack_sb;
           stack_sb << "[";
           for (int i = 0; i < (int)stk->depth(); i++) {
-            if (i > 0) stack_sb << ",";
+            if (i > 0)
+              stack_sb << ",";
             serialize_stack_entry_std(stack_sb, stk->at(i));
           }
           stack_sb << "]";
