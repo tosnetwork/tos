@@ -1,0 +1,24 @@
+{
+  "tests": 1,
+  "controls": [
+    {
+      "guard": "pre-auth-check",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "post-auth-check",
+      "exit": 2,
+      "semantic_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "iOS registry task cancellation at authentication boundary; not protected Keychain success, current proof or full recovery acceptance",
+  "ios_commit": "4bda13c",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-r2-cancellation",
+  "logs": {
+    "post-auth-check.log": "d4fcbbc96b5c82aebf09464c85bdd7e31c4d3494815a2f05651684f00df8d21f",
+    "pre-auth-check.log": "7400c4fd01bd6b417d65ff729359b15667afd427915a775d9fa1fc0479de13ee",
+    "restored.log": "55d55ea87f6eb30d4f0ae29f7ab1914e9a7b369bb5986a1c0bb30e575bec1a73"
+  }
+}
