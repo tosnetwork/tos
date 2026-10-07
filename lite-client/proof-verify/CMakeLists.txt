@@ -68,3 +68,7 @@ endif()
 add_executable(test-proof-acquisition ../../test/pq-native/proof-acquisition-test.cpp)
 target_link_libraries(test-proof-acquisition PRIVATE proof-verify-core)
 add_test(NAME proof-material-acquisition COMMAND test-proof-acquisition ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+
+add_executable(test-proof-readonly-query ../../test/pq-native/proof-readonly-query-test.cpp)
+target_link_libraries(test-proof-readonly-query PRIVATE proof-verify-engine)
+add_test(NAME proof-readonly-query COMMAND test-proof-readonly-query)

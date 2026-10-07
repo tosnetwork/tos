@@ -66,7 +66,7 @@ jobs:
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
-            tos-proof-verify test-proof-verify proof-verify-fs-shim \
+            tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport \
             test-n5-manager-db-fixture test-consensus \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup \
@@ -98,6 +98,12 @@ jobs:
           print(f"all {len(expected)} security regressions are registered")
           PY
           ctest --test-dir build -L security-findings --no-tests=error --output-on-failure
+
+      - name: Check read-only proof relay and real HTTP ingress
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(proof-readonly-query|test-json-rpc-transport)$'
+
+      - name: Remove and restore proof relay route control
+        run: python3 scripts/test-proof-query-rpc-controls.py --build-dir build
 
       # A virtualized key-block proof must retain every PQ finality context
       # field. This is a compiled behavior test, not a source-only guard.

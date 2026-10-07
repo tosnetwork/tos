@@ -1220,6 +1220,8 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   // Existing methods
   if (method == "sendBoc") {
     handle_sendBoc(params, std::move(req_id), source_ip, std::move(promise));
+  } else if (method == "getProofQuery") {
+    handle_getProofQuery(params, std::move(req_id), std::move(promise));
   } else if (method == "getConfigParam") {
     handle_getConfigParam(params, std::move(req_id), std::move(promise));
   } else if (method == "getAddressInformation") {

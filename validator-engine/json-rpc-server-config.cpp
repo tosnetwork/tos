@@ -17,6 +17,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include "json-rpc-server-internal.h"
+#include "lite-client/proof-verify/readonly-query.h"
 
 #include "auto/tl/lite_api.hpp"
 #include "tl/tl_object_parse.h"
@@ -29,6 +30,27 @@
 #include "block/mc-config.h"
 
 namespace tos {
+
+void JsonRpcServer::handle_getProofQuery(td::JsonObject &params, std::string req_id,
+                                        td::Promise<HttpReturn> promise) {
+  auto encoded = params.get_required_string_field("query");
+  if (encoded.is_error() || encoded.ok().size() > 21848) {
+    promise.set_value(make_json_error(-32602, "Invalid proof query", req_id)); return;
+  }
+  auto bytes = td::base64_decode(encoded.ok());
+  if (bytes.is_error()) { promise.set_value(make_json_error(-32602, "Invalid proof query", req_id)); return; }
+  auto checked = proofverify::checked_readonly_query(bytes.ok());
+  if (checked.is_error()) { promise.set_value(make_json_error(-32602, "Proof query refused", req_id)); return; }
+  auto wrapped = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(checked.move_as_ok()), true);
+  send_liteserver_query(std::move(wrapped),
+      [req_id = std::move(req_id), cors = opts_.cors_origin, promise = std::move(promise)](td::Result<td::BufferSlice> reply) mutable {
+        if (reply.is_error() || reply.ok().size() > (64u << 20)) {
+          promise.set_value(make_json_error(-32603, "Proof response unavailable", req_id, cors)); return;
+        }
+        const auto encoded = td::base64_encode(reply.ok().as_slice());
+        promise.set_value(make_json_ok(PSTRING() << "{\"reply\":\"" << encoded << "\"}", req_id, cors));
+      });
+}
 
 void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string req_id,
                                           td::Promise<HttpReturn> promise) {
