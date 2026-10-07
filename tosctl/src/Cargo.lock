@@ -891,12 +891,15 @@ dependencies = [
  "adnl",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chain_block",
  "common",
  "hex",
  "serde",
  "serde_json",
+ "tempfile",
  "tl_api",
+ "tokio",
  "tracing",
 ]
 
