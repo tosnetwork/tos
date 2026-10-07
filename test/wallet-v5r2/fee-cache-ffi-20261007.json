@@ -1,0 +1,45 @@
+{
+  "source_sha256": "7a1cdefa96c317d1d36dd1fd83e874c73c81ca417935cf126a7fbf9fe0bbbaa9",
+  "controls": [
+    {
+      "name": "owner",
+      "exit": 101,
+      "semantic_failure": true,
+      "log_sha256": "95f353099cab7967e2fa484bba2fb923abfb5edcdd34101aa21f245227ecbf47"
+    },
+    {
+      "name": "store-verification",
+      "exit": 101,
+      "semantic_failure": true,
+      "log_sha256": "b37e7dc56ba3b4ba364c46746992ca0a8fdb410fd1c73011c63afc6e3598a5f5"
+    },
+    {
+      "name": "export-verification",
+      "exit": 101,
+      "semantic_failure": true,
+      "log_sha256": "2e6ec9d82dd2415c489bc337de777b4290edb42f11397bce89835540312ec928"
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "callback ordering, ownership and byte persistence only; verifier doubles are not cryptographic evidence",
+  "tests": {
+    "passed": 24,
+    "failed": 0,
+    "child_probe": "invoked by process handoff test"
+  },
+  "commands": [
+    "cargo fmt --all --check",
+    "cargo test -p lms-fee-state --locked",
+    "cargo build -p lms-fee-state --release --locked --target aarch64-apple-ios-sim",
+    "cargo build -p lms-fee-state --release --locked --target aarch64-linux-android"
+  ],
+  "sources": {
+    "tosctl/src/lms-fee-state/src/ffi.rs": "7a1cdefa96c317d1d36dd1fd83e874c73c81ca417935cf126a7fbf9fe0bbbaa9",
+    "sdk/native/v5r2/tos_fee_state.h": "5c2691e9d090b68c992e51796e9f5fc44230d55bbe257693f8d2c94597f584fd"
+  },
+  "retained_artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-fee-cache-ffi",
+  "limitations": [
+    "Callback doubles do not establish LMS cryptographic correctness.",
+    "Mobile JNI/Swift cache integration and authenticated route/expiry/consumption checks remain required."
+  ]
+}

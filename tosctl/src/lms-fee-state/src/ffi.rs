@@ -15,6 +15,9 @@ const INTERNAL: i32 = -4;
 const CAPACITY: i32 = -5;
 const MAX_SESSIONS: usize = 256;
 const MAX_RESERVATIONS: usize = 1024;
+const SIGNATURE_SIZE: usize = 2832;
+pub type FeeVerify =
+    unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, u32, *const u8, *const u8, usize) -> i32;
 
 #[derive(Default)]
 struct Registry {
@@ -169,10 +172,338 @@ pub extern "C" fn tos_fee_state_close(handle: u64) -> i32 {
     })
 }
 
+/// Verify with a trusted native primitive, then consume the reservation token
+/// and persist immutable signature bytes. Verification failure burns the token.
+/// Callback returns exactly 1 for valid; it must not unwind or use RPC verdicts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tos_fee_state_cache_verified(
+    handle: u64,
+    token: u64,
+    public_key: *const u8,
+    signature: *const u8,
+    size: usize,
+    verify: Option<FeeVerify>,
+    context: *mut std::ffi::c_void,
+) -> i32 {
+    boundary(|| {
+        if public_key.is_null() || signature.is_null() || size != SIGNATURE_SIZE {
+            return Err(INVALID);
+        }
+        let verify = verify.ok_or(INVALID)?;
+        let key = unsafe { std::slice::from_raw_parts(public_key, 60) };
+        let signature = unsafe { std::slice::from_raw_parts(signature, size) };
+        let mut r = lock(registry())?;
+        if !r.sessions.contains_key(&handle) {
+            return Err(INVALID);
+        }
+        let owner = r.reservations.get(&token).ok_or(INVALID)?.0;
+        if owner != handle {
+            return Err(INVALID);
+        }
+        let (_, receipt) = r.reservations.remove(&token).ok_or(INVALID)?;
+        let leaf = receipt.leaf();
+        let digest = *receipt.intent_hash();
+        if unsafe {
+            verify(
+                context,
+                key.as_ptr(),
+                leaf,
+                digest.as_ptr(),
+                signature.as_ptr(),
+                signature.len(),
+            )
+        } != 1
+        {
+            return Err(STATE);
+        }
+        let journal = r.sessions.get_mut(&handle).ok_or(INVALID)?;
+        journal.cache_signature(receipt, signature).map_err(|_| STATE)
+    })
+}
+
+/// Load exact cached bytes and reverify before copying to caller output.
+/// A miss never invokes a signer. Live route/expiry/consumption remain caller gates.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tos_fee_state_cached_verified(
+    handle: u64,
+    leaf: u32,
+    digest: *const u8,
+    public_key: *const u8,
+    verify: Option<FeeVerify>,
+    context: *mut std::ffi::c_void,
+    output: *mut u8,
+    size: usize,
+) -> i32 {
+    boundary(|| {
+        if output.is_null() || size != SIGNATURE_SIZE {
+            return Err(INVALID);
+        }
+        unsafe { std::ptr::write_bytes(output, 0, size) };
+        if public_key.is_null() {
+            return Err(INVALID);
+        }
+        let verify = verify.ok_or(INVALID)?;
+        let digest = unsafe { array32(digest)? };
+        let key = unsafe { std::slice::from_raw_parts(public_key, 60) };
+        let mut r = lock(registry())?;
+        let journal = r.sessions.get_mut(&handle).ok_or(INVALID)?;
+        let signature = journal.cached_signature(leaf, digest).map_err(|_| STATE)?;
+        if unsafe {
+            verify(
+                context,
+                key.as_ptr(),
+                leaf,
+                digest.as_ptr(),
+                signature.as_ptr(),
+                signature.len(),
+            )
+        } != 1
+        {
+            return Err(STATE);
+        }
+        unsafe { std::ptr::copy_nonoverlapping(signature.as_ptr(), output, size) };
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
+    static FFI_TEST: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn cache_tokens_are_single_use_and_export_is_reverified() -> anyhow::Result<()> {
+        let _serial = FFI_TEST.lock().expect("isolated registry fixture");
+        unsafe extern "C" fn valid(
+            _: *mut std::ffi::c_void,
+            _: *const u8,
+            _: u32,
+            _: *const u8,
+            _: *const u8,
+            _: usize,
+        ) -> i32 {
+            1
+        }
+        unsafe extern "C" fn invalid(
+            _: *mut std::ffi::c_void,
+            _: *const u8,
+            _: u32,
+            _: *const u8,
+            _: *const u8,
+            _: usize,
+        ) -> i32 {
+            0
+        }
+        let dir = tempfile::tempdir()?;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))?;
+        let path = dir.path().as_os_str().as_bytes();
+        let route = [1; 32];
+        let digest = [9; 32];
+        let key = [0; 60];
+        let mut h = 0;
+        assert_eq!(
+            unsafe {
+                tos_fee_state_open(
+                    path.as_ptr(),
+                    path.len(),
+                    42,
+                    route.as_ptr(),
+                    route.as_ptr(),
+                    route.as_ptr(),
+                    100,
+                    100,
+                    &mut h,
+                )
+            },
+            0
+        );
+        let mut token = 0;
+        assert_eq!(unsafe { tos_fee_state_reserve(h, 3700, 0, 4, digest.as_ptr(), &mut token) }, 0);
+        // Framing-only public fixture. Callback doubles are not crypto evidence.
+        let mut sig = [0x55; SIGNATURE_SIZE];
+        sig[..4].copy_from_slice(&0u32.to_be_bytes());
+        sig[4..8].copy_from_slice(&4u32.to_be_bytes());
+        sig[8..12].copy_from_slice(&3u32.to_be_bytes());
+        sig[2188..2192].copy_from_slice(&8u32.to_be_bytes());
+        let other_dir = tempfile::tempdir()?;
+        std::fs::set_permissions(other_dir.path(), std::fs::Permissions::from_mode(0o700))?;
+        let other_path = other_dir.path().as_os_str().as_bytes();
+        let mut other = 0;
+        assert_eq!(
+            unsafe {
+                tos_fee_state_open(
+                    other_path.as_ptr(),
+                    other_path.len(),
+                    42,
+                    route.as_ptr(),
+                    route.as_ptr(),
+                    route.as_ptr(),
+                    100,
+                    100,
+                    &mut other,
+                )
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cache_verified(
+                    other,
+                    token,
+                    key.as_ptr(),
+                    sig.as_ptr(),
+                    sig.len(),
+                    Some(valid),
+                    std::ptr::null_mut(),
+                )
+            },
+            INVALID
+        );
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cache_verified(
+                    h,
+                    token,
+                    key.as_ptr(),
+                    sig.as_ptr(),
+                    sig.len(),
+                    Some(valid),
+                    std::ptr::null_mut(),
+                )
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cache_verified(
+                    h,
+                    token,
+                    key.as_ptr(),
+                    sig.as_ptr(),
+                    sig.len(),
+                    Some(valid),
+                    std::ptr::null_mut(),
+                )
+            },
+            INVALID
+        );
+        assert_eq!(tos_fee_state_close(other), 0);
+        let mut output = [0xff; SIGNATURE_SIZE];
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cached_verified(
+                    h,
+                    4,
+                    digest.as_ptr(),
+                    key.as_ptr(),
+                    Some(invalid),
+                    std::ptr::null_mut(),
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            },
+            STATE
+        );
+        assert!(output.iter().all(|b| *b == 0));
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cached_verified(
+                    h,
+                    4,
+                    digest.as_ptr(),
+                    key.as_ptr(),
+                    Some(valid),
+                    std::ptr::null_mut(),
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            },
+            0
+        );
+        assert_eq!(output, sig);
+        assert_eq!(unsafe { tos_fee_state_reserve(h, 3700, 0, 5, digest.as_ptr(), &mut token) }, 0);
+        sig[4..8].copy_from_slice(&5u32.to_be_bytes());
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cache_verified(
+                    h,
+                    token,
+                    key.as_ptr(),
+                    sig.as_ptr(),
+                    sig.len(),
+                    Some(invalid),
+                    std::ptr::null_mut(),
+                )
+            },
+            STATE
+        );
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cache_verified(
+                    h,
+                    token,
+                    key.as_ptr(),
+                    sig.as_ptr(),
+                    sig.len(),
+                    Some(valid),
+                    std::ptr::null_mut(),
+                )
+            },
+            INVALID
+        );
+        assert_eq!(tos_fee_state_close(h), 0);
+        assert_eq!(
+            unsafe {
+                tos_fee_state_open(
+                    path.as_ptr(),
+                    path.len(),
+                    42,
+                    route.as_ptr(),
+                    route.as_ptr(),
+                    route.as_ptr(),
+                    100,
+                    3700,
+                    &mut h,
+                )
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cached_verified(
+                    h,
+                    4,
+                    digest.as_ptr(),
+                    key.as_ptr(),
+                    Some(valid),
+                    std::ptr::null_mut(),
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            },
+            0
+        );
+        assert_eq!(&output[4..8], &4u32.to_be_bytes());
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cached_verified(
+                    h,
+                    5,
+                    digest.as_ptr(),
+                    key.as_ptr(),
+                    Some(valid),
+                    std::ptr::null_mut(),
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            },
+            STATE
+        );
+        assert!(output.iter().all(|b| *b == 0));
+        assert_eq!(tos_fee_state_close(h), 0);
+        Ok(())
+    }
 
     #[test]
     fn contention_and_poisoning_have_distinct_failure_codes() {
@@ -190,6 +521,7 @@ mod tests {
 
     #[test]
     fn ffi_lifecycle_keeps_reservations_and_restore_barrier() -> anyhow::Result<()> {
+        let _serial = FFI_TEST.lock().expect("isolated registry fixture");
         let dir = tempfile::tempdir()?;
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))?;
         let path = dir.path().as_os_str().as_bytes();

@@ -17,6 +17,17 @@ int32_t tos_fee_state_preview(uint64_t handle, uint32_t time, uint32_t chain_nex
 int32_t tos_fee_state_reserve(uint64_t handle, uint32_t time, uint32_t chain_next,
     uint32_t expected_leaf, const uint8_t *digest, uint64_t *reservation);
 int32_t tos_fee_state_close(uint64_t handle);
+/* Trusted native verification callback: exactly 1 means valid. It must not
+ * unwind or trust network verdicts. Reentrant state calls return BUSY.
+ * public_key is 60 bytes, digest 32, signature 2832. No signer is called here. */
+typedef int32_t (*tos_fee_state_verify)(void *context, const uint8_t *public_key,
+    uint32_t leaf, const uint8_t *digest, const uint8_t *signature, size_t signature_size);
+int32_t tos_fee_state_cache_verified(uint64_t handle, uint64_t reservation,
+    const uint8_t *public_key, const uint8_t *signature, size_t signature_size,
+    tos_fee_state_verify verify, void *context);
+int32_t tos_fee_state_cached_verified(uint64_t handle, uint32_t leaf,
+    const uint8_t *digest, const uint8_t *public_key, tos_fee_state_verify verify,
+    void *context, uint8_t *output, size_t output_size);
 #ifdef __cplusplus
 }
 #endif

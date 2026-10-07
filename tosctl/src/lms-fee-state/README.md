@@ -36,9 +36,16 @@ are bounded at 256 and 1,024 respectively. Contention returns BUSY; a poisoned
 registry returns INTERNAL and must not be treated as a retryable capacity hint.
 Close invalidates handles/tokens while leaving reservations burned on disk.
 
-The current C interface does not yet expose signing, cache verification or
-broadcast. A reservation receipt is not crypto approval. Caller-provided time
+The C interface exposes verified cache storage/read callbacks, but not signing or
+broadcast. Callbacks must be trusted native cryptographic primitives, never RPC
+verdicts. Storage consumes a same-session token once; failed verification keeps
+the leaf burned. Cache reads reverify before copying bytes to caller output.
+A reservation receipt is not crypto approval. Caller-provided time
 and chain counters must come from the platform's authenticated proof layer.
 Rust tests and `fee-state-ffi-test.c` cover ownership, stale previews, failure
 outputs and restart barriers. iOS/Android target builds are build evidence,
 not on-device lifecycle acceptance.
+
+Cache callback tests use explicit framing-only verifier doubles to prove call
+ordering, token ownership and immutable retry behavior. They do not establish
+LMS cryptographic correctness or platform signer integration.
