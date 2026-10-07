@@ -965,6 +965,35 @@ target_include_directories(test-wallet-index-apply PRIVATE ${CMAKE_CURRENT_SOURC
 target_link_libraries(test-wallet-index-apply PRIVATE validator-disk validator-common validator-db
                       tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
 
+add_executable(test-control-getter-transport test/validator/control-getter-transport-test.cpp)
+target_include_directories(test-control-getter-transport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_BINARY_DIR}/crypto)
+target_link_libraries(test-control-getter-transport PRIVATE control-getter fift-lib adnl keyring dht tl_lite_api tl-lite-utils)
+add_dependencies(test-control-getter-transport gen_fif)
+
+add_executable(test-control-getter-query test/validator/control-getter-query-test.cpp)
+target_include_directories(test-control-getter-query PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto ${CMAKE_CURRENT_BINARY_DIR}/crypto)
+target_link_libraries(test-control-getter-query PRIVATE control-getter fift-lib)
+add_dependencies(test-control-getter-query gen_fif)
+
+add_executable(test-control-getter test/validator/control-getter-test.cpp)
+target_include_directories(test-control-getter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-control-getter PRIVATE control-getter fift-lib tdactor)
+
+add_executable(test-control-getter-budget test/validator/control-getter-budget-test.cpp)
+target_include_directories(test-control-getter-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-control-getter-budget PRIVATE control-getter fift-lib)
+
+foreach(core_target test-control-getter test-control-getter-budget)
+  target_include_directories(${core_target} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/crypto)
+  add_dependencies(${core_target} gen_fif)
+endforeach()
+
+add_executable(test-get-method-context test/validator/getter-context-test.cpp)
+target_include_directories(test-get-method-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-get-method-context PRIVATE validator-disk validator-common validator-db
+                      tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht fift-lib)
+
 # Measurement tool, not a gate: apply completion when the wallet index must
 # read a block's data itself, against the same apply with no index.
 add_executable(test-apply-block-readback-latency test/validator/apply-block-readback-latency.cpp
@@ -1606,6 +1635,44 @@ add_test(NAME n6-instrumentation-byte-equivalence
 add_test(NAME n6-disabled-instrumentation-cost
   COMMAND test-measurement-contract --filter DisabledTraceIdProviderIsLazy)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME getter-context-fixture
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/prepare-getter-context.py
+          --source ${CMAKE_CURRENT_SOURCE_DIR} --build ${CMAKE_CURRENT_BINARY_DIR})
+set_tests_properties(getter-context-fixture PROPERTIES FIXTURES_SETUP getter-context-state TIMEOUT 90)
+foreach(context_case context vm libraries liteserver)
+  add_test(NAME getter-context-${context_case}
+    COMMAND test-get-method-context
+      ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
+      ${CMAKE_CURRENT_SOURCE_DIR}/doc/evidence/getter-serialization-budget/elector-snapshot
+      ${CMAKE_CURRENT_SOURCE_DIR}/tosctl/src/node-control/contracts/tests/fixtures/list_proposals/config-code.boc
+      --case ${context_case}
+      --baseline ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/data/getter-context-before.tsv)
+  set_tests_properties(getter-context-${context_case} PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 60)
+endforeach()
+foreach(core_case executor shutdown limits actor vm context delete)
+  add_test(NAME control-getter-${core_case}
+    COMMAND test-control-getter ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/fixtures/control-getter ${core_case})
+  set_tests_properties(control-getter-${core_case} PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 90)
+endforeach()
+add_test(NAME control-getter-budget
+  COMMAND test-control-getter-budget ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/fixtures/control-getter)
+set_tests_properties(control-getter-budget PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 180)
+foreach(query_case service boundary admission completion)
+  add_test(NAME control-getter-query-${query_case}
+    COMMAND test-control-getter-query ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/fixtures/control-getter ${query_case})
+  set_tests_properties(control-getter-query-${query_case} PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 120)
+endforeach()
+add_test(NAME control-getter-transport
+  COMMAND test-control-getter-transport ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
+    ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/fixtures/control-getter)
+set_tests_properties(control-getter-transport PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 90)
+add_dependencies(all-tests test-control-getter-query test-control-getter-transport)
+add_dependencies(all-tests test-control-getter test-control-getter-budget)
+add_dependencies(all-tests test-get-method-context create-state)
+
 add_test(NAME n6-manifest-completeness
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/measurement-manifest-test.py)
 set_tests_properties(n6-manifest-completeness PROPERTIES LABELS "source-guard")

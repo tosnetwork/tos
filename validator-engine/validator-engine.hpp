@@ -53,6 +53,7 @@
 #include "validator/validator-transport-authority.h"
 #include "validator/validator.h"
 
+#include "control-getter-service.h"
 #include "json-rpc-server.h"
 #include "overlays.h"
 
@@ -199,6 +200,7 @@ class ValidatorEngine : public td::actor::Actor {
   tos::PublicKeyHash default_dht_node_ = tos::PublicKeyHash::zero();
   td::actor::ActorOwn<tos::overlay::Overlays> overlay_manager_;
   td::actor::ActorOwn<tos::validator::ValidatorManagerInterface> validator_manager_;
+  td::actor::ActorOwn<tos::control_getter::Service> control_getters_;
   td::actor::ActorOwn<tos::adnl::AdnlExtClient> full_node_client_;
   // The full-node ADNL key a slave signs in to its masters with; loaded and
   // checked at startup, before anything else starts.
@@ -892,6 +894,13 @@ class ValidatorEngine : public td::actor::Actor {
                          td::BufferSlice data, tos::PublicKeyHash src, td::uint32 perm,
                          td::Promise<td::BufferSlice> promise);
 
+  void start_control_getters();
+  void run_control_query(tos::tos_api::engine_validator_getElectorState &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+  void run_control_query(tos::tos_api::engine_validator_getConfigProposals &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+  void run_control_query(tos::tos_api::engine_validator_getConfigProposal &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   template <class T>
   void run_control_query(T &query, td::BufferSlice data, tos::PublicKeyHash src, td::uint32 perm,
                          td::Promise<td::BufferSlice> promise) {
