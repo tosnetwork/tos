@@ -1,0 +1,39 @@
+{
+  "ios_commit": "d8e5753",
+  "scope": "Initial PRIMARY/SLH role recovery UI with public key binding and protected Keychain import API",
+  "validation": [
+    "make compile: full app build succeeded",
+    "WalletCore/CoreComponentsTests/TOSV5R2RecoveryInputTests: 2 simulator tests passed",
+    "Remove pre-derive master reset: named test failed stale-master assertion",
+    "Restore source: both tests passed"
+  ],
+  "artifacts": [
+    {
+      "file": "r2-input-pass.raw.log",
+      "bytes": 2643771,
+      "sha256": "b66d1b5a41c3b069e6371e186f9148ebb69c067e6c398d8d02e7c55a3c6fe59d"
+    },
+    {
+      "file": "r2-input-stale-control.raw.log",
+      "bytes": 101445,
+      "sha256": "dd68d991a5370315b272b18b83bb859ac44d3788a3b5edb32f8be4b5fee92b00"
+    },
+    {
+      "file": "r2-input-restored.raw.log",
+      "bytes": 99589,
+      "sha256": "c526231617aacbf4237f5c03c23000a2a3f1061dae278ed4db93bbd913f13439"
+    },
+    {
+      "file": "r2-role-final-build.raw.log",
+      "bytes": 1929534,
+      "sha256": "d19e2aba4bf0b90a886fe0ffabbf022c1d633206ae46bf37ea99c907caaed04c"
+    }
+  ],
+  "limits": [
+    "No successful physical-device Keychain import asserted",
+    "No proof-backed live authority or funded POP asserted",
+    "UI role form interaction not yet acceptance-tested",
+    "Swift String and UIKit field copies cannot be claimed securely erased; owned Data buffers are wiped",
+    "No full creation, independent device custody, broadcast, rotation or finality acceptance asserted"
+  ]
+}
