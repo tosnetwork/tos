@@ -1,0 +1,22 @@
+{
+  "tests": 1,
+  "controls": [
+    {
+      "guard": "atomic-state",
+      "exit": 1
+    },
+    {
+      "guard": "caller-wipe",
+      "exit": 1
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Real Android JNI full-profile LMS signing with public full-tree paths and journal/cache; live proofs, fee custody and full wallet acceptance remain required",
+  "android_commit": "260f8c1",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-atomic-fee-sign",
+  "logs": {
+    "caller-wipe.log": "4b666573e8091e0f0794a820ff9ae62d8a79e1df71d6b60d02a7f3c783f676d1",
+    "atomic-state.log": "0c7ae2153d241943fbb18a95af04b216221c76eb0171a2921b798be065175efd",
+    "restored.log": "e3f414a7c496947e758671c774694ed59d3f493b92227902281c18b0904df388"
+  }
+}
