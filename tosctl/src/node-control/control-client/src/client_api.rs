@@ -242,6 +242,19 @@ pub struct EngineValidatorAdnlAddress {
 
 #[async_trait::async_trait]
 pub trait ClientAPI: Send + Sync {
+    async fn get_elector_state(
+        &mut self,
+        request: &crate::operator_reads::ElectorStateRequest,
+    ) -> anyhow::Result<crate::operator_reads::ElectorState>;
+    async fn get_config_proposals(
+        &mut self,
+        request: &crate::operator_reads::ConfigProposalsRequest,
+    ) -> anyhow::Result<crate::operator_reads::ConfigProposals>;
+    async fn get_config_proposal(
+        &mut self,
+        request: &crate::operator_reads::ConfigProposalRequest,
+    ) -> anyhow::Result<crate::operator_reads::ConfigProposalDetail>;
+
     async fn get_account_state(&mut self, address: &str) -> anyhow::Result<Account>;
     async fn get_blockchain_config(&mut self) -> anyhow::Result<BlockchainConfigInfo>;
     async fn get_validator_config(&mut self) -> anyhow::Result<EngineValidatorConfig>;

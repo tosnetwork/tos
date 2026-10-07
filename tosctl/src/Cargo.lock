@@ -865,6 +865,7 @@ dependencies = [
  "chain-rpc-client",
  "chain_block",
  "common",
+ "control-client",
  "ed25519-dalek",
  "errno",
  "fips204",
