@@ -1,0 +1,40 @@
+{
+  "status": "local Android emulator component evidence",
+  "scope": "JNI locked state, durable reservations, stale previews, close and restore barriers; not private-key signing, cache export, live chain proofs or complete wallet recovery",
+  "device": {
+    "avd": "TOS_PQ_API36_16K_20261004",
+    "api": "36.1",
+    "architecture": "arm64-v8a",
+    "page_size": 16384
+  },
+  "test_count": 1,
+  "failure_count": 0,
+  "controls": {
+    "controls": [
+      {
+        "name": "managed-close",
+        "semantic_failure": true,
+        "target": "V5R2FeeStateDeviceTest.kt:35",
+        "receipt_note": "JUnit comparison adds brackets; target/message components verified."
+      },
+      {
+        "name": "native-reservation",
+        "semantic_failure": true,
+        "test_exit": 1,
+        "source_sha256": "739ff5fa8f40b8591f545e34d9731ddf059b840e3dd9e9bc9a95227d2889c3af"
+      }
+    ],
+    "restored_exit": 0,
+    "device": "API36.1 ARM64, 16KB pages, emulator-5554",
+    "scope": "JNI state ownership and durable reservation, not signing or complete recovery acceptance"
+  },
+  "restored_xml": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-fee-jni/restored.xml",
+    "sha256": "1747d3e33f3fe6ccaaaa6de7eb60ba55d364ac17becc6647a416bede9b059a4c"
+  },
+  "sources": {
+    "lib/security/src/main/java/network/tos/security/pq/FeeStateNative.kt": "2b2d3ef8413fbb38e1f4f5a3a8fd6612a355d540e80cd7d49e055508d6eb11ec",
+    "lib/security/src/main/cpp/pq_jni.cpp": "739ff5fa8f40b8591f545e34d9731ddf059b840e3dd9e9bc9a95227d2889c3af",
+    "lib/security/src/androidTest/java/network/tos/security/pq/V5R2FeeStateDeviceTest.kt": "0fd696967b9eeb9bdb26f7a564498720b767ec20baa9fbb06f2d6e081eee8944"
+  }
+}
