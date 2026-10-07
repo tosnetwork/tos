@@ -1,0 +1,40 @@
+{
+  "vectors": 6,
+  "tests": 4,
+  "controls": [
+    {
+      "field": "configure",
+      "exit": 2
+    },
+    {
+      "field": "lock",
+      "exit": 2
+    },
+    {
+      "field": "migration-order",
+      "exit": 2
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "iOS Simulator all AUTH action wire vectors; framing signatures only",
+  "ios_commit": "cad6ca8",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-auth-full",
+  "logs": {
+    "configure.log": {
+      "sha256": "ecdab3c1909842eea502c8131e3714327741dfd877788930f92c2cc2ece3eacd",
+      "bytes": 35548
+    },
+    "migration-order.log": {
+      "sha256": "0c1503f12132f0cfe65526c8a2d20b1f90dc02086f6ed5da1877b2814f8cf712",
+      "bytes": 31092
+    },
+    "restored.log": {
+      "sha256": "c9cae971a06942f31689e958f6a2ccb53ecfe74b1bc7b0b09d899b5b43dfc498",
+      "bytes": 31673
+    },
+    "lock.log": {
+      "sha256": "22e38b74c3bfbca2fadc2c9ed75c8fbe5f162a805b0a6757dcb767d89d6a915a",
+      "bytes": 31092
+    }
+  }
+}

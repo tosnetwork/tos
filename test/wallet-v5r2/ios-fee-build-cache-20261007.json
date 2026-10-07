@@ -1,0 +1,28 @@
+{
+  "unchanged_output_mtime_preserved": true,
+  "modified_header_forced_rebuild": true,
+  "restored_header_sha256": "bb13c1f1d1ce730493fcf8027bd72d5319fcce709b6ee3e5b4e68672c687bf38",
+  "deleted_comparison_reused_modified_header": true,
+  "restored_comparison_rebuilt_header": true,
+  "ios_commit": "d1a4b21",
+  "scope": "Native build output retention and corruption repair; not wallet or release acceptance",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-fee-build-cache",
+  "logs": {
+    "deleted-comparison.log": {
+      "sha256": "00d8ba70069055c7ba68d89d694812a62984c0bbed8bfee17b822b1eee23ff88",
+      "bytes": 290
+    },
+    "repaired.log": {
+      "sha256": "fab665421e536fb50b31b05dd911de17c0a7ef860183bcf06b437c1172a9bda2",
+      "bytes": 368
+    },
+    "restored-comparison.log": {
+      "sha256": "fab665421e536fb50b31b05dd911de17c0a7ef860183bcf06b437c1172a9bda2",
+      "bytes": 368
+    },
+    "unchanged.log": {
+      "sha256": "34d9fc37325c0c9275f5c51be8d06372810969fc0bca0c05b64347d0f3bfaa98",
+      "bytes": 290
+    }
+  }
+}
