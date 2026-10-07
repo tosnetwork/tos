@@ -1,0 +1,35 @@
+{
+  "scope": "Android arm64 C proof verifier shared library; JNI and wallet proof acquisition are not complete",
+  "device": "emulator-5554 arm64 API36.1 16KB pages; not physical hardware",
+  "ndk": "27.0.12077973",
+  "api": 26,
+  "cases_passed": 12,
+  "dynamic_dependency": "test executable has NEEDED libtosproofverify.so",
+  "load_alignment": "all LOAD segments 0x4000",
+  "library_sha256": "f4401978d016cd7b7ee541335396172a2cd421954a8bc6b40acdab94a851b989",
+  "library_bytes": 106831192,
+  "artifacts": [
+    {
+      "file": "20261007-proof-android-runtime.log",
+      "sha256": "a924565a1b936a0a0d0c30b8ef063a05f8f7c7bb5d244500c9f3228aaf8c4984",
+      "bytes": 597
+    },
+    {
+      "file": "20261007-proof-android-script-build.log",
+      "sha256": "de99ce8b2486ec38d381a29621156adcc8ddde074bc8133d36cf02ebcac7415b",
+      "bytes": 19063
+    },
+    {
+      "file": "20261007-proof-host-shared-build.log",
+      "sha256": "5fcef7495a11bd8caab8a0a3a492d4f51dbf513b5d128b9331ba8503c74d8b61",
+      "bytes": 706
+    }
+  ],
+  "remaining": [
+    "JNI/Swift bindings",
+    "iOS cross build",
+    "durable serialized live-state commit before accepting results",
+    "proof acquisition and independently provisioned anchor",
+    "wallet bindings, transactions, rotation and delivery acceptance"
+  ]
+}
