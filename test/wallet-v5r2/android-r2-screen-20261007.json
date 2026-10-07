@@ -1,0 +1,23 @@
+{
+  "app_ui_tests": 1,
+  "controls": [
+    {
+      "guard": "secure-window",
+      "runtime_failure": null
+    },
+    {
+      "guard": "import-entry",
+      "runtime_failure": null
+    }
+  ],
+  "restored_exit": 0,
+  "environment": "System UI ANR diagnosed and its process restarted before valid baseline; no app data cleared",
+  "scope": "Actual Android emulator R2 screen visibility and secure window only; not full navigation, paid recovery or chain proof acceptance",
+  "android_commit": "8adee98",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-r2-screen",
+  "logs": {
+    "import-entry.log": "9bcd8b8d3d50e424758de8d881880af4efe065c3f04f5bb3abb8de5225601b48",
+    "restored.log": "0d5849d369f7ef2376179f59aea55e2ce84f0af49de916a7036795c465a81d17",
+    "secure-window.log": "2fcf7f37bac87f28f7a4bd99f822780f04d8a8ca5ffdc8fb02fe24a4fca3b6e3"
+  }
+}

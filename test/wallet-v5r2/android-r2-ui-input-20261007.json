@@ -1,0 +1,24 @@
+{
+  "app_tests": 2,
+  "controls": [
+    {
+      "guard": "input-wipe",
+      "case": "parseAndFailureConsumeAllCharacters",
+      "runtime_failure": null
+    },
+    {
+      "guard": "prestart-cancel-wipe",
+      "case": "cancelledScopeNeverRunsAndStillClearsMaster",
+      "runtime_failure": null
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Android app recovery input parsing and coroutine ownership only; not full UI navigation, current proof, funding or end-to-end wallet recovery",
+  "android_commit": "8adee98",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-r2-ui-input",
+  "logs": {
+    "input-wipe.log": "f9dc7925f3578048aabcf95388d4dccad51daf4d5d6dee5403829ebfb793a413",
+    "prestart-cancel-wipe.log": "cd871904b412b26c2f259505f54960b21ca5fb36ed1353875a3e5fe471ea65e2",
+    "restored.log": "6a27749e8aa47b05a5ba88f3aa187e84db9eb92ca86fc8b6b1fa52b7826af966"
+  }
+}
