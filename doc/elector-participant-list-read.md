@@ -51,8 +51,24 @@ network.
 | 256 | 368,795 | 254,122 | 779 | — |
 
 Gas grows by about 1.33k and depth by exactly 3 per participant.
-`list_proposals` (no voters): ~2,270 gas per proposal; the node stops serializing
-at 49 proposals.
+`list_proposals` (no voters): ~2,270 gas per proposal.
+
+**Serialization budget accounting (measured, reproducible — Appendix A).** The lite
+server serializes the result stack under a 1,000-operation budget (§3.3). Measured with
+an instrumented `VmStateInterface` around the exact production calls
+(`Stack::serialize`, `finalize_to`, `std_boc_serialize`): the stack root costs 1, every
+scalar or null 1, and **every tuple 2** (the tuple itself plus one more operation per
+tuple). Hence:
+
+| Getter result | Operations | Largest that fits in 1,000 |
+| --- | --- | --- |
+| `participant_list_extended`, N participants | 13N + 8 (three tuples per entry) | N = 76 (77 → 1,009) |
+| `list_proposals`, P proposals, V voter entries in total | 20P + 3V + 2 | P = 49 with no voters (50 → 1,002); P = 12 with 21 voters each |
+
+`std_boc_serialize` adds no operations. With the budget raised to 10^9 the same probe
+serializes 300 participants and 300 proposals, so the budget — not cell depth — is the
+binding limit. An earlier source-only estimate (10N + 8) counted a tuple as one
+operation and is superseded by these measurements.
 
 ## 3. Root cause
 
@@ -224,14 +240,40 @@ value missing.
   consumer's output is unchanged.
 - If the node does not know the query (pre-upgrade engine), fail with an explicit
   "upgrade the node" error; TOS is pre-launch, so no compatibility path is kept.
-- Every operator consumer is moved as listed in §5.4; operator commands never
+- Every operator consumer is moved as listed in §5.5; operator commands never
   silently use the public path, and tests assert the public-RPC call count stays zero
   in each migrated workflow.
 - The hardened public proposal path from #151 stays, explicitly separate, for public
   consumers; it is removed only after every remaining caller is inventoried and
   replaced.
 
-### 5.4 Routing of every consumer
+### 5.4 One snapshot per election decision
+
+Today three places read the election id and the participant list with two separate
+getter calls and never check that both answers describe the same election:
+
+| Pair of reads (on `main`) |
+| --- |
+| `elections/src/runner.rs:352` `get_active_election_id` then `:373` `elections_info` |
+| `config_wallet_cmd.rs:492` then `:496` |
+| `vote_cmd.rs:1748` then `:1761` |
+
+`active_election_id` returns the stored `elect_at` even for a finished election
+(`elector-code.fc:1617–1619`). Once the list moves to the control channel, the id would
+come from one source and the list from another, so a public endpoint already showing a
+new election E1 and a control node still on E0 (finished) would combine into a
+snapshot that marks E1 finished with E0's participants, and the runner would skip E1.
+
+Rule: each of these decisions takes the working election id, status and participants
+from **one** `getElectionParticipants` response (its `elect_at` has the same meaning
+as `active_election_id`); the separate id read is removed. The response's block
+identity is kept; any other election-sensitive read in the same decision
+(`past_elections`, `compute_returned_stake`) is pinned to that block, and an answer
+for any other block is refused and the decision retried on the next tick, before the
+snapshot or acceptance state is updated. Regression cases: public E1 / control E0
+finished, and the reverse ordering; plus a block mismatch on a pinned follow-up read.
+
+### 5.5 Routing of every consumer
 
 | Consumer (call site on `main`) | Today | After |
 | --- | --- | --- |
@@ -249,10 +291,12 @@ The zero-public-RPC assertion covers every "After" row except the explorer. The
 explorer is a public service without a control key; it keeps the public path and
 the #151 machinery for proposals.
 
-### 5.5 Out of scope
+### 5.6 Out of scope
 
 - The explorer's public `/staking` endpoint and other public consumers keep the public
-  path and its limits (76 participants / 49 proposals), documented; a paginated public
+  path and its limits, documented: participants 13N + 8 ≤ 1,000 (76), proposals
+  20P + 3V + 2 ≤ 1,000 (49 with no voters, 12 with 21 voters each), plus the client's
+  separate JSON recursion limit (38 participants on the generic path); a paginated public
   query can be designed separately.
 - A distinct JSON-RPC error code for result-serialization failures; the node's silent
   `"stack":[]` on result-parse failure (`json-rpc-server-runmethod.cpp:642–660`).
@@ -312,3 +356,22 @@ the #151 machinery for proposals.
    it; remove it only after every caller is replaced.
 4. Metadata suffices for `vote offer cast` selection and display, not for full details
    or diff; preserve optional-hash and value-presence semantics.
+
+## Appendix A. Reproducing the serialization measurements
+
+- Source revision: `main` at `6da705c8a`; `crypto/vm` and `validator/impl/liteserver.cpp`
+  are identical to the revision the probe was linked against.
+- Probe: `doc/evidence/getter-serialization-budget/probe.cpp` builds the getters'
+  exact result shapes (`participant_list_extended`: 7-entry stack, entries
+  `[id, [stake, max_factor, id, adnl, algorithm_id, key_id]]` in cons cells;
+  `list_proposals`: cons of `[phash, 9-tuple]` with voter cons lists), then runs the
+  production sequence `Stack::serialize` → `finalize_to` → `std_boc_serialize` under
+  (a) `FakeVmStateLimits(1000)` as the lite server does and (b) a counting
+  `VmStateInterface`.
+- Build and run (from a configured tos build directory `build/`):
+  see `doc/evidence/getter-serialization-budget/README.md`.
+- Output: participants fit up to 76 (77 → 1,009 operations); proposals up to 49 with no
+  voters (50 → 1,002), 12 with 21 voters each; with a 10^9 budget both reach the probe's
+  300 cap.
+- The implementation adds the equivalent as a committed native test through the
+  production path (§7).
