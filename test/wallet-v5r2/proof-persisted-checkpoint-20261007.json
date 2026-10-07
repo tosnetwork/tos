@@ -1,0 +1,42 @@
+{
+  "scope": "Host native persisted live verification; mobile binding not yet implemented",
+  "normal_cases": 14,
+  "sync_fault_cases": 2,
+  "controls": [
+    "Missing enrolled checkpoint cannot be reset: removal compiled and failed named case",
+    "NOFOLLOW on checkpoint read: removal compiled and failed symlink case",
+    "Directory fsync rejection: ignoring failure compiled and failed after-rename refusal case"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-proof-persisted-path-restored.log",
+      "sha256": "78cecbc3336e5fa9eef45cf8f912ce7a093bd2d9e309476c7f7e1aac9e259812",
+      "bytes": 8945
+    },
+    {
+      "file": "20261007-proof-persisted-reset-control.log",
+      "sha256": "581be1ae8550d3c981b21d11cb28f890f1ad5938ca3705dd36164812393f364e",
+      "bytes": 6769
+    },
+    {
+      "file": "20261007-proof-persisted-symlink-control.log",
+      "sha256": "d3dfff59084366973d1660b9e629113cf0516fd6cecabadd98cb315bbcd48b94",
+      "bytes": 9775
+    },
+    {
+      "file": "20261007-proof-persisted-sync-control.log",
+      "sha256": "1b5800b982ed20195223d9aec15bde98d9dd6f2a4b48f68f1e41d9d698066b38",
+      "bytes": 2986
+    },
+    {
+      "file": "20261007-proof-persisted-sync-restored.log",
+      "sha256": "0be653b295f7477e97df2748a3809afb389938ab552878aa76d49664441f7c28",
+      "bytes": 2486
+    }
+  ],
+  "limits": [
+    "Caller must provision a trusted anchor and private directory excluded from backups",
+    "Filesystem owned by the caller is trusted; this does not protect against malicious owner edits or copied rollback snapshots",
+    "No phone runtime, iOS binding, transport or wallet signing authorization acceptance claimed"
+  ]
+}

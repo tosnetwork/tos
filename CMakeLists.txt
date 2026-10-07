@@ -1901,6 +1901,9 @@ set_tests_properties(
   PROPERTIES LABELS "security-findings")
 tos_test(test-quorum)
 add_dependencies(all-tests test-quorum-portable)
+if(TARGET proof-persisted-fsync-shim)
+  add_dependencies(all-tests proof-persisted-fsync-shim)
+endif()
 tos_test(test-emulator)
 
 tos_test(test-fec)

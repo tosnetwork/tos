@@ -7,7 +7,7 @@ target_link_libraries(proof-verify-engine PUBLIC lite-client-proof-common tos_bl
   tl-lite-utils tdutils)
 
 # Swift/JNI consumers load the C ABI without linking desktop acquisition code.
-add_library(tos-proof-embedded SHARED EXCLUDE_FROM_ALL embedded.cpp)
+add_library(tos-proof-embedded SHARED EXCLUDE_FROM_ALL embedded.cpp persisted.cpp persisted.h)
 target_link_libraries(tos-proof-embedded PRIVATE proof-verify-engine)
 set_target_properties(tos-proof-embedded PROPERTIES OUTPUT_NAME tosproofverify)
 if(ANDROID)
@@ -32,3 +32,22 @@ endif()
 
 add_test(NAME proof-verify-embedded COMMAND test-proof-verify-embedded
   ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+
+if(NOT CMAKE_CROSSCOMPILING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_library(proof-persisted-fsync-shim SHARED ../../test/pq-native/proof-persisted-fsync-shim.cpp)
+  target_link_libraries(proof-persisted-fsync-shim PRIVATE ${CMAKE_DL_LIBS})
+  if(APPLE)
+    set(PROOF_PERSIST_LOADER DYLD_INSERT_LIBRARIES)
+  else()
+    set(PROOF_PERSIST_LOADER LD_PRELOAD)
+  endif()
+  add_test(NAME proof-verify-persisted-sync-fault COMMAND ${CMAKE_COMMAND} -E env
+    "${PROOF_PERSIST_LOADER}=$<TARGET_FILE:proof-persisted-fsync-shim>"
+    ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test/pq-native/proof-verify-persisted-test.py
+    $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real --sync-fault)
+
+  add_test(NAME proof-verify-persisted COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/test/pq-native/proof-verify-persisted-test.py
+    $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+endif()
