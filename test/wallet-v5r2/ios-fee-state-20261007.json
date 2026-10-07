@@ -1,0 +1,31 @@
+{
+  "source_sha256": "ed3c6ea8156bd401189fded3198842f2c399a7fbc3835b306ca2e2878fe93d17",
+  "controls": [
+    "cache-verification.log",
+    "reservation-compiled.log"
+  ],
+  "excluded": "reservation.log: compile failure, not semantic evidence",
+  "restored_exit": 0,
+  "tests": 2,
+  "ios_commit": "464f7ed",
+  "scope": "iOS Simulator durable reservation and real LMS verified cache component; no live chain proof, signing custody, wallet lifecycle or release acceptance",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-fee-state-controls",
+  "logs": {
+    "cache-verification.log": {
+      "sha256": "02a05523af5a4ea1d279d86e6a8f8d81ab75a4869ca3cb00bd865ad9638b1d83",
+      "bytes": 32231
+    },
+    "reservation-compiled.log": {
+      "sha256": "85b28db2076a5daa9ff5aea8db7b6eff69dd146e3711024540a368a1cc16dd39",
+      "bytes": 28149
+    },
+    "reservation.log": {
+      "sha256": "9825133ba3dca8daa10beea25df11a55c1d3963afcd16c7eb16baf117b197d61",
+      "bytes": 2533
+    },
+    "restored.log": {
+      "sha256": "1d77152ea8a88d9c5548b28ea0079fe6fe25a240ab34daf77a6ae288545baeeb",
+      "bytes": 28045
+    }
+  }
+}
