@@ -56,6 +56,13 @@ def unpinned_pip_packages(arguments: str) -> list[str]:
             expect = None
             continue
         option, has_value, value = word.partition("=")
+        # A short option may carry its value attached: -rfile, -e./path.
+        if (
+            not word.startswith("--")
+            and len(word) > 2
+            and word[:2] in PIP_PATH_OPTIONS | PIP_VALUE_OPTIONS
+        ):
+            option, has_value, value = word[:2], "=", word[2:]
         if word.startswith("-") and option in PIP_PATH_OPTIONS | PIP_VALUE_OPTIONS:
             kind = "path" if option in PIP_PATH_OPTIONS else "value"
             if not has_value:
@@ -169,6 +176,9 @@ class WorkflowInstallTests(unittest.TestCase):
             "pip install --editable=git+https://example.invalid/repo",
             "pip install -r https://example.invalid/requirements.txt",
             "pip install -c https://example.invalid/constraints.txt pkg==1.0",
+            "pip install -rhttps://example.invalid/requirements.txt",
+            "pip install -egit+https://example.invalid/repo",
+            "pip install -chttps://example.invalid/constraints.txt pkg==1.0",
         ]
         accepted = [
             "sudo scripts/install-llvm-toolchain.sh 21 all",
@@ -177,6 +187,7 @@ class WorkflowInstallTests(unittest.TestCase):
             "python -m pip install bitarray==3.7.2 PyNaCl==1.5.0",
             "pip install -q --upgrade -r requirements/ci.txt",
             "pip install ./tools/package",
+            "pip install -rrequirements/ci.txt -e./tools/package",
             "# wget https://apt.llvm.org/llvm.sh",
         ]
         for line in refused:
