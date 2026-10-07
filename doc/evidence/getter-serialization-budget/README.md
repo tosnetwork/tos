@@ -103,12 +103,36 @@ both getters.
 - Changing one digit of `elector-real-dump.txt` makes it fail (`emulated result
   equals the lite server's answer at the saved block`, exit 1).
 
+## Elector getter budgets
+
+`elector-budget.cpp` (build like `probe.cpp`; run `./elector-budget
+doc/evidence/getter-serialization-budget/elector-snapshot`) grows the saved elector
+along each dimension its getters walk: the member book (0–256), the retained past
+elections (1–16, each with 21 or 256 frozen entries cloned under hashed keys) and the
+credits dictionary (0–65,536 random keys, plus 257 keys forming the deepest 256-level
+path). It checks each result's shape — elections and frozen-entry counts, the
+credited and absent wallets' amounts — and records gas and the native frozen-walk
+time in `elector-budget-result.txt`:
+
+- `participant_list_extended`: 345,395 gas at 256 members.
+- `past_elections`: about 0.9k gas per retained election (15,953 at 16), independent
+  of frozen entries, which are returned as a cell; walking 4,096 frozen entries
+  natively takes about 2 ms.
+- `compute_returned_stake`: 2,896 gas at 65,536 random credits, 26,804 on the deepest
+  path.
+
+These probes run with `tos::SmartContract`'s convenience context: they validate the
+getters' shapes, serialization cost and gas, not the exact production c7 parity the
+implementation must show separately.
+
 ## Hashes (SHA-256)
 
 ```
 2d7b1ac70018659cd2d4caeb2d4d9c064dce1cbd4da1f5ea8b28380d17ce0952  probe.cpp
+2e35e42cc09328afd0e51cd39a16eca9fe56fae4fefd00e5a60af85743c055da  elector-budget.cpp
 c251375e03c5e73fe12eb269d77ec398345b713ee9010175c53a2d471ce6c7dc  export_list_proposals_states.rs
 7e1825e9300bb24efc368234897062c54ad4c552679ae18ea7e2444b6b8037b2  result.txt
+6396d7a8d00d5df311baa4f5837e918e679a8c778cc9027e69c7428dde7b455d  elector-budget-result.txt
 cfebf996d613089bdae5f3b0db8f17c3d0b6c9ebc7b1a768dd193a139fd4552a  elector-snapshot/elector-block.txt
 60d9e0b113f8d88f681438f99bbdf5873bd360f734fe8ce746764d1a82f93adf  elector-snapshot/elector-code.boc
 3150c331f4c317786a8f3308a535a4713abcfc9f20921a30047e0d1c27764d9a  elector-snapshot/elector-data.boc

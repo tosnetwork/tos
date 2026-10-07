@@ -8,7 +8,9 @@
   routing behaviour). Revision 4: the serialization measurements are corrected
   (revision 3's probe built every tuple wrapped in a one-element tuple, §2) and checked
   against the real getters; the elector reads one decision needs come from one control
-  query (§5.1, §5.4).
+  query (§5.1, §5.4). Revision 5: per-getter elector budgets from measurements of all three
+  getters, the combined query's total cost and native-work limits, and the extended
+  combined-response tests (§5.2, §6, §7).
 - Repository: `tosnetwork/tos`, base `main` at `6da705c8a` (includes PR #151).
 - Branch / PR: `fix/elector-participant-list`, draft PR #152.
 - Also kept in the team notes (`memo/elector-participant-list/`).
@@ -204,9 +206,9 @@ engine.validator.getConfigProposal
 when none is open, as the getter returns), `past_elections` (each election's frozen
 dictionary flattened into `frozen`, keyed by the stable validator id; complaints are
 not returned — no consumer reads them), and `compute_returned_stake` once per requested
-wallet. `wallets` holds at most a named small maximum of distinct addresses, refused
-otherwise (duplicates included); `returned` has one entry per wallet in request order,
-zero when nothing is owed. `weight` is the elector's unsigned 64-bit weight carried in
+wallet. `wallets` holds at most `kMaxReturnedStakeWallets = 16` distinct addresses,
+refused otherwise (duplicates included); `returned` has exactly one entry per wallet,
+in request order, carrying the requested address, zero when nothing is owed. `weight` is the elector's unsigned 64-bit weight carried in
 a TL `long` and interpreted as unsigned.
 
 `getConfigProposal` runs the config contract's `get_proposal`: `flags.0` absent means
@@ -254,11 +256,34 @@ value missing.
   version-dependent c7 fields; global and account libraries with the same rules; due
   payment and precompiled-contract context; signature checking enabled; randomness
   seeded by the same policy. Parity tests share the seed.
-- **Named budgets**: `kElectorGetterGasLimit`, applied to each elector getter run of
-  `getElectorState` and derived from the most expensive of them, the measured
-  256-member `participant_list_extended` (≈ 369k), plus stated headroom; `kConfigProposalsGasLimit`
-  (10,000,000) as an explicit operational ceiling, not a capacity claim. Gas
-  exhaustion is an explicit error; no partial result.
+- **Named budgets**, one per getter, each from a measurement of that getter
+  (Appendix A, `elector-budget-result.txt`; the C++ VM on the saved elector, grown
+  along each dimension the getter walks):
+
+  | Getter (per run) | What its cost depends on | Measured worst case | Budget |
+  | --- | --- | --- | --- |
+  | `participant_list_extended` | members (protocol cap 256) | 345,395 C++ / 368,795 Rust sandbox at 256 | `kElectorParticipantsGasLimit = 500,000` |
+  | `past_elections` | retained past elections K (≈ 0.9k each; independent of frozen entries, returned as a cell) | 15,953 at K = 16 | `kPastElectionsGasLimit = 50,000` |
+  | `compute_returned_stake` | credits dictionary path length | 2,896 at 65,536 random credits; 26,804 on the deepest path 256-bit keys allow | `kReturnedStakeGasLimit = 40,000` per wallet |
+  | `list_proposals` / `get_proposal` | proposals, voters | — | `kConfigProposalsGasLimit = 10,000,000`, an operational ceiling, not a capacity claim |
+
+  Gas exhaustion in any run is an explicit error; no partial result.
+- **Combined cost of `getElectorState`**: at most 2 + `kMaxReturnedStakeWallets` = 18
+  getter runs; aggregate VM gas at most 500,000 + 50,000 + 16 × 40,000 = 1,190,000
+  (`kElectorStateGasLimit`), each run also held to its own budget. Native work is
+  bounded separately: `kMaxPastElections = 16` (an **operational** limit — the elector
+  retains past elections until their stakes are unfrozen, about two at the local
+  network's ConfigParam 15; the contract imposes no cap), at most 256 frozen entries
+  per election (frozen entries are written only for elected members taken from that
+  election's book, `elector-code.fc:1342`, and the book is capped at 256), and
+  `kMaxFrozenEntriesTotal = 4,096`. The frozen-dictionary walk counts entries as it
+  goes and stops at the first entry beyond a limit, without visiting the rest
+  (measured: 4,096 entries flatten in about 2 ms). Any budget or limit exceeded —
+  including a later getter after earlier ones succeeded — rejects the whole response;
+  the client receives an error and changes no state.
+- **Immutable snapshot**: every getter run starts from the same original snapshot's
+  code and data cells; a run's VM-private changes (its c4, c5) are discarded and never
+  seen by the next run.
 - **Result conversion**: walk the cons list iteratively into the flat TL vector,
   validating exact tuple arities, integer ranges, strictly ascending ids, and for the
   elector at most 256 participants with the getter's exclusive `2^256 − 1` sentinel
@@ -361,6 +386,8 @@ the #151 machinery for proposals.
 | Read | Bound |
 | --- | --- |
 | Election participants | the elector's own 256 cap, under a budget derived from the measured worst case |
+| Past elections | **operational** limit of 16 retained elections and 4,096 frozen entries (the contract has no cap on retained elections); exceeding it is an explicit error, not a truncated list |
+| Returned stakes | up to 16 wallets per query, each lookup within its own measured budget |
 | Config proposals | bounded all-or-nothing under an explicit 10M-gas operational ceiling and the reply bound; supported capacity stated only after measuring adversarial dictionary shapes and populated voter lists; incremental reads remain future work |
 | Reply size | a named bound below the 16 MiB control packet |
 
@@ -385,7 +412,18 @@ the #151 machinery for proposals.
   from the same state as the participants (a state where an election unfreezes between
   two blocks shows each block's answer internally consistent); wallet-list bounds,
   duplicates and the empty list; the runner tick makes one elector query and no
-  public-RPC elector read.
+  public-RPC elector read. Also:
+  - no open election, with non-empty past elections and non-zero returned credits;
+  - 16 past elections and 4,096 frozen entries accepted, 17 elections or 4,097 entries
+    refused;
+  - `returned` matches the request in count, order and address; a reply with a
+    missing, extra, reordered or wrong-address entry is refused by tosctl;
+  - a frozen entry whose validator id differs from its owner is carried with both;
+  - weight `2^63` and `2^64 − 1` round-trip as unsigned;
+  - aggregate-budget exhaustion in a returned-stake run after the participant and
+    past-election runs succeeded rejects the whole response;
+  - every run starts from the original snapshot, shown by a test getter that rewrites
+    its own c4 before a second run reads it.
 - **Executor**: queue saturation (`busy`), cancellation (admission held until work
   ends), shutdown, and another control query completing while an expensive getter
   runs.
@@ -439,5 +477,14 @@ the #151 machinery for proposals.
   300 participants and 300 voted proposals serialize.
 - Sensitivity: reintroducing revision 3's one-element tuple wrapper, or changing one
   digit of the saved lite-client answer, makes the probe exit 1.
+- Scope of this evidence: the probes run the getters with `tos::SmartContract`'s
+  convenience context. That validates these getters' result shapes, serialization
+  cost and gas on real code and data; it does not establish the exact production c7
+  parity §5.2 requires of the implementation, which the implementation's own parity
+  tests must show.
+- Elector budgets: `elector-budget.cpp` grows the saved elector's member book (0–256),
+  past elections (1–16, each with 21 or 256 frozen entries) and credits (0–65,536
+  random, plus the deepest 256-level path) and records each getter's gas and the
+  native frozen-dictionary walk (`elector-budget-result.txt`).
 - The implementation adds the equivalent as a committed native test through the
   production path (§7).

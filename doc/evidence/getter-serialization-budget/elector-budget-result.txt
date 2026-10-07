@@ -1,0 +1,22 @@
+== participant_list_extended (N members)
+N=0 gas=2503
+N=21 gas=28725
+N=99 gas=131621
+N=256 gas=345395
+== past_elections (K elections x F frozen entries)
+K=1 F=21 gas=2773 frozen_entries=21 native_flatten_us=13
+K=1 F=256 gas=2773 frozen_entries=256 native_flatten_us=128
+K=2 F=21 gas=3645 frozen_entries=42 native_flatten_us=22
+K=2 F=256 gas=3645 frozen_entries=512 native_flatten_us=252
+K=8 F=21 gas=8827 frozen_entries=168 native_flatten_us=82
+K=8 F=256 gas=8827 frozen_entries=2048 native_flatten_us=1035
+K=16 F=21 gas=15953 frozen_entries=336 native_flatten_us=166
+K=16 F=256 gas=15953 frozen_entries=4096 native_flatten_us=1982
+== compute_returned_stake (C credits)
+C=0 gas_present=1096 gas_absent=1096
+C=1 gas_present=1204 gas_absent=1196
+C=256 gas_present=1904 gas_absent=1996
+C=4096 gas_present=2404 gas_absent=2396
+C=65536 gas_present=2804 gas_absent=2896
+deepest path (257 credits, 256 levels) gas=26804
+ALL CHECKS PASSED
