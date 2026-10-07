@@ -1,0 +1,24 @@
+{
+  "tests": 1,
+  "controls": [
+    {
+      "guard": "profile",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "key-binding",
+      "exit": 2,
+      "semantic_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "iOS Simulator native derived key binding and master clearing only; protected Keychain success/user presence and full restore require further acceptance",
+  "ios_commit": "7704d35",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-derived-restore",
+  "logs": {
+    "key-binding.log": "84a7a22c1129f3bc317f766159ab6d092735a565d40ad1281e35853782ed00cc",
+    "profile.log": "bc520d35aa8c37da9a62ed8bddd15bfb84224346f40719647b0ac3d108dbdaab",
+    "restored.log": "22d7e468403112bba0e14347ad401362b6cac61c50d68f575f2acb2ee67a4c1c"
+  }
+}
