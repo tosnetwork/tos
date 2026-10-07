@@ -5,7 +5,10 @@
   automation uses the node's authenticated control channel, not the public RPC".
   Revision 3: amendments from the design pre-review (off-actor execution with
   admission, exact VM context, honest capacity, TL optional fields, account and
-  routing behaviour).
+  routing behaviour). Revision 4: the serialization measurements are corrected
+  (revision 3's probe built every tuple wrapped in a one-element tuple, §2) and checked
+  against the real getters; the elector reads one decision needs come from one control
+  query (§5.1, §5.4).
 - Repository: `tosnetwork/tos`, base `main` at `6da705c8a` (includes PR #151).
 - Branch / PR: `fix/elector-participant-list`, draft PR #152.
 - Also kept in the team notes (`memo/elector-participant-list/`).
@@ -32,7 +35,8 @@ that election. Only the number of *elected* validators is capped at 21 (`:1277`)
 
 The same class of defect affects `vote offer ls` / `vote offer cast`
 (`list_proposals`), which PR #151 moved to a hardened public-RPC path: the node stops
-serving that getter at 49 proposals (§3.3).
+serving that getter above 62 unvoted proposals, and above 17 when each carries 21
+votes (§3.3).
 
 ## 2. Measurements
 
@@ -46,29 +50,45 @@ network.
 | 21 | 30,175 | 21,415 | 74 | ok |
 | 38 | 53,594 | 38,211 | 125 | ok |
 | 39 | 54,926 | 39,199 | 128 | **fails** (client) |
-| 77 | — | — | — | **node refuses** (serialization) |
+| 100 | — | — | — | **node refuses** (serialization) |
 | 214 | > 300,000 | — | — | **node refuses** (exit 13) |
 | 256 | 368,795 | 254,122 | 779 | — |
 
 Gas grows by about 1.33k and depth by exactly 3 per participant.
-`list_proposals` (no voters): ~2,270 gas per proposal.
+`list_proposals` (no voters): ~2,270 gas per proposal. The gas column is the Rust
+sandbox with real registrations; the node's C++ VM running the elector code saved from
+the local network, with its member book re-filled by cloned members, measures 131,621
+gas at 99 members and 345,395 at 256 (Appendix A). Budgets are derived from the larger
+figure.
 
 **Serialization budget accounting (measured, reproducible — Appendix A).** The lite
 server serializes the result stack under a 1,000-operation budget (§3.3). Measured with
 an instrumented `VmStateInterface` around the exact production calls
-(`Stack::serialize`, `finalize_to`, `std_boc_serialize`): the stack root costs 1, every
-scalar or null 1, and **every tuple 2** (the tuple itself plus one more operation per
-tuple). Hence:
+(`Stack::serialize`, `finalize_to`, `std_boc_serialize`): the stack root costs 1 and
+every entry 1 — a scalar, a null, or a tuple, whose elements are then counted in turn.
+A participant is a cons cell holding `[id, [6 fields]]`: 1 + 1 + 1 + 7 = 10. Hence:
 
 | Getter result | Operations | Largest that fits in 1,000 |
 | --- | --- | --- |
-| `participant_list_extended`, N participants | 13N + 8 (three tuples per entry) | N = 76 (77 → 1,009) |
-| `list_proposals`, P proposals, V voter entries in total | 20P + 3V + 2 | P = 49 with no voters (50 → 1,002); P = 12 with 21 voters each |
+| `participant_list_extended`, N participants | 10N + 8 | N = 99 (100 → 1,008) |
+| `list_proposals`, P proposals, V voter entries in total | 16P + 2V + 2 | P = 62 with no voters (63 → 1,010); P = 17 with 21 voters each (18 → 1,046) |
 
-`std_boc_serialize` adds no operations. With the budget raised to 10^9 the same probe
-serializes 300 participants and 300 proposals, so the budget — not cell depth — is the
-binding limit. An earlier source-only estimate (10N + 8) counted a tuple as one
-operation and is superseded by these measurements.
+`std_boc_serialize` adds no operations. With the budget raised to 10^9 the same
+sequence serializes 300 participants and 300 proposals with 21 voters each, so the
+budget — not cell depth — is the binding limit.
+
+The formulas hold for the real getters, not only for stacks built to their
+description: the elector's code and an open election saved from the local network
+(its member book re-filled to N members), and the genesis configuration contract with
+proposal sets written by the sandbox, executed and measured through the same
+sequence; the emulated elector result equals the lite server's own answer for the
+saved block (Appendix A).
+
+**Correction.** Revision 3 reported 13N + 8 and 20P + 3V + 2 (76 participants, 49
+proposals). Its probe built each tuple with `make_tuple_ref(std::move(vector))`, which
+brace-initializes a one-element vector and so wraps the intended tuple in a second
+tuple (`crypto/vm/stack.hpp:63–64`); every tuple therefore cost one extra operation.
+The source-derived 10N + 8 that revision 3 claimed to supersede was right.
 
 ## 3. Root cause
 
@@ -89,7 +109,7 @@ about 3·*n* levels deep.
 `tosctl` parses with `serde_json` (recursion limit 128). Raising it is unsafe on a
 public surface: a deep response from any endpoint could overflow the reader's stack.
 
-### 3.3 Public-surface limit 2 — result serialization (76 participants, 49 proposals)
+### 3.3 Public-surface limit 2 — result serialization (99 participants, 62 proposals)
 
 The lite server serializes a getter's result under `vm::FakeVmStateLimits
 fstate(1000)` (`validator/impl/liteserver.cpp:1556`); larger stacks fail with
@@ -138,13 +158,25 @@ documented limits. Operator workflows never fall back to it.
 engine.validator.electionParticipant
     id:int256 stake:bytes max_factor:int adnl:int256 algorithm:int key_id:int256
     = engine.validator.ElectionParticipant;
-engine.validator.electionParticipants
+engine.validator.frozenStake
+    id:int256 owner:int256 weight:long stake:bytes banned:Bool
+    = engine.validator.FrozenStake;
+engine.validator.pastElection
+    election_id:int unfreeze_at:int stake_held:int vset_hash:int256
+    total_stake:bytes bonuses:bytes frozen:(vector engine.validator.frozenStake)
+    = engine.validator.PastElection;
+engine.validator.returnedStake
+    wallet:int256 amount:bytes = engine.validator.ReturnedStake;
+engine.validator.electorState
     block:tosNode.blockIdExt elect_at:int elect_close:int
     min_stake:bytes total_stake:bytes failed:Bool finished:Bool
     participants:(vector engine.validator.electionParticipant)
-    = engine.validator.ElectionParticipants;
-engine.validator.getElectionParticipants
-    flags:# block:flags.0?tosNode.blockIdExt = engine.validator.ElectionParticipants;
+    past_elections:(vector engine.validator.pastElection)
+    returned:(vector engine.validator.returnedStake)
+    = engine.validator.ElectorState;
+engine.validator.getElectorState
+    flags:# block:flags.0?tosNode.blockIdExt wallets:(vector int256)
+    = engine.validator.ElectorState;
 
 engine.validator.configProposalMeta
     flags:# hash:int256 expires:int critical:Bool param_id:int
@@ -166,6 +198,16 @@ engine.validator.getConfigProposal
     flags:# block:flags.0?tosNode.blockIdExt hash:int256
     = engine.validator.ConfigProposalDetail;
 ```
+
+`getElectorState` runs, on one state, the elector getters an election decision needs:
+`participant_list_extended` (the open election; `elect_at = 0` with no participants
+when none is open, as the getter returns), `past_elections` (each election's frozen
+dictionary flattened into `frozen`, keyed by the stable validator id; complaints are
+not returned — no consumer reads them), and `compute_returned_stake` once per requested
+wallet. `wallets` holds at most a named small maximum of distinct addresses, refused
+otherwise (duplicates included); `returned` has one entry per wallet in request order,
+zero when nothing is owed. `weight` is the elector's unsigned 64-bit weight carried in
+a TL `long` and interpreted as unsigned.
 
 `getConfigProposal` runs the config contract's `get_proposal`: `flags.0` absent means
 no such proposal; when present, `value` (`flags.1`) is the proposed parameter cell as
@@ -212,8 +254,9 @@ value missing.
   version-dependent c7 fields; global and account libraries with the same rules; due
   payment and precompiled-contract context; signature checking enabled; randomness
   seeded by the same policy. Parity tests share the seed.
-- **Named budgets**: `kElectorParticipantsGasLimit`, derived from the measured
-  256-member worst case (≈ 369k) plus stated headroom; `kConfigProposalsGasLimit`
+- **Named budgets**: `kElectorGetterGasLimit`, applied to each elector getter run of
+  `getElectorState` and derived from the most expensive of them, the measured
+  256-member `participant_list_extended` (≈ 369k), plus stated headroom; `kConfigProposalsGasLimit`
   (10,000,000) as an explicit operational ceiling, not a capacity claim. Gas
   exhaustion is an explicit error; no partial result.
 - **Result conversion**: walk the cons list iteratively into the flat TL vector,
@@ -234,10 +277,12 @@ value missing.
 
 ### 5.3 tosctl
 
-- `ElectorWrapperImpl::elections_info` and the config-proposal reads used by
-  `vote offer ls` / `cast` call the new control queries over `ControlClientAdnl`.
-- `ElectionsInfo` / `Participant` / `ConfigProposal` keep their shape, so every
-  consumer's output is unchanged.
+- The elector reads (`elections_info`, `past_elections`, `compute_returned_stake`,
+  `get_active_election_id`) and the config-proposal reads used by `vote offer ls` /
+  `cast` call the new control queries over `ControlClientAdnl`; an elector decision
+  makes one `getElectorState` call and takes everything it needs from that answer.
+- `ElectionsInfo` / `Participant` / `PastElections` / `FrozenParticipant` /
+  `ConfigProposal` keep their shape, so every consumer's output is unchanged.
 - If the node does not know the query (pre-upgrade engine), fail with an explicit
   "upgrade the node" error; TOS is pre-launch, so no compatibility path is kept.
 - Every operator consumer is moved as listed in §5.5; operator commands never
@@ -264,22 +309,32 @@ come from one source and the list from another, so a public endpoint already sho
 new election E1 and a control node still on E0 (finished) would combine into a
 snapshot that marks E1 finished with E0's participants, and the runner would skip E1.
 
-Rule: each of these decisions takes the working election id, status and participants
-from **one** `getElectionParticipants` response (its `elect_at` has the same meaning
-as `active_election_id`); the separate id read is removed. The response's block
-identity is kept; any other election-sensitive read in the same decision
-(`past_elections`, `compute_returned_stake`) is pinned to that block, and an answer
-for any other block is refused and the decision retried on the next tick, before the
-snapshot or acceptance state is updated. Regression cases: public E1 / control E0
-finished, and the reverse ordering; plus a block mismatch on a pinned follow-up read.
+Rule: each of these decisions takes every elector fact it uses — the working election
+id, status and participants, the past elections' frozen stakes, and the stake owed to
+each of its wallets — from **one** `getElectorState` response (its `elect_at` has the
+same meaning as `active_election_id`). The separate id read is removed, and the runner
+tick's later `past_elections` and `compute_returned_stake` calls (`runner.rs:418`,
+`:862`) are replaced by the same answer's `past_elections` and `returned`, so there is
+no follow-up elector read to pin and none can reach the public RPC. Regression cases:
+public E1 / control E0 finished and the reverse ordering, each now unable to arise; a
+tick whose returned stake and frozen stake come from different elections is
+impossible by construction, and a test asserts the tick makes exactly one elector
+query.
+
+Not covered by this rule, and unchanged: the tick's reads of the operator's own pool
+and wallet balances (`calc_stake`, `recover_stake`) are account reads of other
+contracts at whatever block answers them. Combining them with frozen stakes from the
+elector snapshot can over-count a stake that was returned to the pool in between; the
+consequence is a stake message the pool refuses for insufficient funds, retried on
+the next tick. This is pre-existing and recorded as follow-up, not fixed here.
 
 ### 5.5 Routing of every consumer
 
 | Consumer (call site on `main`) | Today | After |
 | --- | --- | --- |
-| Elections runner tick (`elections/src/runner.rs:373`) | public `participant_list_extended` | `getElectionParticipants` |
-| Stake confirmation (`config_wallet_cmd.rs:496`, `:711`) | public | `getElectionParticipants` |
-| `vote participants` / `vote cast` (`vote_cmd.rs:1651`, `:1761`) | public | `getElectionParticipants` |
+| Elections runner tick (`elections/src/runner.rs:373`) | public `active_election_id`, `participant_list_extended`, `past_elections`, `compute_returned_stake` | one `getElectorState` per tick |
+| Stake confirmation (`config_wallet_cmd.rs:496`, `:711`) | public | `getElectorState` |
+| `vote participants` / `vote cast` (`vote_cmd.rs:1651`, `:1761`) | public | `getElectorState` |
 | `vote offer ls` (`vote_cmd.rs:942`) | #151 bounded public path | `getConfigProposals` (metadata) |
 | `vote offer cast` target selection (`vote_cmd.rs:1146`) | #151 bounded public path | `getConfigProposals` (metadata) |
 | `vote offer create` read-back of the expiry (`vote_cmd.rs:749`) | #151 bounded public path | `getConfigProposal` (expiry from `meta`) |
@@ -294,8 +349,8 @@ the #151 machinery for proposals.
 ### 5.6 Out of scope
 
 - The explorer's public `/staking` endpoint and other public consumers keep the public
-  path and its limits, documented: participants 13N + 8 ≤ 1,000 (76), proposals
-  20P + 3V + 2 ≤ 1,000 (49 with no voters, 12 with 21 voters each), plus the client's
+  path and its limits, documented: participants 10N + 8 ≤ 1,000 (99), proposals
+  16P + 2V + 2 ≤ 1,000 (62 with no voters, 17 with 21 voters each), plus the client's
   separate JSON recursion limit (38 participants on the generic path); a paginated public
   query can be designed separately.
 - A distinct JSON-RPC error code for result-serialization failures; the node's silent
@@ -312,7 +367,7 @@ the #151 machinery for proposals.
 ## 7. Verification plan
 
 - **Native**: a test that builds a masterchain state with the real elector holding
-  0, 1, 21, 76, 77, 212, 256 participants (and the config contract with 0, 49, 50,
+  0, 1, 21, 99, 100, 212, 256 participants (and the config contract with 0, 62, 63,
   several hundred proposals) and runs the new control-query handler: exact field
   equality with the getter's own result; 256 succeeds; a malformed result stack is
   refused; the iterative walk survives the deepest list; gas-budget exhaustion is an
@@ -324,7 +379,13 @@ the #151 machinery for proposals.
   can read, and succeed at 100 and 256 participants.
 - **Live**: the local development network (7 nodes, elections running) answers the new
   queries over each node's control channel, read-only; results equal the public
-  getter's for the current (small) election.
+  getters' (`participant_list_extended`, `past_elections`, `compute_returned_stake`)
+  for the current (small) election at the same block.
+- **One snapshot**: `getElectorState` answers with past elections and returned stakes
+  from the same state as the participants (a state where an election unfreezes between
+  two blocks shows each block's answer internally consistent); wallet-list bounds,
+  duplicates and the empty list; the runner tick makes one elector query and no
+  public-RPC elector read.
 - **Executor**: queue saturation (`busy`), cancellation (admission held until work
   ends), shutdown, and another control query completing while an expensive getter
   runs.
@@ -359,19 +420,24 @@ the #151 machinery for proposals.
 
 ## Appendix A. Reproducing the serialization measurements
 
-- Source revision: `main` at `6da705c8a`; `crypto/vm` and `validator/impl/liteserver.cpp`
-  are identical to the revision the probe was linked against.
-- Probe: `doc/evidence/getter-serialization-budget/probe.cpp` builds the getters'
-  exact result shapes (`participant_list_extended`: 7-entry stack, entries
-  `[id, [stake, max_factor, id, adnl, algorithm_id, key_id]]` in cons cells;
-  `list_proposals`: cons of `[phash, 9-tuple]` with voter cons lists), then runs the
-  production sequence `Stack::serialize` → `finalize_to` → `std_boc_serialize` under
-  (a) `FakeVmStateLimits(1000)` as the lite server does and (b) a counting
-  `VmStateInterface`.
-- Build and run (from a configured tos build directory `build/`):
-  see `doc/evidence/getter-serialization-budget/README.md`.
-- Output: participants fit up to 76 (77 → 1,009 operations); proposals up to 49 with no
-  voters (50 → 1,002), 12 with 21 voters each; with a 10^9 budget both reach the probe's
-  300 cap.
+- Source revision: `main` at `6da705c8a`.
+- Evidence: `doc/evidence/getter-serialization-budget/` — `probe.cpp`, the sandbox
+  exporter `export_list_proposals_states.rs`, the elector state saved from the local
+  development network at an open election (`elector-snapshot/`, with the lite client's
+  answer at that block), `result.txt`, and a README with build commands, input hashes
+  and sensitivity results.
+- The probe measures, through the production sequence `Stack::serialize` →
+  `finalize_to` → `std_boc_serialize`, both synthetic stacks of the documented shapes
+  (tuples built directly, arities asserted) and the real getters executed on real code
+  and data: the saved elector (member book re-filled to 1–256 members) and the genesis
+  configuration contract with 0–63 proposals, with and without values, and with 21
+  voters each. Every case must match `10N + 8` / `16P + 2V + 2` and the synthetic
+  stack; the emulated elector result for the saved state must equal the lite client's
+  answer.
+- Output: participants fit up to 99 (100 → 1,008 operations); proposals up to 62 with
+  no voters (63 → 1,010), 17 with 21 voters each (18 → 1,046); with a 10^9 budget,
+  300 participants and 300 voted proposals serialize.
+- Sensitivity: reintroducing revision 3's one-element tuple wrapper, or changing one
+  digit of the saved lite-client answer, makes the probe exit 1.
 - The implementation adds the equivalent as a committed native test through the
   production path (§7).

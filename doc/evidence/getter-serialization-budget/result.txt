@@ -1,0 +1,34 @@
+== synthetic, budget 1000
+participants: ops = 10N+8 for N in 0..300; largest N the lite server serializes: 99
+with a 10^9 budget: 300 participants and 300 proposals with 21 voters each serialize
+proposals, 0 voters each: ops = 16P+2V+2; largest P: 62
+proposals, 1 voters each: ops = 16P+2V+2; largest P: 55
+proposals, 5 voters each: ops = 16P+2V+2; largest P: 38
+proposals, 21 voters each: ops = 16P+2V+2; largest P: 17
+== real elector getter
+saved election: N=4 ops=48 gas=7456 (equals the lite server's own answer)
+real N=1 ops=18 fits=1 gas=3635
+real N=2 ops=28 fits=1 gas=4817
+real N=21 ops=218 fits=1 gas=28725
+real N=64 ops=648 fits=1 gas=84926
+real N=98 ops=988 fits=1 gas=130264
+real N=99 ops=998 fits=1 gas=131621
+real N=100 ops=1008 fits=0 gas=132953
+real N=101 ops=1018 fits=0 gas=134285
+real N=256 ops=2568 fits=0 gas=345395
+== real config getter
+unvoted-0 P=0 V=0 ops=2 fits=1 gas=1095
+unvoted-1 P=1 V=0 ops=18 fits=1 gas=3314
+unvoted-2 P=2 V=0 ops=34 fits=1 gas=5433
+unvoted-61 P=61 V=0 ops=978 fits=1 gas=136554
+unvoted-62 P=62 V=0 ops=994 fits=1 gas=138773
+unvoted-63 P=63 V=0 ops=1010 fits=0 gas=141017
+valued-1 P=1 V=0 ops=18 fits=1 gas=3304
+valued-61 P=61 V=0 ops=978 fits=1 gas=135944
+valued-62 P=62 V=0 ops=994 fits=1 gas=138153
+valued-63 P=63 V=0 ops=1010 fits=0 gas=140387
+voters21-1 P=1 V=21 ops=60 fits=1 gas=13920
+voters21-16 P=16 V=336 ops=930 fits=1 gas=196645
+voters21-17 P=17 V=357 ops=988 fits=1 gas=209145
+voters21-18 P=18 V=378 ops=1046 fits=0 gas=221295
+ALL CHECKS PASSED
