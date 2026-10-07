@@ -43,6 +43,34 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(f"BRANCH_CHAIN_PYTHON_CI_FAILURE: {message}")
 
 
+def validate_unconditional_steps(text: str) -> None:
+    # Always-on evidence upload cannot skip a test. All jobs and runtime gates
+    # retain the unconditional coverage rule, including any other upload step.
+    archive = re.search(
+        r"(?ms)^      - name: Retain V5R2 candidate configuration and boot evidence\n"
+        r"(?P<body>.*?)(?=^      - |\Z)",
+        text,
+    )
+    if archive is not None:
+        body = archive.group("body")
+        require(
+            re.search(
+                r"(?m)^        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02(?: # v4)?$",
+                body,
+            )
+            is not None,
+            "evidence archive is not the pinned upload action",
+        )
+        require(
+            body.count("        if: always()\n") == 1 and "run:" not in body,
+            "evidence archive must run always and cannot execute tests",
+        )
+        text = text.replace(
+            archive.group(0), archive.group(0).replace("        if: always()\n", ""), 1
+        )
+    require("if:" not in text, "workflow makes a job or step conditional")
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     workflow = root / ".github/workflows/branch-chain-python.yml"
@@ -58,9 +86,9 @@ def main() -> int:
         "workflow restricts branch triggers",
     )
     # This workflow's only purpose is to run on every push and pull request.
-    # Refuse conditions anywhere in the file: a job- or step-level `if:` is
+    # Refuse runtime conditions: a job- or step-level `if:` is
     # how the existing real-chain job became a green-looking skipped check.
-    require("if:" not in text, "workflow makes a job or step conditional")
+    validate_unconditional_steps(text)
     require("uv sync --no-dev" in text, "workflow does not install repository Python dependencies")
     require(
         "test/tostester/generate_tl.py" in text,
