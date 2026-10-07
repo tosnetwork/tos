@@ -27,13 +27,12 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-from e2e_private_dir import make_private_dir
-
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 from pytosiq_core import Address, Cell  # noqa: E402
 from tostester.install import Install  # noqa: E402
 from tostester.pq_election_fixture import make_pool_fixture  # noqa: E402
+from tostester.private_dir import make_private_dir  # noqa: E402
 
 spec = importlib.util.spec_from_file_location(
     "nominator_pool_lifecycle", REPO / "scripts/nominator-pool-lifecycle-e2e.py"

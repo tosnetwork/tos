@@ -10,7 +10,8 @@ debug build) - that the real writer accepts the private directory and refuses
 a group-writable checkout with an actionable message.
 
 The harnesses import the generated TL bindings; run
-`uv run test/tostester/generate_tl.py` first.
+`uv run test/tostester/generate_tl.py` first, then run this file with
+`uv run python`.
 """
 
 import importlib.util
@@ -18,15 +19,15 @@ import os
 import re
 import stat
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
 
-import e2e_private_dir  # noqa: E402
+# Harnesses are loaded the way the evidence tests load them: by file path,
+# without adding scripts/ to sys.path.
+from tostester import private_dir as e2e_private_dir  # noqa: E402
 
 HARNESSES = [
     "agent-query-api-e2e",

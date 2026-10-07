@@ -55,9 +55,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-from e2e_private_dir import make_private_dir
 
 from tostester.install import Install
+from tostester.private_dir import make_private_dir
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from contract import tos
@@ -72,7 +72,9 @@ WORKDIR = REPO / "test/integration/.task-escrow-e2e"
 # Set by use_private_dir() at the start of main().
 PRIVATE_DIR: Path | None = None
 CONFIG: Path | None = None
-OBSERVER_CONFIGS: tuple[Path, ...] = ()
+# Until then the observer paths lie under /dev/null, where nothing can be
+# created, so a use before use_private_dir() fails instead of writing.
+OBSERVER_CONFIGS = tuple(Path("/dev/null") / f"tosctl-observer-{index}.json" for index in (1, 2))
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000001"
 
 POLICY_HASH = "11" * 32

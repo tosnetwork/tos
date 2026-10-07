@@ -35,17 +35,15 @@ def workflow_files() -> list[Path]:
 # Running a fetched installer or trusting a key fetched at build time. The
 # pinned replacements are scripts/install-llvm-toolchain.sh (committed key) and
 # verify-build-tool.py (committed digests).
+# What may stand between a pipe and the program that reads it: sudo with its
+# options, and env with options and variable assignments.
+PIPE_PREFIX = r"\|\s*(sudo(\s+-\S+)*\s+)?(env(\s+-\S+)*(\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)?"
 UNVERIFIED = [
     (re.compile(r"llvm\.sh"), "apt.llvm.org installer script"),
     (re.compile(r"apt-key\s+add"), "apt-key with a downloaded key"),
+    (re.compile(PIPE_PREFIX + r"(ba|z|da|k)?sh\b"), "download piped into a shell"),
     (
-        re.compile(
-            r"\|\s*(sudo(\s+-\S+)*\s+)?(env(\s+[A-Za-z_][A-Za-z0-9_]*=\S*)*\s+)?(ba|z|da|k)?sh\b"
-        ),
-        "download piped into a shell",
-    ),
-    (
-        re.compile(r"\|\s*(sudo(\s+-\S+)*\s+)?(python3?|perl|ruby|node)\b"),
+        re.compile(PIPE_PREFIX + r"(python3?(\.\d+)?|perl|ruby|node)\b"),
         "download piped into an interpreter",
     ),
 ]
@@ -104,7 +102,7 @@ def unpinned_pip_packages(arguments: str) -> list[str]:
     return refused
 
 
-UV_WITH = re.compile(r"\buv\s+run\b.*?--with(?:=|\s+)(\S+)")
+UV_RUN = re.compile(r"\buv\s+run\b(.*)$")
 TOOL_RUNNERS = re.compile(r"\b(?:uv\s+tool\s+(?:install|run)|uvx|pipx\s+(?:install|run))\s+(.*)$")
 NPX = re.compile(r"\bnpx\s+(.*)$")
 CARGO_INSTALL = re.compile(r"\bcargo\s+install\b(.*)$")
@@ -122,9 +120,18 @@ def first_argument(arguments: str) -> str | None:
 def installer_findings(line: str) -> list[str]:
     """Other package runners must name an exact version."""
     findings = []
-    for package in UV_WITH.findall(line):
-        if not PINNED_PACKAGE.fullmatch(package):
-            findings.append(f"unpinned uv --with package {package}")
+    match = UV_RUN.search(line)
+    if match:
+        words = shlex.split(match.group(1), comments=True)
+        for index, word in enumerate(words):
+            option, has_value, value = word.partition("=")
+            if option not in ("--with", "--with-editable", "--with-requirements"):
+                continue
+            if not has_value:
+                value = words[index + 1] if index + 1 < len(words) else ""
+            pinned = PINNED_PACKAGE.fullmatch(value) if option == "--with" else is_local_path(value)
+            if not pinned:
+                findings.append(f"unpinned uv {option} {value}")
     match = TOOL_RUNNERS.search(line)
     if match:
         tool = first_argument(match.group(1))
@@ -136,8 +143,18 @@ def installer_findings(line: str) -> list[str]:
         if package is None or not PINNED_NPM.fullmatch(package):
             findings.append(f"unpinned npx package {package}")
     match = CARGO_INSTALL.search(line)
-    if match and not ("--locked" in match.group(1) and "--version" in match.group(1)):
-        findings.append("cargo install without --locked --version")
+    if match:
+        words = shlex.split(match.group(1), comments=True)
+        version = None
+        for index, word in enumerate(words):
+            option, has_value, value = word.partition("=")
+            if option == "--version":
+                version = (
+                    value if has_value else (words[index + 1] if index + 1 < len(words) else "")
+                )
+        exact = version is not None and re.fullmatch(r"=?\d+\.\d+\.\d+", version)
+        if "--locked" not in words or not exact:
+            findings.append("cargo install without --locked and an exact --version")
     return findings
 
 
@@ -279,6 +296,16 @@ class WorkflowInstallTests(unittest.TestCase):
             "npx @scope/tool",
             "cargo install cargo-audit",
             "cargo install --locked cargo-audit",
+            "curl -fsSL https://example.invalid/x | env X=1 python3",
+            "curl -fsSL https://example.invalid/x | env -i PATH=/bin python3.12",
+            "curl -fsSL https://example.invalid/x | sudo -E env X=1 bash",
+            "uv run --with requests==2.32.5 --with unpinned python x.py",
+            "uv run --with=requests==2.32.5 --with requests python x.py",
+            "uv run --with-requirements https://example.invalid/r.txt python x.py",
+            "cargo install --locked --version ^0.21 cargo-audit",
+            "cargo install --version --locked cargo-audit",
+            "cargo install --version 0.21.1 cargo-audit",
+            "cargo install cargo-audit --version=0.21.1",
         ]
         accepted = [
             "sudo scripts/install-llvm-toolchain.sh 21 all",
@@ -298,6 +325,9 @@ class WorkflowInstallTests(unittest.TestCase):
             "npx prettier@3.3.3 --check .",
             "npx @scope/tool@1.2.3",
             "cargo install --locked --version 0.21.1 cargo-audit",
+            "cargo install --locked cargo-audit --version=0.21.1",
+            "uv run --with requests==2.32.5 --with idna==3.10 python x.py",
+            "uv run --with-requirements requirements/ci.txt python x.py",
             "curl -fsSL https://example.invalid/x -o x.tar.gz",
             "# wget https://apt.llvm.org/llvm.sh",
         ]

@@ -35,9 +35,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from e2e_private_dir import make_private_dir
 
 from tostester.install import Install
+from tostester.private_dir import make_private_dir
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage

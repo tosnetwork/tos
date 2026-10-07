@@ -232,6 +232,22 @@ written, and the implementation was reviewed until it was accepted.
     reused local build directory must be at the pinned commit but its output
     is not re-verified; `-f` gives a clean, verified build, and CI always
     builds clean.
+  - The wasm build script was run locally with `-f`.
+    - With this branch unmodified, all four libraries built at their pinned
+      commits; OpenSSL 3.5.4 needed `no-afalgeng`. The script then stopped,
+      so the full-script gate did not pass.
+    - The stop came from two problems that already exist on main and are not
+      changed here:
+      - `crypto/vm/boc.cpp:1132` narrows a 64-bit value to `size_t` in an
+        initializer, which wasm32 rejects (from 7a6ce619b);
+      - `emulator-emscripten` needs the generated
+        `smartcont/auto/dns-manual-code.cpp`, which the script does not
+        produce.
+    - With the `boc.cpp` line patched in the scratch copy only,
+      `func`, `fift`, `funcfiftlib` and `tlbc` linked to wasm against these
+      libraries. `emulator-emscripten` still failed.
+    - The wasm workflow runs only on master/testnet, so pull-request CI did
+      not show either problem.
   - The verifier also checks a recorded upstream SHA-1.
 - A5, regressions:
   - The Android build no longer aborts on a fresh OpenSSL tree.

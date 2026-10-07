@@ -40,11 +40,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from e2e_private_dir import make_private_dir
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
+from tostester.private_dir import make_private_dir
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build-remove-workchains-full"))
