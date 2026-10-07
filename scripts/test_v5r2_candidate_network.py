@@ -136,6 +136,10 @@ class CandidateReadbackTests(unittest.TestCase):
                     )
 
             self.assertEqual(set(invoke()), {"wallet", "module", "vault"})
+            fixture["input"]["recipient_code"] = fixture["input"]["wallet_code"]
+            fixture["output"]["recipient_data"] = fixture["output"]["wallet_data"]
+            fixture["output"]["recipient_init"] = fixture["output"]["wallet_init"]
+            self.assertEqual(set(invoke()), {"wallet", "module", "vault", "recipient"})
             for corruption in ("code", "inactive", "checkpoint"):
                 with self.subTest(corruption=corruption), self.assertRaises(ValueError):
                     invoke(corruption)

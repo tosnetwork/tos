@@ -183,7 +183,7 @@ def verify_installed_accounts(root, build, network, out, fixture, point):
     verifier = build / "lite-client/proof-verify/tos-proof-verify"
     target = {key: point[key] for key in ("workchain", "shard", "seqno", "root_hash", "file_hash")}
     results = {}
-    for name in ("wallet", "module", "vault"):
+    for name in (("wallet", "module", "vault", "recipient") if "recipient_init" in fixture["output"] else ("wallet", "module", "vault")):
         init = Boc(bytes.fromhex(fixture["output"][name + "_init"])).deserialize()
         code = Boc(bytes.fromhex(fixture["input"][name + "_code"])).deserialize()
         data = Boc(bytes.fromhex(fixture["output"][name + "_data"])).deserialize()
@@ -255,7 +255,24 @@ def main():
         type=Path,
         help="public SDK fixture for positive wallet/module/vault account proofs",
     )
+    parser.add_argument("--network-input", type=Path, help="Four-account public-test signed payment export")
+    parser.add_argument("--broadcast", action="store_true", help="Broadcast exported test message and retain raw transaction observations")
     args = parser.parse_args()
+    require(not (args.sdk_fixture and args.network_input), "select one account fixture")
+    require(not args.broadcast or args.network_input, "broadcast requires public-test network input")
+    fixture = None
+    exported = None
+    if args.network_input:
+        exported = json.loads(args.network_input.read_text())
+        require(exported["global_id"] == 1 and exported["network"] == "42" * 32, "test export namespace mismatch")
+        require(set(exported["accounts"]) == {"wallet", "module", "vault", "recipient"}, "test export roles mismatch")
+        fixture = {"input": {"global_id": 1, "network": "42" * 32}, "output": {}}
+        for role, account in exported["accounts"].items():
+            fixture["input"][role + "_code"] = account["code"]
+            fixture["output"][role + "_data"] = account["data"]
+            fixture["output"][role + "_init"] = account["state_init"]
+    elif args.sdk_fixture:
+        fixture = json.loads(args.sdk_fixture.read_text())
     root = Path(__file__).resolve().parents[1]
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -282,14 +299,14 @@ def main():
         "--boot-timeout",
         "180",
     ]
-    if args.sdk_fixture is not None:
+    if fixture is not None:
         fixture_out = out / "funded-accounts"
         subprocess.run(
             [
                 sys.executable,
                 str(root / "scripts/build-v5r2-basechain-fixture.py"),
-                "--sdk-fixture",
-                str(args.sdk_fixture.resolve()),
+                "--network-input" if args.network_input else "--sdk-fixture",
+                str((args.network_input or args.sdk_fixture).resolve()),
                 "--build-dir",
                 str(args.build_dir.resolve()),
                 "--out",
@@ -332,15 +349,43 @@ def main():
             gas = validate(cells)
             proof = verify_live_config(root, args.build_dir.resolve(), network, out, cells)
             installed = None
-            if args.sdk_fixture is not None:
+            if fixture is not None:
                 installed = verify_installed_accounts(
                     root,
                     args.build_dir.resolve(),
                     network,
                     out,
-                    json.loads(args.sdk_fixture.read_text()),
+                    fixture,
                     proof["target"],
                 )
+            broadcast = None
+            if args.broadcast:
+                message = (args.network_input.parent / "PUBLIC-TEST-ONLY-external.boc").read_bytes()
+                require(hashlib.sha256(message).hexdigest() == exported["message_sha256"], "signed export message hash mismatch")
+                require(exported["signing_time"] <= int(time.time()) < exported["valid_until"], "signed export outside validity window")
+                def query(method, params):
+                    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+                    req = urllib.request.Request("http://127.0.0.1:38545/jsonRPC", data=payload,
+                                                 headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        return json.load(response)
+                broadcast = query("sendBoc", {"boc": base64.b64encode(message).decode()})
+                (out / "broadcast-result.json").write_text(json.dumps(broadcast, indent=2) + "\n")
+                require(broadcast.get("ok") is True, "test message broadcast refused")
+                observations = {}
+                deadline = time.monotonic() + 90
+                while time.monotonic() < deadline:
+                    for role, account in exported["accounts"].items():
+                        observations[role] = query("getTransactions", {"address": account["address"], "limit": 16})
+                    (out / "transaction-observations.json").write_text(json.dumps(observations, indent=2) + "\n")
+                    if all(v.get("ok") is True and v.get("result") for v in observations.values()):
+                        break
+                    require(process.poll() is None, "candidate exited during transaction observation")
+                    time.sleep(1)
+                require(all(v.get("ok") is True and v.get("result") for v in observations.values()),
+                        "four-account transaction observation deadline exceeded")
+                # Raw RPC observations are retained for a separate transaction-chain verifier.
+                # Nonempty histories and sendBoc success do not prove intended delivery.
             report = {
                 "scope": "Disposable candidate boot and live config/account proofs; genesis allocation is not deployment transaction, signing or lifecycle acceptance",
                 "source": subprocess.check_output(
@@ -352,6 +397,8 @@ def main():
                 "gas": gas,
                 "authenticated_config": proof,
                 "installed_genesis_accounts": installed,
+                "broadcast": broadcast,
+                "transaction_delivery_verified": False,
                 "binaries": {
                     name: hashlib.sha256((args.build_dir / name / name).read_bytes()).hexdigest()
                     for name in ("validator-engine", "dht-server")
