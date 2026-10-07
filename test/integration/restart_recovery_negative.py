@@ -23,8 +23,8 @@ cleanup ARMED. One startup cleanup pass evaluates them all. Asserts:
     via the ordinary path -- examined eligible, reserved, the deleter confirms the
     already-absent dir gone, and the durable orphan record is erase-acked -- with no fault.
   NON-VACUOUS: every injected record was read back through the production decoder
-    (POISON_LOADABLE), and a pass examined the WHOLE pending set (max_pending < scan
-    budget), so the poisons were examined, not skipped.
+    (POISON_LOADABLE), and a pass wrapped -- it scanned to the end of the durable store --
+    so the poisons were examined, not skipped.
 
 Usage: uv run python test/integration/restart_recovery_negative.py [NODE_DIR] [--seconds N]
 NODE_DIR defaults to node2 of the newest .validator-election-experiment run.
@@ -44,13 +44,18 @@ REPO = Path(__file__).resolve().parents[2]
 BUILD = REPO / "build"
 INJECT = BUILD / "inject-validator-cleanup-record"
 ENGINE = BUILD / "validator-engine/validator-engine"
-SCAN_BUDGET = 256  # kValidatorConsensusCleanupScanBudget
 
-FATAL = re.compile(r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b")
+FATAL = re.compile(
+    r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b"
+)
 RESERVE = re.compile(r"VALCLEANUP reserve session=(?P<session>\S+)")
-PASS = re.compile(r"VALCLEANUP pass gc_seqno=(?P<gc>\d+) pending=(?P<pending>\d+) reserved=(?P<reserved>\d+)")
+PASS = re.compile(
+    r"VALCLEANUP pass gc_seqno=(?P<gc>\d+) examined=(?P<examined>\d+) reserved=(?P<reserved>\d+) wrapped=(?P<wrapped>[01])"
+)
 EVAL = re.compile(r"VALCLEANUP eval session=(?P<session>\S+) eligible=(?P<eligible>[01])")
-DELETE_DONE = re.compile(r"VALCLEANUP delete_done session=(?P<session>\S+).* confirmed_gone=(?P<gone>[01])")
+DELETE_DONE = re.compile(
+    r"VALCLEANUP delete_done session=(?P<session>\S+).* confirmed_gone=(?P<gone>[01])"
+)
 ERASE_ACK = re.compile(r"VALCLEANUP erase_ack session=(?P<session>\S+)")
 FUTURE_SEQNO = 9000000
 
@@ -68,9 +73,27 @@ def _zerostate_hashes(node: Path) -> tuple[str, str]:
     return zs["root_hash"], zs["file_hash"]
 
 
-def _inject(node: Path, seed: int, retire_seqno: int, root_b64: str, file_b64: str, dir_wc: int, dir_cc: int,
-            predelete: bool = False) -> str:
-    cmd = [str(INJECT), "write", str(node), str(seed), str(retire_seqno), root_b64, file_b64, str(dir_wc), str(dir_cc)]
+def _inject(
+    node: Path,
+    seed: int,
+    retire_seqno: int,
+    root_b64: str,
+    file_b64: str,
+    dir_wc: int,
+    dir_cc: int,
+    predelete: bool = False,
+) -> str:
+    cmd = [
+        str(INJECT),
+        "write",
+        str(node),
+        str(seed),
+        str(retire_seqno),
+        root_b64,
+        file_b64,
+        str(dir_wc),
+        str(dir_cc),
+    ]
     if predelete:
         cmd.append("predelete")
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -87,7 +110,9 @@ def _inject(node: Path, seed: int, retire_seqno: int, root_b64: str, file_b64: s
     # durable record must survive the deletion (a post-delete re-read), else we did not
     # actually reconstruct the {dir gone, record present} boundary state.
     if predelete and (m.group("g") != "1" or m.group("lp") != "1"):
-        raise SystemExit(f"injection seed={seed} predelete did not reconstruct {{dir gone, record present}}: {r.stdout}")
+        raise SystemExit(
+            f"injection seed={seed} predelete did not reconstruct {{dir gone, record present}}: {r.stdout}"
+        )
     if not predelete and m.group("g") != "0":
         raise SystemExit(f"injection seed={seed} unexpectedly deleted dir: {r.stdout}")
     return m.group("s"), m.group("d")
@@ -113,7 +138,7 @@ def main() -> int:
     ap.add_argument("--seconds", type=float, default=70.0)
     args = ap.parse_args()
 
-    node = (args.node_dir or _latest_node())
+    node = args.node_dir or _latest_node()
     if node is None or not (node / "state").is_dir():
         print("ERROR: no completed node dir found", file=sys.stderr)
         return 2
@@ -128,27 +153,81 @@ def main() -> int:
     # condition; crash_boundary2 shares CONTROL's eligible config but is pre-deleted.
     #   name            seed retire_seqno  root_b64  file_b64  dir_wc dir_cc  expect_del  predelete vetoed_by
     fixtures = [
-        ("control",         10, 0,            root_b64, file_b64, -1, 0,           True,  False, None),
-        ("poison_ancestry", 20, FUTURE_SEQNO, root_b64, file_b64, -1, 0,           False, False, "B: retirement not an ancestor of GC"),
-        ("poison_obsolete", 30, 0,            root_b64, file_b64, -1, FUTURE_SEQNO, False, False, "C: dir cc >= on-chain cc (not obsolete)"),
-        ("poison_sentinel", 40, 0,            root_b64, file_b64, 99, 0,           False, False, "GC oracle sentinel: unknown workchain shard"),
+        ("control", 10, 0, root_b64, file_b64, -1, 0, True, False, None),
+        (
+            "poison_ancestry",
+            20,
+            FUTURE_SEQNO,
+            root_b64,
+            file_b64,
+            -1,
+            0,
+            False,
+            False,
+            "B: retirement not an ancestor of GC",
+        ),
+        (
+            "poison_obsolete",
+            30,
+            0,
+            root_b64,
+            file_b64,
+            -1,
+            FUTURE_SEQNO,
+            False,
+            False,
+            "C: dir cc >= on-chain cc (not obsolete)",
+        ),
+        (
+            "poison_sentinel",
+            40,
+            0,
+            root_b64,
+            file_b64,
+            99,
+            0,
+            False,
+            False,
+            "GC oracle sentinel: unknown workchain shard",
+        ),
         # Mid-flight crash reconstruction: eligible record whose dir the REAL deleter
         # already removed. Restart must reconcile (already-absent => confirmed delete =>
         # erase the orphan record), not loop or fault. Deleted like the control, so
         # expect_deleted=True, but flagged so we assert its dir was ALREADY gone at inject.
-        ("crash_boundary2", 50, 0,            root_b64, file_b64, -1, 0,           True,  True,  None),
+        ("crash_boundary2", 50, 0, root_b64, file_b64, -1, 0, True, True, None),
     ]
     injected = {}
     for name, seed, rseq, rb, fb, wc, cc, expect_del, predel, why in fixtures:
         sess, d = _inject(node, seed, rseq, rb, fb, wc, cc, predelete=predel)
-        injected[name] = {"seed": seed, "session": sess, "dir": d, "expect_deleted": expect_del,
-                          "predeleted": predel, "vetoed_by": why}
-        print(f"injected {name}: session={sess} dir={d} expect_deleted={expect_del} predeleted={predel}", flush=True)
+        injected[name] = {
+            "seed": seed,
+            "session": sess,
+            "dir": d,
+            "expect_deleted": expect_del,
+            "predeleted": predel,
+            "vetoed_by": why,
+        }
+        print(
+            f"injected {name}: session={sess} dir={d} expect_deleted={expect_del} predeleted={predel}",
+            flush=True,
+        )
 
     # Relaunch the engine standalone on its db_root, cleanup ARMED.
     restart_log = node / "restart-recovery.log"
-    cmd = [str(ENGINE), "--global-config", "config.global.json", "--local-config", "config.json",
-           "--db", ".", "-v", "3", "--enable-validator-consensus-cleanup", "--initial-sync-delay", "2"]
+    cmd = [
+        str(ENGINE),
+        "--global-config",
+        "config.global.json",
+        "--local-config",
+        "config.json",
+        "--db",
+        ".",
+        "-v",
+        "3",
+        "--enable-validator-consensus-cleanup",
+        "--initial-sync-delay",
+        "2",
+    ]
     exited_early = False
     with restart_log.open("w") as lf:
         proc = subprocess.Popen(cmd, cwd=str(node), stdout=lf, stderr=subprocess.STDOUT)
@@ -172,7 +251,15 @@ def main() -> int:
     text = restart_log.read_text(errors="replace")
     fatals = [ln[:400] for ln in text.splitlines() if FATAL.search(ln)]
     reserves = {m.group("session") for m in RESERVE.finditer(text)}
-    passes = [(int(m.group("gc")), int(m.group("pending")), int(m.group("reserved"))) for m in PASS.finditer(text)]
+    passes = [
+        (
+            int(m.group("gc")),
+            int(m.group("examined")),
+            int(m.group("reserved")),
+            int(m.group("wrapped")),
+        )
+        for m in PASS.finditer(text)
+    ]
     # per-session eligibility DECISIONS the engine actually made this run (definitive: a
     # session appears here iff a pass examined it, with the decision it reached).
     evals: dict[str, set[int]] = {}
@@ -202,13 +289,19 @@ def main() -> int:
     if fatals:
         failures.append(f"{len(fatals)} fatal/crash diagnostics after restart")
     if exited_early:
-        failures.append(f"engine exited on its own before shutdown (code {early_exit_code}) -- crash/early-exit")
+        failures.append(
+            f"engine exited on its own before shutdown (code {early_exit_code}) -- crash/early-exit"
+        )
     if not passes:
         failures.append("no VALCLEANUP cleanup pass ran after reopen")
+    elif not any(p[3] == 1 for p in passes):
+        failures.append("no cleanup pass scanned to the end of the durable store (no wrapped=1)")
     # instrument-live: control must be EXAMINED, judged eligible, reserved, deleted, erased.
     c = results["control"]
     if not c["evaluated"] or c["eligible_decisions"] != [1]:
-        failures.append(f"CONTROL not examined-as-eligible (evaluated={c['evaluated']} decisions={c['eligible_decisions']})")
+        failures.append(
+            f"CONTROL not examined-as-eligible (evaluated={c['evaluated']} decisions={c['eligible_decisions']})"
+        )
     if not c["reserved"]:
         failures.append("CONTROL (eligible) was NOT reserved -- instrument not proven live")
     if c["dir_present"]:
@@ -224,30 +317,44 @@ def main() -> int:
     # is exercised separately by crash_boundary_recovery.py.)
     b2 = results["crash_boundary2"]
     if not b2["evaluated"] or b2["eligible_decisions"] != [1]:
-        failures.append(f"BOUNDARY2 not examined-as-eligible (evaluated={b2['evaluated']} decisions={b2['eligible_decisions']})")
+        failures.append(
+            f"BOUNDARY2 not examined-as-eligible (evaluated={b2['evaluated']} decisions={b2['eligible_decisions']})"
+        )
     if not b2["reserved"]:
-        failures.append("BOUNDARY2 orphan record was NOT reserved -- restart did not pick up the mid-flight state")
+        failures.append(
+            "BOUNDARY2 orphan record was NOT reserved -- restart did not pick up the mid-flight state"
+        )
     if b2["confirmed_gone_decisions"] != [1]:
-        failures.append(f"BOUNDARY2 deleter did not confirm already-absent dir gone (confirmed_gone={b2['confirmed_gone_decisions']})")
+        failures.append(
+            f"BOUNDARY2 deleter did not confirm already-absent dir gone (confirmed_gone={b2['confirmed_gone_decisions']})"
+        )
     if not b2["erase_acked"]:
-        failures.append("BOUNDARY2 durable record erase was not acked -- orphan record not reconciled")
+        failures.append(
+            "BOUNDARY2 durable record erase was not acked -- orphan record not reconciled"
+        )
     if b2["dir_present"]:
         failures.append("BOUNDARY2 dir present after restart (should have stayed gone)")
     if b2["record_state"] != "ABSENT":
-        failures.append(f"BOUNDARY2 orphan record not erased on restart (record_state={b2['record_state']})")
+        failures.append(
+            f"BOUNDARY2 orphan record not erased on restart (record_state={b2['record_state']})"
+        )
     # per-veto negatives: each poison must be EXAMINED, judged INELIGIBLE, not reserved,
     # dir retained, and record confirmed still present.
     for name in ("poison_ancestry", "poison_obsolete", "poison_sentinel"):
         p = results[name]
         if not p["evaluated"] or p["eligible_decisions"] != [0]:
-            failures.append(f"{name} not examined-as-ineligible (evaluated={p['evaluated']} decisions={p['eligible_decisions']}); "
-                            f"cannot attribute retention to veto '{p['vetoed_by']}'")
+            failures.append(
+                f"{name} not examined-as-ineligible (evaluated={p['evaluated']} decisions={p['eligible_decisions']}); "
+                f"cannot attribute retention to veto '{p['vetoed_by']}'"
+            )
         if p["reserved"]:
             failures.append(f"{name} was RESERVED for deletion (veto '{p['vetoed_by']}' failed)")
         if not p["dir_present"]:
             failures.append(f"{name} dir was DELETED (veto '{p['vetoed_by']}' failed)")
         if p["record_state"] != "PRESENT":
-            failures.append(f"{name} record not confirmed present (record_state={p['record_state']})")
+            failures.append(
+                f"{name} record not confirmed present (record_state={p['record_state']})"
+            )
 
     verdict = "PASS" if not failures else "FAIL"
     summary = {
@@ -270,7 +377,9 @@ def main() -> int:
             "live-consensus rejoin (peers are down here)."
         ),
     }
-    (node / "restart-recovery-negative-analysis.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (node / "restart-recovery-negative-analysis.json").write_text(
+        json.dumps(summary, indent=2) + "\n"
+    )
     print(json.dumps(summary, indent=2))
     return 0 if not failures else 1
 

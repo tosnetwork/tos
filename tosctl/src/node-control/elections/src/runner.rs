@@ -15,16 +15,18 @@ use common::{
     app_config::{BindingStatus, ElectionsConfig, NodeBinding, StakePolicy},
     chain_utils::nanotos_to_dec_string,
     snapshot::{
-        ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus, OurElectionParticipant,
-        ParticipationStatus, SnapshotStore, StakeSubmission, TimeRange, ValidatorNodeSnapshot,
-        ValidatorsSnapshot,
+        ElectionsParticipantSnapshot, ElectionsSnapshot, ElectionsStatus,
+        OperatingAuthorizationSnapshot, OurElectionParticipant, ParticipationStatus, SnapshotStore,
+        StakeSubmission, TimeRange, ValidatorNodeSnapshot, ValidatorsSnapshot,
     },
     task_cancellation::CancellationCtx,
     time_format,
 };
 use contracts::{
-    ElectionsInfo, ElectorWrapper, NominatorWrapper, Participant, Wallet, elector::PastElections,
+    ElectionsInfo, ElectorWrapper, NominatorWrapper, Participant, Wallet,
+    elector::PastElections,
     nominator,
+    validator_controller::{ControllerOperations, OperatingThresholds},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -47,6 +49,8 @@ const RECOVER_FEE: u64 = 200_000_000;
 const WALLET_COMPUTE_FEE: u64 = 200_000_000;
 /// Reserved minimum balance on the wallet (or pool) for stake calculations.
 const MIN_NANOTOS_FOR_STORAGE: u64 = 1_000_000_000;
+/// How often the pool controller's operating authorization is re-read.
+const OPERATING_CHECK_INTERVAL: u64 = 300;
 
 type OnStatusChange = Arc<dyn Fn(HashMap<String, BindingStatus>) + Send + Sync>;
 
@@ -103,6 +107,8 @@ struct Node {
     binding_status: BindingStatus,
     /// Amount to recover from elector, computed each tick.
     last_recover_amount: u64,
+    /// The pool controller's operating authorization, as last read.
+    operating_authorization: Option<OperatingAuthorizationSnapshot>,
 }
 
 impl Node {
@@ -174,6 +180,8 @@ pub(crate) struct ElectionRunner {
     default_max_factor: f32,
     default_stake_policy: StakePolicy,
     past_elections: Vec<PastElections>,
+    /// When a controller's operating authorization is reported as running low.
+    operating_thresholds: OperatingThresholds,
     // Snapshot cache updated during tick execution and published to SnapshotStore in run_loop().
     snapshot_cache: SnapshotCache,
 }
@@ -268,11 +276,13 @@ impl ElectionRunner {
                             validator_config: ValidatorConfig::new(),
                             binding_status,
                             last_recover_amount: 0,
+                            operating_authorization: None,
                         },
                     ))
                 })
                 .collect::<HashMap<String, Node>>(),
             elector,
+            operating_thresholds: operating_thresholds(elections_config),
             snapshot_cache: SnapshotCache::default(),
             past_elections: vec![],
         }
@@ -300,6 +310,7 @@ impl ElectionRunner {
                     self.refresh_validator_set().await;
                     self.refresh_next_validator_set().await;
                     self.refresh_validator_configs().await;
+                    self.refresh_operating_authorizations().await;
 
                     if let Err(e) = &self.run().await {
                         tracing::error!("runner tick error: {:#}", e);
@@ -594,6 +605,7 @@ impl ElectionRunner {
                     max_factor,
                 });
                 node.key_id = key_id;
+                warn_operating_authorization(node_id, node);
                 Self::send_stake(node_id, node, stake).await?;
                 Ok(())
             }
@@ -656,6 +668,7 @@ impl ElectionRunner {
                         if let Some(p) = node.participant.as_mut() {
                             p.stake = stake;
                         }
+                        warn_operating_authorization(node_id, node);
                         Self::send_stake(node_id, node, stake).await?;
                     }
                 }
@@ -1031,6 +1044,43 @@ impl ElectionRunner {
         self.snapshot_cache.last_next_validator_set = None;
     }
 
+    /// Reads each pool controller's operating authorization (kind 4) and reports it.
+    /// Only reads: the authorization is signed offline by the controller root, so a
+    /// shortfall is logged and published, never repaired here.
+    pub(crate) async fn refresh_operating_authorizations(&mut self) {
+        let now = time_format::now();
+        let thresholds = self.operating_thresholds;
+        for (node_id, node) in self.nodes.iter_mut() {
+            let Some(pool) = node.pool.clone() else {
+                continue;
+            };
+            let fresh = node.operating_authorization.as_ref().is_some_and(|last| {
+                last.error.is_none()
+                    && now.saturating_sub(last.checked_at) < OPERATING_CHECK_INTERVAL
+            });
+            if fresh {
+                continue;
+            }
+            let previous = node.operating_authorization.as_ref();
+            let controller = match pool.get_roles().await {
+                Ok(roles) => roles.controller_address,
+                Err(e) => {
+                    let error = format!("cannot read the pool's controller: {e:#}");
+                    let snapshot = failed_operating_snapshot(previous, None, error, now);
+                    log_operating_authorization(node_id, &snapshot);
+                    node.operating_authorization = Some(snapshot);
+                    continue;
+                }
+            };
+            let reading = node.api.controller_operations(&controller).await;
+            let snapshot = operating_snapshot(&controller, reading, previous, now, &thresholds);
+            if let Some(snapshot) = &snapshot {
+                log_operating_authorization(node_id, snapshot);
+            }
+            node.operating_authorization = snapshot;
+        }
+    }
+
     async fn refresh_validator_configs(&mut self) {
         tracing::trace!("fetch validator configs");
         for (node_id, node) in self.nodes.iter_mut() {
@@ -1181,6 +1231,7 @@ impl ElectionRunner {
                 stake_accepted: node.stake_accepted,
                 last_error: node.last_error.clone(),
                 binding_status: node.binding_status,
+                operating_authorization: node.operating_authorization.clone(),
             });
         }
 
@@ -1418,4 +1469,164 @@ async fn find_validator_entries(
     }
 
     Ok((current_entry, is_in_next))
+}
+
+fn operating_thresholds(config: &ElectionsConfig) -> OperatingThresholds {
+    let warnings = &config.operating_authorization;
+    let day = 86_400_u64;
+    OperatingThresholds {
+        target_runway_secs: u64::from(warnings.target_days).saturating_mul(day),
+        runway_warn_percent: warnings.warn_percent,
+        expiry_warn_secs: u64::from(warnings.expiry_warn_days).saturating_mul(day),
+    }
+}
+
+/// What the elections task publishes about a controller's operating authorization.
+/// `None` when the provider cannot read it at all.
+/// A failed read. The last successful values, if any, stay visible but are marked
+/// historical; a reader must not take them for the current state.
+pub(crate) fn failed_operating_snapshot(
+    previous: Option<&OperatingAuthorizationSnapshot>,
+    controller: Option<&MsgAddressInt>,
+    error: String,
+    now: u64,
+) -> OperatingAuthorizationSnapshot {
+    let mut snapshot = match previous {
+        Some(previous) => previous.clone(),
+        None => OperatingAuthorizationSnapshot::default(),
+    };
+    // The values keep the identity they were read for. A failed read for another
+    // controller is named separately, never written over them.
+    snapshot.attempted_controller = controller
+        .map(ToString::to_string)
+        .filter(|attempted| previous.is_none() || *attempted != snapshot.controller);
+    if previous.is_none() {
+        snapshot.controller = snapshot.attempted_controller.clone().unwrap_or_default();
+    }
+    snapshot.stale = snapshot.checked_at > 0;
+    snapshot.attempted_at = now;
+    snapshot.error = Some(error);
+    snapshot
+}
+
+pub(crate) fn operating_snapshot(
+    controller: &MsgAddressInt,
+    reading: anyhow::Result<Option<ControllerOperations>>,
+    previous: Option<&OperatingAuthorizationSnapshot>,
+    now: u64,
+    thresholds: &OperatingThresholds,
+) -> Option<OperatingAuthorizationSnapshot> {
+    let failed = |error: String| failed_operating_snapshot(previous, Some(controller), error, now);
+    let operations = match reading {
+        Ok(Some(operations)) => operations,
+        Ok(None) => return None,
+        Err(e) => return Some(failed(format!("{e:#}"))),
+    };
+    let assessment = match operations.assess(controller, now, thresholds) {
+        Ok(assessment) => assessment,
+        Err(e) => return Some(failed(format!("{e:#}"))),
+    };
+    let state = &operations.state;
+    Some(OperatingAuthorizationSnapshot {
+        controller: controller.to_string(),
+        checked_at: now,
+        block_seqno: operations.checkpoint.seqno,
+        attempted_at: now,
+        error: None,
+        stale: false,
+        attempted_controller: None,
+        funds: state.funds.to_string(),
+        allowance: state.allowance.to_string(),
+        per_request_limit: state.limit.to_string(),
+        storage_floor: state.floor.to_string(),
+        expires: state.expires,
+        payer: state.payer.to_string(),
+        grant: assessment.grant.to_string(),
+        stakes_remaining: assessment.stakes_remaining.to_string(),
+        runway_secs: assessment.runway_secs,
+        expires_in_secs: assessment.expires_in_secs,
+        relay_pending: operations.relay_pending || operations.retry_fees_held,
+        blocks_next_stake: assessment.blocks_next_stake(),
+        warnings: assessment.warnings.iter().map(ToString::to_string).collect(),
+    })
+}
+
+const RENEWAL_HINT: &str = "prepare a renewal with `tosctl controller operations plan` and sign it offline with the controller root";
+
+fn log_operating_authorization(node_id: &str, snapshot: &OperatingAuthorizationSnapshot) {
+    if let Some(error) = &snapshot.error {
+        if snapshot.stale {
+            tracing::warn!(
+                "node [{}] controller {} operating authorization could not be checked: {}; the published values are from {} and may be out of date",
+                node_id,
+                snapshot.controller,
+                error,
+                time_format::format_ts(snapshot.checked_at)
+            );
+        } else {
+            tracing::warn!(
+                "node [{}] controller {} operating authorization could not be checked: {}",
+                node_id,
+                snapshot.controller,
+                error
+            );
+        }
+        return;
+    }
+    tracing::info!(
+        "node [{}] controller {} operating authorization: funds={} allowance={} limit={} expires={} grant={} stakes_remaining={} runway_secs={}",
+        node_id,
+        snapshot.controller,
+        snapshot.funds,
+        snapshot.allowance,
+        snapshot.per_request_limit,
+        snapshot.expires,
+        snapshot.grant,
+        snapshot.stakes_remaining,
+        snapshot.runway_secs
+    );
+    for warning in &snapshot.warnings {
+        if snapshot.blocks_next_stake {
+            tracing::error!(
+                "node [{}] controller {} operating authorization: {}; {}",
+                node_id,
+                snapshot.controller,
+                warning,
+                RENEWAL_HINT
+            );
+        } else {
+            tracing::warn!(
+                "node [{}] controller {} operating authorization: {}; {}",
+                node_id,
+                snapshot.controller,
+                warning,
+                RENEWAL_HINT
+            );
+        }
+    }
+}
+
+/// Repeats, at the moment of staking, why the relay is expected to be refused.
+/// The stake is still sent: this task cannot renew the authorization, and a stake
+/// the controller refuses comes back to the pool.
+fn warn_operating_authorization(node_id: &str, node: &Node) {
+    let Some(snapshot) = &node.operating_authorization else {
+        return;
+    };
+    if snapshot.blocks_next_stake {
+        tracing::error!(
+            "node [{}] staking although controller {} operating authorization will refuse the relay: {}; {}",
+            node_id,
+            snapshot.controller,
+            snapshot.warnings.join("; "),
+            RENEWAL_HINT
+        );
+    } else if !snapshot.warnings.is_empty() {
+        tracing::warn!(
+            "node [{}] staking with controller {} operating authorization warnings: {}",
+            node_id,
+            snapshot.controller,
+            snapshot.warnings.join("; ")
+        );
+    }
 }

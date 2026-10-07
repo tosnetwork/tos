@@ -288,7 +288,8 @@ rebuilt and redeployed with the engine.
 
 ## The rotating development network
 
-`setup-testnet.sh --clean --rotate` creates the network with a bootstrap
+The local network installer (`setup-testnet.sh --clean --rotate`, maintained
+outside this repository) creates the network with a bootstrap
 validator set valid for 600 s, stage-A elections every 600 s
 (`tos-pq-elections.service`, rosters 1,2,3,7 and 1,2,3,4 alternating) and a
 fifth validator node 7. Every election is a configuration change and hence a

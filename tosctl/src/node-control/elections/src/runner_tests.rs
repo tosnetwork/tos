@@ -138,6 +138,10 @@ mock! {
         async fn export_public_key(&mut self, key_id: &[u8]) -> anyhow::Result<Vec<u8>>;
         async fn get_current_vset(&mut self) -> anyhow::Result<ValidatorSet>;
         async fn get_next_vset(&mut self) -> anyhow::Result<Option<ValidatorSet>>;
+        async fn controller_operations(
+            &mut self,
+            controller: &MsgAddressInt,
+        ) -> anyhow::Result<Option<contracts::validator_controller::ControllerOperations>>;
     }
 }
 
@@ -386,6 +390,7 @@ impl TestHarness {
                 policy_overrides: HashMap::new(),
                 max_factor: 3.0,
                 tick_interval: 10,
+                operating_authorization: Default::default(),
             },
             bindings: HashMap::new(),
         }
@@ -1287,6 +1292,7 @@ async fn test_multiple_nodes_one_excluded() {
         policy_overrides: HashMap::new(),
         max_factor: 3.0,
         tick_interval: 10,
+        operating_authorization: Default::default(),
     };
 
     let mut bindings = HashMap::new();
@@ -1729,6 +1735,7 @@ async fn test_node_without_wallet_skipped() {
         policy_overrides: HashMap::new(),
         max_factor: 3.0,
         tick_interval: 10,
+        operating_authorization: Default::default(),
     };
 
     let mut bindings = HashMap::new();
@@ -2143,4 +2150,224 @@ async fn test_participation_status_lifecycle() {
     node.stake_submissions.clear();
     runner.snapshot_cache.last_elections_status = ElectionsStatus::Closed;
     assert_eq!(get_status(&runner), ParticipationStatus::Idle);
+}
+
+// ---- Operating authorization (kind 4) ----
+
+fn controller_operations(expires: u32) -> contracts::validator_controller::ControllerOperations {
+    use contracts::validator_controller::{
+        ControllerAuthority, ControllerOperations, OperatingState, RelayFees,
+    };
+    ControllerOperations {
+        authority: ControllerAuthority { epoch: 0, nonce: 4, algorithm: 1, key_id: [9; 32] },
+        state: OperatingState {
+            funds: 600_000_000_000,
+            allowance: 600_000_000_000,
+            limit: 20_000_000_000,
+            floor: 10_000_000_000,
+            expires,
+            payer: wallet_address(),
+        },
+        relay_pending: false,
+        retry_fees_held: false,
+        balance: 1_000_000_000_000,
+        storage: None,
+        fees: RelayFees {
+            control_value: 1_000_000_000,
+            callback_value: 2_000_000_000,
+            grant: 6_000_000_000,
+            funding_processing: 3_000_000_000,
+        },
+        gas_prices: Default::default(),
+        storage_prices: Vec::new(),
+        elections_interval_secs: 3600,
+        checkpoint: contracts::MasterchainCheckpoint {
+            seqno: 99,
+            root_hash: "ab".repeat(32),
+            file_hash: "cd".repeat(32),
+        },
+    }
+}
+
+fn pool_with_controller(harness: &mut TestHarness) {
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    let pool = harness.pool_mock.as_mut().expect("pool");
+    pool.expect_address().returning(pool_address);
+    pool.expect_get_roles().returning(|| {
+        Ok(NominatorRoles {
+            owner_address: wallet_address(),
+            validator_address: wallet_address(),
+            controller_address: MsgAddressInt::standard(-1, controller_addr()),
+        })
+    });
+}
+
+#[tokio::test]
+async fn an_expired_operating_authorization_is_published_as_blocking() {
+    let mut harness = TestHarness::new().with_pool();
+    pool_with_controller(&mut harness);
+    let expired = (time_format::now() - 1) as u32;
+    harness
+        .provider_mock
+        .expect_controller_operations()
+        .withf(|controller| *controller == MsgAddressInt::standard(-1, controller_addr()))
+        .times(1)
+        .returning(move |_| Ok(Some(controller_operations(expired))));
+    let mut runner = harness.build("node-1");
+
+    runner.refresh_operating_authorizations().await;
+    let snapshot = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(snapshot.blocks_next_stake);
+    assert!(snapshot.error.is_none());
+    assert_eq!(snapshot.funds, "600000000000");
+    assert_eq!(snapshot.stakes_remaining, "100");
+    assert!(snapshot.warnings.iter().any(|w| w.contains("expired")), "{:?}", snapshot.warnings);
+
+    // A fresh reading is not repeated within the check interval (times(1) above).
+    runner.refresh_operating_authorizations().await;
+    let published = runner.build_validators_snapshot().await;
+    assert_eq!(published.controlled_nodes[0].operating_authorization, Some(snapshot));
+}
+
+#[tokio::test]
+async fn a_healthy_operating_authorization_raises_nothing() {
+    let mut harness = TestHarness::new().with_pool();
+    pool_with_controller(&mut harness);
+    let later = (time_format::now() + 60 * 86_400) as u32;
+    harness.provider_mock.expect_controller_operations().returning(move |_| {
+        // 100 stakes at one per 18.2 h is about 76 days, above 25% of 30 days.
+        let mut operations = controller_operations(later);
+        operations.elections_interval_secs = 65_536;
+        Ok(Some(operations))
+    });
+    let mut runner = harness.build("node-1");
+    runner.refresh_operating_authorizations().await;
+    let snapshot = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(!snapshot.blocks_next_stake);
+    assert!(snapshot.warnings.is_empty(), "{:?}", snapshot.warnings);
+}
+
+#[tokio::test]
+async fn an_unreadable_operating_authorization_is_reported_and_retried() {
+    let mut harness = TestHarness::new().with_pool();
+    pool_with_controller(&mut harness);
+    harness
+        .provider_mock
+        .expect_controller_operations()
+        .times(2)
+        .returning(|_| Err(anyhow::anyhow!("get-method operating_state error: exit_code=11")));
+    let mut runner = harness.build("node-1");
+    runner.refresh_operating_authorizations().await;
+    let snapshot = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(snapshot.error.as_deref().is_some_and(|e| e.contains("operating_state")));
+    // A failed reading is not cached.
+    runner.refresh_operating_authorizations().await;
+}
+
+#[test]
+fn a_provider_without_chain_access_publishes_nothing() {
+    let controller = MsgAddressInt::standard(-1, controller_addr());
+    let thresholds = contracts::validator_controller::OperatingThresholds::default();
+    assert_eq!(operating_snapshot(&controller, Ok(None), None, 1, &thresholds), None);
+}
+
+#[test]
+fn operating_thresholds_come_from_the_elections_config() {
+    let mut config = ElectionsConfig::default();
+    config.operating_authorization.target_days = 10;
+    config.operating_authorization.warn_percent = 50;
+    config.operating_authorization.expiry_warn_days = 2;
+    let thresholds = operating_thresholds(&config);
+    assert_eq!(thresholds.target_runway_secs, 10 * 86_400);
+    assert_eq!(thresholds.runway_warn_percent, 50);
+    assert_eq!(thresholds.expiry_warn_secs, 2 * 86_400);
+}
+
+#[tokio::test]
+async fn a_controller_that_cannot_be_found_marks_the_last_reading_historical() {
+    let mut harness = TestHarness::new().with_pool();
+    harness.wallet_mock.expect_address().returning(wallet_address);
+    let pool = harness.pool_mock.as_mut().expect("pool");
+    pool.expect_address().returning(pool_address);
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = calls.clone();
+    pool.expect_get_roles().returning(move || {
+        if counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+            Ok(NominatorRoles {
+                owner_address: wallet_address(),
+                validator_address: wallet_address(),
+                controller_address: MsgAddressInt::standard(-1, controller_addr()),
+            })
+        } else {
+            Err(anyhow::anyhow!("get_roles exit_code=-13"))
+        }
+    });
+    let later = (time_format::now() + 60 * 86_400) as u32;
+    harness
+        .provider_mock
+        .expect_controller_operations()
+        .times(1)
+        .returning(move |_| Ok(Some(controller_operations(later))));
+    let mut runner = harness.build("node-1");
+
+    runner.refresh_operating_authorizations().await;
+    let good = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(good.error.is_none() && !good.stale);
+    assert_eq!(good.block_seqno, 99);
+
+    // Make the reading due again; the pool's controller can no longer be read.
+    if let Some(snapshot) =
+        runner.nodes.get_mut("node-1").and_then(|n| n.operating_authorization.as_mut())
+    {
+        snapshot.checked_at -= 1_000;
+    }
+    runner.refresh_operating_authorizations().await;
+    let failed = runner.nodes["node-1"].operating_authorization.clone().expect("published");
+    assert!(failed.error.as_deref().is_some_and(|e| e.contains("pool's controller")), "{failed:?}");
+    assert!(failed.stale, "old values must be marked historical");
+    assert_eq!(failed.funds, good.funds, "the last values stay visible");
+    assert_eq!(failed.checked_at, good.checked_at - 1_000, "checked_at names the old read");
+    assert!(failed.attempted_at > failed.checked_at);
+    let published = runner.build_validators_snapshot().await;
+    assert_eq!(published.controlled_nodes[0].operating_authorization, Some(failed));
+}
+
+#[test]
+fn a_failed_first_reading_is_an_error_not_history() {
+    let controller = MsgAddressInt::standard(-1, controller_addr());
+    let snapshot = failed_operating_snapshot(None, Some(&controller), "boom".into(), 5);
+    assert!(!snapshot.stale);
+    assert_eq!(snapshot.checked_at, 0);
+    assert_eq!(snapshot.attempted_at, 5);
+    assert_eq!(snapshot.error.as_deref(), Some("boom"));
+}
+
+/// A pool whose controller changed and whose new controller cannot be read must not
+/// present the old controller's values as the new one's.
+#[test]
+fn a_failed_read_for_another_controller_keeps_the_values_with_their_own_controller() {
+    let a = MsgAddressInt::standard(-1, [0xA1; 32]);
+    let b = MsgAddressInt::standard(-1, [0xB2; 32]);
+    let thresholds = contracts::validator_controller::OperatingThresholds::default();
+    let later = (time_format::now() + 60 * 86_400) as u32;
+    let good =
+        operating_snapshot(&a, Ok(Some(controller_operations(later))), None, 10, &thresholds)
+            .expect("a reading");
+    assert_eq!(good.controller, a.to_string());
+
+    let failed = failed_operating_snapshot(Some(&good), Some(&b), "boom".into(), 20);
+    assert_eq!(failed.controller, a.to_string(), "the values stay with controller A");
+    assert_eq!(failed.attempted_controller, Some(b.to_string()));
+    assert_eq!(failed.funds, good.funds);
+    assert!(failed.stale);
+
+    // The same controller failing again names no other controller.
+    let again = failed_operating_snapshot(Some(&good), Some(&a), "boom".into(), 30);
+    assert_eq!(again.controller, a.to_string());
+    assert_eq!(again.attempted_controller, None);
+
+    // A first failure has no values; it names the controller it tried.
+    let first = failed_operating_snapshot(None, Some(&b), "boom".into(), 40);
+    assert_eq!(first.controller, b.to_string());
+    assert!(!first.stale);
 }

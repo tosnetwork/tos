@@ -101,7 +101,7 @@ pub struct WalletRmCmd {
 pub struct WalletSendCmd {
     #[arg(short = 'f', long = "from", help = "Wallet name")]
     from: String,
-    #[arg(short = 't', long = "to", help = "Destination address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, short = 't', long = "to", help = "Destination address")]
     to: String,
     #[arg(short = 'a', long = "amount", help = "Amount in coins")]
     amount: f64,

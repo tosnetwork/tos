@@ -57,6 +57,19 @@ target_include_directories(tos_pq_consensus_signer PUBLIC "${CMAKE_CURRENT_SOURC
 target_compile_definitions(tos_pq_consensus_signer PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 target_link_libraries(tos_pq_consensus_signer PUBLIC tos_pq_consensus PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
 
+# The same signer for tests that need to move the key deadline's wall clock. Only this
+# library is compiled with TOS_PQ_SIGNER_TEST_CLOCK; the production library above has no
+# clock seam, which the pq-signer-no-test-clock test (root CMakeLists.txt) checks.
+add_library(tos_pq_consensus_signer_test_clock STATIC consensus-pq-signer.cpp consensus-key-file.cpp)
+set_target_properties(tos_pq_consensus_signer_test_clock PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_features(tos_pq_consensus_signer_test_clock PUBLIC cxx_std_20)
+target_include_directories(tos_pq_consensus_signer_test_clock PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
+                           PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
+target_compile_definitions(tos_pq_consensus_signer_test_clock PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h"
+                           PUBLIC TOS_PQ_SIGNER_TEST_CLOCK=1)
+target_link_libraries(tos_pq_consensus_signer_test_clock PUBLIC tos_pq_consensus
+                      PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
+
 # The offline controller-root domain. A separate library on purpose: the boundary the offline-root split
 # created is between two machines, so it is a link boundary here. validator-engine links
 # tos_pq_consensus_signer and must never link this, which
@@ -69,16 +82,39 @@ target_compile_definitions(tos_pq_controller_root PRIVATE MLD_CONFIG_FILE="conse
 target_link_libraries(tos_pq_controller_root PUBLIC tos_pq_consensus PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
 
 # Provisioning for the node's consensus key. It links the same library the node loads
-# the key with, so the two cannot disagree about what a valid key file is.
-add_executable(tos-pq-consensus-key "${CMAKE_CURRENT_SOURCE_DIR}/consensus-key-tool.cpp")
-set_target_properties(tos-pq-consensus-key PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
-# The tool includes OpenSSL headers itself; link the same OpenSSL::Crypto target so its
-# headers come from the library it links, not from whatever the system search path holds.
-target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus OpenSSL::Crypto)
-add_test(NAME consensus-key-tool
-         COMMAND "${CMAKE_COMMAND}" -E env python3
-                 "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/consensus_key_tool_test.py"
-                 --tool "$<TARGET_FILE:tos-pq-consensus-key>")
+# the key with, so the two cannot disagree about what a valid key file is, and the
+# engine's own TL schema for the node configuration it edits, so it cannot write a
+# configuration the engine would read differently. The standalone verifier build has no
+# TL schema, and no tool.
+if(TARGET tl_api)
+  add_executable(tos-pq-consensus-key "${CMAKE_CURRENT_SOURCE_DIR}/consensus-key-tool.cpp"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/consensus-node-config.cpp")
+  set_target_properties(tos-pq-consensus-key PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+  # The tool includes OpenSSL headers itself; link the same OpenSSL::Crypto target so its
+  # headers come from the library it links, not from whatever the system search path holds.
+  target_link_libraries(tos-pq-consensus-key PRIVATE tos_pq_consensus_signer tos_pq_consensus tl_api tdutils
+                        OpenSSL::Crypto)
+  # A directory flush that fails after the rename is reached through this shim, which
+  # makes fsync on a directory fail while the test asks it to. LD_PRELOAD is a Linux
+  # mechanism here; elsewhere the test runs without that one case. The shim is test-only:
+  # it is outside the default build and is built through all-tests (or by name), never
+  # as part of the tool.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_library(test-fsync-dir-failure-shim SHARED EXCLUDE_FROM_ALL
+                "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/fsync-dir-failure-shim.cpp")
+    target_link_libraries(test-fsync-dir-failure-shim PRIVATE ${CMAKE_DL_LIBS})
+    if(TARGET all-tests)
+      add_dependencies(all-tests test-fsync-dir-failure-shim)
+    endif()
+    set(CONSENSUS_KEY_TOOL_SHIM_ARGS --fsync-shim "$<TARGET_FILE:test-fsync-dir-failure-shim>")
+  else()
+    set(CONSENSUS_KEY_TOOL_SHIM_ARGS)
+  endif()
+  add_test(NAME consensus-key-tool
+           COMMAND "${CMAKE_COMMAND}" -E env python3
+                   "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44/consensus_key_tool_test.py"
+                   --tool "$<TARGET_FILE:tos-pq-consensus-key>" ${CONSENSUS_KEY_TOOL_SHIM_ARGS})
+endif()
 
 set(PQ_TEST_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-mldsa44")
 add_executable(test-pq-mldsa44-wrapper "${PQ_TEST_DIR}/test.cpp")

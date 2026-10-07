@@ -21,8 +21,10 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -35,8 +37,31 @@ ENGINE_GLOBAL_CONFIG = REPO / "tosctl" / "src" / "adnl" / "tests" / "config" / "
 ZEROSTATE = "F6OpKZKqvqeFp6CQmFomXNMfMj2EnaUSOXN+Mh+wVWk="
 OTHER_ZEROSTATE = "XplPz01CXAps5qeSWUtxcyBfdAo5zVb1N979KLSKD24="
 
+# Tries the engine's lock (fcntl F_SETLK, F_WRLCK, whole file) on PATH from
+# another process and prints "free", "held", or "absent" when there is no lock file.
+LOCK_PROBE = (
+    "import fcntl, os, sys\n"
+    "try:\n"
+    "    fd = os.open(sys.argv[1], os.O_RDWR)\n"
+    "except FileNotFoundError:\n"
+    "    print('absent')\n"
+    "    sys.exit(0)\n"
+    "try:\n"
+    "    fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+    "    print('free')\n"
+    "except OSError:\n"
+    "    print('held')\n"
+)
+
 PLZIP_STUB = """#!/bin/sh
 # Test stand-in for plzip: "-d -c FILE" writes FILE unchanged.
+#
+# PLZIP_STUB_LOCK_PROBE, when set, names a file to which the stub appends
+# whether the database's configuration lock is held, as seen from another
+# process while the import runs.
+if [ -n "${PLZIP_STUB_LOCK_PROBE:-}" ]; then
+  python3 -c "$LOCK_PROBE_PROGRAM" "$TOS_DB_DIR/config.json.lock" >>"$PLZIP_STUB_LOCK_PROBE"
+fi
 #
 # The import decompresses twice: once to list, once to unpack. Two optional
 # hooks act on the second call only, to model what the listing cannot see:
@@ -139,10 +164,20 @@ def free_local_port() -> int:
     raise RuntimeError("no free UDP port in 47000-47999")
 
 
+def is_created_lock(path: Path, root: Path) -> bool:
+    """The empty configuration lock the import creates to hold; its only trace."""
+    if path.parent != root or path.name != "config.json.lock":
+        return False
+    info = path.lstat()
+    return stat.S_ISREG(info.st_mode) and info.st_size == 0
+
+
 def tree(root: Path) -> dict[str, tuple[str, bytes]]:
     snapshot: dict[str, tuple[str, bytes]] = {}
     for path in sorted(root.rglob("*")):
         relative = str(path.relative_to(root))
+        if is_created_lock(path, root):
+            continue
         mode = path.lstat().st_mode
         if stat.S_ISLNK(mode):
             snapshot[relative] = ("link", os.readlink(path).encode())
@@ -192,16 +227,24 @@ class ImportSnapshotTest(unittest.TestCase):
         path.write_bytes(payload)
         return path.as_uri(), hashlib.sha256(payload).hexdigest()
 
-    def run_import(self, **env_overrides: str) -> subprocess.CompletedProcess[str]:
+    def run_import(
+        self, *, argv: list[str] | None = None, **env_overrides: str
+    ) -> subprocess.CompletedProcess[str]:
         env = {
             "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
             "TOS_DB_DIR": str(self.db),
             "SNAPSHOT_STAGING_DIR": str(self.staging),
+            "LOCK_PROBE_PROGRAM": LOCK_PROBE,
             **self.extra_env,
         }
         env.update(env_overrides)
         return subprocess.run(
-            ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=120, check=False
+            argv or ["bash", str(SCRIPT)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
         )
 
     def enabled(self, url: str, digest: str, **extra: str) -> dict[str, str]:
@@ -585,7 +628,7 @@ class ImportSnapshotTest(unittest.TestCase):
         # The layout the replicated fixture claims to reproduce.
         self.assertEqual(
             sorted(p.name for p in self.db.iterdir()),
-            ["config.json", "error", "keyring", "tos-global.config"],
+            ["config.json", "config.json.lock", "error", "keyring", "tos-global.config"],
         )
         self.assertEqual(
             sorted(p.name for p in (self.db / "error").iterdir()), ["files", "log.txt"]
@@ -594,6 +637,264 @@ class ImportSnapshotTest(unittest.TestCase):
         result = self.run_import(**self.enabled(url, digest, DUMP_ZEROSTATE_ROOT_HASH=zerostate))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.db / ".snapshot-imported").read_text(), digest)
+
+    def test_running_real_engine_holds_off_the_import(self) -> None:
+        engine = find_validator_engine()
+        if engine is None:
+            self.skipTest("no built validator-engine; set TOS_VALIDATOR_ENGINE to run this test")
+        for path in sorted(self.db.rglob("*"), reverse=True):
+            path.rmdir() if path.is_dir() else path.unlink()
+        # The test network's zero state without DHT nodes: the engine runs and
+        # contacts nobody.
+        config = json.loads(ENGINE_GLOBAL_CONFIG.read_text())
+        config["dht"]["static_nodes"]["nodes"] = []
+        config.pop("liteservers", None)
+        global_config = self.db / "tos-global.config"
+        global_config.write_text(json.dumps(config))
+        command = [str(engine), "-C", str(global_config), "--db", str(self.db)]
+        address = f"127.0.0.1:{free_local_port()}"
+        init = subprocess.run(
+            [*command, "--ip", address], capture_output=True, timeout=120, check=False
+        )
+        self.assertEqual(init.returncode, 0, init.stderr[-2000:])
+        log = self.root / "engine.log"
+        with log.open("wb") as sink:
+            node = subprocess.Popen(command, stdout=sink, stderr=subprocess.STDOUT)
+            try:
+                lock = str(self.db / "config.json.lock")
+                deadline = time.monotonic() + 60
+                state = ""
+                while time.monotonic() < deadline and node.poll() is None:
+                    state = subprocess.run(
+                        [sys.executable, "-c", LOCK_PROBE, lock],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    ).stdout.strip()
+                    if state == "held":
+                        break
+                    time.sleep(0.2)
+                self.assertEqual(state, "held", log.read_bytes()[-3000:])
+                url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+                zerostate = config["validator"]["zero_state"]["root_hash"]
+                result = self.run_import(
+                    **self.enabled(url, digest, DUMP_ZEROSTATE_ROOT_HASH=zerostate)
+                )
+                self.assertIsNone(node.poll(), "the engine must still be running")
+            finally:
+                node.kill()
+                node.wait(timeout=30)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("config.json.lock is held by another process", result.stderr)
+        self.assertFalse((self.db / ".snapshot-imported").exists())
+
+    def hold_lock_as_the_engine_does(
+        self, path: Path | None = None, primitive: str = "lockf"
+    ) -> subprocess.Popen[str]:
+        # A separate process holding PATH (default: the configuration lock)
+        # until its stdin closes. "lockf" is the engine's and RocksDB's
+        # primitive (td::FileFd::lock, fs_posix LockFile: fcntl F_SETLK,
+        # F_WRLCK, the whole file); "flock" is flock(2), which is not.
+        holder = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "import fcntl, os, sys\n"
+                "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\n"
+                f"fcntl.{primitive}(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                "print('locked', flush=True)\n"
+                "sys.stdin.read()\n",
+                str(path or self.db / "config.json.lock"),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        assert holder.stdout is not None
+        self.assertEqual(holder.stdout.readline().strip(), "locked")
+        return holder
+
+    def test_held_configuration_lock_is_refused(self) -> None:
+        holder = self.hold_lock_as_the_engine_does()
+        try:
+            url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+            before = tree(self.db)
+            result = self.run_import(**self.enabled(url, digest))
+        finally:
+            assert holder.stdin is not None and holder.stdout is not None
+            holder.stdin.close()
+            holder.wait(timeout=30)
+            holder.stdout.close()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("config.json.lock is held by another process", result.stderr)
+        self.assertEqual(tree(self.db), before)
+        self.assertFalse((self.db / ".snapshot-imported").exists())
+
+    def release(self, holder: subprocess.Popen[str]) -> None:
+        assert holder.stdin is not None and holder.stdout is not None
+        holder.stdin.close()
+        holder.wait(timeout=30)
+        holder.stdout.close()
+
+    def test_held_rocksdb_lock_is_refused(self) -> None:
+        (self.db / "celldb").mkdir()
+        rocksdb_lock = self.db / "celldb" / "LOCK"
+        rocksdb_lock.touch()
+        holder = self.hold_lock_as_the_engine_does(rocksdb_lock)
+        try:
+            url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+            before = tree(self.db)
+            result = self.run_import(**self.enabled(url, digest))
+        finally:
+            self.release(holder)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("RocksDB lock", result.stderr)
+        self.assertIn("is held by another process", result.stderr)
+        self.assertEqual(tree(self.db), before)
+
+    def test_unheld_rocksdb_lock_is_refused_only_as_existing_data(self) -> None:
+        (self.db / "celldb").mkdir()
+        (self.db / "celldb" / "LOCK").touch()
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("the database directory is not new: it contains celldb", result.stderr)
+        self.assertNotIn("RocksDB lock", result.stderr)
+
+    def test_flock_is_not_the_engines_lock(self) -> None:
+        # flock(2) and fcntl record locks are independent on Linux: an
+        # flock-held configuration lock neither excludes the engine nor
+        # stops the import. Only the engine's own primitive does.
+        holder = self.hold_lock_as_the_engine_does(primitive="flock")
+        try:
+            url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+            result = self.run_import(**self.enabled(url, digest))
+        finally:
+            self.release(holder)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_init_imports_before_the_engine_is_ever_started(self) -> None:
+        # Like upstream's entrypoint: the import runs once, before init.sh
+        # initializes the database and before it execs the engine, so no
+        # engine of this container can run beside it.
+        lines = INIT_SCRIPT.read_text().splitlines()
+        imports = [
+            i for i, line in enumerate(lines) if "import-snapshot.sh" in line and "||" in line
+        ]
+        engine = [
+            i
+            for i, line in enumerate(lines)
+            # Every engine run on the database (TEST mode's -h touches none).
+            if line.strip().startswith(("validator-engine ", "exec validator-engine "))
+            and "--db" in line
+        ]
+        self.assertEqual(len(imports), 1)
+        self.assertGreaterEqual(len(engine), 2, "initialize and exec")
+        self.assertLess(imports[0], min(engine))
+
+    # The previous version trusted this variable as proof of the lock; an
+    # invocation can set it to its own pid and exec the script.
+    FORGED = ["bash", "-c", 'TOS_SNAPSHOT_CONFIG_LOCK_PID=$$ exec bash "$0"', str(SCRIPT)]
+
+    def test_forged_lock_claim_while_another_process_holds_it_is_refused(self) -> None:
+        holder = self.hold_lock_as_the_engine_does()
+        try:
+            url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+            before = tree(self.db)
+            for name, argv, extra in (
+                ("pid variable", self.FORGED, {}),
+                ("attempt counter", None, {"TOS_SNAPSHOT_LOCK_ATTEMPT": "1"}),
+            ):
+                with self.subTest(name):
+                    result = self.run_import(argv=argv, **self.enabled(url, digest, **extra))
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("[snapshot] refused", result.stderr)
+                    self.assertEqual(tree(self.db), before)
+                    self.assertFalse((self.db / ".snapshot-imported").exists())
+        finally:
+            self.release(holder)
+
+    def test_forged_lock_claim_when_nobody_holds_it_still_takes_the_lock(self) -> None:
+        probe = self.root / "lock-probe"
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(
+            argv=self.FORGED, **self.enabled(url, digest, PLZIP_STUB_LOCK_PROBE=str(probe))
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(probe.read_text().split(), ["held", "held"])
+
+    def test_lock_is_held_before_the_first_database_read(self) -> None:
+        # The default global config lives in the database and is read with jq
+        # first; a jq that probes the lock from another process on each call
+        # must find it held already at the first.
+        probe = self.root / "jq-probe"
+        real_jq = shutil.which("jq")
+        assert real_jq is not None
+        wrapper = self.bin / "jq"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f'python3 -c "$LOCK_PROBE_PROGRAM" "$TOS_DB_DIR/config.json.lock" >>"{probe}"\n'
+            f'exec "{real_jq}" "$@"\n'
+        )
+        wrapper.chmod(0o755)
+        self.assertEqual(self.extra_env.get("TOS_GLOBAL_CONFIG"), None, "default location")
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = probe.read_text().split()
+        self.assertTrue(calls, "jq was never called")
+        self.assertEqual(calls[0], "held")
+
+    def test_lock_is_held_through_the_import(self) -> None:
+        probe = self.root / "lock-probe"
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest, PLZIP_STUB_LOCK_PROBE=str(probe)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # Seen from another process at both decompressions: held each time.
+        self.assertEqual(probe.read_text().split(), ["held", "held"])
+        # Released once the import has exited.
+        after = subprocess.run(
+            [sys.executable, "-c", LOCK_PROBE, str(self.db / "config.json.lock")],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(after.stdout.strip(), "free")
+
+    def test_refusal_after_locking_leaves_only_the_lock(self) -> None:
+        (self.db / "dump_downloaded").write_bytes(b"")
+        result = self.run_import(**self.enabled("https://snapshots.invalid/x.tar.lz", "1" * 64))
+        self.assertNotEqual(result.returncode, 0)
+        lock = self.db / "config.json.lock"
+        self.assertTrue(lock.is_file())
+        self.assertEqual(lock.stat().st_size, 0)
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+
+    def test_linked_lock_is_refused_before_it_is_opened(self) -> None:
+        target = self.root / "elsewhere"
+        (self.db / "config.json.lock").symlink_to(target)
+        result = self.run_import(**self.enabled("https://snapshots.invalid/x.tar.lz", "1" * 64))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("config.json.lock is a symbolic link", result.stderr)
+        self.assertFalse(target.exists())
+
+    def test_empty_configuration_lock_is_accepted(self) -> None:
+        (self.db / "config.json.lock").touch(mode=0o600)
+        url, digest = self.serve(tar_bytes(GOOD_MEMBERS))
+        result = self.run_import(**self.enabled(url, digest))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.db / ".snapshot-imported").read_text(), digest)
+
+    def test_configuration_lock_with_content_is_refused(self) -> None:
+        (self.db / "config.json.lock").write_bytes(b"data")
+        self.assert_member_refused(GOOD_MEMBERS, "config.json.lock is not the empty lock file")
+
+    def test_configuration_lock_that_is_a_link_is_refused(self) -> None:
+        (self.db / "config.json.lock").symlink_to(self.db / "elsewhere")
+        self.assert_member_refused(GOOD_MEMBERS, "config.json.lock is a symbolic link")
+
+    def test_archive_carrying_a_configuration_lock_is_refused(self) -> None:
+        self.assert_spelling_refused("config.json.lock", "file", "config.json.lock")
 
     def test_error_log_with_entries_is_refused(self) -> None:
         make_engine_error_log(self.db)

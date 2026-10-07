@@ -62,8 +62,6 @@ extend-exclude = [
     "test/tostester/src/tostester/network.py",
     # The node health monitor's receipts, source manifests and deployment hash inputs pin
     # these scripts by their exact bytes, for the same reason as above.
-    "scripts/local-pq-privacy.py",
-    "scripts/local-pq-transfers.py",
     "tools/node-health-monitor/scripts/check-witness-current.py",
     "tools/node-health-monitor/scripts/freeze-manifests.py",
     "tools/node-health-monitor/scripts/plan-c09-retention-dry-run.py",

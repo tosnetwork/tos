@@ -138,6 +138,10 @@ void ValidatorEngineConsole::run() {
   add_query_runner(std::make_unique<QueryRunnerImpl<AddQuicAddressQuery>>());
   add_query_runner(std::make_unique<QueryRunnerImpl<DelQuicAddressQuery>>());
   add_query_runner(std::make_unique<QueryRunnerImpl<CreatePqStakeAuthorizationQuery>>());
+  add_query_runner(std::make_unique<QueryRunnerImpl<CreatePqStakeAuthorizationWithKeyQuery>>());
+  add_query_runner(std::make_unique<QueryRunnerImpl<GetPqConsensusKeysQuery>>());
+  add_query_runner(std::make_unique<QueryRunnerImpl<AddPqConsensusKeyQuery>>());
+  add_query_runner(std::make_unique<QueryRunnerImpl<DelPqConsensusKeyQuery>>());
   add_query_runner(std::make_unique<QueryRunnerImpl<CreateProposalVoteQuery>>());
   add_query_runner(std::make_unique<QueryRunnerImpl<CreateComplaintVoteQuery>>());
   add_query_runner(std::make_unique<QueryRunnerImpl<CheckDhtServersQuery>>());

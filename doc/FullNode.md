@@ -52,7 +52,9 @@ cd build
 Useful flags from the current binary:
 
 - `-C`: global config
-- `-c`: local config
+- `-c`: local config, read only when `<db>/config.json` does not exist: the
+  engine creates `<db>/config.json` from it and exits so that it can be
+  checked; every later start reads `<db>/config.json`
 - `-D`: database root
 - `-I`: advertised node address
 - `-f`: Fift script directory
@@ -60,6 +62,15 @@ Useful flags from the current binary:
 - `--parallel-validation`: enable parallel validation across accounts
 - `--permanent-celldb`: archival-style cell retention
 - `--unsynced-liteserver`: allow liteserver queries before full sync
+
+## Database Lock
+
+The engine holds `<db>/config.json.lock` from before it reads any
+configuration until it exits. A second engine started on the same database
+exits with status 2 and names the lock, as does an engine started while
+`tos-pq-consensus-key bind-node` is editing `<db>/config.json`. Stop the node
+before editing `config.json` by hand: the engine rewrites the file whenever its
+configuration changes.
 
 ## Sync and Storage
 
@@ -176,7 +187,10 @@ Use the console and lite client to confirm:
 
 - Run as a service user
 - Keep logs on a separate volume when possible
-- Pin a consistent global config per environment
+- Pin a consistent global config per environment, and use one whose
+  `validator.init_block` is a recent key block: a new node cannot prove its way
+  forward from blocks its peers no longer keep (see
+  [validator-operator-guide.md](validator-operator-guide.md#11-refresh-the-global-configs-init-block))
 - Upgrade binaries and configs together, not independently
 
 ## AI Actor Operations
@@ -191,5 +205,6 @@ Operators running AI agents or service actors should prefer a local full node wh
 ## Related Docs
 
 - [Validator.md](Validator.md)
+- [validator-operator-guide.md](validator-operator-guide.md)
 - [LiteClient.md](LiteClient.md)
 - [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md)

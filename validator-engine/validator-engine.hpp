@@ -43,11 +43,13 @@
 #include "rldp2/rldp.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
+#include "td/utils/port/FileFd.h"
 #include "tos/tos-types.h"
 #include "validator/full-node-master.h"
 #include "validator/full-node-slave-key.h"
 #include "validator/full-node.h"
 #include "validator/manager.h"
+#include "validator/node-consensus-status.h"
 #include "validator/validator-transport-authority.h"
 #include "validator/validator.h"
 
@@ -86,12 +88,21 @@ struct Config {
     tos::PublicKey key;
     td::IPAddress addr;
   };
-  // The one post-quantum secret a validator host holds, and the identity it holds it
+  // The post-quantum consensus keys a validator host holds, and the identity it holds them
   // for. The controller root that authorises the stake and its own replacement stays on
   // an operator machine and has no representation here at all.
+  //
+  // Usually one key. During a consensus key rotation, two (or a few): the key the running
+  // validator set lists and the key the controller has been rebound to, each with the
+  // window crypto/pq/consensus-key-schedule.h describes.
+  struct PqConsensusKey {
+    std::string consensus_key_file;
+    td::uint32 valid_from = 0;  // first election date it may sign a stake for
+    td::uint32 expire_at = 0;   // unix time it stops being used; 0: never
+  };
   struct PqConsensus {
     tos::ValidatorId validator_id;
-    std::string consensus_key_file;
+    std::vector<PqConsensusKey> keys;
   };
   struct FastSyncOverlayClient {
     FastSyncOverlayClient() = default;
@@ -207,6 +218,8 @@ class ValidatorEngine : public td::actor::Actor {
   std::string local_config_ = "";
   std::string global_config_ = "tos-global.config";
   std::string config_file_;
+  // Held from before the configuration is read until the process exits; see run().
+  td::FileFd config_lock_;
   std::string temp_config_file() const {
     return config_file_ + ".tmp";
   }
@@ -233,9 +246,26 @@ class ValidatorEngine : public td::actor::Actor {
 
   td::Ref<tos::validator::MasterchainState> state_;
   td::Ref<block::ValidatorSet> validator_set_, validator_set_prev_, validator_set_next_;
-  // The hot consensus key this host custodies, kept so the node can sign its own votes
-  // without asking anything else for the secret.
-  std::shared_ptr<const tos::pq::ValidatorPQKeyStore> pq_consensus_signer_;
+  // The hot consensus keys this host custodies, kept so the node can sign its own votes
+  // and stakes without asking anything else for a secret. The same custody rules the
+  // validator manager applies to groups decide which key signs what here.
+  tos::validator::PqConsensusCustody pq_custody_;
+  static td::uint32 pq_custody_now() {
+    return static_cast<td::uint32>(td::Clocks::system());
+  }
+  // The identity each loaded key file derived. A key that had expired before the node
+  // started is not loaded, and has no entry.
+  std::map<std::string, tos::ConsensusKeyId> pq_key_ids_by_file_;
+  // Set from the moment a consensus key change has passed its checks until its
+  // configuration is durable; a second change is refused meanwhile.
+  bool pq_key_mutation_in_flight_ = false;
+  td::Status write_config_durably();
+  tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKeyInfo> pq_consensus_key_info(
+      const Config::PqConsensusKey &key, td::uint32 now) const;
+  void finish_add_pq_consensus_key(Config::PqConsensusKey key, tos::ConsensusKeyId key_id,
+                                   td::Result<td::Unit> installed, td::Promise<td::BufferSlice> promise);
+  void finish_del_pq_consensus_key(tos::ConsensusKeyId key_id, td::Result<td::Unit> removed,
+                                   td::Promise<td::BufferSlice> promise);
   td::Timestamp issue_fast_sync_overlay_certificates_at_ = td::Timestamp::now();
   td::Timestamp issue_shard_overlay_certificates_at_ = td::Timestamp::now();
   bool fast_sync_member_certificates_write_scheduled_ = false;
@@ -268,7 +298,9 @@ class ValidatorEngine : public td::actor::Actor {
   std::map<CI_key, td::uint32> control_permissions_;
 
   double state_ttl_ = 0;
-  bool enable_validator_consensus_cleanup_ = false;
+  // Deletion of retired validator consensus-DB directories; on unless
+  // --disable-validator-consensus-cleanup is given.
+  bool validator_consensus_cleanup_ = true;
   bool test_crash_cleanup_before_erase_ = false;
   size_t max_mempool_num_ = 0;
   td::optional<tos::validator::ExtMessageWorkProfile> ext_message_work_profile_;
@@ -342,8 +374,8 @@ class ValidatorEngine : public td::actor::Actor {
   void set_state_ttl(double t) {
     state_ttl_ = t;
   }
-  void set_enable_validator_consensus_cleanup(bool v) {
-    enable_validator_consensus_cleanup_ = v;
+  void set_validator_consensus_cleanup(bool v) {
+    validator_consensus_cleanup_ = v;
   }
   void set_test_crash_cleanup_before_erase(bool v) {
     test_crash_cleanup_before_erase_ = v;
@@ -630,7 +662,10 @@ class ValidatorEngine : public td::actor::Actor {
     std::shared_ptr<const tos::pq::ValidatorPQKeyStore> signer;
     td::int32 global_id;
   };
-  void get_local_pq_identity(td::Promise<LocalIdentity> promise);
+  // The key is the one the key schedule assigns to the election at `election_date`, or
+  // `requested` when given (still subject to its window).
+  void get_local_pq_identity(td::uint32 election_date, std::optional<tos::ConsensusKeyId> requested,
+                             td::Promise<LocalIdentity> promise);
 
   void try_add_adnl_node(tos::PublicKeyHash pub, AdnlCategory cat, td::Promise<td::Unit> promise);
   void try_add_dht_node(tos::PublicKeyHash pub, td::Promise<td::Unit> promise);
@@ -774,6 +809,14 @@ class ValidatorEngine : public td::actor::Actor {
   void run_control_query(tos::tos_api::engine_validator_getStats &query, td::BufferSlice data, tos::PublicKeyHash src,
                          td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(tos::tos_api::engine_validator_createPqStakeAuthorization &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+  void run_control_query(tos::tos_api::engine_validator_createPqStakeAuthorizationWithKey &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+  void run_control_query(tos::tos_api::engine_validator_getPqConsensusKeys &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+  void run_control_query(tos::tos_api::engine_validator_addPqConsensusKey &query, td::BufferSlice data,
+                         tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+  void run_control_query(tos::tos_api::engine_validator_delPqConsensusKey &query, td::BufferSlice data,
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(tos::tos_api::engine_validator_checkDhtServers &query, td::BufferSlice data,
                          tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);

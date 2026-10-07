@@ -27,6 +27,40 @@ use std::{
 };
 use url::Url;
 
+/// A JSON-RPC response body as received: the HTTP status, the bounded text, and
+/// the id the request carried.
+pub struct RawRpcResponse {
+    pub status: u16,
+    pub text: String,
+    pub request_id: String,
+}
+
+/// One raw read: the endpoints to try, in order, and the id every attempt carries.
+pub struct RawReadPlan {
+    pub endpoints: Vec<usize>,
+    pub request_id: String,
+}
+
+/// What one endpoint answered.
+pub enum RawAttempt {
+    /// A successful status with a body within the transport limit.
+    Body(RawRpcResponse),
+    /// A successful status with a body above the transport limit.
+    TooLarge { limit: usize },
+    /// A transport error or a non-success status, as a fixed category.
+    Failed(&'static str),
+}
+
+impl RawAttempt {
+    pub fn category(&self) -> &'static str {
+        match self {
+            RawAttempt::Body(_) => "body",
+            RawAttempt::TooLarge { .. } => "response_too_large",
+            RawAttempt::Failed(category) => category,
+        }
+    }
+}
+
 struct EndpointClient {
     url: String,
     display_origin: String,
@@ -51,6 +85,16 @@ fn bounded_rpc_error_category(error: &impl std::fmt::Display) -> &'static str {
         "transport_unavailable"
     } else {
         "remote_or_protocol_error"
+    }
+}
+
+/// A fixed category for a non-success HTTP status.
+fn http_status_category(status: u16) -> &'static str {
+    match status {
+        429 => "rate_limit",
+        400..=499 => "http_client_error",
+        500..=599 => "http_server_error",
+        _ => "http_non_success",
     }
 }
 
@@ -213,6 +257,62 @@ impl ClientJsonRpc {
         }
     }
 
+    /// The plan for one raw read: every endpoint once, in round-robin order from
+    /// the next start, under one request id. A caller that validates each answer
+    /// itself walks the plan with [`Self::raw_attempt`] and moves to the next
+    /// endpoint on an endpoint-specific failure.
+    pub fn raw_read_plan(&self) -> RawReadPlan {
+        let total = self.endpoints.len();
+        let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % total;
+        RawReadPlan {
+            endpoints: (0..total).map(|attempt| (start + attempt) % total).collect(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+
+    /// One side-effect-free request to one endpoint of a plan, with the plan's id.
+    /// The answer comes back unparsed: a bounded successful body, a successful body
+    /// above the transport limit (refused whole), or a fixed failure category for a
+    /// transport error or a non-success HTTP status, whose body is not interpreted
+    /// or logged.
+    pub async fn raw_attempt(
+        &self,
+        endpoint: usize,
+        method: &'static str,
+        params: &serde_json::Value,
+        request_id: &str,
+    ) -> RawAttempt {
+        let Some(target) = self.endpoints.get(endpoint) else {
+            return RawAttempt::Failed("internal");
+        };
+        let outcome = target
+            .client
+            .json_rpc_text(method, params.clone(), serde_json::json!(request_id))
+            .await;
+        let attempt = match outcome {
+            Ok((status, text)) if (200..300).contains(&status) => {
+                return RawAttempt::Body(RawRpcResponse {
+                    status,
+                    text,
+                    request_id: request_id.to_string(),
+                });
+            }
+            Ok((status, _)) => RawAttempt::Failed(http_status_category(status)),
+            Err(ToscenterError::HttpStatus { code }) => {
+                RawAttempt::Failed(http_status_category(code))
+            }
+            Err(ToscenterError::ResponseTooLarge { limit }) => RawAttempt::TooLarge { limit },
+            Err(err) => RawAttempt::Failed(bounded_rpc_error_category(&err)),
+        };
+        tracing::debug!(
+            method,
+            endpoint = %target.display_origin,
+            category = attempt.category(),
+            "chain-rpc raw read attempt failed"
+        );
+        attempt
+    }
+
     /// Executes a state-changing JSON-RPC request against the configured
     /// primary endpoint exactly once.
     ///
@@ -266,6 +366,26 @@ impl ClientJsonRpc {
             .with_context(|| format!("getConfigParam({})", param_id))?;
 
         decode_config_param(config_info, param_id)
+    }
+
+    /// The parameter as of masterchain block `seqno`. The response does not echo
+    /// the block, so this is only as faithful as the endpoint.
+    pub async fn get_config_param_at(
+        &self,
+        param_id: u32,
+        seqno: u32,
+    ) -> anyhow::Result<(ConfigParamEnum, BlockIdExt)> {
+        anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
+        // with_proof makes the endpoint report the block it actually read; a height
+        // alone does not name a block, and another endpoint may hold another one.
+        let config_info = self
+            .json_rpc_read(
+                "getConfigParam",
+                serde_json::json!({"config_id": param_id, "seqno": seqno, "with_proof": true}),
+            )
+            .await
+            .with_context(|| format!("getConfigParam({param_id}) at seqno {seqno}"))?;
+        decode_config_param_with_block(config_info, param_id)
     }
 
     /// Return the exact on-chain value cell. Pool maintenance compares its
@@ -603,6 +723,24 @@ impl ClientJsonRpc {
         })?;
         let address_info = serde_json::from_value::<GetAddressInformationRes>(res)?;
         Ok(address_info)
+    }
+
+    /// The account as of masterchain block `seqno`; the response carries the block
+    /// it was read at, which the caller checks.
+    pub async fn get_address_information_at(
+        &self,
+        address: &MsgAddressInt,
+        seqno: u32,
+    ) -> anyhow::Result<GetAddressInformationRes> {
+        anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
+        let res = self
+            .json_rpc_read(
+                "getAddressInformation",
+                serde_json::json!({"address": address.to_string(), "seqno": seqno}),
+            )
+            .await
+            .with_context(|| format!("getAddressInformation({address}) at seqno {seqno}"))?;
+        Ok(serde_json::from_value::<GetAddressInformationRes>(res)?)
     }
 
     pub async fn get_account_capability(
@@ -1104,6 +1242,20 @@ fn decode_config_param(
 ) -> anyhow::Result<ConfigParamEnum> {
     let cell = decode_config_param_cell(config_info)?;
     ConfigParamEnum::construct_from_cell_and_number(cell, param_id).map_err(anyhow::Error::from)
+}
+
+/// A `getConfigParam` answer requested `with_proof`, with the block it was read at.
+pub fn decode_config_param_with_block(
+    config_info: serde_json::Value,
+    param_id: u32,
+) -> anyhow::Result<(ConfigParamEnum, BlockIdExt)> {
+    let block = config_info
+        .get("block_id")
+        .or_else(|| config_info.get("result").and_then(|result| result.get("block_id")))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("the endpoint did not report the block it read"))?;
+    let block = serde_json::from_value::<BlockIdExt>(block).context("block_id")?;
+    Ok((decode_config_param(config_info, param_id)?, block))
 }
 
 fn decode_config_param_cell(config_info: serde_json::Value) -> anyhow::Result<Cell> {

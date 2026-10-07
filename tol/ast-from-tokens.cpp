@@ -1801,6 +1801,14 @@ static AnyV parse_function_declaration(Lexer& lex, const std::vector<V<ast_annot
         flags |= FunctionData::flagMarkedAsPure;
         break;
       case AnnotationKind::method_id: {
+        if (is_contract_getter && !genericsT_list && !receiver_type && !is_entrypoint && !n_mutate_params &&
+            !accepts_self) {
+          err("top-level `get fun` derives its method ID from the function name and cannot use `@method_id`. "
+              "For an explicit numeric ABI, keep `@method_id` and remove only `get`, using `fun {}(...)`. "
+              "For a name-derived getter, keep `get fun` and omit `@method_id`.",
+              f_name)
+              .fire(v_annotation);
+        }
         if (is_contract_getter || genericsT_list || receiver_type || is_entrypoint || n_mutate_params || accepts_self) {
           err("@method_id can be specified only for regular functions").fire(v_annotation);
         }

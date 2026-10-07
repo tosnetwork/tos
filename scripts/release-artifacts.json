@@ -293,6 +293,26 @@
           "name": "toslib-cli-linux-x86_64"
         },
         {
+          "artifact": "tos-x86_64-linux",
+          "path": "tos-pq-consensus-key",
+          "name": "tos-pq-consensus-key-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tos-pq-controller",
+          "name": "tos-pq-controller-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tos-pq-key",
+          "name": "tos-pq-key-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tos-pq-vote",
+          "name": "tos-pq-vote-linux-x86_64"
+        },
+        {
           "artifact": "tos-arm64-linux",
           "zip": true,
           "name": "tos-linux-arm64.zip"
@@ -356,6 +376,26 @@
           "artifact": "tos-arm64-linux",
           "path": "toslib-cli",
           "name": "toslib-cli-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tos-pq-consensus-key",
+          "name": "tos-pq-consensus-key-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tos-pq-controller",
+          "name": "tos-pq-controller-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tos-pq-key",
+          "name": "tos-pq-key-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tos-pq-vote",
+          "name": "tos-pq-vote-linux-arm64"
         },
         {
           "artifact": "tos-wasm",

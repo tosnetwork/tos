@@ -12,6 +12,10 @@ bool is_engine_console_query(const tos::tl_object_ptr<tos::tos_api::Function>& f
     case tos::tos_api::engine_validator_setConsensusNoncriticalParamsOverrides::ID:
     case tos::tos_api::engine_validator_createProposalVote::ID:
     case tos::tos_api::engine_validator_createPqStakeAuthorization::ID:
+    case tos::tos_api::engine_validator_createPqStakeAuthorizationWithKey::ID:
+    case tos::tos_api::engine_validator_getPqConsensusKeys::ID:
+    case tos::tos_api::engine_validator_addPqConsensusKey::ID:
+    case tos::tos_api::engine_validator_delPqConsensusKey::ID:
       return true;
     default:
       return false;

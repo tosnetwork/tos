@@ -1,0 +1,7 @@
+@method_id(100001)
+fun onInternalMessage(in: InMessage) {}
+/**
+@compilation_should_fail
+@stderr @method_id can be specified only for regular functions
+@stderr_avoid remove only `get`
+ */

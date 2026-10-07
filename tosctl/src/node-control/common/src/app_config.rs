@@ -778,6 +778,46 @@ pub struct ElectionsConfig {
     /// Interval for elections runner in seconds
     #[serde(default = "default_tick_interval")]
     pub tick_interval: u64,
+    /// When the pool controller's operating authorization is reported as running low.
+    #[serde(default)]
+    pub operating_authorization: OperatingAuthorizationWarnings,
+}
+
+/// Warning thresholds for a controller's operating authorization (kind 4). The
+/// elections task only reports; renewal is signed offline by the controller root.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct OperatingAuthorizationWarnings {
+    /// The runway an authorization is sized for, in days.
+    #[serde(default = "default_operating_target_days")]
+    pub target_days: u32,
+    /// Warn when the funded runway falls below this percentage of the target.
+    #[serde(default = "default_operating_warn_percent")]
+    pub warn_percent: u8,
+    /// Warn when the authorization expires within this many days.
+    #[serde(default = "default_operating_expiry_warn_days")]
+    pub expiry_warn_days: u32,
+}
+
+fn default_operating_target_days() -> u32 {
+    30
+}
+
+fn default_operating_warn_percent() -> u8 {
+    25
+}
+
+fn default_operating_expiry_warn_days() -> u32 {
+    7
+}
+
+impl Default for OperatingAuthorizationWarnings {
+    fn default() -> Self {
+        Self {
+            target_days: default_operating_target_days(),
+            warn_percent: default_operating_warn_percent(),
+            expiry_warn_days: default_operating_expiry_warn_days(),
+        }
+    }
 }
 
 impl ElectionsConfig {
@@ -791,6 +831,13 @@ impl ElectionsConfig {
         if !(1.0..=3.0).contains(&self.max_factor) {
             anyhow::bail!("max_factor must be in range [1.0..3.0]");
         }
+        let warnings = &self.operating_authorization;
+        if warnings.target_days == 0 {
+            anyhow::bail!("operating_authorization.target_days must be positive");
+        }
+        if !(1..=100).contains(&warnings.warn_percent) {
+            anyhow::bail!("operating_authorization.warn_percent must be in range [1..100]");
+        }
         Ok(())
     }
 }
@@ -802,6 +849,7 @@ impl Default for ElectionsConfig {
             policy_overrides: HashMap::new(),
             max_factor: default_max_factor(),
             tick_interval: default_tick_interval(),
+            operating_authorization: OperatingAuthorizationWarnings::default(),
         }
     }
 }

@@ -8180,3 +8180,181 @@ fn the_operator_tools_carry_a_validator_from_no_key_to_a_governed_change() {
         "a single key changed a parameter after the whole sequence"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Configuration proposals as `tosctl vote offer create` builds them
+//
+// The body and the price come from the same builder the command uses. The price is
+// checked three ways: against the contract's own `proposal_storage_price`, against
+// what the contract actually keeps, and by underpaying by one nanotomi.
+// ---------------------------------------------------------------------------
+
+fn voting_setup(chain: &Chain, critical: bool) -> chain_block::ConfigProposalSetup {
+    match chain.blockchain.config_params().config(11).expect("param 11").expect("present") {
+        chain_block::ConfigParamEnum::ConfigParam11(setup) => {
+            if critical { setup.read_critical_params() } else { setup.read_normal_params() }
+                .expect("the voting setup")
+        }
+        other => panic!("ConfigParam 11 is {other:?}"),
+    }
+}
+
+fn contract_storage_price(chain: &Chain, critical: bool, ttl: u32, bits: u64, refs: u64) -> u128 {
+    use tos_vm::stack::StackItem;
+    let result = chain
+        .blockchain
+        .run_get_method(
+            &chain.config_contract,
+            "proposal_storage_price",
+            vec![
+                StackItem::int(if critical { -1 } else { 0 }),
+                StackItem::int(i64::from(ttl)),
+                StackItem::int(bits as i64),
+                StackItem::int(refs as i64),
+            ],
+        )
+        .expect("the configuration contract answers");
+    assert_eq!(result.exit_code, 0, "proposal_storage_price failed");
+    result
+        .stack
+        .last()
+        .expect("a price")
+        .as_integer()
+        .expect("an integer")
+        .to_string()
+        .parse()
+        .expect("a non-negative price")
+}
+
+#[test]
+fn a_proposal_built_for_the_cli_is_registered_at_the_price_it_computes() {
+    use contracts::config_contract::messages::proposal;
+    let mut chain = launch();
+    let param_id = 42;
+    assert!(!is_critical(&chain, param_id), "the fixture expects an ordinary parameter");
+    let setup = voting_setup(&chain, false);
+    let ttl = setup.min_store_sec.checked_add(3_600).expect("a lifetime");
+
+    let mut value = chain_block::BuilderData::new();
+    chain_block::IBitstring::append_u32(&mut value, 0xabcd).expect("value");
+    chain_block::IBitstring::append_u64(&mut value, 0x1234).expect("value");
+    let value = value.into_cell().expect("value cell");
+    let (price, stored) = proposal::storage_price(&setup, Some(&value), ttl).expect("a price");
+    assert_eq!(stored, ttl.min(setup.max_store_sec));
+    let (_, bits, refs) = proposal::value_size(Some(&value)).expect("size");
+    assert_eq!(
+        contract_storage_price(&chain, false, ttl, bits, refs),
+        price,
+        "the local price differs from the contract's own"
+    );
+
+    let cell = proposal::proposal_cell(param_id, Some(value), None).expect("proposal");
+    let body = proposal::new_proposal_body(7, ttl, cell, false).expect("body");
+    let proposer =
+        chain.blockchain.treasury("cli-proposer", 20_000 * TOS).expect("a funded account");
+
+    // One nanotomi short of the price plus the contract's minimum surplus is refused.
+    let short = u64::try_from(price + proposal::MIN_VALUE_ABOVE_PRICE - 1).expect("a value");
+    let before = balance_of(&chain, &chain.config_contract);
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(
+            &chain.config_contract,
+            short,
+            true,
+            Some(body.clone()),
+        ))
+        .expect("delivered");
+    let tags = replies(&result);
+    assert!(!tags.contains(&proposal::PROPOSAL_ACCEPTED), "an underpaid proposal was registered");
+    assert!(tags.contains(&0xf061_7924), "expected the need-more-money answer: {tags:02x?}");
+    assert_eq!(balance_of(&chain, &chain.config_contract), before, "a refusal kept value");
+
+    let enough = u64::try_from(price + proposal::MIN_VALUE_ABOVE_PRICE).expect("a value");
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(&chain.config_contract, enough, true, Some(body)))
+        .expect("delivered");
+    let tags = replies(&result);
+    assert!(tags.contains(&proposal::PROPOSAL_ACCEPTED), "refused: {tags:02x?}");
+    assert_eq!(
+        balance_of(&chain, &chain.config_contract) - before,
+        price,
+        "the contract kept something other than the computed price"
+    );
+}
+
+#[test]
+fn a_critical_parameter_needs_the_critical_flag_and_a_mandatory_one_its_current_hash() {
+    use contracts::config_contract::messages::proposal;
+    let mut chain = launch();
+    // Whichever present parameter the launch configuration lists first as critical.
+    let critical_ids = match chain.blockchain.config_params().config(10).expect("param 10") {
+        Some(chain_block::ConfigParamEnum::ConfigParam10(value)) => {
+            let mut ids = Vec::new();
+            value
+                .critical_params
+                .iterate_keys(|id: i32| {
+                    ids.push(id);
+                    Ok(true)
+                })
+                .expect("the critical list");
+            ids
+        }
+        other => panic!("ConfigParam 10 is {other:?}"),
+    };
+    let param_id = critical_ids
+        .into_iter()
+        .find(|id| raw_parameter(&chain, *id).is_some())
+        .expect("a present critical parameter");
+    assert!(is_critical(&chain, param_id), "the fixture expects a critical parameter");
+    let value = raw_parameter(&chain, param_id).expect("the current voting setup");
+    let setup = voting_setup(&chain, true);
+    let ttl = setup.min_store_sec.checked_add(3_600).expect("a lifetime");
+    let (price, _) = proposal::storage_price(&setup, Some(&value), ttl).expect("a price");
+    let value_to_send =
+        u64::try_from(price + proposal::MIN_VALUE_ABOVE_PRICE + u128::from(TOS)).expect("a value");
+    let proposer = chain.blockchain.treasury("cli-proposer", 100_000 * TOS).expect("funded");
+
+    // A proposal for a mandatory parameter must name the value it replaces, or it is
+    // refused as an attempt to null it; binding to the current hash satisfies both rules.
+    let mut current = [0u8; 32];
+    current.copy_from_slice(value.repr_hash().as_slice());
+    let unbound = proposal::proposal_cell(param_id, Some(value.clone()), None).expect("proposal");
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(
+            &chain.config_contract,
+            value_to_send,
+            true,
+            Some(proposal::new_proposal_body(10, ttl, unbound, true).expect("body")),
+        ))
+        .expect("delivered");
+    assert!(replies(&result).contains(&0xcd50_6e6c), "{:02x?}", replies(&result));
+
+    let cell =
+        proposal::proposal_cell(param_id, Some(value.clone()), Some(current)).expect("proposal");
+    let plain = proposal::new_proposal_body(8, ttl, cell.clone(), false).expect("body");
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(
+            &chain.config_contract,
+            value_to_send,
+            true,
+            Some(plain),
+        ))
+        .expect("delivered");
+    assert!(replies(&result).contains(&0xc372_6954), "{:02x?}", replies(&result));
+
+    let critical = proposal::new_proposal_body(9, ttl, cell, true).expect("body");
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(
+            &chain.config_contract,
+            value_to_send,
+            true,
+            Some(critical),
+        ))
+        .expect("delivered");
+    assert!(replies(&result).contains(&proposal::PROPOSAL_ACCEPTED), "{:02x?}", replies(&result));
+}

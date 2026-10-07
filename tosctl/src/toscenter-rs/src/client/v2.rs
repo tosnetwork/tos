@@ -623,4 +623,17 @@ impl ApiClientV2 {
 
         self.base_client.post_rpc(&self.base_url, "jsonRPC", &request_body, &id).await
     }
+
+    /// The same request as [`Self::json_rpc`], returning the HTTP status and the
+    /// bounded response body without parsing or validating it.
+    pub async fn json_rpc_text(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        id: serde_json::Value,
+    ) -> Result<(u16, String), ToscenterError> {
+        let request_body =
+            JsonRpcRequest { jsonrpc: "2.0".to_string(), method: method.to_string(), params, id };
+        self.base_client.post_rpc_text(&self.base_url, "jsonRPC", &request_body).await
+    }
 }

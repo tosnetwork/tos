@@ -303,3 +303,69 @@ impl VotingRunner {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chain_block::MsgAddressInt;
+    use common::tvm_stack_parser::TvmStackParser;
+    use tl_api::tos::tvm::StackEntry;
+
+    /// Answers `list_proposals` with the node's real two-proposal response.
+    struct LiveListProvider;
+
+    #[async_trait::async_trait]
+    impl contracts::ContractProvider for LiveListProvider {
+        async fn get_method(
+            &self,
+            _address: String,
+            method: &str,
+            _stack: Vec<StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            anyhow::ensure!(method == "list_proposals", "unexpected getter {method}");
+            let response =
+                include_str!("../../../contracts/tests/fixtures/list_proposals/two-live.json");
+            let value: serde_json::Value = serde_json::from_str(response)?;
+            let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
+                serde_json::from_value(value["result"].clone())?;
+            Ok(contracts::chain_provider::stack_from_rpc(result.stack))
+        }
+
+        async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            Ok(0)
+        }
+
+        /// Test-only: decodes the recorded answer in process.
+        async fn read_proposals(
+            &self,
+            address: &MsgAddressInt,
+            read: contracts::ProposalRead,
+        ) -> anyhow::Result<contracts::ProposalAnswer> {
+            anyhow::ensure!(read == contracts::ProposalRead::List, "unexpected read {read:?}");
+            let stack = self.get_method(address.to_string(), "list_proposals", vec![]).await?;
+            contracts::config_contract::decode_proposal_list(&stack)
+                .map(contracts::ProposalAnswer::List)
+        }
+    }
+
+    fn runner(tracked: &str) -> VotingRunner {
+        let mut hash = [0u8; 32];
+        hex::decode_to_slice(tracked, &mut hash).unwrap();
+        let config = Arc::new(ConfigContractImpl::new(Arc::new(LiveListProvider)));
+        VotingRunner::new(HashMap::new(), config, vec![hash])
+    }
+
+    /// A tick reads the live proposal list: an untracked hash ends the tick quietly,
+    /// a tracked one goes on to the validator set (which no node here can supply).
+    /// A list the task cannot read fails the tick before either.
+    #[tokio::test]
+    async fn a_tick_reads_the_served_proposal_list() {
+        let mut untracked = runner(&"11".repeat(32));
+        untracked.run().await.expect("no tracked proposal is listed");
+
+        let mut tracked =
+            runner("caf342eb8fdd9adc97379f44c7740735097dd210430f79dc410a3690639888f0");
+        let error = tracked.run().await.expect_err("no node supplies a validator set");
+        assert!(error.to_string().contains("get_current_vset"), "{error}");
+    }
+}

@@ -1,0 +1,8 @@
+@method_id(100001)
+get fun get_state<T>(x: T): T { return x; }
+fun onInternalMessage(in: InMessage) {}
+/**
+@compilation_should_fail
+@stderr invalid declaration of a get method
+@stderr_avoid remove only `get`
+ */

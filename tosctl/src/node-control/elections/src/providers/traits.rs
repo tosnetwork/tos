@@ -6,7 +6,8 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use chain_block::{ValidatorSet, config_params::ConfigParam15};
+use chain_block::{MsgAddressInt, ValidatorSet, config_params::ConfigParam15};
+use contracts::validator_controller::ControllerOperations;
 use control_client::client_api::Account as ControlClientAccount;
 use control_client::client_api::PqStakeAuthorization;
 use std::collections::HashMap;
@@ -124,6 +125,15 @@ pub trait ElectionsProvider: Send + Sync {
     /// moved has to speak in the same terms. Providers that cannot supply it
     /// return `None`, which simply means no such nudge is attempted.
     async fn get_current_vset_hash(&mut self) -> anyhow::Result<Option<[u8; 32]>> {
+        Ok(None)
+    }
+
+    /// The pool controller's operating authorization (kind 4) and the live relay grant,
+    /// read through the chain. `None` when this provider has no chain access.
+    async fn controller_operations(
+        &mut self,
+        _controller: &MsgAddressInt,
+    ) -> anyhow::Result<Option<ControllerOperations>> {
         Ok(None)
     }
 }

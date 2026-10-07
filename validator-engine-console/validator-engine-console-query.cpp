@@ -797,6 +797,100 @@ td::Status CreatePqStakeAuthorizationQuery::receive(td::BufferSlice data) {
   return td::Status::OK();
 }
 
+td::Status CreatePqStakeAuthorizationWithKeyQuery::run() {
+  TRY_RESULT_ASSIGN(date_, tokenizer_.get_token<td::uint32>());
+  TRY_RESULT_ASSIGN(max_factor_, tokenizer_.get_token<td::uint32>());
+  TRY_RESULT_ASSIGN(adnl_addr_, tokenizer_.get_token<tos::Bits256>());
+  TRY_RESULT_ASSIGN(stake_owner_, tokenizer_.get_token<tos::Bits256>());
+  TRY_RESULT_ASSIGN(key_id_, tokenizer_.get_token<tos::Bits256>());
+  TRY_RESULT_ASSIGN(fname_, tokenizer_.get_token<std::string>());
+  TRY_STATUS(tokenizer_.check_endl());
+  return td::Status::OK();
+}
+
+td::Status CreatePqStakeAuthorizationWithKeyQuery::send() {
+  auto b = tos::create_serialize_tl_object<tos::tos_api::engine_validator_createPqStakeAuthorizationWithKey>(
+      date_, max_factor_, adnl_addr_, stake_owner_, key_id_);
+  td::actor::send_closure(console_, &ValidatorEngineConsole::envelope_send_query, std::move(b), create_promise());
+  return td::Status::OK();
+}
+
+td::Status CreatePqStakeAuthorizationWithKeyQuery::receive(td::BufferSlice data) {
+  TRY_RESULT_PREFIX(f, tos::fetch_tl_object<tos::tos_api::engine_validator_pqStakeAuthorization>(data.as_slice(), true),
+                    "received incorrect answer: ");
+  td::TerminalIO::out() << "success: validator=" << f->validator_id_.to_hex() << " key=" << f->key_id_.to_hex() << "\n";
+  TRY_STATUS(td::write_file(fname_, f->signature_.as_slice()));
+  return td::Status::OK();
+}
+
+td::Status GetPqConsensusKeysQuery::run() {
+  TRY_STATUS(tokenizer_.check_endl());
+  return td::Status::OK();
+}
+
+td::Status GetPqConsensusKeysQuery::send() {
+  auto b = tos::create_serialize_tl_object<tos::tos_api::engine_validator_getPqConsensusKeys>();
+  td::actor::send_closure(console_, &ValidatorEngineConsole::envelope_send_query, std::move(b), create_promise());
+  return td::Status::OK();
+}
+
+td::Status GetPqConsensusKeysQuery::receive(td::BufferSlice data) {
+  TRY_RESULT_PREFIX(f, tos::fetch_tl_object<tos::tos_api::engine_validator_pqConsensusKeys>(data.as_slice(), true),
+                    "received incorrect answer: ");
+  td::TerminalIO::out() << "validator=" << f->validator_id_.to_hex() << "\n";
+  for (const auto &key : f->keys_) {
+    td::TerminalIO::out() << "key=" << (key->key_id_.is_zero() ? std::string("(not loaded)") : key->key_id_.to_hex())
+                          << " valid_from=" << static_cast<td::uint32>(key->valid_from_)
+                          << " expire_at=" << static_cast<td::uint32>(key->expire_at_)
+                          << " expired=" << (key->expired_ ? "yes" : "no") << " file=" << key->consensus_key_file_
+                          << "\n";
+  }
+  return td::Status::OK();
+}
+
+td::Status AddPqConsensusKeyQuery::run() {
+  TRY_RESULT_ASSIGN(file_, tokenizer_.get_token<std::string>());
+  TRY_RESULT_ASSIGN(valid_from_, tokenizer_.get_token<td::uint32>());
+  TRY_RESULT_ASSIGN(expire_at_, tokenizer_.get_token<td::uint32>());
+  TRY_STATUS(tokenizer_.check_endl());
+  return td::Status::OK();
+}
+
+td::Status AddPqConsensusKeyQuery::send() {
+  auto b = tos::create_serialize_tl_object<tos::tos_api::engine_validator_addPqConsensusKey>(
+      file_, static_cast<td::int32>(valid_from_), static_cast<td::int32>(expire_at_));
+  td::actor::send_closure(console_, &ValidatorEngineConsole::envelope_send_query, std::move(b), create_promise());
+  return td::Status::OK();
+}
+
+td::Status AddPqConsensusKeyQuery::receive(td::BufferSlice data) {
+  TRY_RESULT_PREFIX(f, tos::fetch_tl_object<tos::tos_api::engine_validator_pqConsensusKeyInfo>(data.as_slice(), true),
+                    "received incorrect answer: ");
+  td::TerminalIO::out() << "success: key=" << f->key_id_.to_hex()
+                        << " valid_from=" << static_cast<td::uint32>(f->valid_from_)
+                        << " expire_at=" << static_cast<td::uint32>(f->expire_at_) << "\n";
+  return td::Status::OK();
+}
+
+td::Status DelPqConsensusKeyQuery::run() {
+  TRY_RESULT_ASSIGN(key_id_, tokenizer_.get_token<tos::Bits256>());
+  TRY_STATUS(tokenizer_.check_endl());
+  return td::Status::OK();
+}
+
+td::Status DelPqConsensusKeyQuery::send() {
+  auto b = tos::create_serialize_tl_object<tos::tos_api::engine_validator_delPqConsensusKey>(key_id_);
+  td::actor::send_closure(console_, &ValidatorEngineConsole::envelope_send_query, std::move(b), create_promise());
+  return td::Status::OK();
+}
+
+td::Status DelPqConsensusKeyQuery::receive(td::BufferSlice data) {
+  TRY_RESULT_PREFIX(f, tos::fetch_tl_object<tos::tos_api::engine_validator_success>(data.as_slice(), true),
+                    "received incorrect answer: ");
+  td::TerminalIO::out() << "success\n";
+  return td::Status::OK();
+}
+
 td::Status CreateProposalVoteQuery::run() {
   TRY_RESULT_ASSIGN(data_, tokenizer_.get_token<std::string>());
   TRY_RESULT_ASSIGN(fname_, tokenizer_.get_token<std::string>());

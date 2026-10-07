@@ -139,7 +139,7 @@ TEST(ConsensusDbSweep, reclaims_queued_directory) {
 
 // A validator directory (no observer suffix) that is NOT in the queue must never
 // be deleted by the sweep, whatever else is on disk. Validator-group cleanup is
-// checkpoint-bound in the manager (Finding 1 / PR B), never a fence match here,
+// checkpoint-bound in the manager, never a fence match here,
 // so a still-recreatable session can never lose its consensus state at startup.
 // If the sweep regained a by-session-id deletion path, this would fail.
 TEST(ConsensusDbSweep, never_sweeps_unqueued_validator_directory) {

@@ -1,0 +1,10 @@
+@method_id(100001)
+fun get_state(): bool {
+    return true;
+}
+
+fun onInternalMessage(in: InMessage) {}
+
+/**
+@testcase | 100001 | | -1
+ */

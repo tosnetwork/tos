@@ -27,7 +27,7 @@
 #include "td/utils/port/path.h"
 #include "validator/consensus/validator-cleanup.h"
 
-// Key-value persistence for validator cleanup records (Finding 1), kept separate
+// Key-value persistence for validator cleanup records, kept separate
 // from validator-cleanup.h so the pure record/predicate core has no dependency on
 // the KeyValue layer. StateDb's methods are thin wrappers over these functions,
 // and tests exercise the SAME functions against a real RocksDb -- so disabling a
@@ -46,7 +46,7 @@ inline void store_validator_cleanup_record(td::KeyValue& kv, const PendingValida
 // Atomically persist a validator retirement: the destroyed-session fence (already
 // encoded by the caller as a single key/value) together with every newly-retiring
 // cleanup record, in ONE synced write batch. This is the durable precondition for
-// PR B's "persist intent before the actor is allowed to close" flow: if the actor
+// the "persist intent before the actor is allowed to close" retirement flow: if the actor
 // may begin retiring, the fence and the cleanup intents are already on disk
 // together. The record keys are written directly here (not via
 // store_validator_cleanup_record) because that helper opens its own batch and
@@ -72,29 +72,89 @@ inline void erase_validator_cleanup_record(td::KeyValue& kv, const ValidatorSess
   kv.commit_write_batch().ensure();
 }
 
-// Load every record via a bracketed prefix range scan. A value that fails the
-// strict decode is dropped (a lost record can at worst leak an orphan directory,
-// never authorize deleting the wrong one); one bad record does not abort the scan.
+// Read at most `max_keys` record keys strictly after `after_key` (from the start
+// of the range when it is empty), via a bracketed prefix range scan. A value that
+// fails the strict decode is dropped (a lost record can at worst leak an orphan
+// directory, never authorize deleting the wrong one); one bad record does not abort
+// the scan, but it does count toward `max_keys`, so a page is bounded by the keys
+// it examines and not only by the records it returns. A storage error during the
+// scan is returned as an error -- never a partial page -- so the caller examines
+// nothing and keeps its cursor; stopping because the page is full is not an error.
+inline td::Result<ValidatorCleanupPage> load_validator_cleanup_page(td::KeyValueReader& kv,
+                                                                    const std::string& after_key, size_t max_keys) {
+  ValidatorCleanupPage page;
+  if (max_keys == 0) {
+    return page;
+  }
+  auto end = validator_cleanup_key_range_end();
+  // The smallest key strictly greater than after_key.
+  std::string begin = after_key.empty() ? validator_cleanup_key_prefix().str() : after_key + '\0';
+  size_t examined = 0;
+  bool stopped = false;
+  auto status =
+      kv.for_each_in_range(td::Slice{begin}, td::Slice{end}, [&](td::Slice key, td::Slice value) -> td::Status {
+        if (examined == max_keys) {
+          stopped = true;
+          return td::Status::Error("page full");  // stops the scan; not a failure
+        }
+        ++examined;
+        page.last_key = key.str();
+        auto decoded = decode_validator_cleanup_record(value);
+        if (!decoded) {
+          return td::Status::OK();
+        }
+        // The value's session id is checked against its directory name by decode,
+        // but the record must ALSO sit under its own key. A record found under a
+        // different session's key is inconsistent persistence: drop it, so an
+        // erase-by-session (which targets validator_cleanup_key(session_id)) can
+        // never leave a mismatched record behind to reappear on the next load.
+        if (key != td::Slice{validator_cleanup_key(decoded.value().session_id)}) {
+          return td::Status::OK();
+        }
+        page.records.push_back(std::move(decoded.value()));
+        return td::Status::OK();
+      });
+  if (!stopped) {
+    TRY_STATUS(std::move(status));
+    page.reached_end = true;
+  }
+  return page;
+}
+
+// The current durable record for one session (a point read): the record, nothing if
+// there is none or it does not decode (as a page read skips such a value), or an error
+// if the read itself failed -- which is not absence. Cleanup re-reads a record this
+// way just before reserving its delete, so a page copy that a later retirement or
+// erase made stale is never acted on.
+inline td::Result<std::optional<PendingValidatorConsensusDbCleanup>> load_validator_cleanup_record(
+    td::KeyValueReader& kv, const ValidatorSessionId& session_id) {
+  std::string value;
+  TRY_RESULT(status, kv.get(td::Slice{validator_cleanup_key(session_id)}, value));
+  if (status != td::KeyValueReader::GetStatus::Ok) {
+    return std::optional<PendingValidatorConsensusDbCleanup>{};
+  }
+  auto decoded = decode_validator_cleanup_record(value);
+  if (!decoded || !(decoded.value().session_id == session_id)) {
+    return std::optional<PendingValidatorConsensusDbCleanup>{};
+  }
+  return std::optional<PendingValidatorConsensusDbCleanup>{std::move(decoded.value())};
+}
+
+// Load every record, page by page. For offline tools and tests only: the node scans
+// the store a page at a time and never holds the backlog in memory.
 inline std::vector<PendingValidatorConsensusDbCleanup> load_validator_cleanup_records(td::KeyValueReader& kv) {
   std::vector<PendingValidatorConsensusDbCleanup> records;
-  auto end = validator_cleanup_key_range_end();
-  kv.for_each_in_range(validator_cleanup_key_prefix(), td::Slice{end}, [&records](td::Slice key, td::Slice value) {
-      auto decoded = decode_validator_cleanup_record(value);
-      if (!decoded) {
-        return td::Status::OK();
-      }
-      // The value's session id is checked against its directory name by decode,
-      // but the record must ALSO sit under its own key. A record found under a
-      // different session's key is inconsistent persistence: drop it, so an
-      // erase-by-session (which targets validator_cleanup_key(session_id)) can
-      // never leave a mismatched record behind to reappear on the next load.
-      if (key != td::Slice{validator_cleanup_key(decoded.value().session_id)}) {
-        return td::Status::OK();
-      }
-      records.push_back(std::move(decoded.value()));
-      return td::Status::OK();
-    }).ensure();
-  return records;
+  std::string cursor;
+  while (true) {
+    auto page = load_validator_cleanup_page(kv, cursor, 1024).move_as_ok();  // tools and tests only
+    for (auto& record : page.records) {
+      records.push_back(std::move(record));
+    }
+    if (page.reached_end) {
+      return records;
+    }
+    cursor = std::move(page.last_key);
+  }
 }
 
 // True only when a stat of `full` confirms it is absent (POSIX ENOENT / Windows
@@ -127,7 +187,7 @@ inline bool path_is_confirmed_absent(const std::string& full) {
 // destroy_inner (RocksDb::destroy + rmrf + confirmed-absent stat), and shares
 // their assumption that the consensus root is a node-owned, trusted directory --
 // symlinks planted inside it are out of scope, exactly as for those paths.
-// Performs NO eligibility check: the caller (the cleanup orchestrator, B2-6) must
+// Performs NO eligibility check: the caller (the cleanup orchestrator) must
 // have already established -- under the checkpoint-bound four-condition rule --
 // that deleting this session's directory is safe. This is the last step, not the
 // decision.

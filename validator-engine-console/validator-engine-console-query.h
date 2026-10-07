@@ -966,6 +966,108 @@ class CreatePqStakeAuthorizationQuery : public Query {
   std::string fname_;
 };
 
+/// The same permission, asserting which consensus key signs it: refused unless that is the
+/// key the node's schedule assigns to the election (see consensus-key-schedule.h).
+class CreatePqStakeAuthorizationWithKeyQuery : public Query {
+ public:
+  CreatePqStakeAuthorizationWithKeyQuery(td::actor::ActorId<ValidatorEngineConsole> console, Tokenizer tokenizer)
+      : Query(console, std::move(tokenizer)) {
+  }
+  td::Status run() override;
+  td::Status send() override;
+  td::Status receive(td::BufferSlice data) override;
+  static std::string get_name() {
+    return "create-stake-authorization-with-key";
+  }
+  static std::string get_help() {
+    return "create-stake-authorization-with-key <election-date> <max-factor> <adnl-addr> <stake-owner> <key-id> "
+           "<fname>\tas create-stake-authorization, refused unless <key-id> is the key the schedule assigns to the "
+           "election";
+  }
+  std::string name() const override {
+    return get_name();
+  }
+
+ private:
+  td::uint32 date_;
+  td::uint32 max_factor_;
+  tos::Bits256 adnl_addr_;
+  tos::Bits256 stake_owner_;
+  tos::Bits256 key_id_;
+  std::string fname_;
+};
+
+/// The post-quantum consensus keys the node holds: identities, windows, files. Never seeds.
+class GetPqConsensusKeysQuery : public Query {
+ public:
+  GetPqConsensusKeysQuery(td::actor::ActorId<ValidatorEngineConsole> console, Tokenizer tokenizer)
+      : Query(console, std::move(tokenizer)) {
+  }
+  td::Status run() override;
+  td::Status send() override;
+  td::Status receive(td::BufferSlice data) override;
+  static std::string get_name() {
+    return "get-pq-consensus-keys";
+  }
+  static std::string get_help() {
+    return "get-pq-consensus-keys\tlist the post-quantum consensus keys this node holds";
+  }
+  std::string name() const override {
+    return get_name();
+  }
+};
+
+/// Hold one more consensus key while running, for a rotation without downtime.
+class AddPqConsensusKeyQuery : public Query {
+ public:
+  AddPqConsensusKeyQuery(td::actor::ActorId<ValidatorEngineConsole> console, Tokenizer tokenizer)
+      : Query(console, std::move(tokenizer)) {
+  }
+  td::Status run() override;
+  td::Status send() override;
+  td::Status receive(td::BufferSlice data) override;
+  static std::string get_name() {
+    return "add-pq-consensus-key";
+  }
+  static std::string get_help() {
+    return "add-pq-consensus-key <key-file> <valid-from> <expire-at>\thold another post-quantum consensus key: "
+           "it signs stakes for elections from <valid-from> (unix time) and stops being used at <expire-at> "
+           "(0: never)";
+  }
+  std::string name() const override {
+    return get_name();
+  }
+
+ private:
+  std::string file_;
+  td::uint32 valid_from_;
+  td::uint32 expire_at_;
+};
+
+/// Stop holding a consensus key: refused for the last key, and for an unexpired key a
+/// current, previous or next validator set still lists.
+class DelPqConsensusKeyQuery : public Query {
+ public:
+  DelPqConsensusKeyQuery(td::actor::ActorId<ValidatorEngineConsole> console, Tokenizer tokenizer)
+      : Query(console, std::move(tokenizer)) {
+  }
+  td::Status run() override;
+  td::Status send() override;
+  td::Status receive(td::BufferSlice data) override;
+  static std::string get_name() {
+    return "del-pq-consensus-key";
+  }
+  static std::string get_help() {
+    return "del-pq-consensus-key <key-id>\tstop holding a post-quantum consensus key no validator set needs";
+  }
+  std::string name() const override {
+    return get_name();
+  }
+
+ private:
+  tos::Bits256 key_id_;
+};
+
 class CreateProposalVoteQuery : public Query {
  public:
   CreateProposalVoteQuery(td::actor::ActorId<ValidatorEngineConsole> console, Tokenizer tokenizer)

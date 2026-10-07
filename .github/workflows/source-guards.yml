@@ -68,15 +68,10 @@ jobs:
           uv sync --frozen --no-dev
           uv run --frozen test/tostester/generate_tl.py
 
-      - name: Run the local testnet tooling tests
+      - name: Run the Config34 proof tests
         env:
           PYTHONDONTWRITEBYTECODE: '1'
           PYTHONPATH: scripts
         run: >-
           uv run --frozen pytest -q -p no:cacheprovider
-          test/pq-native/test_local_pq_testnet.py
           test/pq-native/test_x02_config34_proof.py
-          scripts/test_install_root_services.py
-          scripts/test_local_pq_transfers.py
-          scripts/test_local_pq_privacy.py
-          scripts/test_local_pq_elections.py

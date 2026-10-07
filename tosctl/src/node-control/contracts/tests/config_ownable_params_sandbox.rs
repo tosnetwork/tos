@@ -20,7 +20,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, compile_func_with_stdlib};
 use tos_vm::stack::{StackItem, integer::IntegerData};
 
+mod served;
 mod weak_ed25519;
+
+use served::as_served;
 
 const TOS: u64 = 1_000_000_000;
 const ERR_WEAK_VALIDATOR_KEY: i32 = 45;
@@ -549,4 +552,45 @@ fn the_guard_fits_the_external_gas_credit() {
     eprintln!("worst {worst}, worst guard overhead {worst_overhead}");
     assert!(worst_overhead <= 1_050, "the guard adds {worst_overhead} gas");
     assert!(worst * 10 <= EXTERNAL_GAS_CREDIT * 9, "{worst} leaves under 10% of the credit");
+}
+
+/// The configuration contract's own `get_proposal`, rendered as the node serves it
+/// and read back by the decoders `tosctl` uses.
+fn served_proposal(config: &Config, phash: [u8; 32]) -> common::tvm_stack_parser::TvmStackParser {
+    let key = StackItem::integer(IntegerData::from_unsigned_bytes_be(phash));
+    let result = config.bc.run_get_method(&config.address, "get_proposal", vec![key]).expect("run");
+    result.expect_success();
+    // The node serializes the stack top first; the provider reverses it.
+    let served: Vec<serde_json::Value> = result.stack.iter().rev().map(as_served).collect();
+    let entries: Vec<chain_rpc_client::v2::stack::RPCStackEntry> =
+        serde_json::from_value(serde_json::Value::Array(served)).expect("served entries");
+    contracts::chain_provider::stack_from_rpc(entries)
+}
+
+#[test]
+fn the_real_get_proposal_decodes_absent_unvoted_and_voted() {
+    use contracts::config_contract::{decode_proposal, decode_proposal_expiry};
+    let strong = strong_validator();
+    let weak = weak_ed25519::sign_bit_aliases()[1];
+    let mut config = Config::deploy(compile(&source()), &weak, &strong);
+    let expires = config.bc.now() + 100_000;
+
+    let absent = served_proposal(&config, [0x71; 32]);
+    assert_eq!(decode_proposal_expiry(&absent).expect("absent"), None);
+    assert!(decode_proposal([0x71; 32], &absent).expect("absent").is_none());
+
+    let unvoted = served_proposal(&config, PHASH);
+    assert_eq!(decode_proposal_expiry(&unvoted).expect("present"), Some(expires));
+    let proposal = decode_proposal(PHASH, &unvoted).expect("present").expect("a proposal");
+    assert_eq!(proposal.expires, expires);
+    assert_eq!(proposal.param.id, 100);
+    assert!(proposal.voters.is_empty());
+
+    let part = internal_vote_part(STRONG_INDEX, PHASH);
+    let (result, _) = config.send_internal(internal_vote(7, strong.sign(&part).to_bytes(), &part));
+    result.expect_success();
+    let voted = served_proposal(&config, PHASH);
+    assert_eq!(decode_proposal_expiry(&voted).expect("voted"), Some(expires));
+    let proposal = decode_proposal(PHASH, &voted).expect("voted").expect("a proposal");
+    assert_eq!(proposal.voters, vec![STRONG_INDEX]);
 }

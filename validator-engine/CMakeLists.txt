@@ -8,6 +8,15 @@ add_library(json-rpc-parse STATIC
 target_include_directories(json-rpc-parse PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(json-rpc-parse PUBLIC tos_crypto tdutils tl_lite_api)
 
+# An account's storage metadata as served by the JSON-RPC (see
+# test/test-json-rpc-storage.cpp, which holds it to block::Account).
+add_library(json-rpc-storage STATIC
+  json-rpc-server-storage.h
+  json-rpc-server-storage.cpp
+)
+target_include_directories(json-rpc-storage PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
+target_link_libraries(json-rpc-storage PUBLIC tos_block tos_crypto tdutils)
+
 set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server.h
   json-rpc-server-internal.h
@@ -51,7 +60,7 @@ target_compile_options(validator-engine-json-rpc PRIVATE
 target_include_directories(validator-engine-json-rpc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(validator-engine-json-rpc PUBLIC metrics overlay tdutils tdactor adnl tl_api dht
   rldp2 quic full-node validator tos_validator validator toshttp
-  fift-lib smc-envelope json-rpc-parse json-rpc-account-model)
+  fift-lib smc-envelope json-rpc-parse json-rpc-account-model json-rpc-storage)
 
 add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})
 target_compile_options(validator-engine PRIVATE

@@ -981,5 +981,90 @@ class RepositoryConfigTest(unittest.TestCase):
             self.assertNotIn("--set ", text.replace(f"--set {release_set} ", ""), workflow)
 
 
+class PqToolPackagingTest(unittest.TestCase):
+    """A Linux release and the node image carry the post-quantum key tools.
+
+    Without them an operator installing from a release cannot create the
+    consensus key a validator loads, nor sign controller actions offline.
+    """
+
+    TOOLS = {
+        # tool -> where the packaging scripts find it, relative to the build dir
+        "tos-pq-consensus-key": "crypto/pq/tos-pq-consensus-key",
+        "tos-pq-controller": "crypto/tos-pq-controller",
+        "tos-pq-vote": "crypto/tos-pq-vote",
+        # A separate CMake project, so the root signer links into no node target.
+        "tos-pq-key": "pq-key/tos-pq-key",
+    }
+    IN_TREE_TARGETS = ("tos-pq-consensus-key", "tos-pq-controller", "tos-pq-vote")
+    LINUX_ARTIFACTS = {"tos-x86_64-linux": "linux-x86_64", "tos-arm64-linux": "linux-arm64"}
+    LINUX_SCRIPTS = (
+        "build-ubuntu-appimages.sh",
+        "build-ubuntu-portable.sh",
+        "build-ubuntu-shared.sh",
+    )
+
+    @staticmethod
+    def copied_into_artifacts(script: str) -> str:
+        """The single `cp ... artifacts` command that fills the artifact directory."""
+        start = script.index("  cp build/storage/storage-daemon/storage-daemon ")
+        end = script.index("\n     artifacts\n", start)
+        return script[start:end]
+
+    @staticmethod
+    def ninja_target_lists(script: str) -> list[str]:
+        lists = []
+        # The main build's target lists, one for a build with tests, one without.
+        for chunk in script.split("\nninja storage-daemon ")[1:]:
+            lines = []
+            for line in chunk.splitlines():
+                lines.append(line)
+                if not line.rstrip().endswith("\\"):
+                    break
+            lists.append(" ".join(lines))
+        return lists
+
+    def test_full_release_publishes_every_tool_for_each_linux_architecture(self) -> None:
+        config = json.loads((HERE / "release-artifacts.json").read_text())
+        published = {
+            (asset["artifact"], asset.get("path")): asset["name"]
+            for asset in config["release_sets"]["full"]["assets"]
+        }
+        for artifact, suffix in self.LINUX_ARTIFACTS.items():
+            for tool in self.TOOLS:
+                self.assertEqual(published.get((artifact, tool)), f"{tool}-{suffix}")
+
+    def test_linux_release_workflows_package_with_the_appimage_script(self) -> None:
+        config = json.loads((HERE / "release-artifacts.json").read_text())
+        workflows = HERE.parent / ".github" / "workflows"
+        for entry in config["build_workflows"]:
+            if entry["artifact"] in self.LINUX_ARTIFACTS:
+                text = (workflows / entry["workflow"]).read_text()
+                self.assertIn("./build-ubuntu-appimages.sh -a", text, entry["workflow"])
+
+    def test_linux_packaging_scripts_build_and_copy_every_tool(self) -> None:
+        for name in self.LINUX_SCRIPTS:
+            script = (HERE.parent / "assembly" / "native" / name).read_text()
+            target_lists = self.ninja_target_lists(script)
+            self.assertEqual(len(target_lists), 2, name)
+            for targets in target_lists:
+                for target in self.IN_TREE_TARGETS:
+                    self.assertIn(f" {target} ", f" {targets} ", f"{name}: ninja misses {target}")
+            self.assertIn("-S ../crypto/pq/tools -B pq-key", script, name)
+            self.assertIn("ninja -C pq-key tos-pq-key", script, name)
+            copied = self.copied_into_artifacts(script).split()
+            for tool, path in self.TOOLS.items():
+                self.assertIn(f"build/{path}", copied, f"{name}: {tool} is not copied")
+
+    def test_node_image_installs_every_tool(self) -> None:
+        dockerfile = (HERE.parent / "Dockerfile").read_text()
+        for tool in self.IN_TREE_TARGETS:
+            self.assertRegex(dockerfile, rf"\bninja [^\n]*(?:\\\n[^\n]*)*\b{tool}\b")
+        self.assertIn("-S /tos/crypto/pq/tools -B /tos/build-pq-key", dockerfile)
+        for tool, path in self.TOOLS.items():
+            source = f"/tos/build-pq-key/{tool}" if tool == "tos-pq-key" else f"/tos/build/{path}"
+            self.assertIn(f"COPY --from=builder {source} /usr/local/bin/\n", dockerfile)
+
+
 if __name__ == "__main__":
     unittest.main()

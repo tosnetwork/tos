@@ -98,7 +98,10 @@ enum class SeedFileRefusal {
 // rather than followed: the path an operator configured is the file that is read.
 inline std::optional<SeedFileRefusal> read_protected_seed(std::string_view path, SeedBuffer& seed) noexcept {
   const std::string name(path);
-  Descriptor fd(::open(name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW));
+  // Opened without blocking, so a FIFO at the path is refused below rather than waited on
+  // until something writes to it. Blocking is restored once the file is known to be
+  // regular, where it makes no difference anyway.
+  Descriptor fd(::open(name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
   if (!fd.valid()) {
     return SeedFileRefusal::cannot_open;
   }
@@ -108,6 +111,10 @@ inline std::optional<SeedFileRefusal> read_protected_seed(std::string_view path,
   }
   if (!S_ISREG(st.st_mode)) {
     return SeedFileRefusal::not_a_regular_file;
+  }
+  const int flags = ::fcntl(fd.get(), F_GETFL);
+  if (flags < 0 || ::fcntl(fd.get(), F_SETFL, flags & ~O_NONBLOCK) != 0) {
+    return SeedFileRefusal::cannot_open;
   }
   if (st.st_uid != ::geteuid()) {
     return SeedFileRefusal::wrong_owner;

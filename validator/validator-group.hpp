@@ -75,8 +75,8 @@ class IValidatorGroup : public td::actor::Actor {
 
   // Retire the group WITHOUT deleting its consensus DB: stop the consensus bus,
   // close the database, and report closure to the manager, leaving the directory
-  // on disk for a later checkpoint-bound deletion (validator-group cleanup,
-  // Finding 1 / PR B). Unlike destroy(), this never removes the directory, so a
+  // on disk for a later checkpoint-bound deletion by the manager's validator-group
+  // cleanup. Unlike destroy(), this never removes the directory, so a
   // session that is still recreatable can never lose its consensus state here.
   // `generation` is the retiring incarnation tag the manager assigned; it is
   // reported back in consensus_db_closed so a stale close from an older

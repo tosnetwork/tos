@@ -68,9 +68,18 @@ pub struct PoolRmCmd {
 pub struct PoolImportCmd {
     #[arg(short = 'n', long = "name", help = "Pool name")]
     name: String,
-    #[arg(short = 'a', long = "address", help = "Pool contract address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        short = 'a',
+        long = "address",
+        help = "Pool contract address"
+    )]
     address: String,
-    #[arg(long, help = "Validator controller address the pool relays its stake through")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        help = "Validator controller address the pool relays its stake through"
+    )]
     controller: String,
 }
 
@@ -119,6 +128,7 @@ pub struct PoolNominatorCreateCmd {
     #[arg(long, help = "Validator wallet name from config (usually the node's wallet)")]
     validator: String,
     #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
         long,
         help = "Validator controller address the pool relays its stake through (-1:<hex>)"
     )]
@@ -258,7 +268,11 @@ pub struct PoolSingleCreateCmd {
     owner: String,
     #[arg(long, help = "Validator wallet name from config (usually the node's wallet)")]
     validator: String,
-    #[arg(long, help = "Validator controller address the pool relays its stake through")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        help = "Validator controller address the pool relays its stake through"
+    )]
     controller: String,
 }
 
@@ -352,13 +366,18 @@ pub enum PoolLiquidControllerAction {
 pub struct PoolLiquidControllerCreateCmd {
     #[arg(short = 'n', long = "name", help = "Controller set name to save in config")]
     name: String,
-    #[arg(short = 'p', long = "pool-address", help = "Liquid staking pool address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        short = 'p',
+        long = "pool-address",
+        help = "Liquid staking pool address"
+    )]
     pool_address: String,
     /// Controller 0 address (if already deployed). If omitted and --deploy is set, will deploy automatically.
-    #[arg(long = "controller-0-address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long = "controller-0-address")]
     controller_0_address: Option<String>,
     /// Controller 1 address (if already deployed). If omitted and --deploy is set, will deploy automatically.
-    #[arg(long = "controller-1-address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long = "controller-1-address")]
     controller_1_address: Option<String>,
     /// Deploy controllers by sending pre-built BOC messages to the liquid pool. Requires --wallet.
     #[arg(long = "deploy")]
@@ -367,7 +386,7 @@ pub struct PoolLiquidControllerCreateCmd {
     #[arg(long = "wallet")]
     wallet: Option<String>,
     /// The Validator Controller both staking controllers relay their stake through.
-    #[arg(long = "validator-controller")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long = "validator-controller")]
     validator_controller: String,
 }
 
@@ -391,9 +410,15 @@ pub struct PoolLiquidControllerGetCmd {
 pub struct PoolLiquidControllerAddCmd {
     #[arg(short = 'n', long = "name", help = "Controller name to save in config")]
     name: String,
-    #[arg(short = 'a', long = "address", help = "Controller contract address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        short = 'a',
+        long = "address",
+        help = "Controller contract address"
+    )]
     address: String,
     #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
         long,
         help = "Validator controller address this staking controller relays its stake through"
     )]

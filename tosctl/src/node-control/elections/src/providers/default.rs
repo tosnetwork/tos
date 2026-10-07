@@ -12,11 +12,11 @@ use adnl::client::AdnlClientConfig;
 use anyhow::Context;
 use chain_block::{Cell, ConfigParam15, ConfigParamEnum, MsgAddressInt, ValidatorSet};
 use contracts::ChainProvider;
+use contracts::validator_controller::{ControllerOperations, read_controller_operations};
 use control_client::{
     client_adnl::ControlClientAdnl,
     client_api::{
-        AddAdnlAddressRq, AddValidatorAdnlAddrRq, AddValidatorPermKeyRq, AddValidatorTempKeyRq,
-        ClientAPI, SignRq,
+        AddAdnlAddressRq, AddValidatorAdnlAddrRq, AddValidatorPermKeyRq, ClientAPI, SignRq,
     },
 };
 use std::collections::HashMap;
@@ -43,6 +43,20 @@ impl ElectionsProvider for DefaultElectionsProvider {
     async fn shutdown(&mut self) -> anyhow::Result<()> {
         self.client.shutdown().await
     }
+    // On a post-quantum chain this Ed25519 key never signs anything: the stake is
+    // authorized by the node's ML-DSA-44 consensus key (createPqStakeAuthorization),
+    // and the engine matches a PQ descriptor to this node only through the custodied
+    // consensus key (local_consensus_descriptor), never through a permanent or
+    // temporary key. Nor does the engine need the entry to serve the election's ADNL
+    // address: it registers the address a PQ descriptor names whenever that address is
+    // among its configured ADNL ids (local_pq_validator_adnl_ids), which
+    // new_adnl_addr's addAdnlAddress provides. The permanent-key entry is kept only as
+    // this runner's durable per-election record: addValidatorAdnlAddress needs an
+    // entry to attach the address to, getValidatorConfig returns it keyed by
+    // election_date (which is how a restarted runner finds the address it staked
+    // with), and the engine garbage-collects the entry after the term. A temporary
+    // key served only classical descriptors, which the PQ validator set refuses, so
+    // none is created.
     async fn new_validator_key(
         &mut self,
         since: u64,
@@ -57,14 +71,6 @@ impl ElectionsProvider for DefaultElectionsProvider {
             })
             .await
             .context("add_validator_perm_key")?;
-        self.client
-            .add_validator_temp_key(&AddValidatorTempKeyRq {
-                perm_key_hash: key_id.clone(),
-                key_hash: key_id.clone(),
-                expire_at: until as i32,
-            })
-            .await
-            .context("add_validator_temp_key")?;
         let pub_key = self.client.export_key_pub(&key_id).await.context("export_key_pub")?;
         Ok((key_id, pub_key))
     }
@@ -151,6 +157,13 @@ impl ElectionsProvider for DefaultElectionsProvider {
     async fn get_current_vset_hash(&mut self) -> anyhow::Result<Option<[u8; 32]>> {
         let cell = self.chain_provider.get_config_param_cell(34).await?;
         Ok(Some(cell.repr_hash().inner()))
+    }
+
+    async fn controller_operations(
+        &mut self,
+        controller: &MsgAddressInt,
+    ) -> anyhow::Result<Option<ControllerOperations>> {
+        Ok(Some(read_controller_operations(self.chain_provider.as_ref(), controller).await?))
     }
 
     async fn get_next_vset(&mut self) -> anyhow::Result<Option<ValidatorSet>> {

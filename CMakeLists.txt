@@ -846,6 +846,12 @@ target_include_directories(test-node-consensus-membership PRIVATE ${CMAKE_CURREN
 target_link_libraries(test-node-consensus-membership PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor
                       tos_pq_consensus_signer tos_pq_consensus)
 
+add_executable(test-pq-consensus-key-rotation test/test-pq-consensus-key-rotation.cpp)
+target_include_directories(test-pq-consensus-key-rotation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-pq-consensus-key-rotation PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor
+                      tos_pq_consensus_signer_test_clock tos_pq_consensus tos_mldsa44)
+
 add_executable(test-validator-transport-authority test/pq-native/validator-transport-authority-test.cpp)
 target_include_directories(test-validator-transport-authority PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1009,6 +1015,8 @@ target_link_libraries(test-validator-cleanup-integration PRIVATE tos_validator v
 
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
+add_executable(test-json-rpc-storage test/test-td-main.cpp test/test-json-rpc-storage.cpp)
+target_link_libraries(test-json-rpc-storage PRIVATE validator-engine-json-rpc json-rpc-storage tos_block tos_crypto tdutils)
 add_executable(test-account-model-detection test/test-td-main.cpp test/test-account-model-detection.cpp)
 target_link_libraries(test-account-model-detection PRIVATE json-rpc-account-model tos_crypto tdutils)
 add_executable(test-json-rpc-source-ip test/test-json-rpc-source-ip.cpp)
@@ -1530,6 +1538,13 @@ if (NOT NIX)
           "FIFT_EXECUTABLE=${CMAKE_CURRENT_BINARY_DIR}/crypto/fift"
           "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     endif()
+    # Raw inline bytes bypass symbolic continuation-capacity handling.
+    add_test(
+      NAME test-tol-raw-opcode-capacity
+      COMMAND ${PYTHON_VER} ${CMAKE_CURRENT_SOURCE_DIR}/tol-tester/check-raw-opcode-capacity.py
+        $<TARGET_FILE:tol> $<TARGET_FILE:fift>)
+    set_property(TEST test-tol-raw-opcode-capacity PROPERTY ENVIRONMENT
+      "FIFTPATH=${CMAKE_CURRENT_SOURCE_DIR}/crypto/fift/lib/")
     # Committed scaffold examples must match `tol new` output, and the tests
     # it generates must pass.
     add_test(
@@ -1661,6 +1676,9 @@ add_test(NAME full-node-master-startup
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/full-node-master-startup-test.py
           $<TARGET_FILE:validator-engine>)
 set_tests_properties(full-node-master-startup PROPERTIES LABELS "security-findings")
+add_test(NAME validator-consensus-cleanup-flags
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validator-consensus-cleanup-flags-test.py
+          $<TARGET_FILE:validator-engine>)
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
@@ -1718,6 +1736,12 @@ set_tests_properties(llvm-apt-key-pin PROPERTIES LABELS "source-guard")
 add_test(NAME snapshot-import-offline
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_import_snapshot.py)
 set_tests_properties(snapshot-import-offline PROPERTIES LABELS "source-guard")
+add_test(NAME docker-validator-role
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_docker_validator_role.py)
+set_tests_properties(docker-validator-role PROPERTIES LABELS "source-guard")
+add_test(NAME global-config-init-block-refresh
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_refresh_global_config_init_block.py)
+set_tests_properties(global-config-init-block-refresh PROPERTIES LABELS "source-guard")
 add_test(NAME dns-pq-vote-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-dns-pq-vote-source.py
           ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1832,6 +1856,7 @@ tos_test(test-rate-limiter)
 tos_test(test-full-node-shard-admission)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-parse)
+tos_test(test-json-rpc-storage)
 tos_test(test-account-model-detection)
 tos_test(test-json-rpc-source-ip)
 tos_test(test-json-rpc-listen-policy)
@@ -1842,6 +1867,20 @@ tos_test(test-validator-cleanup-statedb)
 tos_test(test-validator-cleanup-worker)
 tos_test(test-validator-cleanup-integration)
 tos_test(test-node-consensus-membership)
+tos_test(test-pq-consensus-key-rotation)
+# The production signer, and the binaries built on it, have no way to move the consensus key
+# deadline's clock; only the rotation test's signer does. See the script for every check.
+if(TARGET validator-engine AND TARGET tos-pq-consensus-key)
+  find_program(TOS_NM_EXECUTABLE NAMES llvm-nm-21 llvm-nm nm REQUIRED)
+  add_test(NAME pq-signer-no-test-clock
+           COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-signer-no-test-clock.py"
+                   --nm "${TOS_NM_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+                   --source-root "${CMAKE_CURRENT_SOURCE_DIR}"
+                   --production "$<TARGET_FILE:tos_pq_consensus_signer>"
+                   --binary "$<TARGET_FILE:validator-engine>"
+                   --binary "$<TARGET_FILE:tos-pq-consensus-key>"
+                   --test-clock "$<TARGET_FILE:tos_pq_consensus_signer_test_clock>")
+endif()
 tos_test(test-json-rpc-rate-gate)
 tos_test(test-json-rpc-payload-waiter)
 # Source-level check: a route added to on_request bypasses the dispatcher's

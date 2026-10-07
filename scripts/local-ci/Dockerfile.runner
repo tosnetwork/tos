@@ -1,0 +1,99 @@
+# Hosted-runner equivalence layer for the local CI replay.
+#
+# Jobs declared `runs-on: ubuntu-24.04` without a `container:` run on GitHub's
+# hosted image, which ships tools the builder image does not: a non-root
+# `runner` account with password-less sudo, rustup, Node.js with corepack, pip
+# that may install into the system interpreter, and a tool cache that
+# actions/setup-python fills. This layer adds those on top of the repository's
+# own `Dockerfile.builder` target `builder-24`, so a job's own install steps
+# (`apt-get install`, `llvm.sh 21 all`, `install-rust-toolchain.sh`) still run
+# for real and only find their packages already present.
+#
+# Jobs that declare `container:` do not use this layer; they run in the
+# builder image itself, as they do on GitHub.
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends sudo python3-pip python3-venv \
+        jq unzip zip xz-utils file ca-certificates iproute2 net-tools procps psmisc \
+        lsof tmux netcat-openbsd clang libclang-rt-18-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# `clang` above is the distribution compiler the hosted image calls plain
+# `clang` (18 on 24.04), with its sanitizer runtimes; the builder image only
+# has clang-21.
+#
+# Pre-warm what the lint and native jobs install themselves, so their own
+# install steps are quick no-ops instead of a multi-minute download per job.
+RUN wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && \
+    ./llvm.sh 21 all && rm llvm.sh && \
+    apt-get install -y --no-install-recommends clang-format-21 && \
+    rm -rf /var/lib/apt/lists/*
+
+# The hosted image lets pip install into the system interpreter.
+RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
+
+# The hosted runner account: uid 1001, password-less sudo.
+RUN (userdel -r ubuntu 2>/dev/null || true) && \
+    groupadd -g 1001 runner && \
+    useradd -m -u 1001 -g 1001 -s /bin/bash runner && \
+    printf 'runner ALL=(ALL) NOPASSWD:ALL\nDefaults env_keep += "PATH"\nDefaults !secure_path\n' \
+        > /etc/sudoers.d/runner && chmod 0440 /etc/sudoers.d/runner
+
+# Node.js LTS with corepack, as on the hosted image, where the runner account
+# can write the Node.js install (`corepack enable` links into it).
+ARG NODE_VERSION=22.20.0
+RUN set -eux; \
+    cd /tmp; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"; \
+    curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"; \
+    grep " node-v${NODE_VERSION}-linux-x64.tar.xz\$" SHASUMS256.txt | sha256sum -c -; \
+    tar -xJf "node-v${NODE_VERSION}-linux-x64.tar.xz" -C /usr/local --strip-components=1; \
+    rm -f "node-v${NODE_VERSION}-linux-x64.tar.xz" SHASUMS256.txt; \
+    node --version; corepack --version; \
+    chown -R 1001:1001 /usr/local/bin /usr/local/lib/node_modules
+
+# uv stays off PATH: hosted runners do not have it until a workflow installs
+# it (setup-uv, or the pinned install script). The replay's setup-uv
+# emulation puts this copy on PATH.
+RUN mkdir -p /opt/uv && cp /root/.local/bin/uv /root/.local/bin/uvx /opt/uv/ && \
+    chmod 0755 /opt/uv/uv /opt/uv/uvx
+
+# The interpreter actions/setup-python would provide. Its pip installs
+# freely, so the managed-interpreter marker is removed.
+ARG PYTHON_314=3.14
+RUN UV_PYTHON_INSTALL_DIR=/opt/hostedtoolcache/uv-python /opt/uv/uv python install "${PYTHON_314}" && \
+    py="$(UV_PYTHON_INSTALL_DIR=/opt/hostedtoolcache/uv-python /opt/uv/uv python find "${PYTHON_314}")" && \
+    mkdir -p "/opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin" && \
+    ln -sf "$py" "/opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin/python" && \
+    ln -sf "$py" "/opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin/python3" && \
+    ln -sf "$py" "/opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin/python${PYTHON_314}" && \
+    find /opt/hostedtoolcache/uv-python -name EXTERNALLY-MANAGED -delete && \
+    "$py" -m ensurepip --upgrade >/dev/null && \
+    printf '#!/bin/sh\nexec "%s" -m pip "$@"\n' "$py" > "/opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin/pip" && \
+    cp "/opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin/pip" "/opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin/pip3" && \
+    chmod 0755 /opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin/pip* && \
+    chmod -R a+rwX /opt/hostedtoolcache
+
+# rustup for the runner account with the default stable toolchain, as on the
+# hosted image. The repository-pinned toolchain (from the commit's
+# rust-toolchain.toml) is pre-installed too, so the jobs' own
+# scripts/install-rust-toolchain.sh verifies it instead of downloading it in
+# every job; the image tag carries the pinned version.
+ARG RUST_PINNED
+USER runner
+ENV HOME=/home/runner
+RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | \
+        sh -s -- -y --profile minimal --default-toolchain stable --component rustfmt,clippy && \
+    if [ -n "${RUST_PINNED}" ]; then \
+        /home/runner/.cargo/bin/rustup toolchain install "${RUST_PINNED}" --profile minimal \
+            --component clippy --component rustfmt; \
+    fi && \
+    /home/runner/.cargo/bin/rustc --version
+USER root
+# The hosted image's PATH carries the runner's ~/.local/bin, where installer
+# scripts such as uv's put their binaries.
+ENV PATH="/home/runner/.local/bin:/home/runner/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
