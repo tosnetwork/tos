@@ -1,0 +1,30 @@
+{
+  "simulator_tests": 1,
+  "controls": [
+    {
+      "guard": "authentication",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "duplicate",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "cross-instance-lock",
+      "exit": 2,
+      "semantic_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "iOS initial registry, authentication refusal, master cleanup and multi-instance write exclusion; no protected Keychain success, current proof or full recovery acceptance",
+  "ios_commit": "10846dd",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-r2-store",
+  "logs": {
+    "duplicate.log": "d92bd88d6c5e1e35933998a0df1ac7b1510bd2f82dfe2c37b7ae732680a78bed",
+    "restored.log": "466204c90bc1949bb0884a86240c303445f5a0bf24be22faec29989bbf4beb54",
+    "authentication.log": "a3daa5a3f2937a4a001b15e5e116af255e693fcd9885e5318cfb03f05265efd0",
+    "cross-instance-lock.log": "d161f91ca53f671267000f70c211fb9f4bc8dc2cbda85809308f72d04ae340e3"
+  }
+}
