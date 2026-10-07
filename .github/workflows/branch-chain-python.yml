@@ -86,13 +86,16 @@ jobs:
         run: scripts/install-rust-toolchain.sh
 
       - name: Verify Rust operator reads against the actual engine
+        # The job runs in a container: the default sh has no pipefail, and the
+        # workspace path inside the container is $GITHUB_WORKSPACE, not the host's.
+        shell: bash
         env:
-          TOS_SOURCE: ${{ github.workspace }}
-          TOS_ENGINE_BUILD: ${{ github.workspace }}/build
           CARGO_BUILD_JOBS: 4
-          CARGO_TARGET_DIR: ${{ github.workspace }}/build/operator-rust-target
         run: |
-          set -o pipefail
+          set -euo pipefail
+          export TOS_SOURCE="$GITHUB_WORKSPACE"
+          export TOS_ENGINE_BUILD="$GITHUB_WORKSPACE/build"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p control-client \
             --test engine_operator_reads real_engine_ -- --ignored --nocapture \
             | tee build/operator-engine-tests.log
