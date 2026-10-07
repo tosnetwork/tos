@@ -1,0 +1,23 @@
+{
+  "vectors": 4,
+  "tests": 4,
+  "controls": [
+    {
+      "field": "successor-owner",
+      "exit": 2
+    },
+    {
+      "field": "vault-epoch",
+      "exit": 2
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "iOS Simulator successor DAG wire identities with synthetic codes/keys; not POP, deployed migration or live chain acceptance",
+  "ios_commit": "1678e08",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-successor-full",
+  "logs": {
+    "successor-owner.log": "58d71b0458dcc5d6ee3ec159ea5938f29515cb166fe43808d0274123027105e6",
+    "vault-epoch.log": "496e8f7c7dd1f5e64d476da809c996b40d7f18cc729a7fd9da40e0f6d5ca1142",
+    "restored.log": "9cf6b269ea3034c4e0835e40be9c80540944a6fe61ef6e2e7727dc133984050a"
+  }
+}
