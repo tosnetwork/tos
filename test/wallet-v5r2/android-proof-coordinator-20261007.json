@@ -1,0 +1,49 @@
+{
+  "scope": "Android authenticated repository initial-proof coordinator and real main-app refusal paths; no deployed multi-account positive flow",
+  "android_revision": "6d49e6c",
+  "validation": [
+    "Account app module compiles",
+    "Main-app registration/custody test includes proof authentication refusal and native missing-checkpoint refusal before endpoint queries",
+    "Authentication removal compiles and fails named boundary assertion; restored/final test passes",
+    "Owned checkpoint directory cleanup added to test finally path"
+  ],
+  "control_delta": "Final test adds cleanup only after accepted authentication control; production coordinator unchanged.",
+  "coordinator": "Explicit enrollment; system local clock; interruptible worker; wallet LIVE then exact-checkpoint module/vault and optional PRIMARY policy; rechecks fee proof before returning observation. No seeds, signing, funding or broadcast.",
+  "artifacts": [
+    {
+      "file": "20261007-android-proof-coordinator-compile.log",
+      "bytes": 22051,
+      "sha256": "43dc5bf7a28cb8147eeb721a024e1009803fbcfb8b017c58134cf2a0bd06b509"
+    },
+    {
+      "file": "20261007-android-coordinator-auth-baseline.log",
+      "bytes": 77955,
+      "sha256": "3f02e978ee8b7a8bd1696a24931d8fd3f27124b45669dc07ac4331cbe03356d8"
+    },
+    {
+      "file": "20261007-android-coordinator-auth-control.log",
+      "bytes": 78934,
+      "sha256": "ba9b7224cb345eba6c5f9c230a02ede412519a9c411fb5afd607db7e61ca553f"
+    },
+    {
+      "file": "20261007-android-coordinator-auth-control.xml",
+      "bytes": 1691,
+      "sha256": "518bd2fb37c6f80db7e068400cb4627952c1137b3ff3f25732385c0f393d47ed"
+    },
+    {
+      "file": "20261007-android-coordinator-auth-restored.log",
+      "bytes": 77969,
+      "sha256": "72b9cbab526c82582187744bbfaedcdee38b78843c5131d167cbb66f237e453c"
+    },
+    {
+      "file": "20261007-android-coordinator-final.log",
+      "bytes": 77955,
+      "sha256": "ce238e1f1692ff86724e0d1a8e853eca6b6d81f85ae4c4422743367d29828fd6"
+    }
+  ],
+  "pending": [
+    "Real endpoint/deployed R2 positive tuple, concurrent advancement and transport cancellation scenarios",
+    "Custody, solvency, signed action and receipt integration",
+    "Successor staged rotation and hardware validation"
+  ]
+}

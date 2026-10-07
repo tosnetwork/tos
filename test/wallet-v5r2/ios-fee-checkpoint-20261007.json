@@ -1,0 +1,108 @@
+{
+  "scope": "Swift explicit-target LIVE proof request and fee-clock/slot semantics; captured proofs and codec tests, not live payment acceptance",
+  "ios_revision": "00a53f4",
+  "native_revision": "67d7b2598",
+  "validation": [
+    "Two checkpoint and two time baseline/restored tests pass",
+    "Five mutants compile and fail named runtime assertions",
+    "Fixed-target read verifies same authenticated point via two callback queries",
+    "Future/stale/cross-slot/pre-epoch fee proofs fail closed; signed-width arithmetic avoids wrap",
+    "Full app make compile passes at 00a53f4"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-ios-checkpoint-request.log",
+      "bytes": 157623,
+      "sha256": "c189a021398f1ba64c3c8225b2d0ce64c8b252f5b954fdae79b261368d1491c1"
+    },
+    {
+      "file": "20261007-ios-fee-proof-time.log",
+      "bytes": 41000,
+      "sha256": "35733de2836181504dbb4b6218602f54b63d70aad64c09dcfa596913e9ee2ba2"
+    },
+    {
+      "file": "20261007-ios-fee-proof-time-baseline-raw.log",
+      "bytes": 455514,
+      "sha256": "aa3f8a7d9b52ff44ac2c5b094f527aee84dd837f56ed50a6c5e3a1ee3ea092d5"
+    },
+    {
+      "file": "20261007-ios-fee-target-control.log",
+      "bytes": 41279,
+      "sha256": "d9a71fa9d31eafd5c007c3864ff0fe98123f29b3412ed6fc9ed3f66af6c3e5d5"
+    },
+    {
+      "file": "20261007-ios-fee-target-control-raw.log",
+      "bytes": 466465,
+      "sha256": "cf075192d4106189494617b330199086948da2cf8fc0e0e532912f189a641907"
+    },
+    {
+      "file": "20261007-ios-fee-slot-control.log",
+      "bytes": 41388,
+      "sha256": "f578121085cd3092534e8ad8c5d1bedaa491dfe2054d90f90bd0b0f5b2443f7b"
+    },
+    {
+      "file": "20261007-ios-fee-slot-control-raw.log",
+      "bytes": 467097,
+      "sha256": "8cbf2fffd2f2546742b24c19e3967ae98aecfb940fc911d541064f9bd5fc6f08"
+    },
+    {
+      "file": "20261007-ios-fee-future-control.log",
+      "bytes": 11905,
+      "sha256": "02d2796c1be6acbfcfb63974f632e95ee9b01813e3c4be969b6d38d0904c1e2a"
+    },
+    {
+      "file": "20261007-ios-fee-future-control-raw.log",
+      "bytes": 76037,
+      "sha256": "e6fb98bcb6fe4dbbeacd979838211550289fdfee0af81e4bc203d35b1b2fc987"
+    },
+    {
+      "file": "20261007-ios-fee-age-control.log",
+      "bytes": 11905,
+      "sha256": "95ea744f261f5aa4f60d6dc2c94dcc2f0cb02cfee09b5ec06eec190fc95684bf"
+    },
+    {
+      "file": "20261007-ios-fee-age-control-raw.log",
+      "bytes": 76037,
+      "sha256": "b8c5983465ac149c7fb84b64c337d99185b8f8e883e1a37d3898a633b06e8c03"
+    },
+    {
+      "file": "20261007-ios-fee-epoch-control.log",
+      "bytes": 40541,
+      "sha256": "9a6b8130b2ebc5d63492007868a1987d6359b17b11d081553eca687bf0b0c888"
+    },
+    {
+      "file": "20261007-ios-fee-epoch-control-raw.log",
+      "bytes": 450067,
+      "sha256": "2ec905c1e7322c066e4b3ac9a54ab0c9cc869bb117b82031a8eb4f26d99b097b"
+    },
+    {
+      "file": "20261007-ios-fee-checkpoint-restored.log",
+      "bytes": 12684,
+      "sha256": "35d1ab6b8b59a5d1dbd6b89fdba2b0fbaa24798deb61ce4ab5f733004fa7e068"
+    },
+    {
+      "file": "20261007-ios-fee-checkpoint-restored-raw.log",
+      "bytes": 119188,
+      "sha256": "c64c0a334ab9aeff9d3a07663a7e78cfd2c2505c12d5964c6fffb363384c059b"
+    },
+    {
+      "file": "20261007-ios-fee-time-restored.log",
+      "bytes": 40816,
+      "sha256": "365bdbae6020d2cc0e06f780e2de38de60f7e44d0b2abd712a391d1a5787a8ef"
+    },
+    {
+      "file": "20261007-ios-fee-time-restored-raw.log",
+      "bytes": 453878,
+      "sha256": "b0644bc9e3add0e07dd76b14702dfe58cf508659bc26ed0399109307a64f6965"
+    },
+    {
+      "file": "20261007-ios-fee-checkpoint-full-compile.log",
+      "bytes": 252272,
+      "sha256": "975d92d4f5757ecd3fa5e721d3cdb37fb5826030eb11dc34405f215b2e0edd1f"
+    }
+  ],
+  "pending": [
+    "Real multi-account coordinator and signed fee/custody integration",
+    "Deployed R2 positive lifecycle and recipient finality"
+  ]
+}

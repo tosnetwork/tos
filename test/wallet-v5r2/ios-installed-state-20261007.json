@@ -1,0 +1,94 @@
+{
+  "scope": "Swift strict TOS wallet/account/vault codecs and typed initial-tuple observation; no deployed R2 proof-positive lifecycle claim",
+  "ios_revision": "2af1e69",
+  "native_controls_revision": "2edbeb6d1",
+  "native_final_genesis_revision": "67d7b2598",
+  "validation": [
+    "Three state tests pass before controls and after restoration",
+    "Five guard removal controls compile and fail their named runtime assertions",
+    "Four Genesis tests pass after restoration and native pin update",
+    "TOS StorageExtraInfo none/dictionary metadata, inactive/classic/wrong mode/identity/config and u64/counter boundaries checked",
+    "Full app make compile passes at iOS 2af1e69"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-ios-installed-state-baseline-raw.log",
+      "bytes": 458185,
+      "sha256": "a8baea064c73c5d01763835c75b83489811c67ee33bfb571ffefbde039cfca1f"
+    },
+    {
+      "file": "20261007-ios-installed-state-restored.log",
+      "bytes": 40153,
+      "sha256": "310787aa1cf06cfb99a3afce19a9abf5e6322cf12b823ad67ac6b29a0c81b0d3"
+    },
+    {
+      "file": "20261007-ios-installed-state-restored-raw.log",
+      "bytes": 447541,
+      "sha256": "c4c7acc834857d9e181953821bad195e53f44f3c50e0078877dc28f3d89c4086"
+    },
+    {
+      "file": "20261007-ios-installed-state-genesis-restored.log",
+      "bytes": 49847,
+      "sha256": "76317d54a8842cab27017ef79e8797722f4a07ebcd620df8258977ca5e15c96e"
+    },
+    {
+      "file": "20261007-ios-installed-classic-control.log",
+      "bytes": 11845,
+      "sha256": "4f4008725fe7766047759aedbb6f8625d8791cea66a34f4365c55553526bc908"
+    },
+    {
+      "file": "20261007-ios-installed-classic-control-raw.log",
+      "bytes": 76013,
+      "sha256": "6460ba27b54a33eb78fdcb05625d97c899cef801bb121b7391e7fbf3e03986d3"
+    },
+    {
+      "file": "20261007-ios-installed-mode-control.log",
+      "bytes": 40508,
+      "sha256": "219c60ee5be5141d7b2d59bf2cd2948e89d1139d6ce7749cf6db87d5b326a9ba"
+    },
+    {
+      "file": "20261007-ios-installed-mode-control-raw.log",
+      "bytes": 448548,
+      "sha256": "5c514afd38bff19a07723edabbf1e0dfff450ba9d878cdb27c35e557ca62cad0"
+    },
+    {
+      "file": "20261007-ios-installed-account-code-control.log",
+      "bytes": 40240,
+      "sha256": "f957f8bfdc5b5cb70f8949558b8872ecc3971cca1262f9748c64206adfd508dd"
+    },
+    {
+      "file": "20261007-ios-installed-account-code-control-raw.log",
+      "bytes": 447918,
+      "sha256": "dd954763c84277d06f1e842d66aebfdfecdb2370afa46b01a493b652d46e21d6"
+    },
+    {
+      "file": "20261007-ios-installed-counter-control.log",
+      "bytes": 11847,
+      "sha256": "8a28b7578a6468faaf7625cc21a1aa6cf53d56abac92a35110d249c76d92cfbd"
+    },
+    {
+      "file": "20261007-ios-installed-counter-control-raw.log",
+      "bytes": 75989,
+      "sha256": "78d50dcc77d91be600f4e48378e32b0e4452c9455c312f720ec0bde031e977fa"
+    },
+    {
+      "file": "20261007-ios-installed-configuration-control.log",
+      "bytes": 11849,
+      "sha256": "26061766dd68464207aed64debab98e3213b18d899462efa1ce21b45c83066b2"
+    },
+    {
+      "file": "20261007-ios-installed-configuration-control-raw.log",
+      "bytes": 75991,
+      "sha256": "5ec1a56f3fbec8d8e33b4314c797bf800dd3192d9325f00e620fe1594328d67d"
+    },
+    {
+      "file": "20261007-ios-installed-full-compile.log",
+      "bytes": 251966,
+      "sha256": "c7aa550d8f6f4497f7d647ffa3e4f62411052dd005b8f627b3d046d96168f4cf"
+    }
+  ],
+  "pending": [
+    "Independent deployed R2 proof binding, policy, fee-slot/solvency and custody authorizer",
+    "Successor tuple rotation and transaction-bound recipient finality"
+  ]
+}

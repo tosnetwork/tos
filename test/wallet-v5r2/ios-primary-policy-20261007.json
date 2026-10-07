@@ -1,0 +1,112 @@
+{
+  "scope": "Swift native-authenticated dynamic config and exact v1 retirement policy with PRIMARY eligibility integration; no complete live signing claim",
+  "ios_revision": "77863d3",
+  "native_revision": "67d7b2598",
+  "validation": [
+    "Two config and two retirement baseline tests pass",
+    "Six control mutants compile and fail named runtime assertions",
+    "Both restored two-test suites pass",
+    "Full app make compile passes at 77863d3"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-ios-retirement-policy.log",
+      "bytes": 157376,
+      "sha256": "c64da74d58ee39b0e586c55d30f1724d4fb735d798d16bd65dcf8fdb9c89564b"
+    },
+    {
+      "file": "20261007-ios-dynamic-config-baseline.log",
+      "bytes": 11897,
+      "sha256": "6f9d54ee7a597a7a64c7eba23c260bbc39d702c7d73060b7e8d53e31e757a37e"
+    },
+    {
+      "file": "20261007-ios-policy-config-index-control.log",
+      "bytes": 40377,
+      "sha256": "30bf2d825fbd2571266d430ff178a4759040591b34fd11f66b53fc6e899baf40"
+    },
+    {
+      "file": "20261007-ios-policy-config-index-control-raw.log",
+      "bytes": 454345,
+      "sha256": "8478144dc0b6b9616ecd4411cb12d755622d742a9a638f965a68058e539659e7"
+    },
+    {
+      "file": "20261007-ios-policy-deadline-control.log",
+      "bytes": 41326,
+      "sha256": "279836084a9df199869b07e99f56bb9ce54ab48764aca7ab57a5bb64a8f77b59"
+    },
+    {
+      "file": "20261007-ios-policy-deadline-control-raw.log",
+      "bytes": 466218,
+      "sha256": "d9c8741844973f42a51e688570952c2e42b258f9d9599613a525a922e20bb6bc"
+    },
+    {
+      "file": "20261007-ios-policy-retired-control.log",
+      "bytes": 11821,
+      "sha256": "c80d8143af01b8f09f250d71c73eef6f98c4a5a4a52ef1078537a2985bdbc560"
+    },
+    {
+      "file": "20261007-ios-policy-retired-control-raw.log",
+      "bytes": 75881,
+      "sha256": "cc9b3528ade0ea27f20e9bc732af4cf656850a3d9c6c204674f6d57cf7c21235"
+    },
+    {
+      "file": "20261007-ios-policy-unknown-bits-control.log",
+      "bytes": 11827,
+      "sha256": "750f980655c9d106efec03172a1e41c2784cfd0d0a14cb10d2bda6d6351475e6"
+    },
+    {
+      "file": "20261007-ios-policy-unknown-bits-control-raw.log",
+      "bytes": 75888,
+      "sha256": "a8a485150126df754bdbbe19c842bf8744affcfa3322b13d4613f8f62f2f478d"
+    },
+    {
+      "file": "20261007-ios-policy-spec-control.log",
+      "bytes": 40343,
+      "sha256": "e03029aecde377af02eab90bfd3d070bd6cee36d0a6ea53ae98e3f83cd690ed2"
+    },
+    {
+      "file": "20261007-ios-policy-spec-control-raw.log",
+      "bytes": 448868,
+      "sha256": "904d62bbae767907112620b9da1aa3af6d472c42fe96e0233ce3305bdca15919"
+    },
+    {
+      "file": "20261007-ios-policy-suite-control.log",
+      "bytes": 40337,
+      "sha256": "d8d2f3442ece269840f3266235547fd1a24b45cdd00cc55e3b3e7e1b5193f838"
+    },
+    {
+      "file": "20261007-ios-policy-suite-control-raw.log",
+      "bytes": 448861,
+      "sha256": "77eea0879c82e26fca51beaaa316915b750b1d1cc8c25a2f7cc73da3d2ece51f"
+    },
+    {
+      "file": "20261007-ios-policy-config-restored.log",
+      "bytes": 41068,
+      "sha256": "823983c58fca35469b5391a814bfad3849661a8befe0203916929994372d554a"
+    },
+    {
+      "file": "20261007-ios-policy-config-restored-raw.log",
+      "bytes": 468229,
+      "sha256": "2e40648e32fad068c470b0be42c3619002e906a6056283110c57f75d54f7c912"
+    },
+    {
+      "file": "20261007-ios-policy-retirement-restored.log",
+      "bytes": 40735,
+      "sha256": "43a8b9276309bbed9132d2a45f05c4643b166e961bd244181e8235eea4269fee"
+    },
+    {
+      "file": "20261007-ios-policy-retirement-restored-raw.log",
+      "bytes": 452938,
+      "sha256": "ea23eb8c9cfacb365b239abab653e9a58425d3b66e925640122175d51979ab87"
+    },
+    {
+      "file": "20261007-ios-primary-policy-full-compile.log",
+      "bytes": 252389,
+      "sha256": "2f7de597dda7df53a357d3ca417e25393df0fe61ddd04df73f24cee9a6916d61"
+    }
+  ],
+  "pending": [
+    "Positive deployed R2/current global-policy integration",
+    "Fees, custody, signed action/broadcast and final recipient workflow"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "scope": "Android native-authenticated dynamic config lookup; separate fixed-release hash checks retained",
+  "android_revision": "a96a980",
+  "validation": [
+    "Three proof instrumentation tests pass",
+    "Proven index 34 returns data; unproven index 48 refuses",
+    "Index-matching removal compiles and fails Unproven configuration accepted assertion; restored tests pass"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-android-proven-dynamic-config.log",
+      "bytes": 25785,
+      "sha256": "205fba9be4f0ad1446c18acf2c765256cf69ee81b78d44b1b66aa86d0a5895ad"
+    },
+    {
+      "file": "20261007-android-dynamic-config-control.log",
+      "bytes": 26721,
+      "sha256": "77cba3b5cce7b91485e236e0ecbbc4470bb01cd0b221538b63af52bb1c96412a"
+    },
+    {
+      "file": "20261007-android-dynamic-config-control.xml",
+      "bytes": 1183,
+      "sha256": "d61c4c7dbf9f57b0a35fca17409c5a59aaf9afd6cc13b0f8d25c5f737e0a1146"
+    },
+    {
+      "file": "20261007-android-dynamic-config-restored.log",
+      "bytes": 25854,
+      "sha256": "aa19b484837f5194282b72c3312cdd4fa8765ed407105346b7daa86abda52e16"
+    }
+  ],
+  "pending": [
+    "Actual ConfigParam48 policy decoding and authorization integration",
+    "iOS dynamic config equivalent",
+    "No current R2 readiness or network acceptance inferred"
+  ]
+}

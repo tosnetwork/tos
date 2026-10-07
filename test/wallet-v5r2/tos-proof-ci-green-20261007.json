@@ -1,0 +1,22 @@
+{
+  "scope": "Configured TOS CI at exact source head; not complete R2 release acceptance",
+  "tos_revision": "67d7b25983e9caa7b9b6fe96746f4a46b2ea042e",
+  "run": "https://github.com/tosnetwork/tos/actions/runs/37590941423",
+  "validation": [
+    "All six configured PR checks pass",
+    "Real HTTP ingress rejection and readonly query CTest: 2/2 pass",
+    "Compiled route-removal control and restored HTTP baseline pass",
+    "Anchored verifier configured CTest: 4/4 pass",
+    "Remaining configured PQ/chain/native regressions complete successfully"
+  ],
+  "artifact": {
+    "file": "20261007-linux-proof-ci-success.log",
+    "bytes": 17642462,
+    "sha256": "4fee4d789cdaac16b2511b41ec999b6b73912c4caa920c8cc7150b72e94f2926"
+  },
+  "limits": [
+    "Route control log is not independently uploaded; workflow records compile/control/restored success",
+    "No live deployed R2 funding/POP/rotation or full device acceptance inferred",
+    "Later source heads need their own relevant checks"
+  ]
+}

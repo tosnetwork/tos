@@ -1,0 +1,42 @@
+{
+  "scope": "Android explicit-target LIVE request from native-produced read; captured signed proof fixture, not real endpoint/multi-R2-account delivery",
+  "android_revision": "61d3aef",
+  "validation": [
+    "Three proof tests pass",
+    "After enrolled latest read, two-query exact-target read verifies at same checkpoint",
+    "Target excludes metadata and keeps five required block ID fields",
+    "Omitted-target control compiles and fails named assertion; restored three tests pass"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-android-checkpoint-request.log",
+      "bytes": 25785,
+      "sha256": "0833064614c380836cbbf60f85e06fad2329f753959f3fc8d178ee5725a83e81"
+    },
+    {
+      "file": "20261007-android-checkpoint-target-baseline.log",
+      "bytes": 25840,
+      "sha256": "6f0d5e6eca107523151eb3eb55cae76acfa2038f70b08f9b412b0b7845d86c8a"
+    },
+    {
+      "file": "20261007-android-checkpoint-target-control.log",
+      "bytes": 26721,
+      "sha256": "ce36b2592a2d8662272b2c8cfe35680dc59a8ae146c27d3f7a4afe6670fcef8b"
+    },
+    {
+      "file": "20261007-android-checkpoint-target-control.xml",
+      "bytes": 1229,
+      "sha256": "d699e63ee9eec45d3eb0d75a414dcda4dcf751f615f2f5bff78fc73fe6552a6a"
+    },
+    {
+      "file": "20261007-android-checkpoint-target-restored.log",
+      "bytes": 25854,
+      "sha256": "6c88136f171df0c0ec82419f3d12dfc1dc4ab8a8b1071edb1a81a2d25c910f38"
+    }
+  ],
+  "pending": [
+    "Real multi-account coordinator",
+    "iOS equivalent fixed-checkpoint request builder",
+    "Concurrent checkpoint advancement/retry and deployed R2 positive account binding"
+  ]
+}

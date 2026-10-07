@@ -1,0 +1,21 @@
+{
+  "scope": "Android PRIMARY Execute AUTH construction from native-produced installed-state observation; compile and existing wire regression only",
+  "android_revision": "4b77381",
+  "validation": [
+    "Account app module compiles",
+    "Four existing AUTH wire/action regression tests pass"
+  ],
+  "behavior": "Rechecks same-checkpoint policy/local retirement/counters and local deadline; global ID, network, original wallet, installed module, epoch, PRIMARY nonce and wallet shard time come from proven enrollment/state. Does not sign, approve actions, assert solvency or broadcast.",
+  "artifacts": [
+    {
+      "file": "20261007-android-proven-primary-request.log",
+      "bytes": 24725,
+      "sha256": "5a310a854234ff6e64172df18924bae74aeba18acfb5b30130708d058fdc8e32"
+    }
+  ],
+  "pending": [
+    "Positive request construction from authenticated deployed R2 fixtures",
+    "Coordinator-to-request/signing integration and current-key custody binding",
+    "Funding/action/receipt/recipient validation"
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "scope": "Swift authenticated initial/successor observation worker and actual callback-cancellation/refusal paths; no deployed positive multi-account flow",
+  "ios_revision": "acbfca7",
+  "native_revision": "67d7b2598",
+  "validation": [
+    "Registry/authentication/missing-checkpoint test passes with no endpoint query on refusal",
+    "Background callback cancellation discards returned bytes; test path does not commit checkpoint and releases lock",
+    "Three mutants compile and reach named runtime assertions; restored store and cancellation tests pass",
+    "Full app make compile passes at acbfca7"
+  ],
+  "behavior": "Actor authenticates and reconstructs local enrollment; one background queue worker obtains wallet LIVE and exact-target module/vault/optional policy, then rechecks fee time. Cancellation flag synchronized by lock; provider must enforce finite timeout/receive bounds. No keys, signing, funding or broadcast.",
+  "artifacts": [
+    {
+      "file": "20261007-ios-proof-auth-baseline.log",
+      "bytes": 40462,
+      "sha256": "224dccd0c32a28973df51bf6513b7ada089a210e9a242809b80a76a0eb053953"
+    },
+    {
+      "file": "20261007-ios-proof-coordinator-cancel.log",
+      "bytes": 42298,
+      "sha256": "e7f25d961f2fa529990e20e5fc1a83491c6d09a48fd550921eddcb8dd2d0975f"
+    },
+    {
+      "file": "20261007-ios-coordinator-auth-control.log",
+      "bytes": 40675,
+      "sha256": "65f0d8dd08832f9c4fa97ff6ba831ad16b3ff799bd1b5af534b6061adbca332f"
+    },
+    {
+      "file": "20261007-ios-coordinator-auth-control-raw.log",
+      "bytes": 452035,
+      "sha256": "eb90d564581ae70a25970554c6e0e2e3db116cc84ea8099bbff54a0f47a44905"
+    },
+    {
+      "file": "20261007-ios-coordinator-cancel-handler-control.log",
+      "bytes": 13170,
+      "sha256": "de1cf6a4e9a81a2f99bf96cc166ae90a020e2dfc6ba4659e426fb53e7f6584aa"
+    },
+    {
+      "file": "20261007-ios-coordinator-cancel-handler-control-raw.log",
+      "bytes": 98853,
+      "sha256": "3c4647f75b29e3208d8b52d212e6d28a39ac183dee97adf87d50a6bdd57a626a"
+    },
+    {
+      "file": "20261007-ios-coordinator-cancel-after-query-control.log",
+      "bytes": 12461,
+      "sha256": "2631c2bd160e22e6106ff37895f55019a896d0d4aa343ee089a28f851ccf8c1c"
+    },
+    {
+      "file": "20261007-ios-coordinator-cancel-after-query-control-raw.log",
+      "bytes": 84076,
+      "sha256": "831f9ceab7169141d91a25f5958d6ed41bcff1bfc07b990243818847690fb126"
+    },
+    {
+      "file": "20261007-ios-coordinator-store-restored.log",
+      "bytes": 41181,
+      "sha256": "6aa0cc7a721747cd4c62ffb4cccfd5ccaebd3a24b28f2c209131b675e42bafeb"
+    },
+    {
+      "file": "20261007-ios-coordinator-store-restored-raw.log",
+      "bytes": 462012,
+      "sha256": "2b26be62b9368247b55d2821b70f372495c146dc4e4ffa17fdddaf246318c9c4"
+    },
+    {
+      "file": "20261007-ios-coordinator-cancel-restored.log",
+      "bytes": 12171,
+      "sha256": "f8ecae67bf83271d99e9f337ec0491a21d1d1e94a30497ac34d277085ab39bb4"
+    },
+    {
+      "file": "20261007-ios-coordinator-cancel-restored-raw.log",
+      "bytes": 54635,
+      "sha256": "f3ce4352b6c39d63e22687138e83b4e4bd96ab0b0cca00c245aa608e5c5115c6"
+    },
+    {
+      "file": "20261007-ios-coordinator-full-compile.log",
+      "bytes": 252378,
+      "sha256": "61665f20c2202c3a368d728782e1d1c7f2e4d634b2fa00d36090b13abd2558c6"
+    }
+  ],
+  "pending": [
+    "Real HTTP abort/timeout and concurrent-head advancement",
+    "Deployed R2 positive tuple/current-enrollment/signing, funded POP and rotation",
+    "Final recipient delivery and hardware acceptance"
+  ]
+}

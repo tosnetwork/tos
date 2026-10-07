@@ -1,0 +1,42 @@
+{
+  "scope": "Android authenticated successor observation entrypoint and real app refusal path; no funded migration or positive multi-account acceptance",
+  "android_revision": "e17cf17",
+  "validation": [
+    "App module compiles; main-app registration/custody/observation test passes",
+    "Incompatible successor namespace refuses before queries",
+    "Dropping successor from coordinator compiles and fails named runtime assertion; restored test passes"
+  ],
+  "behavior": "Original wallet still read LIVE; module/vault addresses and expected tuple derived from supplied locally authenticated successor. Shared authentication, checkpoint, policy and fee-time checks remain. No keys/signing/funding/broadcast.",
+  "artifacts": [
+    {
+      "file": "20261007-android-successor-coordinator-compile.log",
+      "bytes": 22062,
+      "sha256": "3832270ab206b35399e9d54468567d306837375d77a7ccd6680fa77956fa5c23"
+    },
+    {
+      "file": "20261007-android-successor-coordinator-device.log",
+      "bytes": 77779,
+      "sha256": "e8c3d0f3545e3c429106741a7792735502289becbff835a52da886f660de40ce"
+    },
+    {
+      "file": "20261007-android-successor-coordinator-control.log",
+      "bytes": 78998,
+      "sha256": "21aaafb431f5be5d0ca5349ad4a1653d247f4f6b28f56eb5cebfab8e931a3a57"
+    },
+    {
+      "file": "20261007-android-successor-coordinator-control.xml",
+      "bytes": 1711,
+      "sha256": "65f5721069d3e7b4c8056845eded4d9026121134734c52b24498e754996c216f"
+    },
+    {
+      "file": "20261007-android-successor-coordinator-restored.log",
+      "bytes": 77969,
+      "sha256": "fe90d77b926c08be464bba54a9cc67ae736eca1fd06f4d588e5256de99223b25"
+    }
+  ],
+  "pending": [
+    "Persistent current-generation enrollment and mnemonic recovery discovery",
+    "Deployed successor positive proof and staging/dual POP",
+    "Repeated migration, signer/custody/payment and final delivery"
+  ]
+}

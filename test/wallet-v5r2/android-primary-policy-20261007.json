@@ -1,0 +1,83 @@
+{
+  "scope": "Android exact ConfigParam48 v1 decoder and PRIMARY execution chain-eligibility integration; no complete signed/funded live policy acceptance",
+  "android_revision": "cb715a7",
+  "validation": [
+    "No schedule and both legal single-suite label encodings accepted before deadline",
+    "Retired/unknown bits, wrong network/version/specification, unsupported suite, zero deadline and trailing data refuse",
+    "Five guard variants compile and trigger named runtime assertions; restored 27 related tests pass",
+    "Final account app module compilation passes"
+  ],
+  "binding": "Wallet live freshness, same checkpoint policy read, READY policy/local PRIMARY retirement and seqno/nonce bounds checked before reading authenticated dynamic ConfigParam48. Custody, fees and action/signing remain separate gates.",
+  "artifacts": [
+    {
+      "file": "20261007-android-retirement-policy.log",
+      "bytes": 10781,
+      "sha256": "203966ef0a5f233c0d9709510ce659a2c3ccfd8b345e2e1e1a4ff976892a0773"
+    },
+    {
+      "file": "20261007-retirement-restored-regressions.log",
+      "bytes": 9799,
+      "sha256": "d08779b9644f7149a9b6e1c75aedabe2544431a61ef7661f2d11ec978228eab0"
+    },
+    {
+      "file": "20261007-android-primary-policy-final-compile.log",
+      "bytes": 22073,
+      "sha256": "0ad3ea68b802197c43a38c243318262709012f66eb12b4b0e4ea73c2accb8606"
+    },
+    {
+      "file": "20261007-retirement-deadline-control.log",
+      "bytes": 10300,
+      "sha256": "70d595f4100be2e530ec53693ef4573f6f6a2987dbeb32d9ab84d30e64f0046d"
+    },
+    {
+      "file": "20261007-retirement-deadline-control.xml",
+      "bytes": 5038,
+      "sha256": "d91bbb099d7119dcc392d72dc7c7b067028bf653d5cf51fc1030e3693f53f06b"
+    },
+    {
+      "file": "20261007-retirement-retired-control.log",
+      "bytes": 10298,
+      "sha256": "f061c4dc31174dbb03e33f84a5ce84f34716b005e126b4a39fd0686857545a99"
+    },
+    {
+      "file": "20261007-retirement-retired-control.xml",
+      "bytes": 5048,
+      "sha256": "2441346df85f90d3778e34b4401454bbecb94a6b8dc702ed7b04db8ba4525c54"
+    },
+    {
+      "file": "20261007-retirement-unknown-bits-control.log",
+      "bytes": 10298,
+      "sha256": "28e03c82a256b4979de1e92e68ef91995d7a7a1327a7920386dbb0c868050547"
+    },
+    {
+      "file": "20261007-retirement-unknown-bits-control.xml",
+      "bytes": 5048,
+      "sha256": "2607964bb05bfecf2e4258abb9ec744a3458d3407ff9b02d8e164792f67e3f7b"
+    },
+    {
+      "file": "20261007-retirement-spec-control.log",
+      "bytes": 10298,
+      "sha256": "00af61cdb275a8da673d348710fea3a37285d983511343df8d2ee5bb55ab655a"
+    },
+    {
+      "file": "20261007-retirement-spec-control.xml",
+      "bytes": 5048,
+      "sha256": "1d6b77c1adb05498a3de8ad01b4df80187b37230d8725e62a7f5cf705fb8a757"
+    },
+    {
+      "file": "20261007-retirement-suite-control.log",
+      "bytes": 10298,
+      "sha256": "b77d716b01977b7270bb637e76ab342dfc94f2bb19630701320e3eaf93b372ad"
+    },
+    {
+      "file": "20261007-retirement-suite-control.xml",
+      "bytes": 5048,
+      "sha256": "9ee1004978c77721fb4af5f25d8737ad82980deff85e4fb7244137c628f538ea"
+    }
+  ],
+  "pending": [
+    "Positive integration against deployed R2 wallet and current ConfigParam48",
+    "iOS dynamic config/policy equivalent",
+    "Fee-slot/time/solvency and actual signing/broadcast/recipient workflow"
+  ]
+}
