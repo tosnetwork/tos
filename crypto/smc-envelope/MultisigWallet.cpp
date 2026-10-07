@@ -38,7 +38,8 @@
 
 namespace tos {
 
-MultisigWallet::QueryBuilder::QueryBuilder(td::uint32 wallet_id, td::int32 global_id, td::int64 query_id, td::Ref<vm::Cell> msg, int mode) {
+MultisigWallet::QueryBuilder::QueryBuilder(td::uint32 wallet_id, td::int32 global_id, td::int64 query_id,
+                                           td::Ref<vm::Cell> msg, int mode) {
   msg_ = vm::CellBuilder()
              .store_long(wallet_id, 32)
              .store_long(global_id, 32)

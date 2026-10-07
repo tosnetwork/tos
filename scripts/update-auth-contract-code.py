@@ -69,18 +69,20 @@ def main():
             ),
         ]
         stale = []
-        replacements.extend([
-            (
-                "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs",
-                r'(pub const V3R2_CODE: &str =\s*")[^"]*(";)',
-                outputs["wallet3"].hex(),
-            ),
-            (
-                "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs",
-                r'(pub const V4R2_CODE_B64: &str =\s*")[^"]*(";)',
-                base64.b64encode(outputs["wallet4"]).decode(),
-            ),
-        ])
+        replacements.extend(
+            [
+                (
+                    "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs",
+                    r'(pub const V3R2_CODE: &str =\s*")[^"]*(";)',
+                    outputs["wallet3"].hex(),
+                ),
+                (
+                    "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs",
+                    r'(pub const V4R2_CODE_B64: &str =\s*")[^"]*(";)',
+                    base64.b64encode(outputs["wallet4"]).decode(),
+                ),
+            ]
+        )
         for relative, pattern, value in replacements:
             path = ROOT / relative
             text = path.read_text()

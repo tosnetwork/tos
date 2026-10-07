@@ -17,7 +17,6 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "dispatch-progress.h"
 #include <algorithm>
 #include <cassert>
 #include <ctime>
@@ -40,6 +39,7 @@
 #include "vm/dict.h"
 
 #include "collator-impl.h"
+#include "dispatch-progress.h"
 #include "fabric.h"
 #include "storage-stat-cache.hpp"
 #include "top-shard-descr.hpp"

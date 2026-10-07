@@ -141,10 +141,7 @@ jobs:
 
     - name: Install Clang 21 formatting tools
       run: |
-        # SECURITY: Pin to specific LLVM release instead of fetching script
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21
+        sudo scripts/install-llvm-toolchain.sh 21
         sudo apt-get install -y clang-format-21
 
     # Captured output under an evidence `raw/` directory is a byte-exact record whose
@@ -195,8 +192,12 @@ jobs:
     - name: Prepare Python environment
       if: steps.changed.outputs.python_count != '0'
       run: |
-        # SECURITY: Pin uv version to avoid supply chain risk
-        curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+        tool_dir="$(mktemp -d)"
+        trap 'rm -rf "$tool_dir"' EXIT
+        curl -fsSL https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-unknown-linux-gnu.tar.gz -o "$tool_dir/uv.tar.gz"
+        python3 scripts/verify-build-tool.py uv-x86_64 "$tool_dir/uv.tar.gz"
+        tar -xzf "$tool_dir/uv.tar.gz" -C "$tool_dir"
+        sudo install -m 0755 "$tool_dir/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
         uv sync
 
     - name: Lint changed Python
@@ -220,8 +221,12 @@ jobs:
 
     - name: Prepare Python environment
       run: |
-        # SECURITY: Pin uv version to avoid supply chain risk
-        curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+        tool_dir="$(mktemp -d)"
+        trap 'rm -rf "$tool_dir"' EXIT
+        curl -fsSL https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-unknown-linux-gnu.tar.gz -o "$tool_dir/uv.tar.gz"
+        python3 scripts/verify-build-tool.py uv-x86_64 "$tool_dir/uv.tar.gz"
+        tar -xzf "$tool_dir/uv.tar.gz" -C "$tool_dir"
+        sudo install -m 0755 "$tool_dir/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
         uv sync
         uv run test/tostester/generate_tl.py
 

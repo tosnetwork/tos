@@ -17,7 +17,6 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "dispatch-progress.h"
 #include <ctime>
 
 #include "adnl/utils.hpp"
@@ -38,6 +37,7 @@
 #include "vm/cells/MerkleUpdate.h"
 
 #include "collator-impl.h"
+#include "dispatch-progress.h"
 #include "fabric.h"
 #include "storage-stat-cache.hpp"
 #include "top-shard-descr.hpp"
@@ -3858,8 +3858,10 @@ bool ValidateQuery::unpack_dispatch_queue_update() {
     // Reconstruct the state point used by production from validated cleanup
     // removals. Later additions and same-shard imports cannot hide dispatch.
     const auto chain_defer_limit = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
-    const auto post_cleanup_size = have_out_msg_queue_size_in_state_ ? old_out_msg_queue_size_ - cleanup_out_msg_count_ : 0;
-    const bool need_dispatch_progress_check = have_out_msg_queue_size_in_state_ &&
+    const auto post_cleanup_size =
+        have_out_msg_queue_size_in_state_ ? old_out_msg_queue_size_ - cleanup_out_msg_count_ : 0;
+    const bool need_dispatch_progress_check =
+        have_out_msg_queue_size_in_state_ &&
         dispatch_progress_required(old_out_msg_queue_size_, post_cleanup_size, chain_defer_limit, chain_defer_limit);
     if (need_dispatch_progress_check) {
       // Check that at least one message was taken from each AccountDispatchQueue
