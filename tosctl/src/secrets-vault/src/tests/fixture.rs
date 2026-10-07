@@ -148,7 +148,7 @@ pub async fn create_storage(
             let file_path = match path_opt {
                 Some(p) => p,
                 None => {
-                    let temp_dir = tempfile::TempDir::new()?;
+                    let temp_dir = private_tempdir()?;
                     let p = temp_dir.path().join("secrets.json");
                     // Leak the temp_dir to keep it alive
                     std::mem::forget(temp_dir);
@@ -205,7 +205,7 @@ pub fn create_url(
     let (url, temp_dir) = match storage_type {
         #[cfg(feature = "file-storage-json")]
         StorageType::FileJson => {
-            let temp_dir = tempfile::tempdir()?;
+            let temp_dir = private_tempdir()?;
             let random_name = rand::random::<u64>().to_string();
             let file_path = temp_dir.path().join(format!("{random_name}.json"));
             let file_path_str =
@@ -294,4 +294,15 @@ pub fn fixture() -> Vec<TestConfig> {
     ];
 
     configs
+}
+
+/// Vault fixtures satisfy the same owner-only directory policy as deployments.
+pub fn private_tempdir() -> std::io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    builder.tempdir()
 }

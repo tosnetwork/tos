@@ -26,8 +26,8 @@ use common::{
     time_format,
 };
 use contracts::{
-    DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, NominatorWrapper,
-    NominatorWrapperImpl, Wallet, contract_provider, nominator, nominator::NominatorRoles,
+    DefaultChainProvider, NominatorWrapper, NominatorWrapperImpl, Wallet, contract_provider,
+    nominator, nominator::NominatorRoles,
 };
 use elections::providers::{DefaultElectionsProvider, ElectionsProvider};
 use secrets_vault::{errors::error::VaultError, vault::SecretVault};
@@ -486,14 +486,11 @@ impl WalletStakeCmd {
             Arc::new(DefaultChainProvider::new(rpc_client.clone())),
         );
 
-        // Get active election ID from elector via RPC
-        let elector = ElectorWrapperImpl::new(contract_provider!(rpc_client.clone()));
-        let election_id =
-            elector.get_active_election_id().await.context("get_active_election_id")?;
+        let elections_info = stake_elections_info(&mut provider).await?;
+        let election_id = elections_info.election_id;
         if election_id == 0 {
             anyhow::bail!("No active elections");
         }
-        let elections_info = elector.elections_info().await.context("elections_info")?;
         if elections_info.finished {
             anyhow::bail!("Elections are already finished");
         }
@@ -510,7 +507,10 @@ impl WalletStakeCmd {
         // Get election parameters for key expiration
         let cfg15 = provider.election_parameters().await.context("election_parameters")?;
         const KEY_EXPIRED_LAG: u64 = 300;
-        let key_expired_at = election_id + cfg15.validators_elected_for as u64 + KEY_EXPIRED_LAG;
+        let key_expired_at = election_id
+            .checked_add(u64::from(cfg15.validators_elected_for))
+            .and_then(|value| value.checked_add(KEY_EXPIRED_LAG))
+            .context("key expiration overflow")?;
 
         // Find or generate validator key
         let validator_config = provider.validator_config().await.context("validator_config")?;
@@ -665,11 +665,13 @@ impl WalletStakeCmd {
             .find(|p| p.pub_key == authorization.validator_id)
             .map(|p| p.stake)
             .unwrap_or(0);
-        let expected_stake = previous_stake + stake_nanotos;
+        let expected_stake =
+            previous_stake.checked_add(stake_nanotos).context("expected stake overflow")?;
 
         let stake_timeout = tokio::time::Duration::from_secs(60);
         wait_for_stake_accepted(
-            &elector,
+            &mut provider,
+            election_id,
             &authorization.validator_id,
             expected_stake,
             &cancellation_ctx,
@@ -695,8 +697,15 @@ fn require_observable_wallet_seqno(wallet: bool, seqno: Option<u32>) -> anyhow::
 
 const STAKE_POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(3);
 
-async fn wait_for_stake_accepted(
-    elector: &ElectorWrapperImpl,
+pub(crate) async fn stake_elections_info(
+    provider: &mut dyn ElectionsProvider,
+) -> anyhow::Result<contracts::ElectionsInfo> {
+    Ok(provider.elector_snapshot(&[]).await?.elections)
+}
+
+pub(crate) async fn wait_for_stake_accepted(
+    provider: &mut dyn ElectionsProvider,
+    election_id: u64,
     validator_id: &[u8],
     expected_stake: u64,
     cancellation_ctx: &CancellationCtx,
@@ -708,7 +717,11 @@ async fn wait_for_stake_accepted(
                 anyhow::bail!("Task cancelled");
             }
             tokio::time::sleep(STAKE_POLL_INTERVAL).await;
-            let info = elector.elections_info().await.context("elections_info")?;
+            let info = stake_elections_info(provider).await?;
+            anyhow::ensure!(
+                info.election_id == election_id,
+                "election changed while confirming stake"
+            );
             if let Some(p) = info.participants.iter().find(|p| p.pub_key == validator_id) {
                 if p.stake >= expected_stake {
                     return Ok(());

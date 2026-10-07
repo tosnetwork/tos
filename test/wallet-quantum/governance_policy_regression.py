@@ -23,8 +23,8 @@ def main():
     name, old_hash, new_hash = NAME, OLD, NEW
     if args.case == "zerostate":
         name = "Test_Toslib_GenZerostateFiftRegression_default"
-        old_hash = "814401c531cb039224d39721bf01472dc50545236d1c8e2820cfecda5f3aa381"
-        new_hash = "79a896e7d1cd99bb34ff86174cf417d428f3be62ce2cd1c5f422efc4c4156efd"
+        old_hash = "0147a343b81819bd12297238f4dac708c67b8ac55d46487f4471c8b558a248d5"
+        new_hash = "5b36806f911c0605d4e3e9b8e977c48e5b2a9c834436cec5176c0273a5abae6b"
     args.output.mkdir(parents=True, exist_ok=False)
     generated = args.build / "crypto/smartcont/auto/config-code.fif"
     original = generated.read_bytes()

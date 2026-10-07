@@ -23,7 +23,7 @@ use secrets_vault::{
     errors::error::VaultError, types::secret::Secret, vault::SecretVault,
     vault_builder::SecretVaultBuilder,
 };
-use std::{collections::HashMap, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 const POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(2);
 pub const SEND_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(15);
@@ -66,7 +66,7 @@ pub fn warn_chain_rpc_unavailable(error: &anyhow::Error, note: &str) {
 
 pub fn save_config(config: &AppConfig, path: &Path) -> anyhow::Result<()> {
     let json = serde_json::to_string_pretty(config)?;
-    fs::write(path, json)?;
+    secrets_vault::private_file::write_private_atomic(path, json.as_bytes())?;
     Ok(())
 }
 
@@ -281,4 +281,62 @@ pub async fn wait_for_seqno_change(
         Ok(info.seqno != initial_seqno)
     })
     .await
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::save_config;
+    use common::app_config::{AppConfig, ChainRpcConfig, HttpConfig};
+    use std::{
+        collections::HashMap,
+        os::unix::fs::{PermissionsExt, symlink},
+    };
+
+    fn minimal_config() -> AppConfig {
+        AppConfig {
+            nodes: HashMap::new(),
+            wallets: HashMap::new(),
+            agent_wallets: HashMap::new(),
+            agent_tasks: HashMap::new(),
+            capability_registries: HashMap::new(),
+            service_actors: HashMap::new(),
+            disputes: HashMap::new(),
+            proof_attestations: HashMap::new(),
+            pools: HashMap::new(),
+            bindings: HashMap::new(),
+            chain_rpc: ChainRpcConfig::default(),
+            elections: None,
+            voting: None,
+            http: HttpConfig::default(),
+            master_wallet: None,
+            tick_interval: 40,
+            indexer_retention_blocks: 0,
+            log: None,
+            bookmarks: HashMap::new(),
+            alerts: Default::default(),
+            proof_verifier: None,
+        }
+    }
+
+    /// Configuration may hold inline keys, so it is saved owner-only and never
+    /// through a link planted at the target.
+    #[test]
+    fn save_config_is_private_and_refuses_a_linked_target() {
+        let dir = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("tempdir");
+        let path = dir.path().join("tosctl-config.json");
+        save_config(&minimal_config(), &path).expect("save config");
+        let meta = std::fs::symlink_metadata(&path).expect("config metadata");
+        assert!(meta.is_file());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"unchanged").expect("seed victim");
+        std::fs::remove_file(&path).expect("remove config");
+        symlink(&victim, &path).expect("link config");
+        assert!(save_config(&minimal_config(), &path).is_err());
+        assert_eq!(std::fs::read(&victim).expect("read victim"), b"unchanged");
+    }
 }

@@ -22,13 +22,17 @@
 // instead. Remove the guards in json-rpc-server-parse.cpp and the process
 // aborts here.
 
-#include "json-rpc-server-parse.h"
+#include <limits>
 
+#include "auto/tl/lite_api.hpp"
 #include "td/utils/tests.h"
 #include "vm/boc.h"
 #include "vm/cells.h"
 #include "vm/dict.h"
 #include "vm/stack.hpp"
+
+#include "json-rpc-server-parse.h"
+#include "json-rpc-server-runresult.h"
 
 namespace {
 
@@ -69,6 +73,53 @@ td::Ref<vm::Cell> make_key_dict(const std::vector<td::Ref<vm::Cell>>& entries) {
     CHECK(dict.set(key.cbits(), 8, vm::load_cell_slice_ref(entry)));
   }
   return dict.get_root_cell();
+}
+
+// Reply rendering shared by runGetMethod (Legacy) and runGetMethodStd (Std). The
+// expected bodies and messages were captured from the handlers' own rendering
+// code before it moved into render_run_method_result, so the move is pinned
+// byte for byte. These test the reply both endpoints send, not the HTTP
+// transport or the handler lambdas.
+td::BufferSlice serialize_full_stack() {
+  vm::Stack st;
+  st.push_smallint(42);
+  st.push_cell(vm::CellBuilder().finalize());
+  vm::CellBuilder sb;
+  sb.store_long(0xabcd, 16);
+  sb.store_ref(vm::CellBuilder().finalize());
+  st.push_cellslice(td::make_ref<vm::CellSlice>(vm::load_cell_slice(sb.finalize())));
+  std::vector<vm::StackEntry> inner{vm::StackEntry{}};
+  std::vector<vm::StackEntry> outer{td::make_refint(-7), vm::StackEntry{std::move(inner)}};
+  st.push(vm::StackEntry{std::move(outer)});
+  st.push(vm::StackEntry{});
+  return serialize_stack(st);
+}
+
+tos::lite_api::object_ptr<tos::lite_api::tosNode_blockIdExt> fixed_block() {
+  return tos::lite_api::make_object<tos::lite_api::tosNode_blockIdExt>(
+      -1, std::numeric_limits<td::int64>::min(), 12345, td::Bits256(td::Slice(std::string(32, '\x11')).ubegin()),
+      td::Bits256(td::Slice(std::string(32, '\x22')).ubegin()));
+}
+
+tos::lite_api::liteServer_runMethodResult run_answer(td::int32 exit_code, td::BufferSlice result, bool with_block) {
+  return tos::lite_api::liteServer_runMethodResult(4, with_block ? fixed_block() : nullptr, nullptr, td::BufferSlice(),
+                                                   td::BufferSlice(), td::BufferSlice(), td::BufferSlice(),
+                                                   td::BufferSlice(), exit_code, std::move(result));
+}
+
+void expect_body(const tos::lite_api::liteServer_runMethodResult& answer, tos::RunResultFormat format,
+                 const char* expected) {
+  auto body = tos::render_run_method_result(answer, format);
+  ASSERT_TRUE(body.is_ok());
+  ASSERT_STREQ(expected, body.ok());
+}
+
+void expect_error(const tos::lite_api::liteServer_runMethodResult& answer, tos::RunResultFormat format,
+                  const char* expected) {
+  auto body = tos::render_run_method_result(answer, format);
+  ASSERT_TRUE(body.is_error());
+  ASSERT_EQ(-32603, body.error().code());
+  ASSERT_STREQ(expected, body.error().message().str());
 }
 
 }  // namespace
@@ -115,6 +166,63 @@ TEST(JsonRpcParse, result_stack_rejects_slice_over_exotic_cell) {
   // throws cell_und on a library cell without the guard.
   auto parsed = tos::parse_get_method_result_stack(serialize_slice_stack_over(make_library_cell()).as_slice());
   ASSERT_TRUE(parsed.is_error());
+}
+
+TEST(JsonRpcParse, run_method_inactive_account_resolves_to_an_empty_stack) {
+  // The liteserver's own value, pinned independently of the production constant.
+  ASSERT_EQ(-256, tos::kInactiveAccountExitCode);
+  auto resolved = tos::resolve_run_method_result_stack(-256, td::Slice());
+  ASSERT_TRUE(resolved.is_ok());
+  ASSERT_EQ(0, resolved.ok()->depth());
+}
+
+TEST(JsonRpcParse, run_method_missing_result_is_an_error_for_any_other_exit_code) {
+  for (td::int32 exit_code : {0, 11}) {
+    auto resolved = tos::resolve_run_method_result_stack(exit_code, td::Slice());
+    ASSERT_TRUE(resolved.is_error());
+    ASSERT_STREQ(PSTRING() << "liteserver returned no result stack for exit code " << exit_code,
+                 resolved.error().message().str());
+  }
+}
+
+TEST(JsonRpcParse, run_method_zero_depth_stack_is_a_result_not_a_missing_one) {
+  auto resolved = tos::resolve_run_method_result_stack(0, serialize_stack(vm::Stack{}).as_slice());
+  ASSERT_TRUE(resolved.is_ok());
+  ASSERT_EQ(0, resolved.ok()->depth());
+}
+
+TEST(JsonRpcParse, run_method_returned_stack_round_trips_for_success_and_failure_exits) {
+  vm::Stack stack;
+  stack.push_smallint(42);
+  stack.push_cell(vm::CellBuilder().finalize());
+  auto boc = serialize_stack(stack);
+  for (td::int32 exit_code : {0, 11}) {
+    auto resolved = tos::resolve_run_method_result_stack(exit_code, boc.as_slice());
+    ASSERT_TRUE(resolved.is_ok());
+    auto stk = resolved.move_as_ok();
+    ASSERT_EQ(2, stk->depth());
+    ASSERT_TRUE(stk->at(1).is_int());
+    ASSERT_EQ(42, stk->at(1).as_int()->to_long());
+    ASSERT_TRUE(stk->at(0).is_cell());
+  }
+}
+
+TEST(JsonRpcParse, run_method_unparsable_result_keeps_the_parser_error) {
+  td::Slice garbage("\xff\xff\xff\xff\x00\x01");
+  auto library = vm::std_boc_serialize(make_library_cell()).move_as_ok();
+  for (td::Slice result : {garbage, td::Slice(library.as_slice())}) {
+    auto expected = tos::parse_get_method_result_stack(result);
+    ASSERT_TRUE(expected.is_error());
+    auto resolved = tos::resolve_run_method_result_stack(0, result);
+    ASSERT_TRUE(resolved.is_error());
+    ASSERT_EQ(expected.error().code(), resolved.error().code());
+    ASSERT_STREQ(expected.error().message().str(), resolved.error().message().str());
+  }
+}
+
+TEST(JsonRpcParse, run_method_inactive_exit_code_does_not_excuse_unparsable_bytes) {
+  auto resolved = tos::resolve_run_method_result_stack(-256, td::Slice("\xff\xff\xff\xff\x00\x01"));
+  ASSERT_TRUE(resolved.is_error());
 }
 
 TEST(JsonRpcParse, multisig_keys_happy_path) {
@@ -240,4 +348,80 @@ TEST(JsonRpcParse, reflected_id_is_bounded_on_its_serialized_form) {
   for (auto bad : {"true", "false", "[1]", "{\"a\":1}", "1e+-.3"}) {
     ASSERT_TRUE(reflect(bad).is_error());
   }
+}
+
+TEST(JsonRpcRunResult, full_stack_with_block_id_renders_both_formats) {
+  auto answer = run_answer(11, serialize_full_stack(), true);
+  expect_body(
+      answer, tos::RunResultFormat::Legacy,
+      "{\"@type\":\"smc.runResult\",\"gas_used\":0,\"stack\":[[\"list\",{\"elements\":[]}],[\"tuple\",{\"elements\":[["
+      "\"num\",\"-7\"],[\"tuple\",{\"elements\":[[\"list\",{\"elements\":[]}]]}]]}],[\"slice\",{\"bytes\":"
+      "\"te6ccgEBAgEABwABBKvNAQAA\"}],[\"cell\",{\"bytes\":\"te6ccgEBAQEAAgAAAA==\"}],[\"num\",\"42\"]],\"exit_code\":"
+      "11,\"last_transaction_id\":null,\"block_id\":{\"@type\":\"tos.blockIdExt\",\"workchain\":-1,\"shard\":\"-"
+      "9223372036854775808\",\"seqno\":12345,\"root_hash\":\"ERERERERERERERERERERERERERERERERERERERERERE=\",\"file_"
+      "hash\":\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=\"}}");
+  expect_body(
+      answer, tos::RunResultFormat::Std,
+      "{\"@type\":\"smc.runResult\",\"gas_used\":0,\"stack\":[{\"@type\":\"tvm.stackEntryList\",\"list\":{\"@type\":"
+      "\"tvm.list\",\"elements\":[]}},{\"@type\":\"tvm.stackEntryTuple\",\"tuple\":{\"@type\":\"tvm.tuple\","
+      "\"elements\":[{\"@type\":\"tvm.stackEntryNumber\",\"number\":{\"@type\":\"tvm.numberDecimal\",\"number\":\"-7\"}"
+      "},{\"@type\":\"tvm.stackEntryTuple\",\"tuple\":{\"@type\":\"tvm.tuple\",\"elements\":[{\"@type\":\"tvm."
+      "stackEntryList\",\"list\":{\"@type\":\"tvm.list\",\"elements\":[]}}]}}]}},{\"@type\":\"tvm.stackEntrySlice\","
+      "\"slice\":{\"@type\":\"tvm.slice\",\"bytes\":\"te6ccgEBAgEABwABBKvNAQAA\"}},{\"@type\":\"tvm.stackEntryCell\","
+      "\"cell\":{\"@type\":\"tvm.cell\",\"bytes\":\"te6ccgEBAQEAAgAAAA==\"}},{\"@type\":\"tvm.stackEntryNumber\","
+      "\"number\":{\"@type\":\"tvm.numberDecimal\",\"number\":\"42\"}}],\"exit_code\":11,\"last_transaction_id\":null,"
+      "\"block_id\":{\"@type\":\"tos.blockIdExt\",\"workchain\":-1,\"shard\":\"-9223372036854775808\",\"seqno\":12345,"
+      "\"root_hash\":\"ERERERERERERERERERERERERERERERERERERERERERE=\",\"file_hash\":"
+      "\"IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=\"}}");
+}
+
+TEST(JsonRpcRunResult, inactive_account_renders_an_empty_stack) {
+  auto answer = run_answer(-256, td::BufferSlice(), false);
+  expect_body(answer, tos::RunResultFormat::Legacy,
+              "{\"@type\":\"smc.runResult\",\"gas_used\":0,\"stack\":[],\"exit_code\":-256,\"last_transaction_id\":"
+              "null,\"block_id\":null}");
+  expect_body(answer, tos::RunResultFormat::Std,
+              "{\"@type\":\"smc.runResult\",\"gas_used\":0,\"stack\":[],\"exit_code\":-256,\"last_transaction_id\":"
+              "null,\"block_id\":null}");
+}
+
+TEST(JsonRpcRunResult, zero_depth_stack_is_a_result) {
+  vm::Stack empty;
+  auto answer = run_answer(0, serialize_stack(empty), false);
+  expect_body(answer, tos::RunResultFormat::Legacy,
+              "{\"@type\":\"smc.runResult\",\"gas_used\":0,\"stack\":[],\"exit_code\":0,\"last_transaction_id\":null,"
+              "\"block_id\":null}");
+  expect_body(answer, tos::RunResultFormat::Std,
+              "{\"@type\":\"smc.runResult\",\"gas_used\":0,\"stack\":[],\"exit_code\":0,\"last_transaction_id\":null,"
+              "\"block_id\":null}");
+}
+
+TEST(JsonRpcRunResult, missing_result_answers_internal_error) {
+  auto answer = run_answer(0, td::BufferSlice(), false);
+  expect_error(
+      answer, tos::RunResultFormat::Legacy,
+      "result stack (exit_code 0, result_bytes 0): [Error : 0 : liteserver returned no result stack for exit code 0]");
+  expect_error(
+      answer, tos::RunResultFormat::Std,
+      "result stack (exit_code 0, result_bytes 0): [Error : 0 : liteserver returned no result stack for exit code 0]");
+}
+
+TEST(JsonRpcRunResult, unreadable_result_answers_internal_error) {
+  auto answer = run_answer(0, td::BufferSlice(td::Slice("\xff\xff\xff\xff\x00\x01", 6)), false);
+  expect_error(answer, tos::RunResultFormat::Legacy,
+               "result stack (exit_code 0, result_bytes 6): [Error : 0 : result BOC parse error: cannot deserialize "
+               "bag-of-cells: invalid header, error 0]");
+  expect_error(answer, tos::RunResultFormat::Std,
+               "result stack (exit_code 0, result_bytes 6): [Error : 0 : result BOC parse error: cannot deserialize "
+               "bag-of-cells: invalid header, error 0]");
+}
+
+TEST(JsonRpcRunResult, inactive_exit_code_does_not_excuse_unreadable_bytes) {
+  auto answer = run_answer(-256, td::BufferSlice(td::Slice("\xff\xff\xff\xff\x00\x01", 6)), false);
+  expect_error(answer, tos::RunResultFormat::Legacy,
+               "result stack (exit_code -256, result_bytes 6): [Error : 0 : result BOC parse error: cannot deserialize "
+               "bag-of-cells: invalid header, error 0]");
+  expect_error(answer, tos::RunResultFormat::Std,
+               "result stack (exit_code -256, result_bytes 6): [Error : 0 : result BOC parse error: cannot deserialize "
+               "bag-of-cells: invalid header, error 0]");
 }

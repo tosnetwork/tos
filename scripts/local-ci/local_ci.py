@@ -43,6 +43,21 @@ except ImportError:  # pragma: no cover - exercised only on a bare interpreter
     sys.exit("PyYAML is required; run through scripts/local-ci/run.sh")
 
 HERE = Path(__file__).resolve().parent
+# Repository files the builder image copies in (relative to the source
+# checkout); they are copied into the build context and hashed into its tag.
+BUILDER_CONTEXT_FILES = (
+    "scripts/install-llvm-toolchain.sh",
+    "scripts/keys/apt-llvm-org.asc",
+    "scripts/verify-build-tool.py",
+    "scripts/build-tool-pins.json",
+)
+# The same for the runner image built on top of it.
+RUNNER_CONTEXT_FILES = (
+    "scripts/install-llvm-toolchain.sh",
+    "scripts/install-rust-toolchain.sh",
+    "scripts/keys/apt-llvm-org.asc",
+    "rust-toolchain.toml",
+)
 RUNNER_UID = 1001
 RUNNER_HOME = "/home/runner"
 RUNNER_WS = "/home/runner/work/tos/tos"
@@ -607,16 +622,11 @@ class Run:
         log(f"commit {self.commit}, base {self.base_sha} ({len(self.changed)} changed files)")
 
     def dockerfile_hash(self) -> str:
-        return sh_out(
-            [
-                "git",
-                "-C",
-                str(self.src),
-                "rev-parse",
-                "--short=12",
-                f"{self.commit}:Dockerfile.builder",
-            ]
-        )
+        digest = hashlib.sha256((self.src / "Dockerfile.builder").read_bytes())
+        for relative in BUILDER_CONTEXT_FILES:
+            digest.update(relative.encode() + b"\0")
+            digest.update((self.src / relative).read_bytes())
+        return digest.hexdigest()[:12]
 
     def image_exists(self, tag: str) -> bool:
         return (
@@ -626,7 +636,11 @@ class Run:
     def ensure_images(self) -> None:
         h = self.dockerfile_hash()
         self.base_image = f"tos-builder-local:24-{h}"
-        runner_hash = hashlib.sha256((HERE / "Dockerfile.runner").read_bytes()).hexdigest()[:12]
+        runner_digest = hashlib.sha256((HERE / "Dockerfile.runner").read_bytes())
+        for relative in RUNNER_CONTEXT_FILES:
+            runner_digest.update(relative.encode() + b"\0")
+            runner_digest.update((self.src / relative).read_bytes())
+        runner_hash = runner_digest.hexdigest()[:12]
         toml = (
             (self.src / "rust-toolchain.toml").read_text()
             if (self.src / "rust-toolchain.toml").exists()
@@ -642,6 +656,9 @@ class Run:
         if not self.image_exists(self.base_image):
             log(f"building {self.base_image} from Dockerfile.builder target builder-24")
             shutil.copy(self.src / "Dockerfile.builder", ctx / "Dockerfile.builder")
+            for relative in BUILDER_CONTEXT_FILES:
+                (ctx / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(self.src / relative, ctx / relative)
             with open(self.out / "image-build.log", "a") as fh:
                 sh(
                     [
@@ -663,6 +680,9 @@ class Run:
         if not self.image_exists(self.runner_image):
             log(f"building {self.runner_image}")
             shutil.copy(HERE / "Dockerfile.runner", ctx / "Dockerfile.runner")
+            for relative in RUNNER_CONTEXT_FILES:
+                (ctx / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(self.src / relative, ctx / relative)
             with open(self.out / "image-build.log", "a") as fh:
                 sh(
                     [
@@ -672,8 +692,6 @@ class Run:
                         str(ctx / "Dockerfile.runner"),
                         "--build-arg",
                         f"BASE_IMAGE={self.base_image}",
-                        "--build-arg",
-                        f"RUST_PINNED={self.rust_pinned}",
                         "-t",
                         self.runner_image,
                         str(ctx),

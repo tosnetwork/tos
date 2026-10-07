@@ -28,18 +28,22 @@ RUN set -eux; \
     rm -rf /tmp/rg.tar.gz "/tmp/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl" && \
     rg --pcre2-version
 
-# Install Clang 21 (pinned — no runtime download needed by CI)
-RUN wget -q https://apt.llvm.org/llvm.sh && \
-    chmod +x llvm.sh && \
-    ./llvm.sh 21 all && \
-    rm llvm.sh && \
-    rm -rf /var/lib/apt/lists/*
+# Use a repository-pinned signing key and apt's authenticated packages.
+COPY scripts/install-llvm-toolchain.sh /opt/tos/scripts/
+COPY scripts/keys/apt-llvm-org.asc /opt/tos/scripts/keys/
+RUN bash /opt/tos/scripts/install-llvm-toolchain.sh 21 all && rm -rf /var/lib/apt/lists/*
 
 ENV CC=/usr/bin/clang-21
 ENV CXX=/usr/bin/clang++-21
 
 # Install uv (pinned version)
-RUN curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+COPY scripts/verify-build-tool.py scripts/build-tool-pins.json /opt/tos/scripts/
+RUN curl -fsSL https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-unknown-linux-gnu.tar.gz -o /tmp/uv.tar.gz && \
+    python3 /opt/tos/scripts/verify-build-tool.py uv-x86_64 /tmp/uv.tar.gz && \
+    tar -xzf /tmp/uv.tar.gz -C /tmp && \
+    install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uv /usr/local/bin/uv && \
+    install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uvx /usr/local/bin/uvx && \
+    rm -rf /tmp/uv.tar.gz /tmp/uv-x86_64-unknown-linux-gnu
 ENV PATH="/root/.local/bin:$PATH"
 
 # Verify tools
@@ -56,18 +60,22 @@ RUN apt-get update && \
     libgmp-dev libssl-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Clang 21
-RUN wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add - && \
-    echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | tee /etc/apt/sources.list.d/llvm.list && \
-    apt-get update && \
-    apt-get install -y clang-21 lld-21 && \
-    rm -rf /var/lib/apt/lists/*
+# Use the same authenticated package boundary for both base distributions.
+COPY scripts/install-llvm-toolchain.sh /opt/tos/scripts/
+COPY scripts/keys/apt-llvm-org.asc /opt/tos/scripts/keys/
+RUN bash /opt/tos/scripts/install-llvm-toolchain.sh 21 all && rm -rf /var/lib/apt/lists/*
 
 ENV CC=/usr/bin/clang-21
 ENV CXX=/usr/bin/clang++-21
 
 # Install uv (pinned version)
-RUN curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+COPY scripts/verify-build-tool.py scripts/build-tool-pins.json /opt/tos/scripts/
+RUN curl -fsSL https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-unknown-linux-gnu.tar.gz -o /tmp/uv.tar.gz && \
+    python3 /opt/tos/scripts/verify-build-tool.py uv-x86_64 /tmp/uv.tar.gz && \
+    tar -xzf /tmp/uv.tar.gz -C /tmp && \
+    install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uv /usr/local/bin/uv && \
+    install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uvx /usr/local/bin/uvx && \
+    rm -rf /tmp/uv.tar.gz /tmp/uv-x86_64-unknown-linux-gnu
 ENV PATH="/root/.local/bin:$PATH"
 
 RUN clang-21 --version && uv --version

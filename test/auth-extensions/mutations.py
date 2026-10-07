@@ -45,6 +45,10 @@ def main():
                         ROOT / "crypto/smartcont/wallet-v5-action-list.fc",
                         work / "wallet-v5-action-list.fc",
                     )
+                    shutil.copy2(
+                        ROOT / "crypto/smartcont/strong-ed25519-key.fc",
+                        work / "strong-ed25519-key.fc",
+                    )
                 text = (ROOT / "crypto/smartcont" / helper).read_text()
                 assert text.count(before) == 1
                 (work / helper).write_text(text.replace(before, after))

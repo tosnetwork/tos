@@ -46,6 +46,12 @@ td::Result<std::string> get_line(td::ChainBufferReader &input, std::string &cur_
       input.confirm_read(S.size());
       continue;
     }
+    if ((f > 0 && S[f - 1] != '\r') || (f == 0 && (cur_line.empty() || cur_line.back() != '\r'))) {
+      return td::Status::Error("HTTP lines require CRLF");
+    }
+    if (cur_line.size() + f > max_line_size) {
+      return td::Status::Error("too big http header");
+    }
     if (f > 0) {
       if (S[f - 1] == '\r') {
         cur_line += S.truncate(f - 1).str();
@@ -65,12 +71,121 @@ td::Result<std::string> get_line(td::ChainBufferReader &input, std::string &cur_
   }
 }
 
+namespace {
+
+bool is_ows(char c) {
+  return c == ' ' || c == '\t';
+}
+
+// Strips only optional whitespace (SP and HTAB). Any other control character
+// stays in the value, where HttpHeader::basic_check refuses it.
+td::Slice trim_ows(td::Slice s) {
+  while (!s.empty() && is_ows(s[0])) {
+    s.remove_prefix(1);
+  }
+  while (!s.empty() && is_ows(s.back())) {
+    s.remove_suffix(1);
+  }
+  return s;
+}
+
+bool is_token_char(unsigned char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+         td::Slice("!#$%&'*+-.^_`|~").find(c) != td::Slice::npos;
+}
+
+int hex_digit_value(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  return -1;
+}
+
+}  // namespace
+
 td::Result<HttpHeader> get_header(std::string line) {
   auto p = line.find(':');
   if (p == std::string::npos) {
     return td::Status::Error("failed to parse header");
   }
-  return HttpHeader{line.substr(0, p), td::trim(line.substr(p + 1))};
+  return HttpHeader{line.substr(0, p), trim_ows(td::Slice(line).substr(p + 1)).str()};
+}
+
+td::Result<td::uint64> parse_chunk_size(td::Slice line) {
+  constexpr size_t max_digits = 15;
+  td::uint64 size = 0;
+  size_t i = 0;
+  for (; i < line.size(); i++) {
+    int digit = hex_digit_value(line[i]);
+    if (digit < 0) {
+      break;
+    }
+    if (i == max_digits) {
+      return td::Status::Error("chunk size is too large");
+    }
+    size = size * 16 + static_cast<td::uint64>(digit);
+  }
+  if (i == 0) {
+    return td::Status::Error("invalid chunk size");
+  }
+  if (i == line.size()) {
+    return size;
+  }
+  // chunk-ext = *( BWS ";" BWS ext-name [ BWS "=" BWS ext-val ] )
+  auto rest = line.substr(i);
+  while (!rest.empty() && is_ows(rest[0])) {
+    rest.remove_prefix(1);
+  }
+  if (rest.empty() || rest[0] != ';') {
+    return td::Status::Error("invalid chunk size");
+  }
+  for (unsigned char c : rest) {
+    if ((c < 32 && c != '\t') || c == 127) {
+      return td::Status::Error("bad character in chunk extension");
+    }
+  }
+  return size;
+}
+
+td::Result<ConnectionOptions> parse_connection_options(td::Slice lower_case_value) {
+  ConnectionOptions options;
+  bool any = false;
+  for (auto element : td::full_split(lower_case_value, ',')) {
+    element = trim_ows(element);
+    if (element.empty() || !std::all_of(element.begin(), element.end(), is_token_char)) {
+      return td::Status::Error("invalid Connection header");
+    }
+    any = true;
+    if (element == "close") {
+      options.close = true;
+    } else if (element == "keep-alive") {
+      options.keep_alive = true;
+    } else if (element == "content-length" || element == "transfer-encoding" || element == "host") {
+      return td::Status::Error("Connection header nominates a message framing header");
+    } else {
+      options.nominated.push_back(element.str());
+    }
+  }
+  if (!any) {
+    return td::Status::Error("invalid Connection header");
+  }
+  return options;
+}
+
+void remove_nominated_headers(std::vector<HttpHeader> &headers, const std::vector<std::string> &nominated) {
+  if (nominated.empty()) {
+    return;
+  }
+  std::erase_if(headers, [&](const HttpHeader &header) {
+    auto lc_name = td::to_lower(header.name);
+    return std::find(nominated.begin(), nominated.end(), lc_name) != nominated.end();
+  });
 }
 
 }  // namespace util
@@ -169,6 +284,7 @@ bool HttpRequest::check_parse_header_completed() const {
 
 td::Status HttpRequest::complete_parse_header() {
   CHECK(!parse_header_completed_);
+  util::remove_nominated_headers(options_, connection_nominated_);
   parse_header_completed_ = true;
   return td::Status::OK();
 }
@@ -195,6 +311,7 @@ bool HttpRequest::need_payload() const {
 }
 
 td::Status HttpRequest::add_header(HttpHeader header) {
+  TRY_STATUS(header.basic_check());
   auto lc_name = header.name;
   auto lc_value = header.value;
   std::transform(lc_name.begin(), lc_name.end(), lc_name.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -203,7 +320,12 @@ td::Status HttpRequest::add_header(HttpHeader header) {
   auto S = td::trim(td::Slice(lc_value));
 
   if (lc_name == "content-length") {
+    if (S.empty() || !std::all_of(S.begin(), S.end(), [](unsigned char c) { return c >= '0' && c <= '9'; })) {
+      return td::Status::Error("invalid Content-Length");
+    }
     TRY_RESULT(len, td::to_integer_safe<td::uint32>(S));
+    header.name = "Content-Length";
+    header.value = std::to_string(len);
     if (found_transfer_encoding_ || found_content_length_) {
       return td::Status::Error("duplicate Content-Length/Transfer-Encoding");
     }
@@ -225,27 +347,35 @@ td::Status HttpRequest::add_header(HttpHeader header) {
     content_length_ = len;
     found_content_length_ = true;
   } else if (lc_name == "transfer-encoding") {
-    // expect chunked, don't event check
+    // Only this coding is implemented by the payload reader and writer.
+    if (S != "chunked" || proto_version_ == "HTTP/1.0") {
+      return td::Status::Error("unsupported Transfer-Encoding");
+    }
+    header.name = "Transfer-Encoding";
+    header.value = "chunked";
     if (found_transfer_encoding_ || found_content_length_) {
       return td::Status::Error("duplicate Content-Length/Transfer-Encoding");
     }
     found_transfer_encoding_ = true;
   } else if (lc_name == "host") {
+    if (S.empty()) {
+      return td::Status::Error("empty Host");
+    }
     if (host_.size() > 0) {
       return td::Status::Error("duplicate Host");
     }
     host_ = S.str();
-  } else if (lc_name == "connection" && S == "keep-alive") {
-    keep_alive_ = true;
-    return td::Status::OK();
-  } else if (lc_name == "connection" && S == "close") {
-    keep_alive_ = false;
-    return td::Status::OK();
-  } else if (lc_name == "proxy-connection" && S == "keep-alive") {
-    keep_alive_ = true;
-    return td::Status::OK();
-  } else if (lc_name == "proxy-connection" && S == "close") {
-    keep_alive_ = false;
+  } else if (lc_name == "connection" || lc_name == "proxy-connection") {
+    TRY_RESULT(connection, util::parse_connection_options(S));
+    connection_close_ |= connection.close;
+    if (connection_close_) {
+      keep_alive_ = false;
+    } else if (connection.keep_alive) {
+      keep_alive_ = true;
+    }
+    for (auto &name : connection.nominated) {
+      connection_nominated_.push_back(std::move(name));
+    }
     return td::Status::OK();
   }
   options_.emplace_back(std::move(header));
@@ -316,9 +446,7 @@ td::Status HttpPayload::parse(td::ChainBufferReader &input) {
         if (l.size() == 0) {
           return td::Status::Error("expected chunk, found empty line");
         }
-        auto v = td::split(l);
-
-        TRY_RESULT(size, td::hex_to_integer_safe<size_t>(v.first));
+        TRY_RESULT(size, util::parse_chunk_size(l));
         if (size == 0) {
           state_ = ParseState::reading_trailer;
           break;
@@ -380,6 +508,7 @@ td::Status HttpPayload::parse(td::ChainBufferReader &input) {
           return td::Status::OK();
         }
         TRY_RESULT(h, util::get_header(std::move(l)));
+        TRY_STATUS(h.basic_check());
         add_trailer(std::move(h));
         if (trailer_size_ > HttpRequest::max_header_size()) {
           return td::Status::Error("too big trailer part");
@@ -478,6 +607,31 @@ void HttpPayload::add_trailer(HttpHeader header) {
     }
   }
   run_callbacks(std::move(callbacks), false, ready_bytes);
+}
+
+td::Status HttpPayload::add_framed_chunk(td::BufferSlice data) {
+  if (data.empty()) {
+    return td::Status::OK();
+  }
+  if (type_ == PayloadType::pt_empty || parse_completed() || is_error()) {
+    return td::Status::Error("payload data after the end of the body");
+  }
+  if (type_ == PayloadType::pt_content_length) {
+    if (data.size() > framed_remaining_) {
+      return td::Status::Error("payload is longer than its Content-Length");
+    }
+    framed_remaining_ -= data.size();
+  }
+  add_chunk(std::move(data));
+  return td::Status::OK();
+}
+
+td::Status HttpPayload::complete_framed_parse() {
+  if (type_ == PayloadType::pt_content_length && framed_remaining_ != 0) {
+    return td::Status::Error("payload is shorter than its Content-Length");
+  }
+  complete_parse();
+  return td::Status::OK();
 }
 
 void HttpPayload::add_chunk(td::BufferSlice data) {
@@ -943,6 +1097,7 @@ HttpResponse::HttpResponse(std::string proto_version, td::uint32 code, std::stri
     , reason_(std::move(reason))
     , force_no_payload_(force_no_payload)
     , force_no_keep_alive_(!keep_alive)
+    , keep_alive_(keep_alive && proto_version_ == "HTTP/1.1")
     , is_tunnel_(is_tunnel) {
 }
 
@@ -969,6 +1124,11 @@ td::Result<std::unique_ptr<HttpResponse>> HttpResponse::create(std::string proto
 
 td::Status HttpResponse::complete_parse_header() {
   CHECK(!parse_header_completed_);
+  util::remove_nominated_headers(options_, connection_nominated_);
+  if (proto_version_ == "HTTP/1.0" && need_payload() && !is_tunnel_ && !found_content_length_ &&
+      !found_transfer_encoding_) {
+    keep_alive_ = false;  // HTTP/1.0 cannot delimit an unknown body with chunks.
+  }
   parse_header_completed_ = true;
   return td::Status::OK();
 }
@@ -999,6 +1159,7 @@ bool HttpResponse::need_payload() const {
 }
 
 td::Status HttpResponse::add_header(HttpHeader header) {
+  TRY_STATUS(header.basic_check());
   auto lc_name = header.name;
   auto lc_value = header.value;
   std::transform(lc_name.begin(), lc_name.end(), lc_name.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -1007,7 +1168,12 @@ td::Status HttpResponse::add_header(HttpHeader header) {
   auto S = td::trim(td::Slice(lc_value));
 
   if (lc_name == "content-length") {
+    if (S.empty() || !std::all_of(S.begin(), S.end(), [](unsigned char c) { return c >= '0' && c <= '9'; })) {
+      return td::Status::Error("invalid Content-Length");
+    }
     TRY_RESULT(len, td::to_integer_safe<td::uint32>(S));
+    header.name = "Content-Length";
+    header.value = std::to_string(len);
     if (found_transfer_encoding_ || found_content_length_) {
       return td::Status::Error("duplicate Content-Length/Transfer-Encoding");
     }
@@ -1022,22 +1188,27 @@ td::Status HttpResponse::add_header(HttpHeader header) {
     content_length_ = len;
     found_content_length_ = true;
   } else if (lc_name == "transfer-encoding") {
-    // expect chunked, don't event check
+    // Only this coding is implemented by the payload reader and writer.
+    if (S != "chunked" || proto_version_ == "HTTP/1.0") {
+      return td::Status::Error("unsupported Transfer-Encoding");
+    }
+    header.name = "Transfer-Encoding";
+    header.value = "chunked";
     if (found_transfer_encoding_ || found_content_length_) {
       return td::Status::Error("duplicate Content-Length/Transfer-Encoding");
     }
     found_transfer_encoding_ = true;
-  } else if (lc_name == "connection" && S == "keep-alive") {
-    keep_alive_ = true;
-    return td::Status::OK();
-  } else if (lc_name == "connection" && S == "close") {
-    keep_alive_ = false;
-    return td::Status::OK();
-  } else if (lc_name == "proxy-connection" && S == "keep-alive") {
-    keep_alive_ = true;
-    return td::Status::OK();
-  } else if (lc_name == "proxy-connection" && S == "close") {
-    keep_alive_ = false;
+  } else if (lc_name == "connection" || lc_name == "proxy-connection") {
+    TRY_RESULT(connection, util::parse_connection_options(S));
+    connection_close_ |= connection.close;
+    if (connection_close_) {
+      keep_alive_ = false;
+    } else if (connection.keep_alive) {
+      keep_alive_ = true;
+    }
+    for (auto &name : connection.nominated) {
+      connection_nominated_.push_back(std::move(name));
+    }
     return td::Status::OK();
   }
   options_.emplace_back(std::move(header));
@@ -1047,6 +1218,10 @@ td::Status HttpResponse::add_header(HttpHeader header) {
 void HttpResponse::store_http(td::ChainBufferWriter &output) {
   std::string line = proto_version_ + " " + std::to_string(code_) + " " + reason_ + "\r\n";
   output.append(line);
+  // EOF payloads are serialized as chunks; advertise that wire representation.
+  if (need_payload() && !is_tunnel_ && !found_content_length_ && !found_transfer_encoding_ && keep_alive_) {
+    HttpHeader{"Transfer-Encoding", "chunked"}.store_http(output);
+  }
   for (auto &x : options_) {
     x.store_http(output);
   }
@@ -1075,17 +1250,63 @@ tl_object_ptr<tos_api::http_response> HttpResponse::store_tl() {
 }
 
 td::Status HttpHeader::basic_check() {
-  for (auto &c : name) {
-    if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ':' || c == '\0') {
+  if (name.empty()) {
+    return td::Status::Error("empty header name");
+  }
+  for (unsigned char c : name) {
+    const bool token = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                       td::Slice("!#$%&'*+-.^_`|~").find(c) != td::Slice::npos;
+    if (!token) {
       return td::Status::Error("bad character in header name");
     }
   }
-  for (auto &c : value) {
-    if (c == '\r' || c == '\n' || c == '\0') {
+  for (unsigned char c : value) {
+    if ((c < 32 && c != '\t') || c == 127) {
       return td::Status::Error("bad character in header value");
     }
   }
   return td::Status::OK();
+}
+
+td::Result<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> relayed_response(
+    const HttpRequest &request, const tos_api::http_response &answer, std::vector<HttpHeader> extra_headers) {
+  const bool head = request.no_payload_in_answer();
+  const bool tunnel = request.method() == "CONNECT" && answer.status_code_ == 200;
+  TRY_RESULT(response, HttpResponse::create(answer.http_version_, answer.status_code_, answer.reason_,
+                                            answer.no_payload_ || head, true, tunnel));
+  for (auto &e : answer.headers_) {
+    HttpHeader h{e->name_, e->value_};
+    TRY_STATUS(h.basic_check());
+    TRY_STATUS(response->add_header(std::move(h)));
+  }
+  for (auto &h : extra_headers) {
+    TRY_STATUS(response->add_header(std::move(h)));
+  }
+  TRY_STATUS(response->complete_parse_header());
+  const bool body_allowed =
+      !head && answer.status_code_ >= 200 && answer.status_code_ != 204 && answer.status_code_ != 304;
+  if (answer.no_payload_ && !tunnel && body_allowed && response->announces_body()) {
+    return td::Status::Error("remote announced a body it did not send");
+  }
+  TRY_RESULT(payload, response->create_empty_payload());
+  if (answer.no_payload_) {
+    TRY_STATUS(payload->complete_framed_parse());
+  }
+  return std::make_pair(std::move(response), std::move(payload));
+}
+
+td::Result<bool> add_payload_part(HttpPayload &payload, tos_api::http_payloadPart &part) {
+  TRY_STATUS(payload.add_framed_chunk(std::move(part.data_)));
+  for (auto &x : part.trailer_) {
+    HttpHeader h{x->name_, x->value_};
+    TRY_STATUS(h.basic_check());
+    payload.add_trailer(std::move(h));
+  }
+  if (part.last_) {
+    TRY_STATUS(payload.complete_framed_parse());
+    return true;
+  }
+  return false;
 }
 
 void answer_error(HttpStatusCode code, std::string reason,

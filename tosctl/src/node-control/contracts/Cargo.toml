@@ -12,6 +12,7 @@ native-wallet-vault = ["native-wallet-signer", "wallet-pq-signer/vault", "dep:se
 tos-native-mnemonic = { path = "../../tos-native-mnemonic", optional = true }
 secrets-vault = { path = "../../secrets-vault", optional = true }
 wallet-pq-signer = { path = "../../wallet-pq-signer", optional = true }
+control-client = { path = "../control-client" }
 anyhow = "1.0"
 async-trait = "0.1.89"
 common = { path = "../common" }

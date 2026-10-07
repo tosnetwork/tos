@@ -34,6 +34,8 @@
 #include "vm/boc.h"
 #include "vm/cellops.h"
 
+#include "html-escape.h"
+
 extern bool local_scripts;
 
 class HttpAnswer {
@@ -142,7 +144,7 @@ class HttpAnswer {
   };
 
  public:
-  HttpAnswer(std::string title, std::string prefix) : title_(title), prefix_(prefix) {
+  HttpAnswer(std::string title, std::string prefix) : title_(title), prefix_(escape_html(prefix)) {
     buf_ = td::BufferSlice{1 << 28};
     sb_ = std::make_unique<td::StringBuilder>(buf_.as_slice());
   }

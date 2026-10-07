@@ -9,3 +9,8 @@
 pub mod client_adnl;
 pub mod client_api;
 pub mod config_params;
+
+pub mod operator_reads;
+mod operator_requests;
+
+pub use operator_reads::UnsupportedControlQuery;

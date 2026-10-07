@@ -783,6 +783,7 @@ version = "0.3.0"
 dependencies = [
  "adnl",
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "chain-rpc-client",
  "chain_block",
@@ -808,6 +809,7 @@ dependencies = [
  "service",
  "sha2",
  "tempfile",
+ "tl_api",
  "tokio",
  "tos-native-mnemonic",
  "tracing",
@@ -864,6 +866,7 @@ dependencies = [
  "chain-rpc-client",
  "chain_block",
  "common",
+ "control-client",
  "ed25519-dalek",
  "errno",
  "fips204",
@@ -893,12 +896,15 @@ dependencies = [
  "adnl",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chain_block",
  "common",
  "hex",
  "serde",
  "serde_json",
+ "tempfile",
  "tl_api",
+ "tokio",
  "tracing",
 ]
 
@@ -1351,6 +1357,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tl_api",
  "tokio",
  "tracing",
 ]

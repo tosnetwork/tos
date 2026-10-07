@@ -15,3 +15,8 @@ chain_block = { path = "../../block" }
 tl_api = { path = "../../tl/api" }
 common = { path = "../common" }
 hex = "0.4.3"
+
+[dev-dependencies]
+base64 = "0.22"
+tempfile = "3"
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread", "time"] }

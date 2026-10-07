@@ -1,0 +1,23 @@
+{
+  "appimagetool-x86_64": {
+    "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage",
+    "sha256": "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0",
+    "source": "Numbered 1.9.1 release asset; GitHub digest matched by a local download 2026-10-07"
+  },
+  "appimagetool-aarch64": {
+    "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-aarch64.AppImage",
+    "sha256": "f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158",
+    "source": "Numbered 1.9.1 release asset; GitHub digest matched by a local download 2026-10-07"
+  },
+  "uv-x86_64": {
+    "url": "https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-unknown-linux-gnu.tar.gz",
+    "sha256": "6681d691eb7f9c00ac6a3af54252f7ab29ae72f0c8f95bdc7f9d1401c23ea868",
+    "source": "GitHub 0.11.7 release asset digest"
+  },
+  "android-ndk-r27d": {
+    "url": "https://dl.google.com/android/repository/android-ndk-r27d-linux.zip",
+    "sha256": "601246087a682d1944e1e16dd85bc6e49560fe8b6d61255be2829178c8ed15d9",
+    "upstream_sha1": "22105e410cf29afcf163760cc95522b9fb981121",
+    "source": "Official HTTPS archive; upstream r27d release SHA-1 cross-check"
+  }
+}

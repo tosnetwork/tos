@@ -1,3 +1,4 @@
+#include "strong-ed25519-key.fc";
 ;; Heavy-duty wallet for mass transfers (e.g., for cryptocurrency exchanges)
 ;; accepts orders for up to 254 internal messages (transfers) in one external message
 ;; this version does not use seqno for replay protection; instead, it remembers all recent query_ids
@@ -39,6 +40,7 @@ int get_global_id() asm "GLOBALID";
   (_, var found?) = old_queries.udict_get?(64, query_id);
   throw_if(32, found?);
   throw_unless(34, subwallet_id == stored_subwallet);
+  throw_if(35, weak_ed25519_key?(public_key));
   throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
   var dict = cs~load_dict();
   cs.end_parse();

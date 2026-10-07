@@ -140,14 +140,16 @@ impl FileJsonStorage {
         crypto_factory: Box<dyn CryptoFactory>,
         auto_migrate: bool,
     ) -> anyhow::Result<Self> {
+        crate::private_file::prepare_parent(file_path)?;
+
         let requested_path = file_path.to_owned();
         let (owned_path, writer_lock) =
             tokio::task::spawn_blocking(move || Self::acquire_writer(&requested_path)).await??;
         let file_path = owned_path.as_path();
         let crypto = crypto_factory.new_crypto()?;
 
-        let tree = if tokio::fs::metadata(&file_path).await.is_ok() {
-            let mut json = tokio::fs::read_to_string(&file_path).await?;
+        let tree = if tokio::fs::symlink_metadata(&file_path).await.is_ok() {
+            let mut json = crate::private_file::read_regular(file_path)?;
             let mut storage_file: StorageFile = serde_json::from_str(&json)?;
 
             if storage_file.version != Self::FORMAT_VERSION {
@@ -160,7 +162,7 @@ impl FileJsonStorage {
                 }
 
                 Self::migrate_locked(file_path, master_key.key_material(), crypto.as_ref()).await?;
-                json = tokio::fs::read_to_string(&file_path).await?;
+                json = crate::private_file::read_regular(file_path)?;
                 storage_file = serde_json::from_str(&json)?;
             }
 
@@ -367,27 +369,13 @@ impl FileJsonStorage {
     }
 
     async fn safe_save(data: &str, file_path: &Path) -> anyhow::Result<()> {
-        // Use an exclusive, unpredictable, owner-only file in the same directory.
-        // A fixed temporary name can be pre-created as a symlink and clobber an
-        // unrelated file before the final rename. Persist atomically replaces the
-        // destination; synchronizing the directory makes that rename durable.
-        let file_path = file_path.to_owned();
-        let data = data.to_owned();
-        tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-            use std::io::Write;
-            let parent = file_path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or_else(|| Path::new("."));
-            let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-            temp.write_all(data.as_bytes())?;
-            temp.as_file().sync_all()?;
-            temp.persist(&file_path).map_err(|error| error.error)?;
-            #[cfg(unix)]
-            std::fs::File::open(parent)?.sync_all()?;
-            Ok(())
+        let path = file_path.to_owned();
+        let data = data.as_bytes().to_vec();
+        tokio::task::spawn_blocking(move || {
+            crate::private_file::write_private_atomic(&path, &data)
         })
-        .await?
+        .await??;
+        Ok(())
     }
 
     async fn migrate_to(
@@ -431,7 +419,7 @@ impl FileJsonStorage {
         master_key: &KeyMaterial,
         crypto: &dyn Crypto,
     ) -> anyhow::Result<()> {
-        let json_str = tokio::fs::read_to_string(file_path).await?;
+        let json_str = crate::private_file::read_regular(file_path)?;
         let mut json_value: serde_json::Value = serde_json::from_str(&json_str)?;
         let format_version: u32 = json_value
             .get("version")
@@ -453,22 +441,8 @@ impl FileJsonStorage {
             );
         }
 
-        // Backup
-        {
-            let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-            let base_backup_name =
-                format!("{}.backup_v{}_{}", file_path.to_string_lossy(), format_version, timestamp);
-
-            let mut backup_name = base_backup_name.clone();
-            let mut counter = 1;
-
-            while tokio::fs::try_exists(&backup_name).await? {
-                backup_name = format!("{}.{}", base_backup_name, counter);
-                counter += 1;
-            }
-
-            tokio::fs::copy(file_path, &backup_name).await?;
-        }
+        // Persist the exact bytes read for migration through exclusive creation.
+        crate::private_file::write_private_backup(file_path, json_str.as_bytes(), format_version)?;
 
         let mut current_version = format_version;
         while current_version < Self::FORMAT_VERSION {

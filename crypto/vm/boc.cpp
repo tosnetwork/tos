@@ -1129,7 +1129,13 @@ class StreamingFileReader {
     }
     if (!cached_in_range(offset, len)) {
       if (scratch_.size() < chunk_bytes_) {
-        scratch_ = td::BufferSlice{chunk_bytes_};
+        // On 32-bit targets the chunk size may not fit in memory: refuse it
+        // rather than allocating a truncated buffer.
+        if (chunk_bytes_ > std::numeric_limits<std::size_t>::max()) {
+          return td::Status::Error(PSLICE() << "streaming BoC reader: chunk size " << chunk_bytes_
+                                            << " exceeds addressable memory");
+        }
+        scratch_ = td::BufferSlice{static_cast<std::size_t>(chunk_bytes_)};
       }
       // Decide where to anchor the chunk window. The default is forward
       // (anchor at `offset`); we switch to backward (anchor so the chunk

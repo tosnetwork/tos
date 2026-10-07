@@ -46,7 +46,10 @@ fn text(output: &Output) -> String {
 
 #[test]
 fn import_reads_protected_channels_and_refuses_the_argument_form() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = tempfile::Builder::new()
+        .permissions(std::fs::Permissions::from_mode(0o700))
+        .tempdir()
+        .expect("tempdir");
     let vault = dir.path().join("vault.json");
     let init = cli(&vault, &["init"], None);
     assert!(init.status.success(), "{}", text(&init));

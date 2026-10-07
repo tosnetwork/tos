@@ -24,6 +24,7 @@ describe("ConnectContext", () => {
       connector: null,
       wallet: null,
       connecting: false,
+      connectError: null,
       disconnect: async () => {},
       connect: () => {},
     };

@@ -24,12 +24,13 @@ use common::{
 };
 use contracts::{
     ElectionsInfo, ElectorWrapper, NominatorWrapper, Participant, Wallet,
+    control_reads::ElectorSnapshot,
     elector::PastElections,
     nominator,
     validator_controller::{ControllerOperations, OperatingThresholds},
 };
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
     time::Duration,
 };
@@ -176,7 +177,6 @@ impl Node {
 /// The only requirement is that the TOS network deploys a compatible elector contract.
 pub(crate) struct ElectionRunner {
     nodes: HashMap<String, Node>,
-    elector: Arc<dyn ElectorWrapper>,
     default_max_factor: f32,
     default_stake_policy: StakePolicy,
     past_elections: Vec<PastElections>,
@@ -281,7 +281,6 @@ impl ElectionRunner {
                     ))
                 })
                 .collect::<HashMap<String, Node>>(),
-            elector,
             operating_thresholds: operating_thresholds(elections_config),
             snapshot_cache: SnapshotCache::default(),
             past_elections: vec![],
@@ -303,6 +302,19 @@ impl ElectionRunner {
                 _ = interval.tick() => {
                     tracing::info!("TICK");
 
+                    // A failed or unsupported read leaves the last accepted snapshot
+                    // and participation state intact; public getters are not a fallback.
+                    let snapshot = match self.read_elector_snapshot().await {
+                        Ok(snapshot) => snapshot,
+                        Err(error) => {
+                            tracing::error!("runner elector snapshot error: {error:#}");
+                            if error.downcast_ref::<control_client::UnsupportedControlQuery>().is_some() {
+                                return Err(error);
+                            }
+                            continue;
+                        }
+                    };
+
                     // Clear per-node last_error at the start of the tick (best-effort).
                     for node in self.nodes.values_mut() {
                         node.last_error = None;
@@ -312,7 +324,7 @@ impl ElectionRunner {
                     self.refresh_validator_configs().await;
                     self.refresh_operating_authorizations().await;
 
-                    if let Err(e) = &self.run().await {
+                    if let Err(e) = &self.run_with_snapshot(snapshot).await {
                         tracing::error!("runner tick error: {:#}", e);
                     }
 
@@ -340,17 +352,54 @@ impl ElectionRunner {
         }
     }
 
-    // TOS compatibility: The election runner assumes the TOS network uses the same
-    // elector contract interface (active_election_id getter, participant_list_extended,
-    // compute_returned_stake, past_elections). The config params 15, 34, 36 must follow
-    // the same structure. These assumptions hold for TOS.
+    #[cfg(test)]
     pub(crate) async fn run(&mut self) -> anyhow::Result<()> {
+        let snapshot = self.read_elector_snapshot().await?;
+        self.run_with_snapshot(snapshot).await
+    }
+
+    async fn read_elector_snapshot(&mut self) -> anyhow::Result<ElectorSnapshot> {
+        let wallets = self
+            .nodes
+            .values()
+            .map(|node| {
+                <[u8; 32]>::try_from(node.wallet_addr())
+                    .map_err(|_| anyhow::anyhow!("returned-stake wallet is not a 256-bit address"))
+            })
+            .collect::<anyhow::Result<BTreeSet<_>>>()?;
+        let wallets = wallets.into_iter().collect::<Vec<_>>();
+        anyhow::ensure!(
+            wallets.len() <= control_client::operator_reads::MAX_RETURNED_WALLETS,
+            "more than 16 distinct returned-stake wallets; reduce the configured wallet set"
+        );
+        let node_id = self.nodes.keys().min().cloned().context("no configured election nodes")?;
+        let node = self.nodes.get_mut(&node_id).context("election node disappeared")?;
+        let snapshot = node.api.elector_snapshot(&wallets).await?;
+        anyhow::ensure!(
+            snapshot.block.shard().is_masterchain(),
+            "elector snapshot is not masterchain"
+        );
+        anyhow::ensure!(
+            snapshot.returned.len() == wallets.len()
+                && snapshot
+                    .returned
+                    .iter()
+                    .zip(&wallets)
+                    .all(|((actual, _), expected)| actual == expected),
+            "returned wallet count, order or address does not match request"
+        );
+        Ok(snapshot)
+    }
+
+    async fn run_with_snapshot(&mut self, snapshot: ElectorSnapshot) -> anyhow::Result<()> {
+        let elections_info = snapshot.elections;
+        let returned = snapshot.returned.into_iter().collect::<HashMap<_, _>>();
+        let election_id = elections_info.election_id;
         let cfg15 = self.election_parameters().await?;
         self.snapshot_cache.update_next_elections_range(&cfg15);
-
-        let election_id =
-            self.elector.get_active_election_id().await.context("get_active_election_id")?;
+        self.past_elections = snapshot.past_elections;
         if election_id == 0 {
+            self.build_elections_snapshot(election_id, &cfg15, &elections_info);
             self.snapshot_cache.last_elections_status = ElectionsStatus::Closed;
             tracing::info!("no active elections");
             return Ok(());
@@ -370,7 +419,6 @@ impl ElectionRunner {
 
         Self::print_election_cycle(&cfg15, election_id);
 
-        let elections_info = self.elector.elections_info().await.context("elections_info")?;
         tracing::info!(
             "elections: close={}({}), min_stake={} TOS, total_stake={} TOS, failed={}, finished={}, participants={}",
             time_format::format_ts(elections_info.elect_close),
@@ -415,7 +463,6 @@ impl ElectionRunner {
             self.snapshot_cache.last_elections_status = ElectionsStatus::Postponed;
         }
 
-        self.past_elections = self.elector.past_elections().await.context("past_elections")?;
         // walk through the nodes and try to participate in the elections
         let mut nodes = self.nodes.keys().cloned().collect::<Vec<String>>();
         nodes.sort();
@@ -432,7 +479,7 @@ impl ElectionRunner {
         for node_id in nodes {
             tracing::info!("node [{}] recover stake", node_id);
             let excluded = self.nodes.get(&node_id).map(|node| node.excluded).unwrap_or(true);
-            let recover_amount = match self.recover_stake(&node_id).await {
+            let recover_amount = match self.recover_stake(&node_id, &returned).await {
                 Ok(amount) => amount,
                 Err(e) => {
                     self.nodes.get_mut(&node_id).map(|node| node.last_error = Some(e.to_string()));
@@ -857,9 +904,16 @@ impl ElectionRunner {
         Ok(body)
     }
 
-    async fn recover_stake(&mut self, node_id: &str) -> anyhow::Result<u64> {
-        let node = self.nodes.get_mut(node_id).expect("node not found");
-        let amount = self.elector.compute_returned_stake(&node.wallet_addr()).await?;
+    async fn recover_stake(
+        &mut self,
+        node_id: &str,
+        returned: &HashMap<[u8; 32], u64>,
+    ) -> anyhow::Result<u64> {
+        let node = self.nodes.get_mut(node_id).context("recovery node not found")?;
+        let wallet = <[u8; 32]>::try_from(node.wallet_addr())
+            .map_err(|_| anyhow::anyhow!("recovery wallet is not 256 bits"))?;
+        let amount =
+            *returned.get(&wallet).context("recovery wallet absent from elector snapshot")?;
         node.last_recover_amount = amount;
         if amount > 0 {
             tracing::info!(
@@ -867,7 +921,8 @@ impl ElectionRunner {
                 node_id,
                 amount as f64 / 1_000_000_000.0
             );
-            let fee = RECOVER_FEE + WALLET_COMPUTE_FEE;
+            let fee =
+                RECOVER_FEE.checked_add(WALLET_COMPUTE_FEE).context("recovery fee overflow")?;
             let wallet_balance = node.wallet_balance().await?;
             if wallet_balance < fee {
                 anyhow::bail!(
