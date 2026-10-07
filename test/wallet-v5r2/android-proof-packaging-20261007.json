@@ -1,0 +1,31 @@
+{
+  "android_commit": "20e872d",
+  "source_pin": "1f618fee3",
+  "scope": "Security module arm64 Kotlin/JNI instrumentation APK packaging and runtime; full wallet app not rebuilt in this step",
+  "test": "V5R2ProofDeviceTest.packagedKotlinJniVerifiesRealHistoricalProofAndRejectsMissingMaterial",
+  "control": "Remove generated jniLibs source directory: named runtime UnsatisfiedLinkError; restore: test passed",
+  "artifacts": [
+    {
+      "file": "20261007-proof-kotlin-instrumentation.log",
+      "sha256": "aac633cc40d8d76ba6d6cf1c6a811177209c66431560abba45ae0e4c07b2573a",
+      "bytes": 26898
+    },
+    {
+      "file": "20261007-proof-package-control.xml",
+      "sha256": "f0b5ac1df3c57b3cf1e4cd36b0afe48c0c726fda8bd71634817de8cdb7f27a1c",
+      "bytes": 1092
+    },
+    {
+      "file": "20261007-proof-package-restored.log",
+      "sha256": "15350387b7da5ec9c0fe52410fc1cd681b67e51396f3c4ab96a955816bb8bcc2",
+      "bytes": 26899
+    }
+  ],
+  "remaining": [
+    "Other three ABIs and wallet minimum API24 compatibility",
+    "Full wallet APK build and release shrinking",
+    "iOS proof library and Swift binding",
+    "Proof acquisition, independently provisioned anchor and durable live-state commit",
+    "Wallet authorization, funded POP, creation, rotation and delivery acceptance"
+  ]
+}
