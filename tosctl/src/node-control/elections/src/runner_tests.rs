@@ -522,6 +522,125 @@ async fn control_runner(fixture: &elector_fixture::Fixture) -> anyhow::Result<El
     Ok(runner)
 }
 
+async fn wire_provider(
+    fixture: &elector_fixture::Fixture,
+) -> anyhow::Result<Box<dyn ElectionsProvider>> {
+    let config = fixture.config()?;
+    let adnl = config.nodes.get("test").context("fixture node")?.to_node_adnl_config(None).await?;
+    let rpc = Arc::new(chain_rpc_client::v2::client_json_rpc::ClientJsonRpc::connect(
+        fixture.public_url.clone(),
+        None,
+    )?);
+    Ok(Box::new(crate::providers::DefaultElectionsProvider::new(
+        adnl,
+        Arc::new(contracts::DefaultChainProvider::new(rpc)),
+    )))
+}
+
+#[tokio::test]
+async fn distinct_wire_credits_drive_recovery_from_one_snapshot() -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    let fixture = elector_fixture::Fixture::new(elector_fixture::Reply {
+        credits: HashMap::from([([0xaa; 32], vec![11]), ([0xbb; 32], vec![22])]),
+        frozen_owner: [0xaa; 32],
+        ..Default::default()
+    })
+    .await?;
+    let mut runner = control_runner(&fixture).await?;
+    let mut pool = MockNominatorWrapperImpl::new();
+    pool.expect_address().returning(wallet_address);
+    pool.expect_get_roles().returning(|| {
+        Ok(NominatorRoles {
+            owner_address: wallet_address(),
+            validator_address: wallet_address(),
+            controller_address: MsgAddressInt::standard(-1, [5; 32]),
+        })
+    });
+    let node = runner.nodes.get_mut("node-1").context("pool node")?;
+    node.excluded = false;
+    node.pool = Some(Arc::new(pool));
+    let mut extra = TestHarness::new();
+    extra.elector_mock.expect_address().returning(elector_address);
+    extra.wallet_mock.expect_address().returning(|| MsgAddressInt::standard(-1, [0xbb; 32]));
+    let mut extra = extra.build("node-2");
+    let mut node = extra.nodes.remove("node-2").context("second node")?;
+    node.api = wire_provider(&fixture).await?;
+    runner.nodes.insert("node-2".into(), node);
+    runner.run().await?;
+    assert_eq!(runner.nodes["node-1"].last_recover_amount, 11);
+    assert_eq!(runner.nodes["node-2"].last_recover_amount, 22);
+    for node in runner.nodes.values() {
+        assert!(
+            node.last_error.as_deref().is_some_and(|e| e.contains("low wallet balance")),
+            "recovery must reach its funding check: {:?}",
+            node.last_error
+        );
+    }
+    let identity = runner.nodes["node-1"].elector_validator_id().await?.context("controller id")?;
+    let identity =
+        <[u8; 32]>::try_from(identity).map_err(|_| anyhow::anyhow!("controller id width"))?;
+    assert_eq!(runner.past_elections[0].frozen_map[&identity].wallet_addr, [0xaa; 32]);
+    assert_eq!(fixture.counts.control.load(Ordering::SeqCst), 1);
+    fixture.no_public_elector()?;
+    runner.shutdown().await?;
+    fixture.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn late_wire_overflow_preserves_populated_decision_state() -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    for frozen_overflow in [true, false] {
+        let good = elector_fixture::Fixture::new(elector_fixture::Reply {
+            credits: HashMap::from([([0xaa; 32], vec![11])]),
+            ..Default::default()
+        })
+        .await?;
+        let mut runner = control_runner(&good).await?;
+        runner.nodes.get_mut("node-1").context("node")?.stake_accepted = true;
+        runner.nodes.get_mut("node-1").context("node")?.accepted_stake_amount = Some(123);
+        runner.run().await?;
+        let snapshot = serde_json::to_value(&runner.snapshot_cache.last_elections)?;
+        let status = runner.snapshot_cache.last_elections_status.clone();
+        assert_eq!(runner.nodes["node-1"].last_recover_amount, 11);
+        let bad = elector_fixture::Fixture::new(elector_fixture::Reply {
+            frozen_overflow,
+            credits: HashMap::from([(
+                [0xaa; 32],
+                if frozen_overflow { vec![22] } else { vec![1, 0, 0, 0, 0, 0, 0, 0, 0] },
+            )]),
+            ..Default::default()
+        })
+        .await?;
+        runner.nodes.get_mut("node-1").context("node")?.api.shutdown().await?;
+        runner.nodes.get_mut("node-1").context("node")?.api = wire_provider(&bad).await?;
+        let error = runner.run().await.err().context("late overflow accepted")?;
+        assert!(
+            format!("{error:#}").contains(if frozen_overflow {
+                "frozen stake exceeds u64"
+            } else {
+                "returned stake exceeds u64"
+            }),
+            "wrong refusal: {error:#}"
+        );
+        assert_eq!(serde_json::to_value(&runner.snapshot_cache.last_elections)?, snapshot);
+        assert_eq!(runner.snapshot_cache.last_elections_status, status);
+        assert_eq!(runner.past_elections[0].frozen_map[&[5; 32]].stake, 11);
+        assert_eq!(runner.past_elections[0].total_stake, 11);
+        assert!(runner.nodes["node-1"].stake_accepted);
+        assert_eq!(runner.nodes["node-1"].accepted_stake_amount, Some(123));
+        assert_eq!(runner.nodes["node-1"].last_recover_amount, 11);
+        assert_eq!(good.counts.control.load(Ordering::SeqCst), 1);
+        assert_eq!(bad.counts.control.load(Ordering::SeqCst), 1);
+        good.no_public_elector()?;
+        bad.no_public_elector()?;
+        runner.shutdown().await?;
+        good.stop().await;
+        bad.stop().await;
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn runner_uses_one_control_snapshot_and_no_public_elector_getters() -> anyhow::Result<()> {
     use std::sync::atomic::Ordering;

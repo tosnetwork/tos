@@ -33,6 +33,9 @@ pub struct Reply {
     pub overflow: bool,
     pub wrong_wallet: bool,
     pub participants: usize,
+    pub credits: HashMap<[u8; 32], Vec<u8>>,
+    pub frozen_overflow: bool,
+    pub frozen_owner: [u8; 32],
 }
 impl Default for Reply {
     fn default() -> Self {
@@ -43,6 +46,9 @@ impl Default for Reply {
             overflow: false,
             wrong_wallet: false,
             participants: 1,
+            credits: HashMap::new(),
+            frozen_overflow: false,
+            frozen_owner: [6; 32],
         }
     }
 }
@@ -91,9 +97,12 @@ impl Subscriber for ControlReplies {
         let returned = request
             .wallets
             .into_iter()
-            .map(|wallet| tos::engine::validator::returnedstake::ReturnedStake {
-                wallet: if reply.wrong_wallet { UInt256::from([0xfe; 32]) } else { wallet },
-                amount: vec![],
+            .map(|wallet| {
+                let amount = reply.credits.get(wallet.as_slice()).cloned().unwrap_or_default();
+                tos::engine::validator::returnedstake::ReturnedStake {
+                    wallet: if reply.wrong_wallet { UInt256::from([0xfe; 32]) } else { wallet },
+                    amount,
+                }
             })
             .collect();
         let participants = if open {
@@ -138,9 +147,13 @@ impl Subscriber for ControlReplies {
                 bonuses: vec![2],
                 frozen: vec![tos::engine::validator::frozenstake::FrozenStake {
                     id: UInt256::from([5; 32]),
-                    owner: UInt256::from([6; 32]),
+                    owner: UInt256::from(reply.frozen_owner),
                     weight: -1,
-                    stake: vec![11],
+                    stake: if reply.frozen_overflow {
+                        vec![1, 0, 0, 0, 0, 0, 0, 0, 0]
+                    } else {
+                        vec![11]
+                    },
                     banned: false.into(),
                 }],
             }],
@@ -255,6 +268,12 @@ impl Fixture {
                                     "last":{"@type":"tos.blockIdExt","workchain":-1,"shard":i64::MIN.to_string(),"seqno":17,"root_hash":root,"file_hash":file},
                                     "init":{"@type":"tos.blockIdExt","workchain":-1,"shard":i64::MIN.to_string(),"seqno":0,"root_hash":root,"file_hash":file}
                                 })
+                            } else if request["method"] == "getAddressInformation" {
+                                let zero =
+                                    base64::engine::general_purpose::STANDARD.encode([0; 32]);
+                                serde_json::json!({"@type":"addressInformation","balance":"0","state":"active",
+                                    "last_transaction_id":{"@type":"internal.transactionId","lt":"0","hash":zero},
+                                    "block_id":{"@type":"tos.blockIdExt","workchain":-1,"shard":i64::MIN.to_string(),"seqno":17,"root_hash":zero,"file_hash":zero},"sync_utime":1700000000})
                             } else {
                                 public_result(method)
                             };

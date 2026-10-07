@@ -2305,15 +2305,15 @@ mod offer_list_tests {
 
     /// The node's real `list_proposals` answer with two proposals, decoded as the
     /// wrapper decodes it.
-    pub(super) fn live_proposals() -> Vec<control_client::operator_reads::ConfigProposalMeta> {
+    pub(super) fn live_proposals()
+    -> anyhow::Result<Vec<control_client::operator_reads::ConfigProposalMeta>> {
         let response =
             include_str!("../../../../contracts/tests/fixtures/list_proposals/two-live.json");
-        let value: serde_json::Value = serde_json::from_str(response).unwrap();
+        let value: serde_json::Value = serde_json::from_str(response)?;
         let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
-            serde_json::from_value(value["result"].clone()).unwrap();
+            serde_json::from_value(value["result"].clone())?;
         let stack = contracts::chain_provider::stack_from_rpc(result.stack);
-        contracts::config_contract::decode_proposal_list(&stack)
-            .unwrap()
+        Ok(contracts::config_contract::decode_proposal_list(&stack)?
             .into_iter()
             .map(|p| control_client::operator_reads::ConfigProposalMeta {
                 hash: p.hash,
@@ -2329,15 +2329,15 @@ mod offer_list_tests {
                 wins: p.wins,
                 losses: p.losses,
             })
-            .collect()
+            .collect())
     }
 
     const FIRST: &str = "472b34cc4214f8c3d028bc1f47dcc7d8c2e040b093a9b32f4afe2485be597cc9";
     const SECOND: &str = "caf342eb8fdd9adc97379f44c7740735097dd210430f79dc410a3690639888f0";
 
     #[test]
-    fn the_json_listing_of_the_live_answer() {
-        let rendered = render_offer_list(&live_proposals(), true).unwrap();
+    fn the_json_listing_of_the_live_answer() -> anyhow::Result<()> {
+        let rendered = render_offer_list(&live_proposals()?, true)?;
         let expected = serde_json::json!([
             {
                 "param_id": 1000,
@@ -2358,12 +2358,13 @@ mod offer_list_tests {
         ]);
         assert_eq!(rendered, format!("{}\n", serde_json::to_string_pretty(&expected).unwrap()));
         assert_eq!(render_offer_list(&[], true).unwrap(), "[]\n");
+        Ok(())
     }
 
     #[test]
-    fn the_text_listing_of_the_live_answer() {
+    fn the_text_listing_of_the_live_answer() -> anyhow::Result<()> {
         colored::control::set_override(false);
-        let rendered = render_offer_list(&live_proposals(), false).unwrap();
+        let rendered = render_offer_list(&live_proposals()?, false)?;
         let rows: Vec<&str> = rendered.lines().collect();
         assert_eq!(rows[1], "Config Proposals");
         assert_eq!(
@@ -2382,11 +2383,12 @@ mod offer_list_tests {
         );
         assert_eq!(rows.len(), 8);
         assert_eq!(render_offer_list(&[], false).unwrap(), "\nNo active config proposals.\n\n");
+        Ok(())
     }
 
     #[test]
-    fn cast_selects_by_hash_or_the_only_proposal() {
-        let proposals = live_proposals();
+    fn cast_selects_by_hash_or_the_only_proposal() -> anyhow::Result<()> {
+        let proposals = live_proposals()?;
         let mut second = [0u8; 32];
         hex::decode_to_slice(SECOND, &mut second).unwrap();
         match select_offer(&proposals, Some(&second)) {
@@ -2399,6 +2401,7 @@ mod offer_list_tests {
             OfferChoice::One(p) => assert_eq!(hex::encode(p.hash), FIRST),
             _ => panic!("a single proposal is selected without a hash"),
         }
+        Ok(())
     }
 }
 

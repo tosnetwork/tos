@@ -28,8 +28,9 @@ struct ControlReplies {
 fn block() -> BlockIdExt {
     BlockIdExt::with_params(ShardIdent::masterchain(), 1, UInt256::default(), UInt256::default())
 }
-fn metadata() -> Vec<tos::engine::validator::configproposalmeta::ConfigProposalMeta> {
-    super::offer_list_tests::live_proposals()
+fn metadata() -> anyhow::Result<Vec<tos::engine::validator::configproposalmeta::ConfigProposalMeta>>
+{
+    Ok(super::offer_list_tests::live_proposals()?
         .into_iter()
         .map(|p| tos::engine::validator::configproposalmeta::ConfigProposalMeta {
             hash: UInt256::from(p.hash),
@@ -45,7 +46,7 @@ fn metadata() -> Vec<tos::engine::validator::configproposalmeta::ConfigProposalM
             wins: i32::from(p.wins),
             losses: i32::from(p.losses),
         })
-        .collect()
+        .collect())
 }
 #[async_trait::async_trait]
 impl Subscriber for ControlReplies {
@@ -71,7 +72,7 @@ impl Subscriber for ControlReplies {
             return QueryResult::consume(
                 tos::engine::validator::configproposals::ConfigProposals {
                     block: block(),
-                    proposals: metadata(),
+                    proposals: metadata()?,
                 },
             );
         }
@@ -85,7 +86,7 @@ impl Subscriber for ControlReplies {
                     },
                 );
             }
-            let meta = metadata().into_iter().find(|p| p.hash == request.hash);
+            let meta = metadata()?.into_iter().find(|p| p.hash == request.hash);
             let meta = meta.map(|mut p| {
                 p.has_value = true.into();
                 p
@@ -253,7 +254,7 @@ async fn offer_cast_selection_never_reads_public_proposals() -> anyhow::Result<(
 async fn offer_diff_never_reads_public_proposals() -> anyhow::Result<()> {
     for unsupported in [false, true] {
         let fixture = Fixture::new(unsupported).await?;
-        let hash = hex::encode(super::offer_list_tests::live_proposals()[0].hash);
+        let hash = hex::encode(super::offer_list_tests::live_proposals()?[0].hash);
         let result = VoteOfferDiffCmd { hash }.run(&fixture.path()?).await;
         fixture.no_public_proposals()?;
         check_upgrade(result, unsupported)?;
@@ -269,12 +270,12 @@ async fn offer_create_expiry_never_reads_public_proposals() -> anyhow::Result<()
         let config = common::app_config::AppConfig::load(std::path::Path::new(&fixture.path()?))?;
         let client = tokio::sync::Mutex::new(operator_control_client(&config, None).await?);
         let result =
-            proposal_expiry(&client, super::offer_list_tests::live_proposals()[0].hash).await;
+            proposal_expiry(&client, super::offer_list_tests::live_proposals()?[0].hash).await;
         fixture.no_public_proposals()?;
         if unsupported {
             check_upgrade(result.map(|_| ()), true)?;
         } else {
-            assert_eq!(result?, Some(super::offer_list_tests::live_proposals()[0].expires));
+            assert_eq!(result?, Some(super::offer_list_tests::live_proposals()?[0].expires));
         }
         assert_eq!(fixture.counts.control_detail.load(Ordering::SeqCst), 1);
         fixture.stop().await;
@@ -287,7 +288,7 @@ async fn offer_upgrade_errors_never_fall_back_to_public_proposals() -> anyhow::R
     for workflow in ["ls", "cast", "diff", "create"] {
         let fixture = Fixture::new(true).await?;
         let path = fixture.path()?;
-        let hash = super::offer_list_tests::live_proposals()[0].hash;
+        let hash = super::offer_list_tests::live_proposals()?[0].hash;
         let result = match workflow {
             "ls" => {
                 VoteOfferLsCmd { format: super::super::output_format::OutputFormat::Json }

@@ -1,6 +1,6 @@
 # Reading election participants and proposals for operator automation
 
-- Opened: 2026-10-07. Status: **design approved; implementation in progress.** Revision 2:
+- Opened: 2026-10-07. Status: **implemented; local gates and seven-node live gate passed.** Revision 2:
   the owner redirected the design from "harden the public RPC path" to "operator
   automation uses the node's authenticated control channel, not the public RPC".
   Revision 3: amendments from the design pre-review (off-actor execution with

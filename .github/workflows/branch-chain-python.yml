@@ -82,6 +82,22 @@ jobs:
       - name: Verify authenticated control-getter queries and transport
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^control-getter-(query-(service|boundary|admission|completion)|transport)$'
 
+      - name: Install repository-pinned Rust toolchain for engine integration
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Verify Rust operator reads against the actual engine
+        env:
+          TOS_SOURCE: ${{ github.workspace }}
+          TOS_ENGINE_BUILD: ${{ github.workspace }}/build
+          CARGO_BUILD_JOBS: 4
+          CARGO_TARGET_DIR: ${{ github.workspace }}/build/operator-rust-target
+        run: |
+          set -o pipefail
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p control-client \
+            --test engine_operator_reads real_engine_ -- --ignored --nocapture \
+            | tee build/operator-engine-tests.log
+          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored' build/operator-engine-tests.log
+
       - name: Verify bounded control getters and their production-context budgets
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^control-getter-(executor|shutdown|limits|actor|vm|context|delete|budget)$'
 
