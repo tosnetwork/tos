@@ -258,6 +258,7 @@ class ValidateQuery : public td::actor::Actor {
   std::set<StdSmcAddress> accounts_with_dispatch_queue_diff_;
   std::set<StdSmcAddress> account_expected_defer_all_messages_;
   td::uint64 old_out_msg_queue_size_ = 0, new_out_msg_queue_size_ = 0;
+  td::uint64 cleanup_out_msg_count_ = 0;
   bool out_msg_queue_size_known_ = false;
   bool have_out_msg_queue_size_in_state_ = false;
 

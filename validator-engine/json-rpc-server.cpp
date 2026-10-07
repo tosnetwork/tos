@@ -426,7 +426,7 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
         "  \"openapi_spec\": \"https://github.com/tosnetwork/tos/blob/main/doc/openapi.yaml\"\n"
         "}";
 
-    auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+    auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
     response->add_header({"Content-Type", "application/json"});
     if (!opts_.cors_origin.empty()) {
       response->add_header({"Access-Control-Allow-Origin", opts_.cors_origin});
@@ -1416,7 +1416,7 @@ void JsonRpcServer::send_attributed_liteserver_query(td::BufferSlice query, adnl
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_raw_json_response(const std::string& json_body,
                                                                 const std::string& cors_origin) {
-  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
@@ -1444,7 +1444,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, s
      << ",\"result\":" << result_json << "}";
   std::string body = sb.as_cslice().str();
 
-  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
@@ -1493,7 +1493,8 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
     http_status = 500; http_status_text = "Internal Server Error";
   }
 
-  auto response = http::HttpResponse::create("HTTP/1.1", http_status, std::move(http_status_text), false, false).move_as_ok();
+  auto response =
+      http::HttpResponse::create("HTTP/1.1", http_status, std::move(http_status_text), false, true).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
@@ -1509,7 +1510,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
 }
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_health_ok(const std::string& cors_origin) {
-  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
   response->add_header({"Content-Type", "text/plain"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
@@ -1535,7 +1536,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::stri
      << ",\"message\":" << td::JsonString(td::Slice(message)) << "}}";
   std::string body = sb.as_cslice().str();
 
-  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
@@ -1551,7 +1552,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_rpc_error(int code, std::stri
 }
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_no_content(const std::string& cors_origin) {
-  auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, true).move_as_ok();
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
   }
@@ -1566,7 +1567,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_no_content(const std::string& cors
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_array_response(std::string body,
                                                                    const std::string& cors_origin) {
-  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
@@ -1594,7 +1595,7 @@ std::string JsonRpcServer::extract_response_body(HttpReturn& ret) {
 }
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_cors_preflight(const std::string& cors_origin) {
-  auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", 204, "No Content", false, true).move_as_ok();
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
   }
@@ -1614,8 +1615,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_text_response(int status_code,
                                                             std::string status_text,
                                                             std::string body,
                                                             const std::string& cors_origin) {
-  auto response = http::HttpResponse::create("HTTP/1.1", status_code,
-                                             std::move(status_text), false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", status_code, std::move(status_text), false, true).move_as_ok();
   response->add_header({"Content-Type", "text/plain"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});
@@ -1919,8 +1919,7 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
             }
           }
           // Could not extract result or not ok — rebuild and forward without caching
-          auto resp = http::HttpResponse::create("HTTP/1.1", 200, "OK",
-                                                 false, false).move_as_ok();
+          auto resp = http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
           resp->add_header({"Content-Type", "application/json"});
           resp->add_header({"Access-Control-Allow-Origin", cors});
           resp->add_header({"Transfer-Encoding", "Chunked"});

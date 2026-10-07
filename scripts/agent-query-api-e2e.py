@@ -35,6 +35,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
@@ -48,7 +49,9 @@ HTTP = "127.0.0.1:18648"
 WORKDIR = REPO / "test/integration/.agent-query-api-e2e"
 HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
 MANIFEST = WORKDIR / "manifest.json"
-CONFIG = WORKDIR / "tosctl-e2e-config.json"
+# Set by use_private_dir() at the start of main().
+PRIVATE_DIR: Path | None = None
+CONFIG: Path | None = None
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000002"
 POLICY_HASH = "22" * 32
 NANO = 1_000_000_000
@@ -62,6 +65,22 @@ def check(label: str, ok: bool, detail: str = ""):
     else:
         print(f"  FAIL: {label}  {detail}")
         failures.append(label)
+
+
+def use_private_dir() -> Path:
+    """Place this run's tosctl configuration and vault in a private directory.
+
+    Evidence stays in WORKDIR; the checkout may be group-writable, where
+    tosctl refuses to write configuration or vault files.
+    """
+    global PRIVATE_DIR, CONFIG
+    # Imported here: evidence tests load this module with tostester stubbed
+    # and never call this function.
+    from tostester.private_dir import make_private_dir
+
+    PRIVATE_DIR = make_private_dir("agent-query-api-e2e")
+    CONFIG = PRIVATE_DIR / "tosctl-e2e-config.json"
+    return PRIVATE_DIR
 
 
 def write_manifest() -> None:
@@ -82,6 +101,7 @@ def write_manifest() -> None:
         "test_sha256": hashlib.sha256(
             (REPO / "test/pq-native/test_e05_http_transcript.py").read_bytes()).hexdigest(),
         "http_transcript": HTTP_TRANSCRIPT.name,
+        "tosctl_private_dir": str(PRIVATE_DIR),
         "binaries": {
             name: {"path": str(path.resolve()),
                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -198,7 +218,7 @@ async def check_task_filter_exclusion(creator: str, agent: str) -> None:
 # chain (and therefore the tosctl call itself) until the subprocess timeout.
 async def tosctl(*args: str, may_fail: bool = False) -> str:
     env = dict(os.environ)
-    env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
         TOSCTL, *args, "-c", str(CONFIG),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
@@ -414,7 +434,7 @@ async def run_checks(faucet) -> None:
 
     print("\n=== start tosctld HTTP daemon ===")
     env = dict(os.environ)
-    env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/e2e-vault.json?master_key={MASTER_KEY}"
     service_proc = await asyncio.create_subprocess_exec(
         TOSCTL, "service", "-c", str(CONFIG),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
@@ -532,6 +552,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    use_private_dir()
     write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)

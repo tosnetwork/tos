@@ -542,6 +542,14 @@ void test_back_and_forth_transfer(Client& client, const Wallet& giver_wallet, bo
 void test_multisig(Client& client, const Wallet& giver_wallet) {
   LOG(ERROR) << "TEST: multisig";
 
+  auto config = sync_send(client, make_object<toslib_api::getConfigParam>(0, 19)).move_as_ok();
+  CHECK(config->config_);
+  auto config_cell = vm::std_boc_deserialize(config->config_->bytes_, true).move_as_ok();
+  CHECK(config_cell.not_null());
+  auto config_slice = vm::load_cell_slice(config_cell);
+  CHECK(config_slice.size() == 32 && config_slice.size_refs() == 0);
+  const auto global_id = static_cast<td::int32>(config_slice.fetch_long(32));
+
   int n = 16;
   int k = 10;
   td::uint32 wallet_id = 7;
@@ -567,7 +575,7 @@ void test_multisig(Client& client, const Wallet& giver_wallet) {
     tos::GenericAccount::store_int_message(icb, block::StdAddress::parse(giver_wallet.address).move_as_ok(), 1, {});
     icb.store_bytes("\0\0\0\0", 4);
     vm::CellString::store(icb, "Greatings from multisig", 35 * 8).ensure();
-    tos::MultisigWallet::QueryBuilder qb(wallet_id, -1 - i, icb.finalize());
+    tos::MultisigWallet::QueryBuilder qb(wallet_id, global_id, -1 - i, icb.finalize());
     for (int i = 0; i < k - 1; i++) {
       qb.sign(i, private_keys[i]);
     }

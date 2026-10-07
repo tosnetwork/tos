@@ -189,8 +189,7 @@ void JsonRpcServer::handle_detectHash(td::JsonObject &params, std::string req_id
 
 JsonRpcServer::HttpReturn JsonRpcServer::build_readyz_response(int status_code, std::string status_text,
                                                                std::string body, const std::string &cors_origin) {
-  auto response =
-      http::HttpResponse::create("HTTP/1.1", status_code, std::move(status_text), false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", status_code, std::move(status_text), false, true).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});

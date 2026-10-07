@@ -1,0 +1,298 @@
+# Security scan remediation: 2026-10-06
+
+Scan run: `wfr_587879028e36a0b20fa2c768bf6bc2d5a88c5b179aea0c45136dd66b204afb60`.
+Scan revision: `9960de239fda55dd9888cd23893bd694af130e44`.
+Review baseline: `6da705c8ad6e5a1dd118f11de819e0e542416540` (rechecked before publication).
+
+All twelve findings remain present at the baseline: their source paths were unchanged from the scan except for unrelated address parsing additions in nodectl/utils.rs. This is source confirmation, not twelve reproduced production exploits. This branch implements remediation candidates for all twelve. No new Cloud scan, finding closure, production deployment or activation has been performed.
+
+| # | Finding ID | Severity | Finding | Baseline | Remediation and evidence |
+|---|---|---|---|---|---|
+| 1 | `csf_0e44054d12cb535e11a3d3f2` | high | Source rotation bypasses ADNL decrypt throttling and creates unbounded pre-authentication state | Present | Process and local decrypt work/concurrency budgets; bounded source and statistics tables; IPv6 /64 admission. Native budget/table cardinality and IPv6 tests; two red/green controls. Full actor flood and authenticated-peer service benchmark pending. |
+| 2 | `csf_c0cba186c5954d7050a7af3f` | high | Generic multisig authorizations are not bound to the network global ID | Present | Signed int32 GLOBALID in the generic multisig packet and C++/Rust builders; sibling-network transaction replay rejected. 11 multisig transaction tests; cross-network replay red/green. |
+| 3 | `csf_80e522ac5cc5420f8641dd26` | high | Node-control configuration writes expose inline keys and credentials through permissive, symlink-following creation | Present | Shared owner-private, random-temp atomic configuration writer; regular-file/owner/link checks and file/directory fsync. Private file mode 0600/update/symlink refusal tests; permission red/green; shared vault library suite. |
+| 4 | `csf_d565d7fc0f942dc96e8f05f4` | high | Release and builder pipelines execute downloaded tooling without independent integrity verification | Present | Repository-pinned SHA-256 checks before AppImage execution and NDK/uv extraction; pinned signing key for LLVM apt packages. Two verifier tamper tests covering all pins plus two packaging pipeline tests covering cached AppImage tools on both architectures and cached NDK archives; verifier/call-bypass red/green. Actual NDK archive matches size/upstream SHA-1 and pinned SHA-256. |
+| 5 | `csf_c8a7cfb31c272ff0f43fe776` | high | Ambiguous HTTP framing permits request smuggling across proxy boundaries | Present | HTTP token/value/CRLF and decimal length validation; strict single chunked coding; conflicting framing rejected. Native malformed framing tests; coding and raw header-admission red/green. |
+| 6 | `csf_eef543a1772e8a986f353a24` | high | TOS Connect trusts an unbound bridge sender as the wallet and permits sender replacement | Present | Trusted out-of-band wallet session key required; encrypted sender pinning, low-order-key refusal and v3 session restoration. 100 Connect tests; encrypted forged connect/RPC/disconnect and replacement cases; sender gate red/green; TypeScript passes. |
+| 7 | `csf_762872508293ff63bfe3acca` | medium | JSON vault persistence uses a predictable symlink-following temporary path | Present | Private vault directories; exclusive random temporaries and backups; no-follow regular-file reads and atomic saves. 231 vault tests + 1 CLI import test passed; 1 pre-existing ignored test. Random temp/backup mode and victim-preservation checks. |
+| 8 | `csf_7cbc3b2d69ccf923770f6fd9` | medium | RLDP response forwarding emits chunked bodies without a matching HTTP framing header | Present | Canonical chunked headers for persistent EOF bodies; raw EOF plus actual close for nonpersistent/HTTP1.0 responses. Native header/body tests including HTTP/1.0; missing framing-header red/green. Pooled RLDP end-to-end fixture pending. |
+| 9 | `csf_ed36e7ef66dea1203e68ef69` | medium | Legacy wallet contracts accept forgeable Ed25519 authority-key encodings | Present | Runtime weak-key checks in twelve legacy wallet families, including restricted-wallet initialization/rotation; regenerated SDK/Rust code. Twelve wallet-family transaction controls; weak-key guard red/green; 10 wallet + 13 highload regression tests; native SDK vectors. |
+| 10 | `csf_b8df2f7a85245ada30915d98` | medium | Lite-server error messages are inserted unescaped into explorer HTML | Present | HTML-escaped Status/error/notification/title output; CSP and nosniff on explorer HTML responses. Native HttpAnswer abort/finish escaping checks; actual rendering-call bypass red/green. Browser DOM fixture pending. |
+| 11 | `csf_91c17590b773e98f2828c242` | medium | Chain-RPC API keys are accepted in process-visible command-line arguments | Present | Removed literal API-key argv; protected file/descriptor or hidden prompt; installer uses hidden zeroizing input. 2 input-channel tests and argv-admission red/green; command suite has 194 passed / 4 macOS GNU-tar incompatibilities. |
+| 12 | `csf_3a15ea0edf9f75b9a8704613` | low | Validator can skip mandatory dispatch-queue priority after cleanup and regrowth | Present | Validated deq/deq_short cleanup count and shared post-cleanup dispatch predicate; excludes later imports/requeues. Native cleanup/regrowth predicate and tag controls; predicate red/green. Full malicious-block validation fixture and activation review pending. |
+
+## Local validation and reproduction
+
+Use the repository's pinned Rust toolchain, freshly built FunC/Fift, and `TOS_ROOT=$PWD` to prevent a sandbox fallback to another checkout.
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target func fift emulator test-security-boundaries -j8
+build/test-security-boundaries
+TOS_ROOT=$PWD cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --test multisig_code_sandbox --test legacy_wallet_key_sandbox --test wallet_sandbox --test highload_wallet_v3_sandbox
+cargo test --locked --manifest-path tosctl/src/Cargo.toml -p secrets-vault --lib
+cargo test --locked --manifest-path tosctl/src/Cargo.toml -p secrets-vault --features secrets-vault-cli --test cli_import_secret_input
+cargo test --locked --manifest-path tosctl/src/Cargo.toml -p commands secret_channel_tests
+pnpm --dir sdk/js --filter @tos/connect --filter @tos/wallets typecheck
+pnpm --dir sdk/js --filter @tos/connect test
+pnpm --dir sdk/js --filter @tos/wallets test
+python3 scripts/test-build-tool-pins.py
+python3 scripts/test-build-tool-pipelines.py
+FUNC_PATH=$PWD/build/crypto/func FIFT_PATH=$PWD/build/crypto/fift python3 scripts/update-auth-contract-code.py --check
+FUNC_PATH=$PWD/build/crypto/func FIFT_PATH=$PWD/build/crypto/fift EMULATOR_PATH=$PWD/build/emulator/libemulator.so python3 test/auth-extensions/test_sdk_wallet_vectors.py
+```
+
+On macOS use `libemulator.dylib`. The full native build at this baseline fails on Linux-only constants in `metrics/diagnostic-ipc.h`. The local `scripts/run-security-boundaries.py` runner uses CMake's flags and the production HTTP/explorer and registered test sources; it omits only the unused exporter and toslib libraries from the unit link. Four boundary tests passed. All changed native translation units compiled independently. This is unit/source compilation evidence, not a full macOS daemon build.
+
+Local results: 11 multisig tests; one transaction suite covering twelve wallet families; 10 wallet and 13 highload regression tests; 231 vault library tests (one existing ignored); one real vault CLI import test; two API-key input tests; 100 Connect tests; 94 SDK wallet tests; six native SDK deployment/transfer/domain vectors; two tool integrity and two packaging pipeline tests. Rust formatting, TypeScript checking and regenerated-bytecode checks passed.
+
+The complete commands library run passed 194 tests and failed four existing backup tests: this macOS BSD tar does not support `--no-overwrite-dir` and `--transform`. The backup implementation is unchanged. Linux CI is the authority for that suite and the complete native build.
+
+## Sensitivity controls
+
+Run in an isolated checkout without concurrent builds using the mutated sources. The runner removes one control, requires an executed runtime test to fail, restores exact source bytes in `finally`, then requires success. Native controls exited 1 then 0; Rust controls exited 101 then 0; Python/Connect controls exited 1 then 0. File-mode sensitivity is shared by findings 3 and 7. Compiler errors do not count as successful controls.
+
+```sh
+python3 scripts/test-security-remediation-mutations.py decrypt sources multisig private-file integrity tool-call http header-names response legacy-key html api-key dispatch connect --logs /tmp/security-remediation-controls
+```
+
+These controls do not establish the explicitly pending integration boundaries in the table.
+
+## Compatibility and acceptance
+
+- Generic multisig payload is now `wallet_id:uint32 global_id:int32 query_id:uint64 actions`; both root and co-signatures cover the network. Builders require the identity explicitly and old unbound packets are refused.
+- Wallet bytecode and derived deployment addresses change. Existing deployed code is immutable: an SDK update does not upgrade a wallet or migrate its funds. Deployment/migration requires an operator decision.
+- Config writes create mode-0600 operator-owned regular files, reject symlink/hardlink targets and fsync atomic replacement. Vault directories must be owner-only (0700), or newly created privately; existing shared directories are refused rather than silently chmodded. Backups use exclusive random names.
+- API keys use `--api-key-file`, `--api-key-fd` or `--api-key-prompt`; the old `--api-key` / `-k` form is refused. The setup guide is updated.
+- HTTP bridge connections require a trusted paired wallet key; injected connections retain their flow. Old unbound sessions cannot be restored. See `sdk/js/packages/connect/PAIRING.md`.
+- Dispatch validation tightens consensus acceptance. A complete malicious-block fixture, historical compatibility/activation review and operator acceptance remain deployment gates. Predicate tests cannot establish production consensus acceptance.
+- ADNL budgets bound admission and memory; they do not establish availability under a full network flood. Tool pins authenticate the cited downloaded tools, not every release dependency or reproducible container build.
+
+The PR stays draft for final-head Linux checks and the remaining integration/activation boundaries. Required branch checks remain hard gates; no merge or deployment is requested here.
+
+## CI follow-up to f6e1de245
+
+The first full run found integration omissions that the narrower local checks
+had not exercised. They are fixed without relaxing the security controls:
+
+- The online multisig caller now reads the proof-checked ConfigParam 19 and
+  supplies its signed network identity. Its translation unit failed to compile
+  before the fix and compiles after it. No live funded online test was run.
+- The service auth fixture creates its file-vault directory with mode 0700.
+  Its 12 failures reproduce locally before the fixture correction; afterward
+  all 16 user-store tests pass, and the service library passes 274 tests with
+  two existing ignored tests (local loopback networking enabled).
+- HTTP/1.1 JSON-RPC response factories permit persistence. The inbound actor
+  still clamps client-requested closure, early-answer closure and explicit
+  response closure; neither close enforcement nor framing validation is
+  removed. Persistent connection-cap and pipelined-output test callbacks now
+  declare their intended connection policy. The slow-reader test queues 1 MiB
+  so kernel buffering cannot flush its entire sample before the deadline.
+  All three targeted socket tests execute and pass on macOS. The complete
+  Linux network-safety/ASAN suite remains a CI gate; the full macOS socket run
+  also encountered a separate header-admission timing assumption.
+- Temporary AUTH mutation workspaces include the wallet's strong-key library.
+  All three nonce mutants now compile and reach their expected failing runtime
+  assertion, with the restored source passing.
+- The local native runner uses the test driver's actual `--filter` flag and
+  refuses a successful process that ran zero tests. The HTTP framing filter
+  executes one test and passes.
+
+Full strict-build, service, AUTH mutation and network-safety jobs must be
+rechecked at the new head; an older successful job is not clearance for it.
+
+## CI follow-up to 3c0ca1abc
+
+That head passed strict-build, service, network-safety/ASAN and JSON-RPC/ASAN.
+Two further integration failures were reproduced and corrected:
+
+- The weak-key multisig control now signs the required network identity. With
+  the old payload both guarded and unguarded contracts rejected the request,
+  so it could not establish sensitivity. Both native alias tests now execute
+  and pass, including acceptance by the unguarded control.
+- The Fift v3 deploy/genesis assembly was still frozen at the previous wallet
+  code. Its address differed from the guarded native wallet, aborting the
+  smart-contract test binary before the recorded-answer tests. Regenerate it
+  from the same FunC inputs and flags as CMake; the authentication bytecode
+  checker now also refuses drift in this assembly. All 31 smart-contract tests
+  execute and pass locally with the original address/message assertions.
+  The checker rejects the old frozen code and passes after restoration.
+- Only the zerostate recorded answer changes, from
+  `814401c531cb039224d39721bf01472dc50545236d1c8e2820cfecda5f3aa381` to
+  `0147a343b81819bd12297238f4dac708c67b8ac55d46487f4471c8b558a248d5`.
+  Restoring just the old Fift wallet reproduces the old answer. The guarded
+  wallet increases the deterministic zerostate from 21,139 to 21,337 bytes;
+  its file/root hashes change, while the base state and fixed system addresses
+  remain identical. Governance and validator script answers remain identical.
+  This changes a generated fixture, not an already deployed network.
+- The recorded-answer checker now prints bounded diagnostics when a binary
+  aborts before comparing any hash, and when recording into a fresh answer
+  file fails. It retains both hash equality and complete test-name checks.
+  `scripts/check-regression-db.sh . build` passes locally for all four binaries,
+  including the second run into empty records that verifies test-name coverage.
+
+Final-head Linux CI must still verify these corrections and later workflow
+steps. No required check is disabled or converted into an allowed failure.
+
+## Complete contract-suite follow-up
+
+Running the later workflow steps exposed two more stale Rust wallet unit tests:
+their v3/v4/v5 code hashes and fixed-key deployment addresses still named the
+previous bytecode. Update those six expected values to the guarded contracts;
+the native/SDK transaction vectors and bytecode reproducibility check remain
+independent checks of the embeddings. The full contracts library now passes
+247 tests (the original run had 245 passing and these two failing).
+
+The complete `cargo test -p contracts --locked --no-fail-fast` sweep also
+identified local harness limits. Building the separate `crypto/pq/tools` key
+tool and allowing local loopback sockets makes all 12 configuration-query,
+148 elector and 22 query-worker tests pass (three existing ignored tests).
+The historical proven-read suite uses Linux `LD_PRELOAD` to fix the verifier's
+clock; five cases fail on macOS because that preload is ineffective and the
+recorded block is correctly rejected as stale. No production freshness check
+is relaxed. That suite and complete final-head acceptance remain Linux CI
+gates; the local sweep is not claimed as entirely green.
+
+## HTTP fixture timing follow-up to 5a4677ef6
+
+That head passed 22 of its 23 pull-request workflows, including the complete
+Linux contract suite, historical proof/indexer checks, both Falcon platforms
+and parity, strict-build, service and JSON-RPC/ASAN. Network-safety/ASAN found
+a scheduling race in `eight_slow_replies_expire_and_the_listener_recovers_its_slots`:
+the eight replies started their 0.5-second deadlines during setup, so a slot
+could correctly expire before the ninth connection was attempted. An admitted
+ninth connection then waited for its header deadline instead of closing at
+accept, contradicting the test's assumption.
+
+The fixture now holds its responses in scheduler actors until all eight
+requests and the ninth connection's refusal have been observed. Setup includes
+a delay longer than the response timeout. A complete ninth request distinguishes
+real cap refusal from an idle-header timeout. After the responses start, the
+clients remain nonreading and recovery is observed within a bounded window.
+Disabling the connection cap or the response deadline causes the corresponding
+runtime assertion to fail (exit 1); restoring both passes one executed test.
+Production connection and timeout limits are unchanged.
+
+The complete local HTTP run also reproduced the earlier macOS admission-fixture
+limit: a large send on its blocking client could wait for the held admission
+window and outlive `send_for`'s intended retry deadline. The test client now uses
+an explicit nonblocking descriptor, bounded send chunks and a known send buffer;
+the test waits for real read-ahead before asserting it remains bounded and the
+body remains undispatched. All 31 HTTP tests pass locally. The local link uses
+the existing collectors-only metrics archive because of the baseline Linux-only
+exporter constants; final-head Linux/ASAN remains the full instrumented gate.
+
+## Review follow-up: items A1–A6
+
+A read-only review of this branch (PR comment 6037599902) found gaps in six
+places. The fix plan was agreed with a separate reviewer before any code was
+written, and the implementation was reviewed until it was accepted.
+
+- A1, ADNL admission (finding 1):
+  - A packet must hold a source-table entry and a token from its own rate
+    limiter before the shared process and local decrypt budgets are charged,
+    so one source can no longer starve every peer.
+  - When the bounded source table is full, the least recently used idle entry
+    is evicted instead of new sources being refused.
+  - Per-source state is reachable only through the admission ticket.
+- A2, HTTP framing (findings 5 and 8):
+  - RLDP-relayed bodies are reconciled with their declared Content-Length in
+    both directions, through `relayed_response` and `add_payload_part`, which
+    the proxy calls.
+  - HEAD answers and 204/304 responses keep their metadata lengths. A remote
+    that sends no payload may not announce one, and a failed CONNECT is not a
+    tunnel.
+  - Chunk sizes are parsed strictly; extensions are accepted and dropped.
+  - Header values are trimmed of SP/HTAB only, and TCP trailers are validated.
+  - Connection is a token list: `close` wins, and nominated hop-by-hop headers
+    are removed.
+- A3, explorer (finding 10):
+  - The echoed path prefix is limited to unreserved path characters; anything
+    else gets a fixed 400.
+  - The page policy allows only the exact script files the page loads, and
+    adds `form-action 'self'`.
+- A4, tooling (finding 4):
+  - Every workflow installs LLVM through the committed-key installer and uv
+    through the pinned archive.
+  - Python dependencies are resolved from pinned sources: `uv.lock` (with
+    `--frozen`) or a hashed requirements file installed with
+    `--require-hashes`.
+  - A test scans every workflow and composite action and refuses:
+    - a download piped into a shell or an interpreter;
+    - `llvm.sh` and `apt-key`;
+    - pip arguments that are neither a pinned version nor a local path, and
+      custom package indexes;
+    - unpinned `uv run --with`, `uv tool`, `uvx`, `pipx`, `npx` and
+      `cargo install`.
+
+    A file downloaded in one step and run in a later one is not detected
+    generically. Review and the digest verifier remain the control there.
+  - The wasm build pins emsdk and the OpenSSL, zlib, lz4 and libsodium
+    sources to verified commits. OpenSSL moves from master to 3.5.4 LTS. A
+    reused local build directory must be at the pinned commit but its output
+    is not re-verified; `-f` gives a clean, verified build, and CI always
+    builds clean.
+  - The wasm build script was run locally with `-f`.
+    - With this branch unmodified, all four libraries built at their pinned
+      commits; OpenSSL 3.5.4 needed `no-afalgeng`. The script then stopped,
+      so the full-script gate did not pass.
+    - The stop came from two problems that already exist on main and are not
+      changed here:
+      - `crypto/vm/boc.cpp:1132` narrows a 64-bit value to `size_t` in an
+        initializer, which wasm32 rejects (from 7a6ce619b);
+      - `emulator-emscripten` needs the generated
+        `smartcont/auto/dns-manual-code.cpp`, which the script does not
+        produce.
+    - With the `boc.cpp` line patched in the scratch copy only,
+      `func`, `fift`, `funcfiftlib` and `tlbc` linked to wasm against these
+      libraries. `emulator-emscripten` still failed.
+    - The wasm workflow runs only on master/testnet, so pull-request CI did
+      not show either problem.
+  - The verifier also checks a recorded upstream SHA-1.
+- A5, regressions:
+  - The Android build no longer aborts on a fresh OpenSSL tree.
+  - appimagetool is pinned to release 1.9.1 instead of `continuous`.
+  - connect-react forwards `walletSessionPublicKey` and reports refusals
+    through `connectError`.
+  - HTTP-bridge connections to the bundled mobile wallets stay unavailable
+    until they implement pairing.
+- A6, private files (findings 3 and 7):
+  - The service runtime configuration uses the shared writer.
+  - The resolved directory is re-checked.
+  - Configuration and vault directories follow one policy: owned by the user,
+    not group- or other-writable. A refusal names the directory and the
+    `chmod go-w` fix, including for a group-writable ancestor directory.
+  - The Docker examples mount a private directory as the host user.
+  - The e2e harnesses keep tosctl's configuration, vault and index database in
+    a fresh private directory outside the checkout, which is group-writable
+    under umask 002. Evidence stays in the harness work directory. A test run
+    under umask 002 checks this, and it also checks the real writer when a
+    tosctl binary is present.
+- A3, second pass: the send form escapes its prefix, and routing obtains the
+  prefix only from `split_explorer_url`, which applies the path allowlist.
+
+Accepted residuals:
+
+- One IPv6 /64 is one ADNL source. A /56 (256 sources) still sustains about
+  776 packets/s, above one local id's 512/s budget, and a /48 can reach the
+  process budget. This is the accepted multi-source residual: the budgets
+  bound CPU, and no capacity is reserved for known peers.
+- The uv and appimagetool digests come from the same origin as the downloads.
+  They are trust-on-first-use pins, reviewed in this repository.
+- The Android workflow runs only on master/testnet pushes, so pull-request CI
+  does not exercise the Android build fix.
+
+Local verification on the final head:
+
+- Native builds: the full Release and `-Werror` builds pass.
+- `test-security-boundaries` passes 15 tests. The HTTP, RLDP tunnel, ADNL
+  pair-cap and JSON-RPC transport suites pass, and so does the network-safety
+  label under ASAN with the CI options.
+- Rust: the secrets-vault, commands and service suites pass (233, 199 and 275
+  tests), and the workspace test build compiles.
+- JS: all SDK packages pass typecheck and tests.
+- Python: the build-tool tests pass.
+
+Each new guard has a red/green control: removing it fails its test, and
+restoring it passes. That covers 19 controls across native, Rust, JS and
+Python, plus 10 more in the second pass.

@@ -1,3 +1,4 @@
+#include "strong-ed25519-key.fc";
 ;; Wallet V5 smart contract with global_id anti-replay protection
 ;;
 ;; Based on wallet-contract-v5 by Tonkeeper (MIT License)
@@ -244,6 +245,7 @@ cell verify_auth_actions(cell actions) inline {
   int public_key = data_slice~load_uint(size::public_key);
   int is_extensions_not_empty = data_slice.preload_int(1);
 
+  throw_if(error::invalid_signature, weak_ed25519_key?(public_key));
   int is_signature_valid = check_signature(slice_hash(signed_slice), signature, public_key);
   ifnot (is_signature_valid) {
     if (is_external) {

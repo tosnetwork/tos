@@ -172,6 +172,8 @@ void HttpQueryCommon::abort_query(td::Status error) {
     auto page = A.finish();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -266,6 +268,8 @@ void HttpQueryBlockView::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -464,6 +468,8 @@ void HttpQueryBlockInfo::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -686,6 +692,8 @@ void HttpQueryBlockSearch::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -773,6 +781,8 @@ void HttpQueryViewAccount::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -872,6 +882,8 @@ void HttpQueryViewTransaction::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -954,6 +966,8 @@ void HttpQueryViewTransaction2::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -1159,6 +1173,8 @@ void HttpQueryConfig::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -1181,7 +1197,7 @@ void HttpQuerySendForm::finish_query() {
   if (promise_) {
     auto page = [&]() -> std::string {
       HttpAnswer A{"send", prefix_};
-      A << "<div class=\"row\"><form action=\"" << prefix_
+      A << "<div class=\"row\"><form action=\"" << escape_html(prefix_)
         << "send\" method=\"post\" enctype=\"multipart/form-data\"><div class=\"form-group-row\">"
         << "<label for=\"filedata\">bag of cells</label>"
         << "<input type=\"file\" class=\"form-control-file\" id=\"filedata\" name=\"filedata\">"
@@ -1191,6 +1207,8 @@ void HttpQuerySendForm::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -1253,6 +1271,8 @@ void HttpQuerySend::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();
@@ -1383,6 +1403,8 @@ void HttpQueryRunMethod::got_result(td::BufferSlice data) {
   }();
   auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
   MHD_add_response_header(R, "Content-Type", "text/html");
+  MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+  MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
   promise_.set_value(std::move(R));
   stop();
 }
@@ -1460,6 +1482,8 @@ void HttpQueryStatus::finish_query() {
     }();
     auto R = MHD_create_response_from_buffer(page.length(), const_cast<char *>(page.c_str()), MHD_RESPMEM_MUST_COPY);
     MHD_add_response_header(R, "Content-Type", "text/html");
+    MHD_add_response_header(R, "X-Content-Type-Options", "nosniff");
+    MHD_add_response_header(R, "Content-Security-Policy", kExplorerHtmlPolicy);
     promise_.set_value(std::move(R));
   }
   stop();

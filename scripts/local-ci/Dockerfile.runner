@@ -6,8 +6,10 @@
 # that may install into the system interpreter, and a tool cache that
 # actions/setup-python fills. This layer adds those on top of the repository's
 # own `Dockerfile.builder` target `builder-24`, so a job's own install steps
-# (`apt-get install`, `llvm.sh 21 all`, `install-rust-toolchain.sh`) still run
-# for real and only find their packages already present.
+# (`apt-get install`, `install-llvm-toolchain.sh 21 all`,
+# `install-rust-toolchain.sh`) still run for real and only find their packages
+# already present. The image is built with the repository's own verified
+# installers, which local_ci.py copies into the build context.
 #
 # Jobs that declare `container:` do not use this layer; they run in the
 # builder image itself, as they do on GitHub.
@@ -28,8 +30,10 @@ RUN apt-get update && \
 #
 # Pre-warm what the lint and native jobs install themselves, so their own
 # install steps are quick no-ops instead of a multi-minute download per job.
-RUN wget -q https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && \
-    ./llvm.sh 21 all && rm llvm.sh && \
+COPY scripts/install-llvm-toolchain.sh scripts/install-rust-toolchain.sh /opt/tos-ci/scripts/
+COPY scripts/keys/apt-llvm-org.asc /opt/tos-ci/scripts/keys/
+COPY rust-toolchain.toml /opt/tos-ci/
+RUN /opt/tos-ci/scripts/install-llvm-toolchain.sh 21 all && \
     apt-get install -y --no-install-recommends clang-format-21 && \
     rm -rf /var/lib/apt/lists/*
 
@@ -57,9 +61,10 @@ RUN set -eux; \
     chown -R 1001:1001 /usr/local/bin /usr/local/lib/node_modules
 
 # uv stays off PATH: hosted runners do not have it until a workflow installs
-# it (setup-uv, or the pinned install script). The replay's setup-uv
-# emulation puts this copy on PATH.
-RUN mkdir -p /opt/uv && cp /root/.local/bin/uv /root/.local/bin/uvx /opt/uv/ && \
+# it (setup-uv, or the pinned install script). The builder image installs its
+# verified copy in /usr/local/bin; it moves here, and the replay's setup-uv
+# emulation puts it on PATH.
+RUN mkdir -p /opt/uv && mv /usr/local/bin/uv /usr/local/bin/uvx /opt/uv/ && \
     chmod 0755 /opt/uv/uv /opt/uv/uvx
 
 # The interpreter actions/setup-python would provide. Its pip installs
@@ -78,20 +83,17 @@ RUN UV_PYTHON_INSTALL_DIR=/opt/hostedtoolcache/uv-python /opt/uv/uv python insta
     chmod 0755 /opt/hostedtoolcache/Python/${PYTHON_314}/x64/bin/pip* && \
     chmod -R a+rwX /opt/hostedtoolcache
 
-# rustup for the runner account with the default stable toolchain, as on the
-# hosted image. The repository-pinned toolchain (from the commit's
-# rust-toolchain.toml) is pre-installed too, so the jobs' own
-# scripts/install-rust-toolchain.sh verifies it instead of downloading it in
-# every job; the image tag carries the pinned version.
-ARG RUST_PINNED
+# rustup for the runner account, installed by the repository's own script
+# (which checks rustup-init's SHA-256) with the pinned toolchain from
+# rust-toolchain.toml, so the jobs' own scripts/install-rust-toolchain.sh
+# verifies it instead of downloading it in every job. The default stable
+# toolchain matches the hosted image. The image tag carries the pinned version.
 USER runner
 ENV HOME=/home/runner
-RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | \
-        sh -s -- -y --profile minimal --default-toolchain stable --component rustfmt,clippy && \
-    if [ -n "${RUST_PINNED}" ]; then \
-        /home/runner/.cargo/bin/rustup toolchain install "${RUST_PINNED}" --profile minimal \
-            --component clippy --component rustfmt; \
-    fi && \
+RUN /opt/tos-ci/scripts/install-rust-toolchain.sh && \
+    /home/runner/.cargo/bin/rustup toolchain install stable --profile minimal \
+        --component rustfmt --component clippy && \
+    /home/runner/.cargo/bin/rustup default stable && \
     /home/runner/.cargo/bin/rustc --version
 USER root
 # The hosted image's PATH carries the runner's ~/.local/bin, where installer

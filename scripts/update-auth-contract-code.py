@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Regenerate the Agent Account and wallet BOCs embedded in Rust and the JS SDK.
+"""Regenerate wallet bytecode embedded in Rust, the JS SDK and Fift scripts.
 
 Every embedded wallet must be the network-bound code compiled from this
 repository's FunC source: an embedding that drifts from it (for example an
-upstream wallet without the global_id check) is stale. The Rust V3R2/V4R2
-constants are verified by their decoded bytes rather than rewritten.
+upstream wallet without the global_id check) is stale. All supported wallet constants are regenerated together with their SDK embeddings.
 
 Build func/fift first and set FUNC_PATH/FIFT_PATH (or use build/crypto).
 --check verifies reproducibility without writing to the working tree.
@@ -14,6 +13,7 @@ import argparse
 import base64
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -70,21 +70,42 @@ def main():
             ),
         ]
         stale = []
-        rust = (
-            ROOT / "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs"
-        ).read_text()
-        for const, decode, name in [
-            ("V3R2_CODE", bytes.fromhex, "wallet3"),
-            ("V4R2_CODE_B64", base64.b64decode, "wallet4"),
-        ]:
-            match = re.search(rf'pub const {const}: &str = "(.*?)";', rust, re.S)
-            if match is None:
-                raise SystemExit(f"wallet_contract.rs: {const} not found")
-            embedded = decode(re.sub(r"\\\s*\n\s*", "", match[1]))
-            if embedded != outputs[name]:
-                raise SystemExit(
-                    f"wallet_contract.rs: {const} differs from {name} source; update it by hand"
-                )
+        # Fift deploy/genesis scripts load this frozen assembly directly. Use
+        # the same relative inputs and flags as CMake's GenFif, so they deploy
+        # exactly the code used by the native wallet and SDKs.
+        wallet3_fif = work / "wallet3-deploy.fif"
+        subprocess.run(
+            [
+                os.environ["FUNC_PATH"],
+                "-PS",
+                "-o",
+                str(wallet3_fif),
+                "smartcont/stdlib.fc",
+                "smartcont/wallet3-code.fc",
+            ],
+            cwd=ROOT / "crypto",
+            check=True,
+            capture_output=True,
+        )
+        frozen_fif = ROOT / "crypto/smartcont/wallet-v3-code.fif"
+        if frozen_fif.read_bytes() != wallet3_fif.read_bytes():
+            stale.append(str(frozen_fif.relative_to(ROOT)))
+            if not args.check:
+                frozen_fif.write_bytes(wallet3_fif.read_bytes())
+        replacements.extend(
+            [
+                (
+                    "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs",
+                    r'(pub const V3R2_CODE: &str =\s*")[^"]*(";)',
+                    outputs["wallet3"].hex(),
+                ),
+                (
+                    "tosctl/src/node-control/contracts/src/wallet/wallet_contract.rs",
+                    r'(pub const V4R2_CODE_B64: &str =\s*")[^"]*(";)',
+                    base64.b64encode(outputs["wallet4"]).decode(),
+                ),
+            ]
+        )
         for relative, pattern, value in replacements:
             path = ROOT / relative
             text = path.read_text()

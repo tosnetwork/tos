@@ -393,16 +393,19 @@ Set the chain RPC URL and optional API key.
 | Flag | Short form | Description |
 |------|------------|-------------|
 | `--url <URL>` | `-u` | Chain RPC endpoint URL |
-| `--api-key <KEY>` | `-k` | API key (optional) |
+| `--api-key-file <PATH>` | | Read the API key from an owner-only (0600) file |
+| `--api-key-fd <FD>` | | Read the API key from an open file descriptor or pipe |
+| `--api-key-prompt` | | Prompt for the API key without echo |
 
 ```bash
 # Set chain RPC URL
 tosctl config chain-rpc set --url "http://127.0.0.1:3301/"
 
-# Set with API key
+# Set with an API key read from a protected file (never pass it on the
+# command line, where other local users can read it)
 tosctl config chain-rpc set \
   --url "http://127.0.0.1:3301/" \
-  --api-key "your-api-key"
+  --api-key-file ./chain-rpc-api-key
 ```
 
 ---

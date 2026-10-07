@@ -19,6 +19,7 @@
 */
 #include "keys/encryptor.h"
 #include "td/utils/Random.h"
+#include "td/utils/ScopeGuard.h"
 
 #include "adnl-local-id.h"
 #include "utils.hpp"
@@ -26,11 +27,6 @@
 namespace tos {
 
 namespace adnl {
-
-static td::IPAddress remove_port(td::IPAddress addr) {
-  addr.set_port(0);
-  return addr;
-}
 
 AdnlNodeIdFull AdnlLocalId::get_id() const {
   return id_;
@@ -58,34 +54,36 @@ void AdnlLocalId::receive(td::IPAddress addr, td::BufferSlice data) {
 }
 
 td::actor::Task<> AdnlLocalId::receive_coro(td::IPAddress addr, td::BufferSlice data) {
-  InboundRateLimiter &rate_limiter = inbound_rate_limiter_[remove_port(addr)];
+  static DecryptBudget process_budget{4096, 1.0 / 4096.0, 512};
+  auto r_ticket = inbound_sources_.admit(addr, process_budget, decrypt_budget_);
+  if (r_ticket.is_error()) {
+    add_dropped_packet_stats(addr);
+    co_return r_ticket.move_as_error();
+  }
+  // The ticket holds the decrypt budgets and keeps this source's entry alive
+  // until the packet has been fully handled.
+  auto ticket = r_ticket.move_as_ok();
+  auto &source = ticket.source().extra;
   if (!cleanup_rate_limiter_at_) {
     alarm_timestamp().relax(cleanup_rate_limiter_at_ = td::Timestamp::in(1.0));
   }
-  if (!rate_limiter.rate_limiter.take()) {
-    add_dropped_packet_stats(addr);
-    co_return td::Status::Error("rate limit exceeded");
-  }
-  ++rate_limiter.currently_decrypting_packets;
 
   size_t data_size = data.size();
   auto r_decrypted_data =
       co_await td::actor::ask(keyring_, &keyring::Keyring::decrypt_message, short_id_.pubkey_hash(), std::move(data))
           .wrap();
 
-  // rate_limiter cannot be deleted from map while currently_decrypting_packets > 0
-  --rate_limiter.currently_decrypting_packets;
   add_decrypted_packet_stats(addr);
 
   auto tl = co_await fetch_tl_object<tos_api::adnl_packetContents>(co_await std::move(r_decrypted_data), true);
   auto packet = co_await AdnlPacket::create(std::move(tl));
   packet.set_remote_addr(addr);
-  if (rate_limiter.recent_inbound_peers.size() >= UNIQUE_PEERS_PER_IP_LIMIT) {
-    if (!rate_limiter.recent_inbound_peers.contains(packet.from_short())) {
+  if (source.recent_inbound_peers.size() >= UNIQUE_PEERS_PER_IP_LIMIT) {
+    if (!source.recent_inbound_peers.contains(packet.from_short())) {
       co_return td::Status::Error("too many unique peer ids from a single ip");
     }
   } else {
-    rate_limiter.recent_inbound_peers.insert(packet.from_short());
+    source.recent_inbound_peers.insert(packet.from_short());
     if (!cleanup_recent_inbound_peers_at_) {
       alarm_timestamp().relax(cleanup_recent_inbound_peers_at_ = td::Timestamp::in(UNIQUE_PEERS_PER_IP_WINDOW));
     }
@@ -281,21 +279,12 @@ void AdnlLocalId::alarm() {
   alarm_timestamp().relax(publish_address_list_at_);
   if (cleanup_recent_inbound_peers_at_ && cleanup_recent_inbound_peers_at_.is_in_past()) {
     cleanup_recent_inbound_peers_at_ = td::Timestamp::never();
-    for (auto &[_, limiter] : inbound_rate_limiter_) {
-      limiter.recent_inbound_peers.clear();
-    }
+    inbound_sources_.for_each([](const td::IPAddress &, auto &source) { source.extra.recent_inbound_peers.clear(); });
   }
   if ((cleanup_rate_limiter_at_ && cleanup_rate_limiter_at_.is_in_past())) {
-    for (auto it = inbound_rate_limiter_.begin(); it != inbound_rate_limiter_.end();) {
-      auto &limiter = it->second;
-      if (limiter.currently_decrypting_packets == 0 && limiter.rate_limiter.is_full() &&
-          limiter.recent_inbound_peers.empty()) {
-        it = inbound_rate_limiter_.erase(it);
-      } else {
-        ++it;
-      }
-    }
-    if (inbound_rate_limiter_.empty()) {
+    inbound_sources_.erase_idle_if(
+        [](auto &source) { return source.rate_limiter.is_full() && source.extra.recent_inbound_peers.empty(); });
+    if (inbound_sources_.empty()) {
       cleanup_rate_limiter_at_ = td::Timestamp::never();
     } else {
       cleanup_rate_limiter_at_ = td::Timestamp::in(1.0);
@@ -335,12 +324,12 @@ void AdnlLocalId::update_packet(AdnlPacket packet, bool update_id, bool sign, td
 void AdnlLocalId::get_stats(bool all, td::Promise<tl_object_ptr<tos_api::adnl_stats_localId>> promise) {
   auto stats = create_tl_object<tos_api::adnl_stats_localId>();
   stats->short_id_ = short_id_.bits256_value();
-  for (auto &[ip, x] : inbound_rate_limiter_) {
-    if (x.currently_decrypting_packets != 0) {
+  inbound_sources_.for_each([&](const td::IPAddress &ip, auto &source) {
+    if (source.in_flight != 0) {
       stats->current_decrypt_.push_back(create_tl_object<tos_api::adnl_stats_ipPackets>(
-          ip.is_valid() ? ip.get_ip_str().str() : "", x.currently_decrypting_packets));
+          ip.is_valid() ? ip.get_ip_str().str() : "", source.in_flight));
     }
-  }
+  });
   prepare_packet_stats();
   stats->packets_recent_ = packet_stats_prev_.tl();
   promise.set_result(std::move(stats));
@@ -348,12 +337,26 @@ void AdnlLocalId::get_stats(bool all, td::Promise<tl_object_ptr<tos_api::adnl_st
 
 void AdnlLocalId::add_decrypted_packet_stats(td::IPAddress addr) {
   prepare_packet_stats();
-  packet_stats_cur_.decrypted_packets[remove_port(addr)].inc();
+  auto &table = packet_stats_cur_.decrypted_packets;
+  auto counter = bounded_source(table, preauth_source(addr), MAX_PREAUTH_SOURCES);
+  if (counter) {
+    counter->inc();
+  } else {
+    // The invalid-address entry is a fixed overflow bucket.
+    table[td::IPAddress{}].inc();
+  }
 }
 
 void AdnlLocalId::add_dropped_packet_stats(td::IPAddress addr) {
   prepare_packet_stats();
-  packet_stats_cur_.dropped_packets[remove_port(addr)].inc();
+  auto &table = packet_stats_cur_.dropped_packets;
+  auto counter = bounded_source(table, preauth_source(addr), MAX_PREAUTH_SOURCES);
+  if (counter) {
+    counter->inc();
+  } else {
+    // The invalid-address entry is a fixed overflow bucket.
+    table[td::IPAddress{}].inc();
+  }
 }
 
 void AdnlLocalId::prepare_packet_stats() {

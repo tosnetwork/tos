@@ -1,3 +1,4 @@
+int get_global_id() asm "GLOBALID";
 ;; Simple wallet smart contract
 ;;
 ;; An owner key anyone can sign for (strong-ed25519-key.fc) would sign as root or
@@ -215,6 +216,9 @@ int tuple_length(tuple t) asm "TLEN";
   slice co_signed = in_msg;
   int query_wallet_id = in_msg~load_uint(32);
   throw_unless(42, query_wallet_id == wallet_id);
+
+  int query_global_id = in_msg~load_int(32);
+  throw_unless(44, query_global_id == get_global_id());
 
   int query_id = in_msg~load_uint(64);
 

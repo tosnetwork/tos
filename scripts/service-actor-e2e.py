@@ -87,6 +87,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+
 from pytosiq_core import Address, Cell, InternalMsgInfo, MessageAny, WalletMessage
 from tostester.install import Install
 from tostester.network import Network, StartOptions
@@ -104,7 +105,9 @@ NEGATIVE_EVIDENCE = WORKDIR / "negative-evidence.jsonl"
 POSITIVE_EVIDENCE = WORKDIR / "positive-evidence.jsonl"
 HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
 INDEXER_EVIDENCE = WORKDIR / "indexer-evidence.jsonl"
-CONFIG = WORKDIR / "tosctl-e2e-config.json"
+# Set by use_private_dir() at the start of main().
+PRIVATE_DIR: Path | None = None
+CONFIG: Path | None = None
 PROVENANCE = WORKDIR / "provenance.json"
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000004"
 NANO = 1_000_000_000
@@ -234,7 +237,7 @@ def balance(addr: str) -> int:
 
 async def tosctl(*args: str) -> str:
     env = dict(os.environ)
-    env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
         TOSCTL, *args, "-c", str(CONFIG),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
@@ -765,7 +768,7 @@ async def run_checks(faucet) -> None:
     print("\n=== start tosctld HTTP daemon (real query API + indexer, not the sandbox suite) ===")
     deployment_mc_seqno = finalized_mc_header()["id"]["seqno"]
     env = dict(os.environ)
-    env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/e2e-vault.json?master_key={MASTER_KEY}"
     # Redirected to a file, not asyncio.subprocess.PIPE: nothing in this
     # script ever reads a PIPE for this long-lived daemon, and the indexer's
     # own tick logging (tick_interval=2s, for the rest of this section) is
@@ -1137,6 +1140,22 @@ async def run_checks(faucet) -> None:
     # or not) -- a second distinct caller is not additionally informative here.
 
 
+def use_private_dir() -> Path:
+    """Place this run's tosctl configuration and vault in a private directory.
+
+    Evidence stays in WORKDIR; the checkout may be group-writable, where
+    tosctl refuses to write configuration or vault files.
+    """
+    global PRIVATE_DIR, CONFIG
+    # Imported here: evidence tests load this module with tostester stubbed
+    # and never call this function.
+    from tostester.private_dir import make_private_dir
+
+    PRIVATE_DIR = make_private_dir("service-actor-e2e")
+    CONFIG = PRIVATE_DIR / "tosctl-e2e-config.json"
+    return PRIVATE_DIR
+
+
 async def main() -> int:
     if not Path(TOSCTL).exists():
         print(f"FATAL: tosctl binary not found at {TOSCTL} "
@@ -1146,6 +1165,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    use_private_dir()
     write_provenance()
     prepare_config()
     install = Install(BUILD_DIR, REPO)

@@ -18,7 +18,6 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #pragma once
-
 #include <map>
 
 #include "auto/tl/tos_api.h"
@@ -27,6 +26,7 @@
 #include "td/utils/BufferedUdp.h"
 
 #include "adnl-peer-table.h"
+#include "decrypt-admission.h"
 #include "utils.hpp"
 
 namespace tos {
@@ -105,12 +105,12 @@ class AdnlLocalId : public td::actor::Actor {
 
   td::uint32 mode_;
 
-  struct InboundRateLimiter {
-    RateLimiter rate_limiter = RateLimiter(75, 0.33);
-    td::uint64 currently_decrypting_packets = 0;
+  static constexpr size_t MAX_PREAUTH_SOURCES = 4096;
+  DecryptBudget decrypt_budget_{256, 1.0 / 512.0, 64};
+  struct InboundSourceState {
     std::set<AdnlNodeIdShort> recent_inbound_peers;
   };
-  std::map<td::IPAddress, InboundRateLimiter> inbound_rate_limiter_;
+  PreauthGate<InboundSourceState> inbound_sources_{MAX_PREAUTH_SOURCES, 75, 0.33};
   struct PacketStats {
     double ts_start = 0.0, ts_end = 0.0;
 

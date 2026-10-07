@@ -1,6 +1,6 @@
 import React, { useContext } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { TosConnectProvider } from "./provider.js";
 import { ThemeContext, TranslationContext, ConnectContext, ModalContext } from "./context.js";
 
@@ -253,5 +253,44 @@ describe("TosConnectProvider", () => {
     await waitFor(() => {
       expect(mockOnStatusChange).toHaveBeenCalled();
     });
+  });
+
+  it("forwards the paired wallet key with or without items", async () => {
+    const key = "ab".repeat(32);
+    const wallet = { name: "Bridge wallet", bridgeUrl: "https://bridge.example.com" };
+    const captured: { ctx: React.ContextType<typeof ConnectContext> } = { ctx: null };
+    function Capture() {
+      captured.ctx = useContext(ConnectContext);
+      return null;
+    }
+    renderWithProvider(<Capture />);
+    await waitFor(() => expect(captured.ctx?.connector).not.toBeNull());
+
+    act(() => captured.ctx?.connect(wallet as never, { walletSessionPublicKey: key }));
+    expect(mockConnect).toHaveBeenLastCalledWith(wallet, { walletSessionPublicKey: key });
+
+    const items = [{ name: "tos_addr" }];
+    act(() => captured.ctx?.connect(wallet as never, { items: items as never, walletSessionPublicKey: key }));
+    expect(mockConnect).toHaveBeenLastCalledWith(wallet, { items, walletSessionPublicKey: key });
+  });
+
+  it("reports a refused connection instead of swallowing it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockConnect.mockImplementationOnce(() => {
+      throw new Error("HTTP bridge connections require walletSessionPublicKey");
+    });
+    const captured: { ctx: React.ContextType<typeof ConnectContext> } = { ctx: null };
+    function Capture() {
+      captured.ctx = useContext(ConnectContext);
+      return null;
+    }
+    renderWithProvider(<Capture />);
+    await waitFor(() => expect(captured.ctx?.connector).not.toBeNull());
+
+    act(() => captured.ctx?.connect({ name: "Bridge wallet" } as never));
+    await waitFor(() => expect(captured.ctx?.connectError?.message).toContain("walletSessionPublicKey"));
+    expect(captured.ctx?.connecting).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

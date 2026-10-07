@@ -1296,7 +1296,8 @@ slice1_func_to_boc(${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/stdlib.fc
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc
-                   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/auth-extension.fc)
+                   INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/auth-extension.fc
+                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/strong-ed25519-key.fc)
 
 # Compile a production FunC contract from crypto/smartcont to a .boc, with
 # stdlib.fc first. ARGN lists the library files the contract includes, so an
@@ -1327,7 +1328,7 @@ set(MULTISIG_ORDER_BOC  ${SLICE1_GAS_PARITY_DIR}/multisig-order.boc)
 smartcont_func_to_boc(${MULTISIG_WALLET_BOC} multisig-wallet-code.fc multisig-order.fc)
 smartcont_func_to_boc(${MULTISIG_ORDER_BOC} multisig-order-code.fc multisig-order.fc)
 set(HIGHLOAD_WALLET_V3_BOC ${SLICE1_GAS_PARITY_DIR}/highload-wallet-v3.boc)
-smartcont_func_to_boc(${HIGHLOAD_WALLET_V3_BOC} highload-wallet-v3-code.fc replay-guard.fc)
+smartcont_func_to_boc(${HIGHLOAD_WALLET_V3_BOC} highload-wallet-v3-code.fc replay-guard.fc strong-ed25519-key.fc)
 
 add_custom_target(smartcont_fixture_contracts
     DEPENDS
@@ -2062,3 +2063,12 @@ set_tests_properties(
 add_subdirectory(test)
 endif()
 #END internal
+
+if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
+  add_executable(test-security-boundaries test/test-td-main.cpp test/test-security-boundaries.cpp
+    blockchain-explorer/blockchain-explorer-http.cpp)
+  target_link_libraries(test-security-boundaries PRIVATE toshttp adnl tdutils lite-client-common)
+  tos_test(test-security-boundaries)
+
+  set_tests_properties(test-security-boundaries PROPERTIES LABELS "security-findings")
+endif()

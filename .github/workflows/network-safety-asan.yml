@@ -66,9 +66,7 @@ jobs:
 
     - name: Install Clang 21
       run: |
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 all
+        sudo scripts/install-llvm-toolchain.sh 21 all
 
     - name: Configure with AddressSanitizer
       run: |

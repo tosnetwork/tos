@@ -47,11 +47,26 @@ tosctl is distributed as a Docker image. Pull the latest version:
 docker pull ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1
 ```
 
+tosctl keeps its configuration (which can hold inline keys) and a file-backed
+vault in one directory that only you can modify: it refuses to write into a
+directory that is group- or other-writable, owned by another user, or reached
+through a symbolic link. Create it once:
+
+```bash
+export TOSCTL_HOME="$HOME/.tosctl"
+mkdir -p "$TOSCTL_HOME" && chmod 700 "$TOSCTL_HOME"
+```
+
+The container runs as your user (`--user`) so that the files it writes are
+owned by you, and the whole directory is mounted (a single bind-mounted file
+cannot be replaced atomically).
+
 To run any `tosctl` CLI command, use `docker run` with the image:
 
 ```bash
 docker run --rm \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
+  --user "$(id -u):$(id -g)" \
+  -v "$TOSCTL_HOME":/tosctl \
   -e VAULT_URL="$VAULT_URL" \
   -e CONFIG_PATH="/tosctl/config.json" \
   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
@@ -62,23 +77,15 @@ For convenience, create a shell alias:
 
 ```bash
 alias tosctl='docker run --rm \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
+  --user "$(id -u):$(id -g)" \
+  -v "$TOSCTL_HOME":/tosctl \
   -e VAULT_URL="$VAULT_URL" \
   -e CONFIG_PATH="/tosctl/config.json" \
   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
   tosctl'
 ```
 
-> **Note (file-based vault only):** If you are using the `file://` vault backend, the vault file must also be mounted into the container, otherwise it will be lost when the container exits. Extend the alias with an extra volume mount:
-> ```bash
-> alias tosctl='docker run --rm \
->   -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
->   -v "$(pwd)/vault.json":/tosctl/vault.json \
->   -e VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY" \
->   -e CONFIG_PATH="/tosctl/config.json" \
->   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
->   tosctl'
-> ```
+> **Note (file-based vault only):** keep the vault file in the mounted directory, otherwise it is lost when the container exits: `VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY"`.
 
 Now you can use `tosctl` as if it were installed locally:
 
@@ -120,6 +127,14 @@ Set the `VAULT_URL` environment variable:
 ```bash
 export VAULT_URL="file://vault.json?master_key=$MASTER_KEY"
 ```
+
+A relative path is resolved against the current directory. That directory and
+each directory above it must be owned by you (or root) and not group- or
+other-writable; on systems whose umask is 002, a checkout or home subdirectory
+is usually group-writable, so run `chmod go-w` on the directory tosctl names in
+its error, or use `$TOSCTL_HOME`. With Docker, use
+`file:///tosctl/vault.json?master_key=$MASTER_KEY` so the vault lives in the
+mounted directory.
 
 The vault file will be created automatically on first use. Keep the master key safe — without it the vault file cannot be decrypted.
 
@@ -174,7 +189,7 @@ tosctl config chain-rpc set -u "http://127.0.0.1:3301/"
 With an optional API key:
 
 ```bash
-tosctl config chain-rpc set -u "http://127.0.0.1:3301/" -k "your-api-key"
+tosctl config chain-rpc set -u "http://127.0.0.1:3301/" --api-key-prompt
 ```
 
 > **Important**: Do not enable the RPC server on a validator node. Use a separate TOS fullnode as the RPC server.
@@ -451,7 +466,7 @@ Logging is configured directly in the config file under the `log` section:
     "log": {
         "level": "INFO",
         "output": "all",
-        "path": "./logs/tosctl.log",
+        "path": "/tosctl/logs/tosctl.log",
         "max_size_mb": 50,
         "max_files": 10,
         "rotation": "daily"
@@ -463,7 +478,7 @@ Logging is configured directly in the config file under the `log` section:
 |-------|---------|-------------|
 | `level` | `INFO` | Log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `output` | `console` | Where to write: `console`, `file`, or `all` (both) |
-| `path` | — | Log file path (required if `output` is `file` or `all`) |
+| `path` | — | Log file path (required if `output` is `file` or `all`). Its directory must exist; with Docker, use a path in the mounted `/tosctl` directory |
 | `max_size_mb` | `50` | Max size of a single log file in MB before rotation |
 | `max_files` | `10` | Number of rotated log files to keep |
 | `rotation` | `daily` | Rotation schedule: `daily`, `hourly`, or `never` |
@@ -531,13 +546,13 @@ Expected output: `4194304`
 ## Step 14: Run the Service
 
 ```bash
-# Create logs directory if it doesn't exist
-mkdir -p "$(pwd)/logs"
+# Create the logs directory (the logger does not create it)
+mkdir -p "$TOSCTL_HOME/logs"
 
 docker run -d \
   --name tosctl --restart unless-stopped \
-  -v "$(pwd)/logs":/tosctl/logs \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
+  --user "$(id -u):$(id -g)" \
+  -v "$TOSCTL_HOME":/tosctl \
   -e VAULT_URL="$VAULT_URL" \
   -e CONFIG_PATH="/tosctl/config.json" \
   -e RUST_BACKTRACE=1 \
@@ -545,20 +560,10 @@ docker run -d \
   tosctl service --config=/tosctl/config.json
 ```
 
-> **Note (file-based vault only):** If you are using the `file://` vault backend, add a volume mount for the vault file so it persists across container restarts:
-> ```bash
-> docker run -d \
->   --name tosctl --restart unless-stopped \
->   -v "$(pwd)/logs":/tosctl/logs \
->   -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
->   -v "$(pwd)/vault.json":/tosctl/vault.json \
->   -e VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY" \
->   -e CONFIG_PATH="/tosctl/config.json" \
->   -e RUST_BACKTRACE=1 \
->   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
->   tosctl service --config=/tosctl/config.json
-> ```
-> Without this mount, all vault keys (wallet keys, ADNL keys) will be lost on every container restart.
+With `"path": "/tosctl/logs/tosctl.log"` (Step 12), logs are written to
+`$TOSCTL_HOME/logs` on the host.
+
+> **Note (file-based vault only):** keep the vault in the mounted directory (`VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY"`). A vault outside it is lost on every container restart, together with its wallet and ADNL keys.
 
 ### What the Service Does
 
@@ -797,3 +802,15 @@ Or override temporarily via environment variable:
 ```bash
 RUST_LOG=debug tosctl service --config=tosctl-config.json
 ```
+
+### Private configuration and credential input
+
+Configuration saves use mode-0600 atomic replacement and reject symlinks and
+hardlinks. Run as the owner of the configuration directory. Use a dedicated
+mode-0700 directory for file vaults; the library refuses existing shared vault
+directories instead of changing their permissions.
+
+For chain-RPC API keys, use `--api-key-prompt` for hidden interactive input,
+`--api-key-file` for an owner-private regular file, or `--api-key-fd` for a
+protected descriptor/pipe. The literal `--api-key` / `-k` option is retired so
+tokens do not appear in process arguments and shell history.
