@@ -69,3 +69,50 @@ Java_network_tos_security_pq_V5R2ProofNative_nativeVerify(JNIEnv *env, jobject,
     return result;
   } catch (...) { return refuse(env); }
 }
+
+#include <string>
+#include "persisted.h"
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_network_tos_security_pq_V5R2ProofNative_nativeVerifyLivePersisted(JNIEnv *env, jobject,
+    jstring directory, jboolean initialize, jbyteArray anchor, jbyteArray request,
+    jlong now, jintArray kinds, jobjectArray material) {
+  auto fail = [&]() -> jbyteArray { refuse(env); return nullptr; };
+  try {
+    if (!directory || env->GetStringUTFLength(directory) > 4096 || !kinds || !material || now <= 0) return fail();
+    const char *chars = env->GetStringUTFChars(directory, nullptr);
+    if (!chars) return nullptr;
+    std::string path;
+    try { path.assign(chars); } catch (...) { env->ReleaseStringUTFChars(directory, chars); throw; }
+    env->ReleaseStringUTFChars(directory, chars);
+    if (path.empty()) return fail();
+    const auto count = env->GetArrayLength(kinds);
+    if (count < 0 || count > 1045 || env->GetArrayLength(material) != count) return fail();
+    std::vector<uint8_t> a, r;
+    if (!read(env, anchor, kMaxJson, a) || !read(env, request, kMaxJson, r)) return fail();
+    std::vector<jint> tags(static_cast<size_t>(count));
+    if (count) env->GetIntArrayRegion(kinds, 0, count, tags.data());
+    if (env->ExceptionCheck()) return nullptr;
+    std::vector<std::vector<uint8_t>> storage(static_cast<size_t>(count));
+    std::vector<tos_proof_material> parts;
+    size_t total = 0;
+    for (jsize i = 0; i < count; ++i) {
+      auto item = static_cast<jbyteArray>(env->GetObjectArrayElement(material, i));
+      if (!item || tags[i] < 1 || tags[i] > 7) { if (item) env->DeleteLocalRef(item); return fail(); }
+      const bool ok = read(env, item, kMaxMaterial - total, storage[i]);
+      env->DeleteLocalRef(item);
+      if (!ok || storage[i].empty()) return fail();
+      total += storage[i].size();
+      parts.push_back({static_cast<uint32_t>(tags[i]), storage[i].data(), storage[i].size()});
+    }
+    std::vector<char> output(kMaxMaterial);
+    size_t size = 0;
+    const int status = tos_proof_verify_live_persisted(path.c_str(), initialize == JNI_TRUE ? 1 : 0,
+        reinterpret_cast<const char *>(a.data()), a.size(), reinterpret_cast<const char *>(r.data()), r.size(),
+        now, parts.data(), parts.size(), output.data(), output.size(), &size);
+    if (status != 0) return fail();
+    auto result = env->NewByteArray(static_cast<jsize>(size));
+    if (!result) return nullptr;
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte *>(output.data()));
+    return env->ExceptionCheck() ? nullptr : result;
+  } catch (...) { return fail(); }
+}

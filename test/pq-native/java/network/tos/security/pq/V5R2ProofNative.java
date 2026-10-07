@@ -10,6 +10,7 @@ import java.util.stream.Stream;
 public final class V5R2ProofNative {
     private static native byte[][] nativeVerify(byte[] anchor, byte[] request, byte[] state,
                                                 long now, int[] kinds, byte[][] material);
+    private static native byte[] nativeVerifyLivePersisted(String directory, boolean initialize, byte[] anchor, byte[] request, long now, int[] kinds, byte[][] material);
     private static byte[] bytes(Path p) throws Exception { return Files.readAllBytes(p); }
     private static void check(String name, boolean ok) {
         System.out.println("PROOF_JNI_CASE " + name + " " + (ok ? "PASS" : "FAIL"));
@@ -53,6 +54,34 @@ public final class V5R2ProofNative {
             refused(mode + "-null-anchor", () -> nativeVerify(null, request, state, 1791200932L, kinds, data));
             refused(mode + "-missing-material", () -> nativeVerify(anchor, request, state, 1791200932L, new int[0], new byte[0][]));
             refused(mode + "-invalid-tag", () -> nativeVerify(anchor, request, state, 1791200932L, new int[]{8}, new byte[][]{{1}}));
+            if (mode.equals("live")) {
+                Path directory = Files.createTempDirectory(root.getParent(), "jni-checkpoint-");
+                try {
+                    ArrayList<Integer> firstTags = new ArrayList<>();
+                    ArrayList<byte[]> firstData = new ArrayList<>();
+                    for (int i = 0; i < kinds.length; i++) if (kinds[i] != 2 && kinds[i] != 3) {
+                        firstTags.add(kinds[i]); firstData.add(data[i]);
+                    }
+                    try (Stream<Path> paths = Files.list(root.resolve("historical"))) {
+                        for (Path path : (Iterable<Path>) paths.filter(p -> p.getFileName().toString().startsWith("chain-")).sorted()::iterator) {
+                            firstTags.add(2); firstData.add(bytes(path));
+                        }
+                    }
+                    int[] initialKinds = firstTags.stream().mapToInt(Integer::intValue).toArray();
+                    byte[][] initialData = firstData.toArray(new byte[0][]);
+                    refused("persisted-needs-enrollment", () -> nativeVerifyLivePersisted(directory.toString(), false, anchor, request, 1791200932L, initialKinds, initialData));
+                    byte[] verified = nativeVerifyLivePersisted(directory.toString(), true, anchor, request, 1791200932L, initialKinds, initialData);
+                    check("persisted-first-use", new String(verified, java.nio.charset.StandardCharsets.UTF_8).contains("\"status\":\"verified\""));
+                    check("persisted-file-before-result", Files.isRegularFile(directory.resolve("checkpoint.json")));
+                    check("persisted-reopen", nativeVerifyLivePersisted(directory.toString(), false, anchor, request, 1791200932L, kinds, data).length > 0);
+                    Files.delete(directory.resolve("checkpoint.json"));
+                    refused("persisted-loss-cannot-reset", () -> nativeVerifyLivePersisted(directory.toString(), true, anchor, request, 1791200932L, initialKinds, initialData));
+                } finally {
+                    try (Stream<Path> paths = Files.walk(directory)) {
+                        for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator) Files.delete(path);
+                    }
+                }
+            }
             if (mode.equals("live")) refused("live-expired", () -> nativeVerify(anchor, request, state, 1791201231L, kinds, data));
         }
     }

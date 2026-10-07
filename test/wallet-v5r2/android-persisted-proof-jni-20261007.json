@@ -1,0 +1,30 @@
+{
+  "scope": "Standalone Android ART/JNI persisted proof boundary; Kotlin session and wallet application acceptance remain incomplete",
+  "runtime": "Dedicated arm64 emulator API36.1 16KB pages, native API24 build",
+  "cases_passed": 16,
+  "control": "Remove persisted status refusal: compiled and failed persisted-needs-enrollment; restored all 16 passed",
+  "artifacts": [
+    {
+      "file": "20261007-persisted-jni-runtime.log",
+      "bytes": 646,
+      "sha256": "2eeab725bef6631c8f3aa34b2889fbfe3f7c01fb3014a5ed73ca1d6cba1b069b"
+    },
+    {
+      "file": "20261007-persisted-jni-control-runtime.log",
+      "bytes": 447,
+      "sha256": "8b641519c54cb32af3a1285a7044638801c87d235914e3536c5cdc1e8887e2d1"
+    },
+    {
+      "file": "20261007-persisted-jni-restored-runtime.log",
+      "bytes": 646,
+      "sha256": "2eeab725bef6631c8f3aa34b2889fbfe3f7c01fb3014a5ed73ca1d6cba1b069b"
+    }
+  ],
+  "remaining": [
+    "Kotlin private no-backup directory session and instrumentation",
+    "Other ABI persisted runtime acceptance",
+    "iOS integration",
+    "Authenticated proof acquisition and wallet-authority binding",
+    "Creation, funded dual POP, rotation and transaction delivery acceptance"
+  ]
+}
