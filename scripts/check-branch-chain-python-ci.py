@@ -23,6 +23,8 @@ REQUIRED_NATIVE_TARGETS = {
     "tos-proof-verify",
     "test-proof-verify",
     "test-get-method-context",
+    "test-control-getter",
+    "test-control-getter-budget",
     "proof-verify-fs-shim",
     "test-n5-manager-db-fixture",
     "test-consensus",
@@ -105,6 +107,11 @@ def main() -> int:
         "-R '^getter-context-(context|vm|libraries|liteserver)$'" in text,
         "getter-context independent parity gate is absent",
     )
+    require(
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^control-getter-(executor|shutdown|limits|actor|vm|context|delete|budget)$'" in text,
+        "bounded control-getter behavior and budget gate is absent",
+    )
     c09_pytest = (
         "uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py "
         "test/pq-native/test_x02_stage_a_capture.py"
@@ -119,6 +126,11 @@ def main() -> int:
         "foreach(context_case context vm libraries liteserver)" in cmake_text
         and "FIXTURES_REQUIRED getter-context-state" in cmake_text,
         "getter-context CTest registrations or fixture dependency are absent",
+    )
+    require(
+        "foreach(core_case executor shutdown limits actor vm context delete)" in cmake_text
+        and "add_test(NAME control-getter-budget" in cmake_text,
+        "bounded control-getter CTest registrations are absent",
     )
     for registration in (
         r"tos_test\(test-proof-verify\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data\)",

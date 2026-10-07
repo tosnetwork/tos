@@ -1,3 +1,7 @@
+add_library(control-getter STATIC control-getter.h control-getter.cpp control-getter-executor.h control-getter-executor.cpp)
+target_include_directories(control-getter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../crypto)
+target_link_libraries(control-getter PUBLIC tos_crypto tdutils)
+
 # Pure, actor-free parsers for chain data served through JSON-RPC. Kept in a
 # separate library so they can be unit tested with hostile inputs
 # (see test/test-json-rpc-parse.cpp).

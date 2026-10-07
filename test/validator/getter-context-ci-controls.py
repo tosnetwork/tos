@@ -21,6 +21,24 @@ CASES = {
         "foreach(context_case context vm libraries)",
         "getter-context CTest registrations or fixture dependency are absent",
     ),
+    "core-selector": (
+        ".github/workflows/branch-chain-python.yml",
+        "^control-getter-(executor|shutdown|limits|actor|vm|context|delete|budget)$",
+        "^control-getter-(executor|shutdown|limits|actor|vm|context|delete)$",
+        "bounded control-getter behavior and budget gate is absent",
+    ),
+    "core-registration": (
+        "CMakeLists.txt",
+        "add_test(NAME control-getter-budget",
+        "add_test(NAME unregistered-control-budget",
+        "bounded control-getter CTest registrations are absent",
+    ),
+    "core-target": (
+        ".github/workflows/branch-chain-python.yml",
+        "test-control-getter test-control-getter-budget \\",
+        "test-control-getter \\",
+        "native fixture targets are missing: ['test-control-getter-budget']",
+    ),
     "oracle": (
         "test/validator/getter-context-reference.h",
         "td::make_refint(now)",

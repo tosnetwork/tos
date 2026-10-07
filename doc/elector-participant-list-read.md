@@ -256,7 +256,8 @@ is checked by executing the original VM path because the wire reply has no gas f
   admission or allocation; unauthorized and insufficient-permission callers are tested.
 - **Off the engine actor**: control callbacks are dispatched to the `ValidatorEngine`
   actor (`validator-engine.cpp:2962–2965`); a getter must not run there. A dedicated
-  bounded executor runs getters: at most two active jobs and a small bounded queue,
+  bounded executor runs getters: `kControlGetterActiveJobs = 2` active reservations and at most
+  `kControlGetterQueuedJobs = 8` queued reservations,
   excess requests answered `busy`; admission is taken before retaining state or
   allocating results; workers receive an immutable snapshot; cancellation never
   releases admission while work continues; the result list is walked and destroyed
@@ -273,18 +274,20 @@ is checked by executing the original VM path because the wire reply has no gas f
   (Appendix A, `elector-budget-result.txt`; the C++ VM on the saved elector, grown
   along each dimension the getter walks):
 
-  | Getter (per run) | What its cost depends on | Measured worst case | Budget |
-  | --- | --- | --- | --- |
-  | `participant_list_extended` | members (protocol cap 256) and the member dictionary's path length | 1,114,595 at 256 on the deepest path (345,395 C++ / 368,795 Rust sandbox with random-like keys); a maximum-width stake (2^120 − 1, the record's only variable-width field) costs the same | `kElectorParticipantsGasLimit = 1,500,000` |
-  | `past_elections` | retained past elections K (≈ 0.9k each; independent of frozen entries, returned as a cell) | 15,953 at K = 16 | `kPastElectionsGasLimit = 50,000` |
-  | `compute_returned_stake` | credits dictionary path length | 2,896 at 65,536 random credits; 26,804 on the deepest path 256-bit keys allow | `kReturnedStakeGasLimit = 40,000` per wallet |
-  | `list_proposals` / `get_proposal` | proposals, voters | — | `kConfigProposalsGasLimit = 10,000,000`, an operational ceiling, not a capacity claim |
+  | Getter (per run) | What its cost depends on | Measured production-context worst case | Budget | Headroom `(budget − gas) / gas` |
+  | --- | --- | --- | --- | --- |
+  | `participant_list_extended` | members (protocol cap 256) and the member dictionary's path length | 1,114,595 at 256 on the deepest path (345,395 C++ / 368,795 Rust sandbox with random-like keys); a maximum-width stake (2^120 − 1, the record's only variable-width field) costs the same | `kElectorParticipantsGasLimit = 1,500,000` | 34.6 % |
+  | `past_elections` | retained past elections K (≈ 0.9k each; independent of frozen entries, returned as a cell) | 19,528 on deep-path election ids at K = 16, F = 256 (4,096 frozen entries); hashed ids 17,878; contiguous ids 15,953 | `kPastElectionsGasLimit = 50,000` | 156.0 % |
+  | `compute_returned_stake` | credits dictionary path length | 2,896 at 65,536 random credits; 26,804 on the deepest path 256-bit keys allow | `kReturnedStakeGasLimit = 40,000` per wallet | 49.2 % |
+  | `list_proposals` / `get_proposal` | proposals, voters | — | `kConfigProposalsGasLimit = 10,000,000`, an operational ceiling, not a capacity claim | Measured operational cases below; oversized states are refused, not truncated |
 
   Gas exhaustion in any run is an explicit error; no partial result. The budgets are
-  provisional until the implementation measures the same worst cases (the deepest
-  256-member book included) in the production VM context of §5.2; each must keep at
-  least the headroom stated here (about 35 % for participants) or be revised before
-  merge.
+  measured in the production VM context of §5.2 (the deepest 256-member book
+  included). The merge gate requires at least **30 % headroom**, defined as
+  `(budget − gas) / gas`, for the protocol-bounded elector getters and combined
+  elector read, against their worst measured shapes. Proposal reads have no headroom
+  guarantee: the contract imposes no proposal bound and the 10M ceiling is operational.
+  Every proposal response is whole or explicitly refused, never partial.
 - **Combined cost of `getElectorState`**: at most 2 + `kMaxReturnedStakeWallets` = 18
   getter runs; aggregate VM gas at most 1,500,000 + 50,000 + 16 × 40,000 = 2,190,000
   (`kElectorStateGasLimit`), each run also held to its own budget. Native work is
@@ -303,9 +306,11 @@ is checked by executing the original VM path because the wire reply has no gas f
   seen by the next run.
 - **Result conversion**: walk the cons list iteratively into the flat TL vector,
   validating exact tuple arities, integer ranges, strictly ascending ids, and for the
-  elector at most 256 participants with the getter's exclusive `2^256 − 1` sentinel
+  elector at most 256 participants and `kMaxConfigProposals = 4,096` proposals,
+  with the getter's exclusive `2^256 − 1` sentinel
   reproduced; any violation is an explicit error.
-- **Reply bound**: a named maximum reply size well below the 16 MiB control packet
+- **Reply bound**: `kControlGetterReplyBytes = 8 MiB`, including the reply wrapper,
+  below the 16 MiB control packet
   (`adnl-ext-limits.h:15–18`) leaving protocol overhead; vector, count and byte bounds
   are applied before building the reply.
 - **Accounts**: missing or frozen account → explicit error, never an empty election;
@@ -405,7 +410,7 @@ the #151 machinery for proposals.
 | Election participants | the elector's own 256 cap, under a budget derived from the measured worst case |
 | Past elections | **operational** limit of 16 retained elections and 4,096 frozen entries (the contract has no cap on retained elections); exceeding it is an explicit error, not a truncated list |
 | Returned stakes | up to 16 wallets per query, each lookup within its own measured budget |
-| Config proposals | bounded all-or-nothing under an explicit 10M-gas operational ceiling and the reply bound; supported capacity stated only after measuring adversarial dictionary shapes and populated voter lists; incremental reads remain future work |
+| Config proposals | measured operational envelope: about 4,096 unvoted proposals with hashed keys (9,431,419 gas); about 512 deep-path proposals with 21 voters each (8,547,745 gas); single `get_proposal` lookup up to 38,512 gas in the measured matrix. No headroom guarantee or protocol capacity claim; beyond the gas, count or reply envelope, explicit refusal with no partial result. Incremental reads remain future work |
 | Reply size | a named bound below the 16 MiB control packet |
 
 ## 7. Verification plan

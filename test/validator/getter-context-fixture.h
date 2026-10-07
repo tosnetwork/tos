@@ -161,7 +161,9 @@ struct State {
 };
 
 inline State build(const std::string& zero_path, const std::string& elector_dir, const std::string& config_code_path,
-                   int version = 17, bool global_library = true) {
+                   int version = 17, bool global_library = true, Ref<vm::Cell> elector_override = {},
+                   Ref<vm::Cell> proposal_override = {}, Ref<vm::Cell> probe_code = {}, Ref<vm::Cell> probe_data = {},
+                   Ref<vm::Cell> elector_code_override = {}, Ref<vm::Cell> config_code_override = {}) {
   State fixture;
   auto zero_bytes = must(td::read_file(td::CSlice(zero_path)), "zerostate bytes");
   auto zero = must(vm::std_boc_deserialize(zero_bytes.as_slice()), "zerostate");
@@ -174,8 +176,9 @@ inline State build(const std::string& zero_path, const std::string& elector_dir,
   require(template_slice.not_null(), "elector account");
   auto original = template_slice->prefetch_ref();
 
-  auto elector_code = load(elector_dir + "/elector-code.boc");
-  auto elector_data = load(elector_dir + "/elector-data.boc");
+  auto elector_code =
+      elector_code_override.not_null() ? elector_code_override : load(elector_dir + "/elector-code.boc");
+  auto elector_data = elector_override.not_null() ? elector_override : load(elector_dir + "/elector-data.boc");
   auto wide_balance = block::CurrencyCollection{td::make_refint(1) << 100};
   vm::Dictionary extras{32};
   vm::CellBuilder extra_amount;
@@ -198,15 +201,16 @@ inline State build(const std::string& zero_path, const std::string& elector_dir,
   Getter proposal{"proposals",
                   "list_proposals",
                   {tos::masterchainId, filled(0x55)},
-                  load(config_code_path),
-                  proposal_data(),
+                  config_code_override.not_null() ? config_code_override : load(config_code_path),
+                  proposal_override.not_null() ? proposal_override : proposal_data(),
                   block::CurrencyCollection{td::make_refint(20000000000ULL)}};
-  Getter peek{"context-fields",
-              "context_fields",
-              {tos::masterchainId, filled(0x77)},
-              must(fift::compile_asm("DROP NOW LTIME BALANCE MYADDR"), "context getter"),
-              vm::CellBuilder{}.finalize_novm(),
-              wide_balance};
+  Getter peek{
+      "context-fields",
+      "context_fields",
+      {tos::masterchainId, filled(0x77)},
+      probe_code.not_null() ? probe_code : must(fift::compile_asm("DROP NOW LTIME BALANCE MYADDR"), "context getter"),
+      probe_data.not_null() ? probe_data : vm::CellBuilder{}.finalize_novm(),
+      wide_balance};
   peek.due_payment = td::make_refint(123456789);
   fixture.getters = {participant, active, returned, proposal, peek};
   for (const auto& getter : {participant, proposal, peek}) {

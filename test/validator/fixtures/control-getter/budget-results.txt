@@ -1,0 +1,71 @@
+participants-shape=0-n=0 gas=2503 budget=1500000 headroom_percent=59828.0863 unused_percent=99.8331
+participants-shape=0-n=21 gas=28725 budget=1500000 headroom_percent=5121.9321 unused_percent=98.0850
+participants-shape=0-n=99 gas=131621 budget=1500000 headroom_percent=1039.6358 unused_percent=91.2253
+participants-shape=0-n=256 gas=345395 budget=1500000 headroom_percent=334.2854 unused_percent=76.9737
+participants-shape=1-n=0 gas=2503 budget=1500000 headroom_percent=59828.0863 unused_percent=99.8331
+participants-shape=1-n=21 gas=31950 budget=1500000 headroom_percent=4594.8357 unused_percent=97.8700
+participants-shape=1-n=99 gas=238221 budget=1500000 headroom_percent=529.6674 unused_percent=84.1186
+participants-shape=1-n=256 gas=1114595 budget=1500000 headroom_percent=34.5780 unused_percent=25.6937
+participants-shape=2-n=0 gas=2503 budget=1500000 headroom_percent=59828.0863 unused_percent=99.8331
+participants-shape=2-n=21 gas=31950 budget=1500000 headroom_percent=4594.8357 unused_percent=97.8700
+participants-shape=2-n=99 gas=238221 budget=1500000 headroom_percent=529.6674 unused_percent=84.1186
+participants-shape=2-n=256 gas=1114595 budget=1500000 headroom_percent=34.5780 unused_percent=25.6937
+past-shape=-1-k=16-f=21 gas=15953 budget=50000 headroom_percent=213.4207 unused_percent=68.0940
+past-shape=-1-k=16-f=256 gas=15953 budget=50000 headroom_percent=213.4207 unused_percent=68.0940
+past-shape=0-k=16-f=21 gas=17878 budget=50000 headroom_percent=179.6733 unused_percent=64.2440
+past-shape=0-k=16-f=256 gas=17878 budget=50000 headroom_percent=179.6733 unused_percent=64.2440
+past-shape=1-k=16-f=21 gas=19528 budget=50000 headroom_percent=156.0426 unused_percent=60.9440
+past-shape=1-k=16-f=256 gas=19528 budget=50000 headroom_percent=156.0426 unused_percent=60.9440
+returned-c=1-absent gas=1196 budget=40000 headroom_percent=3244.4816 unused_percent=97.0100
+returned-c=1-present gas=1204 budget=40000 headroom_percent=3222.2591 unused_percent=96.9900
+returned-c=65536-absent gas=2896 budget=40000 headroom_percent=1281.2155 unused_percent=92.7600
+returned-c=65536-present gas=2804 budget=40000 headroom_percent=1326.5335 unused_percent=92.9900
+returned-deepest gas=26804 budget=40000 headroom_percent=49.2315 unused_percent=32.9900
+aggregate-distinct-wallets=16 gas=1552487 budget=2190000 headroom_percent=41.0640 unused_percent=29.1102
+proposals-deep=0-v=0-n=0 gas=1095 budget=10000000 headroom_percent=913142.0091 unused_percent=99.9891
+proposals-deep=0-v=0-n=62 gas=134673 budget=10000000 headroom_percent=7325.3934 unused_percent=98.6533
+single-proposal-deep=0-v=0-n=62 gas=3406
+proposals-deep=0-v=0-n=63 gas=136842 budget=10000000 headroom_percent=7207.6979 unused_percent=98.6316
+single-proposal-deep=0-v=0-n=63 gas=3406
+proposals-deep=0-v=0-n=200 gas=439845 budget=10000000 headroom_percent=2173.5282 unused_percent=95.6016
+single-proposal-deep=0-v=0-n=200 gas=3506
+proposals-deep=0-v=0-n=512 gas=1141823 budget=10000000 headroom_percent=775.7925 unused_percent=88.5818
+single-proposal-deep=0-v=0-n=512 gas=3606
+proposals-deep=0-v=0-n=4096 gas=9431419 budget=10000000 headroom_percent=6.0286 unused_percent=5.6858
+single-proposal-deep=0-v=0-n=4096 gas=4006
+proposals-deep=0-v=21-n=0 gas=1095 budget=10000000 headroom_percent=913142.0091 unused_percent=99.9891
+proposals-deep=0-v=21-n=62 gas=755645 budget=10000000 headroom_percent=1223.3727 unused_percent=92.4436
+single-proposal-deep=0-v=21-n=62 gas=14012
+proposals-deep=0-v=21-n=63 gas=767820 budget=10000000 headroom_percent=1202.3886 unused_percent=92.3218
+single-proposal-deep=0-v=21-n=63 gas=14012
+proposals-deep=0-v=21-n=200 gas=2441645 budget=10000000 headroom_percent=309.5599 unused_percent=75.5836
+single-proposal-deep=0-v=21-n=200 gas=14112
+proposals-deep=0-v=21-n=512 gas=6265495 budget=10000000 headroom_percent=59.6043 unused_percent=37.3451
+single-proposal-deep=0-v=21-n=512 gas=14212
+proposals-deep=0-v=21-n=4096 REFUSED gas=10000025
+single-proposal-deep=0-v=21-n=4096 gas=14612
+proposals-deep=1-v=0-n=0 gas=1095 budget=10000000 headroom_percent=913142.0091 unused_percent=99.9891
+proposals-deep=1-v=0-n=62 gas=173673 budget=10000000 headroom_percent=5657.9474 unused_percent=98.2633
+single-proposal-deep=1-v=0-n=62 gas=8906
+proposals-deep=1-v=0-n=63 gas=177242 budget=10000000 headroom_percent=5542.0036 unused_percent=98.2276
+single-proposal-deep=1-v=0-n=63 gas=9006
+proposals-deep=1-v=0-n=200 gas=902520 budget=10000000 headroom_percent=1008.0087 unused_percent=90.9748
+single-proposal-deep=1-v=0-n=200 gas=22706
+proposals-deep=1-v=0-n=512 gas=3424073 budget=10000000 headroom_percent=192.0498 unused_percent=65.7593
+single-proposal-deep=1-v=0-n=512 gas=27606
+proposals-deep=1-v=0-n=4096 REFUSED gas=10000016
+single-proposal-deep=1-v=0-n=4096 gas=27906
+proposals-deep=1-v=21-n=0 gas=1095 budget=10000000 headroom_percent=913142.0091 unused_percent=99.9891
+proposals-deep=1-v=21-n=62 gas=794645 budget=10000000 headroom_percent=1158.4236 unused_percent=92.0536
+single-proposal-deep=1-v=21-n=62 gas=19512
+proposals-deep=1-v=21-n=63 gas=808220 budget=10000000 headroom_percent=1137.2869 unused_percent=91.9178
+single-proposal-deep=1-v=21-n=63 gas=19612
+proposals-deep=1-v=21-n=200 gas=2904320 budget=10000000 headroom_percent=244.3147 unused_percent=70.9568
+single-proposal-deep=1-v=21-n=200 gas=33312
+proposals-deep=1-v=21-n=512 gas=8547745 budget=10000000 headroom_percent=16.9899 unused_percent=14.5226
+single-proposal-deep=1-v=21-n=512 gas=38212
+proposals-deep=1-v=21-n=4096 REFUSED gas=10000007
+single-proposal-deep=1-v=21-n=4096 gas=38512
+proposals-count=4097 REFUSED gas=9433738 vm_exit=0
+proposals-adjacent-gas-boundary last_success=4339 gas=9999336 first_refusal=4340 gas=10000024
+CONTROL_GETTER_BUDGET_RESULT gate_failures=0

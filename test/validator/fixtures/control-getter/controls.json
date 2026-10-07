@@ -1,0 +1,288 @@
+{
+  "controls": [
+    {
+      "control": "active",
+      "file": "validator-engine/control-getter.h",
+      "line": 13,
+      "anchors": 1,
+      "suite": "executor",
+      "assertion": "executor-reservations-2-8",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "queue",
+      "file": "validator-engine/control-getter.h",
+      "line": 14,
+      "anchors": 1,
+      "suite": "executor",
+      "assertion": "executor-eleventh-busy",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "dispatch",
+      "file": "validator-engine/control-getter-executor.cpp",
+      "line": 107,
+      "anchors": 1,
+      "suite": "executor",
+      "assertion": "executor-second-dispatch-refused",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "cancel",
+      "file": "validator-engine/control-getter-executor.cpp",
+      "line": 93,
+      "anchors": 1,
+      "suite": "executor",
+      "assertion": "executor-cancel-keeps-reservation",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "stopped",
+      "file": "validator-engine/control-getter-executor.cpp",
+      "line": 162,
+      "anchors": 1,
+      "suite": "executor",
+      "assertion": "executor-shutdown-refuses",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "exception",
+      "file": "validator-engine/control-getter-executor.cpp",
+      "line": 56,
+      "anchors": 1,
+      "suite": "executor",
+      "assertion": "executor-exception-reported",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "workers",
+      "file": "validator-engine/control-getter-executor.cpp",
+      "line": 126,
+      "anchors": 1,
+      "suite": "actor",
+      "assertion": "actor-getter-started",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "shutdown",
+      "file": "validator-engine/control-getter-executor.cpp",
+      "line": 148,
+      "anchors": 1,
+      "suite": "shutdown",
+      "assertion": "shutdown-queued-cancelled",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "aggregate",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 177,
+      "anchors": 1,
+      "suite": "vm",
+      "assertion": "vm-aggregate-only-refused",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "vm-exit",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 178,
+      "anchors": 1,
+      "suite": "context",
+      "assertion": "vm-exit-refused",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "snapshot",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 60,
+      "anchors": 1,
+      "suite": "vm",
+      "assertion": "snapshot-other-height",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "provenance",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 137,
+      "anchors": 1,
+      "suite": "vm",
+      "assertion": "vm-mixed-snapshot-refused",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "signature",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 168,
+      "anchors": 1,
+      "suite": "context",
+      "assertion": "signature-check-enabled",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "clock",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 153,
+      "anchors": 1,
+      "suite": "context",
+      "assertion": "context-now",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "libraries",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 166,
+      "anchors": 1,
+      "suite": "context",
+      "assertion": "library-present",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "immutable",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 181,
+      "anchors": 1,
+      "suite": "vm",
+      "assertion": "vm-private-c4-reset",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "count",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 204,
+      "anchors": 1,
+      "suite": "limits",
+      "assertion": "list-one-over-before-visit",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "arity",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 201,
+      "anchors": 1,
+      "suite": "limits",
+      "assertion": "list-extra-field",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "visitor",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 209,
+      "anchors": 1,
+      "suite": "limits",
+      "assertion": "list-visitor-refused",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "bytes",
+      "file": "validator-engine/control-getter.cpp",
+      "line": 45,
+      "anchors": 1,
+      "suite": "limits",
+      "assertion": "reply-one-over",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "delete",
+      "file": "crypto/common/refcnt.cpp",
+      "line": 35,
+      "anchors": 1,
+      "suite": "delete",
+      "assertion": "deep-drop-small-stack",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "headroom",
+      "file": "validator-engine/control-getter.h",
+      "line": 23,
+      "anchors": 1,
+      "suite": "budget",
+      "assertion": "BUDGET_GATE_FAIL past-shape=1",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "per-gas",
+      "file": "validator-engine/control-getter.h",
+      "line": 24,
+      "anchors": 1,
+      "suite": "budget",
+      "assertion": "BUDGET_MEASUREMENT_FAILURE returned-deepest",
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0
+    },
+    {
+      "control": "core-selector",
+      "file": ".github/workflows/branch-chain-python.yml",
+      "line": 83,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0,
+      "reason": "bounded control-getter behavior and budget gate is absent"
+    },
+    {
+      "control": "core-registration",
+      "file": "CMakeLists.txt",
+      "line": 1648,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0,
+      "reason": "bounded control-getter CTest registrations are absent"
+    },
+    {
+      "control": "core-target",
+      "file": ".github/workflows/branch-chain-python.yml",
+      "line": 71,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0,
+      "reason": "native fixture targets are missing: ['test-control-getter-budget']"
+    }
+  ],
+  "not_red": 0
+}
