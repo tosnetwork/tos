@@ -1,0 +1,13 @@
+{
+  "rust_mobile_fixture_test": 1,
+  "schema_control_exit": 101,
+  "restored_exit": 0,
+  "scope": "Rust/mobile public manifest semantic equality and initial identities only; no current authority or end-to-end recovery",
+  "source_commit": "66e718e1b",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-rust-mobile-manifest",
+  "logs": {
+    "schema-control.log": "1e73520082d4a047a0f636a1c7fb90b35467f526ea4716398d51ab260592f9e5",
+    "baseline.log": "38555265d4ad2b955565c71a7df2d33f2fbb5474a4b9c75af3229bd89271be42",
+    "restored.log": "aa4e1153533f1cf329e11ee5c8187cbaed3a847f5f059fa096224a758641ae03"
+  }
+}
