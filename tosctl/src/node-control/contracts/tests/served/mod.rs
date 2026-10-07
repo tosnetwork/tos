@@ -182,6 +182,8 @@ type Handler = dyn Fn(&str, &serde_json::Value) -> Reply + Send + Sync;
 pub struct ServedNode {
     pub url: String,
     pub calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// Every request as received, in order.
+    pub requests: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -194,22 +196,36 @@ impl ServedNode {
         let url = format!("http://{}", listener.local_addr().expect("address"));
         let calls = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let handler: std::sync::Arc<Handler> = std::sync::Arc::new(handler);
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let log = calls.clone();
+        let request_log = requests.clone();
         let task = tokio::spawn(async move {
             loop {
                 let Ok((socket, _)) = listener.accept().await else { return };
                 let handler = handler.clone();
                 let log = log.clone();
+                let request_log = request_log.clone();
                 tokio::spawn(async move {
-                    let _ = serve_one(socket, handler, log).await;
+                    let _ = serve_one(socket, handler, log, request_log).await;
                 });
             }
         });
-        Self { url, calls, task }
+        Self { url, calls, requests, task }
     }
 
     pub fn calls(&self) -> Vec<String> {
         self.calls.lock().expect("calls").clone()
+    }
+
+    /// The requests for `method`, as received.
+    pub fn requests_for(&self, method: &str) -> Vec<serde_json::Value> {
+        self.requests
+            .lock()
+            .expect("requests")
+            .iter()
+            .filter(|request| request["method"] == method)
+            .cloned()
+            .collect()
     }
 }
 
@@ -223,6 +239,7 @@ async fn serve_one(
     mut socket: tokio::net::TcpStream,
     handler: std::sync::Arc<Handler>,
     log: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    request_log: std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>,
 ) -> std::io::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut request = Vec::new();
@@ -247,6 +264,7 @@ async fn serve_one(
     let request: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
     let method = request["method"].as_str().unwrap_or_default().to_string();
     log.lock().expect("log").push(method.clone());
+    request_log.lock().expect("request log").push(request.clone());
     // A handler may block (to model a slow node); keep it off the runtime's workers.
     let params = request["params"].clone();
     let called = method.clone();

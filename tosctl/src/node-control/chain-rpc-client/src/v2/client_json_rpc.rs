@@ -84,6 +84,16 @@ fn bounded_rpc_error_category(error: &impl std::fmt::Display) -> &'static str {
     }
 }
 
+/// A fixed category for a non-success HTTP status.
+fn http_status_category(status: u16) -> &'static str {
+    match status {
+        429 => "rate_limit",
+        400..=499 => "http_client_error",
+        500..=599 => "http_server_error",
+        _ => "http_non_success",
+    }
+}
+
 fn is_explicit_missing_config_param(
     error: &ToscenterError,
     expected_id: &serde_json::Value,
@@ -255,35 +265,47 @@ impl ClientJsonRpc {
     ) -> Result<RawRpcResponse, RawReadError> {
         let total = self.endpoints.len();
         let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % total;
+        // One id, one set of parameters, every endpoint at most once.
         let request_id = uuid::Uuid::new_v4().to_string();
         let mut last_error_category: Option<&'static str> = None;
+        let mut oversized: Option<usize> = None;
         for attempt in 0..total {
             let idx = (start + attempt) % total;
             let endpoint = &self.endpoints[idx];
-            match endpoint
+            let outcome = endpoint
                 .client
                 .json_rpc_text(method, params.clone(), serde_json::json!(request_id))
-                .await
-            {
-                Ok((status, text)) => {
+                .await;
+            let error_category = match outcome {
+                Ok((status, text)) if (200..300).contains(&status) => {
                     return Ok(RawRpcResponse { status, text, request_id });
                 }
+                // A non-success status is this endpoint's failure, whatever its body
+                // says or how large it is: the body is never read or logged.
+                Ok((status, _)) => http_status_category(status),
+                Err(ToscenterError::HttpStatus { code }) => http_status_category(code),
+                // An oversized successful answer is a property of the answer, but
+                // another endpoint may still serve it within the limit.
                 Err(ToscenterError::ResponseTooLarge { limit }) => {
-                    return Err(RawReadError::TooLarge { limit });
+                    oversized = Some(limit);
+                    "response_too_large"
                 }
-                Err(err) => {
-                    let error_category = bounded_rpc_error_category(&err);
-                    tracing::debug!(
-                        method,
-                        endpoint = %endpoint.display_origin,
-                        attempt = attempt + 1,
-                        total_attempts = total,
-                        error_category,
-                        "chain-rpc request failed"
-                    );
-                    last_error_category = Some(error_category);
-                }
-            }
+                Err(err) => bounded_rpc_error_category(&err),
+            };
+            tracing::debug!(
+                method,
+                endpoint = %endpoint.display_origin,
+                attempt = attempt + 1,
+                total_attempts = total,
+                error_category,
+                "chain-rpc request failed"
+            );
+            last_error_category = Some(error_category);
+        }
+        // Only an oversized successful answer is "too large"; HTTP errors alone
+        // never are.
+        if let Some(limit) = oversized {
+            return Err(RawReadError::TooLarge { limit });
         }
         Err(RawReadError::Failed(format!(
             "all chain-rpc endpoints failed; endpoint_count={total}; rpc_error_category={}",

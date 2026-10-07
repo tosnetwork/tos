@@ -191,12 +191,8 @@ impl BaseApiClient {
             Ok(text) => Ok((status.as_u16(), text)),
             // An oversized body is "too large" only on a successful response; an
             // error status stays an error whatever its body's size.
-            Err(ToscenterError::ResponseTooLarge { limit }) if !status.is_success() => {
-                self.handle_error(
-                    u32::from(status.as_u16()),
-                    format!("error response body exceeds the {limit}-byte limit"),
-                )?;
-                Err(protocol_error("unreachable error response state"))
+            Err(ToscenterError::ResponseTooLarge { .. }) if !status.is_success() => {
+                Err(ToscenterError::HttpStatus { code: status.as_u16() })
             }
             Err(error) => Err(error),
         }

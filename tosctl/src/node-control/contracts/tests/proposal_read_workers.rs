@@ -766,3 +766,155 @@ fn an_oversized_error_response_never_falls_back() {
         });
     }
 }
+
+// ─── Endpoint failover ────────────────────────────────────────────────────────
+
+/// A node answering the checkpoint and the account normally and the getter with
+/// `getter`.
+async fn endpoint(getter: Reply) -> ServedNode {
+    node(getter, account_reply(&account_with_value(Cell::default()))).await
+}
+
+/// A list read through a client over `nodes`, with the getter tried on `nodes[0]`
+/// first. (The client's round-robin cursor gives the checkpoint request the first
+/// configured endpoint and the getter the next, so `nodes[0]` is configured second.)
+async fn read_over(nodes: &[&ServedNode]) -> anyhow::Result<ProposalAnswer> {
+    let mut urls: Vec<(String, Option<String>)> =
+        nodes.iter().map(|node| (node.url.clone(), None)).collect();
+    urls.rotate_right(1);
+    let client = ClientJsonRpc::connect_many(urls, None)?;
+    let address: MsgAddressInt = CONFIG.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
+    tokio::time::timeout(
+        WATCHDOG,
+        read_proposals_with(&client, &address, ProposalRead::List, &production()),
+    )
+    .await
+    .unwrap_or_else(|_| panic!("a proposal read hung past the {WATCHDOG:?} watchdog"))
+}
+
+fn getter_requests(nodes: &[&ServedNode]) -> Vec<serde_json::Value> {
+    nodes.iter().flat_map(|node| node.requests_for("runGetMethodStd")).collect()
+}
+
+fn account_reads(nodes: &[&ServedNode]) -> usize {
+    nodes.iter().map(|node| node.requests_for("getAddressInformation").len()).sum()
+}
+
+/// Every endpoint was asked at most once, with one request id and one set of
+/// pinned parameters.
+fn assert_one_request_per_endpoint(nodes: &[&ServedNode]) {
+    for node in nodes {
+        assert!(node.requests_for("runGetMethodStd").len() <= 1, "an endpoint was asked twice");
+    }
+    let requests = getter_requests(nodes);
+    assert!(!requests.is_empty());
+    for request in &requests {
+        assert_eq!(request["id"], requests[0]["id"], "the request id changed between attempts");
+        assert_eq!(request["params"], requests[0]["params"], "the parameters changed");
+        assert_eq!(request["params"]["seqno"], SEQNO, "the checkpoint is not pinned");
+    }
+}
+
+fn small_error(status: u16) -> Reply {
+    Reply::raw(status, r#"{"ok":false,"jsonrpc":"2.0","id":"@@ID@@","error":"busy","code":500}"#)
+}
+
+fn big(status: u16) -> Reply {
+    Reply::raw(status, " ".repeat(MAX_RESPONSE_BYTES + 1))
+}
+
+/// A non-success status on the first endpoint, small or oversized, fails over to
+/// the next, which answers: the read succeeds from it and never touches state.
+#[test]
+fn an_http_error_fails_over_to_the_next_endpoint() {
+    let runtime = runtime();
+    for (case, first) in [
+        ("small 503", small_error(503)),
+        ("small 500", small_error(500)),
+        ("small 429", small_error(429)),
+        ("small 404", small_error(404)),
+        ("oversized 503", big(503)),
+        ("oversized 429", big(429)),
+        ("oversized 200", big(200)),
+    ] {
+        runtime.block_on(async {
+            let failing = endpoint(first).await;
+            let serving = endpoint(Reply::raw(200, list_answer(2, 0))).await;
+            let nodes = [&failing, &serving];
+            let list = listed(read_over(&nodes).await.unwrap_or_else(|e| panic!("{case}: {e:#}")));
+            assert_eq!(list.len(), 2, "{case}");
+            assert_eq!(failing.requests_for("runGetMethodStd").len(), 1, "{case}: not tried first");
+            assert_eq!(serving.requests_for("runGetMethodStd").len(), 1, "{case}");
+            assert_eq!(account_reads(&nodes), 0, "{case} read the stored state");
+            assert_one_request_per_endpoint(&nodes);
+        });
+    }
+}
+
+/// When no endpoint serves a bounded successful answer, the read is "too large"
+/// (and may read stored state) only if some endpoint answered successfully with an
+/// oversized body. HTTP errors alone, of any size, are a failure.
+#[test]
+fn only_an_oversized_success_makes_the_answer_too_large() {
+    let runtime = runtime();
+    for (case, replies, falls_back) in [
+        ("all oversized 200", vec![big(200), big(200)], true),
+        ("oversized 200 then 503", vec![big(200), small_error(503)], true),
+        ("503 then oversized 200", vec![small_error(503), big(200)], true),
+        ("oversized 200 then oversized 500", vec![big(200), big(500)], true),
+        ("all HTTP errors, small then oversized", vec![small_error(503), big(500)], false),
+        ("all HTTP errors, oversized then small", vec![big(502), small_error(429)], false),
+        ("single oversized 200", vec![big(200)], true),
+        ("single small 503", vec![small_error(503)], false),
+    ] {
+        runtime.block_on(async {
+            let mut nodes = Vec::new();
+            for reply in replies {
+                nodes.push(endpoint(reply).await);
+            }
+            let refs: Vec<&ServedNode> = nodes.iter().collect();
+            let outcome = read_over(&refs).await;
+            assert_eq!(
+                account_reads(&refs) > 0,
+                falls_back,
+                "{case}: {:?}",
+                outcome.as_ref().err()
+            );
+            if falls_back {
+                assert_eq!(listed(outcome.unwrap_or_else(|e| panic!("{case}: {e:#}"))).len(), 1);
+            } else {
+                let error = outcome.err().unwrap_or_else(|| panic!("{case} was accepted"));
+                assert!(
+                    format!("{error:#}").contains("all chain-rpc endpoints failed"),
+                    "{case}: {error:#}"
+                );
+            }
+            for node in &refs {
+                assert_eq!(
+                    node.requests_for("runGetMethodStd").len(),
+                    1,
+                    "{case}: an endpoint was skipped"
+                );
+            }
+            assert_one_request_per_endpoint(&refs);
+        });
+    }
+}
+
+/// A malformed but bounded successful answer is not retried on the next endpoint.
+#[test]
+fn a_malformed_bounded_answer_is_not_retried() {
+    let runtime = runtime();
+    runtime.block_on(async {
+        let malformed = endpoint(Reply::raw(200, "{\"ok\":true,")).await;
+        let serving = endpoint(Reply::raw(200, list_answer(1, 0))).await;
+        let nodes = [&malformed, &serving];
+        assert!(read_over(&nodes).await.is_err());
+        assert_eq!(
+            serving.requests_for("runGetMethodStd").len(),
+            0,
+            "a malformed answer was retried"
+        );
+        assert_eq!(account_reads(&nodes), 0);
+    });
+}
