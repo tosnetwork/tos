@@ -11,6 +11,7 @@ add_library(tos-proof-embedded SHARED EXCLUDE_FROM_ALL embedded.cpp)
 target_link_libraries(tos-proof-embedded PRIVATE proof-verify-engine)
 set_target_properties(tos-proof-embedded PROPERTIES OUTPUT_NAME tosproofverify)
 if(ANDROID)
+  target_sources(tos-proof-embedded PRIVATE android-jni.cpp)
   target_link_options(tos-proof-embedded PRIVATE "-Wl,-z,max-page-size=16384")
 endif()
 
