@@ -3,6 +3,9 @@
 - Opened: 2026-10-07. Status: **design for review — no code written.** Revision 2:
   the owner redirected the design from "harden the public RPC path" to "operator
   automation uses the node's authenticated control channel, not the public RPC".
+  Revision 3: amendments from the design pre-review (off-actor execution with
+  admission, exact VM context, honest capacity, TL optional fields, account and
+  routing behaviour).
 - Repository: `tosnetwork/tos`, base `main` at `6da705c8a` (includes PR #151).
 - Branch / PR: `fix/elector-participant-list`, draft PR #152.
 - Also kept in the team notes (`memo/elector-participant-list/`).
@@ -90,8 +93,10 @@ anonymous getter call. The elector's own 256-member cap needs ≈ 369k.
    not inherit, limits whose purpose is to defend that node against strangers.
 2. **The contract is the authority on its own data layout.** Run the contract's getter;
    do not re-implement its storage format in the client.
-3. **Read capacity must cover the protocol's own bounds** (256 participants; every
-   proposal the config contract can hold).
+3. **Read capacity must cover the protocol's bound where one exists**, and state its
+   limit honestly where none does: the elector caps participants at 256; the config
+   contract has no proposal-count bound, so proposal reads are bounded all-or-nothing
+   with explicit limits, and incremental reads remain future work.
 4. **A list read is all or nothing**; a partial list never reaches a staking decision.
 5. **Bounded cost even for an authenticated caller**: a bug in a client must not make
    the node do unbounded work.
@@ -107,7 +112,7 @@ public serialization limit, no client-side stack-safety machinery, no stored-sta
 decoder.
 
 The public RPC path stays as it is for the public (explorers, wallets), with its
-documented limits.
+documented limits. Operator workflows never fall back to it.
 
 ## 5. Design
 
@@ -125,43 +130,74 @@ engine.validator.electionParticipants
 engine.validator.getElectionParticipants
     flags:# block:flags.0?tosNode.blockIdExt = engine.validator.ElectionParticipants;
 
-engine.validator.configProposal
-    hash:int256 expires:int critical:Bool param_id:int param_hash:int256
+engine.validator.configProposalMeta
+    flags:# hash:int256 expires:int critical:Bool param_id:int
+    param_hash:flags.0?int256 has_value:Bool
     vset_id:int256 voters:(vector int) weight_remaining:long
     rounds_remaining:int wins:int losses:int
-    = engine.validator.ConfigProposal;
+    = engine.validator.ConfigProposalMeta;
 engine.validator.configProposals
-    block:tosNode.blockIdExt proposals:(vector engine.validator.configProposal)
+    block:tosNode.blockIdExt proposals:(vector engine.validator.configProposalMeta)
     = engine.validator.ConfigProposals;
 engine.validator.getConfigProposals
     flags:# block:flags.0?tosNode.blockIdExt = engine.validator.ConfigProposals;
 ```
 
-- Amounts are carried as canonical big-endian bytes (Coins can exceed 64 bits); the
-  Rust side converts with checked arithmetic into its existing types and refuses
-  explicitly what does not fit.
+- Amounts are canonical big-endian unsigned bytes: zero is the empty string, no
+  leading zero byte, at most 16 bytes (the Coins range); the Rust side converts with
+  checked arithmetic and refuses explicitly what does not fit its existing types.
+- TL `int` fields that carry times or ranges are interpreted as unsigned 32-bit and
+  range-checked; unknown `flags` bits are refused.
+- `param_hash` is optional (`flags.0`), so an absent hash is distinct from a
+  legitimate all-ones hash; `has_value` says whether the proposal carries a value
+  (absence means deletion to existing consumers). The metadata type is distinct from
+  the existing `ConfigProposal`, whose `param.cell = None` means deletion — metadata
+  must never be mapped into that type with the value dropped.
 - `getConfigProposals` returns proposal metadata only (what `vote offer ls`/`cast`
   use), not parameter values, so its size is independent of proposal payloads.
 - Without `flags.0` the query reads the latest masterchain state the node has applied;
-  the answer always names the block it was computed at.
+  with it, the full block identity (root and file hash, not only seqno) must match a
+  masterchain block whose state the node holds, else an explicit error. All reads of
+  one query use one coherent applied snapshot, and the answer names that block.
 
-### 5.2 Node implementation (`validator-engine/validator-engine.cpp`)
+### 5.2 Node implementation (`validator-engine/`)
 
-- Permission: `vep_default` (read-only), like `getStats`.
-- Resolve the masterchain state (requested or latest) through the validator manager,
-  as `getShardOutQueueSize` does; read the elector / config contract account from it.
-- Run the getter in process with `SmartContract::run_get_method` and the same VM
-  context the lite server builds (config, libraries, previous blocks, `now`), but with
-  a **control-query gas budget** (`kControlGetterGasLimit`, proposed 10,000,000: ~27×
-  the elector's 256-member worst case and ~4,400 proposals; a named constant with the
-  rationale beside it).
-- Walk the result cons list **iteratively** in C++ into the flat TL vector; validate
-  every field (exact tuple arities, integer ranges, strictly ascending ids, at most
-  256 participants for the elector); any violation is a control-query error.
-- Bound the reply to the control channel's frame (16 MiB, `adnl-ext-limits.h`); the
-  elector's worst case is a few tens of KB.
-- Run in the engine's existing control-query actor context; the getter is CPU-bound and
-  bounded by the gas budget.
+- **Authorization first**: `vep_default` (read-only), checked before any state lookup,
+  admission or allocation; unauthorized and insufficient-permission callers are tested.
+- **Off the engine actor**: control callbacks are dispatched to the `ValidatorEngine`
+  actor (`validator-engine.cpp:2962–2965`); a getter must not run there. A dedicated
+  bounded executor runs getters: at most two active jobs and a small bounded queue,
+  excess requests answered `busy`; admission is taken before retaining state or
+  allocating results; workers receive an immutable snapshot; cancellation never
+  releases admission while work continues; the result list is walked and destroyed
+  iteratively; no VM state is persisted and returned actions are never executed.
+- **Exact VM context**: reuse or extract the lite server's context construction
+  (`liteserver.cpp:1416–1464`, `:1521–1547`) rather than `SmartContract` convenience
+  defaults: the snapshot's global version, block time and logical time; full balance
+  including extra currencies (set in c7 exactly — `Args::set_balance` takes `uint64`,
+  so it is not used); address, code and data; config, previous-block information and
+  version-dependent c7 fields; global and account libraries with the same rules; due
+  payment and precompiled-contract context; signature checking enabled; randomness
+  seeded by the same policy. Parity tests share the seed.
+- **Named budgets**: `kElectorParticipantsGasLimit`, derived from the measured
+  256-member worst case (≈ 369k) plus stated headroom; `kConfigProposalsGasLimit`
+  (10,000,000) as an explicit operational ceiling, not a capacity claim. Gas
+  exhaustion is an explicit error; no partial result.
+- **Result conversion**: walk the cons list iteratively into the flat TL vector,
+  validating exact tuple arities, integer ranges, strictly ascending ids, and for the
+  elector at most 256 participants with the getter's exclusive `2^256 − 1` sentinel
+  reproduced; any violation is an explicit error.
+- **Reply bound**: a named maximum reply size well below the 16 MiB control packet
+  (`adnl-ext-limits.h:15–18`) leaving protocol overhead; vector, count and byte bounds
+  are applied before building the reply.
+- **Accounts**: missing or frozen account → explicit error, never an empty election;
+  active elector with no open election → the canonical empty result; upgraded code →
+  run its getter and refuse incompatible output explicitly; missing libraries or
+  context → explicit error. Account and state roots are unchanged after every
+  execution, successful or not.
+- **Exposure**: the control channel is authenticated but not inherently loopback-only
+  (control ports carry no address restriction, `validator-engine.cpp:2980–2981`);
+  deployment keeps it on loopback, as the production runbook requires.
 
 ### 5.3 tosctl
 
@@ -171,9 +207,14 @@ engine.validator.getConfigProposals
   consumer's output is unchanged.
 - If the node does not know the query (pre-upgrade engine), fail with an explicit
   "upgrade the node" error; TOS is pre-launch, so no compatibility path is kept.
-- The hardened public-RPC proposal path from #151 is no longer used by operator
-  commands; it is either kept for callers without a control key or removed — a
-  review question (§9).
+- Every operator consumer is audited and moved, including proposal-creation
+  read-back and single-proposal details; operator commands never silently use the
+  public path, and tests assert the public-RPC call count stays zero in migrated
+  workflows. `getConfigProposals` metadata covers `vote offer cast` selection and
+  display; full proposal details and diff need the value and keep their own read.
+- The hardened public proposal path from #151 stays, explicitly separate, for public
+  consumers; it is removed only after every remaining caller is inventoried and
+  replaced.
 
 ### 5.4 Out of scope
 
@@ -187,9 +228,9 @@ engine.validator.getConfigProposals
 
 | Read | Bound |
 | --- | --- |
-| Election participants | the elector's own 256 cap; gas ≈ 369k ≪ 10M |
-| Config proposals | ≈ 4,400 at 10M gas; metadata only |
-| Reply size | ≪ 16 MiB control frame |
+| Election participants | the elector's own 256 cap, under a budget derived from the measured worst case |
+| Config proposals | bounded all-or-nothing under an explicit 10M-gas operational ceiling and the reply bound; supported capacity stated only after measuring adversarial dictionary shapes and populated voter lists; incremental reads remain future work |
+| Reply size | a named bound below the 16 MiB control packet |
 
 ## 7. Verification plan
 
@@ -207,6 +248,14 @@ engine.validator.getConfigProposals
 - **Live**: the local development network (7 nodes, elections running) answers the new
   queries over each node's control channel, read-only; results equal the public
   getter's for the current (small) election.
+- **Executor**: queue saturation (`busy`), cancellation (admission held until work
+  ends), shutdown, and another control query completing while an expensive getter
+  runs.
+- **Boundaries**: maximum-depth member dictionaries; 256 and 257 entries; amount
+  overflow per field; the exclusive hash-max sentinel; frozen, missing, upgraded and
+  library-coded accounts; wrong root/file hash at the same height; unavailable
+  historical state; gas exhaustion and reply-size limits with no partial result;
+  account/state roots unchanged after success and failure.
 - **Mutation testing** per the project's rules (isolated worktrees, run in parallel).
 - Full local gate: native build (no target) incl. `-Werror`; `ctest`; `cargo test
   --workspace --no-run`; touched crates; fmt; clippy.
@@ -220,13 +269,13 @@ engine.validator.getConfigProposals
 | Read raw account state over the control channel and decode in Rust | Duplicates the contract's layout in the client; the getter already defines it |
 | Cap or paginate in the elector | Contract change; the 256 cap already exists |
 
-## 9. Questions for the reviewer
+## 9. Reviewer rulings (design pre-review, 2026-10-07)
 
-1. Is the control interface (authenticated, loopback, `vep_default`) the right
-   boundary for these reads, and is `vep_default` the right permission?
-2. Is 10,000,000 gas an appropriate budget for an authenticated control query, or
-   should each query get its own budget derived from the contract's cap?
-3. Should #151's hardened public proposal path stay for callers without a control key,
-   or be removed now that operator commands no longer use it?
-4. Is returning metadata only from `getConfigProposals` sufficient for `vote offer
-   cast` (which today shows the parameter id and voter count)?
+1. Control interface: yes; `vep_default` is appropriate, with authorization checked
+   before state lookup and admission.
+2. Separate named budgets: the elector's from the 256-member measurement plus
+   headroom; 10M for proposals only as an explicit operational ceiling, off-actor.
+3. Keep #151's public path separate for public consumers; operator commands never use
+   it; remove it only after every caller is replaced.
+4. Metadata suffices for `vote offer cast` selection and display, not for full details
+   or diff; preserve optional-hash and value-presence semantics.
