@@ -136,7 +136,9 @@ def source_files():
 
 def public_files():
     files = [ROOT / name for name in PUBLIC_FILES]
-    files += sorted((ROOT / "tosctl/src/node-control/contracts/tests/fixtures/quantum").glob("*.json"))
+    files += sorted(
+        (ROOT / "tosctl/src/node-control/contracts/tests/fixtures/quantum").glob("*.json")
+    )
     files += sorted((ROOT / "tosctl/src/node-control/contracts/src").glob("wallet_quantum*.rs"))
     files += [ROOT / "tosctl/src/wallet-pq-signer/src/kdf.rs"]
     return files

@@ -56,7 +56,9 @@ def transform(source, variant):
     if variant.startswith("bounds"):
         start = source.index("  ;; Fee-relative class bounds:")
         end = source.index("  throw_unless(2010, (amount >= floor)", start)
-        declaration = "(int, int, int) quantumfee_bounds(int kind, int setup_module, int setup_vault)"
+        declaration = (
+            "(int, int, int) quantumfee_bounds(int kind, int setup_module, int setup_vault)"
+        )
         call = "  var (floor, ceiling, reserve) = quantumfee_bounds(kind, setup_module, setup_vault);\n"
         result = "  return (floor, ceiling, reserve);\n"
     else:

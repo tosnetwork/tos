@@ -1113,9 +1113,9 @@ def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path)
     )
     (tmp_path / "unguarded.stderr.raw").write_bytes(result.stderr)
     with pytest.raises(AssertionError, match="early namespace guard"):
-        assert b"Quantum admission candidate requires an explicit AUTH network tag" in result.stderr, (
-            "early namespace guard"
-        )
+        assert (
+            b"Quantum admission candidate requires an explicit AUTH network tag" in result.stderr
+        ), "early namespace guard"
     assert (tmp_path / "main-wallet.pk").exists(), "unguarded candidate reached custody generation"
 
 

@@ -62,7 +62,11 @@ def main():
         "--chain-config", type=Path, help="Use unchanged generated version-18 ConfigParams"
     )
     p.add_argument("--transaction-time", type=int, help="Explicit disposable-network signing time")
-    p.add_argument("--export-network-input", action="store_true", help="Export public-test account cells and signed external message")
+    p.add_argument(
+        "--export-network-input",
+        action="store_true",
+        help="Export public-test account cells and signed external message",
+    )
     p.add_argument("--genesis-driver", type=Path)
     p.add_argument("--fee-driver", type=Path)
     p.add_argument("--preparation-driver", type=Path)
@@ -142,12 +146,21 @@ def main():
         global_id = parameters[19].refs[0].slice().sint(32)
         now = 1_789_437_600  # One hour after canonical genesis.
     if options.transaction_time is not None:
-        assert options.chain_config and 7201 < options.transaction_time < 0xffffffff - 600
+        assert options.chain_config and 7201 < options.transaction_time < 0xFFFFFFFF - 600
         now = options.transaction_time
     if options.export_network_input:
         assert options.chain_config and global_id == 1 and network == int("42" * 32, 16)
-        assert not any((options.prepare, options.pop_role, options.recovery, options.fault,
-                        options.delete_execute_actions, options.delete_payload_guard, options.credit_probe))
+        assert not any(
+            (
+                options.prepare,
+                options.pop_role,
+                options.recovery,
+                options.fault,
+                options.delete_execute_actions,
+                options.delete_payload_guard,
+                options.credit_probe,
+            )
+        )
     auth_fee_amount = pop_fee_amount = 5_000_000_000
     if chain_config is not None:
         generated_compute, generated_forward, generated_reserve, generated_vault_floor = (
@@ -246,7 +259,9 @@ def main():
             emission = "ifnot (cell_null?(actions)) { set_c5_actions(actions); }"
             assert text.count(emission) == 1
             src.write_text(text.replace(emission, ""))
-        vault = native.compile_contract(str(work / "wallet-quantum-fee-vault.fc"), out / "vault.boc")
+        vault = native.compile_contract(
+            str(work / "wallet-quantum-fee-vault.fc"), out / "vault.boc"
+        )
         const = f'cell compiled_vault() asm "B{{{vault.boc().hex()}}} B>boc PUSHREF";\n'
         (work / "module.fc").write_text(
             '#include "wallet-quantum-module.fc";\n'
@@ -553,20 +568,37 @@ def main():
         if options.export_network_input:
             accounts = {}
             for name, code, data, balance in (
-                ("wallet", wallet, wd, 10**15), ("module", module, md, 10**12),
-                ("vault", vault, vd, 10**15), ("recipient", recipient_code, recipient_data, 10**9),
+                ("wallet", wallet, wd, 10**15),
+                ("module", module, md, 10**12),
+                ("vault", vault, vd, 10**15),
+                ("recipient", recipient_code, recipient_data, 10**9),
             ):
                 initial = native.state_init(code, data)
-                accounts[name] = dict(address="0:" + initial.hash.hex(), code=code.boc().hex(),
-                                      data=data.boc().hex(), state_init=initial.boc().hex(), balance=balance)
+                accounts[name] = dict(
+                    address="0:" + initial.hash.hex(),
+                    code=code.boc().hex(),
+                    data=data.boc().hex(),
+                    state_init=initial.boc().hex(),
+                    balance=balance,
+                )
             message = ext.boc()
             (out / "PUBLIC-TEST-ONLY-external.boc").write_bytes(message)
-            (out / "PUBLIC-TEST-ONLY-network-input.json").write_text(json.dumps(dict(
-                scope="Disposable private network only; deterministic keys; export is not broadcast or delivery evidence",
-                global_id=global_id, network=f"{network:064x}", signing_time=now, valid_until=now + 600,
-                message_sha256=hashlib.sha256(message).hexdigest(), accounts=accounts,
-                payment_amount=1_000_000_000,
-            ), indent=2) + "\n")
+            (out / "PUBLIC-TEST-ONLY-network-input.json").write_text(
+                json.dumps(
+                    dict(
+                        scope="Disposable private network only; deterministic keys; export is not broadcast or delivery evidence",
+                        global_id=global_id,
+                        network=f"{network:064x}",
+                        signing_time=now,
+                        valid_until=now + 600,
+                        message_sha256=hashlib.sha256(message).hexdigest(),
+                        accounts=accounts,
+                        payment_amount=1_000_000_000,
+                    ),
+                    indent=2,
+                )
+                + "\n"
+            )
         if chain_config is None:
             entries = read_dict(native.config(17), 32)
             entries[48] = Cell().ref(global_policy())

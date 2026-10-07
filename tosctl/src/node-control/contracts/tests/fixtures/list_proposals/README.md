@@ -73,3 +73,10 @@ the stored account is far more compact (a minimal proposal adds about 110 bytes
 to it). No state bound exists in the contract, so a dictionary too large for
 both representations is an explicit error. Paginated or incremental state reads
 are the remaining capacity work.
+
+The 2026-10-08 config-code fixture includes ConfigParam 48 monotonic AUTH policy
+validation. Its representation hash is
+`8291930aa0bf0b6939d8086c9ad9b0d63dbc65e4ca85af081eb80da82af82cb8`.
+Proposal storage layout is unchanged. The decoder accepts this exact hash and
+the prior known hash, while refusing unknown code. The genesis-code test checks
+both hash membership and exact BOC bytes; all twelve proposal sandbox tests pass.

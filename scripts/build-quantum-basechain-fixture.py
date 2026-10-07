@@ -92,7 +92,10 @@ if __name__ == "__main__":
         value = json.loads(args.network_input.read_text())
         if set(value["accounts"]) != {"wallet", "module", "vault", "recipient"}:
             raise ValueError("Expected four disposable-network accounts")
-        fixture = {"input": {"global_id": value["global_id"], "network": value["network"]}, "output": {}}
+        fixture = {
+            "input": {"global_id": value["global_id"], "network": value["network"]},
+            "output": {},
+        }
         for role, account in value["accounts"].items():
             roots = Boc(bytes.fromhex(account["state_init"])).deserialize()
             if len(roots) != 1 or account["address"] != "0:" + roots[0].hash.hex():
@@ -102,6 +105,7 @@ if __name__ == "__main__":
             fixture["output"][role + "_init"] = account["state_init"]
         # Keep adaptation outside the generated directory (build requires it fresh).
         import tempfile
+
         with tempfile.TemporaryDirectory() as temporary:
             fixture_path = Path(temporary) / "fixture.json"
             fixture_path.write_text(json.dumps(fixture))

@@ -28,3 +28,27 @@ the isolated option-table test does not clear its remaining runtime cases.
 
 The repair does not change default admission settings or bypass CI gates.
 Final-head remote CI remains required before merge.
+
+## Second CI round: head 0d2bce93e
+
+The completed round exposed three additional integration failures:
+
+- Python hygiene: 31 Ruff errors, followed by formatting differences. Applied
+  import fixes and formatting to the workflow's changed-file selection; Ruff
+  check now passes.
+- Both release-parity platforms rejected the review manifest's file identities.
+  Renaming and formatting changed source bytes without refreshing that frozen
+  manifest. Regenerated it only after asserting identical code, configuration,
+  format and candidate acceptance status. Full bundle reproduction and its
+  targeted corruption/refusal controls pass locally; comparison was not relaxed.
+- The configuration-contract sandbox refused current genesis code
+  `8291930aa0bf0b6939d8086c9ad9b0d63dbc65e4ca85af081eb80da82af82cb8`.
+  ConfigParam 48 monotonic-policy validation changed code while leaving proposal
+  storage unchanged. Retained the prior known-code hash and added this specific
+  reviewed hash; regenerated the exact code BOC fixture from native gen_fif
+  output. All 12 `config_list_proposals_sandbox` tests pass, including exact
+  genesis fixture matching, large-state fallback and unknown-code refusal.
+
+The sanitizer job was again never acquired by a runner. The dependent
+`determinism` gate correctly failed because that required job did not succeed;
+its prerequisite gate is unchanged. Final-head remote checks still must pass.

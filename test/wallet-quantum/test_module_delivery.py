@@ -99,7 +99,9 @@ def run(out, delete_recipient_update=False, chain_config_path=None):
             "wallet-v5-action-list.fc",
         ]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
-        vault = native.compile_contract(str(work / "wallet-quantum-fee-vault.fc"), out / "vault.boc")
+        vault = native.compile_contract(
+            str(work / "wallet-quantum-fee-vault.fc"), out / "vault.boc"
+        )
         recipient_source = work / "recipient.fc"
         recipient_source.write_text(
             "() recv_internal(slice body) impure { "

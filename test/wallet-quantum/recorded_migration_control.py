@@ -27,7 +27,9 @@ def main():
     changed_body = Cell(bits=body.bits, refs=[body.refs[0], changed])
     bad = args.output / "different-submission.boc"
     bad.write_bytes(changed_body.boc())
-    source = ROOT / "tosctl/src/node-control/contracts/src/wallet_quantum_recorded_migration_tests.rs"
+    source = (
+        ROOT / "tosctl/src/node-control/contracts/src/wallet_quantum_recorded_migration_tests.rs"
+    )
     original = source.read_text()
     witness = "executed migration differs from gated signature"
     at = original.index(json.dumps(witness))

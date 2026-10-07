@@ -83,7 +83,8 @@ class CandidateReadbackTests(unittest.TestCase):
     def test_installed_account_proof_binds_all_roles_and_checkpoint(self):
         fixture = json.loads(
             (
-                Path(__file__).parents[1] / "test/wallet-quantum/fixtures/public-genesis-accounts.json"
+                Path(__file__).parents[1]
+                / "test/wallet-quantum/fixtures/public-genesis-accounts.json"
             ).read_text()
         )
         point = {

@@ -16,7 +16,11 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     files = {
         name: (BASE / name).read_text()
-        for name in ["proven_getters.rs", "wallet_quantum_policy.rs", "wallet_quantum_wallet_state.rs"]
+        for name in [
+            "proven_getters.rs",
+            "wallet_quantum_policy.rs",
+            "wallet_quantum_wallet_state.rs",
+        ]
     }
     config_test = "config_response_cells_are_bound_to_requested_indices_and_hashes"
     policy_test = "primary_policy_strict_retirement"

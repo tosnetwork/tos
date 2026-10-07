@@ -92,7 +92,9 @@ def main():
             shutil.copyfile(src, work / src.name)
         for name in ["auth-policy.fc", "pq.fc", "pq-bytes.fc"]:
             shutil.copyfile(ROOT / "crypto/smartcont" / name, work / name)
-        vault = native.compile_contract(str(work / "wallet-quantum-fee-vault.fc"), out / "vault.boc")
+        vault = native.compile_contract(
+            str(work / "wallet-quantum-fee-vault.fc"), out / "vault.boc"
+        )
         driver = work / "module.fc"
         driver.write_text(
             '#include "wallet-quantum-module.fc";\n'

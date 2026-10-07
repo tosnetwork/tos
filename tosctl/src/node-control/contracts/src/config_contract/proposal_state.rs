@@ -25,7 +25,12 @@ use chain_block::{Cell, HashmapE, HashmapType, SliceData, read_single_root_boc};
 /// Representation hashes of the configuration-contract code whose storage layout
 /// this module decodes (`config-code.fc`, as the zerostate deploys it). Pinned by a
 /// test against a generated zerostate.
-pub const SUPPORTED_CONFIG_CODE_HASHES: [[u8; 32]; 1] = [CONFIG_CODE_HASH];
+pub const SUPPORTED_CONFIG_CODE_HASHES: [[u8; 32]; 2] =
+    [CONFIG_CODE_HASH, AUTH_POLICY_CONFIG_CODE_HASH];
+
+// ConfigParam 48 monotonic-policy validation changes code, not proposal storage.
+const AUTH_POLICY_CONFIG_CODE_HASH: [u8; 32] =
+    hex_literal("8291930aa0bf0b6939d8086c9ad9b0d63dbc65e4ca85af081eb80da82af82cb8");
 
 const CONFIG_CODE_HASH: [u8; 32] =
     hex_literal("2774a7cc7850cfb8dd1023b725c1e44182a9bae39da547fb8724b2f72562ff7a");

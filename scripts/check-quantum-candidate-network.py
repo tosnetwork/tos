@@ -13,8 +13,8 @@ import time
 import urllib.request
 from pathlib import Path
 
-from pytosiq_core.boc.deserialize import Boc
 from pytosiq_core import Builder
+from pytosiq_core.boc.deserialize import Boc
 from pytosiq_core.tlb.config import ConfigParam20, ConfigParam21
 
 ABSENT_ACCOUNT = "0:" + hashlib.sha256(b"TOS-V5R2-ABSENT-CANDIDATE-PROBE-v1").hexdigest()
@@ -27,7 +27,12 @@ def require(value, message):
 
 def rpc(endpoint, index):
     payload = json.dumps(
-        {"jsonrpc": "2.0", "id": index, "method": "getConfigAll" if index is None else "getConfigParam", "params": {} if index is None else {"param": index}}
+        {
+            "jsonrpc": "2.0",
+            "id": index,
+            "method": "getConfigAll" if index is None else "getConfigParam",
+            "params": {} if index is None else {"param": index},
+        }
     ).encode()
     request = urllib.request.Request(
         endpoint, data=payload, headers={"Content-Type": "application/json"}
@@ -184,7 +189,11 @@ def verify_installed_accounts(root, build, network, out, fixture, point):
     verifier = build / "lite-client/proof-verify/tos-proof-verify"
     target = {key: point[key] for key in ("workchain", "shard", "seqno", "root_hash", "file_hash")}
     results = {}
-    for name in (("wallet", "module", "vault", "recipient") if "recipient_init" in fixture["output"] else ("wallet", "module", "vault")):
+    for name in (
+        ("wallet", "module", "vault", "recipient")
+        if "recipient_init" in fixture["output"]
+        else ("wallet", "module", "vault")
+    ):
         init = Boc(bytes.fromhex(fixture["output"][name + "_init"])).deserialize()
         code = Boc(bytes.fromhex(fixture["input"][name + "_code"])).deserialize()
         data = Boc(bytes.fromhex(fixture["output"][name + "_data"])).deserialize()
@@ -256,17 +265,31 @@ def main():
         type=Path,
         help="public SDK fixture for positive wallet/module/vault account proofs",
     )
-    parser.add_argument("--network-input", type=Path, help="Four-account public-test signed payment export")
-    parser.add_argument("--broadcast", action="store_true", help="Broadcast exported test message and retain raw transaction observations")
+    parser.add_argument(
+        "--network-input", type=Path, help="Four-account public-test signed payment export"
+    )
+    parser.add_argument(
+        "--broadcast",
+        action="store_true",
+        help="Broadcast exported test message and retain raw transaction observations",
+    )
     args = parser.parse_args()
     require(not (args.sdk_fixture and args.network_input), "select one account fixture")
-    require(not args.broadcast or args.network_input, "broadcast requires public-test network input")
+    require(
+        not args.broadcast or args.network_input, "broadcast requires public-test network input"
+    )
     fixture = None
     exported = None
     if args.network_input:
         exported = json.loads(args.network_input.read_text())
-        require(exported["global_id"] == 1 and exported["network"] == "42" * 32, "test export namespace mismatch")
-        require(set(exported["accounts"]) == {"wallet", "module", "vault", "recipient"}, "test export roles mismatch")
+        require(
+            exported["global_id"] == 1 and exported["network"] == "42" * 32,
+            "test export namespace mismatch",
+        )
+        require(
+            set(exported["accounts"]) == {"wallet", "module", "vault", "recipient"},
+            "test export roles mismatch",
+        )
         fixture = {"input": {"global_id": 1, "network": "42" * 32}, "output": {}}
         for role, account in exported["accounts"].items():
             fixture["input"][role + "_code"] = account["code"]
@@ -367,14 +390,27 @@ def main():
             broadcast = None
             if args.broadcast:
                 message = (args.network_input.parent / "PUBLIC-TEST-ONLY-external.boc").read_bytes()
-                require(hashlib.sha256(message).hexdigest() == exported["message_sha256"], "signed export message hash mismatch")
-                require(exported["signing_time"] <= int(time.time()) < exported["valid_until"], "signed export outside validity window")
+                require(
+                    hashlib.sha256(message).hexdigest() == exported["message_sha256"],
+                    "signed export message hash mismatch",
+                )
+                require(
+                    exported["signing_time"] <= int(time.time()) < exported["valid_until"],
+                    "signed export outside validity window",
+                )
+
                 def query(method, params):
-                    payload = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
-                    req = urllib.request.Request("http://127.0.0.1:38545/jsonRPC", data=payload,
-                                                 headers={"Content-Type": "application/json"})
+                    payload = json.dumps(
+                        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+                    ).encode()
+                    req = urllib.request.Request(
+                        "http://127.0.0.1:38545/jsonRPC",
+                        data=payload,
+                        headers={"Content-Type": "application/json"},
+                    )
                     with urllib.request.urlopen(req, timeout=10) as response:
                         return json.load(response)
+
                 broadcast = query("sendBoc", {"boc": base64.b64encode(message).decode()})
                 (out / "broadcast-result.json").write_text(json.dumps(broadcast, indent=2) + "\n")
                 require(broadcast.get("ok") is True, "test message broadcast refused")
@@ -382,15 +418,24 @@ def main():
                 deadline = time.monotonic() + 90
                 while time.monotonic() < deadline:
                     for role, account in exported["accounts"].items():
-                        observations[role] = query("getTransactions", {"address": account["address"], "limit": 16})
-                    (out / "transaction-observations.json").write_text(json.dumps(observations, indent=2) + "\n")
+                        observations[role] = query(
+                            "getTransactions", {"address": account["address"], "limit": 16}
+                        )
+                    (out / "transaction-observations.json").write_text(
+                        json.dumps(observations, indent=2) + "\n"
+                    )
                     if all(v.get("ok") is True and v.get("result") for v in observations.values()):
                         break
-                    require(process.poll() is None, "candidate exited during transaction observation")
+                    require(
+                        process.poll() is None, "candidate exited during transaction observation"
+                    )
                     time.sleep(1)
-                require(all(v.get("ok") is True and v.get("result") for v in observations.values()),
-                        "four-account transaction observation deadline exceeded")
+                require(
+                    all(v.get("ok") is True and v.get("result") for v in observations.values()),
+                    "four-account transaction observation deadline exceeded",
+                )
                 from quantum_transaction_chain import verify as verify_transaction_chain
+
                 execution = verify_transaction_chain(exported, message, observations)
                 (out / "transaction-chain.json").write_text(json.dumps(execution, indent=2) + "\n")
                 # Execution linkage still requires authenticated block inclusion/finality.
