@@ -1,8 +1,12 @@
 """Independent TL-B config cells exercise the candidate readback acceptance boundary."""
 
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from pytosiq_core import Builder
 
@@ -74,6 +78,43 @@ class CandidateReadbackTests(unittest.TestCase):
         ]:
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.module.validate(self.cells(**kwargs))
+
+    def test_live_proof_result_must_match_readback(self):
+        cells = self.cells()
+        result = {
+            "status": "verified",
+            "mode": "live",
+            "interface": "tos-proof-verify/1",
+            "config_params": [{"index": k, "cell_hash": v.hash.hex()} for k, v in cells.items()],
+            "target": {"seqno": 1},
+            "chain": {"links": 1},
+            "live": {"age_seconds": 1},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def invoke(value, code=0):
+                with (
+                    patch.object(self.module.subprocess, "check_output", return_value=b"{}"),
+                    patch.object(
+                        self.module.subprocess,
+                        "run",
+                        return_value=SimpleNamespace(
+                            stdout=json.dumps(value).encode(), stderr=b"", returncode=code
+                        ),
+                    ),
+                ):
+                    return self.module.verify_live_config(root, root, root, root, cells)
+
+            self.assertEqual(invoke(result)["target"], {"seqno": 1})
+            altered = json.loads(json.dumps(result))
+            altered["config_params"][0]["cell_hash"] = "00" * 32
+            with self.assertRaisesRegex(ValueError, "differs from RPC"):
+                invoke(altered)
+            with self.assertRaisesRegex(ValueError, "proof refused"):
+                invoke(result, 1)
+            with self.assertRaisesRegex(ValueError, "identity mismatch"):
+                invoke(dict(result, mode="historical"))
 
 
 if __name__ == "__main__":

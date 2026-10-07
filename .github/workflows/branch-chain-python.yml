@@ -215,6 +215,11 @@ jobs:
           path: |
             build/v5r2-candidate-ci/report.json
             build/v5r2-candidate-ci/network.log
+            build/v5r2-candidate-ci/proof-result.json
+            build/v5r2-candidate-ci/proof-verifier.log
+            build/v5r2-candidate-ci/anchor.json
+            build/v5r2-candidate-ci/proof-request.json
+            build/v5r2-candidate-ci/proof-material/
           if-no-files-found: ignore
           retention-days: 14
 

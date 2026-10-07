@@ -104,6 +104,60 @@ def validate(cells):
     return gas
 
 
+def verify_live_config(root, build, network, out, cells):
+    """Authenticate the generated chain's configuration, independently of raw RPC readback."""
+    verifier = build / "lite-client/proof-verify/tos-proof-verify"
+    anchor = out / "anchor.json"
+    request = out / "proof-request.json"
+    anchor.write_bytes(
+        subprocess.check_output(
+            [str(verifier), "anchor", "--zerostate", str(network / "state/zerostate.boc")],
+            cwd=root,
+            timeout=15,
+        )
+    )
+    request.write_text(
+        json.dumps({"mode": "live", "max_age_seconds": 300, "config_params": list(cells)}) + "\n"
+    )
+    result = subprocess.run(
+        [
+            str(verifier),
+            "verify",
+            "--anchor",
+            str(anchor),
+            "--request",
+            str(request),
+            "--liteserver",
+            str(network / "lite-client.json"),
+            "--state",
+            str(out / "live-state.json"),
+            "--save-material",
+            str(out / "proof-material"),
+            "--timeout-seconds",
+            "45",
+        ],
+        cwd=root,
+        capture_output=True,
+        timeout=60,
+    )
+    (out / "proof-result.json").write_bytes(result.stdout)
+    (out / "proof-verifier.log").write_bytes(result.stderr)
+    require(result.returncode == 0, "live candidate configuration proof refused")
+    verified = json.loads(result.stdout)
+    require(
+        verified.get("status") == "verified"
+        and verified.get("mode") == "live"
+        and verified.get("interface") == "tos-proof-verify/1",
+        "proof result identity mismatch",
+    )
+    hashes = {entry["index"]: entry["cell_hash"] for entry in verified["config_params"]}
+    require(
+        hashes == {index: cell.hash.hex() for index, cell in cells.items()},
+        "authenticated configuration differs from RPC readback",
+    )
+    return {"target": verified["target"], "chain": verified["chain"], "live": verified["live"]}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", type=Path, required=True)
@@ -164,13 +218,17 @@ def main():
                 index: rpc("http://127.0.0.1:38545/jsonRPC", index) for index in (8, 19, 20, 21, 48)
             }
             gas = validate(cells)
+            proof = verify_live_config(root, args.build_dir.resolve(), network, out, cells)
             report = {
                 "scope": "Disposable candidate boot/config readback only, no wallet signature or lifecycle acceptance",
                 "source": subprocess.check_output(
-                    ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"], cwd=root, text=True
+                    ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"],
+                    cwd=root,
+                    text=True,
                 ).strip(),
                 "config_hashes": {str(k): v.hash.hex() for k, v in cells.items()},
                 "gas": gas,
+                "authenticated_config": proof,
                 "binaries": {
                     name: hashlib.sha256((args.build_dir / name / name).read_bytes()).hexdigest()
                     for name in ("validator-engine", "dht-server")
