@@ -170,8 +170,7 @@ TEST(JsonRpcParse, run_method_unparsable_result_keeps_the_parser_error) {
 }
 
 TEST(JsonRpcParse, run_method_inactive_exit_code_does_not_excuse_unparsable_bytes) {
-  auto resolved =
-      tos::resolve_run_method_result_stack(-256, td::Slice("\xff\xff\xff\xff\x00\x01"));
+  auto resolved = tos::resolve_run_method_result_stack(-256, td::Slice("\xff\xff\xff\xff\x00\x01"));
   ASSERT_TRUE(resolved.is_error());
 }
 
