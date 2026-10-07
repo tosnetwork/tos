@@ -1197,7 +1197,7 @@ void HttpQuerySendForm::finish_query() {
   if (promise_) {
     auto page = [&]() -> std::string {
       HttpAnswer A{"send", prefix_};
-      A << "<div class=\"row\"><form action=\"" << prefix_
+      A << "<div class=\"row\"><form action=\"" << escape_html(prefix_)
         << "send\" method=\"post\" enctype=\"multipart/form-data\"><div class=\"form-group-row\">"
         << "<label for=\"filedata\">bag of cells</label>"
         << "<input type=\"file\" class=\"form-control-file\" id=\"filedata\" name=\"filedata\">"

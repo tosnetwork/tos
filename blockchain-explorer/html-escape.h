@@ -1,6 +1,8 @@
 #pragma once
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 inline std::string escape_html(std::string_view value) {
   std::string out;
@@ -41,6 +43,20 @@ inline bool is_safe_path_prefix(std::string_view prefix) {
     }
   }
   return prefix.find("//") == std::string_view::npos;
+}
+
+// Splits a request path into the prefix echoed into every page and the
+// command after the last '/'. Returns nothing when the prefix is not a safe
+// path prefix, so a request can only be routed with a prefix that pages may
+// echo.
+inline std::optional<std::pair<std::string, std::string>> split_explorer_url(std::string_view url) {
+  auto pos = url.rfind('/');
+  std::string_view prefix = pos == std::string_view::npos ? std::string_view() : url.substr(0, pos + 1);
+  std::string_view command = pos == std::string_view::npos ? url : url.substr(pos + 1);
+  if (!is_safe_path_prefix(prefix)) {
+    return std::nullopt;
+  }
+  return std::make_pair(std::string(prefix), std::string(command));
 }
 
 // Content-Security-Policy of every explorer HTML page. Scripts are allowed

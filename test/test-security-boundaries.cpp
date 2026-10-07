@@ -415,6 +415,14 @@ TEST(SecurityBoundaries, ExplorerPathPrefixAndPolicy) {
                            "https://maxcdn.bootstrapcdn.com;", "https://cdnjs.cloudflare.com;"}) {
     CHECK(policy.find(host) == std::string::npos);
   }
+  // Routing yields a prefix only when it is safe to echo.
+  for (const char *url : {"/\"><script>/status", "/a b/status", "//other.invalid/status", "/%22/block"}) {
+    CHECK(!split_explorer_url(url));
+  }
+  ASSERT_EQ(split_explorer_url("/explorer/status").value(),
+            std::make_pair(std::string("/explorer/"), std::string("status")));
+  ASSERT_EQ(split_explorer_url("status").value(), std::make_pair(std::string(""), std::string("status")));
+  ASSERT_EQ(split_explorer_url("/").value(), std::make_pair(std::string("/"), std::string("")));
   HttpAnswer answer("status", "/\"><b>/");
   auto page = answer.finish();
   CHECK(page.find("\"><b>") == std::string::npos);
