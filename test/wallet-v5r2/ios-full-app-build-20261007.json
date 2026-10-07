@@ -1,0 +1,11 @@
+{
+  "ios_head": "7704d35b0db4cdf280474d095eca80ca7c478e87",
+  "command": "make compile BUILD_DIR=<retained iOS artifact directory>",
+  "exit": 0,
+  "scope": "Full iOS Simulator app build/link only; not application R2 flow, runtime proof, real device custody or release acceptance",
+  "log": {
+    "path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-native/ios/compile-raw.log",
+    "sha256": "f7a15b8a66cc51c4dedf5c9eb2cde98757c0bb803f81bd5884fcb05239200967",
+    "bytes": 8956716
+  }
+}
