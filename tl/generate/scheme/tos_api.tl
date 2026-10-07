@@ -1348,3 +1348,18 @@ consensus.simplex.requestCandidate id:consensus.CandidateId want_candidate:Bool 
 
 engine.validator.setConsensusNoncriticalParamsOverrides overrides:consensus.noncriticalParamsOverrideList = engine.validator.Success;
 engine.validator.getConsensusNoncriticalParamsOverrides = consensus.NoncriticalParamsOverrideList;
+
+---types---
+engine.validator.electionParticipant id:int256 stake:bytes max_factor:int adnl:int256 algorithm:int key_id:int256 = engine.validator.ElectionParticipant;
+engine.validator.frozenStake id:int256 owner:int256 weight:long stake:bytes banned:Bool = engine.validator.FrozenStake;
+engine.validator.pastElection election_id:int unfreeze_at:int stake_held:int vset_hash:int256 total_stake:bytes bonuses:bytes frozen:(vector engine.validator.frozenStake) = engine.validator.PastElection;
+engine.validator.returnedStake wallet:int256 amount:bytes = engine.validator.ReturnedStake;
+engine.validator.electorState block:tosNode.blockIdExt elect_at:int elect_close:int min_stake:bytes total_stake:bytes failed:Bool finished:Bool participants:(vector engine.validator.electionParticipant) past_elections:(vector engine.validator.pastElection) returned:(vector engine.validator.returnedStake) = engine.validator.ElectorState;
+engine.validator.configProposalMeta flags:# hash:int256 expires:int critical:Bool param_id:int param_hash:flags.0?int256 has_value:Bool vset_id:int256 voters:(vector int) weight_remaining:long rounds_remaining:int wins:int losses:int = engine.validator.ConfigProposalMeta;
+engine.validator.configProposals block:tosNode.blockIdExt proposals:(vector engine.validator.configProposalMeta) = engine.validator.ConfigProposals;
+engine.validator.configProposalDetail flags:# block:tosNode.blockIdExt meta:flags.0?engine.validator.configProposalMeta value:flags.1?bytes = engine.validator.ConfigProposalDetail;
+
+---functions---
+engine.validator.getElectorState flags:# block:flags.0?tosNode.blockIdExt wallets:(vector int256) = engine.validator.ElectorState;
+engine.validator.getConfigProposals flags:# block:flags.0?tosNode.blockIdExt = engine.validator.ConfigProposals;
+engine.validator.getConfigProposal flags:# block:flags.0?tosNode.blockIdExt hash:int256 = engine.validator.ConfigProposalDetail;

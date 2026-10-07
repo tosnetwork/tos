@@ -112,6 +112,31 @@ impl<'r> Deserializer<'r> {
     /// Read bare-serialized TL-object
     #[inline(always)]
     pub fn read_bare<D: BareDeserialize>(&mut self) -> Result<D> {
+        // The generated structs do not retain presence flags. Check these new
+        // control types before delegation so unknown fields cannot disappear.
+        let name = type_name::<D>();
+        let mask = if name
+            == type_name::<tos::engine::validator::configproposaldetail::ConfigProposalDetail>()
+        {
+            Some(3u32)
+        } else if name
+            == type_name::<tos::engine::validator::configproposalmeta::ConfigProposalMeta>()
+            || name == type_name::<tos::rpc::engine::validator::GetElectorState>()
+            || name == type_name::<tos::rpc::engine::validator::GetConfigProposals>()
+            || name == type_name::<tos::rpc::engine::validator::GetConfigProposal>()
+        {
+            Some(1u32)
+        } else {
+            None
+        };
+        if let Some(mask) = mask {
+            let flags = self.read_bare::<tos::Flags>()?;
+            if flags & !mask != 0 {
+                return Err(Error::msg("unknown control query flags"));
+            }
+            let mut reader = io::Cursor::new(flags.to_le_bytes()).chain(self);
+            return D::deserialize_bare(&mut Deserializer::new(&mut reader));
+        }
         D::deserialize_bare(self)
     }
 
@@ -306,7 +331,12 @@ impl TLObject {
     }
     pub fn downcast<I: AnyBoxedSerialize>(self) -> std::result::Result<I, Self> {
         if self.is::<I>() {
-            Ok(*self.0.into_boxed_any().downcast::<I>().unwrap())
+            // Retain the original response if an erased implementation reports
+            // inconsistent type information instead of panicking during decoding.
+            match self.0.clone_boxed().0.into_boxed_any().downcast::<I>() {
+                Ok(value) => Ok(*value),
+                Err(_) => Err(self),
+            }
         } else {
             Err(self)
         }
@@ -576,7 +606,7 @@ pub fn serialize_bare<T: BareSerialize>(object: &T) -> Result<Vec<u8>> {
 
 /// Serialize non-boxed TL object into bytes in-place
 pub fn serialize_bare_inplace<T: BareSerialize>(buf: &mut Vec<u8>, object: &T) -> Result<()> {
-    buf.truncate(0);
+    buf.clear();
     Serializer::new(buf).write_into_boxed(object)
 }
 
@@ -595,7 +625,7 @@ pub fn serialize_boxed_append<T: BoxedSerialize>(buf: &mut Vec<u8>, object: &T) 
 
 /// Serialize boxed TL object into bytes in-place
 pub fn serialize_boxed_inplace<T: BoxedSerialize>(buf: &mut Vec<u8>, object: &T) -> Result<()> {
-    buf.truncate(0);
+    buf.clear();
     serialize_boxed_append(buf, object)
 }
 
