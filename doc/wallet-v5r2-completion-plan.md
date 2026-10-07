@@ -113,3 +113,31 @@ final scope-matched evidence; existing source-bound evidence is linked in
 | R3 | SDK/CLI/iOS/Android creation/restore/POP and staged successor flow; durable fee signer and loss/exhaustion solution; exact readiness labeling; T09, T12, T19–T20, T23, T25, T28. Default switch only after R4 also passes |
 | R4 | Independent final-head security review/CI; deployment confirmation; explicit acceptance of consensus/governance and declared custody/funding dependencies |
 
+
+## Disposable-network transaction inputs
+
+The native fee delivery runner can export a signed external LMS fee message and
+four matching account StateInit/code/data cells, including an executing recipient.
+These use deterministic PUBLIC TEST ONLY keys. They must never hold real funds.
+The export is an input to network validation, not evidence of broadcast, finality,
+or delivery. Genesis allocation is not signed deployment acceptance.
+
+Use an isolated output directory and the generated candidate configuration:
+
+```sh
+uv run --with cryptography python test/wallet-v5r2/test_fee_delivery.py \
+  --chain-config "$CANDIDATE_CONFIG" --transaction-time "$SIGNING_TIME" \
+  --export-network-input --output "$TRANSACTION_OUTPUT"
+uv run --with cryptography python scripts/build-v5r2-basechain-fixture.py \
+  --network-input "$TRANSACTION_OUTPUT/PUBLIC-TEST-ONLY-network-input.json" \
+  --build-dir "$TOS_NATIVE_BUILD" --out "$BASECHAIN_OUTPUT"
+```
+
+`SIGNING_TIME` must match the disposable chain's transaction time; AUTH and fee
+intents expire after 600 seconds. The builder independently checks StateInit
+addresses and native account registration. It retains the network's fixed total
+supply through the existing basechain-allocation deduction. Before using the
+signed message, validate the freshly booted network's namespace/configuration
+and four installed accounts. The next gate is broadcasting that exact message,
+then proving vault leaf consumption, wallet nonce progression and the recipient's
+transaction-bound execution. An emulator success does not clear this gate.

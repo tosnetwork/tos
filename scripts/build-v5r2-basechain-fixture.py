@@ -27,7 +27,10 @@ def build(fixture_path, build_dir, out):
         "1 setglobalid",
     ]
     accounts = {}
-    for name, balance in [("wallet", 10**15), ("module", 10**12), ("vault", 10**15)]:
+    roles = [("wallet", 10**15), ("module", 10**12), ("vault", 10**15)]
+    if "recipient_init" in fixture["output"]:
+        roles.append(("recipient", 10**9))
+    for name, balance in roles:
         code = out / (name + "-code.boc")
         data = out / (name + "-data.boc")
         code.write_bytes(bytes.fromhex(fixture["input"][name + "_code"]))
@@ -78,8 +81,30 @@ def build(fixture_path, build_dir, out):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sdk-fixture", type=Path, required=True)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--sdk-fixture", type=Path)
+    inputs.add_argument("--network-input", type=Path, help="Public-test signed transaction export")
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
-    build(args.sdk_fixture.resolve(), args.build_dir.resolve(), args.out.resolve())
+    fixture_path = args.sdk_fixture
+    if args.network_input:
+        value = json.loads(args.network_input.read_text())
+        if set(value["accounts"]) != {"wallet", "module", "vault", "recipient"}:
+            raise ValueError("Expected four disposable-network accounts")
+        fixture = {"input": {"global_id": value["global_id"], "network": value["network"]}, "output": {}}
+        for role, account in value["accounts"].items():
+            roots = Boc(bytes.fromhex(account["state_init"])).deserialize()
+            if len(roots) != 1 or account["address"] != "0:" + roots[0].hash.hex():
+                raise ValueError("Exported account address mismatch")
+            fixture["input"][role + "_code"] = account["code"]
+            fixture["output"][role + "_data"] = account["data"]
+            fixture["output"][role + "_init"] = account["state_init"]
+        # Keep adaptation outside the generated directory (build requires it fresh).
+        import tempfile
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture_path = Path(temporary) / "fixture.json"
+            fixture_path.write_text(json.dumps(fixture))
+            build(fixture_path, args.build_dir.resolve(), args.out.resolve())
+    else:
+        build(fixture_path.resolve(), args.build_dir.resolve(), args.out.resolve())
