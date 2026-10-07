@@ -1,0 +1,32 @@
+{
+  "android_head": "ffa6c385599fb6edd2f65863e136af78a14918c7",
+  "command": "make compile",
+  "exit": 0,
+  "duration": "6m 41s",
+  "tasks": {
+    "total": 953,
+    "executed": 548,
+    "from_cache": 166,
+    "up_to_date": 239
+  },
+  "scope": "Complete wallet/signer Debug and instrumentation APK assembly only; not runtime R2 UI/chain flows, hardware custody or release acceptance",
+  "artifacts": {
+    "apps/wallet/instance/main/build/outputs/apk/default/debug/main-default-debug.apk": {
+      "sha256": "254b1a200344a292236dc118d7965000dd34684c6e44ddad3a75672a3b37a108",
+      "bytes": 78945734
+    },
+    "apps/wallet/instance/main/build/outputs/apk/androidTest/default/debug/main-default-debug-androidTest.apk": {
+      "sha256": "010e5ddf007846d3d73108f01ebbc61e6e7047433c7b02ab5499ad1c7869680f",
+      "bytes": 4870194
+    },
+    "apps/signer/build/outputs/apk/debug/signer-debug.apk": {
+      "sha256": "aab50b6420f6dd85b541fa3f43db22f10f5a5c3ce811ea7fe97a6662e10f8b29",
+      "bytes": 68188924
+    },
+    "apps/signer/build/outputs/apk/androidTest/debug/signer-debug-androidTest.apk": {
+      "sha256": "40b5e9cf95f8ad9d00c620f8527adad26b90282ab32a5edf4612818a461c6cc4",
+      "bytes": 662819
+    }
+  },
+  "artifact_root": "/Users/tomisetsu/android/worktrees/v5r2-rescue"
+}
