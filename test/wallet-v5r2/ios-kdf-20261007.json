@@ -1,0 +1,13 @@
+{
+  "tests": 2,
+  "frozen_derivations": 7,
+  "master_wipe_control": "semantic assertion failed",
+  "restored_exit": 0,
+  "ios_commit": "1aef73b",
+  "scope": "Native iOS Simulator derivation and caller master wipe; not complete encrypted custody, mnemonic creation or wallet restore acceptance",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-kdf",
+  "logs": {
+    "restored.log": "ddd833fc20f2fed552092d65f53f4706bf18cc555e3b50239a84fd1ace63aee1",
+    "master-wipe.log": "95dfef57047bb1b5f436a160908056d3cb6c4d98004450427d828aace0854aec"
+  }
+}
