@@ -1,0 +1,22 @@
+{
+  "app_tests": 3,
+  "controls": [
+    {
+      "guard": "native-prestart-wipe",
+      "runtime_failure": null
+    },
+    {
+      "guard": "native-error-feedback",
+      "runtime_failure": null
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Android native mnemonic UI input handoff/Unicode normalization, cancellation and feedback; not full UI round trip, chain proof or funded recovery acceptance",
+  "android_commit": "1aee27d",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-native-ui-input",
+  "logs": {
+    "native-prestart-wipe.log": "5fb006c88ad1065752b456eae95e0bfb4b2259eb0494284b47f7e323945d899c",
+    "native-error-feedback.log": "a8c66270fea42434fe136e50fe73786129c7c0d45013cca2292ce2f97b8e3444",
+    "restored.log": "a18385847a1cd3ccce748a2037cf832db8b5142e263158f7797653c437a4c199"
+  }
+}
