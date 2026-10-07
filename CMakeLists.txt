@@ -1995,3 +1995,12 @@ set_tests_properties(
 add_subdirectory(test)
 endif()
 #END internal
+
+if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
+  add_executable(test-security-boundaries test/test-td-main.cpp test/test-security-boundaries.cpp
+    blockchain-explorer/blockchain-explorer-http.cpp)
+  target_link_libraries(test-security-boundaries PRIVATE toshttp adnl tdutils lite-client-common)
+  tos_test(test-security-boundaries)
+
+  set_tests_properties(test-security-boundaries PROPERTIES LABELS "security-findings")
+endif()

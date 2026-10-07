@@ -29,6 +29,12 @@ export function generateSessionKeypair(): SessionKeypair {
   return { publicKey: kp.publicKey, secretKey: kp.secretKey };
 }
 
+/** Reject low-order Curve25519 peers: their shared secret is public. */
+export function isSafePeerPublicKey(key: Uint8Array, secret: Uint8Array): boolean {
+  return key.length === 32 && secret.length === 32 &&
+    nacl.scalarMult(secret, key).some((byte) => byte !== 0);
+}
+
 // ---------------------------------------------------------------------------
 // Encrypt / Decrypt
 // ---------------------------------------------------------------------------
@@ -83,7 +89,8 @@ export function decryptMessage(
 // Session persistence
 // ---------------------------------------------------------------------------
 
-const SESSION_STORAGE_KEY = "session_v2";
+// Older sessions accepted unauthenticated first senders and cannot be restored.
+const SESSION_STORAGE_KEY = "session_v3";
 
 /**
  * Save session state to storage.
@@ -146,12 +153,21 @@ export async function loadSession(
     return null;
   }
 
+  if (![data.secretKey, data.clientId, data.walletPublicKey].every((key) => /^[0-9a-fA-F]{64}$/.test(key))) {
+    await clearSession(storage);
+    return null;
+  }
+  const secretKey = hexToBytes(data.secretKey);
+  const publicKey = hexToBytes(data.clientId);
+  const walletPublicKey = hexToBytes(data.walletPublicKey);
+  if (!isSafePeerPublicKey(walletPublicKey, secretKey) ||
+      bytesToHex(nacl.box.keyPair.fromSecretKey(secretKey).publicKey) !== bytesToHex(publicKey)) {
+    await clearSession(storage);
+    return null;
+  }
   return {
-    keypair: {
-      publicKey: hexToBytes(data.clientId),
-      secretKey: hexToBytes(data.secretKey),
-    },
-    walletPublicKey: hexToBytes(data.walletPublicKey),
+    keypair: { publicKey, secretKey },
+    walletPublicKey,
     bridgeUrl: data.bridgeUrl,
     wallet: data.wallet,
   };

@@ -21,3 +21,5 @@ pub mod vault_builder;
 
 #[cfg(test)]
 mod tests;
+
+pub mod private_file;

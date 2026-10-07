@@ -19,6 +19,7 @@
 */
 #include "keys/encryptor.h"
 #include "td/utils/Random.h"
+#include "td/utils/ScopeGuard.h"
 
 #include "adnl-local-id.h"
 #include "utils.hpp"
@@ -26,11 +27,6 @@
 namespace tos {
 
 namespace adnl {
-
-static td::IPAddress remove_port(td::IPAddress addr) {
-  addr.set_port(0);
-  return addr;
-}
 
 AdnlNodeIdFull AdnlLocalId::get_id() const {
   return id_;
@@ -58,7 +54,27 @@ void AdnlLocalId::receive(td::IPAddress addr, td::BufferSlice data) {
 }
 
 td::actor::Task<> AdnlLocalId::receive_coro(td::IPAddress addr, td::BufferSlice data) {
-  InboundRateLimiter &rate_limiter = inbound_rate_limiter_[remove_port(addr)];
+  static DecryptBudget process_budget{4096, 1.0 / 4096.0, 512};
+  if (!process_budget.acquire()) {
+    add_dropped_packet_stats(addr);
+    co_return td::Status::Error("process decrypt budget exceeded");
+  }
+  SCOPE_EXIT {
+    process_budget.release();
+  };
+  if (!decrypt_budget_.acquire()) {
+    add_dropped_packet_stats(addr);
+    co_return td::Status::Error("local decrypt budget exceeded");
+  }
+  SCOPE_EXIT {
+    decrypt_budget_.release();
+  };
+  auto limiter = bounded_source(inbound_rate_limiter_, preauth_source(addr), MAX_PREAUTH_SOURCES);
+  if (!limiter) {
+    add_dropped_packet_stats(addr);
+    co_return td::Status::Error("pre-authentication source limit exceeded");
+  }
+  InboundRateLimiter &rate_limiter = *limiter;
   if (!cleanup_rate_limiter_at_) {
     alarm_timestamp().relax(cleanup_rate_limiter_at_ = td::Timestamp::in(1.0));
   }
@@ -348,12 +364,26 @@ void AdnlLocalId::get_stats(bool all, td::Promise<tl_object_ptr<tos_api::adnl_st
 
 void AdnlLocalId::add_decrypted_packet_stats(td::IPAddress addr) {
   prepare_packet_stats();
-  packet_stats_cur_.decrypted_packets[remove_port(addr)].inc();
+  auto &table = packet_stats_cur_.decrypted_packets;
+  auto counter = bounded_source(table, preauth_source(addr), MAX_PREAUTH_SOURCES);
+  if (counter) {
+    counter->inc();
+  } else {
+    // The invalid-address entry is a fixed overflow bucket.
+    table[td::IPAddress{}].inc();
+  }
 }
 
 void AdnlLocalId::add_dropped_packet_stats(td::IPAddress addr) {
   prepare_packet_stats();
-  packet_stats_cur_.dropped_packets[remove_port(addr)].inc();
+  auto &table = packet_stats_cur_.dropped_packets;
+  auto counter = bounded_source(table, preauth_source(addr), MAX_PREAUTH_SOURCES);
+  if (counter) {
+    counter->inc();
+  } else {
+    // The invalid-address entry is a fixed overflow bucket.
+    table[td::IPAddress{}].inc();
+  }
 }
 
 void AdnlLocalId::prepare_packet_stats() {

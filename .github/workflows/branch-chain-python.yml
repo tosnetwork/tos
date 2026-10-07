@@ -48,6 +48,11 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-${{ github.sha }}
           restore-keys: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-
 
+      - name: Verify tool pin tamper rejection
+        run: |
+          python3 scripts/test-build-tool-pins.py
+          python3 scripts/test-build-tool-pipelines.py
+
       - name: Configure the minimal native fixture build
         run: >-
           cmake -S . -B build -G Ninja
@@ -73,7 +78,7 @@ jobs:
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
             test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
-            test-rate-limiter test-full-node-shard-admission test-full-node-master-admission \
+            test-rate-limiter test-security-boundaries test-full-node-shard-admission test-full-node-master-admission \
             test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap
           ccache --show-stats
 
@@ -89,7 +94,7 @@ jobs:
               "test-wallet-index", "test-wallet-index-apply", "test-candidate-data-cache",
               "test-shard-block-confirmations",
               "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure",
-              "test-rate-limiter", "test-full-node-shard-admission", "test-full-node-master-admission",
+              "test-rate-limiter", "test-security-boundaries", "test-full-node-shard-admission", "test-full-node-master-admission",
               "full-node-master-startup",
               "test-rldp2-inbound-budget", "test-rldp2-inbound-transfer-bound", "test-rldp2-decoder-heap",
           }
@@ -248,6 +253,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: tosctl/src -> target
+      - name: Run private file persistence regressions
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p secrets-vault --lib --locked
       - name: Compile every Rust workspace test target
         run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked
       - name: Run command tests including backup, secret input and wallet confirmation

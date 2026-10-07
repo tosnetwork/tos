@@ -73,10 +73,11 @@ fn wallet_data(owners: &[[u8; 32]], k: u8) -> Cell {
     })
 }
 
-/// The part every co-signer signs: wallet_id, query_id, and no outbound messages.
+/// The part every co-signer signs: wallet_id, global_id, query_id, and no outbound messages.
 fn query_body(query_id: u64) -> Cell {
     cell(|b| {
         b.append_u32(WALLET_ID).unwrap();
+        b.append_i32(42).unwrap();
         b.append_u64(query_id).unwrap();
     })
 }
@@ -441,11 +442,12 @@ fn sign_bit_alias_owners_neither_sign_nor_count() {
     assert_eq!(wallet.processed(query_id), -1, "two real owners reach k");
 }
 
-/// wallet_id, query_id, then one (mode, message) pair per action: the query part every
+/// wallet_id, global_id, query_id, then one (mode, message) pair per action: the query part every
 /// signer signs, with outbound messages.
 fn query_body_with(query_id: u64, messages: &[Cell]) -> Cell {
     cell(|b| {
         b.append_u32(WALLET_ID).unwrap();
+        b.append_i32(42).unwrap();
         b.append_u64(query_id).unwrap();
         for message in messages {
             b.append_u8(3).unwrap();
@@ -745,6 +747,7 @@ fn joining_with_a_different_message_is_refused_before_acceptance() {
     // The request's own bits: the stored messages under another send mode.
     let other_mode = cell(|b| {
         b.append_u32(WALLET_ID).unwrap();
+        b.append_i32(42).unwrap();
         b.append_u64(query_id).unwrap();
         for message in &stored {
             b.append_u8(2).unwrap();
@@ -754,6 +757,7 @@ fn joining_with_a_different_message_is_refused_before_acceptance() {
     // Identical bits, one more reference.
     let extra_ref = cell(|b| {
         b.append_u32(WALLET_ID).unwrap();
+        b.append_i32(42).unwrap();
         b.append_u64(query_id).unwrap();
         for message in &stored {
             b.append_u8(3).unwrap();
@@ -863,4 +867,28 @@ fn request_size_limits_are_enforced_before_acceptance() {
         Err(error) => error,
     };
     assert!(error.contains("exit code: 40"), "tree of shared cells: {error}");
+}
+
+#[test]
+fn signed_query_cannot_be_replayed_on_a_sibling_network() {
+    let keys = strong_keys(1);
+    let mut wallet = Wallet::deploy(&public(&keys), 1, keys.clone());
+    let query_id = wallet.query_id(0xfeed);
+    let root = signed_root(0, None, query_id);
+    let packet = query(sign(&keys[0], &root), &root);
+    let mut sibling = Wallet::deploy(&public(&keys), 1, keys.clone());
+    let mut config = sibling.bc.config_params().clone();
+    config.set_config(chain_block::ConfigParamEnum::ConfigParam19(43)).unwrap();
+    config
+        .set_config(chain_block::ConfigParamEnum::ConfigParam31(chain_block::ConfigParam31 {
+            fundamental_smc_addr: chain_block::FundamentalSmcAddresses::default(),
+        }))
+        .unwrap();
+    sibling.bc.set_config(config).unwrap();
+    assert_eq!(wallet.address, sibling.address);
+    wallet.send(packet.clone()).expect("right network").expect_success();
+    assert_eq!(wallet.processed(query_id), -1);
+    let error = sibling.refused(packet);
+    assert!(error.contains("44"), "wrong network: {error}");
+    assert_eq!(sibling.query_state(query_id), (0, 0));
 }

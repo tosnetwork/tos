@@ -549,13 +549,13 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
 
   GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config
     EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/pq-launch-limits.fc)
-  GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
-  GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
-  GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)
-  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5 EXTRA_DEPS smartcont/auth-extension.fc)
-  GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet)
-  GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet)
-  GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2)
+  GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5 EXTRA_DEPS smartcont/auth-extension.fc smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   # The libraries it includes are part of what it compiles to. Without them here, editing
   # one leaves this artifact stale and every test reads the previous version of the rule.
   GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code
@@ -564,9 +564,9 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
   GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig
     EXTRA_DEPS smartcont/strong-ed25519-key.fc)
-  GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet)
-  GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)
-  GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3)
+  GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
   GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow
     EXTRA_DEPS smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc)
@@ -628,7 +628,7 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/payment-channel-code SOURCE smartcont/payment-channel-code.fc NAME payment-channel
     EXTRA_DEPS smartcont/strong-ed25519-key.fc)
 
-  GenFif(DEST smartcont/auto/simple-wallet-ext-code SOURCE smartcont/simple-wallet-ext-code.fc NAME simple-wallet-ext)
+  GenFif(DEST smartcont/auto/simple-wallet-ext-code SOURCE smartcont/simple-wallet-ext-code.fc NAME simple-wallet-ext EXTRA_DEPS smartcont/strong-ed25519-key.fc)
 endif()
 
 add_library(smc-envelope STATIC ${SMC_ENVELOPE_SOURCE})

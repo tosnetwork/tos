@@ -1,0 +1,25 @@
+name: Wallet bridge trust
+on:
+  pull_request:
+    paths:
+      - 'sdk/js/packages/connect/**'
+      - '.github/workflows/connect-trust.yml'
+permissions:
+  contents: read
+jobs:
+  connect-trust:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Install locked SDK dependencies
+        working-directory: sdk/js
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: Verify encrypted pairing and session trust
+        working-directory: sdk/js
+        run: |
+          pnpm --filter @tos/connect typecheck
+          pnpm --filter @tos/connect test

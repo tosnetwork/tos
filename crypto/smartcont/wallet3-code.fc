@@ -1,3 +1,4 @@
+#include "strong-ed25519-key.fc";
 ;; Simple wallet smart contract with global_id anti-replay protection
 
 int get_global_id() asm "GLOBALID";
@@ -18,6 +19,7 @@ int get_global_id() asm "GLOBALID";
   ds.end_parse();
   throw_unless(33, msg_seqno == stored_seqno);
   throw_unless(34, subwallet_id == stored_subwallet);
+  throw_if(35, weak_ed25519_key?(public_key));
   throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
   accept_message();
   cs~touch();

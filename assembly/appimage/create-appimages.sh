@@ -1,4 +1,6 @@
 #!/bin/bash
+set -euo pipefail
+REPO_ROOT=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 
 if [ ! -d "artifacts" ]; then
   echo "No artifacts found."
@@ -6,12 +8,14 @@ if [ ! -d "artifacts" ]; then
 fi
 # x86_64 or aarch64
 ARCH=$1
+case "$ARCH" in x86_64|aarch64) ;; *) echo "unsupported architecture" >&2; exit 1 ;; esac
 
 rm -rf appimages
 
 mkdir -p appimages/artifacts
 
 wget -nc https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$ARCH.AppImage
+python3 "$REPO_ROOT/scripts/verify-build-tool.py" "appimagetool-$ARCH" "appimagetool-$ARCH.AppImage"
 chmod +x ./appimagetool-$ARCH.AppImage
 
 cd appimages

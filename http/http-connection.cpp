@@ -103,6 +103,10 @@ void HttpConnection::send_request(std::unique_ptr<HttpRequest> request, std::sha
 
 void HttpConnection::send_response(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload) {
   CHECK(!writing_payload_);
+  if (!response->keep_alive()) {
+    close_after_write_ = true;
+  }
+  response->set_keep_alive(!close_after_write_);
   response->store_http(buffered_fd_.output_buffer());
 
   write_payload(std::move(payload));
@@ -158,7 +162,7 @@ bool HttpConnection::continue_payload_write() {
   }
 
   auto t = writing_payload_->payload_type();
-  if (t == HttpPayload::PayloadType::pt_eof) {
+  if (t == HttpPayload::PayloadType::pt_eof && !close_after_write_) {
     t = HttpPayload::PayloadType::pt_chunked;
   }
 

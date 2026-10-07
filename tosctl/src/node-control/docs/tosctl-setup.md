@@ -174,7 +174,7 @@ tosctl config chain-rpc set -u "http://127.0.0.1:3301/"
 With an optional API key:
 
 ```bash
-tosctl config chain-rpc set -u "http://127.0.0.1:3301/" -k "your-api-key"
+tosctl config chain-rpc set -u "http://127.0.0.1:3301/" --api-key-prompt
 ```
 
 > **Important**: Do not enable the RPC server on a validator node. Use a separate TOS fullnode as the RPC server.
@@ -797,3 +797,15 @@ Or override temporarily via environment variable:
 ```bash
 RUST_LOG=debug tosctl service --config=tosctl-config.json
 ```
+
+### Private configuration and credential input
+
+Configuration saves use mode-0600 atomic replacement and reject symlinks and
+hardlinks. Run as the owner of the configuration directory. Use a dedicated
+mode-0700 directory for file vaults; the library refuses existing shared vault
+directories instead of changing their permissions.
+
+For chain-RPC API keys, use `--api-key-prompt` for hidden interactive input,
+`--api-key-file` for an owner-private regular file, or `--api-key-fd` for a
+protected descriptor/pipe. The literal `--api-key` / `-k` option is retired so
+tokens do not appear in process arguments and shell history.

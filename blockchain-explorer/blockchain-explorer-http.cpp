@@ -38,6 +38,7 @@
 #include "vm/cells/MerkleProof.h"
 
 #include "blockchain-explorer-http.hpp"
+#include "html-escape.h"
 
 bool local_scripts{false};
 
@@ -695,11 +696,11 @@ HttpAnswer& HttpAnswer::operator<<(ConfigParam conf) {
 }
 
 HttpAnswer& HttpAnswer::operator<<(Error error) {
-  return *this << "<div class=\"alert alert-danger\">" << error.error.to_string() << "</div>";
+  return *this << "<div class=\"alert alert-danger\">" << escape_html(error.error.to_string()) << "</div>";
 }
 
 HttpAnswer& HttpAnswer::operator<<(Notification n) {
-  return *this << "<div class=\"alert alert-success\">" << n.text << "</div>";
+  return *this << "<div class=\"alert alert-success\">" << escape_html(n.text) << "</div>";
 }
 
 void HttpAnswer::block_id_link(tos::BlockIdExt block_id) {
@@ -711,7 +712,7 @@ std::string HttpAnswer::abort(td::Status error) {
   if (error_.is_ok()) {
     error_ = std::move(error);
   }
-  return header() + "<div class=\"alert alert-danger\">" + error_.to_string() + "</div>" + footer();
+  return header() + "<div class=\"alert alert-danger\">" + escape_html(error_.to_string()) + "</div>" + footer();
 }
 
 std::string HttpAnswer::abort(std::string error) {
@@ -721,7 +722,7 @@ std::string HttpAnswer::abort(std::string error) {
 std::string HttpAnswer::header() {
   sb_->clear();
   *this << "<!DOCTYPE html>\n"
-        << "<html lang=\"en\"><head><meta charset=\"utf-8\"><title>" << title_ << "</title>\n"
+        << "<html lang=\"en\"><head><meta charset=\"utf-8\"><title>" << escape_html(title_) << "</title>\n"
         << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1.0, "
            "maximum-scale=1.0, user-scalable=no\" />\n"
         << "<meta name=\"format-detection\" content=\"telephone=no\" />\n"
@@ -791,6 +792,6 @@ std::string HttpAnswer::finish() {
     std::string data = sb_->as_cslice().c_str();
     return header() + data + footer();
   } else {
-    return header() + "<div class=\"alert alert-danger\">" + error_.to_string() + "</div>" + footer();
+    return header() + "<div class=\"alert alert-danger\">" + escape_html(error_.to_string()) + "</div>" + footer();
   }
 }

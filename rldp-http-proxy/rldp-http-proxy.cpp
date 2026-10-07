@@ -481,7 +481,11 @@ class TcpToRldpRequestSender : public td::actor::Actor {
         abort_query(S.move_as_error());
         return;
       }
-      response_->add_header(std::move(h));
+      S = response_->add_header(std::move(h));
+      if (S.is_error()) {
+        abort_query(S.move_as_error());
+        return;
+      }
     }
     response_->add_header({PROXY_ENTRY_VERISON_HEADER_NAME, PROXY_VERSION_HEADER});
     auto S = response_->complete_parse_header();

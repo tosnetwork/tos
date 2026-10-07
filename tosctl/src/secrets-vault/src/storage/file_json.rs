@@ -27,7 +27,6 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
 };
-use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct StoredSecret {
@@ -140,14 +139,12 @@ impl FileJsonStorage {
         crypto_factory: Box<dyn CryptoFactory>,
         auto_migrate: bool,
     ) -> anyhow::Result<Self> {
-        if let Some(parent) = file_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
+        crate::private_file::prepare_parent(file_path, true)?;
 
         let crypto = crypto_factory.new_crypto()?;
 
-        let tree = if tokio::fs::metadata(&file_path).await.is_ok() {
-            let mut json = tokio::fs::read_to_string(&file_path).await?;
+        let tree = if tokio::fs::symlink_metadata(&file_path).await.is_ok() {
+            let mut json = crate::private_file::read_regular(file_path)?;
             let mut storage_file: StorageFile = serde_json::from_str(&json)?;
 
             if storage_file.version != Self::FORMAT_VERSION {
@@ -160,7 +157,7 @@ impl FileJsonStorage {
                 }
 
                 Self::migrate(file_path, master_key.key_material(), crypto.as_ref()).await?;
-                json = tokio::fs::read_to_string(&file_path).await?;
+                json = crate::private_file::read_regular(file_path)?;
                 storage_file = serde_json::from_str(&json)?;
             }
 
@@ -306,13 +303,12 @@ impl FileJsonStorage {
     }
 
     async fn safe_save(data: &str, file_path: &Path) -> anyhow::Result<()> {
-        let temp_path = file_path.with_extension("tmp");
-        let mut file = tokio::fs::File::create(&temp_path).await?;
-        file.write_all(data.as_bytes()).await?;
-        file.sync_all().await?;
-        drop(file);
-        tokio::fs::rename(&temp_path, file_path).await?;
-
+        let path = file_path.to_owned();
+        let data = data.as_bytes().to_vec();
+        tokio::task::spawn_blocking(move || {
+            crate::private_file::write_private_atomic(&path, &data, true)
+        })
+        .await??;
         Ok(())
     }
 
@@ -346,7 +342,7 @@ impl FileJsonStorage {
         master_key: &KeyMaterial,
         crypto: &dyn Crypto,
     ) -> anyhow::Result<()> {
-        let json_str = tokio::fs::read_to_string(file_path).await?;
+        let json_str = crate::private_file::read_regular(file_path)?;
         let mut json_value: serde_json::Value = serde_json::from_str(&json_str)?;
         let format_version: u32 = json_value
             .get("version")
@@ -368,22 +364,8 @@ impl FileJsonStorage {
             );
         }
 
-        // Backup
-        {
-            let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
-            let base_backup_name =
-                format!("{}.backup_v{}_{}", file_path.to_string_lossy(), format_version, timestamp);
-
-            let mut backup_name = base_backup_name.clone();
-            let mut counter = 1;
-
-            while tokio::fs::try_exists(&backup_name).await? {
-                backup_name = format!("{}.{}", base_backup_name, counter);
-                counter += 1;
-            }
-
-            tokio::fs::copy(file_path, &backup_name).await?;
-        }
+        // Persist the exact bytes read for migration through exclusive creation.
+        crate::private_file::write_private_backup(file_path, json_str.as_bytes(), format_version)?;
 
         let mut current_version = format_version;
         while current_version < Self::FORMAT_VERSION {

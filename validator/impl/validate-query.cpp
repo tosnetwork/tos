@@ -17,6 +17,7 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include "dispatch-progress.h"
 #include <ctime>
 
 #include "adnl/utils.hpp"
@@ -3655,6 +3656,14 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
     return reject_query("OutMsgQueue entry with key "s + out_msg_id.to_hex(352) +
                         " contains a MsgEnvelope that should have been stored under different key " + key.to_hex());
   }
+  if (is_pre_dispatch_cleanup(mode, tag)) {
+    // Only deq/deq_short records are emitted by pre-dispatch cleanup.
+    // deq_imm and tr_req are later imports and must not lower this snapshot.
+    if (out_msg_queue_size_known_ && cleanup_out_msg_count_ >= old_out_msg_queue_size_) {
+      return reject_query("cleanup count exceeds old outbound queue size");
+    }
+    ++cleanup_out_msg_count_;
+  }
   return true;
 }
 
@@ -3670,6 +3679,7 @@ bool ValidateQuery::precheck_message_queue_update() {
     REJECT_UNLESS(ns_.out_msg_queue_);
     REJECT_UNLESS(out_msg_dict_);
     new_out_msg_queue_size_ = old_out_msg_queue_size_;
+    cleanup_out_msg_count_ = 0;
     if (!ps_.out_msg_queue_->scan_diff(
             *ns_.out_msg_queue_,
             [this](td::ConstBitPtr key, int key_len, Ref<vm::CellSlice> old_val_extra,
@@ -3845,46 +3855,12 @@ bool ValidateQuery::unpack_dispatch_queue_update() {
       return reject_query("invalid DispatchQueue dictionary in the new state");
     }
 
-    // Round 147 LOW fix: mirror the collator's skip condition.
-    // Collator (collator.cpp:4514) services AccountDispatchQueue
-    // entries unless BOTH new_out_msg_queue_size_ > collator_soft
-    // AND old_out_msg_queue_size_ > chain_hard.  The validator
-    // previously fired the progress check only when old <=
-    // chain_defer, ignoring the post-update new_out_msg_queue_
-    // size_ it had already computed; the case "old > chain_defer
-    // AND new <= chain_defer" was a hole — collator did the work,
-    // validator did not verify it, so a malicious producer could
-    // skip the per-account dispatch progress and validators
-    // would still accept the block.  collator_soft is a node-
-    // local config (max of collator_opts and chain_defer), so
-    // collator_soft >= chain_defer; "new <= chain_defer" therefore
-    // implies "new <= collator_soft" implies collator should have
-    // serviced messages.  Fire the check on either
-    // new <= chain_defer or old <= chain_defer.
-    //
-    // Round 148 LOW (deferred): there is a residual zone the
-    // round-147 fix does not cover.  The collator's actual skip
-    // decision uses the queue size IMMEDIATELY AFTER
-    // out_msg_queue_cleanup() and BEFORE dispatch processing
-    // (collator.cpp:2455 → 4514), which equals old -
-    // cleanup_drops.  If old > chain_defer, post-cleanup <=
-    // chain_defer (collator must service dispatch), and later
-    // tick/tock/transaction phases add enough out-messages that
-    // final new > chain_defer too, then both old and new exceed
-    // chain_defer and this validator gate skips the progress
-    // check even though the collator was required to service it.
-    // Closing this cleanly requires either (a) committing the
-    // post-cleanup queue size in the block or (b) reconstructing
-    // cleanup_drops from the OutMsgDescr / DispatchQueue diffs
-    // that validate-query already iterates.  Both are larger
-    // refactors; tracked as a follow-up.  Exposure is
-    // liveness/fairness only (not state-integrity), and the
-    // attack window requires a specific cleanup_drops + post-
-    // cleanup-add ratio.
+    // Reconstruct the state point used by production from validated cleanup
+    // removals. Later additions and same-shard imports cannot hide dispatch.
     const auto chain_defer_limit = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
-    const bool need_dispatch_progress_check =
-        have_out_msg_queue_size_in_state_ &&
-        (old_out_msg_queue_size_ <= chain_defer_limit || new_out_msg_queue_size_ <= chain_defer_limit);
+    const auto post_cleanup_size = have_out_msg_queue_size_in_state_ ? old_out_msg_queue_size_ - cleanup_out_msg_count_ : 0;
+    const bool need_dispatch_progress_check = have_out_msg_queue_size_in_state_ &&
+        dispatch_progress_required(old_out_msg_queue_size_, post_cleanup_size, chain_defer_limit, chain_defer_limit);
     if (need_dispatch_progress_check) {
       // Check that at least one message was taken from each AccountDispatchQueue
       try {

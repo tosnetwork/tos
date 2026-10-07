@@ -405,7 +405,8 @@ class HttpRequest {
             break;
           }
         }
-        if (match) return h.value;
+        if (match)
+          return h.value;
       }
     }
     return {};
@@ -487,7 +488,7 @@ class HttpResponse {
 
   bool check_parse_header_completed() const;
   bool keep_alive() const {
-    return !force_no_payload_ && keep_alive_;
+    return !force_no_payload_ && !force_no_keep_alive_ && keep_alive_;
   }
 
   td::Status complete_parse_header();

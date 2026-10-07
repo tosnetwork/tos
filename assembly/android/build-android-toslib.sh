@@ -1,5 +1,7 @@
+#!/bin/bash
+set -euo pipefail
 with_artifacts=false
-ROOT_DIR=$(cd "$(dirname "$0")" && pwd)
+ROOT_DIR=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 
 cd "${ROOT_DIR}" || exit 1
 
@@ -19,16 +21,13 @@ rm -rf "${ROOT_DIR}/example/android/build-x86"
 
 export CCACHE_DISABLE=1
 
-if [ ! -d "${ROOT_DIR}/android-ndk-r27d" ]; then
-  rm -f "${ROOT_DIR}/android-ndk-r27d-linux.zip"
+if [ ! -f "${ROOT_DIR}/android-ndk-r27d-linux.zip" ]; then
   echo "Downloading https://dl.google.com/android/repository/android-ndk-r27d-linux.zip"
   wget -q -O "${ROOT_DIR}/android-ndk-r27d-linux.zip" https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
-  unzip -q "${ROOT_DIR}/android-ndk-r27d-linux.zip" -d "${ROOT_DIR}"
-  test $? -eq 0 || { echo "Can't unzip android-ndk-r27d-linux.zip"; exit 1; }
-  echo "Android NDK extracted"
-else
-  echo "Using extracted Android NDK"
 fi
+python3 "${ROOT_DIR}/scripts/verify-build-tool.py" android-ndk-r27d "${ROOT_DIR}/android-ndk-r27d-linux.zip"
+rm -rf "${ROOT_DIR}/android-ndk-r27d"
+unzip -q "${ROOT_DIR}/android-ndk-r27d-linux.zip" -d "${ROOT_DIR}"
 
 export JAVA_AWT_LIBRARY=NotNeeded
 export JAVA_JVM_LIBRARY=NotNeeded

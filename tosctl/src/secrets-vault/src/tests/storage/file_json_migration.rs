@@ -65,7 +65,7 @@ async fn create_and_fill_v1_vault(
     let crypto2 = crypto_factory.new_crypto()?;
 
     let master_key = create_test_master_key().await?;
-    let temp_dir = tempfile::TempDir::new()?;
+    let temp_dir = private_tempdir()?;
     let file_path = temp_dir.path().join("vault.json");
     let storage = FileJsonStorage::new(master_key, &file_path, crypto_factory, false).await?;
 

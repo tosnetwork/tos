@@ -23,7 +23,7 @@ use secrets_vault::{
     errors::error::VaultError, types::secret::Secret, vault::SecretVault,
     vault_builder::SecretVaultBuilder,
 };
-use std::{collections::HashMap, fs, path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 const POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(2);
 pub const SEND_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(15);
@@ -66,7 +66,7 @@ pub fn warn_chain_rpc_unavailable(error: &anyhow::Error, note: &str) {
 
 pub fn save_config(config: &AppConfig, path: &Path) -> anyhow::Result<()> {
     let json = serde_json::to_string_pretty(config)?;
-    fs::write(path, json)?;
+    secrets_vault::private_file::write_private_atomic(path, json.as_bytes(), false)?;
     Ok(())
 }
 

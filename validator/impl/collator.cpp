@@ -17,6 +17,7 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include "dispatch-progress.h"
 #include <algorithm>
 #include <cassert>
 #include <ctime>
@@ -4501,7 +4502,8 @@ bool Collator::process_dispatch_queue() {
   SCOPE_EXIT {
     stats_.load_fraction_dispatch = block_limit_status_->load_fraction(block::ParamLimits::cl_normal);
   };
-  if (out_msg_queue_size_ > defer_out_queue_size_limit_ && old_out_msg_queue_size_ > hard_defer_out_queue_size_limit_) {
+  if (!dispatch_progress_required(old_out_msg_queue_size_, out_msg_queue_size_, defer_out_queue_size_limit_,
+                                  hard_defer_out_queue_size_limit_)) {
     return true;
   }
   have_unprocessed_account_dispatch_queue_ = true;

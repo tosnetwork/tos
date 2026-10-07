@@ -102,7 +102,8 @@ impl InstallWizardCmd {
             println!();
 
             let rpc_url = prompt_with_default("  Chain RPC URL", "http://127.0.0.1:3301/")?;
-            let rpc_api_key = prompt_optional("  Chain RPC API key (leave empty if none)")?;
+            let rpc_api_key =
+                prompt_optional_secret("  Chain RPC API key (leave empty if none): ")?;
 
             println!();
 
@@ -267,13 +268,16 @@ fn prompt_with_default(prompt: &str, default: &str) -> anyhow::Result<String> {
     if trimmed.is_empty() { Ok(default.to_string()) } else { Ok(trimmed.to_string()) }
 }
 
-/// Prompt the user for an optional value
-fn prompt_optional(prompt: &str) -> anyhow::Result<Option<String>> {
-    use std::io::Write;
-    print!("{}: ", prompt);
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    let trimmed = input.trim();
-    if trimmed.is_empty() { Ok(None) } else { Ok(Some(trimmed.to_string())) }
+/// Secret input never appears in terminal echo or an error message.
+fn prompt_optional_secret(prompt: &str) -> anyhow::Result<Option<String>> {
+    use secrets_vault::secret_input::{SecretInputError, SecretSource, read_secret, trim_ascii};
+    match read_secret(&SecretSource::Prompt(prompt.to_owned())) {
+        Ok(bytes) => Ok(Some(
+            std::str::from_utf8(trim_ascii(&bytes))
+                .map_err(|_| anyhow::anyhow!("API key must be UTF-8"))?
+                .to_owned(),
+        )),
+        Err(SecretInputError::Empty) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }

@@ -39,7 +39,7 @@ class MultisigWallet : public tos::SmartContract {
 
   class QueryBuilder {
    public:
-    QueryBuilder(td::uint32 wallet_id, td::int64 query_id, td::Ref<vm::Cell> msg, int mode = 3);
+    QueryBuilder(td::uint32 wallet_id, td::int32 global_id, td::int64 query_id, td::Ref<vm::Cell> msg, int mode = 3);
     void sign(td::int32 id, td::Ed25519::PrivateKey& pk);
 
     td::Ref<vm::Cell> create_inner() const;
