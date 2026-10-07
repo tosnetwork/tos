@@ -5,6 +5,7 @@ from pathlib import Path
 import nacl.signing
 from contract import Provider, WalletV1
 from pytosiq_core import Address, Builder, Cell
+from pytosiq_core.boc.deserialize import Boc
 from tosapi import tos_api
 
 from .install import Install, run_fift
@@ -72,6 +73,8 @@ class NetworkConfig:
     auth_network_tag: bytes | None = None
     # Explicit version-18 admission candidate; requires the deployment fee table.
     v5r2_admission_candidate: bool = False
+    # Test-only funded basechain genesis; allocation is deducted from the faucet.
+    basechain_fixture: bytes | None = field(default=None, repr=False)
     shard_validators: int = 1  # DEV-SPECIFIC: single-validator bootstrap rehearsal
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
@@ -221,7 +224,7 @@ wc_master setworkchain
 
 // Initial state of Workchain 0 (Basic workchain)
 
-0 mkemptyShardState
+{basechain_state}
 
 {{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
   3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, -1 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
@@ -549,6 +552,56 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     }
 
 
+def basechain_fixture_balance(encoded: bytes, global_id: int) -> int:
+    """Check the fixture envelope and aggregate allocation; native genesis checks its dictionary."""
+    if not isinstance(encoded, bytes) or not 1 <= len(encoded) <= 64 * 1024 * 1024:
+        raise ValueError("basechain fixture size")
+    roots = Boc(encoded).deserialize()
+    if len(roots) != 1:
+        raise ValueError("basechain fixture root count")
+    root = roots[0]
+    if root.is_exotic or root.level_mask.mask != 0:
+        raise ValueError("basechain fixture must be ordinary level zero")
+    s = root.begin_parse()
+    if (
+        s.load_uint(32) != 0x9023AFE2
+        or s.load_int(32) != global_id
+        or s.load_uint(8) != 0
+        or s.load_int(32) != 0
+    ):
+        raise ValueError("basechain fixture identity")
+    s.skip_bits(64)
+    if s.load_uint(32) != 0 or s.load_uint(32) != 0:
+        raise ValueError("basechain fixture must be genesis")
+    s.skip_bits(32 + 64 + 32)
+    if s.load_bit() or s.load_bit() or s.remaining_bits or s.remaining_refs != 3:
+        raise ValueError("basechain fixture state shape")
+    accounts = root.refs[1].begin_parse()
+    if accounts.load_bit() != 1 or accounts.load_uint(5) != 0:
+        raise ValueError("basechain fixture account aggregate")
+    allocated = accounts.load_coins()
+    if (
+        allocated <= 0
+        or accounts.load_bit()
+        or accounts.remaining_bits
+        or accounts.remaining_refs != 1
+    ):
+        raise ValueError("basechain fixture balance shape")
+    totals = root.refs[2].begin_parse()
+    totals.skip_bits(128)
+    if totals.load_coins() != allocated or totals.load_bit() or totals.load_coins() != 0:
+        raise ValueError("basechain fixture balance mismatch")
+    if (
+        totals.load_bit()
+        or totals.load_bit()
+        or totals.load_bit()
+        or totals.remaining_bits
+        or totals.remaining_refs
+    ):
+        raise ValueError("unsupported basechain fixture extras")
+    return allocated
+
+
 def create_zerostate(
     install: Install,
     state_dir: Path,
@@ -786,6 +839,23 @@ def create_zerostate(
     if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
         raise ValueError("global_id must fit a signed int32")
 
+    basechain_state = "0 mkemptyShardState"
+    if config.basechain_fixture is not None:
+        if not config.v5r2_admission_candidate or config.validator_economics_profile:
+            raise ValueError("funded basechain fixture requires isolated V5R2 candidate profile")
+        allocated = basechain_fixture_balance(config.basechain_fixture, config.global_id)
+        # The three ordinary system allocations consume 21 TOS independently.
+        if allocated > (5_000_000_000 - 21) * NANOTOS_PER_TOS:
+            raise ValueError("basechain fixture exceeds available genesis allocation")
+        with (state_dir / "basechain-fixture.boc").open("xb") as output:
+            output.write(config.basechain_fixture)
+        basechain_state = (
+            '"basechain-fixture.boc" file>B B>boc dup isShardState? '
+            'not abort"invalid basechain fixture"'
+        )
+        profile["main_wallet_genesis_balance"] += f" {allocated} -"
+        profile["expected_genesis_supply"] += f" {allocated} -"
+
     if wallet_seed is not None:
         # Refuse existing custody files rather than replacing an old run's key.
         # Fift's load-generate-keypair consumes this exact raw 32-byte seed.
@@ -796,6 +866,7 @@ def create_zerostate(
     run_fift(
         install,
         _TEMPLATE.format(
+            basechain_state=basechain_state,
             genesis_now="now" if fixed_time is None else str(fixed_time),
             monitor_min_split=config.monitor_min_split,
             split=config.split,

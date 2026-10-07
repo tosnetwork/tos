@@ -401,7 +401,19 @@ async def main(
     bootstrap_validator_set_valid_for,
     auth_network_tag=None,
     v5r2_admission_candidate=False,
+    basechain_fixture=None,
 ):
+    fixture_bytes = None
+    if basechain_fixture is not None:
+        if not v5r2_admission_candidate:
+            raise ValueError("basechain fixture requires --v5r2-admission-candidate")
+        from tostester.zerostate import basechain_fixture_balance
+
+        fixture_path = Path(basechain_fixture)
+        if not 1 <= fixture_path.stat().st_size <= 64 * 1024 * 1024:
+            raise ValueError("basechain fixture size")
+        fixture_bytes = fixture_path.read_bytes()
+        basechain_fixture_balance(fixture_bytes, 1)
     if v5r2_admission_candidate and saved_network_exists(workdir, num_validators):
         raise ValueError("V5R2 candidate cannot overwrite an existing network")
     install = Install(BUILD_DIR, REPO)
@@ -442,6 +454,7 @@ async def main(
             )
         elif auth_network_tag is not None:
             network.config.auth_network_tag = auth_network_tag
+        network.config.basechain_fixture = fixture_bytes
         if bootstrap_validator_set_valid_for is not None:
             # A long-running acceptance chain without an election exercise
             # must retain an active ConfigParam 34 for its entire run. The
@@ -566,6 +579,11 @@ def parse_args(argv=None):
         ),
     )
     p.add_argument(
+        "--basechain-fixture",
+        type=Path,
+        help="test-only funded basechain genesis BOC for a fresh V5R2 candidate",
+    )
+    p.add_argument(
         "--base-port",
         type=int,
         default=2000,
@@ -608,6 +626,7 @@ if __name__ == "__main__":
                 a.bootstrap_validator_set_valid_for,
                 a.auth_network_tag,
                 a.v5r2_admission_candidate,
+                basechain_fixture=a.basechain_fixture,
             )
         )
     except KeyboardInterrupt:

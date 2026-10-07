@@ -178,10 +178,83 @@ def verify_live_config(root, build, network, out, cells):
     }
 
 
+def verify_installed_accounts(root, build, network, out, fixture, point):
+    """Positive deployed-state observations at one proven point; not transaction acceptance."""
+    verifier = build / "lite-client/proof-verify/tos-proof-verify"
+    target = {key: point[key] for key in ("workchain", "shard", "seqno", "root_hash", "file_hash")}
+    results = {}
+    for name in ("wallet", "module", "vault"):
+        init = Boc(bytes.fromhex(fixture["output"][name + "_init"])).deserialize()
+        code = Boc(bytes.fromhex(fixture["input"][name + "_code"])).deserialize()
+        data = Boc(bytes.fromhex(fixture["output"][name + "_data"])).deserialize()
+        require(len(init) == len(code) == len(data) == 1, "fixture root count")
+        address = "0:" + init[0].hash.hex()
+        request = out / (name + "-proof-request.json")
+        request.write_text(
+            json.dumps(
+                {"mode": "live", "max_age_seconds": 300, "target": target, "account": address}
+            )
+            + "\n"
+        )
+        result = subprocess.run(
+            [
+                str(verifier),
+                "verify",
+                "--anchor",
+                str(out / "anchor.json"),
+                "--request",
+                str(request),
+                "--liteserver",
+                str(network / "lite-client.json"),
+                "--state",
+                str(out / "live-state.json"),
+                "--save-material",
+                str(out / (name + "-material")),
+                "--timeout-seconds",
+                "45",
+            ],
+            cwd=root,
+            capture_output=True,
+            timeout=60,
+        )
+        (out / (name + "-proof-result.json")).write_bytes(result.stdout)
+        (out / (name + "-proof-verifier.log")).write_bytes(result.stderr)
+        require(result.returncode == 0, "installed account proof refused")
+        value = json.loads(result.stdout)
+        require(
+            value.get("status") == "verified"
+            and value.get("mode") == "live"
+            and value.get("interface") == "tos-proof-verify/1",
+            "account proof identity",
+        )
+        require(
+            {key: value["target"][key] for key in target} == target, "account checkpoint mismatch"
+        )
+        account = value.get("account", {})
+        require(
+            account.get("address") == address
+            and account.get("exists") is True
+            and account.get("active") is True
+            and account.get("code_hash") == code[0].hash.hex()
+            and account.get("data_hash") == data[0].hash.hex(),
+            "installed account state mismatch",
+        )
+        results[name] = {
+            key: account[key]
+            for key in ("address", "code_hash", "data_hash", "balance", "gen_utime")
+        }
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--sdk-fixture",
+        type=Path,
+        help="public SDK fixture for positive wallet/module/vault account proofs",
+    )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     out = args.out.resolve()
@@ -209,6 +282,25 @@ def main():
         "--boot-timeout",
         "180",
     ]
+    if args.sdk_fixture is not None:
+        fixture_out = out / "funded-accounts"
+        subprocess.run(
+            [
+                sys.executable,
+                str(root / "scripts/build-v5r2-basechain-fixture.py"),
+                "--sdk-fixture",
+                str(args.sdk_fixture.resolve()),
+                "--build-dir",
+                str(args.build_dir.resolve()),
+                "--out",
+                str(fixture_out),
+            ],
+            cwd=root,
+            env=env,
+            check=True,
+            timeout=45,
+        )
+        command.extend(["--basechain-fixture", str(fixture_out / "basestate0.boc")])
     log = out / "network.log"
     with log.open("w") as stream:
         process = subprocess.Popen(
@@ -239,8 +331,18 @@ def main():
             }
             gas = validate(cells)
             proof = verify_live_config(root, args.build_dir.resolve(), network, out, cells)
+            installed = None
+            if args.sdk_fixture is not None:
+                installed = verify_installed_accounts(
+                    root,
+                    args.build_dir.resolve(),
+                    network,
+                    out,
+                    json.loads(args.sdk_fixture.read_text()),
+                    proof["target"],
+                )
             report = {
-                "scope": "Disposable candidate boot/config readback only, no wallet signature or lifecycle acceptance",
+                "scope": "Disposable candidate boot and live config/account proofs; genesis allocation is not deployment transaction, signing or lifecycle acceptance",
                 "source": subprocess.check_output(
                     ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"],
                     cwd=root,
@@ -249,6 +351,7 @@ def main():
                 "config_hashes": {str(k): v.hash.hex() for k, v in cells.items()},
                 "gas": gas,
                 "authenticated_config": proof,
+                "installed_genesis_accounts": installed,
                 "binaries": {
                     name: hashlib.sha256((args.build_dir / name / name).read_bytes()).hexdigest()
                     for name in ("validator-engine", "dht-server")

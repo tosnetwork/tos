@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from pytosiq_core import Builder
+from pytosiq_core.boc.deserialize import Boc
 
 
 class CandidateReadbackTests(unittest.TestCase):
@@ -78,6 +79,66 @@ class CandidateReadbackTests(unittest.TestCase):
         ]:
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.module.validate(self.cells(**kwargs))
+
+    def test_installed_account_proof_binds_all_roles_and_checkpoint(self):
+        fixture = json.loads(
+            (
+                Path(__file__).parents[1] / "test/wallet-v5r2/fixtures/public-genesis-accounts.json"
+            ).read_text()
+        )
+        point = {
+            "workchain": -1,
+            "shard": "8000000000000000",
+            "seqno": 1,
+            "root_hash": "11" * 32,
+            "file_hash": "22" * 32,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def invoke(corruption=None):
+                def run(command, **kwargs):
+                    name = Path(command[command.index("--request") + 1]).name.split("-proof-")[0]
+
+                    def cell(field):
+                        return Boc(bytes.fromhex(field)).deserialize()[0]
+
+                    account = {
+                        "address": "0:" + cell(fixture["output"][name + "_init"]).hash.hex(),
+                        "exists": True,
+                        "active": True,
+                        "balance": "100",
+                        "gen_utime": 100,
+                        "code_hash": cell(fixture["input"][name + "_code"]).hash.hex(),
+                        "data_hash": cell(fixture["output"][name + "_data"]).hash.hex(),
+                    }
+                    target = dict(point)
+                    if corruption == "code":
+                        account["code_hash"] = "00" * 32
+                    if corruption == "inactive":
+                        account["active"] = False
+                    if corruption == "checkpoint":
+                        target["seqno"] = 2
+                    value = {
+                        "status": "verified",
+                        "interface": "tos-proof-verify/1",
+                        "mode": "live",
+                        "target": target,
+                        "account": account,
+                    }
+                    return SimpleNamespace(
+                        returncode=0, stdout=json.dumps(value).encode(), stderr=b""
+                    )
+
+                with patch.object(self.module.subprocess, "run", side_effect=run):
+                    return self.module.verify_installed_accounts(
+                        root, root, root, root, fixture, point
+                    )
+
+            self.assertEqual(set(invoke()), {"wallet", "module", "vault"})
+            for corruption in ("code", "inactive", "checkpoint"):
+                with self.subTest(corruption=corruption), self.assertRaises(ValueError):
+                    invoke(corruption)
 
     def test_live_proof_result_must_match_readback(self):
         cells = self.cells()

@@ -205,7 +205,7 @@ jobs:
         timeout-minutes: 5
         run: |
           uv run python scripts/test_v5r2_candidate_network.py
-          uv run python scripts/check-v5r2-candidate-network.py --build-dir build --out build/v5r2-candidate-ci
+          uv run python scripts/check-v5r2-candidate-network.py --build-dir build --out build/v5r2-candidate-ci --sdk-fixture test/wallet-v5r2/fixtures/public-genesis-accounts.json
 
       - name: Retain V5R2 candidate configuration and boot evidence
         if: always()
@@ -220,6 +220,11 @@ jobs:
             build/v5r2-candidate-ci/anchor.json
             build/v5r2-candidate-ci/proof-request.json
             build/v5r2-candidate-ci/proof-material/
+            build/v5r2-candidate-ci/*-proof-request.json
+            build/v5r2-candidate-ci/*-proof-result.json
+            build/v5r2-candidate-ci/*-proof-verifier.log
+            build/v5r2-candidate-ci/*-material/
+            build/v5r2-candidate-ci/funded-accounts/accounts.json
           if-no-files-found: ignore
           retention-days: 14
 
