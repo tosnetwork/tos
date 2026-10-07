@@ -14,6 +14,7 @@ import urllib.request
 from pathlib import Path
 
 from pytosiq_core.boc.deserialize import Boc
+from pytosiq_core import Builder
 from pytosiq_core.tlb.config import ConfigParam20, ConfigParam21
 
 ABSENT_ACCOUNT = "0:" + hashlib.sha256(b"TOS-V5R2-ABSENT-CANDIDATE-PROBE-v1").hexdigest()
@@ -26,7 +27,7 @@ def require(value, message):
 
 def rpc(endpoint, index):
     payload = json.dumps(
-        {"jsonrpc": "2.0", "id": index, "method": "getConfigParam", "params": {"param": index}}
+        {"jsonrpc": "2.0", "id": index, "method": "getConfigAll" if index is None else "getConfigParam", "params": {} if index is None else {"param": index}}
     ).encode()
     request = urllib.request.Request(
         endpoint, data=payload, headers={"Content-Type": "application/json"}
@@ -347,6 +348,11 @@ def main():
                 index: rpc("http://127.0.0.1:38545/jsonRPC", index) for index in (8, 19, 20, 21, 48)
             }
             gas = validate(cells)
+            dictionary = rpc("http://127.0.0.1:38545/jsonRPC", None)
+            address = rpc("http://127.0.0.1:38545/jsonRPC", 0)
+            require(len(address.bits) == 256 and not address.refs, "config account address shape")
+            config = Builder().store_cell(address).store_ref(dictionary).end_cell()
+            (out / "candidate-config.boc").write_bytes(config.to_boc())
             proof = verify_live_config(root, args.build_dir.resolve(), network, out, cells)
             installed = None
             if fixture is not None:

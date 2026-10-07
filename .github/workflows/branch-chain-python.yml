@@ -62,7 +62,7 @@ jobs:
         run: |
           ccache --zero-stats
           cmake --build build --parallel 4 --target \
-            gen_fif create-state toslibjson \
+            gen_fif create-state toslibjson func fift emulator \
             generate-random-id tos-pq-consensus-key \
             dht-server validator-engine-console validator-engine \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
@@ -207,12 +207,41 @@ jobs:
           uv run python scripts/test_v5r2_candidate_network.py
           uv run python scripts/check-v5r2-candidate-network.py --build-dir build --out build/v5r2-candidate-ci --sdk-fixture test/wallet-v5r2/fixtures/public-genesis-accounts.json
 
+      - name: Broadcast disposable V5R2 payment and verify execution linkage
+        timeout-minutes: 15
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+          SLH_TOOL: ${{ github.workspace }}/build-signers/slh_tool
+          MLDSA_TOOL: ${{ github.workspace }}/build-signers/mldsa_tool
+          LMS_TOOL: ${{ github.workspace }}/build-signers/lms_tool
+        run: |
+          sh test/rescue-fee-gate/tools/build.sh build-signers
+          signing_time=$(date +%s)
+          uv run --with cryptography python test/wallet-v5r2/test_fee_delivery.py \
+            --chain-config build/v5r2-candidate-ci/candidate-config.boc \
+            --transaction-time "$signing_time" --export-network-input --output build/v5r2-payment-input
+          uv run python scripts/test_v5r2_transaction_chain.py --input build/v5r2-payment-input
+          uv run python scripts/check-v5r2-candidate-network.py --build-dir build \
+            --out build/v5r2-payment-ci --network-input build/v5r2-payment-input/PUBLIC-TEST-ONLY-network-input.json --broadcast
+
       - name: Retain V5R2 candidate configuration and boot evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: v5r2-candidate-${{ github.sha }}
           path: |
+            build/v5r2-payment-ci/report.json
+            build/v5r2-payment-ci/network.log
+            build/v5r2-payment-ci/broadcast-result.json
+            build/v5r2-payment-ci/transaction-observations.json
+            build/v5r2-payment-ci/transaction-chain.json
+            build/v5r2-payment-ci/anchor.json
+            build/v5r2-payment-ci/*-proof-result.json
+            build/v5r2-payment-ci/*-proof-verifier.log
+            build/v5r2-candidate-ci/candidate-config.boc
             build/v5r2-candidate-ci/report.json
             build/v5r2-candidate-ci/network.log
             build/v5r2-candidate-ci/proof-result.json
