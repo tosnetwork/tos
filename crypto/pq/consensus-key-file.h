@@ -3,8 +3,9 @@
 
 // The validator node's own post-quantum consensus key, on disk.
 //
-// A validator host holds exactly one post-quantum secret: the hot consensus key it signs
-// finality, configuration votes and complaint votes with. The controller root, which
+// A validator host holds one kind of post-quantum secret: the hot consensus key it signs
+// finality, configuration votes and complaint votes with (two of them for a while during a
+// key rotation; see consensus-key-schedule.h). The controller root, which
 // authorises the stake and its own replacement, never reaches this machine, so a
 // compromised validator costs an operator the key it can rotate and not the authority
 // that rotates it.

@@ -1,6 +1,6 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 
-// Provisioning for the one post-quantum secret a validator host holds.
+// Provisioning for the post-quantum consensus keys a validator host holds.
 //
 // The node reads its consensus key from a file it does not create. This puts one there,
 // puts a saved one back, or says which key a file already holds -- under exactly the
@@ -14,13 +14,17 @@
 // and never onto a screen or into a file left behind by a redirect.
 //
 // It also points a stopped node at its key: `bind-node` writes the validator id and the
-// key file into the node's configuration, after checking the key the way the node will.
+// key file into the node's configuration, after checking the key the way the node will;
+// and, for a rotation without downtime, adds, removes and lists the further keys a node
+// holds alongside it (`add-node-key`, `remove-node-key`, `list-node-keys`).
 
 #include <array>
 #include <cerrno>
 #include <csignal>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <openssl/crypto.h>
 #include <string>
 #include <string_view>
@@ -120,6 +124,9 @@ int usage() {
       "       tos-pq-consensus-key show KEYFILE\n"
       "       tos-pq-consensus-key export KEYFILE   (the seed to a pipe, never a terminal or file)\n"
       "       tos-pq-consensus-key bind-node [--replace] DB_ROOT KEYFILE VALIDATOR_ID\n"
+      "       tos-pq-consensus-key add-node-key DB_ROOT KEYFILE VALID_FROM [EXPIRE_AT]\n"
+      "       tos-pq-consensus-key remove-node-key DB_ROOT KEYFILE|KEY_ID\n"
+      "       tos-pq-consensus-key list-node-keys DB_ROOT\n"
       "\n"
       "generate, import and show print the identity the validator set records for the\n"
       "key. Only export prints the key itself.\n"
@@ -135,32 +142,50 @@ int usage() {
       "status: 0 bound (or already bound), 1 refused, nothing written, 3 written but\n"
       "the directory flush failed, so durability is unconfirmed.\n"
       "\n"
-      "Rotating the consensus key from A to B (a kind 3 bind). The node holds one key,\n"
-      "so it signs with A or with B, never both: once B is bound the controller refuses\n"
-      "stakes signed with A, and once the node restarts with B it no longer signs for a\n"
-      "validator set that lists A. A single-key rotation is therefore safe only inside a\n"
-      "verified interval in which A has no signing obligation; otherwise it costs\n"
-      "accepted downtime. An uninterrupted rotation needs A and B held at once, which\n"
-      "the node does not support yet.\n"
+      "add-node-key, remove-node-key and list-node-keys manage the several keys a bound\n"
+      "node holds during a consensus key rotation. add-node-key and remove-node-key edit\n"
+      "a stopped node's configuration exactly as bind-node does, with the same lock and\n"
+      "exit statuses; a running node is changed with the console instead\n"
+      "(add-pq-consensus-key, del-pq-consensus-key, get-pq-consensus-keys), which takes\n"
+      "effect without a restart. VALID_FROM is the first election date (unix time) the\n"
+      "key signs stakes for: a stake for an election is signed with the held key whose\n"
+      "VALID_FROM is the greatest not after the election date, so two keys may not share\n"
+      "one. EXPIRE_AT (unix time, default 0: never) is a hard deadline: from then on the\n"
+      "key signs nothing, even in a validator group already running with it. Both are at\n"
+      "most 2147483647. A key signs for a validator group only when that group's\n"
+      "validator set lists it. remove-node-key cannot see validator sets: it refuses only\n"
+      "the last key and a removal that would leave only expired keys.\n"
+      "list-node-keys reads without the lock and works beside a running node.\n"
+      "\n"
+      "Rotating the consensus key from A to B (a kind 3 bind) without downtime. The node\n"
+      "holds A and B together: A keeps signing for every validator set that lists A,\n"
+      "and B signs every stake from the next election on.\n"
       "  1. offline:   tos-pq-consensus-key generate NEXT.seed   (note its key_id, B)\n"
-      "  2. verify the interval: Config34 (and Config36 while a next set is pending)\n"
-      "     no longer lists this controller with key A, and the next stake is not due\n"
-      "     before steps 3-5 complete. If it cannot be verified, plan for downtime.\n"
-      "  3. offline:   tos-pq-controller bind ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH\n"
-      "                  NONCE VALID_UNTIL NEXT.seed   and send the body from a wallet;\n"
-      "     check that the controller_state getter shows B\n"
-      "  4. offline:   tos-pq-consensus-key export NEXT.seed | ENCRYPT > MEDIUM\n"
+      "  2. offline:   tos-pq-consensus-key export NEXT.seed | ENCRYPT > MEDIUM\n"
       "     host:      DECRYPT < MEDIUM | tos-pq-consensus-key import KEYDIR/pq-consensus-next.seed\n"
       "     (or, with a direct link, export | ssh HOST tos-pq-consensus-key import ...)\n"
-      "  5. host, node stopped:\n"
-      "                tos-pq-consensus-key bind-node --replace DB_ROOT\n"
-      "                  KEYDIR/pq-consensus-next.seed VALIDATOR_ID\n"
-      "     then start the node and confirm its log line\n"
-      "       post-quantum consensus custody: validator_id ... key_id ...\n"
-      "     shows B's key_id exactly as `tos-pq-consensus-key show` prints it.\n"
-      "  6. confirm the next election accepts the stake signed with B, and that the\n"
-      "     validator appears in Config34 with B after the set switches.\n"
-      "  7. destroy every other copy of the seed except the encrypted offline backup.\n",
+      "  3. host:      add B alongside A, valid from the next election's date E (or any\n"
+      "     time after the current election's date):\n"
+      "       running node:  validator-engine-console: add-pq-consensus-key\n"
+      "                        KEYDIR/pq-consensus-next.seed E 0\n"
+      "       stopped node:  tos-pq-consensus-key add-node-key DB_ROOT\n"
+      "                        KEYDIR/pq-consensus-next.seed E\n"
+      "     and confirm with get-pq-consensus-keys (or list-node-keys) that both are held.\n"
+      "  4. offline, before the stake for election E is due:\n"
+      "                tos-pq-controller bind ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH\n"
+      "                  NONCE VALID_UNTIL NEXT.seed   and send the body from a wallet;\n"
+      "     check that the controller_state getter shows B\n"
+      "  5. the stake for election E is signed with B: the schedule assigns it by its\n"
+      "     window, with no override (create-stake-authorization-with-key E ... B only\n"
+      "     asserts it, and is refused if the schedule names another key).\n"
+      "     Confirm the elector accepted it.\n"
+      "  6. keep A until no validator set lists it any more: the set that lists A has\n"
+      "     ended (its utime_until has passed and Config34, and Config36 while a next set\n"
+      "     is pending, list this controller with B) and no stake is still held under A.\n"
+      "  7. remove A: del-pq-consensus-key A on the running node (it refuses while a\n"
+      "     current, previous or next set lists A), or remove-node-key on a stopped one.\n"
+      "  8. destroy every other copy of A's seed and of B's seed except the encrypted\n"
+      "     offline backup of B.\n",
       stderr);
   return 2;
 }
@@ -287,11 +312,143 @@ int bind_node(int argc, char** argv) {
   return 0;
 }
 
+// A unix time as an operator types it: decimal digits, nothing else, at most 2^31 - 1
+// (what a configuration can state; see consensus-config-json.h).
+bool parse_unix_time(std::string_view text, std::uint32_t& out) {
+  if (text.empty() || text.size() > 10) {
+    return false;
+  }
+  std::uint64_t value = 0;
+  for (char c : text) {
+    if (c < '0' || c > '9') {
+      return false;
+    }
+    value = value * 10 + static_cast<std::uint64_t>(c - '0');
+  }
+  if (value > 0x7fffffffULL) {
+    return false;
+  }
+  out = static_cast<std::uint32_t>(value);
+  return true;
+}
+
+std::uint32_t unix_now() {
+  const auto now = std::time(nullptr);
+  if (now <= 0) {
+    return 0;
+  }
+  return static_cast<std::uint64_t>(now) > 0xffffffffULL ? 0xffffffffU : static_cast<std::uint32_t>(now);
+}
+
+// What every configuration edit reports: the key, the file, and whether anything changed.
+int report_edit(tos::pq::NodeBindingOutcome outcome, const tos::pq::NodeConsensusBindingResult& result,
+                std::string_view key_file, const std::string& why) {
+  const char* state = nullptr;
+  switch (outcome) {
+    case tos::pq::NodeBindingOutcome::refused:
+      std::fprintf(stderr, "%s\n", why.c_str());
+      return 1;
+    case tos::pq::NodeBindingOutcome::unchanged:
+      state = "unchanged";
+      break;
+    case tos::pq::NodeBindingOutcome::applied:
+    case tos::pq::NodeBindingOutcome::applied_not_durable:
+      state = "updated";
+      break;
+  }
+  std::fputs("key_id       ", stdout);
+  print_hex(std::string_view(reinterpret_cast<const char*>(result.key_id.data()), result.key_id.size()));
+  std::fprintf(stdout, "\nkey_file     %.*s\nconfig       %s %s\n", static_cast<int>(key_file.size()), key_file.data(),
+               result.config_path.c_str(), state);
+  if (outcome == tos::pq::NodeBindingOutcome::applied_not_durable) {
+    std::fprintf(stderr,
+                 "%s\nthe new configuration is in place, but not confirmed durable: run `sync` before relying "
+                 "on it\n",
+                 why.c_str());
+    return 3;
+  }
+  return 0;
+}
+
+int add_node_key(int argc, char** argv) {
+  if (argc != 5 && argc != 6) {
+    return usage();
+  }
+  tos::pq::NodeConsensusKeyAddition addition;
+  addition.db_root = argv[2];
+  addition.key_file = argv[3];
+  if (!parse_unix_time(argv[4], addition.valid_from)) {
+    std::fputs("VALID_FROM is a unix time: decimal digits, at most 2147483647\n", stderr);
+    return 1;
+  }
+  if (argc == 6 && !parse_unix_time(argv[5], addition.expire_at)) {
+    std::fputs("EXPIRE_AT is a unix time: decimal digits, at most 2147483647 (0: never)\n", stderr);
+    return 1;
+  }
+  addition.now = unix_now();
+  tos::pq::NodeConsensusBindingResult result;
+  std::string why;
+  const auto outcome = tos::pq::add_node_consensus_key(addition, result, why);
+  return report_edit(outcome, result, addition.key_file, why);
+}
+
+int remove_node_key(int argc, char** argv) {
+  if (argc != 4) {
+    return usage();
+  }
+  tos::pq::NodeConsensusKeyRemoval removal;
+  removal.db_root = argv[2];
+  removal.key = argv[3];
+  removal.now = unix_now();
+  tos::pq::NodeConsensusBindingResult result;
+  std::string why;
+  const auto outcome = tos::pq::remove_node_consensus_key(removal, result, why);
+  return report_edit(outcome, result, removal.key, why);
+}
+
+int list_node_keys(int argc, char** argv) {
+  if (argc != 3) {
+    return usage();
+  }
+  tos::pq::NodeConsensusKeyListing listing;
+  std::string why;
+  if (!tos::pq::list_node_consensus_keys(argv[2], unix_now(), listing, why)) {
+    std::fprintf(stderr, "%s\n", why.c_str());
+    return 1;
+  }
+  std::fputs("validator_id ", stdout);
+  print_hex(std::string_view(reinterpret_cast<const char*>(listing.validator_id.data()), listing.validator_id.size()));
+  std::fputc('\n', stdout);
+  for (const auto& key : listing.keys) {
+    std::fputs("key ", stdout);
+    if (key.loaded) {
+      print_hex(std::string_view(reinterpret_cast<const char*>(key.key_id.data()), key.key_id.size()));
+    } else {
+      std::fputs("unreadable", stdout);
+    }
+    std::fprintf(stdout, " valid_from %u expire_at %u%s%s file %s\n", key.entry.valid_from, key.entry.expire_at,
+                 key.expired ? " expired" : "", key.entry.primary ? " primary" : "", key.entry.key_file.c_str());
+    if (!key.loaded) {
+      std::fprintf(stdout, "  (%s)\n", key.refusal.c_str());
+    }
+  }
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc >= 2 && std::string_view(argv[1]) == "bind-node") {
     return bind_node(argc, argv);
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "add-node-key") {
+    return add_node_key(argc, argv);
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "remove-node-key") {
+    return remove_node_key(argc, argv);
+  }
+  if (argc >= 2 && std::string_view(argv[1]) == "list-node-keys") {
+    return list_node_keys(argc, argv);
   }
   if (argc != 3) {
     return usage();

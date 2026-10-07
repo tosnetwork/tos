@@ -28,6 +28,13 @@ REQUIRED_NATIVE_TARGETS = {
     "test-notarize-after-transient-resolve",
     "test-state-resolver-teardown",
     "test-custom-overlay-relay-dedup",
+    "test-pq-consensus-key-rotation",
+    "test-fsync-dir-failure-shim",
+    # Executables that link the consensus custody through validator-disk and
+    # validator-hardfork; the full-tree build runs only for pull requests into main.
+    "create-hardfork",
+    "test-tos-collator",
+    "test-apply-block-readback-latency",
 }
 
 RESTART_ORIGIN_TESTS = (
@@ -123,6 +130,24 @@ def main() -> int:
     require(
         re.search(rf"(?m)^\s*run: {re.escape(relay_ctest)}\s*$", text) is not None,
         "custom overlay relay deduplication gate is absent",
+    )
+    rotation_ctest = (
+        "ctest --test-dir build --output-on-failure -R '^test-pq-consensus-key-rotation$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(rotation_ctest)}\s*$", text) is not None,
+        "multi-key PQ consensus custody and key schedule gate is absent",
+    )
+    seam_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error -R '^pq-signer-no-test-clock$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(seam_ctest)}\s*$", text) is not None,
+        "production PQ signer test-clock seam gate is absent",
+    )
+    require(
+        "uv run python test/integration/test_pq_consensus_key_rotation.py" in text,
+        "real-engine PQ consensus key rotation gate is absent",
     )
     real_state_ctest = "ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'"
     require(

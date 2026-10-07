@@ -68,9 +68,10 @@ done
 
 # The consensus key is authority too, and the node's surfaces that spend it are gated as
 # such. A client permitted only to read the node must not be able to have it commit a
-# stake or cast a vote.
+# stake, cast a vote, or change which consensus keys the node signs with.
 ENGINE="$REPO_ROOT/validator-engine/validator-engine.cpp"
-for query in createPqStakeAuthorization createProposalVote createComplaintVote; do
+for query in createPqStakeAuthorization createPqStakeAuthorizationWithKey addPqConsensusKey delPqConsensusKey \
+    createProposalVote createComplaintVote; do
   handler=$(awk -v q="engine_validator_${query} &query" '
     index($0, q) { grab = 1 }
     grab { print }

@@ -856,7 +856,8 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     const auto to_sign = data_to_sign.as_slice();
     auto pq_signature = bus.pq_signer->sign_consensus(std::string_view(to_sign.data(), to_sign.size()));
     if (!pq_signature.has_value()) {
-      LOG(ERROR) << "consensus: the post-quantum signer failed to sign a vote; not casting it";
+      LOG(ERROR) << "consensus: the post-quantum signer failed to sign a vote; not casting it"
+                 << (bus.pq_signer->expired_now() ? " (the consensus key has expired)" : "");
       return std::nullopt;
     }
     return td::BufferSlice(pq_signature->signature);

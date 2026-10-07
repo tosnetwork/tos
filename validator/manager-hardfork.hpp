@@ -102,16 +102,20 @@ class ValidatorManagerImpl : public ValidatorManager {
     UNREACHABLE();
   }
   void add_pq_consensus_key(tos::ValidatorId validator_id, std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store,
-                            td::Promise<td::Unit> promise) override {
-    auto status = pq_custody_.install(validator_id, std::move(store));
+                            td::uint32 valid_from, td::uint32 expire_at, td::Promise<td::Unit> promise) override {
+    auto status = pq_custody_.install(validator_id, std::move(store), valid_from, expire_at);
     if (status.is_error()) {
       promise.set_error(std::move(status));
       return;
     }
     promise.set_value(td::Unit());
   }
-  void del_pq_consensus_key(tos::ValidatorId validator_id, td::Promise<td::Unit> promise) override {
-    pq_custody_.remove(validator_id);
+  void del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
+                            td::Promise<td::Unit> promise) override {
+    if (!pq_custody_.remove_key(validator_id, key_id)) {
+      promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no such post-quantum consensus key is custodied"));
+      return;
+    }
     promise.set_value(td::Unit());
   }
 

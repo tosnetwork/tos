@@ -250,7 +250,8 @@ class BlockProducerImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       auto pq_signature = bus.pq_signer->sign_consensus(std::string_view(to_sign.data(), to_sign.size()));
       if (!pq_signature.has_value()) {
         observation->finish(tos::health::Phase::SignFailure);
-        LOG(ERROR) << "consensus: the post-quantum signer failed to sign a candidate; not producing it";
+        LOG(ERROR) << "consensus: the post-quantum signer failed to sign a candidate; not producing it"
+                   << (bus.pq_signer->expired_now() ? " (the consensus key has expired)" : "");
         break;
       }
       observation->observe(tos::health::Phase::Signed);
