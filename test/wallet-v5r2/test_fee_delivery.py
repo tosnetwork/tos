@@ -66,6 +66,13 @@ def main():
     p.add_argument("--preparation-driver", type=Path)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument(
+        "--execute-actions",
+        type=int,
+        default=1,
+        choices=range(1, 256),
+        help="Signed legal OutList action-count boundary with independent message bodies",
+    )
+    p.add_argument(
         "--cache-driver",
         type=Path,
         help="Use real SDK cached signature for the positive fee request",
@@ -76,6 +83,11 @@ def main():
         help="Measure required credit without changing protocol defaults",
     )
     p.add_argument("--gas-trace", action="store_true", help="Retain instruction gas accounting")
+    p.add_argument(
+        "--delete-execute-actions",
+        action="store_true",
+        help="Test-only private wallet mutation removing action emission",
+    )
     p.add_argument(
         "--recovery", action="store_true", help="Run continuous funded recovery after preparation"
     )
@@ -103,6 +115,12 @@ def main():
         help="Test-only Rust gate over recorded native receipts",
     )
     options = p.parse_args()
+    assert options.execute_actions == 1 or not (
+        options.prepare or options.pop_role or options.recovery
+    )
+    assert not options.delete_execute_actions or not (
+        options.prepare or options.pop_role or options.recovery
+    )
     chain_config = None
     chain_bytes = None
     network, global_id = 123, 42
@@ -146,7 +164,12 @@ def main():
     assert (
         sum(
             bool(x)
-            for x in (options.delete_preparation_guard, options.delete_payload_guard, options.fault)
+            for x in (
+                options.delete_preparation_guard,
+                options.delete_payload_guard,
+                options.fault,
+                options.delete_execute_actions,
+            )
         )
         <= 1
     )
@@ -208,6 +231,12 @@ def main():
         if options.fault:
             src = work / "wallet-v5r2-fee-vault.fc"
             src.write_text(fee_failure_controls.inject(src.read_text(), options.fault))
+        if options.delete_execute_actions:
+            src = work / "wallet-v5r2-code.fc"
+            text = src.read_text()
+            emission = "ifnot (cell_null?(actions)) { set_c5_actions(actions); }"
+            assert text.count(emission) == 1
+            src.write_text(text.replace(emission, ""))
         vault = native.compile_contract(str(work / "wallet-v5r2-fee-vault.fc"), out / "vault.boc")
         const = f'cell compiled_vault() asm "B{{{vault.boc().hex()}}} B>boc PUSHREF";\n'
         (work / "module.fc").write_text(
@@ -289,8 +318,11 @@ def main():
             0,
             int.from_bytes(native.state_init(recipient_code, recipient_data).hash, "big"),
         )
-        payment = native.internal(wa, recipient, Cell(), value=1_000_000_000)
-        actions = Cell().uint(0x0EC3C86D, 32).uint(3, 8).ref(Cell()).ref(payment)
+        actions = Cell()
+        for index in range(options.execute_actions):
+            payment_body = Cell() if options.execute_actions == 1 else Cell().uint(index, 32)
+            payment = native.internal(wa, recipient, payment_body, value=1_000_000_000)
+            actions = Cell().uint(0x0EC3C86D, 32).uint(3, 8).ref(actions).ref(payment)
         req = request(root=root, role=2, account=wa, body=Cell().uint(0x45584543, 32).ref(actions))
         if options.prepare:
             successor_tree = out / "PUBLIC-TEST-ONLY-successor-tree"
@@ -1089,14 +1121,24 @@ def main():
                 )
                 (out / "wallet-result.json").write_text(json.dumps(executed, indent=2) + "\n")
                 assert executed["success"] and executed["details"]["exit"] == 0, executed
-                assert len(native.outgoing(from_boc(executed["transaction"]))) == 1
-                outgoing = native.outgoing(from_boc(executed["transaction"]))[0]
-                delivered = e.send(
-                    native.active_account(
-                        recipient, recipient_code, recipient_data, balance=1_000_000_000
-                    ),
-                    outgoing,
+                payments = native.outgoing(from_boc(executed["transaction"]))
+                assert len(payments) == options.execute_actions, (
+                    "signed legal action count not delivered"
                 )
+                recipient_state = native.active_account(
+                    recipient, recipient_code, recipient_data, balance=1_000_000_000
+                )
+                for index, outgoing in enumerate(payments):
+                    delivered = e.send(recipient_state, outgoing)
+                    assert (
+                        delivered["success"]
+                        and delivered["details"]["exit"] == 0
+                        and not delivered["details"]["aborted"]
+                    ), delivered
+                    recipient_state = from_boc(delivered["shard_account"])
+                    (out / f"recipient-{index}.json").write_text(
+                        json.dumps(delivered, indent=2) + "\n"
+                    )
                 assert (
                     delivered["success"]
                     and delivered["details"]["exit"] == 0
@@ -1106,7 +1148,7 @@ def main():
                     from_boc(delivered["shard_account"])
                 )
                 assert (
-                    recipient_after.hash == Cell().uint(1, 32).hash
+                    recipient_after.hash == Cell().uint(options.execute_actions, 32).hash
                     and recipient_balance > 1_000_000_000
                 )
                 (out / "recipient-result.json").write_text(json.dumps(delivered, indent=2) + "\n")
@@ -1188,6 +1230,7 @@ def main():
                 "global_id": global_id,
                 "pop_role": options.pop_role,
                 "prepare": options.prepare,
+                "execute_actions": options.execute_actions,
                 "preparation_deployments": preparation_deployments,
                 "successor_pop": successor_pop,
                 "credit_probe": credit_probe,
