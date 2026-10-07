@@ -28,7 +28,7 @@ def main():
         parser.error('Host build must be configured from this source checkout')
     target_cache = target / 'CMakeCache.txt'
     if target_cache.exists():
-        values = dict(re.findall(r'^([^:#=]+):[^=]+=(.*)$', target_cache.read_text(), re.MULTILINE))
+        values = dict(re.findall(r'^([A-Za-z_][A-Za-z0-9_]*):[^=\r\n]+=(.*)$', target_cache.read_text(), re.MULTILINE))
         cached_sdk = values.get('CMAKE_OSX_SYSROOT', '')
         expected_sdk = subprocess.check_output(['xcrun', '--sdk', args.sdk, '--show-sdk-path'], text=True).strip()
         if values.get('CMAKE_HOME_DIRECTORY') != str(root) or values.get('CMAKE_OSX_ARCHITECTURES') != args.arch or values.get('CMAKE_OSX_DEPLOYMENT_TARGET') != args.minimum or cached_sdk not in (args.sdk, expected_sdk):
