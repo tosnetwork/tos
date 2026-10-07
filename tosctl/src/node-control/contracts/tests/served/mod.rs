@@ -307,3 +307,26 @@ pub fn masterchain_info(seqno: u32) -> Reply {
         "init": block_json(1)
     }))
 }
+
+/// A test hook a handler blocks on until the test opens it, in place of a sleep.
+#[allow(dead_code)]
+#[derive(Clone, Default)]
+pub struct Gate(std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+
+#[allow(dead_code)]
+impl Gate {
+    /// Blocks the calling thread (a handler, off the runtime) until opened.
+    pub fn wait(&self) {
+        let (open, signal) = &*self.0;
+        let mut opened = open.lock().expect("gate");
+        while !*opened {
+            opened = signal.wait(opened).expect("gate");
+        }
+    }
+
+    pub fn open(&self) {
+        let (open, signal) = &*self.0;
+        *open.lock().expect("gate") = true;
+        signal.notify_all();
+    }
+}

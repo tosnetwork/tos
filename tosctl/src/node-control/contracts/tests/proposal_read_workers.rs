@@ -181,6 +181,15 @@ async fn node(getter: Reply, account: Reply) -> ServedNode {
 /// a failure rather than left to stall the suite. Timing is recorded, not gated.
 const WATCHDOG: Duration = Duration::from_secs(300);
 
+/// Waits for `condition`, failing the test (rather than hanging it) after a minute.
+async fn wait_until(what: &str, condition: impl Fn() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !condition() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
 async fn read(node: &ServedNode, admission: &Admission) -> anyhow::Result<ProposalAnswer> {
     let client = ClientJsonRpc::connect(node.url.clone(), None)?;
     let address: MsgAddressInt = CONFIG.parse().map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -415,11 +424,14 @@ fn cancelled_reads_never_exceed_the_worker_budget() {
 fn an_exhausted_admission_refuses_as_busy() {
     let runtime = runtime();
     runtime.block_on(async {
-        let slow = ServedNode::start(|method, _| match method {
+        // The getter is held until the test opens the gate, so the first read keeps
+        // its permit for as long as the test needs, with no sleep to tune.
+        let gate = served::Gate::default();
+        let hold = gate.clone();
+        let slow = ServedNode::start(move |method, _| match method {
             "getMasterchainInfo" => masterchain_info(SEQNO),
             _ => {
-                // Long enough that a late timer under a loaded host still fires first.
-                std::thread::sleep(Duration::from_secs(8));
+                hold.wait();
                 Reply::raw(200, list_answer(1, 0))
             }
         })
@@ -431,9 +443,10 @@ fn an_exhausted_admission_refuses_as_busy() {
             tokio::spawn(async move { read(&slow, &admission).await })
         };
         // The first read asks for the getter only once it holds the one permit.
-        while !slow.calls().contains(&"runGetMethodStd".to_string()) {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        wait_until("the first read to ask for the getter", || {
+            slow.calls().contains(&"runGetMethodStd".to_string())
+        })
+        .await;
         let started = Instant::now();
         let second = read(&slow, &admission).await;
         let waited = started.elapsed();
@@ -442,6 +455,7 @@ fn an_exhausted_admission_refuses_as_busy() {
         assert!(error.to_string().contains("busy"), "{error:#}");
         assert!(waited >= Duration::from_millis(300), "{waited:?}");
         println!("busy refusal after {waited:?}");
+        gate.open();
         assert!(first.await.expect("join").is_ok());
     });
 }
@@ -1112,9 +1126,7 @@ fn cancellation_releases_the_permit_only_when_no_work_is_running() {
                     .map(|_| ())
             })
         };
-        while admission.worker_counts().0 == 0 {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
+        wait_until("the read's worker to start", || admission.worker_counts().0 > 0).await;
         task.abort();
         let _ = task.await;
         // The worker outlives the cancelled read; while it lives, its permit is not
@@ -1140,10 +1152,12 @@ fn cancellation_releases_the_permit_only_when_no_work_is_running() {
 
         // Between attempts: the second endpoint is slow to answer HTTP, no worker runs.
         let failing = endpoint(small_error(503)).await;
-        let slow = ServedNode::start(|method, _| match method {
+        let gate = served::Gate::default();
+        let hold = gate.clone();
+        let slow = ServedNode::start(move |method, _| match method {
             "getMasterchainInfo" => masterchain_info(SEQNO),
             _ => {
-                std::thread::sleep(Duration::from_secs(5));
+                hold.wait();
                 Reply::raw(200, list_answer(1, 0))
             }
         })
@@ -1160,9 +1174,10 @@ fn cancellation_releases_the_permit_only_when_no_work_is_running() {
                     .map(|_| ())
             })
         };
-        while slow.requests_for("runGetMethodStd").is_empty() {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
+        wait_until("the second attempt to reach the slow endpoint", || {
+            !slow.requests_for("runGetMethodStd").is_empty()
+        })
+        .await;
         assert_eq!(admission.worker_counts().0, 0);
         assert_eq!(
             admission.idle_permits(),
@@ -1176,6 +1191,8 @@ fn cancellation_releases_the_permit_only_when_no_work_is_running() {
             1,
             "a read cancelled between attempts kept its permit"
         );
+        // Let the held request finish, so the node's handler thread ends.
+        gate.open();
         assert!(
             read_proposals_with(&quick_client, &address, ProposalRead::List, &admission)
                 .await
