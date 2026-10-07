@@ -14,7 +14,8 @@ rm -rf appimages
 
 mkdir -p appimages/artifacts
 
-wget -nc https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-$ARCH.AppImage
+tool_url=$(python3 "$REPO_ROOT/scripts/verify-build-tool.py" --url "appimagetool-$ARCH")
+wget -nc -O "appimagetool-$ARCH.AppImage" "$tool_url"
 python3 "$REPO_ROOT/scripts/verify-build-tool.py" "appimagetool-$ARCH" "appimagetool-$ARCH.AppImage"
 chmod +x ./appimagetool-$ARCH.AppImage
 

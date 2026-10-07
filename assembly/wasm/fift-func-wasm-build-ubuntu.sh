@@ -4,9 +4,7 @@
 #                    libreadline-dev pkg-config libgsl-dev python3 python3-dev python3-pip \
 #                    nodejs automake libtool libjemalloc-dev ccache
 
-# wget https://apt.llvm.org/llvm.sh
-# chmod +x llvm.sh
-# sudo ./llvm.sh 21 clang
+# sudo scripts/install-llvm-toolchain.sh 21
 
 with_artifacts=false
 scratch_new=false
@@ -50,10 +48,21 @@ fi
 
 mkdir -p "$EMSCRIPTEN_3PP_DIR"
 
+# emsdk is executed below, so it is pinned to a reviewed commit (tag 4.0.17)
+# and refused if the checked-out commit or any tracked file differs.
+EMSDK_COMMIT=dadf06a88d62a20b4f711250b8447409352aa4d7
 if [ ! -d "emsdk" ]; then
-  git clone https://github.com/emscripten-core/emsdk.git
-echo
+  git clone https://github.com/emscripten-core/emsdk.git || exit 1
+else
   echo Using cloned emsdk
+fi
+if [ "$(git -C emsdk rev-parse HEAD)" != "$EMSDK_COMMIT" ]; then
+  git -C emsdk fetch --depth 1 origin "$EMSDK_COMMIT" || exit 1
+  git -C emsdk checkout --detach "$EMSDK_COMMIT" || exit 1
+fi
+if [ "$(git -C emsdk rev-parse HEAD)" != "$EMSDK_COMMIT" ] || ! git -C emsdk diff --quiet HEAD --; then
+  echo "emsdk checkout does not match the pinned commit $EMSDK_COMMIT" >&2
+  exit 1
 fi
 
 cd emsdk || exit

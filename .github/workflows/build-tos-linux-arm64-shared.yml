@@ -41,19 +41,13 @@ jobs:
 
     - if: matrix.os != 'ubuntu-24.04-arm'
       run: |
-        # SECURITY: Pin to specific LLVM release instead of fetching script
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 clang
+        sudo scripts/install-llvm-toolchain.sh 21
 
     - if: matrix.os == 'ubuntu-24.04-arm'
       name: Install llvm-21
       run: |
         lsb_release -a
-        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-        echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-        sudo apt-get -y update
-        sudo apt-get install -y clang-21
+        sudo scripts/install-llvm-toolchain.sh 21
 
     - name: Cache TOS test
       id: cache-tos

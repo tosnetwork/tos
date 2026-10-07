@@ -14,16 +14,18 @@ while getopts 'a' flag; do
 done
 
 rm -rf "${ROOT_DIR}/build"
-cd "${ROOT_DIR}/third-party/openssl" || exit 1
-make clean
-cd -
+# A fresh checkout has no configured OpenSSL tree, so there is nothing to clean.
+if [ -f "${ROOT_DIR}/third-party/openssl/Makefile" ]; then
+  make -C "${ROOT_DIR}/third-party/openssl" clean
+fi
 rm -rf "${ROOT_DIR}/example/android/build-x86"
 
 export CCACHE_DISABLE=1
 
 if [ ! -f "${ROOT_DIR}/android-ndk-r27d-linux.zip" ]; then
-  echo "Downloading https://dl.google.com/android/repository/android-ndk-r27d-linux.zip"
-  wget -q -O "${ROOT_DIR}/android-ndk-r27d-linux.zip" https://dl.google.com/android/repository/android-ndk-r27d-linux.zip
+  ndk_url=$(python3 "${ROOT_DIR}/scripts/verify-build-tool.py" --url android-ndk-r27d)
+  echo "Downloading ${ndk_url}"
+  wget -q -O "${ROOT_DIR}/android-ndk-r27d-linux.zip" "${ndk_url}"
 fi
 python3 "${ROOT_DIR}/scripts/verify-build-tool.py" android-ndk-r27d "${ROOT_DIR}/android-ndk-r27d-linux.zip"
 rm -rf "${ROOT_DIR}/android-ndk-r27d"

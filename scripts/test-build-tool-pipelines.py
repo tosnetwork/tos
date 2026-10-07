@@ -54,7 +54,8 @@ class PipelineTests(unittest.TestCase):
                         json.dumps(
                             {
                                 f"appimagetool-{arch}": {
-                                    "sha256": hashlib.sha256(approved).hexdigest()
+                                    "url": f"https://example.invalid/appimagetool-{arch}.AppImage",
+                                    "sha256": hashlib.sha256(approved).hexdigest(),
                                 }
                             }
                         )
@@ -101,6 +102,11 @@ done
                 script = root / "build-android-toslib.sh"
                 shutil.copy(ROOT / "assembly/android/build-android-toslib.sh", script)
                 (root / "third-party/openssl").mkdir(parents=True)
+                # Like make, fail when the directory has no Makefile: a fresh
+                # checkout has no configured OpenSSL tree to clean.
+                executable(
+                    tools / "make", '#!/bin/sh\n[ -f Makefile ] || [ -f "$2/Makefile" ] || exit 2\n'
+                )
                 (root / "example/android").mkdir(parents=True)
                 (root / "example/android/build-all.sh").write_text("return 0\n")
                 executable(tools / "unzip", '#!/bin/sh\ntouch "$MARKER"\n')
