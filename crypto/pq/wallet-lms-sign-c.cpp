@@ -1,7 +1,13 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #include <cstring>
+#ifdef TOS_LMS_PORTABLE_SHA256
+#include "tos_lms_sha256.h"
+#define OPENSSL_cleanse tos_lms_wipe
+#define CRYPTO_memcmp tos_lms_compare
+#else
 #include <openssl/crypto.h>
 #include <openssl/sha.h>
+#endif
 
 #include "lms-fee.h"
 extern "C" {

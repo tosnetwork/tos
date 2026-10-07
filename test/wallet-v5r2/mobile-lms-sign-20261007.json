@@ -1,0 +1,22 @@
+{
+  "scope": "Host portable LMS primitive and public enrollment path only; durable mobile signing, live proofs and full wallet acceptance remain required",
+  "controls": [
+    {
+      "guard": "seed-binding",
+      "compiled": true,
+      "semantic_failure": true
+    },
+    {
+      "guard": "self-verification",
+      "compiled": true,
+      "semantic_failure": true
+    },
+    {
+      "guard": "failure-output",
+      "compiled": true,
+      "semantic_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-portable-lms-sign-controls"
+}
