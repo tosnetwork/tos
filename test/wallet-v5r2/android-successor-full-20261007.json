@@ -4,21 +4,31 @@
   "controls": [
     {
       "field": "successor-owner",
-      "exit": 1
+      "exit": 1,
+      "compiled_semantic_failure": "org.junit.internal.ArrayComparisonFailure"
     },
     {
       "field": "vault-epoch",
-      "exit": 1
+      "exit": 1,
+      "compiled_semantic_failure": "org.junit.internal.ArrayComparisonFailure"
     }
   ],
   "restored_exit": 0,
-  "scope": "Android JVM successor DAG identities; synthetic code/key framing only, not POP, deployed migration or live proof acceptance",
+  "scope": "Android JVM successor DAG encoding only",
+  "excluded": "successor-owner.log: unresolved walletAddress compile failure; never semantic evidence",
   "android_commit": "7a78a54",
   "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-successor-full",
   "generator": "test/wallet-v5r2/sdk_genesis_vectors.py --successor",
   "logs": {
     "successor-owner.log": "7d7abec05e9b1479cccfc25d9f7b51045eae5d41bef1762a825d908dd60f07d0",
     "vault-epoch.log": "04ddd445fa26998045239cd8667fc909c7ff14278863ca5988cadfb71fa88885",
-    "restored.log": "44976766c752df233d65ad72574063c305d3cfb792e75ce7b1062d563406ecf9"
+    "successor-owner-compiled.log": "f8810526e5894401d1ec7eba0d00aeef815e076fb7847bc42af1e7ddffe7bb9e",
+    "restored-corrected.log": "7effa5131b1ded22781b310e735722aca39baf6c301fb07860f0add6dc750ce6",
+    "restored.log": "44976766c752df233d65ad72574063c305d3cfb792e75ce7b1062d563406ecf9",
+    "vault-epoch-compiled.log": "371d55055824992e3ffd5f4a185516eb9e03f1b606b6183dde9b821eb8dc6083"
+  },
+  "compiled_junit_receipts": {
+    "vault-epoch-compiled.xml": "e6510e100ed0939f56aa57650dbcfcbd18589f7e2712fa8077d21b2c40ca4ea8",
+    "successor-owner-compiled.xml": "48e57713e0217a1320a86b86e66f86fa63c6045c4ad1c21c3887a0a243b45fcf"
   }
 }
