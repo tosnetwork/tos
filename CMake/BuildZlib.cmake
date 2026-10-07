@@ -80,7 +80,10 @@ if (MSVC)
     OUTPUT ${ZLIB_LIBRARY}
   )
 else()
+  set(ZLIB_CONFIGURE_ENV)
   if (ANDROID)
+    # zlib otherwise detects the macOS build host and replaces llvm-ar with Apple libtool.
+    set(ZLIB_CONFIGURE_ENV CHOST=${TOS_ANDROID_HOST})
     set(ZLIB_BINARY_DIR ${TOS_ANDROID_THIRD_PARTY_DIR}/zlib/${TOS_ANDROID_ARCH_DIR})
     set(ZLIB_BUILD_DIR ${ZLIB_BINARY_DIR}/src)
     set(ZLIB_CC ${TOS_ANDROID_CC})
@@ -139,6 +142,7 @@ else()
         AR=${ZLIB_AR}
         RANLIB=${ZLIB_RANLIB}
         CFLAGS=${ZLIB_CFLAGS}
+        ${ZLIB_CONFIGURE_ENV}
         ./configure --static --prefix=${ZLIB_BINARY_DIR}
       COMMAND ${CMAKE_COMMAND} -E chdir ${ZLIB_BUILD_DIR} ${CMAKE_COMMAND} -E env
         CC=${ZLIB_CC}
