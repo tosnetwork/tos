@@ -1,0 +1,24 @@
+{
+  "app_tests": 1,
+  "controls": [
+    {
+      "guard": "code-pin",
+      "exit": 1,
+      "runtime_failure": null
+    },
+    {
+      "guard": "chain-binding",
+      "exit": 1,
+      "runtime_failure": null
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Android emulator fixed review candidate code loading and chain restriction; no approved release, config proof, deployment or funded POP acceptance",
+  "android_commit": "0cf65c3",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-candidate-codes",
+  "logs": {
+    "code-pin.log": "38033359b192cab22c56b24130f2acd5b2fe1f2d762e6d5149e4a2ac1efc50f4",
+    "chain-binding.log": "db7e9310e872952844cd52e900aaad6a7ecf8768926a23b7f29b83801d95369e",
+    "restored.log": "f9b2f02c28ffc1851d9c4ae6fb46e97c682978c1ddc603fde53a189678c820b0"
+  }
+}
