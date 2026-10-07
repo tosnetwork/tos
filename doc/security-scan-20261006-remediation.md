@@ -181,3 +181,69 @@ the test waits for real read-ahead before asserting it remains bounded and the
 body remains undispatched. All 31 HTTP tests pass locally. The local link uses
 the existing collectors-only metrics archive because of the baseline Linux-only
 exporter constants; final-head Linux/ASAN remains the full instrumented gate.
+
+## Review follow-up: items A1–A6
+
+A read-only review of this branch (PR comment 6037599902) found gaps in six
+places. The fix plan was agreed with a separate reviewer before any code was
+written, and the implementation was reviewed until it was accepted.
+
+- A1, ADNL admission (finding 1):
+  - A packet must hold a source-table entry and a token from its own rate
+    limiter before the shared process and local decrypt budgets are charged,
+    so one source can no longer starve every peer.
+  - When the bounded source table is full, the least recently used idle entry
+    is evicted instead of new sources being refused.
+  - Per-source state is reachable only through the admission ticket.
+- A2, HTTP framing (findings 5 and 8):
+  - RLDP-relayed bodies are reconciled with their declared Content-Length in
+    both directions, through `relayed_response` and `add_payload_part`, which
+    the proxy calls.
+  - HEAD answers and 204/304 responses keep their metadata lengths. A remote
+    that sends no payload may not announce one, and a failed CONNECT is not a
+    tunnel.
+  - Chunk sizes are parsed strictly; extensions are accepted and dropped.
+  - Header values are trimmed of SP/HTAB only, and TCP trailers are validated.
+  - Connection is a token list: `close` wins, and nominated hop-by-hop headers
+    are removed.
+- A3, explorer (finding 10):
+  - The echoed path prefix is limited to unreserved path characters; anything
+    else gets a fixed 400.
+  - The page policy allows only the exact script files the page loads, and
+    adds `form-action 'self'`.
+- A4, tooling (finding 4):
+  - Every workflow installs LLVM through the committed-key installer and uv
+    through the pinned archive.
+  - pip packages are pinned, and a test refuses unverified installers and
+    remote pip arguments.
+  - emsdk is pinned to a verified commit.
+  - The verifier also checks a recorded upstream SHA-1.
+- A5, regressions:
+  - The Android build no longer aborts on a fresh OpenSSL tree.
+  - appimagetool is pinned to release 1.9.1 instead of `continuous`.
+  - connect-react forwards `walletSessionPublicKey` and reports refusals
+    through `connectError`.
+  - HTTP-bridge connections to the bundled mobile wallets stay unavailable
+    until they implement pairing.
+- A6, private files (findings 3 and 7):
+  - The service runtime configuration uses the shared writer.
+  - The resolved directory is re-checked.
+  - Configuration and vault directories follow one policy: owned by the user,
+    not group- or other-writable. A refusal names the directory and the
+    `chmod go-w` fix.
+  - The Docker examples mount a private directory as the host user.
+
+Local verification on the final head:
+
+- Native builds: the full Release and `-Werror` builds pass.
+- `test-security-boundaries` passes 15 tests. The HTTP, RLDP tunnel, ADNL
+  pair-cap and JSON-RPC transport suites pass, and so does the network-safety
+  label under ASAN with the CI options.
+- Rust: the secrets-vault, commands and service suites pass (233, 199 and 275
+  tests), and the workspace test build compiles.
+- JS: all SDK packages pass typecheck and tests.
+- Python: the build-tool tests pass.
+
+Each new guard has a red/green control: removing it fails its test, and
+restoring it passes. That covers 19 controls across native, Rust, JS and
+Python.
