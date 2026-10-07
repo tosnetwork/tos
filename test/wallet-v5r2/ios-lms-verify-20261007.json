@@ -1,0 +1,12 @@
+{
+  "ios_commit": "25d56ee",
+  "scope": "Real iOS Simulator LMS fee verification component; not durable state/cache or full wallet acceptance",
+  "baseline_tests": 1,
+  "control": "Remove cryptographic validity comparison: XCTest XCTAssertFalse failed",
+  "restored_tests": 1,
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-lms-control",
+  "logs": {
+    "verification-control.log": "36827b9ce5f4dfdd79f15d73cfc99bc994601886ecdf5bd73ba631758501969d",
+    "restored.log": "6b5e34041a454857bd8b5491267db7b57487e8b15a0a2df900799cbbd36c14d4"
+  }
+}
