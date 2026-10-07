@@ -66,6 +66,33 @@ TEST(SecurityBoundaries, PreauthSourceIsChargedBeforeSharedBudgets) {
   CHECK(gate.admit(ipv4_source(2), process, local).is_ok());
 }
 
+TEST(SecurityBoundaries, PreauthSourceIsChargedBeforeProcessBudget) {
+  // The process budget holds 100 tokens and never refills during the test.
+  tos::adnl::DecryptBudget process{100, 3600.0, 1 << 20};
+  tos::adnl::DecryptBudget local{1000000, 0.000001, 1 << 20};
+  tos::adnl::PreauthGate<int> gate{16, 75, 3600.0};
+  size_t admitted = 0;
+  for (int i = 0; i < 10000; ++i) {
+    if (gate.admit(ipv4_source(1), process, local).is_ok()) {
+      ++admitted;
+    }
+  }
+  ASSERT_EQ(admitted, 75u);
+  CHECK(gate.admit(ipv4_source(2), process, local).is_ok());
+}
+
+TEST(SecurityBoundaries, PreauthLocalRefusalReleasesProcessSlot) {
+  tos::adnl::DecryptBudget process{1000000, 0.000001, 1};
+  tos::adnl::DecryptBudget local{1, 3600.0, 1 << 20};
+  tos::adnl::PreauthGate<int> gate{16, 75, 3600.0};
+  CHECK(gate.admit(ipv4_source(1), process, local).is_ok());
+  // The local budget has no token left: the process slot taken for this
+  // packet must be returned.
+  CHECK(gate.admit(ipv4_source(2), process, local).is_error());
+  CHECK(process.acquire());
+  process.release();
+}
+
 TEST(SecurityBoundaries, PreauthTableEvictsOnlyIdleSources) {
   tos::adnl::DecryptBudget process{1000000, 0.000001, 1 << 20};
   tos::adnl::DecryptBudget local{1000000, 0.000001, 1 << 20};
@@ -291,15 +318,85 @@ TEST(SecurityBoundaries, HttpFramedBodyMatchesContentLength) {
   auto chunked = std::make_shared<HttpPayload>(HttpPayload::PayloadType::pt_chunked, 1, 1 << 20);
   chunked->add_framed_chunk(td::BufferSlice("any length")).ensure();
   chunked->complete_framed_parse().ensure();
+}
 
-  // A response that promises a body: refused by the proxy when the remote
-  // says it sends none, unless the request was HEAD or the status has no body.
-  auto announced = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", true, true).move_as_ok();
-  announced->add_header({"Content-Length", "5"}).ensure();
-  CHECK(announced->announces_body());
-  auto zero = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", true, true).move_as_ok();
-  zero->add_header({"Content-Length", "0"}).ensure();
-  CHECK(!zero->announces_body());
+namespace {
+
+tos::tl_object_ptr<tos::tos_api::http_response> remote_answer(td::int32 code, std::string content_length,
+                                                              bool no_payload) {
+  std::vector<tos::tl_object_ptr<tos::tos_api::http_header>> headers;
+  if (!content_length.empty()) {
+    headers.push_back(tos::create_tl_object<tos::tos_api::http_header>("Content-Length", content_length));
+  }
+  return tos::create_tl_object<tos::tos_api::http_response>("HTTP/1.1", code, "Status", std::move(headers), no_payload);
+}
+
+tos::tl_object_ptr<tos::tos_api::http_payloadPart> payload_part(std::string data, bool last) {
+  return tos::create_tl_object<tos::tos_api::http_payloadPart>(
+      td::BufferSlice(data), std::vector<tos::tl_object_ptr<tos::tos_api::http_header>>(), last);
+}
+
+std::unique_ptr<tos::http::HttpRequest> relayed_request(const std::string &method) {
+  auto request = tos::http::HttpRequest::create(method, "/", "HTTP/1.1").move_as_ok();
+  request->complete_parse_header().ensure();
+  return request;
+}
+
+}  // namespace
+
+TEST(SecurityBoundaries, HttpRelayedResponseFraming) {
+  using tos::http::HttpPayload;
+  using tos::http::relayed_response;
+  auto get = relayed_request("GET");
+  // A remote that sends no payload may not announce one.
+  CHECK(relayed_response(*get, *remote_answer(200, "5", true), {}).is_error());
+  CHECK(relayed_response(*relayed_request("CONNECT"), *remote_answer(403, "5", true), {}).is_error());
+  // HEAD answers and bodiless statuses keep their metadata lengths.
+  for (auto [method, code, no_payload] : {std::tuple{"HEAD", 200, false}, std::tuple{"HEAD", 200, true},
+                                          std::tuple{"GET", 304, true}, std::tuple{"GET", 204, true}}) {
+    auto relayed = relayed_response(*relayed_request(method), *remote_answer(code, "5", no_payload), {});
+    CHECK(relayed.is_ok());
+    auto payload = relayed.move_as_ok().second;
+    ASSERT_EQ(payload->payload_type(), HttpPayload::PayloadType::pt_empty);
+    if (!no_payload) {
+      CHECK(tos::http::add_payload_part(*payload, *payload_part("", true)).move_as_ok());
+    }
+    CHECK(payload->parse_completed());
+  }
+  // An established tunnel has no length.
+  auto tunnel = relayed_response(*relayed_request("CONNECT"), *remote_answer(200, "", false), {}).move_as_ok();
+  ASSERT_EQ(tunnel.second->payload_type(), HttpPayload::PayloadType::pt_tunnel);
+  CHECK(relayed_response(*get, *remote_answer(200, "0", true), {}).move_as_ok().second->parse_completed());
+
+  // Relayed parts are reconciled with the declared length.
+  auto body = [&] { return relayed_response(*get, *remote_answer(200, "5", false), {}).move_as_ok().second; };
+  auto longer = body();
+  CHECK(tos::http::add_payload_part(*longer, *payload_part("hello!", false)).is_error());
+  auto shorter = body();
+  CHECK(!tos::http::add_payload_part(*shorter, *payload_part("hel", false)).move_as_ok());
+  CHECK(tos::http::add_payload_part(*shorter, *payload_part("", true)).is_error());
+  auto exact = body();
+  CHECK(!tos::http::add_payload_part(*exact, *payload_part("hel", false)).move_as_ok());
+  CHECK(tos::http::add_payload_part(*exact, *payload_part("lo", true)).move_as_ok());
+  ASSERT_EQ(exact->ready_bytes(), 5u);
+}
+
+TEST(SecurityBoundaries, HttpRelayedRequestFraming) {
+  auto request_with_length = [] {
+    std::vector<tos::tl_object_ptr<tos::tos_api::http_header>> headers;
+    headers.push_back(tos::create_tl_object<tos::tos_api::http_header>("Content-Length", "5"));
+    auto tl = tos::create_tl_object<tos::tos_api::http_request>(td::Bits256::zero(), "POST", "/", "HTTP/1.1",
+                                                                std::move(headers));
+    auto request = tos::http::HttpRequest::create(*tl).move_as_ok();
+    return request->create_empty_payload().move_as_ok();
+  };
+  auto longer = request_with_length();
+  CHECK(tos::http::add_payload_part(*longer, *payload_part("hello, backend", true)).is_error());
+  auto shorter = request_with_length();
+  CHECK(tos::http::add_payload_part(*shorter, *payload_part("hi", true)).is_error());
+  CHECK(!shorter->parse_completed());
+  auto exact = request_with_length();
+  CHECK(tos::http::add_payload_part(*exact, *payload_part("hello", true)).move_as_ok());
 }
 
 TEST(SecurityBoundaries, ExplorerPathPrefixAndPolicy) {

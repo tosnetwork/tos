@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <list>
 #include <set>
+#include <tuple>
 
 #include "adnl/adnl.h"
 #include "auto/tl/tos_api_json.h"
@@ -223,27 +224,13 @@ class HttpRldpPayloadReceiver : public td::actor::Actor {
     auto f = F.move_as_ok();
     LOG(INFO) << "HttpPayloadReceiver: received answer datasize=" << f->data_.size()
               << " trailers_cnt=" << f->trailer_.size() << " last=" << f->last_;
-    auto S = payload_->add_framed_chunk(std::move(f->data_));
-    if (S.is_error()) {
-      abort_query(std::move(S));
+    auto R = tos::http::add_payload_part(*payload_, *f);
+    if (R.is_error()) {
+      abort_query(R.move_as_error());
       return;
     }
-    for (auto &x : f->trailer_) {
-      tos::http::HttpHeader h{x->name_, x->value_};
-      S = h.basic_check();
-      if (S.is_error()) {
-        abort_query(S.move_as_error());
-        return;
-      }
-      payload_->add_trailer(std::move(h));
-    }
     sent_ = false;
-    if (f->last_) {
-      S = payload_->complete_framed_parse();
-      if (S.is_error()) {
-        abort_query(std::move(S));
-        return;
-      }
+    if (R.ok()) {
       LOG(INFO) << "received HTTP payload";
       stop();
     } else {
@@ -473,43 +460,14 @@ class TcpToRldpRequestSender : public td::actor::Actor {
       return;
     }
     auto f = F.move_as_ok();
-    auto R = tos::http::HttpResponse::create(f->http_version_, f->status_code_, f->reason_, f->no_payload_, true,
-                                             is_tunnel() && f->status_code_ == 200);
+    std::vector<tos::http::HttpHeader> extra_headers;
+    extra_headers.push_back({PROXY_ENTRY_VERISON_HEADER_NAME, PROXY_VERSION_HEADER});
+    auto R = tos::http::relayed_response(*request_, *f, std::move(extra_headers));
     if (R.is_error()) {
       abort_query(R.move_as_error());
       return;
     }
-    response_ = R.move_as_ok();
-    for (auto &e : f->headers_) {
-      tos::http::HttpHeader h{e->name_, e->value_};
-      auto S = h.basic_check();
-      if (S.is_error()) {
-        abort_query(S.move_as_error());
-        return;
-      }
-      S = response_->add_header(std::move(h));
-      if (S.is_error()) {
-        abort_query(S.move_as_error());
-        return;
-      }
-    }
-    response_->add_header({PROXY_ENTRY_VERISON_HEADER_NAME, PROXY_VERSION_HEADER});
-    auto S = response_->complete_parse_header();
-    if (S.is_error()) {
-      abort_query(S.move_as_error());
-      return;
-    }
-    // A remote that sends no payload must not announce one: the client would
-    // wait for the announced bytes and read the next response as this body.
-    // HEAD answers and 204/304 responses keep their metadata lengths.
-    const bool body_allowed =
-        !request_->no_payload_in_answer() && f->status_code_ >= 200 && f->status_code_ != 204 && f->status_code_ != 304;
-    if (f->no_payload_ && !is_tunnel() && body_allowed && response_->announces_body()) {
-      abort_query(td::Status::Error("remote announced a body it did not send"));
-      return;
-    }
-
-    response_payload_ = response_->create_empty_payload().move_as_ok();
+    std::tie(response_, response_payload_) = R.move_as_ok();
 
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
       if (R.is_error()) {
@@ -518,13 +476,8 @@ class TcpToRldpRequestSender : public td::actor::Actor {
         td::actor::send_closure(SelfId, &TcpToRldpRequestSender::finished_payload_transfer);
       }
     });
-    if (f->no_payload_) {
-      S = response_payload_->complete_framed_parse();
-      if (S.is_error()) {
-        abort_query(S.move_as_error());
-        return;
-      }
-    } else {
+    // relayed_response has already completed an answer without payload.
+    if (!f->no_payload_) {
       td::actor::create_actor<HttpRldpPayloadReceiver>("HttpPayloadReceiver", response_payload_, id_, dst_, local_id_,
                                                        adnl_, rldp_, is_tunnel())
           .release();

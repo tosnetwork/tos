@@ -30,26 +30,44 @@ UNVERIFIED = [
     (re.compile(r"\|\s*(sudo\s+)?(ba|z)?sh\b"), "download piped into a shell"),
 ]
 PIP_INSTALL = re.compile(r"\bpip\s+install\s+(.*)$")
-# Options whose next word is a value, not a package.
-PIP_VALUE_OPTIONS = {"--python", "-r", "--requirement", "-c", "--constraint", "--index-url", "-i"}
+# Options whose next word (or "=value") is a value, not a package.
+PIP_VALUE_OPTIONS = {"--python", "-i", "--index-url"}
+# Options whose value names something to install; it must be a local path.
+PIP_PATH_OPTIONS = {"-e", "--editable", "-r", "--requirement", "-c", "--constraint"}
+PINNED_PACKAGE = re.compile(r"[A-Za-z0-9._-]+(\[[A-Za-z0-9,._-]+\])?==[A-Za-z0-9.+!-]+")
+REMOTE_PREFIXES = ("git" + "+", "http", "file:")
+
+
+def is_local_path(word: str) -> bool:
+    if "://" in word or "@" in word or word.startswith(REMOTE_PREFIXES):
+        return False
+    return word.startswith(("./", "../", "/")) or "/" in word
 
 
 def unpinned_pip_packages(arguments: str) -> list[str]:
+    """Install arguments that fetch something not pinned by version or path."""
     words = shlex.split(arguments, comments=True)
-    unpinned = []
-    skip = False
+    refused = []
+    expect = None
     for word in words:
-        if skip:
-            skip = False
+        if expect is not None:
+            if expect == "path" and not is_local_path(word):
+                refused.append(word)
+            expect = None
             continue
-        if word in PIP_VALUE_OPTIONS:
-            skip = True
+        option, has_value, value = word.partition("=")
+        if word.startswith("-") and option in PIP_PATH_OPTIONS | PIP_VALUE_OPTIONS:
+            kind = "path" if option in PIP_PATH_OPTIONS else "value"
+            if not has_value:
+                expect = kind
+            elif kind == "path" and not is_local_path(value):
+                refused.append(value)
             continue
-        if word.startswith("-") or "/" in word or word.startswith("."):
+        if word.startswith("-"):
             continue
-        if not re.fullmatch(r"[A-Za-z0-9._-]+(\[[A-Za-z0-9,._-]+\])?==[A-Za-z0-9.+!-]+", word):
-            unpinned.append(word)
-    return unpinned
+        if not (is_local_path(word) or PINNED_PACKAGE.fullmatch(word)):
+            refused.append(word)
+    return refused
 
 
 def workflow_findings(text: str) -> list[str]:
@@ -144,12 +162,21 @@ class WorkflowInstallTests(unittest.TestCase):
             "curl -fsSL https://example.invalid/x | sudo bash",
             "python3 -m pip install jsonschema",
             "python3 -m pip install 'jsonschema>=4'",
+            "pip install https://example.invalid/pkg.whl",
+            "pip install git+https://example.invalid/repo",
+            "pip install 'pkg @ https://example.invalid/pkg.whl'",
+            "pip install -e https://example.invalid/repo",
+            "pip install --editable=git+https://example.invalid/repo",
+            "pip install -r https://example.invalid/requirements.txt",
+            "pip install -c https://example.invalid/constraints.txt pkg==1.0",
         ]
         accepted = [
             "sudo scripts/install-llvm-toolchain.sh 21 all",
             "python3 -m pip install jsonschema==4.26.0",
             "uv pip install --python .venv/bin/python -e test/tostester",
             "python -m pip install bitarray==3.7.2 PyNaCl==1.5.0",
+            "pip install -q --upgrade -r requirements/ci.txt",
+            "pip install ./tools/package",
             "# wget https://apt.llvm.org/llvm.sh",
         ]
         for line in refused:

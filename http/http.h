@@ -583,6 +583,18 @@ class HttpResponse {
   bool is_tunnel_ = false;
 };
 
+// The response a relay forwards for `request`, rebuilt from the remote's TL
+// answer with `extra_headers` added. A HEAD answer and 1xx/204/304 responses
+// carry no body whatever their headers say; a CONNECT answered 200 becomes a
+// tunnel. A remote that says it sends no payload must not announce a body,
+// or the client would read the next response as this one's body.
+td::Result<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> relayed_response(
+    const HttpRequest &request, const tos_api::http_response &answer, std::vector<HttpHeader> extra_headers);
+
+// Adds one relayed payload part to a payload being received, enforcing its
+// declared length. Returns whether the part was the last one.
+td::Result<bool> add_payload_part(HttpPayload &payload, tos_api::http_payloadPart &part);
+
 void answer_error(HttpStatusCode code, std::string reason,
                   td::Promise<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> promise);
 

@@ -1268,6 +1268,47 @@ td::Status HttpHeader::basic_check() {
   return td::Status::OK();
 }
 
+td::Result<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> relayed_response(
+    const HttpRequest &request, const tos_api::http_response &answer, std::vector<HttpHeader> extra_headers) {
+  const bool head = request.no_payload_in_answer();
+  const bool tunnel = request.method() == "CONNECT" && answer.status_code_ == 200;
+  TRY_RESULT(response, HttpResponse::create(answer.http_version_, answer.status_code_, answer.reason_,
+                                            answer.no_payload_ || head, true, tunnel));
+  for (auto &e : answer.headers_) {
+    HttpHeader h{e->name_, e->value_};
+    TRY_STATUS(h.basic_check());
+    TRY_STATUS(response->add_header(std::move(h)));
+  }
+  for (auto &h : extra_headers) {
+    TRY_STATUS(response->add_header(std::move(h)));
+  }
+  TRY_STATUS(response->complete_parse_header());
+  const bool body_allowed =
+      !head && answer.status_code_ >= 200 && answer.status_code_ != 204 && answer.status_code_ != 304;
+  if (answer.no_payload_ && !tunnel && body_allowed && response->announces_body()) {
+    return td::Status::Error("remote announced a body it did not send");
+  }
+  TRY_RESULT(payload, response->create_empty_payload());
+  if (answer.no_payload_) {
+    TRY_STATUS(payload->complete_framed_parse());
+  }
+  return std::make_pair(std::move(response), std::move(payload));
+}
+
+td::Result<bool> add_payload_part(HttpPayload &payload, tos_api::http_payloadPart &part) {
+  TRY_STATUS(payload.add_framed_chunk(std::move(part.data_)));
+  for (auto &x : part.trailer_) {
+    HttpHeader h{x->name_, x->value_};
+    TRY_STATUS(h.basic_check());
+    payload.add_trailer(std::move(h));
+  }
+  if (part.last_) {
+    TRY_STATUS(payload.complete_framed_parse());
+    return true;
+  }
+  return false;
+}
+
 void answer_error(HttpStatusCode code, std::string reason,
                   td::Promise<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> promise) {
   if (reason.empty()) {
