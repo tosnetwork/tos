@@ -8,6 +8,8 @@ target_link_libraries(control-getter PUBLIC tos_crypto tdutils tl_api tdactor)
 add_library(json-rpc-parse STATIC
   json-rpc-server-parse.h
   json-rpc-server-parse.cpp
+  json-rpc-server-runresult.h
+  json-rpc-server-runresult.cpp
 )
 target_include_directories(json-rpc-parse PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(json-rpc-parse PUBLIC tos_crypto tdutils tl_lite_api)

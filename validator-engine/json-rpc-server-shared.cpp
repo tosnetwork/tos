@@ -15,17 +15,6 @@ td::Result<block::StdAddress> parse_address_param(td::JsonObject& params) {
   return addr;
 }
 
-std::string format_block_id_json(const tos::lite_api::tosNode_blockIdExt& blk) {
-  return PSTRING()
-      << "{\"@type\":\"tos.blockIdExt\""
-      << ",\"workchain\":" << blk.workchain_
-      << ",\"shard\":\"" << blk.shard_ << "\""
-      << ",\"seqno\":" << blk.seqno_
-      << ",\"root_hash\":\"" << td::base64_encode(blk.root_hash_.as_slice()) << "\""
-      << ",\"file_hash\":\"" << td::base64_encode(blk.file_hash_.as_slice()) << "\""
-      << "}";
-}
-
 std::string format_zero_state_json(const tos::lite_api::tosNode_zeroStateIdExt& zs) {
   return PSTRING()
       << "{\"@type\":\"tos.blockIdExt\""

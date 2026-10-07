@@ -19,6 +19,7 @@
 #pragma once
 
 #include "json-rpc-server-parse.h"
+#include "json-rpc-server-runresult.h"
 #include "json-rpc-server-storage.h"
 #include "json-rpc-server.h"
 
@@ -39,7 +40,6 @@ td::Result<block::StdAddress> parse_address_param(td::JsonObject& params);
 
 // ─── Shared: block ID JSON formatters ───────────────────────────────────
 
-std::string format_block_id_json(const tos::lite_api::tosNode_blockIdExt& blk);
 std::string format_zero_state_json(const tos::lite_api::tosNode_zeroStateIdExt& zs);
 
 // ─── Shared: ParsedAccountState (declaration only) ──────────────────────
