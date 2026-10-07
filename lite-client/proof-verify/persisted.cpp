@@ -32,10 +32,11 @@ bool write_all(int fd, const char *data, size_t size) {
   return ::fsync(fd) == 0;
 }
 }
-extern "C" int tos_proof_verify_live_persisted(const char *directory, int initialize,
+static int run_persisted(const char *directory, int initialize,
     const char *anchor, size_t anchor_size, const char *request, size_t request_size,
     int64_t local_now, const tos_proof_material *material, size_t material_count,
-    char *result, size_t capacity, size_t *result_size) {
+    char *result, size_t capacity, size_t *result_size,
+    tos_proof_query_callback query, void *query_context) {
   namespace pv = tos::proofverify;
   if (result_size) *result_size = 0;
   if (!result || capacity > pv::kMaxFileBytes) return -1;
@@ -78,6 +79,24 @@ extern "C" int tos_proof_verify_live_persisted(const char *directory, int initia
         done += static_cast<size_t>(n);
       }
     }
+    struct Collected {
+      std::vector<std::vector<uint8_t>> bytes;
+      std::vector<tos_proof_material> parts;
+    } collected;
+    if (query) {
+      auto collect = [](void *context, uint32_t kind, const uint8_t *data, size_t size) -> int {
+        auto &out = *static_cast<Collected *>(context);
+        try {
+          out.bytes.emplace_back(data, data + size);
+          out.parts.push_back({kind, out.bytes.back().data(), size});
+          return 0;
+        } catch (...) { return -1; }
+      };
+      const int acquired = tos_proof_acquire(anchor, anchor_size, request, request_size, prior.data(), prior.size(),
+          query, query_context, collect, &collected);
+      if (acquired != 0) return -2;
+      material = collected.parts.data(); material_count = collected.parts.size();
+    }
     std::vector<char> answer(capacity), next(1u << 20);
     size_t answer_size = 0, next_size = 0;
     int status = tos_proof_verify_embedded(anchor, anchor_size, request, request_size, prior.data(), prior.size(),
@@ -96,4 +115,24 @@ extern "C" int tos_proof_verify_live_persisted(const char *directory, int initia
     std::memcpy(result, answer.data(), answer_size); *result_size = answer_size;
     return 0;
   } catch (...) { return -4; }
+}
+
+extern "C" int tos_proof_verify_live_persisted(const char *directory, int initialize,
+    const char *anchor, size_t anchor_size, const char *request, size_t request_size,
+    int64_t local_now, const tos_proof_material *material, size_t material_count,
+    char *result, size_t capacity, size_t *result_size) {
+  return run_persisted(directory, initialize, anchor, anchor_size, request, request_size,
+      local_now, material, material_count, result, capacity, result_size, nullptr, nullptr);
+}
+extern "C" int tos_proof_acquire_verify_live_persisted(const char *directory, int initialize,
+    const char *anchor, size_t anchor_size, const char *request, size_t request_size,
+    int64_t local_now, tos_proof_query_callback query, void *query_context,
+    char *result, size_t capacity, size_t *result_size) {
+  if (!query) {
+    if (result_size) *result_size = 0;
+    if (result && capacity <= tos::proofverify::kMaxFileBytes) std::memset(result, 0, capacity);
+    return -1;
+  }
+  return run_persisted(directory, initialize, anchor, anchor_size, request, request_size,
+      local_now, nullptr, 0, result, capacity, result_size, query, query_context);
 }

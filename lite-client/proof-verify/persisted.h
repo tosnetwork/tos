@@ -1,6 +1,7 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #pragma once
 #include "embedded.h"
+#include "acquisition.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -14,6 +15,13 @@ extern "C" {
 int tos_proof_verify_live_persisted(const char *directory, int initialize,
     const char *anchor, size_t anchor_size, const char *request, size_t request_size,
     int64_t local_now, const tos_proof_material *material, size_t material_count,
+    char *result, size_t result_capacity, size_t *result_size);
+/* Holds the same checkpoint lock across acquisition, verification and commit.
+ * Query callback must apply network timeout/cancellation and receive-size bounds.
+ */
+int tos_proof_acquire_verify_live_persisted(const char *directory, int initialize,
+    const char *anchor, size_t anchor_size, const char *request, size_t request_size,
+    int64_t local_now, tos_proof_query_callback query, void *query_context,
     char *result, size_t result_capacity, size_t *result_size);
 #ifdef __cplusplus
 }

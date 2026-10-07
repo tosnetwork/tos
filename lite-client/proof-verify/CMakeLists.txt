@@ -40,6 +40,10 @@ add_test(NAME proof-verify-embedded COMMAND test-proof-verify-embedded
 
 if(NOT CMAKE_CROSSCOMPILING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME proof-acquire-persisted COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/test/pq-native/proof-acquire-persisted-test.py
+    $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+
   add_test(NAME proof-acquisition-c COMMAND ${Python3_EXECUTABLE}
     ${PROJECT_SOURCE_DIR}/test/pq-native/proof-acquisition-c-test.py
     $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
