@@ -1,0 +1,35 @@
+{
+  "scope": "Android ART transport callback acquisition/verification/commit; captured responses only",
+  "runtime": "Dedicated API36.1 arm64 16KB emulator, native API24 build",
+  "cases_passed": 22,
+  "validation": [
+    "Platform callback supplies bounded raw replies",
+    "Acquired captured live proof verified and checkpoint committed",
+    "Malformed response refuses and preserves state",
+    "Platform transport exception propagates and preserves state"
+  ],
+  "control": "Remove JNI acquired-result status refusal: compiled and failed malformed-acquisition case; restored all 22 passed",
+  "artifacts": [
+    {
+      "file": "20261007-acquisition-jni-expanded-runtime.log",
+      "bytes": 926,
+      "sha256": "a48db8673e35ecd09e6391e990d93fb7b110a9079242cf312a3a48b68fc4625e"
+    },
+    {
+      "file": "20261007-acquisition-jni-control-runtime.log",
+      "bytes": 709,
+      "sha256": "11cfd496e4700f302e7401aa86ca1a127e2b9a27ea32a79dad1b10063fd6c971"
+    },
+    {
+      "file": "20261007-acquisition-jni-restored-runtime.log",
+      "bytes": 926,
+      "sha256": "a48db8673e35ecd09e6391e990d93fb7b110a9079242cf312a3a48b68fc4625e"
+    }
+  ],
+  "remaining": [
+    "Kotlin interface and application instrumentation",
+    "Actual network transport and disposable live-chain acquisition",
+    "Independent anchor/wallet code/config binding",
+    "Full creation, dual POP, rotation and delivery; physical/release acceptance"
+  ]
+}

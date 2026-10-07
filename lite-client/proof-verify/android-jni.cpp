@@ -116,3 +116,56 @@ Java_network_tos_security_pq_V5R2ProofNative_nativeVerifyLivePersisted(JNIEnv *e
     return env->ExceptionCheck() ? nullptr : result;
   } catch (...) { return fail(); }
 }
+
+namespace {
+struct PlatformQuery { JNIEnv *env; jobject transport; jmethodID query; };
+int platform_query(void *context, const uint8_t *data, size_t size, uint8_t *output, size_t capacity, size_t *used) {
+  auto &platform = *static_cast<PlatformQuery *>(context);
+  auto *env = platform.env; *used = 0;
+  if (size > kMaxJson || capacity > kMaxMaterial || env->ExceptionCheck()) return -1;
+  auto request = env->NewByteArray(static_cast<jsize>(size));
+  if (!request) return -1;
+  env->SetByteArrayRegion(request, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte *>(data));
+  if (env->ExceptionCheck()) { env->DeleteLocalRef(request); return -1; }
+  auto response = static_cast<jbyteArray>(env->CallObjectMethod(platform.transport, platform.query, request, static_cast<jint>(capacity)));
+  env->DeleteLocalRef(request);
+  if (env->ExceptionCheck() || !response) return -1;
+  const auto length = env->GetArrayLength(response);
+  if (length <= 0 || static_cast<size_t>(length) > capacity) { env->DeleteLocalRef(response); return -1; }
+  env->GetByteArrayRegion(response, 0, length, reinterpret_cast<jbyte *>(output));
+  env->DeleteLocalRef(response);
+  if (env->ExceptionCheck()) return -1;
+  *used = static_cast<size_t>(length); return 0;
+}
+}
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_network_tos_security_pq_V5R2ProofNative_nativeAcquireLivePersisted(JNIEnv *env, jobject,
+    jstring directory, jboolean initialize, jbyteArray anchor, jbyteArray request, jlong now, jobject transport) {
+  auto fail = [&]() -> jbyteArray { refuse(env); return nullptr; };
+  try {
+    if (!directory || env->GetStringUTFLength(directory) > 4096 || !transport || now <= 0) return fail();
+    const char *chars = env->GetStringUTFChars(directory, nullptr);
+    if (!chars) return nullptr;
+    std::string path;
+    try { path.assign(chars); } catch (...) { env->ReleaseStringUTFChars(directory, chars); throw; }
+    env->ReleaseStringUTFChars(directory, chars);
+    if (path.empty()) return fail();
+    std::vector<uint8_t> a, r;
+    if (!read(env, anchor, kMaxJson, a) || !read(env, request, kMaxJson, r)) return fail();
+    auto klass = env->GetObjectClass(transport);
+    if (!klass) return nullptr;
+    auto method = env->GetMethodID(klass, "query", "([BI)[B");
+    env->DeleteLocalRef(klass);
+    if (!method || env->ExceptionCheck()) return nullptr;
+    PlatformQuery callback{env, transport, method};
+    std::vector<char> output(kMaxMaterial); size_t size = 0;
+    const int status = tos_proof_acquire_verify_live_persisted(path.c_str(), initialize == JNI_TRUE ? 1 : 0,
+        reinterpret_cast<const char *>(a.data()), a.size(), reinterpret_cast<const char *>(r.data()), r.size(), now,
+        platform_query, &callback, output.data(), output.size(), &size);
+    if (status != 0) return fail();
+    auto result = env->NewByteArray(static_cast<jsize>(size));
+    if (!result) return nullptr;
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(size), reinterpret_cast<const jbyte *>(output.data()));
+    return env->ExceptionCheck() ? nullptr : result;
+  } catch (...) { return fail(); }
+}
