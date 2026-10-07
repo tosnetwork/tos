@@ -1,0 +1,18 @@
+{
+  "tests": 2,
+  "controls": [
+    "binding.log",
+    "wipe-compiled.log"
+  ],
+  "excluded": "wipe.log: compile failure, not sensitivity evidence",
+  "restored_exit": 0,
+  "scope": "record parsing and failed import wipe; real device user-presence acceptance remains required",
+  "ios_commit": "97a9f14",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-seed-keychain",
+  "logs": {
+    "binding.log": "af01fb7dd24129d6cf309146b3b3bb9e126471f1b9e5d10092d228b0c9147d5c",
+    "wipe-compiled.log": "c956055a53dc8e0071933c450de487cd08b8a602913a27fa611de423aa75cd41",
+    "wipe.log": "9e445573b3e41f1b36637fdd7ca7206856a11fe1669201d5e3e36cd74c9b8c31",
+    "restored.log": "4ef44aac7bfc71486d7e57185127e88c75bea30e53f620071aa397f964f3f33e"
+  }
+}
