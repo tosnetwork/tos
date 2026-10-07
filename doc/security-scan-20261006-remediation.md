@@ -133,3 +133,22 @@ Two further integration failures were reproduced and corrected:
 
 Final-head Linux CI must still verify these corrections and later workflow
 steps. No required check is disabled or converted into an allowed failure.
+
+## Complete contract-suite follow-up
+
+Running the later workflow steps exposed two more stale Rust wallet unit tests:
+their v3/v4/v5 code hashes and fixed-key deployment addresses still named the
+previous bytecode. Update those six expected values to the guarded contracts;
+the native/SDK transaction vectors and bytecode reproducibility check remain
+independent checks of the embeddings. The full contracts library now passes
+247 tests (the original run had 245 passing and these two failing).
+
+The complete `cargo test -p contracts --locked --no-fail-fast` sweep also
+identified local harness limits. Building the separate `crypto/pq/tools` key
+tool and allowing local loopback sockets makes all 12 configuration-query,
+148 elector and 22 query-worker tests pass (three existing ignored tests).
+The historical proven-read suite uses Linux `LD_PRELOAD` to fix the verifier's
+clock; five cases fail on macOS because that preload is ineffective and the
+recorded block is correctly rejected as stale. No production freshness check
+is relaxed. That suite and complete final-head acceptance remain Linux CI
+gates; the local sweep is not claimed as entirely green.

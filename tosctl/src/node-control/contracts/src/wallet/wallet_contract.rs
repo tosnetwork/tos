@@ -416,15 +416,15 @@ mod tests {
         );
         assert_eq!(
             format!("{:x}", v3r2.repr_hash()),
-            "6c6caaf194af3660e7ae4c584785c1bda0d85fafd80e947d725105947cd11d7d"
+            "5829bd66ea5884eef70788d0609acad76af5c418aed2fc17709def2224cf9164"
         );
         assert_eq!(
             format!("{:x}", v4r2.repr_hash()),
-            "f15bc24cbc229a1b72cab39345db191e761ef913e6d066e76d3836cf1600cb47"
+            "056032cd4c32691b32eb043baa4495e6225590597ca458641975a7ed9de2bd6d"
         );
         assert_eq!(
             format!("{:x}", v5r1.repr_hash()),
-            "47527d7483a0d15309661a8328539150bf35b496776c62eb60485af5211c9a9d"
+            "76e73ca966098806708d7fcf977f61ee65cc9a55dca2a1723753f37b1117f3a7"
         );
     }
 
@@ -443,7 +443,7 @@ mod tests {
         assert_eq!(
             v3r2,
             MsgAddressInt::from_str(
-                "0:771555ef9b48db2f8c269ab3ad2d30b36360681f4dc1fefc03142564813fae8f"
+                "0:0c8f77db9d7cb91eb5ae3654c45a34b47b01db344ef001ac632c2b9b6e79d8c9"
             )
             .unwrap()
         );
@@ -454,7 +454,7 @@ mod tests {
         assert_eq!(
             v4r2,
             MsgAddressInt::from_str(
-                "0:89664bd10cff3d946e3a54f6319542488740eda2102fd1173e83b716d1c75c9d"
+                "0:9f108b7f52928a8ccee2461d51428bdf7b595feebaf9bfac528053555fef2c9c"
             )
             .unwrap()
         );
@@ -465,7 +465,7 @@ mod tests {
         assert_eq!(
             v5r1,
             MsgAddressInt::from_str(
-                "0:c075f2627be95afe6e345bb3d1501615527aed4c0d023d07ff6ef1ae2b1cb6f9"
+                "0:35c5bb64e0a320beced9c33371eb26ccf1522cac89378eae6d1997333dec329e"
             )
             .unwrap()
         );
