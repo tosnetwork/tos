@@ -1,0 +1,31 @@
+{
+  "scope": "iOS initial public registry and independent onboarding access only",
+  "ios_commit": "e85a5da",
+  "test": "TOSWalletUITests/testR2InitialAccountScreenShowsPendingGatesOffline",
+  "device": "Dedicated iPhone 17 iOS 26.5 simulator; no physical-device acceptance",
+  "rpc": "Unreachable loopback port 9; no live proof or chain validation claimed",
+  "evidence": [
+    {
+      "file": "r2-onboarding-pass.raw.log",
+      "bytes": 248382,
+      "sha256": "003d50212ed05f9b263bcfa262501a06879de04bac097ee551975c5c05534975"
+    },
+    {
+      "file": "r2-onboarding-mutant.raw.log",
+      "bytes": 216597,
+      "sha256": "c3bf13c166f3b8c9efaf3235b49072f9bc26b607cf2c257a54357abdf5f6c190"
+    },
+    {
+      "file": "r2-onboarding-restored.raw.log",
+      "bytes": 211399,
+      "sha256": "4e4a5222ef07e2dba0d1b052867e9c3503e78ad48ae957d3cedea7e400552aa5"
+    }
+  ],
+  "control": "Remove v5r2Button from onboarding arranged views: compiled test failed XCTAssertTrue at line 38; restored test passed",
+  "remaining": [
+    "Role restore UI",
+    "PQ-first full creation and funded dual POP",
+    "Authenticated chain proofs, rotation and delivery",
+    "Physical-device authentication and release review"
+  ]
+}
