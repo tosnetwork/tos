@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the Agent Account and wallet BOCs embedded in Rust and the JS SDK.
+"""Regenerate wallet bytecode embedded in Rust, the JS SDK and Fift scripts.
 
 Every embedded wallet must be the network-bound code compiled from this
 repository's FunC source: an embedding that drifts from it (for example an
@@ -13,6 +13,7 @@ import argparse
 import base64
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -69,6 +70,28 @@ def main():
             ),
         ]
         stale = []
+        # Fift deploy/genesis scripts load this frozen assembly directly. Use
+        # the same relative inputs and flags as CMake's GenFif, so they deploy
+        # exactly the code used by the native wallet and SDKs.
+        wallet3_fif = work / "wallet3-deploy.fif"
+        subprocess.run(
+            [
+                os.environ["FUNC_PATH"],
+                "-PS",
+                "-o",
+                str(wallet3_fif),
+                "smartcont/stdlib.fc",
+                "smartcont/wallet3-code.fc",
+            ],
+            cwd=ROOT / "crypto",
+            check=True,
+            capture_output=True,
+        )
+        frozen_fif = ROOT / "crypto/smartcont/wallet-v3-code.fif"
+        if frozen_fif.read_bytes() != wallet3_fif.read_bytes():
+            stale.append(str(frozen_fif.relative_to(ROOT)))
+            if not args.check:
+                frozen_fif.write_bytes(wallet3_fif.read_bytes())
         replacements.extend(
             [
                 (

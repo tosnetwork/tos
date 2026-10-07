@@ -1,77 +1,148 @@
-// automatically generated from `smartcont/stdlib.fc` `smartcont/wallet3-code.fc`
+// automatically generated from `smartcont/stdlib.fc` `smartcont/wallet3-code.fc` incl:`smartcont/strong-ed25519-key.fc`
 PROGRAM{
+  DECLPROC ed25519_key_may_be_weak?
+  DECLPROC weak_ed25519_key?
   DECLPROC recv_internal
   DECLPROC recv_external
   85143 DECLMETHOD seqno
   78748 DECLMETHOD get_public_key
+  ed25519_key_may_be_weak? PROCINLINE:<{
+    //  public_key
+    115791978809374647578019408182089249191843791618478310574374198299196844408835 PUSHINT	//  public_key _1=115791978809374647578019408182089249191843791618478310574374198299196844408835
+    SWAP	//  _1=115791978809374647578019408182089249191843791618478310574374198299196844408835 public_key
+    248 RSHIFT#	//  _1=115791978809374647578019408182089249191843791618478310574374198299196844408835 _3
+    RSHIFT	//  _4
+    1 PUSHINT	//  _4 _5=1
+    AND	//  _6
+  }>
+  weak_ed25519_key? PROCREF:<{
+    //  public_key
+    DUP	//  public_key public_key
+    248 RSHIFT#	//  public_key _2
+    236 PUSHINT	//  public_key _2 _3=236
+    GEQ	//  public_key _4
+    IFJMP:<{	//  public_key
+      DUP	//  public_key public_key
+      8 RSHIFT#	//  public_key _6
+      240 PUSHPOW2DEC	//  public_key _6 _11
+      AND	//  public_key _12
+      240 PUSHPOW2DEC	//  public_key _12 _17
+      EQUAL	//  public_key _18
+      SWAP
+      127 PUSHINT	//  _18 public_key _19=127
+      AND	//  _18 _20
+      127 EQINT	//  _18 _22
+      AND	//  _23
+    }>	//  public_key
+    7 PUSHPOW2	//  public_key _25=128
+    OR	//  either_sign
+    DUP
+    64 PUSHPOW2DEC	//  either_sign either_sign _28=18446744073709551615
+    AND	//  either_sign tail
+    DUP
+    7 PUSHPOW2	//  either_sign tail tail _30=128
+    NEQ	//  either_sign tail _31
+    OVER
+    12769959528382069893 PUSHINT	//  either_sign tail _31 tail _32=12769959528382069893
+    NEQ	//  either_sign tail _31 _33
+    AND	//  either_sign tail _34
+    SWAP
+    5676784545327481850 PUSHINT	//  either_sign _34 tail _35=5676784545327481850
+    NEQ	//  either_sign _34 _36
+    AND	//  either_sign _37
+    IFJMP:<{	//  either_sign
+      DROP	//
+      FALSE	//  _38
+    }>	//  either_sign
+    DUP
+    7 PUSHPOW2	//  either_sign either_sign _39=128
+    EQUAL	//  either_sign _40
+    OVER
+    452312848583266388373324160190187140051835877600158453279131187530910662784 PUSHINT	//  either_sign _40 either_sign _41=452312848583266388373324160190187140051835877600158453279131187530910662784
+    EQUAL	//  either_sign _40 _42
+    OR	//  either_sign _43
+    OVER
+    17598829001174626432760624799725821048721521463415130398946799010204297198725 PUSHINT	//  either_sign _43 either_sign _44=17598829001174626432760624799725821048721521463415130398946799010204297198725
+    EQUAL	//  either_sign _43 _45
+    OR	//  either_sign _46
+    SWAP
+    90051628961642774000090525325538718283615417405422581481486423622152440513530 PUSHINT	//  _46 either_sign _47=90051628961642774000090525325538718283615417405422581481486423622152440513530
+    EQUAL	//  _46 _48
+    OR	//  _49
+  }>
   recv_internal PROC:<{
     //  in_msg
-    DROP
+    DROP	//
   }>
   recv_external PROC:<{
     //  in_msg
-    9 PUSHPOW2
-    LDSLICEX
-    DUP
-    32 LDI
-    GLOBALID
-    s1 s2 XCHG
-    EQUAL
+    9 PUSHPOW2	//  in_msg _3=512
+    LDSLICEX	//  signature in_msg
+    DUP	//  signature in_msg cs
+    32 LDI	//  signature in_msg msg_global_id cs
+    GLOBALID	//  signature in_msg msg_global_id cs _11
+    s1 s2 XCHG	//  signature in_msg cs msg_global_id _11
+    EQUAL	//  signature in_msg cs _12
     36 THROWIFNOT
-    32 LDU
-    32 LDU
-    32 LDU
+    32 LDU	//  signature in_msg _17 cs
+    32 LDU	//  signature in_msg _17 _20 cs
+    32 LDU	//  signature in_msg subwallet_id valid_until msg_seqno cs
     s0 s2 XCHG
-    NOW
-    LEQ
+    NOW	//  signature in_msg subwallet_id cs msg_seqno valid_until _27
+    LEQ	//  signature in_msg subwallet_id cs msg_seqno _28
     35 THROWIF
-    c4 PUSH
-    CTOS
-    32 LDU
-    32 LDU
-    256 LDU
+    c4 PUSH	//  signature in_msg subwallet_id cs msg_seqno _31
+    CTOS	//  signature in_msg subwallet_id cs msg_seqno ds
+    32 LDU	//  signature in_msg subwallet_id cs msg_seqno _36 ds
+    32 LDU	//  signature in_msg subwallet_id cs msg_seqno _36 _39 ds
+    256 LDU	//  signature in_msg subwallet_id cs msg_seqno stored_seqno stored_subwallet public_key ds
     ENDS
-    s3 s2 XCPU
-    EQUAL
+    s3 s2 XCPU	//  signature in_msg subwallet_id cs public_key stored_seqno stored_subwallet msg_seqno stored_seqno
+    EQUAL	//  signature in_msg subwallet_id cs public_key stored_seqno stored_subwallet _47
     33 THROWIFNOT
-    s4 s4 XCPU
-    EQUAL
+    s4 s4 XCPU	//  signature in_msg stored_subwallet cs public_key stored_seqno subwallet_id stored_subwallet
+    EQUAL	//  signature in_msg stored_subwallet cs public_key stored_seqno _50
     34 THROWIFNOT
-    s0 s4 XCHG
-    HASHSU
-    s0 s5 s5 XC2PU
-    CHKSIGNU
+    OVER	//  signature in_msg stored_subwallet cs public_key stored_seqno public_key
+    weak_ed25519_key? INLINECALLDICT	//  signature in_msg stored_subwallet cs public_key stored_seqno _53
+    35 THROWIF
+    s0 s4 XCHG	//  signature stored_seqno stored_subwallet cs public_key in_msg
+    HASHSU	//  signature stored_seqno stored_subwallet cs public_key _56
+    s0 s5 s5 XC2PU	//  public_key stored_seqno stored_subwallet cs _56 signature public_key
+    CHKSIGNU	//  public_key stored_seqno stored_subwallet cs _57
     35 THROWIFNOT
-    ACCEPT
+    ACCEPT	//  public_key stored_seqno stored_subwallet cs
     WHILE:<{
-      DUP
-      SREFS
-    }>DO<{
-      8 LDU
-      LDREF
-      s0 s2 XCHG
+      DUP	//  public_key stored_seqno stored_subwallet cs cs
+      SREFS	//  public_key stored_seqno stored_subwallet cs _62
+    }>DO<{	//  public_key stored_seqno stored_subwallet cs
+      8 LDU	//  public_key stored_seqno stored_subwallet mode cs
+      LDREF	//  public_key stored_seqno stored_subwallet mode _67 cs
+      s0 s2 XCHG	//  public_key stored_seqno stored_subwallet cs _67 mode
       SENDRAWMSG
-    }>
-    DROP
-    SWAP
-    INC
-    NEWC
-    32 STU
-    32 STU
-    256 STU
-    ENDC
+    }>	//  public_key stored_seqno stored_subwallet cs
+    DROP	//  public_key stored_seqno stored_subwallet
+    SWAP	//  public_key stored_subwallet stored_seqno
+    INC	//  public_key stored_subwallet _71
+    NEWC	//  public_key stored_subwallet _71 _72
+    32 STU	//  public_key stored_subwallet _74
+    32 STU	//  public_key _76
+    256 STU	//  _78
+    ENDC	//  _79
     c4 POP
   }>
   seqno PROC:<{
-    c4 PUSH
-    CTOS
-    32 PLDU
+    //
+    c4 PUSH	//  _0
+    CTOS	//  _1
+    32 PLDU	//  _3
   }>
   get_public_key PROC:<{
-    c4 PUSH
-    CTOS
-    64 LDU
-    NIP
-    256 PLDU
+    //
+    c4 PUSH	//  _1
+    CTOS	//  cs
+    64 LDU	//  _9 _8
+    NIP	//  cs
+    256 PLDU	//  _7
   }>
 }END>c

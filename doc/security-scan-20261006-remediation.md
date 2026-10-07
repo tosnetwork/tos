@@ -100,3 +100,36 @@ had not exercised. They are fixed without relaxing the security controls:
 
 Full strict-build, service, AUTH mutation and network-safety jobs must be
 rechecked at the new head; an older successful job is not clearance for it.
+
+## CI follow-up to 3c0ca1abc
+
+That head passed strict-build, service, network-safety/ASAN and JSON-RPC/ASAN.
+Two further integration failures were reproduced and corrected:
+
+- The weak-key multisig control now signs the required network identity. With
+  the old payload both guarded and unguarded contracts rejected the request,
+  so it could not establish sensitivity. Both native alias tests now execute
+  and pass, including acceptance by the unguarded control.
+- The Fift v3 deploy/genesis assembly was still frozen at the previous wallet
+  code. Its address differed from the guarded native wallet, aborting the
+  smart-contract test binary before the recorded-answer tests. Regenerate it
+  from the same FunC inputs and flags as CMake; the authentication bytecode
+  checker now also refuses drift in this assembly. All 31 smart-contract tests
+  execute and pass locally with the original address/message assertions.
+  The checker rejects the old frozen code and passes after restoration.
+- Only the zerostate recorded answer changes, from
+  `814401c531cb039224d39721bf01472dc50545236d1c8e2820cfecda5f3aa381` to
+  `0147a343b81819bd12297238f4dac708c67b8ac55d46487f4471c8b558a248d5`.
+  Restoring just the old Fift wallet reproduces the old answer. The guarded
+  wallet increases the deterministic zerostate from 21,139 to 21,337 bytes;
+  its file/root hashes change, while the base state and fixed system addresses
+  remain identical. Governance and validator script answers remain identical.
+  This changes a generated fixture, not an already deployed network.
+- The recorded-answer checker now prints bounded diagnostics when a binary
+  aborts before comparing any hash, and when recording into a fresh answer
+  file fails. It retains both hash equality and complete test-name checks.
+  `scripts/check-regression-db.sh . build` passes locally for all four binaries,
+  including the second run into empty records that verifies test-name coverage.
+
+Final-head Linux CI must still verify these corrections and later workflow
+steps. No required check is disabled or converted into an allowed failure.
