@@ -207,6 +207,11 @@ jobs:
       - name: Run the complete Python suite
         run: uv run pytest
 
+      # The e2e harnesses keep tosctl's configuration and vault outside the
+      # checkout, which tosctl refuses when it is group-writable.
+      - name: Check e2e harness private directories
+        run: uv run python scripts/test-e2e-private-dirs.py
+
       # C09: X02 Config34 is accepted only through the anchored verifier built
       # above. These production-path tests need that binary and fail without it.
       - name: Check X02 Config34 authentication through the anchored verifier

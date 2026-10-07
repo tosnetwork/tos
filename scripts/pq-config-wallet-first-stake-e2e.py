@@ -27,6 +27,8 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
+from e2e_private_dir import make_private_dir
+
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 from pytosiq_core import Address, Cell  # noqa: E402
@@ -166,9 +168,13 @@ async def product_run(args: argparse.Namespace, run_dir: Path, report: dict) -> 
         campaign_run_id="pq-config-wallet-product-first-stake",
         product_rpc_address=f"127.0.0.1:{args.rpc_port}",
     )
-    config = run_dir / "tosctl-config.json"
+    # tosctl refuses to write its configuration and vault under a
+    # group-writable checkout; evidence stays in run_dir.
+    private_dir = make_private_dir("pq-config-wallet-first-stake")
+    report["tosctl_private_dir"] = str(private_dir)
+    config = private_dir / "tosctl-config.json"
     binary = args.tosctl.resolve()
-    vault = run_dir / "product-vault.json"
+    vault = private_dir / "product-vault.json"
     env = dict(os.environ)
     env["VAULT_URL"] = f"file://{vault}?master_key={'0' * 63}1"
     daemon = None

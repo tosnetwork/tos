@@ -128,9 +128,11 @@ Set the `VAULT_URL` environment variable:
 export VAULT_URL="file://vault.json?master_key=$MASTER_KEY"
 ```
 
-A relative path is resolved against the current directory, which must be owned
-by you and not group- or other-writable (on systems whose umask is 002, run
-`chmod go-w .` or use `$TOSCTL_HOME`). With Docker, use
+A relative path is resolved against the current directory. That directory and
+each directory above it must be owned by you (or root) and not group- or
+other-writable; on systems whose umask is 002, a checkout or home subdirectory
+is usually group-writable, so run `chmod go-w` on the directory tosctl names in
+its error, or use `$TOSCTL_HOME`. With Docker, use
 `file:///tosctl/vault.json?master_key=$MASTER_KEY` so the vault lives in the
 mounted directory.
 
@@ -464,7 +466,7 @@ Logging is configured directly in the config file under the `log` section:
     "log": {
         "level": "INFO",
         "output": "all",
-        "path": "./logs/tosctl.log",
+        "path": "/tosctl/logs/tosctl.log",
         "max_size_mb": 50,
         "max_files": 10,
         "rotation": "daily"
@@ -476,7 +478,7 @@ Logging is configured directly in the config file under the `log` section:
 |-------|---------|-------------|
 | `level` | `INFO` | Log level: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `output` | `console` | Where to write: `console`, `file`, or `all` (both) |
-| `path` | — | Log file path (required if `output` is `file` or `all`) |
+| `path` | — | Log file path (required if `output` is `file` or `all`). Its directory must exist; with Docker, use a path in the mounted `/tosctl` directory |
 | `max_size_mb` | `50` | Max size of a single log file in MB before rotation |
 | `max_files` | `10` | Number of rotated log files to keep |
 | `rotation` | `daily` | Rotation schedule: `daily`, `hourly`, or `never` |
@@ -544,8 +546,8 @@ Expected output: `4194304`
 ## Step 14: Run the Service
 
 ```bash
-# Create logs directory if it doesn't exist
-mkdir -p "$(pwd)/logs"
+# Create the logs directory (the logger does not create it)
+mkdir -p "$TOSCTL_HOME/logs"
 
 docker run -d \
   --name tosctl --restart unless-stopped \
@@ -558,7 +560,8 @@ docker run -d \
   tosctl service --config=/tosctl/config.json
 ```
 
-Logs are written to `$TOSCTL_HOME/logs`.
+With `"path": "/tosctl/logs/tosctl.log"` (Step 12), logs are written to
+`$TOSCTL_HOME/logs` on the host.
 
 > **Note (file-based vault only):** keep the vault in the mounted directory (`VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY"`). A vault outside it is lost on every container restart, together with its wallet and ADNL keys.
 

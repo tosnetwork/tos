@@ -41,6 +41,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from e2e_private_dir import make_private_dir
+
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
@@ -55,7 +57,9 @@ RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
 CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
 NEGATIVE_EVIDENCE = WORKDIR / "negative-evidence.jsonl"
 MANIFEST = WORKDIR / "manifest.json"
-CONFIG = WORKDIR / "tosctl-e2e-config.json"
+# Set by use_private_dir() at the start of main().
+PRIVATE_DIR: Path | None = None
+CONFIG: Path | None = None
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000007"
 NANO = 1_000_000_000
 
@@ -64,6 +68,18 @@ ATTESTED_HASH_1 = "22" * 32
 ATTESTED_HASH_2 = "33" * 32
 
 failures: list[str] = []
+
+
+def use_private_dir() -> Path:
+    """Place this run's tosctl configuration and vault in a private directory.
+
+    Evidence stays in WORKDIR; the checkout may be group-writable, where
+    tosctl refuses to write configuration or vault files.
+    """
+    global PRIVATE_DIR, CONFIG
+    PRIVATE_DIR = make_private_dir("proof-attestation-e2e")
+    CONFIG = PRIVATE_DIR / "tosctl-e2e-config.json"
+    return PRIVATE_DIR
 
 
 def write_manifest() -> None:
@@ -83,6 +99,7 @@ def write_manifest() -> None:
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "test_sha256": hashlib.sha256(
             (REPO / "test/pq-native/test_e08_negative_finality.py").read_bytes()).hexdigest(),
+        "tosctl_private_dir": str(PRIVATE_DIR),
         "binaries": {
             name: {"path": str(path.resolve()),
                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -224,7 +241,7 @@ async def await_attestation_bounce(wallet_tx: dict, contract_tx: dict,
 
 async def tosctl(*args: str) -> str:
     env = dict(os.environ)
-    env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
         TOSCTL, *args, "-c", str(CONFIG),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
@@ -516,6 +533,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    use_private_dir()
     write_manifest()
     prepare_config()
     install = Install(BUILD_DIR, REPO)

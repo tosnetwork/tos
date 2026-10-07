@@ -51,6 +51,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from e2e_private_dir import make_private_dir
+
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
@@ -62,8 +64,10 @@ TOSCTL = os.environ.get("TOSCTL", str(REPO / "tosctl/src/target/debug/tosctl"))
 RPC = "127.0.0.1:19546"
 OBSERVER_RPCS = ("127.0.0.1:19547", "127.0.0.1:19548")
 WORKDIR = REPO / "test/integration/.agent-wallet-account-e2e"
-CONFIG = WORKDIR / "tosctl-e2e-config.json"
-OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
+# Set by use_private_dir() at the start of main().
+PRIVATE_DIR: Path | None = None
+CONFIG: Path | None = None
+OBSERVER_CONFIGS: tuple[Path, ...] = ()
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000010"
 NANO = 1_000_000_000
 
@@ -120,7 +124,7 @@ def explicit_contract_refusal(response: dict, exit_code: int) -> bool:
 
 async def tosctl(*args: str, may_fail: bool = False) -> str:
     env = dict(os.environ)
-    env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
         TOSCTL, *args, "-c", str(CONFIG),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
@@ -626,6 +630,19 @@ async def run_checks(faucet, node) -> None:
           await async_predicate_stays_true(expired_state_unchanged))
 
 
+def use_private_dir() -> Path:
+    """Place this run's tosctl configuration and vault in a private directory.
+
+    Evidence stays in WORKDIR; the checkout may be group-writable, where
+    tosctl refuses to write configuration or vault files.
+    """
+    global PRIVATE_DIR, CONFIG, OBSERVER_CONFIGS
+    PRIVATE_DIR = make_private_dir("agent-wallet-account-e2e")
+    CONFIG = PRIVATE_DIR / "tosctl-e2e-config.json"
+    OBSERVER_CONFIGS = tuple(PRIVATE_DIR / f"tosctl-observer-{index}.json" for index in (1, 2))
+    return PRIVATE_DIR
+
+
 async def main() -> int:
     if not Path(TOSCTL).exists():
         print(f"FATAL: tosctl binary not found at {TOSCTL} "
@@ -635,6 +652,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    use_private_dir()
     write_config()
     install = Install(BUILD_DIR, REPO)
 

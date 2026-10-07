@@ -54,6 +54,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from e2e_private_dir import make_private_dir
+
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
@@ -70,8 +72,10 @@ RPC_TRANSCRIPT = WORKDIR / "rpc-transcript.jsonl"
 CLI_TRANSCRIPT = WORKDIR / "cli-transcript.jsonl"
 CHAIN_EVIDENCE = WORKDIR / "chain-evidence.jsonl"
 MANIFEST = WORKDIR / "manifest.json"
-CONFIG = WORKDIR / "tosctl-e2e-config.json"
-OBSERVER_CONFIGS = tuple(WORKDIR / f"tosctl-observer-{index}.json" for index in (1, 2))
+# Set by use_private_dir() at the start of main().
+PRIVATE_DIR: Path | None = None
+CONFIG: Path | None = None
+OBSERVER_CONFIGS: tuple[Path, ...] = ()
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000008"
 NANO = 1_000_000_000
 REVIEW_PERIOD = 3600
@@ -98,6 +102,19 @@ RULING_HASH = "01" * 32
 failures: list[str] = []
 
 
+def use_private_dir() -> Path:
+    """Place this run's tosctl configuration and vault in a private directory.
+
+    Evidence stays in WORKDIR; the checkout may be group-writable, where
+    tosctl refuses to write configuration or vault files.
+    """
+    global PRIVATE_DIR, CONFIG, OBSERVER_CONFIGS
+    PRIVATE_DIR = make_private_dir("agent-economy-composed-e2e")
+    CONFIG = PRIVATE_DIR / "tosctl-e2e-config.json"
+    OBSERVER_CONFIGS = tuple(PRIVATE_DIR / f"tosctl-observer-{index}.json" for index in (1, 2))
+    return PRIVATE_DIR
+
+
 def write_manifest() -> None:
     source_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
@@ -117,6 +134,7 @@ def write_manifest() -> None:
             (REPO / "test/pq-native/test_e10_composed_evidence.py").read_bytes()).hexdigest(),
         "quorum_test_sha256": hashlib.sha256(
             (REPO / "test/pq-native/test_e10_controller_quorum.py").read_bytes()).hexdigest(),
+        "tosctl_private_dir": str(PRIVATE_DIR),
         "binaries": {
             name: {"path": str(path.resolve()),
                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -194,7 +212,7 @@ def balance(addr: str) -> int:
 
 async def tosctl(*args: str) -> str:
     env = dict(os.environ)
-    env["VAULT_URL"] = f"file://{WORKDIR}/e2e-vault.json?master_key={MASTER_KEY}"
+    env["VAULT_URL"] = f"file://{PRIVATE_DIR}/e2e-vault.json?master_key={MASTER_KEY}"
     proc = await asyncio.create_subprocess_exec(
         TOSCTL, *args, "-c", str(CONFIG),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env,
@@ -777,6 +795,7 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    use_private_dir()
     write_manifest()
     write_config()
     install = Install(BUILD_DIR, REPO)

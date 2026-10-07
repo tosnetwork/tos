@@ -40,6 +40,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from e2e_private_dir import make_private_dir
+
 from tostester.install import Install
 from tostester.network import Network, StartOptions
 from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
@@ -53,8 +55,10 @@ HTTP_B = "127.0.0.1:19447"
 WORKDIR = REPO / "test/integration/.agent-chain-index-e2e"
 HTTP_TRANSCRIPT = WORKDIR / "http-transcript.jsonl"
 MANIFEST = WORKDIR / "manifest.json"
-CONFIG_A = WORKDIR / "tosctl-config-a.json"
-CONFIG_B = WORKDIR / "tosctl-config-b.json"
+# Set by use_private_dir() at the start of main().
+PRIVATE_DIR: Path | None = None
+CONFIG_A: Path | None = None
+CONFIG_B: Path | None = None
 MASTER_KEY = "0000000000000000000000000000000000000000000000000000000000000009"
 POLICY_HASH = "22" * 32
 NANO = 1_000_000_000
@@ -261,6 +265,19 @@ def prepare_config(config: Path, http_bind: str | None):
     config.write_text(json.dumps(cfg, indent=2))
 
 
+def use_private_dir() -> Path:
+    """Place this run's tosctl configuration and vault in a private directory.
+
+    Evidence stays in WORKDIR; the checkout may be group-writable, where
+    tosctl refuses to write configuration or vault files.
+    """
+    global PRIVATE_DIR, CONFIG_A, CONFIG_B
+    PRIVATE_DIR = make_private_dir("agent-chain-index-e2e")
+    CONFIG_A = PRIVATE_DIR / "tosctl-config-a.json"
+    CONFIG_B = PRIVATE_DIR / "tosctl-config-b.json"
+    return PRIVATE_DIR
+
+
 def write_manifest() -> None:
     source_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
@@ -275,6 +292,7 @@ def write_manifest() -> None:
         "tosctl_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "build_dir": str(BUILD_DIR.resolve()),
         "http_transcript": HTTP_TRANSCRIPT.name,
+        "tosctl_private_dir": str(PRIVATE_DIR),
     }
     MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
@@ -433,8 +451,9 @@ async def main() -> int:
 
     shutil.rmtree(WORKDIR, ignore_errors=True)
     WORKDIR.mkdir(parents=True, exist_ok=True)
+    use_private_dir()
     check("config-b index database absent before service",
-          not (WORKDIR / "tosctl-indexer.db").exists())
+          not (PRIVATE_DIR / "tosctl-indexer.db").exists())
     write_manifest()
     prepare_config(CONFIG_A, http_bind=None)
     prepare_config(CONFIG_B, http_bind=HTTP_B)

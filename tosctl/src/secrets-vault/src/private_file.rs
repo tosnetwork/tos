@@ -37,15 +37,21 @@ pub fn prepare_parent(path: &Path) -> anyhow::Result<PathBuf> {
         let euid = unsafe { libc::geteuid() };
         let owner_trusted = meta.uid() == 0 || meta.uid() == euid;
         let protected = meta.mode() & 0o022 == 0 || (meta.uid() == 0 && meta.mode() & 0o1000 != 0);
-        anyhow::ensure!(
-            owner_trusted && protected,
-            "persistence directory {} is inside {} (mode {:04o}, owner uid {}), which another user can modify; \
-             use a directory whose ancestors are owned by you or root and not group- or other-writable",
-            resolved.display(),
-            ancestor.display(),
-            meta.mode() & 0o7777,
-            meta.uid()
-        );
+        if !(owner_trusted && protected) {
+            let fix = if meta.uid() == euid {
+                format!("run 'chmod go-w {}' or use a directory outside it", ancestor.display())
+            } else {
+                "use a directory whose ancestors are owned by you or root".to_string()
+            };
+            anyhow::bail!(
+                "persistence directory {} is inside {} (mode {:04o}, owner uid {}), which another user can \
+                 modify; {fix}",
+                resolved.display(),
+                ancestor.display(),
+                meta.mode() & 0o7777,
+                meta.uid()
+            );
+        }
     }
     Ok(resolved)
 }
@@ -195,6 +201,23 @@ mod tests {
         fs::set_permissions(&readable, fs::Permissions::from_mode(0o755)).unwrap();
         write_private_atomic(&readable.join("vault.json"), b"secret").unwrap();
         assert_eq!(fs::metadata(readable.join("vault.json")).unwrap().mode() & 0o777, 0o600);
+        // An ancestor the user made group-writable is refused with its fix;
+        // a protected one is accepted.
+        let shared_ancestor = dir.path().join("checkout");
+        fs::create_dir(&shared_ancestor).unwrap();
+        fs::set_permissions(&shared_ancestor, fs::Permissions::from_mode(0o775)).unwrap();
+        let private_child = shared_ancestor.join("conf");
+        fs::create_dir(&private_child).unwrap();
+        fs::set_permissions(&private_child, fs::Permissions::from_mode(0o700)).unwrap();
+        let error =
+            write_private_atomic(&private_child.join("config.json"), b"secret").unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains(&format!("chmod go-w {}", shared_ancestor.display())),
+            "{message}"
+        );
+        fs::set_permissions(&shared_ancestor, fs::Permissions::from_mode(0o755)).unwrap();
+        write_private_atomic(&private_child.join("config.json"), b"secret").unwrap();
         // A directory reached through a link is refused.
         let link = dir.path().join("link");
         symlink(&readable, &link).unwrap();
