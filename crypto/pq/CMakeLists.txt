@@ -32,6 +32,11 @@ target_link_libraries(tos_mldsa44 PRIVATE tos_mldsa_native)
 # value types, stable key-id derivation, structural bounds. Verify-only; the signer is
 # a separate target.
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+# Imported library paths alone order linking, not generation of their headers.
+# Follow the source-built dependency before compiling every PQ consumer.
+if(TARGET OpenSSL)
+  add_dependencies(OpenSSL::Crypto OpenSSL)
+endif()
 add_library(tos_pq_consensus STATIC pq-consensus.cpp)
 set_target_properties(tos_pq_consensus PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_features(tos_pq_consensus PUBLIC cxx_std_20)
