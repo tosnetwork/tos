@@ -360,8 +360,8 @@ void exercise_work_dispatch(bool mismatched_config, bool ordinary_account = fals
   }
   if (accepted_loop) {
     ASSERT_TRUE(ordinary_account);
-    auto source =
-        td::read_file((std::filesystem::path(__FILE__).parent_path() / "wallet-quantum/post-accept-probe.boc").string());
+    auto source = td::read_file(
+        (std::filesystem::path(__FILE__).parent_path() / "wallet-quantum/post-accept-probe.boc").string());
     ASSERT_TRUE(source.is_ok());
     auto code = vm::std_boc_deserialize(source.move_as_ok());
     ASSERT_TRUE(code.is_ok());

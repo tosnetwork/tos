@@ -3,7 +3,9 @@ use super::{
     InitialCodeArgs, PathBuf, SecretId, Zeroizing, bounded_public_file, open_vault_file,
     public_hash, secret_input,
 };
-use contracts::wallet_quantum_manifest::{InitialRecoveryManifest, MAX_MANIFEST_BYTES, SeedProfile};
+use contracts::wallet_quantum_manifest::{
+    InitialRecoveryManifest, MAX_MANIFEST_BYTES, SeedProfile,
+};
 
 #[derive(clap::Args, Clone)]
 #[command(

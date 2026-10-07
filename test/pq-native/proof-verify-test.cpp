@@ -291,27 +291,29 @@ void real_cases(const RealFixture& fixture, const pv::Anchor& foreign_anchor, co
   if (selected("real-sdk-boc-output")) {
     expect_verified("real-sdk-boc-output", verify_historical(fixture, fixture.historical),
                     [&](const pv::Verified& verified) -> std::string {
-      if (!verified.account || verified.params.empty()) {
-        return "SDK output fixture did not exercise account and configuration";
-      }
-      auto check = [](const std::string& encoded, const td::Bits256& expected) -> std::string {
-        if (encoded.size() < 5 || (static_cast<unsigned char>(encoded[4]) & 0xe0) != 0x40) {
-          return "SDK BOC output must use CRC-only serialization";
-        }
-        auto parsed = vm::std_boc_deserialize(td::Slice(encoded));
-        if (parsed.is_error() || td::Bits256{parsed.ok()->get_hash().bits()} != expected) {
-          return "SDK BOC output changed proven cell identity";
-        }
-        return {};
-      };
-      auto error = check(verified.account->state_boc, verified.account->state_hash);
-      if (!error.empty()) return error;
-      for (const auto& param : verified.params) {
-        error = check(param.boc, param.cell_hash);
-        if (!error.empty()) return error;
-      }
-      return {};
-    });
+                      if (!verified.account || verified.params.empty()) {
+                        return "SDK output fixture did not exercise account and configuration";
+                      }
+                      auto check = [](const std::string& encoded, const td::Bits256& expected) -> std::string {
+                        if (encoded.size() < 5 || (static_cast<unsigned char>(encoded[4]) & 0xe0) != 0x40) {
+                          return "SDK BOC output must use CRC-only serialization";
+                        }
+                        auto parsed = vm::std_boc_deserialize(td::Slice(encoded));
+                        if (parsed.is_error() || td::Bits256{parsed.ok()->get_hash().bits()} != expected) {
+                          return "SDK BOC output changed proven cell identity";
+                        }
+                        return {};
+                      };
+                      auto error = check(verified.account->state_boc, verified.account->state_hash);
+                      if (!error.empty())
+                        return error;
+                      for (const auto& param : verified.params) {
+                        error = check(param.boc, param.cell_hash);
+                        if (!error.empty())
+                          return error;
+                      }
+                      return {};
+                    });
   }
   if (selected("real-historical-baseline")) {
     // The real chain must cross a membership/key rotation for this baseline to

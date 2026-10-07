@@ -161,9 +161,10 @@ mod tests {
                 .serialize()
                 .unwrap()
         };
-        let all: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/fixtures/quantum/receipt-transactions.json"))
-                .unwrap();
+        let all: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/quantum/receipt-transactions.json"
+        ))
+        .unwrap();
         let wallet_init = chain_block::read_single_root_boc(
             hex::decode(all["wallet_init_hex"].as_str().unwrap()).unwrap(),
         )

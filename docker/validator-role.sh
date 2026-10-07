@@ -152,6 +152,7 @@ custom_words() {
 # on init.sh's command line are complete options with their values, so the
 # engine starts CUSTOM_ARG in the same state as this parser does.
 LONG_OPTIONS_WITH_ARGUMENT="
+  ext-message-work-profile
   verbosity
   measurement-jsonl
   measurement-node-id

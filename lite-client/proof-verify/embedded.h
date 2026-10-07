@@ -24,11 +24,11 @@ typedef struct tos_proof_material {
  * every failure after validating output buffers. Returned lengths exclude NUL; outputs are byte strings.
  * Caller must serialize live reads and independently bind result to the wallet.
  */
-int tos_proof_verify_embedded(const char *anchor, size_t anchor_size,
-    const char *request, size_t request_size, const char *state, size_t state_size,
-    int64_t local_now, const tos_proof_material *material, size_t material_count,
-    char *result, size_t result_capacity, size_t *result_size,
-    char *next_state, size_t state_capacity, size_t *next_state_size);
+int tos_proof_verify_embedded(const char *anchor, size_t anchor_size, const char *request, size_t request_size,
+                              const char *state, size_t state_size, int64_t local_now,
+                              const tos_proof_material *material, size_t material_count, char *result,
+                              size_t result_capacity, size_t *result_size, char *next_state, size_t state_capacity,
+                              size_t *next_state_size);
 #ifdef __cplusplus
 }
 #endif

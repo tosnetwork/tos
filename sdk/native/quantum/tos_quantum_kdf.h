@@ -10,9 +10,9 @@ extern "C" {
  * network is 32 readable bytes; tree_id is 32 bytes for fee and NULL otherwise.
  * All buffers must be valid and nonoverlapping. Output is wiped on failure.
  * Domain separation does not establish independent custody or restore fee state. */
-int tos_quantum_derive_and_wipe(int material, uint8_t *master, size_t master_size,
-    const uint8_t *network, int32_t global_id, uint32_t account_index,
-    uint32_t key_generation, const uint8_t *tree_id, uint8_t *output, size_t output_size);
+int tos_quantum_derive_and_wipe(int material, uint8_t *master, size_t master_size, const uint8_t *network,
+                                int32_t global_id, uint32_t account_index, uint32_t key_generation,
+                                const uint8_t *tree_id, uint8_t *output, size_t output_size);
 #ifdef __cplusplus
 }
 #endif

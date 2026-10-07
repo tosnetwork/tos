@@ -89,7 +89,6 @@ class ExtLiteTransport final : public LiteTransport {
   double last_query_{0};
 };
 
-
 std::string numbered(const char* prefix, std::size_t index) {
   char buffer[32];
   std::snprintf(buffer, sizeof(buffer), "%s-%04zu.tl", prefix, index);
@@ -172,7 +171,6 @@ td::Result<std::unique_ptr<LiteTransport>> connect_liteserver(const std::string&
   TRY_STATUS(transport->start(std::move(servers)));
   return std::unique_ptr<LiteTransport>(std::move(transport));
 }
-
 
 td::Result<Material> read_material(const std::string& directory) {
   DIR* dir = ::opendir(directory.c_str());

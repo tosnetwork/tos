@@ -161,19 +161,22 @@ void test_overflow_safe_at_cap() {
 }
 
 void test_full_width_portable() {
-    std::printf("[TEST] full_width_portable\n");
-    EXPECT(tos::quorum_threshold(UINT64_MAX) == 12297829382473034410ULL, "full uint64 threshold");
-    std::uint64_t value = 1;
-    for (int i = 0; i < 4096; ++i) {
-        value ^= value << 13; value ^= value >> 7; value ^= value << 17;
-        const auto q = tos::quorum_threshold(value);
+  std::printf("[TEST] full_width_portable\n");
+  EXPECT(tos::quorum_threshold(UINT64_MAX) == 12297829382473034410ULL, "full uint64 threshold");
+  std::uint64_t value = 1;
+  for (int i = 0; i < 4096; ++i) {
+    value ^= value << 13;
+    value ^= value >> 7;
+    value ^= value << 17;
+    const auto q = tos::quorum_threshold(value);
 #if defined(__SIZEOF_INT128__)
-        const auto reference = static_cast<std::uint64_t>((static_cast<__uint128_t>(value) * 2 + 2) / 3);
-        EXPECT(q == reference, "portable threshold matches independent wide reference");
+    const auto reference = static_cast<std::uint64_t>((static_cast<__uint128_t>(value) * 2 + 2) / 3);
+    EXPECT(q == reference, "portable threshold matches independent wide reference");
 #endif
-        EXPECT(tos::has_quorum(q, value), "threshold accepted");
-        if (q) EXPECT(!tos::has_quorum(q - 1, value), "below threshold rejected");
-    }
+    EXPECT(tos::has_quorum(q, value), "threshold accepted");
+    if (q)
+      EXPECT(!tos::has_quorum(q - 1, value), "below threshold rejected");
+  }
 }
 
 }  // namespace

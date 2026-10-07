@@ -3301,9 +3301,10 @@ pub(crate) mod transaction_receipt_tests {
     // Actual native-executor transactions/account states, wrapped in synthetic
     // proof metadata. Real finality proof plumbing is tested separately.
     pub(crate) fn fixture(name: &str) -> (ProvenAccountState, Cell) {
-        let cases: serde_json::Value =
-            serde_json::from_str(include_str!("../tests/fixtures/quantum/receipt-transactions.json"))
-                .unwrap();
+        let cases: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/quantum/receipt-transactions.json"
+        ))
+        .unwrap();
         let item = &cases["cases"][name];
         let decode = |field: &str| {
             read_single_root_boc(
