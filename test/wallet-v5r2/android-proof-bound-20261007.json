@@ -1,0 +1,73 @@
+{
+  "scope": "Android native-produced account/config bindings and live freshness; no complete wallet authority or transaction acceptance",
+  "android_revision": "b81c3d2",
+  "validation": [
+    "Final three device tests pass on owned API36 ARM64 16KB emulator",
+    "Wrong address/code/config hash, historical live use, expired proof and earlier local clock refused",
+    "Private constructor; factories perform native verification; live factory performs durable checkpoint acquisition",
+    "Input bounds checked before copying/parsing"
+  ],
+  "controls": "Each address/code/freshness/config guard removal compiles and triggers its named runtime assertion; restored tests pass",
+  "control_source_sha256": "66e1d0e5934be8fb56a8dbb213c5974db82fe00dfdba23a408b336ae5b3c88fc",
+  "final_source_sha256": "94ffbe7683cb672c8027f12fe94172f11251b1976e882ae56fbcbc71949b9a86",
+  "control_delta": "Controls precede the final factory input-size checks; checked guard expressions are unchanged. Final suite rerun after adding those checks.",
+  "artifacts": [
+    {
+      "file": "20261007-android-bound-final.log",
+      "bytes": 25817,
+      "sha256": "865969ef2086885a9ec38186ef95758f76e84d73801358af11faecc847755720"
+    },
+    {
+      "file": "20261007-android-bound-all-restored.log",
+      "bytes": 25853,
+      "sha256": "f0eb48be6c0e2415aecd735a91de7431b7cf9ae92024c06ac0b60a268bc13c76"
+    },
+    {
+      "file": "20261007-android-bound-address-control.log",
+      "bytes": 26721,
+      "sha256": "55fbc96ae347b1f92cb545db3c858514998569666af421abb8cbbde8a4230b99"
+    },
+    {
+      "file": "20261007-android-bound-address-control.xml",
+      "bytes": 1175,
+      "sha256": "485e18a38656c19d1e575c59fb6e59388cb659f59e067d8784fd548d074581e3"
+    },
+    {
+      "file": "20261007-android-bound-code-control.log",
+      "bytes": 26719,
+      "sha256": "ad4d2a7511706522ffcc63ed0c30126ed7bdbb32acd527c72f43fbdf08823e74"
+    },
+    {
+      "file": "20261007-android-bound-code-control.xml",
+      "bytes": 1173,
+      "sha256": "c199c8305972d0fb1356adcf16a19f96862c853a78be39e38a3a4060f27874d6"
+    },
+    {
+      "file": "20261007-android-bound-freshness-control.log",
+      "bytes": 26717,
+      "sha256": "408da5b8ed0770141af70605c55cc1b1b30d566d26732b47db7ae9bdb01a03d4"
+    },
+    {
+      "file": "20261007-android-bound-freshness-control.xml",
+      "bytes": 1179,
+      "sha256": "26ecf8db9cd45ef3d6886b7172c41261bb56e2e60c07ebe8e768ea3a9eefd55d"
+    },
+    {
+      "file": "20261007-android-bound-config-control.log",
+      "bytes": 26722,
+      "sha256": "9cbf9e84e14cb53f4218760dafb6aef290de87d6ecdd096dfbff7a5e9534ec46"
+    },
+    {
+      "file": "20261007-android-bound-config-control.xml",
+      "bytes": 1183,
+      "sha256": "a190890b8d29ef11f530aff06a0803297d0fbb82d7dbd2bb39c7138be5c2d19a"
+    }
+  ],
+  "pending": [
+    "Distinct real checkpoint mismatch positive/negative cases",
+    "Independent expected configuration positive fixtures",
+    "Full wallet state decoding, policy/epoch/module/vault binding",
+    "Real endpoint acquisition and final recipient delivery",
+    "Physical-device runtime evidence"
+  ]
+}

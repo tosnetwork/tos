@@ -1,0 +1,71 @@
+{
+  "scope": "Strict Android R2 wallet data codec; input authentication and policy/route authority are separate gates",
+  "android_revision": "245e76c",
+  "validation": [
+    "Initial and maximum u32/u64 counters decode without wrapping",
+    "Classic authorization/key/extensions, wrong AUTH version/mode/wallet ID/module/fee descriptor and trailing bits/refs refused",
+    "22 related V5R2 unit tests pass after restoring production parser"
+  ],
+  "controls": "Classic flag, PQ mode, module hash and fee-descriptor hash guard removals each compile and fail named runtime assertions; parser restored",
+  "excluded": [
+    "First test compilation used an invalid storeUInt argument type; corrected before runtime validation"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-android-wallet-data-fixed.log",
+      "bytes": 9796,
+      "sha256": "009eb1513ca5cd8cc71a6a97de44538f3c466d55445999676f487ad5e7b03b54"
+    },
+    {
+      "file": "20261007-wallet-data-restored-regressions.log",
+      "bytes": 10798,
+      "sha256": "a40f98f18b981ee01790be709fe0d9c89439a86f5a199718daa14c783e367aa8"
+    },
+    {
+      "file": "20261007-wallet-data-classic-control.log",
+      "bytes": 10276,
+      "sha256": "7fe9e0647b1987915a0cb5e90a37af06af5b37e6f351cb523b4a8b6a5c0e7849"
+    },
+    {
+      "file": "20261007-wallet-data-classic-control.xml",
+      "bytes": 5123,
+      "sha256": "3e5b6951e2b0eaa96b459441a5ec91f9da78a1fba8a290f8db557d7c1a84f949"
+    },
+    {
+      "file": "20261007-wallet-data-mode-control.log",
+      "bytes": 10278,
+      "sha256": "ee40780b7de95379733e8df059c439b2b5571cd93870606cebc55b21815c0e37"
+    },
+    {
+      "file": "20261007-wallet-data-mode-control.xml",
+      "bytes": 5138,
+      "sha256": "9c348330192097b19d2e0d700f43e8b87bb3e679b2cb0b983ba088dd95ddb55f"
+    },
+    {
+      "file": "20261007-wallet-data-module-control.log",
+      "bytes": 10278,
+      "sha256": "f4e5199b1686623bba0c0d5999be6b68bc59f5ac0f2e2d18275524f8735c892e"
+    },
+    {
+      "file": "20261007-wallet-data-module-control.xml",
+      "bytes": 5138,
+      "sha256": "1a9bd029d2c645c89f6eebcac2998237003560a8164992cd522a873323a98b69"
+    },
+    {
+      "file": "20261007-wallet-data-metadata-control.log",
+      "bytes": 10278,
+      "sha256": "c4777d110b7a3c07ec747349beed929fbc3ddc89bbda12052db3632463a063e7"
+    },
+    {
+      "file": "20261007-wallet-data-metadata-control.xml",
+      "bytes": 5136,
+      "sha256": "b281157d2bc6c1001673b9c87b8b5fa1ef758f720460c7fde5149d153b747af5"
+    }
+  ],
+  "pending": [
+    "Authenticated Account TL-B extraction and complete installed module/vault tuple integration",
+    "Global retirement policy and authorization/counter/fee signing workflow",
+    "Successor route and broadcast/finality/recipient lifecycle",
+    "Final-head app/device verification"
+  ]
+}

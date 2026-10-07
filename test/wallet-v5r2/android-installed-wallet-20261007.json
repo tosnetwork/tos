@@ -1,0 +1,95 @@
+{
+  "scope": "Android TOS account TL-B decoder and initial installed wallet/module/vault proof binding. Decoder runtime tests plus app-layer compile; no live R2 proof positive lifecycle claimed.",
+  "android_revision": "4353b46",
+  "validation": [
+    "TOS StorageExtraInfo 000 and 001 dictionary-hash formats decode",
+    "Account address/code/flags/trailing bits/multiple roots refuse",
+    "Vault counter covers terminal 2^20; overflow and immutable-configuration changes refuse",
+    "Five control variants compile and reach named runtime assertion failures",
+    "Restored 25 related V5R2 unit tests pass; final account app module compiles"
+  ],
+  "binding": "Typed native proof inputs only; wallet read live, module/vault at same checkpoint; account/code identities, immutable module data, wallet AUTH and vault descriptor match local birth enrollment. Global policy, fee-slot/time/solvency and signing/custody are additional gates.",
+  "exclusions": [
+    "Initial positive tests caught use of all-cell iterator instead of roots and a fixture slice-copy error; corrected before accepted baseline",
+    "Initial configuration-bit control retained rejection through another changed reference. Excluded; replaced by one-bit mutation with unchanged references."
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-android-account-state-baseline.log",
+      "bytes": 9796,
+      "sha256": "11d71f45010dd961790b2b305b90c4077741b1d89aed3f38c92ca34919a39ee2"
+    },
+    {
+      "file": "20261007-account-state-bits-baseline.log",
+      "bytes": 9788,
+      "sha256": "f871d1cbeded6cbc73d3e41de213f875321ed34848e5174ea3c90ed2fd2e3e76"
+    },
+    {
+      "file": "20261007-account-state-restored.log",
+      "bytes": 9799,
+      "sha256": "b9028299c5b3d12629b1732dd8883b42b2e6bff4637a9eb99dacc4591490a7a6"
+    },
+    {
+      "file": "20261007-android-installed-wallet-final-compile.log",
+      "bytes": 22073,
+      "sha256": "46ec2a4b226acbd15fb9065030770ba6a17fcc865433027c3c10f6583cc4fa07"
+    },
+    {
+      "file": "20261007-account-state-roots-control.log",
+      "bytes": 10288,
+      "sha256": "8a2b3f0524485851ea7232350ccbd6c0d6c68fe7acb60103bb19c772157cfee6"
+    },
+    {
+      "file": "20261007-account-state-roots-control.xml",
+      "bytes": 5184,
+      "sha256": "a7bb3c3706ca3a11475d7c5ea12ad1a307e97dc3e2bc1a3743877527654e1fdf"
+    },
+    {
+      "file": "20261007-account-state-address-control.log",
+      "bytes": 10288,
+      "sha256": "0ded7a5f98857f2ccedf6be839df031c84e5e0ffbcd23778609feac9a878cf35"
+    },
+    {
+      "file": "20261007-account-state-address-control.xml",
+      "bytes": 5169,
+      "sha256": "1e2400b7c935e2077eb21d659f2bf3c1d98febc3a63717caf87da93ce6671d31"
+    },
+    {
+      "file": "20261007-account-state-code-control.log",
+      "bytes": 10288,
+      "sha256": "6f8e7c66acd230ed8686b89fa98268626d89abcc35d64e6c542d49c8239e9ff3"
+    },
+    {
+      "file": "20261007-account-state-code-control.xml",
+      "bytes": 5170,
+      "sha256": "b1a20e1a5d14d8c2a465c462daf1ac14e033743acdad0e4235ea507d3911af7d"
+    },
+    {
+      "file": "20261007-account-state-counter-control.log",
+      "bytes": 10305,
+      "sha256": "71e9c18b962907613adb75e44e52171948d608d1e5fe788adf25015de469d65b"
+    },
+    {
+      "file": "20261007-account-state-counter-control.xml",
+      "bytes": 5209,
+      "sha256": "721c10f85b288db70cd894d938a80c6bc995d0330f7a0c10170a10c9a9e6a550"
+    },
+    {
+      "file": "20261007-account-state-bits-runtime-control.log",
+      "bytes": 10330,
+      "sha256": "abf773c1b33ca40bf62325e8cff32c9449141714047b3d423b06c5fbc3105092"
+    },
+    {
+      "file": "20261007-account-state-bits-runtime-control.xml",
+      "bytes": 5193,
+      "sha256": "5469d497f1c55536b0ecdbe44f148647814dd274adcf8128cee954c6c2fcec71"
+    }
+  ],
+  "pending": [
+    "Complete positive binding using independently authenticated deployed R2 account proofs",
+    "Successor enrollment/rotation binding",
+    "Global policy, fee time/slot, funds and current custody authorizer integration",
+    "Broadcast/finality/recipient delivery",
+    "iOS equivalent TOS TL-B decoder and actual device execution"
+  ]
+}

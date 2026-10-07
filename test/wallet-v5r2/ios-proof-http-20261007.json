@@ -1,0 +1,54 @@
+{
+  "scope": "iOS URLSession protocol fixture proof relay, not real TCP/node forwarding",
+  "ios_revision": "7dd4625",
+  "native_revision": "2edbeb6d1",
+  "validation": [
+    "Normal Base64 reply accepted",
+    "Wrong ID, trailing JSON, excessive streamed bytes, 302 status, decoded-size overflow, caller cancellation and timeout refused",
+    "Restored XCTest passes after compiled ID-check removal fails the named wrongID assertion",
+    "Full TosWallet application make compile passes at iOS 7dd4625"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-ios-proof-http.log",
+      "bytes": 48041,
+      "sha256": "8436a15e1e463eef9fc6675c94f6c53fc28f89df73af5ea96cb639e6b3dc335a"
+    },
+    {
+      "file": "20261007-ios-proof-http-baseline-raw.log",
+      "bytes": 435692,
+      "sha256": "1bb4671177b59c54197ea9e1b4696255a2d854a836ee72037e3e552a62c0ff38"
+    },
+    {
+      "file": "20261007-ios-proof-http-control.log",
+      "bytes": 39995,
+      "sha256": "b7e1532dae8e3fb29588062da0beb026186192546478a1b68ff44cb1e8426ad6"
+    },
+    {
+      "file": "20261007-ios-proof-http-control-raw.log",
+      "bytes": 447556,
+      "sha256": "b39184f38da542447471b840c02a07561dcab25ca7e1cd823aca58ee388aef6c"
+    },
+    {
+      "file": "20261007-ios-proof-http-restored.log",
+      "bytes": 11897,
+      "sha256": "edd962fa2e8ea1784c954ad760d938cfef25b3d3a64b98b3714f6ab8581fbe1f"
+    },
+    {
+      "file": "20261007-ios-proof-http-restored-raw.log",
+      "bytes": 84533,
+      "sha256": "1d56f3948f39b705a4be36e9f001e7477a9ec9ee915b4df7062282729cf6a60f"
+    },
+    {
+      "file": "20261007-ios-proof-http-full-compile.log",
+      "bytes": 252493,
+      "sha256": "458e2245372b083540b4faef6aeba1225834dcfa3c310c06cfda5328d426c3f6"
+    }
+  ],
+  "pending": [
+    "Real redirect callback/TCP endpoint integration",
+    "Wallet/account/configuration and route authorization binding",
+    "Physical-device runtime tests"
+  ],
+  "index_publication": "Deferred until current TOS native CI completes to avoid cancelling it with evidence-only pushes"
+}

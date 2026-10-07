@@ -950,7 +950,7 @@ TEST(JsonRpcTransport, proof_relay_refuses_send_and_nested_queries_without_backe
         ASSERT_TRUE(client.send_all(post(request, with_key)));
         std::string status, body;
         ASSERT_TRUE(client.read_response(5000, status, body));
-        ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+        ASSERT_EQ(status, std::string("HTTP/1.1 422 Unprocessable Entity"));
         ASSERT_TRUE(body.find("\"code\":-32602") != std::string::npos);
         ASSERT_TRUE(body.find(id_field("7")) != std::string::npos);
       }
