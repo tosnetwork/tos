@@ -47,8 +47,9 @@ void JsonRpcServer::handle_getProofQuery(td::JsonObject &params, std::string req
         if (reply.is_error() || reply.ok().size() > (64u << 20)) {
           promise.set_value(make_json_error(-32603, "Proof response unavailable", req_id, cors)); return;
         }
-        const auto encoded = td::base64_encode(reply.ok().as_slice());
-        promise.set_value(make_json_ok(PSTRING() << "{\"reply\":\"" << encoded << "\"}", req_id, cors));
+        auto encoded = proofverify::readonly_reply_json(reply.ok().as_slice());
+        if (encoded.is_error()) { promise.set_value(make_json_error(-32603, "Proof response unavailable", req_id, cors)); return; }
+        promise.set_value(make_json_ok(encoded.move_as_ok(), req_id, cors));
       });
 }
 

@@ -25,5 +25,10 @@ int main() {
   check("library-limit-accepted", tos::proofverify::checked_readonly_query(libraries.as_slice()).is_ok());
   auto too_many = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getLibrariesWithProof>(block(), 0, std::vector<td::Bits256>(17, td::Bits256::zero())), true);
   check("library-over-limit-refused", tos::proofverify::checked_readonly_query(too_many.as_slice()).is_error());
+  const std::string payload(256u << 10, 'x');
+  auto encoded = tos::proofverify::readonly_reply_json(payload);
+  const std::string expected = std::string("{\"reply\":\"") + td::base64_encode(payload) + "\"}";
+  check("large-proof-response-not-truncated", encoded.is_ok() && encoded.ok() == expected && encoded.ok().size() > (128u << 10));
+  check("empty-proof-response-refused", tos::proofverify::readonly_reply_json(td::Slice()).is_error());
   return failures ? 1 : 0;
 }
