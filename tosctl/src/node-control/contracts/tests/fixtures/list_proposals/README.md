@@ -43,7 +43,7 @@ preflight, and only flat results leave it
 | --- | --- | --- |
 | Response body | 1 MiB | the HTTP client's transport limit |
 | JSON depth | 19,724 levels | 3 levels per 160-byte voter cons cell, the cheapest nesting a decodable answer can buy, plus 64 |
-| Workers | 2, 30 s admission | taken before the response is buffered, released when the worker ends |
+| Workers | 2, 30 s admission | taken before any response of the read is buffered (the checkpoint included), released when the worker ends |
 | Worker stack | 128 MiB release, 256 MiB debug | measured need of the whole pipeline: 5.9 MiB release, 34.6 MiB debug |
 | Getter gas | 300,000 on the node | `list_proposals` returns exit 13 at about 130 proposals |
 
@@ -58,6 +58,12 @@ read each including the HTTP round trips, median of five:
 | malformed, at the depth limit | 39,802 | `74eed4c2542706d1224ab31c3f4746e9e7e207a85af8374200f3345956dcbe07` | refused | 127 ms |
 | deep valid prefix, cut at 90 % | 943,551 | `61fde8467a5d4e8ffcfb1b436cdffedd7478370d887952f37f84e9a4731c71ae` | refused | 481 ms |
 | deep stack conversion, refused by the decoder | 1,044,920 | `8beb7f0cff07a2f19b615e4bb4f30054162907c659d07ab3bda9b91bb9f5b86e` | refused | 153 ms |
+
+The duplicate-key check keeps an ordered set of the keys seen. For an unused
+object of 60,000 distinct keys inside a list answer (`wide_object_answer`,
+650,636 bytes; 650,647 with the last key repeated, which is refused), the whole
+read takes 119 ms (97 ms for the refused one) in release; with the earlier
+linear scan of previous keys it took 5.3 s (6.1 s).
 
 These are recorded, not gated: the tests assert each refusal's reason and run
 under a 300 s watchdog for hangs.

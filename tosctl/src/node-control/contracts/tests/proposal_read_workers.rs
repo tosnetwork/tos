@@ -421,7 +421,8 @@ fn an_exhausted_admission_refuses_as_busy() {
         let slow = ServedNode::start(|method, _| match method {
             "getMasterchainInfo" => masterchain_info(SEQNO),
             _ => {
-                std::thread::sleep(Duration::from_millis(1_500));
+                // Long enough that a late timer under a loaded host still fires first.
+                std::thread::sleep(Duration::from_secs(8));
                 Reply::raw(200, list_answer(1, 0))
             }
         })
@@ -437,9 +438,13 @@ fn an_exhausted_admission_refuses_as_busy() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         let started = Instant::now();
-        let error = read(&slow, &admission).await.err().expect("busy");
+        let second = read(&slow, &admission).await;
+        let waited = started.elapsed();
+        let error =
+            second.err().unwrap_or_else(|| panic!("the second read was admitted after {waited:?}"));
         assert!(error.to_string().contains("busy"), "{error:#}");
-        assert!(started.elapsed() >= Duration::from_millis(300));
+        assert!(waited >= Duration::from_millis(300), "{waited:?}");
+        println!("busy refusal after {waited:?}");
         assert!(first.await.expect("join").is_ok());
     });
 }
@@ -642,6 +647,122 @@ fn measure_refusal_times() {
                 "TIME {case} bytes={bytes} sha256={digest} median={:?} max={:?}",
                 timings[2], timings[4]
             );
+        });
+    }
+}
+
+// ─── Review controls ──────────────────────────────────────────────────────────
+
+/// A list answer whose result carries an unused object of `keys` distinct keys,
+/// with the last key repeated when `duplicate` is set.
+fn wide_object_answer(keys: usize, duplicate: bool) -> String {
+    let mut object = String::from("{");
+    for index in 0..keys {
+        if index > 0 {
+            object.push(',');
+        }
+        object.push_str(&format!("\"k{index}\":0"));
+    }
+    if duplicate {
+        object.push_str(&format!(",\"k{}\":0", keys - 1));
+    }
+    object.push('}');
+    let answer = list_answer(1, 0).replacen(
+        "\"gas_used\":0",
+        &format!("\"extra\":{object},\"gas_used\":0"),
+        1,
+    );
+    assert!(answer.len() <= MAX_RESPONSE_BYTES, "{}", answer.len());
+    answer
+}
+
+/// A wide object is checked for duplicate keys in n log n: the widest that fits is
+/// accepted when its keys are distinct and refused for a duplicate at its very
+/// end. Timing is recorded, not gated.
+#[test]
+fn a_wide_object_is_checked_for_duplicates_end_to_end() {
+    let runtime = runtime();
+    for (keys, duplicate) in [(60_000, false), (60_000, true)] {
+        let answer = wide_object_answer(keys, duplicate);
+        let bytes = answer.len();
+        runtime.block_on(async {
+            let node = node(Reply::raw(200, answer), Reply::raw(500, "{}")).await;
+            let started = Instant::now();
+            let outcome = read(&node, &production()).await;
+            let elapsed = started.elapsed();
+            println!("wide object: {keys} keys, duplicate={duplicate}, {bytes} bytes, {elapsed:?}");
+            if duplicate {
+                let error = outcome.err().expect("a duplicate key is refused");
+                assert!(error.to_string().contains("duplicate key \"k59999\""), "{error:#}");
+            } else {
+                assert_eq!(listed(outcome.expect("distinct keys are accepted")).len(), 1);
+            }
+        });
+    }
+}
+
+/// Twenty reads under a two-permit admission against a node that answers the
+/// checkpoint slowly: no more than two checkpoint requests are ever in flight, so
+/// the admission bounds every response a read buffers, the checkpoint included.
+#[test]
+fn admission_bounds_the_checkpoint_request_too() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let most = Arc::new(AtomicUsize::new(0));
+    let runtime = runtime();
+    runtime.block_on(async {
+        let (counter, peak) = (in_flight.clone(), most.clone());
+        let node = Arc::new(
+            ServedNode::start(move |method, _| match method {
+                "getMasterchainInfo" => {
+                    let now = counter.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(300));
+                    counter.fetch_sub(1, Ordering::SeqCst);
+                    masterchain_info(SEQNO)
+                }
+                "runGetMethodStd" => Reply::raw(200, list_answer(1, 0)),
+                _ => Reply::raw(404, "{}"),
+            })
+            .await,
+        );
+        let admission = Arc::new(Admission::new(2, Duration::from_secs(60), WORKER_STACK_BYTES));
+        let reads: Vec<_> = (0..20)
+            .map(|_| {
+                let (node, admission) = (node.clone(), admission.clone());
+                tokio::spawn(async move { read(&node, &admission).await.map(|_| ()) })
+            })
+            .collect();
+        for read in reads {
+            read.await.expect("join").expect("read");
+        }
+    });
+    let most = most.load(std::sync::atomic::Ordering::SeqCst);
+    println!("checkpoint requests in flight at once: {most}");
+    assert!(most <= 2, "{most} checkpoint requests were in flight under two permits");
+    assert!(most >= 1, "no checkpoint request was observed");
+}
+
+/// An oversized error response is an error, never a reason to fall back: with a
+/// declared length or chunked. An oversized successful one still falls back.
+#[test]
+fn an_oversized_error_response_never_falls_back() {
+    let runtime = runtime();
+    let big = || " ".repeat(MAX_RESPONSE_BYTES + 1);
+    let account = || account_reply(&account_with_value(Cell::default()));
+    for (case, getter, falls_back) in [
+        ("503 declared", Reply::raw(503, big()), false),
+        ("503 chunked", Reply::raw(503, big()).chunked(), false),
+        ("404 chunked", Reply::raw(404, big()).chunked(), false),
+        ("200 declared", Reply::raw(200, big()), true),
+        ("200 chunked", Reply::raw(200, big()).chunked(), true),
+    ] {
+        runtime.block_on(async {
+            let node = node(getter, account()).await;
+            let outcome = read(&node, &production()).await;
+            let fell_back = node.calls().contains(&"getAddressInformation".to_string());
+            assert_eq!(fell_back, falls_back, "{case}: {:?}", outcome.as_ref().err());
+            assert_eq!(outcome.is_ok(), falls_back, "{case}: {:?}", outcome.as_ref().err());
         });
     }
 }

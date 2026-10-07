@@ -186,9 +186,20 @@ impl BaseApiClient {
         // Never log headers, query values, or serialized bodies here.
         debug!("Sending POST request to configured endpoint");
         let response = self.client.post(url_with_params).headers(headers).json(body).send().await?;
-        let status = response.status().as_u16();
-        let text = bounded_response_text(response).await?;
-        Ok((status, text))
+        let status = response.status();
+        match bounded_response_text(response).await {
+            Ok(text) => Ok((status.as_u16(), text)),
+            // An oversized body is "too large" only on a successful response; an
+            // error status stays an error whatever its body's size.
+            Err(ToscenterError::ResponseTooLarge { limit }) if !status.is_success() => {
+                self.handle_error(
+                    u32::from(status.as_u16()),
+                    format!("error response body exceeds the {limit}-byte limit"),
+                )?;
+                Err(protocol_error("unreachable error response state"))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn post_rpc(

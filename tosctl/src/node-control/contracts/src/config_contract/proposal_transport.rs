@@ -322,8 +322,11 @@ impl<'de> Visitor<'de> for JsonVisitor {
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Json, A::Error> {
         let mut fields: Vec<(String, Json)> = Vec::new();
+        // An ordered set, so a wide object costs n log n to check, with no hash an
+        // answer could steer.
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         while let Some(key) = map.next_key::<String>()? {
-            if fields.iter().any(|(name, _)| *name == key) {
+            if !seen.insert(key.clone()) {
                 return Err(serde::de::Error::custom(format!("duplicate key {:?}", bounded(&key))));
             }
             let value = map.next_value::<Json>()?;
@@ -803,8 +806,10 @@ pub async fn read_proposals_with(
     read: ProposalRead,
     admission: &Admission,
 ) -> anyhow::Result<ProposalAnswer> {
-    let checkpoint = checkpoint(client).await?;
+    // Admission first: no response of this read, the checkpoint included, is
+    // buffered before it holds a worker permit.
     let permit = admission.admit().await?;
+    let checkpoint = checkpoint(client).await?;
     let response = match client.run_get_method_raw(&getter_params(address, read, &checkpoint)).await
     {
         Ok(response) => response,

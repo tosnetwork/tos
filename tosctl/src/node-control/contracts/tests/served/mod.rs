@@ -149,6 +149,8 @@ pub fn account_result(code: &[u8], data: &[u8], block: serde_json::Value) -> ser
 pub struct Reply {
     pub status: u16,
     pub body: String,
+    /// Sent with `transfer-encoding: chunked` instead of a declared length.
+    pub chunked: bool,
 }
 
 #[allow(dead_code)]
@@ -158,12 +160,17 @@ impl Reply {
         let body =
             serde_json::json!({"ok": true, "jsonrpc": "2.0", "id": "@@ID@@", "result": result})
                 .to_string();
-        Self { status: 200, body }
+        Self { status: 200, body, chunked: false }
     }
 
     /// A body sent exactly as given (with the id placeholder substituted).
     pub fn raw(status: u16, body: impl Into<String>) -> Self {
-        Self { status, body: body.into() }
+        Self { status, body: body.into(), chunked: false }
+    }
+
+    /// The same reply without a declared length.
+    pub fn chunked(self) -> Self {
+        Self { chunked: true, ..self }
     }
 }
 
@@ -248,6 +255,20 @@ async fn serve_one(
         .map_err(std::io::Error::other)?;
     let id = request["id"].to_string();
     let body = reply.body.replace("\"@@ID@@\"", &id);
+    if reply.chunked {
+        let head = format!(
+            "HTTP/1.1 {} X\r\ncontent-type: application/json\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n",
+            reply.status
+        );
+        socket.write_all(head.as_bytes()).await?;
+        for chunk in body.as_bytes().chunks(64 << 10) {
+            socket.write_all(format!("{:x}\r\n", chunk.len()).as_bytes()).await?;
+            socket.write_all(chunk).await?;
+            socket.write_all(b"\r\n").await?;
+        }
+        socket.write_all(b"0\r\n\r\n").await?;
+        return socket.shutdown().await;
+    }
     let head = format!(
         "HTTP/1.1 {} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
         reply.status,
