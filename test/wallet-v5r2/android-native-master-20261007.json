@@ -1,0 +1,23 @@
+{
+  "frozen_vectors": 2,
+  "tests": 2,
+  "controls": [
+    {
+      "guard": "salt",
+      "exit": 1
+    },
+    {
+      "guard": "password-wipe",
+      "exit": 1
+    }
+  ],
+  "restored_exit": 0,
+  "android_commit": "6793b03",
+  "scope": "Android JVM native mnemonic master mapping and password cleanup; not device custody, complete wallet restoration or independent custody acceptance",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-native-master",
+  "logs": {
+    "password-wipe.log": "b51ffb82e46daec5334b3519c0b933d7d4e272444e7cc8604f53727e3d7d691f",
+    "restored.log": "faadf6e1ebca27e1fb22c7abe96d49f318b42aa965d7fa2f94419031dd41c62f",
+    "salt.log": "7962b5a4a728fe2252077dc15c6c4844e783773a8073aec2f04a8b2aceda5c1a"
+  }
+}
