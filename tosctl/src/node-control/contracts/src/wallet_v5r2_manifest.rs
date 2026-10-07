@@ -282,6 +282,44 @@ mod tests {
         .unwrap()
     }
     #[test]
+    fn mobile_public_manifest_matches_rust_wire_and_initial_identities() {
+        let encoded = include_bytes!("../tests/fixtures/v5r2/initial-recovery-mobile.json");
+        let expected =
+            bytes::<32>("017b4078cbfce4b21954669c79ed5f9785176eae6518e8f3bb9448ed2ab12b46")
+                .expect("independently frozen wallet identity");
+        let (parsed, genesis) =
+            InitialRecoveryManifest::parse_and_reconstruct(encoded, bundle(), expected)
+                .expect("mobile public manifest");
+        assert_eq!(genesis.wallet_init().repr_hash().as_array(), &expected);
+        assert_eq!(parsed.wire.last_observed_epoch, Some(u64::MAX));
+        let original: serde_json::Value =
+            serde_json::from_slice(encoded).expect("public fixture JSON");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&parsed.to_json().expect("export"))
+                .expect("JSON"),
+            original
+        );
+        let (prepared, _) = InitialRecoveryManifest::prepare(
+            bundle(),
+            parameters(),
+            RecoveryDerivation {
+                account_index: 0,
+                key_generation: 0,
+                primary_seed_profile: SeedProfile::RawMaster32,
+                rescue_seed_profile: SeedProfile::RawMaster32,
+                fee_seed_profile: SeedProfile::RawMaster32,
+            },
+        )
+        .expect("Rust public preparation");
+        let mut no_hint = original;
+        no_hint["last_observed_epoch"] = serde_json::Value::Null;
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&prepared.to_json().expect("export"))
+                .expect("JSON"),
+            no_hint
+        );
+    }
+    #[test]
     fn manifest_roundtrip_reconstructs_genesis_without_trusting_observations() {
         let (manifest, genesis) = fixture();
         let expected = *genesis.wallet_init().repr_hash().as_array();
