@@ -353,13 +353,18 @@ class ValidatorManagerInterface : public td::actor::Actor {
   virtual void install_callback(std::unique_ptr<Callback> new_callback, td::Promise<td::Unit> promise) = 0;
   virtual void add_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
   virtual void add_temp_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
-  // Post-quantum consensus custody: which validator identity this node holds a
-  // consensus key for, and which key. Consensus membership follows this, not the
-  // Ed25519 keys above, which serve network and operator duties only.
+  // Post-quantum consensus custody: which validator identity this node holds consensus
+  // keys for, and which keys. Consensus membership follows this, not the Ed25519 keys
+  // above, which serve network and operator duties only. Several keys may be held for
+  // one validator during a rotation, each with its validity window (valid_from: the
+  // first election date it may sign a stake for; expire_at: when it stops being used,
+  // 0 for never); a group signs with the one its validator set records.
   virtual void add_pq_consensus_key(tos::ValidatorId validator_id,
-                                    std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store,
+                                    std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store, td::uint32 valid_from,
+                                    td::uint32 expire_at, td::Promise<td::Unit> promise) = 0;
+  // Stops custodying one key. Refuses (and changes nothing) when it is not held.
+  virtual void del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
                                     td::Promise<td::Unit> promise) = 0;
-  virtual void del_pq_consensus_key(tos::ValidatorId validator_id, td::Promise<td::Unit> promise) = 0;
   virtual void del_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
   virtual void del_temp_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
 

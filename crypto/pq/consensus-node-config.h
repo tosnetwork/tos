@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace tos::pq {
 
@@ -62,7 +63,75 @@ bool parse_validator_id(std::string_view text, std::array<std::uint8_t, 32>& out
 // engine's schema would drop, when a different binding is there and `replace` is not set,
 // or when the file's group cannot be kept. Every field the schema knows is written back as
 // the engine itself would write it.
+//
+// A node already holding more than one key (a rotation in progress) is refused even with
+// `replace`: its extra keys are removed one by one with `remove_node_consensus_key` first.
 NodeBindingOutcome bind_node_consensus_key(const NodeConsensusBinding& binding, NodeConsensusBindingResult& result,
                                            std::string& why);
+
+// Several keys: a consensus key rotation without downtime.
+//
+// A validator rotating from key A to key B holds both for a while: A for the validator
+// set that lists A until that set has ended, B for the stakes the controller (rebound to
+// B) will accept. Which key signs what is decided by the windows below and by the sets
+// themselves; see consensus-key-schedule.h.
+
+// One key as a node configuration names it.
+struct NodeConsensusKeyEntry {
+  std::string key_file;
+  std::uint32_t valid_from = 0;  // first election date it may sign a stake for
+  std::uint32_t expire_at = 0;   // unix time from which it is not used; 0: never
+  bool primary = false;          // the configuration's single `consensus_key_file`
+};
+
+struct NodeConsensusKeyAddition {
+  std::string db_root;
+  std::string key_file;  // absolute
+  std::uint32_t valid_from = 0;
+  std::uint32_t expire_at = 0;
+  std::uint32_t now = 0;  // the time keys are judged expired at
+};
+
+// Add a key to a bound node's configuration, under the same lock and with the same
+// refusals as `bind_node_consensus_key`. Refuses, writing nothing, when the node is not
+// bound, when the key file fails the node's own seed checks, when the key would already
+// have expired, when the file is already configured with another window, when the
+// resulting set of keys is one the node would refuse at its next start (another key valid
+// from the same election date, too many keys, a window that closes before it opens, the
+// same key under two file names, a configured key that cannot be loaded). The same key
+// with the same window already present is `unchanged`.
+NodeBindingOutcome add_node_consensus_key(const NodeConsensusKeyAddition& addition, NodeConsensusBindingResult& result,
+                                          std::string& why);
+
+struct NodeConsensusKeyRemoval {
+  std::string db_root;
+  std::string key;        // the absolute key file path it is configured at, or its 64-hex key id
+  std::uint32_t now = 0;  // the time the remaining keys are judged expired at
+};
+
+// Remove one key from a bound node's configuration. Refuses the node's last key, and a
+// removal that would leave only expired keys or an otherwise invalid schedule. This
+// sees no validator set: removing a key a running set still lists for this validator
+// takes the validator out of that set's consensus until the set ends. The operator checks
+// that first (or uses the console's del-pq-consensus-key on the running node, which does).
+NodeBindingOutcome remove_node_consensus_key(const NodeConsensusKeyRemoval& removal, NodeConsensusBindingResult& result,
+                                             std::string& why);
+
+struct NodeConsensusKeyListing {
+  struct Key {
+    NodeConsensusKeyEntry entry;
+    bool expired = false;
+    bool loaded = false;  // whether the seed passes the node's checks
+    std::array<std::uint8_t, 32> key_id{};
+    std::string refusal;  // why it does not, when it does not
+  };
+  std::array<std::uint8_t, 32> validator_id{};
+  std::vector<Key> keys;
+};
+
+// The keys a node's configuration names, each with the identity its seed derives (when
+// it can be read under the node's rules). Read only, and without the lock.
+bool list_node_consensus_keys(const std::string& db_root, std::uint32_t now, NodeConsensusKeyListing& listing,
+                              std::string& why);
 
 }  // namespace tos::pq

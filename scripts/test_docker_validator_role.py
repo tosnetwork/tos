@@ -267,6 +267,8 @@ class RoleTest(unittest.TestCase):
                 "@type": "engine.validator.pqConsensus",
                 "validator_id": VALIDATOR_ID_B64,
                 "consensus_key_file": str(self.seed),
+                # The engine's encoder writes the (empty) list of further keys too.
+                "keys": [],
             },
         )
         written = json.loads(self.config.read_text())

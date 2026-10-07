@@ -2441,7 +2441,7 @@ void ValidatorManagerImpl::get_node_consensus_status(td::Promise<NodeConsensusSt
     status.validator_set_hash = val_set->get_validator_set_hash();
     status.validator_set_total_weight = val_set->get_total_weight();
     status.validator_set_count = static_cast<td::uint32>(val_set->export_vector().size());
-    auto membership = node_validator_membership(*val_set, temp_keys_, permanent_keys_, pq_custody_);
+    auto membership = node_validator_membership(*val_set, temp_keys_, permanent_keys_, pq_custody_, pq_custody_now());
     status.has_local_validator_keys = membership.first;
     status.is_validator = membership.second;
   } else {
@@ -3851,7 +3851,14 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   td::actor::send_closure(ext_message_pool_, &ExtMessagePool::cleanup_external_messages, shard);
 
   auto validator_id = get_validator_id(shard, validator_set);
-  CHECK(!validator_id.is_zero());
+  if (validator_id.is_zero()) {
+    // The caller found this node a member a moment ago; membership follows custody, and a
+    // consensus key that expired in between makes it a member no longer. Refuse the group
+    // as for any other key this node cannot sign with.
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+               << ": this node no longer holds an unexpired consensus key the set records for it";
+    return {};
+  }
   auto descr = validator_set->get_validator(validator_id);
   CHECK(descr);
   auto adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(*descr)};
@@ -3894,12 +3901,13 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
   // start an active group with a key we cannot sign with -- refuse and stay a full node,
   // never fall back to the network keyring.
   const tos::ValidatorId local_vid = validator_id;
-  auto pq_signer = pq_custody_.get_matching_store(local_vid, *descr);
+  auto pq_signer = pq_custody_.get_matching_store(local_vid, *descr, pq_custody_now());
   if (pq_signer == nullptr) {
     LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
                << ": this node is post-quantum validator " << local_vid.value.to_hex()
-               << " but does not custody the exact consensus key the set records for it; validation for this shard is "
-                  "disabled until the key is provisioned";
+               << " but does not custody, unexpired, the exact consensus key the set records for it (key "
+               << descr->key_id.value.to_hex()
+               << "); validation for this shard is disabled until the key is provisioned";
     return {};
   }
 
@@ -3942,7 +3950,7 @@ std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
       if (validator_set->is_validator(descr.validator_id)) {
         continue;
       }
-      if (!local_consensus_descriptor(descr, temp_keys_, permanent_keys_, pq_custody_)) {
+      if (!local_consensus_descriptor(descr, temp_keys_, permanent_keys_, pq_custody_, pq_custody_now())) {
         continue;
       }
       result.emplace(block::validator_adnl_identity(descr));
@@ -4412,6 +4420,37 @@ void ValidatorManagerImpl::get_archive_slice(td::uint64 archive_id, td::uint64 o
   td::actor::send_closure(db_, &Db::get_archive_slice, archive_id, offset, limit, std::move(promise));
 }
 
+void ValidatorManagerImpl::del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
+                                                td::Promise<td::Unit> promise) {
+  // One clock reading for every part of the decision, taken here, where the key is
+  // removed: the engine's own checks ran before the hop to this actor, and a deadline may
+  // have passed since.
+  const auto now = pq_custody_now();
+  std::vector<std::vector<tos::ValidatorDescr>> sets;
+  if (last_masterchain_state_.is_null()) {
+    // Judged as everywhere else: a key retired in this process is expired, whatever its
+    // timestamp says after a clock step back, and may be removed without any set.
+    if (pq_custody_.held_keys(validator_id).count(key_id) != 0 && !pq_custody_.key_expired(validator_id, key_id, now)) {
+      promise.set_error(td::Status::Error(tos::ErrorCode::notready,
+                                          "no masterchain state yet; which sets list this key cannot be told"));
+      return;
+    }
+  } else {
+    for (int offset = -1; offset <= 1; ++offset) {
+      auto set = last_masterchain_state_->get_total_validator_set(offset);
+      if (set.not_null()) {
+        sets.push_back(set->export_vector());
+      }
+    }
+  }
+  if (auto refused = pq_custody_.removal_refusal(validator_id, key_id, now, sets)) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::error, *refused));
+    return;
+  }
+  pq_custody_.remove_key(validator_id, key_id);
+  promise.set_value(td::Unit());
+}
+
 bool ValidatorManagerImpl::has_local_validator_keys() {
   return temp_keys_.size() > 0 || permanent_keys_.size() > 0 || !pq_custody_.empty();
 }
@@ -4426,7 +4465,7 @@ tos::ValidatorId ValidatorManagerImpl::get_validator_id(ShardIdFull shard, td::R
   // Membership is decided by what this node custodies for a validator identity, not by
   // which Ed25519 keys happen to be installed. A node holding network or operator keys
   // and nothing else is not a consensus validator.
-  auto member = local_consensus_member(*val_set, temp_keys_, permanent_keys_, pq_custody_);
+  auto member = local_consensus_member(*val_set, temp_keys_, permanent_keys_, pq_custody_, pq_custody_now());
   if (!member) {
     return {};
   }

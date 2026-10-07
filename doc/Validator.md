@@ -436,8 +436,8 @@ when that file does not exist yet, to create it (the engine then exits so that
 the new file can be checked). The engine holds `<db>/config.json.lock` while it
 runs, and exits with status 2 if another process holds it. A validator's
 `config.json` names its consensus key and controller in
-`extraconfig.pq_consensus`; the engine logs `post-quantum consensus custody:
-validator_id <hex> key_id <hex>` at start-up and refuses to start if the key cannot
+`extraconfig.pq_consensus`; for every key it holds the engine logs `post-quantum consensus custody:
+validator_id <hex> key_id <hex> valid_from <t> expire_at <t>` at start-up and refuses to start if a key cannot
 be loaded.
 
 ### Required Launch Parameters

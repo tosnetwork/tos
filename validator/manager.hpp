@@ -405,18 +405,19 @@ class ValidatorManagerImpl : public ValidatorManager {
   // recorded so membership lapses on its own once the set records a different one,
   // rather than a node continuing to act for a validator that has rotated away from it.
   void add_pq_consensus_key(tos::ValidatorId validator_id, std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store,
-                            td::Promise<td::Unit> promise) override {
-    auto status = pq_custody_.install(validator_id, std::move(store));
+                            td::uint32 valid_from, td::uint32 expire_at, td::Promise<td::Unit> promise) override {
+    auto status = pq_custody_.install(validator_id, std::move(store), valid_from, expire_at);
     if (status.is_error()) {
       promise.set_error(std::move(status));
       return;
     }
     promise.set_value(td::Unit());
   }
-  void del_pq_consensus_key(tos::ValidatorId validator_id, td::Promise<td::Unit> promise) override {
-    pq_custody_.remove(validator_id);
-    promise.set_value(td::Unit());
-  }
+  // Refuses an unexpired key that a previous, current or next validator set lists for this
+  // validator, judged here, at the moment of removal, against this manager's own state:
+  // a group for such a set signs with it.
+  void del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
+                            td::Promise<td::Unit> promise) override;
 
   void validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
                                     td::Promise<td::Unit> promise) override;
@@ -828,6 +829,11 @@ class ValidatorManagerImpl : public ValidatorManager {
   // identity each belongs to. Consensus membership is decided from this; the Ed25519
   // sets above are for network and operator duties and cannot confer it.
   PqConsensusCustody pq_custody_;
+  // The local time custody decisions are made at: a consensus key whose expiry has
+  // passed answers for nothing from then on.
+  static td::uint32 pq_custody_now() {
+    return static_cast<td::uint32>(td::Clocks::system());
+  }
 
  private:
   td::Ref<ValidatorManagerOptions> opts_;

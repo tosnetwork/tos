@@ -171,9 +171,11 @@ the node's own rules. The tool:
 | 2 | usage error |
 | 3 | written, but the directory flush failed: run `sync` before relying on it |
 
-Start the node. It logs `post-quantum consensus custody: validator_id <hex>
-key_id <hex>` at start-up, in the same lower-case hex that
-`tos-pq-consensus-key show` prints, and stops instead of starting as an observer if the key cannot be
+Start the node. For every consensus key it holds it logs
+`post-quantum consensus custody: validator_id <hex> key_id <hex> valid_from <t>
+expire_at <t>` at start-up, in the same lower-case hex that
+`tos-pq-consensus-key show` prints,
+and stops instead of starting as an observer if the key cannot be
 loaded. In the container image the binding is made from `VALIDATOR_ID` and
 `PQ_CONSENSUS_KEY_FILE`; see [docker/README.md](../docker/README.md#run-a-validator).
 
@@ -302,34 +304,77 @@ log lines.
 
 ## 10. Rotate the consensus key
 
-The node holds one consensus key. Once the controller is bound to a new key B
-it refuses stakes signed with the old key A, and once the node restarts with B
-it no longer signs for a validator set that lists A. A rotation is therefore
-safe only in a verified interval in which A has no signing obligation;
-otherwise it costs downtime.
+A node can hold several consensus keys for its validator at once, so a
+rotation from key A to key B needs no downtime. Each key has a window:
+`valid_from` is the first election date (unix time) it signs stakes for, and
+`expire_at` (0: never) is when the node stops using it at all. The node picks
+the key per signature:
 
-1. Offline: `tos-pq-consensus-key generate NEXT.seed` and note its `key_id`.
-2. Verify the interval: ConfigParam 34 (and ConfigParam 36 while a next set is
-   pending) no longer lists this controller with key A, and the next stake is
-   not due before step 5 completes. If you cannot verify it, plan for downtime.
-3. Offline: `tos-pq-controller bind ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH
-   NONCE VALID_UNTIL NEXT.seed`; send the body from a wallet and check that the
-   controller now shows key B.
-4. Move the key: `tos-pq-consensus-key export NEXT.seed | ENCRYPT > MEDIUM`
+- a validator group, and a vote cast as a member of a set, use the key that
+  set's descriptor records for this validator, and no other held key;
+- a stake for an election uses the held key whose `valid_from` is the greatest
+  not after the election date, with no override:
+  `create-stake-authorization-with-key` only asserts which key that is, and is
+  refused, naming the scheduled key, if the schedule assigns another;
+- an expired key is used for nothing, and an older key is never substituted
+  for it.
+
+Two keys valid from the same election date, the same key twice, more than
+eight keys, or a configuration whose keys have all expired are refused, by the
+node at start-up, by the console, and by the offline tool. So is a removal that
+would leave only expired keys.
+
+`expire_at` is a hard deadline: from that second on the key signs nothing,
+including in a validator group that is already running with it. A signature
+whose computation crosses the deadline is discarded, and once the node has seen
+the key expired it never signs with it again in that process, even if the clock
+is stepped back, a new copy of the seed is added from another file, or the key
+is removed and added again. That memory lasts for the life of the process only:
+a node restarted with its wall clock rolled back before a configured key's
+`expire_at` loads that key again by its window. The deadline is read from the host's wall clock, so clock skew
+shifts it by the skew: run NTP. Set it after
+the `utime_until` of every set that lists the key, or leave it at 0 and remove
+the key instead (step 7).
+
+In `config.json` a single key valid for every election is written as
+`consensus_key_file`; any other set of keys is written in `keys` alone, with
+`consensus_key_file` empty, and the node refuses a file that states both, or
+that names a window field it does not know or leaves one out. The console
+makes one key change at a time and reports a change as made only once the new
+configuration is flushed to disk.
+
+1. Offline: `tos-pq-consensus-key generate NEXT.seed` and note its `key_id` (B).
+2. Move the key: `tos-pq-consensus-key export NEXT.seed | ENCRYPT > MEDIUM`
    offline, then `DECRYPT < MEDIUM | tos-pq-consensus-key import
    KEYDIR/pq-consensus-next.seed` on the host.
-5. With the node stopped: `tos-pq-consensus-key bind-node --replace DB_ROOT
-   KEYDIR/pq-consensus-next.seed VALIDATOR_ID`; start the node and confirm it
-   logs key B.
-6. Confirm the next election accepts the stake signed with B and that the
-   validator appears in ConfigParam 34 with B after the set switches.
-7. Keep the new seed B where the node reads it on every start
-   (`KEYDIR/pq-consensus-next.seed`) and in its encrypted offline backup.
-   Delete the temporary copies made to move it: the plaintext `NEXT.seed` on
-   the offline machine and the encrypted transfer `MEDIUM`.
-8. Retire the old key A separately, once step 6 has confirmed B: delete
-   `KEYDIR/pq-consensus.seed` from the host, and destroy A's backup when you no
-   longer need to be able to sign with A.
+3. Add B beside A, valid from the next election's date E (any time after the
+   current election's date works):
+   - running node, no restart: in `validator-engine-console`,
+     `add-pq-consensus-key KEYDIR/pq-consensus-next.seed E 0`;
+   - stopped node: `tos-pq-consensus-key add-node-key DB_ROOT
+     KEYDIR/pq-consensus-next.seed E`.
+
+   Confirm with `get-pq-consensus-keys` (or `tos-pq-consensus-key
+   list-node-keys DB_ROOT`) that both keys are held.
+4. Offline, before the stake for election E is due: `tos-pq-controller bind
+   ROOTSEED GLOBAL_ID CONTROLLER_HEX EPOCH NONCE VALID_UNTIL NEXT.seed`; send
+   the body from a wallet and check that the controller now shows key B.
+5. The stake for election E is signed with B. Confirm the elector accepted it.
+   Until then, A keeps signing every block and vote of the running set.
+6. Keep A until no validator set lists it: the set that lists A has ended (its
+   `utime_until` has passed, and ConfigParam 34, and ConfigParam 36 while a
+   next set is pending, list this controller with B) and no stake is still held
+   under A.
+7. Remove A: `del-pq-consensus-key <A key_id>` on the running node (it refuses
+   while a current, previous or next set lists A, and refuses the last key),
+   or `tos-pq-consensus-key remove-node-key DB_ROOT <A key_id or file>` on a
+   stopped one (it cannot see validator sets: check step 6 yourself).
+8. Keep B's seed where the node reads it and in its encrypted offline backup.
+   Delete `NEXT.seed`, `MEDIUM` and A's seed file; destroy A's backup when you
+   no longer need to be able to sign with A.
+
+`bind-node` refuses a node that holds more than one key, even with
+`--replace`: remove the extra keys first.
 
 ## 11. Refresh the global config's init block
 

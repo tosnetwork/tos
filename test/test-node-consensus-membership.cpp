@@ -48,6 +48,9 @@ Bits256 bits_with_first_byte(td::uint8 b) {
   return x;
 }
 
+// The local time custody decisions are made at. No key in this test expires.
+constexpr td::uint32 kNow = 1'000'000;
+
 PublicKeyHash short_id_of(const Ed25519_PublicKey& key) {
   return PublicKey{pubkeys::Ed25519{key}}.compute_short_id();
 }
@@ -85,18 +88,19 @@ int main() {
 
   {
     std::set<PublicKeyHash> temp{member_key};
-    expect("member_temp_key_in_set", validator::node_validator_membership(set, temp, {}, {}), true, true);
+    expect("member_temp_key_in_set", validator::node_validator_membership(set, temp, {}, {}, kNow), true, true);
   }
   {
     std::set<PublicKeyHash> temp{outsider_key};
-    expect("configured_non_member_not_in_set", validator::node_validator_membership(set, temp, {}, {}), true, false);
+    expect("configured_non_member_not_in_set", validator::node_validator_membership(set, temp, {}, {}, kNow), true,
+           false);
   }
   {
-    expect("no_local_keys_unknown", validator::node_validator_membership(set, {}, {}, {}), false, false);
+    expect("no_local_keys_unknown", validator::node_validator_membership(set, {}, {}, {}, kNow), false, false);
   }
   {
     std::set<PublicKeyHash> perm{member_key};
-    expect("member_permanent_key_in_set", validator::node_validator_membership(set, {}, perm, {}), true, true);
+    expect("member_permanent_key_in_set", validator::node_validator_membership(set, {}, perm, {}, kNow), true, true);
   }
 
   // A post-quantum validator: its identity has nothing to do with any Ed25519 key, and
@@ -125,15 +129,17 @@ int main() {
     block::ValidatorSet pq_set(/*cc_seqno=*/0, ShardIdFull{masterchainId}, std::move(pq_nodes));
 
     validator::PqConsensusCustody holding;
-    check("custody_install_accepts_a_key", holding.install(pq_id, held_store).is_ok());
-    expect("pq_custodied_key_is_member", validator::node_validator_membership(pq_set, {}, {}, holding), true, true);
+    check("custody_install_accepts_a_key", holding.install(pq_id, held_store, 0, 0).is_ok());
+    expect("pq_custodied_key_is_member", validator::node_validator_membership(pq_set, {}, {}, holding, kNow), true,
+           true);
 
     // Holding a different key for that validator does not: a validator that has rotated
     // away from this key is not us any more, and the key identity is read from the key
     // rather than taken on our word.
     validator::PqConsensusCustody stale;
-    check("custody_install_accepts_a_rotated_key", stale.install(pq_id, other_store).is_ok());
-    expect("pq_stale_key_is_not_member", validator::node_validator_membership(pq_set, {}, {}, stale), true, false);
+    check("custody_install_accepts_a_rotated_key", stale.install(pq_id, other_store, 0, 0).is_ok());
+    expect("pq_stale_key_is_not_member", validator::node_validator_membership(pq_set, {}, {}, stale, kNow), true,
+           false);
 
     // The back door this phase exists to close: every Ed25519 key in the world, and no
     // custody, must not make this node a post-quantum consensus validator. The keys
@@ -142,58 +148,60 @@ int main() {
     std::set<PublicKeyHash> every_ed25519{member_key, outsider_key, PublicKeyHash{pq_id.value},
                                           PublicKeyHash{held_key.value}};
     expect("ed25519_keys_alone_are_not_pq_membership",
-           validator::node_validator_membership(pq_set, every_ed25519, every_ed25519, {}), true, false);
+           validator::node_validator_membership(pq_set, every_ed25519, every_ed25519, {}, kNow), true, false);
 
     // A store that failed to load is refused. Accepting it silently would leave the caller
     // believing this node custodies a key it cannot sign with.
     validator::PqConsensusCustody absent;
-    check("absent_key_store_is_refused", absent.install(pq_id, nullptr).is_error());
+    check("absent_key_store_is_refused", absent.install(pq_id, nullptr, 0, 0).is_error());
     check("refused_store_is_not_custodied", absent.empty());
-    expect("absent_key_store_is_not_membership", validator::node_validator_membership(pq_set, {}, {}, absent), false,
-           false);
+    expect("absent_key_store_is_not_membership", validator::node_validator_membership(pq_set, {}, {}, absent, kNow),
+           false, false);
 
     // And holding the right key for some other validator is not holding it for this one.
     validator::PqConsensusCustody elsewhere;
     check("custody_install_accepts_another_validators_key",
-          elsewhere.install(tos::ValidatorId{bits_with_first_byte(0xa9)}, held_store).is_ok());
+          elsewhere.install(tos::ValidatorId{bits_with_first_byte(0xa9)}, held_store, 0, 0).is_ok());
     expect("custody_of_another_validator_is_not_membership",
-           validator::node_validator_membership(pq_set, {}, {}, elsewhere), true, false);
+           validator::node_validator_membership(pq_set, {}, {}, elsewhere, kNow), true, false);
 
     // get_matching_store: the one entry a Simplex group takes a signer from. It hands back
     // the store only when the descriptor names byte-for-byte the key this node holds, and
     // nothing (fail-closed) otherwise.
     const std::string held_pk = held_store->consensus_key().public_key;
     ValidatorDescr matched{pq_id, /*algorithm_id=*/1, held_key, held_pk, /*weight=*/1, bits_with_first_byte(0xc0)};
-    check("matching_store_returns_the_held_store", holding.get_matching_store(pq_id, matched) == held_store);
+    check("matching_store_returns_the_held_store", holding.get_matching_store(pq_id, matched, kNow) == held_store);
 
     // The descriptor names a different validator than the one asked for.
     ValidatorDescr other_id{
         tos::ValidatorId{bits_with_first_byte(0xb0)}, 1, held_key, held_pk, 1, bits_with_first_byte(0xc0)};
-    check("matching_store_refuses_a_validator_id_mismatch", holding.get_matching_store(pq_id, other_id) == nullptr);
+    check("matching_store_refuses_a_validator_id_mismatch",
+          holding.get_matching_store(pq_id, other_id, kNow) == nullptr);
 
     // Same validator, but the descriptor records a rotated key this node does not hold.
     ValidatorDescr rotated{
         pq_id, 1, key_id_of(*other_store), other_store->consensus_key().public_key, 1, bits_with_first_byte(0xc0)};
-    check("matching_store_refuses_a_key_id_mismatch", holding.get_matching_store(pq_id, rotated) == nullptr);
+    check("matching_store_refuses_a_key_id_mismatch", holding.get_matching_store(pq_id, rotated, kNow) == nullptr);
 
     // Same key id, but a tampered public key: the exact bytes must match.
     std::string tampered_pk = held_pk;
     tampered_pk[0] = static_cast<char>(tampered_pk[0] ^ 0x01);
     ValidatorDescr tampered{pq_id, 1, held_key, tampered_pk, 1, bits_with_first_byte(0xc0)};
-    check("matching_store_refuses_a_public_key_mismatch", holding.get_matching_store(pq_id, tampered) == nullptr);
+    check("matching_store_refuses_a_public_key_mismatch", holding.get_matching_store(pq_id, tampered, kNow) == nullptr);
 
     // An unadmitted algorithm id is refused even with the right key bytes.
     ValidatorDescr wrong_algo{pq_id, /*algorithm_id=*/2, held_key, held_pk, 1, bits_with_first_byte(0xc0)};
-    check("matching_store_refuses_a_wrong_algorithm", holding.get_matching_store(pq_id, wrong_algo) == nullptr);
+    check("matching_store_refuses_a_wrong_algorithm", holding.get_matching_store(pq_id, wrong_algo, kNow) == nullptr);
 
     // A classical descriptor never yields a post-quantum signer.
     ValidatorDescr classical{pub_member, /*weight=*/1};
-    check("matching_store_refuses_a_classical_descriptor", holding.get_matching_store(pq_id, classical) == nullptr);
+    check("matching_store_refuses_a_classical_descriptor",
+          holding.get_matching_store(pq_id, classical, kNow) == nullptr);
 
     // No custodied key for this validator at all.
     validator::PqConsensusCustody empty_custody;
     check("matching_store_refuses_when_nothing_is_custodied",
-          empty_custody.get_matching_store(pq_id, matched) == nullptr);
+          empty_custody.get_matching_store(pq_id, matched, kNow) == nullptr);
 
     // validate_pq_consensus_descriptor: the one question the manager (before creating a
     // group) and the consensus bus (before starting one) both ask, so they cannot disagree

@@ -813,6 +813,12 @@ target_include_directories(test-node-consensus-membership PRIVATE ${CMAKE_CURREN
 target_link_libraries(test-node-consensus-membership PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor
                       tos_pq_consensus_signer tos_pq_consensus)
 
+add_executable(test-pq-consensus-key-rotation test/test-pq-consensus-key-rotation.cpp)
+target_include_directories(test-pq-consensus-key-rotation PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-pq-consensus-key-rotation PRIVATE tos_block keys tos_crypto tos_crypto_core tl_api tdutils tdactor
+                      tos_pq_consensus_signer_test_clock tos_pq_consensus tos_mldsa44)
+
 add_executable(test-validator-transport-authority test/pq-native/validator-transport-authority-test.cpp)
 target_include_directories(test-validator-transport-authority PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1821,6 +1827,20 @@ tos_test(test-validator-cleanup-statedb)
 tos_test(test-validator-cleanup-worker)
 tos_test(test-validator-cleanup-integration)
 tos_test(test-node-consensus-membership)
+tos_test(test-pq-consensus-key-rotation)
+# The production signer, and the binaries built on it, have no way to move the consensus key
+# deadline's clock; only the rotation test's signer does. See the script for every check.
+if(TARGET validator-engine AND TARGET tos-pq-consensus-key)
+  find_program(TOS_NM_EXECUTABLE NAMES llvm-nm-21 llvm-nm nm REQUIRED)
+  add_test(NAME pq-signer-no-test-clock
+           COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-signer-no-test-clock.py"
+                   --nm "${TOS_NM_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+                   --source-root "${CMAKE_CURRENT_SOURCE_DIR}"
+                   --production "$<TARGET_FILE:tos_pq_consensus_signer>"
+                   --binary "$<TARGET_FILE:validator-engine>"
+                   --binary "$<TARGET_FILE:tos-pq-consensus-key>"
+                   --test-clock "$<TARGET_FILE:tos_pq_consensus_signer_test_clock>")
+endif()
 tos_test(test-json-rpc-rate-gate)
 tos_test(test-json-rpc-payload-waiter)
 # Source-level check: a route added to on_request bypasses the dispatcher's
