@@ -1,0 +1,25 @@
+{
+  "scope": "Portable host HKDF primitive only; mobile custody, integration and full wallet acceptance remain required",
+  "frozen_derivations": 7,
+  "controls": [
+    {
+      "guard": "domain",
+      "compiled": true,
+      "semantic_failure": true
+    },
+    {
+      "guard": "master-wipe",
+      "compiled": true,
+      "semantic_failure": true
+    },
+    {
+      "guard": "failure-output",
+      "compiled": true,
+      "semantic_failure": true
+    }
+  ],
+  "source_sha256": "d23e235ac280890676d38903be85b4f89ed97cfc4f1c2a11ee28c333b1e4a5e8",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-mobile-kdf-controls",
+  "restored_exit": 0,
+  "sanitizers": "AddressSanitizer and UndefinedBehaviorSanitizer: seven frozen derivations and failure wipe passed"
+}
