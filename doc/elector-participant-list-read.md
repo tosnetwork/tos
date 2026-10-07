@@ -141,10 +141,27 @@ engine.validator.configProposals
     = engine.validator.ConfigProposals;
 engine.validator.getConfigProposals
     flags:# block:flags.0?tosNode.blockIdExt = engine.validator.ConfigProposals;
+
+engine.validator.configProposalDetail
+    flags:# block:tosNode.blockIdExt meta:flags.0?engine.validator.configProposalMeta
+    value:flags.1?bytes
+    = engine.validator.ConfigProposalDetail;
+engine.validator.getConfigProposal
+    flags:# block:flags.0?tosNode.blockIdExt hash:int256
+    = engine.validator.ConfigProposalDetail;
 ```
 
+`getConfigProposal` runs the config contract's `get_proposal`: `flags.0` absent means
+no such proposal; when present, `value` (`flags.1`) is the proposed parameter cell as
+a BOC exactly when `meta.has_value` is true, bounded by the reply bound. A full
+`ConfigProposal` is built only from this detailed answer, never from metadata with the
+value missing.
+
 - Amounts are canonical big-endian unsigned bytes: zero is the empty string, no
-  leading zero byte, at most 16 bytes (the Coins range); the Rust side converts with
+  leading zero byte, at most 15 bytes — Coins is `VarUInteger 16`, whose length is
+  less than 16, so the maximum is 2^120 − 1 (`crypto/block/block.tlb:116`,
+  `tosctl/src/block/src/types.rs:855–864`); 2^120 − 1 is accepted and 2^120
+  refused, tested separately from the Rust side's `u64` boundary; the Rust side converts with
   checked arithmetic and refuses explicitly what does not fit its existing types.
 - TL `int` fields that carry times or ranges are interpreted as unsigned 32-bit and
   range-checked; unknown `flags` bits are refused.
@@ -207,14 +224,30 @@ engine.validator.getConfigProposals
   consumer's output is unchanged.
 - If the node does not know the query (pre-upgrade engine), fail with an explicit
   "upgrade the node" error; TOS is pre-launch, so no compatibility path is kept.
-- Every operator consumer is audited and moved, including proposal-creation
-  read-back and single-proposal details; operator commands never silently use the
-  public path, and tests assert the public-RPC call count stays zero in migrated
-  workflows. `getConfigProposals` metadata covers `vote offer cast` selection and
-  display; full proposal details and diff need the value and keep their own read.
+- Every operator consumer is moved as listed in §5.5; operator commands never
+  silently use the public path, and tests assert the public-RPC call count stays zero
+  in each migrated workflow.
 - The hardened public proposal path from #151 stays, explicitly separate, for public
   consumers; it is removed only after every remaining caller is inventoried and
   replaced.
+
+### 5.5 Routing of every consumer
+
+| Consumer (call site on `main`) | Today | After |
+| --- | --- | --- |
+| Elections runner tick (`elections/src/runner.rs:373`) | public `participant_list_extended` | `getElectionParticipants` |
+| Stake confirmation (`config_wallet_cmd.rs:496`, `:711`) | public | `getElectionParticipants` |
+| `vote participants` / `vote cast` (`vote_cmd.rs:1651`, `:1761`) | public | `getElectionParticipants` |
+| `vote offer ls` (`vote_cmd.rs:942`) | #151 bounded public path | `getConfigProposals` (metadata) |
+| `vote offer cast` target selection (`vote_cmd.rs:1146`) | #151 bounded public path | `getConfigProposals` (metadata) |
+| `vote offer create` read-back of the expiry (`vote_cmd.rs:749`) | #151 bounded public path | `getConfigProposal` (expiry from `meta`) |
+| `vote offer diff --hash` details (`vote_cmd.rs:1077`) | #151 bounded public path | `getConfigProposal` (with `value`) |
+| Service voting task (`service/src/voting/voting_task.rs:150`) | #151 bounded public path | `getConfigProposals` (metadata) |
+| Explorer `/staking` (`service/src/http/explorer_query_api.rs:479`) | public | **unchanged — public consumer**, limits documented |
+
+The zero-public-RPC assertion covers every "After" row except the explorer. The
+explorer is a public service without a control key; it keeps the public path and
+the #151 machinery for proposals.
 
 ### 5.4 Out of scope
 
