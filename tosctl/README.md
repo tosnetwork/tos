@@ -32,27 +32,36 @@ src/target/release/tosctl
 docker pull ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1
 ```
 
+tosctl keeps its configuration (which can hold inline keys) and a file-backed
+vault in one directory that only you can modify: it refuses to write into a
+directory that is group- or other-writable, owned by another user, or reached
+through a symbolic link. Create it once:
+
+```bash
+export TOSCTL_HOME="$HOME/.tosctl"
+mkdir -p "$TOSCTL_HOME" && chmod 700 "$TOSCTL_HOME"
+```
+
+The container runs as your user (`--user`) so that the files it writes are
+owned by you, and the whole directory is mounted (a single bind-mounted file
+cannot be replaced atomically).
+
 Shell alias for convenience:
 
 ```bash
 alias tosctl='docker run --rm \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
+  --user "$(id -u):$(id -g)" \
+  -v "$TOSCTL_HOME":/tosctl \
   -e VAULT_URL="$VAULT_URL" \
   -e CONFIG_PATH="/tosctl/config.json" \
   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
   tosctl'
 ```
 
-If using the file-backed vault, also mount the vault file:
+With the file-backed vault, keep the vault in the same directory:
 
 ```bash
-alias tosctl='docker run --rm \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
-  -v "$(pwd)/vault.json":/tosctl/vault.json \
-  -e VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY" \
-  -e CONFIG_PATH="/tosctl/config.json" \
-  ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
-  tosctl'
+export VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY"
 ```
 
 ## Quick Start

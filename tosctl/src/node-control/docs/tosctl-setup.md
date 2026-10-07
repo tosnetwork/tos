@@ -47,11 +47,26 @@ tosctl is distributed as a Docker image. Pull the latest version:
 docker pull ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1
 ```
 
+tosctl keeps its configuration (which can hold inline keys) and a file-backed
+vault in one directory that only you can modify: it refuses to write into a
+directory that is group- or other-writable, owned by another user, or reached
+through a symbolic link. Create it once:
+
+```bash
+export TOSCTL_HOME="$HOME/.tosctl"
+mkdir -p "$TOSCTL_HOME" && chmod 700 "$TOSCTL_HOME"
+```
+
+The container runs as your user (`--user`) so that the files it writes are
+owned by you, and the whole directory is mounted (a single bind-mounted file
+cannot be replaced atomically).
+
 To run any `tosctl` CLI command, use `docker run` with the image:
 
 ```bash
 docker run --rm \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
+  --user "$(id -u):$(id -g)" \
+  -v "$TOSCTL_HOME":/tosctl \
   -e VAULT_URL="$VAULT_URL" \
   -e CONFIG_PATH="/tosctl/config.json" \
   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
@@ -62,23 +77,15 @@ For convenience, create a shell alias:
 
 ```bash
 alias tosctl='docker run --rm \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
+  --user "$(id -u):$(id -g)" \
+  -v "$TOSCTL_HOME":/tosctl \
   -e VAULT_URL="$VAULT_URL" \
   -e CONFIG_PATH="/tosctl/config.json" \
   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
   tosctl'
 ```
 
-> **Note (file-based vault only):** If you are using the `file://` vault backend, the vault file must also be mounted into the container, otherwise it will be lost when the container exits. Extend the alias with an extra volume mount:
-> ```bash
-> alias tosctl='docker run --rm \
->   -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
->   -v "$(pwd)/vault.json":/tosctl/vault.json \
->   -e VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY" \
->   -e CONFIG_PATH="/tosctl/config.json" \
->   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
->   tosctl'
-> ```
+> **Note (file-based vault only):** keep the vault file in the mounted directory, otherwise it is lost when the container exits: `VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY"`.
 
 Now you can use `tosctl` as if it were installed locally:
 
@@ -120,6 +127,12 @@ Set the `VAULT_URL` environment variable:
 ```bash
 export VAULT_URL="file://vault.json?master_key=$MASTER_KEY"
 ```
+
+A relative path is resolved against the current directory, which must be owned
+by you and not group- or other-writable (on systems whose umask is 002, run
+`chmod go-w .` or use `$TOSCTL_HOME`). With Docker, use
+`file:///tosctl/vault.json?master_key=$MASTER_KEY` so the vault lives in the
+mounted directory.
 
 The vault file will be created automatically on first use. Keep the master key safe — without it the vault file cannot be decrypted.
 
@@ -536,8 +549,8 @@ mkdir -p "$(pwd)/logs"
 
 docker run -d \
   --name tosctl --restart unless-stopped \
-  -v "$(pwd)/logs":/tosctl/logs \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
+  --user "$(id -u):$(id -g)" \
+  -v "$TOSCTL_HOME":/tosctl \
   -e VAULT_URL="$VAULT_URL" \
   -e CONFIG_PATH="/tosctl/config.json" \
   -e RUST_BACKTRACE=1 \
@@ -545,20 +558,9 @@ docker run -d \
   tosctl service --config=/tosctl/config.json
 ```
 
-> **Note (file-based vault only):** If you are using the `file://` vault backend, add a volume mount for the vault file so it persists across container restarts:
-> ```bash
-> docker run -d \
->   --name tosctl --restart unless-stopped \
->   -v "$(pwd)/logs":/tosctl/logs \
->   -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
->   -v "$(pwd)/vault.json":/tosctl/vault.json \
->   -e VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY" \
->   -e CONFIG_PATH="/tosctl/config.json" \
->   -e RUST_BACKTRACE=1 \
->   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
->   tosctl service --config=/tosctl/config.json
-> ```
-> Without this mount, all vault keys (wallet keys, ADNL keys) will be lost on every container restart.
+Logs are written to `$TOSCTL_HOME/logs`.
+
+> **Note (file-based vault only):** keep the vault in the mounted directory (`VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY"`). A vault outside it is lost on every container restart, together with its wallet and ADNL keys.
 
 ### What the Service Does
 

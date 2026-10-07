@@ -139,7 +139,7 @@ impl FileJsonStorage {
         crypto_factory: Box<dyn CryptoFactory>,
         auto_migrate: bool,
     ) -> anyhow::Result<Self> {
-        crate::private_file::prepare_parent(file_path, true)?;
+        crate::private_file::prepare_parent(file_path)?;
 
         let crypto = crypto_factory.new_crypto()?;
 
@@ -306,7 +306,7 @@ impl FileJsonStorage {
         let path = file_path.to_owned();
         let data = data.as_bytes().to_vec();
         tokio::task::spawn_blocking(move || {
-            crate::private_file::write_private_atomic(&path, &data, true)
+            crate::private_file::write_private_atomic(&path, &data)
         })
         .await??;
         Ok(())

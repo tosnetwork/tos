@@ -16,3 +16,25 @@ replace an established account. Changing the wallet requires an explicit
 Only sessions saved under `session_v3` can be restored. Sessions established by
 the former unbound first-sender handshake expire instead of inheriting trust.
 Restoration checks key encodings, the client keypair and the wallet key.
+
+## Refusals
+
+`connect()` throws, and does not open a bridge subscription, when an HTTP-bridge
+wallet is given:
+
+- no `walletSessionPublicKey`;
+- a key that is not exactly 64 hex characters;
+- a low-order (unsafe) Curve25519 key.
+
+## React
+
+`@tos/connect-react` forwards the key: call
+`connect(wallet, { walletSessionPublicKey, items })` from `useConnect()`. A
+refused connection is reported through `connectError` (and a console warning)
+rather than swallowed.
+
+## Current limitation
+
+The bundled mobile wallets do not yet offer an out-of-band pairing step, so a
+dApp cannot obtain their session key in advance. Until they do, HTTP-bridge
+connections to them are refused; injected wallets are unaffected.
