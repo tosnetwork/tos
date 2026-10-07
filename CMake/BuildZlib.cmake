@@ -1,3 +1,4 @@
+include(AppleMobileThirdParty)
 include(AndroidThirdParty)
 
 get_filename_component(TOS_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
@@ -108,6 +109,9 @@ else()
     set(ZLIB_CFLAGS "${CMAKE_C_FLAGS} -fPIC")
   else()
     set(ZLIB_CFLAGS "-fPIC")
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    string(APPEND ZLIB_CFLAGS " ${TOS_IOS_THIRD_PARTY_FLAGS}")
   endif()
 
   if (MINGW)

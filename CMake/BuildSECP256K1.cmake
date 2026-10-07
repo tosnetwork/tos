@@ -1,3 +1,4 @@
+include(AppleMobileThirdParty)
 include(AndroidThirdParty)
 
 # Self-heal stale cache: if a previous configure populated
@@ -141,6 +142,9 @@ if (NOT SECP256K1_LIBRARY)
     else()
       set(SECP256K1_CFLAGS "-fPIC")
     endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+      string(APPEND SECP256K1_CFLAGS " ${TOS_IOS_THIRD_PARTY_FLAGS}")
+    endif()
 
     set(SECP256K1_CONFIGURE_ARGS
       -q
@@ -158,6 +162,8 @@ if (NOT SECP256K1_LIBRARY)
     )
     if (ANDROID)
       list(APPEND SECP256K1_CONFIGURE_ARGS --host=${TOS_ANDROID_HOST})
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+      list(APPEND SECP256K1_CONFIGURE_ARGS --host=${TOS_IOS_CONFIGURE_HOST})
     endif()
 
     if (MINGW)

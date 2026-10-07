@@ -11,6 +11,10 @@ if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER)
 endif()
 
 project(TOS VERSION 0.5 LANGUAGES C CXX)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  # This build packages libraries, not iOS application bundles.
+  set(CMAKE_MACOSX_BUNDLE OFF)
+endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Define the two required variables before including the source code for watching a git repository.

@@ -1,3 +1,4 @@
+include(AppleMobileThirdParty)
 include(AndroidThirdParty)
 
 set(BLST_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third-party/blst)
@@ -65,6 +66,16 @@ if (NOT BLST_LIB)
       DEPENDS ${BLST_SOURCE_DIR}
       OUTPUT ${BLST_LIB}
     )
+  elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    add_custom_command(
+      WORKING_DIRECTORY ${BLST_BINARY_DIR}
+      COMMAND ${CMAKE_COMMAND} -E env CC=${CMAKE_C_COMPILER}
+        AR=${CMAKE_AR} RANLIB=${CMAKE_RANLIB}
+        "CFLAGS=${CMAKE_C_FLAGS} ${TOS_IOS_THIRD_PARTY_FLAGS} -fPIC"
+        ${BLST_SOURCE_DIR}/build.sh -D__BLST_PORTABLE__
+      COMMENT "Build blst (iOS)"
+      DEPENDS ${BLST_SOURCE_DIR}
+      OUTPUT ${BLST_LIB})
   else()
     if (MINGW)
       add_custom_command(
