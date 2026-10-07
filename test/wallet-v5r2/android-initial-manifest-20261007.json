@@ -1,0 +1,51 @@
+{
+  "tests": 4,
+  "controls": [
+    {
+      "guard": "duplicate",
+      "exit": 1,
+      "failed_cases": [
+        "duplicateUnknownMalformedAndOverwideFieldsAreRefused"
+      ]
+    },
+    {
+      "guard": "trusted-wallet",
+      "exit": 1,
+      "failed_cases": [
+        "independentTrustAndReconstructedCommitmentsAreRequired"
+      ]
+    },
+    {
+      "guard": "commitment",
+      "exit": 1,
+      "failed_cases": [
+        "independentTrustAndReconstructedCommitmentsAreRequired"
+      ]
+    },
+    {
+      "guard": "sanitized-error",
+      "failed_cases": [
+        "malformedEncodingNeverEchoesInput"
+      ]
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Public initial identity reconstruction only; no current authority, POP, fee continuity or complete restore acceptance",
+  "restored_final_exit": 0,
+  "android_commit": "b160884",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-initial-manifest",
+  "logs": {
+    "commitment.log": "1410e86d75fee2d2684fb7d86a4091ebbaef6066c3ffc1dd5a476a6a9dd24c73",
+    "sanitized-error.log": "ec18cbd5c486d597bf17d080da02f3733f654eb4ca15965919ef348ec4b70efa",
+    "duplicate.log": "697cad4db0c5902e9bf2cb99a8223b380d5e084f2bc5ca5595be9ca17ee67b10",
+    "trusted-wallet.log": "999e2e2e46895091d7f9711d29c2a9709a114a3125c4533fd7bb2740c3793d0a",
+    "restored-final.log": "9152e27913212d41e08802834ed40e4d43502d2ebc256af1c52949f2e4f49079",
+    "restored.log": "3e221eb37147d26eeeb794e8a06eb8ce224c683abd72e278a496cea52ab79486"
+  },
+  "junit_receipts": {
+    "duplicate.xml": "7d409c53fb03c226be6d090b93ce6eabcf728ae04c64bc9ba6778009cfa8b74a",
+    "trusted-wallet.xml": "aaee135758ce5b0e97812c2c07d8bf9be773d56b7666db2381789df7cd1421ba",
+    "commitment.xml": "75bb485e0ae7e692e12c0f0593d381ccf1a0ddb7ef0fef2ceb9f1f7faa6a76e0",
+    "sanitized-error.xml": "1bcbc9b099001d3a3646ae6501b96f09c42c3f5030c33a0f2db0f464e9fbd0b6"
+  }
+}
