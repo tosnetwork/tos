@@ -1,0 +1,27 @@
+{
+  "tests": 1,
+  "controls": [
+    {
+      "guard": "enrollment",
+      "exit": 1
+    },
+    {
+      "guard": "session-route",
+      "exit": 1
+    },
+    {
+      "guard": "encrypted-context",
+      "exit": 1
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Actual Android AES encrypted fee seed, native enrollment binding and route-matched LMS signing; hardware authentication, backups, proof acquisition and full wallet acceptance remain required",
+  "android_commit": "f598c75",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-fee-custody",
+  "logs": {
+    "encrypted-context.log": "92e8adf1048721a50bfa61172d8b9ea23d6c05923b6e0ddda341bbfe67adf8c7",
+    "session-route.log": "5fc54f4185a05fb1d2916c72cb10ffd5ee8166763d2ae9bbc0d06e2a889bd768",
+    "restored.log": "9c5e18080ab4a4c4a87c0f257bdf6926726774bfa4a21984445c74b7941373d1",
+    "enrollment.log": "a343c6fe2ce1e12d81b419fbfd9a41d4206a8fc0b4bd7aa6c0cce9849bb8de99"
+  }
+}
