@@ -1,0 +1,24 @@
+{
+  "vectors": 4,
+  "tests": 4,
+  "controls": [
+    {
+      "field": "successor-owner",
+      "exit": 1
+    },
+    {
+      "field": "vault-epoch",
+      "exit": 1
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Android JVM successor DAG identities; synthetic code/key framing only, not POP, deployed migration or live proof acceptance",
+  "android_commit": "7a78a54",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-successor-full",
+  "generator": "test/wallet-v5r2/sdk_genesis_vectors.py --successor",
+  "logs": {
+    "successor-owner.log": "7d7abec05e9b1479cccfc25d9f7b51045eae5d41bef1762a825d908dd60f07d0",
+    "vault-epoch.log": "04ddd445fa26998045239cd8667fc909c7ff14278863ca5988cadfb71fa88885",
+    "restored.log": "44976766c752df233d65ad72574063c305d3cfb792e75ce7b1062d563406ecf9"
+  }
+}
