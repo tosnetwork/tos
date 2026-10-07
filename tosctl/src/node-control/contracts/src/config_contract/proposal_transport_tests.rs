@@ -242,7 +242,7 @@ fn checkpoint_of(text: &str) -> MasterchainCheckpoint {
 #[test]
 fn the_live_answers_decode_at_their_own_block_only() {
     let checkpoint = checkpoint_of(TWO_LIVE);
-    let Ok(GetterOutcome::Answer(ProposalAnswer::List(proposals))) =
+    let Attempt::Answer(ProposalAnswer::List(proposals)) =
         decode_getter_response(&response(TWO_LIVE), ProposalRead::List, &checkpoint)
     else {
         panic!("the two-proposal answer decodes");
@@ -250,7 +250,7 @@ fn the_live_answers_decode_at_their_own_block_only() {
     assert_eq!(proposals.len(), 2);
     assert_eq!(proposals[0].param.id, 1000);
     assert_eq!(proposals[1].param.id, 1001);
-    let Ok(GetterOutcome::Answer(ProposalAnswer::List(none))) = decode_getter_response(
+    let Attempt::Answer(ProposalAnswer::List(none)) = decode_getter_response(
         &response(EMPTY_LIVE),
         ProposalRead::List,
         &checkpoint_of(EMPTY_LIVE),
@@ -258,51 +258,79 @@ fn the_live_answers_decode_at_their_own_block_only() {
         panic!("the empty answer decodes");
     };
     assert!(none.is_empty());
-    // The same answer at any other checkpoint is refused.
+    // The same answer at any other checkpoint is no answer about the checkpoint:
+    // the next endpoint is asked.
     let other = MasterchainCheckpoint { seqno: checkpoint.seqno + 1, ..checkpoint.clone() };
-    let refused = decode_getter_response(&response(TWO_LIVE), ProposalRead::List, &other);
-    assert!(refused.is_err_and(|e| e.contains("another block")));
+    let retried = decode_getter_response(&response(TWO_LIVE), ProposalRead::List, &other);
+    assert!(matches!(retried, Attempt::Retry("wrong_block")), "{retried:?}");
     let other = MasterchainCheckpoint { root_hash: "00".repeat(32), ..checkpoint };
-    assert!(decode_getter_response(&response(TWO_LIVE), ProposalRead::List, &other).is_err());
+    let retried = decode_getter_response(&response(TWO_LIVE), ProposalRead::List, &other);
+    assert!(matches!(retried, Attempt::Retry("wrong_block")), "{retried:?}");
 }
 
+/// A valid envelope at the checkpoint whose result or stack the strict decoder
+/// refuses, or whose getter exited non-zero, is terminal; a broken envelope, JSON
+/// or block identity is retried. The two layers are distinct classes.
 #[test]
-fn served_entries_the_node_never_writes_are_refused() {
+fn result_failures_are_terminal_and_envelope_failures_are_retried() {
     let checkpoint = checkpoint_of(TWO_LIVE);
     for (case, from, to) in [
-        ("unknown type", "tvm.stackEntryTuple", "tvm.stackEntryMystery"),
+        ("unknown stack entry type", "tvm.stackEntryTuple", "tvm.stackEntryMystery"),
         ("number without text", r#""number":"0""#, r#""number":0"#),
         ("tuple without elements", r#""elements":["#, r#""items":["#),
-        ("nonzero exit code", r#""exit_code":0"#, r#""exit_code":11"#),
-        ("exit code 1", r#""exit_code":0"#, r#""exit_code":1"#),
-        ("exit code -13", r#""exit_code":0"#, r#""exit_code":-13"#),
+        ("no exit code", r#""exit_code":0,"#, ""),
+        ("no stack", r#""stack":["#, r#""stock":["#),
+        ("exit 11", r#""exit_code":0"#, r#""exit_code":11"#),
+        ("exit 1", r#""exit_code":0"#, r#""exit_code":1"#),
+        ("exit -13", r#""exit_code":0"#, r#""exit_code":-13"#),
+        ("a field the decoder refuses", r#""number":"1792326266""#, r#""number":"-1""#),
     ] {
         let text = TWO_LIVE.replacen(from, to, 1);
         assert_ne!(text, TWO_LIVE, "{case}: the mutation did not apply");
         let result = decode_getter_response(&response(&text), ProposalRead::List, &checkpoint);
-        assert!(result.is_err(), "{case} was accepted");
+        assert!(matches!(result, Attempt::Refused(_)), "{case}: {result:?}");
     }
+    for (case, from, to, category) in [
+        ("an error envelope", r#""ok":true"#, r#""ok":false"#, "envelope_error"),
+        ("a mismatched id", r#""id":"r1""#, r#""id":"r2""#, "envelope_error"),
+        ("no result", r#""result":"#, r#""outcome":"#, "envelope_error"),
+        ("wrong jsonrpc", r#""jsonrpc":"2.0""#, r#""jsonrpc":"1.0""#, "envelope_error"),
+        ("malformed JSON", r#""ok":true,"#, r#""ok":true,,"#, "malformed_json"),
+        ("a duplicate key", r#""ok":true,"#, r#""ok":true,"ok":true,"#, "malformed_json"),
+        ("no block", r#""block_id":"#, r#""block":"#, "wrong_block"),
+    ] {
+        let text = response(TWO_LIVE).text.replacen(from, to, 1);
+        assert_ne!(text, response(TWO_LIVE).text, "{case}: the mutation did not apply");
+        let attempt = RawRpcResponse { status: 200, text, request_id: "r1".into() };
+        let result = decode_getter_response(&attempt, ProposalRead::List, &checkpoint);
+        assert!(matches!(result, Attempt::Retry(c) if c == category), "{case}: {result:?}");
+    }
+    let deep = format!("{}{}", "[".repeat(MAX_JSON_DEPTH + 1), "]".repeat(MAX_JSON_DEPTH + 1));
+    let attempt = RawRpcResponse { status: 200, text: deep, request_id: "r1".into() };
+    let result = decode_getter_response(&attempt, ProposalRead::List, &checkpoint);
+    assert!(matches!(result, Attempt::Retry("too_deep")), "{result:?}");
 }
 
-/// Exit 13 is the one getter exit that sends a list read to stored state, and only
-/// once the answer is from the checkpoint; a single-proposal read never does.
+/// Exit 13 sends a list read to stored state only from the checkpoint; from
+/// another block it is retried, and a single-proposal read refuses it.
 #[test]
 fn only_exit_13_of_a_list_read_at_the_checkpoint_falls_back() {
     let checkpoint = checkpoint_of(TWO_LIVE);
     let exit13 = TWO_LIVE.replacen(r#""exit_code":0"#, r#""exit_code":13"#, 1);
     assert!(matches!(
         decode_getter_response(&response(&exit13), ProposalRead::List, &checkpoint),
-        Ok(GetterOutcome::Exit13)
+        Attempt::Exit13
     ));
     let other = MasterchainCheckpoint { seqno: checkpoint.seqno + 1, ..checkpoint.clone() };
-    assert!(
-        decode_getter_response(&response(&exit13), ProposalRead::List, &other)
-            .is_err_and(|e| e.contains("another block"))
-    );
+    assert!(matches!(
+        decode_getter_response(&response(&exit13), ProposalRead::List, &other),
+        Attempt::Retry("wrong_block")
+    ));
     for read in [ProposalRead::One([1; 32]), ProposalRead::Expiry([1; 32])] {
+        let result = decode_getter_response(&response(&exit13), read, &checkpoint);
         assert!(
-            decode_getter_response(&response(&exit13), read, &checkpoint)
-                .is_err_and(|e| e.contains("exited with code 13"))
+            matches!(&result, Attempt::Refused(e) if e.contains("exited with code 13")),
+            "{result:?}"
         );
     }
 }

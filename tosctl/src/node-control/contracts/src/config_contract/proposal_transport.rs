@@ -33,7 +33,7 @@ use base64::Engine;
 use chain_block::MsgAddressInt;
 use chain_rpc_client::v2::{
     RPCStackEntry,
-    client_json_rpc::{ClientJsonRpc, RawReadError, RawRpcResponse},
+    client_json_rpc::{ClientJsonRpc, RawAttempt, RawRpcResponse},
     data_models::{BlockIdExt, RunGetMethodParams},
 };
 use common::tvm_stack_parser::TvmStackParser;
@@ -580,39 +580,82 @@ fn convert_open(open: &mut Vec<OpenEntry>) -> Result<Vec<StackEntry>, String> {
 
 // ─── Decoding on the worker ───────────────────────────────────────────────────
 
-/// What a getter's answer decoded to.
-enum GetterOutcome {
-    Answer(ProposalAnswer),
-    /// `list_proposals` at the checkpoint returned exit code 13, which is what the
-    /// getter does when its dictionary walk outgrows the node's get-method gas.
+/// How one endpoint's answer ended. Flat: only this crosses back from a worker.
+enum Attempt<T> {
+    /// A valid envelope at the checkpoint, decoded.
+    Answer(T),
+    /// A valid envelope at the checkpoint whose `list_proposals` exited with 13,
+    /// which it does when its dictionary walk outgrows the node's get-method gas.
     Exit13,
+    /// A valid envelope at the checkpoint that is refused: any other non-zero exit,
+    /// a result or stack the strict decoder refuses, or unsupported code. Terminal:
+    /// another endpoint is not asked.
+    Refused(String),
+    /// A failure of this endpoint's answer as a JSON-RPC answer about the
+    /// checkpoint: malformed or over-deep JSON, an envelope that breaks the
+    /// client's rules (an error envelope included), or an answer read at another
+    /// block or naming none. The next endpoint is asked.
+    Retry(&'static str),
 }
 
-/// Decodes a getter's whole response into the flat answer. Runs on a worker.
+impl<T> std::fmt::Debug for Attempt<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Attempt::Answer(_) => f.write_str("Answer"),
+            Attempt::Exit13 => f.write_str("Exit13"),
+            Attempt::Refused(reason) => write!(f, "Refused({reason:?})"),
+            Attempt::Retry(category) => write!(f, "Retry({category})"),
+        }
+    }
+}
+
+/// The envelope and block layer every answer passes before its content is read.
+/// Retryable failures only.
+fn checked_result(
+    response: &RawRpcResponse,
+    checkpoint: &MasterchainCheckpoint,
+) -> Result<Json, &'static str> {
+    if depth_preflight(response.text.as_bytes(), MAX_JSON_DEPTH).is_err() {
+        return Err("too_deep");
+    }
+    let document = parse_document(&response.text).map_err(|_| "malformed_json")?;
+    let result = envelope_result(document, response.status, &response.request_id)
+        .map_err(|_| "envelope_error")?;
+    // The block before anything the answer says: an answer from another block, or
+    // naming none, is no answer about the checkpoint.
+    checked_block(&result, checkpoint).map_err(|_| "wrong_block")?;
+    Ok(result)
+}
+
+/// Classifies one getter answer. Runs on a worker.
 fn decode_getter_response(
     response: &RawRpcResponse,
     read: ProposalRead,
     checkpoint: &MasterchainCheckpoint,
-) -> Result<GetterOutcome, String> {
-    let document = parse_document(&response.text)?;
-    let mut result = envelope_result(document, response.status, &response.request_id)?;
-    // The block first: an answer from another block is refused whatever it says.
-    checked_block(&result, checkpoint)?;
+) -> Attempt<ProposalAnswer> {
+    let mut result = match checked_result(response, checkpoint) {
+        Ok(result) => result,
+        Err(category) => return Attempt::Retry(category),
+    };
     match result.get("exit_code") {
         Some(Json::Number(code)) if code.as_i64() == Some(0) => {}
         Some(Json::Number(code)) if code.as_i64() == Some(13) && read == ProposalRead::List => {
-            return Ok(GetterOutcome::Exit13);
+            return Attempt::Exit13;
         }
-        Some(Json::Number(code)) => return Err(format!("the getter exited with code {code}")),
-        _ => return Err("the answer has no exit code".to_string()),
+        Some(Json::Number(code)) => {
+            return Attempt::Refused(format!("the getter exited with code {code}"));
+        }
+        _ => return Attempt::Refused("the answer has no exit code".to_string()),
     }
-    let served = result
-        .take("stack")
-        .and_then(|mut stack| stack.take_items())
-        .ok_or_else(|| "the answer has no stack".to_string())?;
+    let Some(served) = result.take("stack").and_then(|mut stack| stack.take_items()) else {
+        return Attempt::Refused("the answer has no stack".to_string());
+    };
     drop(result);
     // The node serializes the stack top first; decoders read it in return order.
-    let mut entries = convert_stack(served)?;
+    let mut entries = match convert_stack(served) {
+        Ok(entries) => entries,
+        Err(error) => return Attempt::Refused(error),
+    };
     entries.reverse();
     let mut stack = TvmStackParser::new(entries);
     let answer = match read {
@@ -621,21 +664,27 @@ fn decode_getter_response(
         ProposalRead::Expiry(_) => decode_proposal_expiry(&stack).map(ProposalAnswer::Expiry),
     };
     dismantle(std::mem::take(&mut stack.stack));
-    answer.map(GetterOutcome::Answer).map_err(|error| bounded(format!("{error:#}")))
+    match answer {
+        Ok(answer) => Attempt::Answer(answer),
+        Err(error) => Attempt::Refused(bounded(format!("{error:#}"))),
+    }
 }
 
-/// Decodes the contract's account, read at the checkpoint, into the flat answer.
-/// Runs on a worker.
+/// Classifies one answer for the contract's account at the checkpoint. Runs on a
+/// worker.
 fn decode_account_response(
     response: &RawRpcResponse,
     read: ProposalRead,
     checkpoint: &MasterchainCheckpoint,
-) -> Result<ProposalAnswer, String> {
-    let document = parse_document(&response.text)?;
-    let result = envelope_result(document, response.status, &response.request_id)?;
-    checked_block(&result, checkpoint)?;
+) -> Attempt<ProposalAnswer> {
+    let result = match checked_result(response, checkpoint) {
+        Ok(result) => result,
+        Err(category) => return Attempt::Retry(category),
+    };
     if result.get("state").and_then(Json::as_str) != Some("active") {
-        return Err("the configuration contract is not active at the checkpoint".to_string());
+        return Attempt::Refused(
+            "the configuration contract is not active at the checkpoint".to_string(),
+        );
     }
     let boc = |key: &str| {
         let encoded = result
@@ -646,8 +695,14 @@ fn decode_account_response(
             .decode(encoded)
             .map_err(|_| format!("the account {key} is not base64"))
     };
-    proposal_state::decode_state(&boc("code")?, &boc("data")?, read)
-        .map_err(|error| bounded(format!("{error:#}")))
+    let (code, data) = match (boc("code"), boc("data")) {
+        (Ok(code), Ok(data)) => (code, data),
+        (Err(error), _) | (_, Err(error)) => return Attempt::Refused(error),
+    };
+    match proposal_state::decode_state(&code, &data, read) {
+        Ok(answer) => Attempt::Answer(answer),
+        Err(error) => Attempt::Refused(bounded(format!("{error:#}"))),
+    }
 }
 
 // ─── Workers and admission ────────────────────────────────────────────────────
@@ -690,6 +745,11 @@ impl Admission {
         }
     }
 
+    /// Permits no read holds right now.
+    pub fn idle_permits(&self) -> usize {
+        self.permits.available_permits()
+    }
+
     /// Workers alive now under this admission, and the most ever alive at once.
     pub fn worker_counts(&self) -> (usize, usize) {
         (self.live.load(Ordering::SeqCst), self.most_live.load(Ordering::SeqCst))
@@ -712,17 +772,18 @@ impl Admission {
         }
     }
 
-    /// Runs `job` on a new worker holding `permit` until it ends. Only the flat
-    /// result or a bounded error string crosses back; a panic is reduced to a
-    /// message on the worker.
+    /// Runs `job` on a new worker that holds `permit` while it runs, and hands the
+    /// permit back with the flat result, so one read's attempts reuse one permit
+    /// and never overlap. If the caller goes away, the permit stays with the worker
+    /// until the job ends. A panic is reduced to a message on the worker.
     async fn on_worker<T, F>(
         &self,
         permit: tokio::sync::OwnedSemaphorePermit,
         job: F,
-    ) -> anyhow::Result<T>
+    ) -> anyhow::Result<(T, tokio::sync::OwnedSemaphorePermit)>
     where
         T: Send + 'static,
-        F: FnOnce() -> Result<T, String> + Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
     {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let live = self.live.clone();
@@ -731,12 +792,13 @@ impl Admission {
             .name("proposal-read".to_string())
             .stack_size(self.stack_bytes)
             .spawn(move || {
-                let _permit = permit;
-                let _live = LiveWorker::enter(live, &most_live);
+                let live = LiveWorker::enter(live, &most_live);
                 let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job))
-                    .unwrap_or_else(|_| Err("the proposal read worker panicked".to_string()));
-                // A dropped receiver means the caller went away; the result is
-                // dropped here, on this stack.
+                    .map(|value| (value, permit))
+                    .map_err(|_| "the proposal read worker panicked".to_string());
+                drop(live);
+                // A dropped receiver means the caller went away: the result and the
+                // permit are dropped here, after the work has ended.
                 let _ = sender.send(outcome);
             })
             .map_err(|error| anyhow::anyhow!("cannot start a proposal read worker: {error}"))?;
@@ -799,6 +861,73 @@ pub async fn read_proposals(
     read_proposals_with(client, address, read, Admission::global()).await
 }
 
+/// How a read over every endpoint ended.
+enum Outcome<T> {
+    /// A terminal classification from some endpoint.
+    Settled(Attempt<T>),
+    /// No endpoint gave a valid envelope, and some answered successfully with an
+    /// oversized body.
+    TooLarge { limit: usize },
+    /// No endpoint gave a valid envelope or an oversized successful answer.
+    Failed(String),
+}
+
+type Classify<T> = Arc<dyn Fn(&RawRpcResponse) -> Attempt<T> + Send + Sync>;
+
+/// One request to each endpoint at most, in order, under one id and one permit.
+/// A bounded successful body is classified on a worker; an endpoint-specific
+/// failure moves on to the next endpoint, anything else settles the read. The
+/// next attempt starts only once the previous worker has ended and handed the
+/// permit back.
+async fn over_endpoints<T: Send + 'static>(
+    client: &ClientJsonRpc,
+    admission: &Admission,
+    mut permit: tokio::sync::OwnedSemaphorePermit,
+    method: &'static str,
+    params: serde_json::Value,
+    classify: Classify<T>,
+) -> anyhow::Result<(Outcome<T>, tokio::sync::OwnedSemaphorePermit)> {
+    let plan = client.raw_read_plan();
+    let total = plan.endpoints.len();
+    let mut oversized: Option<usize> = None;
+    let mut last_category = "internal";
+    for endpoint in plan.endpoints {
+        let response = match client.raw_attempt(endpoint, method, &params, &plan.request_id).await {
+            RawAttempt::Body(response) => response,
+            RawAttempt::TooLarge { limit } => {
+                oversized = Some(limit);
+                last_category = "response_too_large";
+                continue;
+            }
+            RawAttempt::Failed(category) => {
+                last_category = category;
+                continue;
+            }
+        };
+        let job = classify.clone();
+        let (attempt, returned) = admission.on_worker(permit, move || job(&response)).await?;
+        permit = returned;
+        match attempt {
+            Attempt::Retry(category) => {
+                tracing::debug!(
+                    method,
+                    category,
+                    "proposal read answer retried on the next endpoint"
+                );
+                last_category = category;
+            }
+            settled => return Ok((Outcome::Settled(settled), permit)),
+        }
+    }
+    let outcome = match oversized {
+        Some(limit) => Outcome::TooLarge { limit },
+        None => Outcome::Failed(format!(
+            "all chain-rpc endpoints failed; endpoint_count={total}; rpc_error_category={last_category}"
+        )),
+    };
+    Ok((outcome, permit))
+}
+
 /// [`read_proposals`] under a given admission.
 pub async fn read_proposals_with(
     client: &ClientJsonRpc,
@@ -807,68 +936,81 @@ pub async fn read_proposals_with(
     admission: &Admission,
 ) -> anyhow::Result<ProposalAnswer> {
     // Admission first: no response of this read, the checkpoint included, is
-    // buffered before it holds a worker permit.
+    // buffered before it holds a worker permit, and it holds that one permit for
+    // the whole read.
     let permit = admission.admit().await?;
     let checkpoint = checkpoint(client).await?;
-    let response = match client.run_get_method_raw(&getter_params(address, read, &checkpoint)).await
-    {
-        Ok(response) => response,
-        Err(RawReadError::TooLarge { limit }) if read == ProposalRead::List => {
-            drop(permit);
-            let why = format!("the list_proposals answer exceeds the {limit}-byte transport limit");
-            return read_from_state(client, address, read, &checkpoint, admission, why).await;
-        }
-        Err(RawReadError::TooLarge { limit }) => anyhow::bail!(
-            "the {} answer exceeds the {limit}-byte transport limit",
-            read_label(read)
-        ),
-        Err(RawReadError::Failed(message)) => {
-            anyhow::bail!("{} read failed: {message}", read_label(read))
-        }
-    };
+    let params = serde_json::to_value(getter_params(address, read, &checkpoint))?;
     let pinned = checkpoint.clone();
-    let outcome = admission
-        .on_worker(permit, move || decode_getter_response(&response, read, &pinned))
-        .await
-        .map_err(|error| anyhow::anyhow!("{} answer refused: {error}", read_label(read)))?;
-    match outcome {
-        GetterOutcome::Answer(answer) => Ok(answer),
-        GetterOutcome::Exit13 => {
+    let classify: Classify<ProposalAnswer> =
+        Arc::new(move |response| decode_getter_response(response, read, &pinned));
+    let label = read_label(read);
+    let (outcome, permit) =
+        over_endpoints(client, admission, permit, "runGetMethodStd", params, classify).await?;
+    let why = match outcome {
+        Outcome::Settled(Attempt::Answer(answer)) => return Ok(answer),
+        Outcome::Settled(Attempt::Exit13) => {
             tracing::info!(target: "proposals", "getter returned exit 13; read from stored state");
-            let why = "the list_proposals getter returned exit 13".to_string();
-            read_from_state(client, address, read, &checkpoint, admission, why).await
+            "the list_proposals getter returned exit 13".to_string()
         }
-    }
+        Outcome::Settled(Attempt::Refused(error)) => {
+            anyhow::bail!("{label} answer refused: {error}")
+        }
+        Outcome::Settled(Attempt::Retry(category)) => {
+            anyhow::bail!("{label} read failed: {category}")
+        }
+        Outcome::TooLarge { limit } if read == ProposalRead::List => {
+            format!("the list_proposals answer exceeds the {limit}-byte transport limit")
+        }
+        Outcome::TooLarge { limit } => {
+            anyhow::bail!("the {label} answer exceeds the {limit}-byte transport limit")
+        }
+        Outcome::Failed(message) => anyhow::bail!("{label} read failed: {message}"),
+    };
+    read_from_state(client, address, read, &checkpoint, admission, permit, why).await
 }
 
 /// The large-state path: the contract's stored vote dictionary at the same
-/// checkpoint and address. Reached only when the list getter's answer exceeded the
-/// transport limit or the getter returned exit 13.
+/// checkpoint and address, under the read's own permit. Reached only when the list
+/// getter's answer exceeded the transport limit on every endpoint that answered
+/// successfully, or the getter returned exit 13 at the checkpoint.
 async fn read_from_state(
     client: &ClientJsonRpc,
     address: &MsgAddressInt,
     read: ProposalRead,
     checkpoint: &MasterchainCheckpoint,
     admission: &Admission,
+    permit: tokio::sync::OwnedSemaphorePermit,
     why: String,
 ) -> anyhow::Result<ProposalAnswer> {
-    let permit = admission.admit().await?;
-    let response = match client.get_address_information_raw(address, checkpoint.seqno).await {
-        Ok(response) => response,
-        Err(RawReadError::TooLarge { limit }) => anyhow::bail!(
+    anyhow::ensure!(checkpoint.seqno > 0, "a pinned read needs a masterchain seqno above zero");
+    let params = serde_json::json!({"address": address.to_string(), "seqno": checkpoint.seqno});
+    let pinned = checkpoint.clone();
+    let classify: Classify<ProposalAnswer> =
+        Arc::new(move |response| decode_account_response(response, read, &pinned));
+    let (outcome, _permit) =
+        over_endpoints(client, admission, permit, "getAddressInformation", params, classify)
+            .await?;
+    match outcome {
+        Outcome::Settled(Attempt::Answer(answer)) => Ok(answer),
+        Outcome::Settled(Attempt::Refused(error)) => {
+            anyhow::bail!("{why}; configuration account refused: {error}")
+        }
+        Outcome::Settled(Attempt::Retry(category)) => {
+            anyhow::bail!("{why}; configuration account read failed: {category}")
+        }
+        Outcome::Settled(Attempt::Exit13) => {
+            anyhow::bail!("{why}; configuration account read answered an exit code")
+        }
+        Outcome::TooLarge { limit } => anyhow::bail!(
             "the vote dictionary is too large to read: {why}, and the configuration \
              contract's stored account exceeds the {limit}-byte transport limit; reading it \
              needs paginated or incremental state reads, which this version does not have"
         ),
-        Err(RawReadError::Failed(message)) => {
+        Outcome::Failed(message) => {
             anyhow::bail!("{why}; configuration account read failed: {message}")
         }
-    };
-    let pinned = checkpoint.clone();
-    admission
-        .on_worker(permit, move || decode_account_response(&response, read, &pinned))
-        .await
-        .map_err(|error| anyhow::anyhow!("{why}; configuration account refused: {error}"))
+    }
 }
 
 #[cfg(test)]

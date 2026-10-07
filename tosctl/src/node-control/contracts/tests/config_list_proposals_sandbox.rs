@@ -726,7 +726,7 @@ fn the_fallback_refuses_another_block_and_unsupported_code() {
         (
             "another block",
             Reply::ok(served::account_result(&code, &data, served::block_json(SEQNO - 1))),
-            "another block",
+            "rpc_error_category=wrong_block",
         ),
         (
             "unsupported code",

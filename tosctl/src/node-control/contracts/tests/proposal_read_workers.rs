@@ -332,10 +332,7 @@ fn past_the_depth_limit_is_refused_before_parsing() {
     runtime.block_on(async {
         let node = node(Reply::raw(200, answer), Reply::raw(500, "{}")).await;
         let error = read(&node, &production()).await.err().expect("too deep");
-        assert!(
-            error.to_string().contains(&format!("deeper than {MAX_JSON_DEPTH} levels")),
-            "{error:#}"
-        );
+        assert!(error.to_string().contains("rpc_error_category=too_deep"), "{error:#}");
     });
 }
 
@@ -692,8 +689,13 @@ fn a_wide_object_is_checked_for_duplicates_end_to_end() {
             let elapsed = started.elapsed();
             println!("wide object: {keys} keys, duplicate={duplicate}, {bytes} bytes, {elapsed:?}");
             if duplicate {
+                // The same object with distinct keys is accepted, so the repeated key
+                // is what is refused (an envelope failure: no other endpoint here).
                 let error = outcome.err().expect("a duplicate key is refused");
-                assert!(error.to_string().contains("duplicate key \"k59999\""), "{error:#}");
+                assert!(
+                    error.to_string().contains("rpc_error_category=malformed_json"),
+                    "{error:#}"
+                );
             } else {
                 assert_eq!(listed(outcome.expect("distinct keys are accepted")).len(), 1);
             }
@@ -901,20 +903,283 @@ fn only_an_oversized_success_makes_the_answer_too_large() {
     }
 }
 
-/// A malformed but bounded successful answer is not retried on the next endpoint.
+/// An answer whose result is read at `seqno` instead of the checkpoint.
+fn at_block(answer: &str, seqno: u32) -> String {
+    let changed = answer.replace(&format!("\"seqno\":{SEQNO}"), &format!("\"seqno\":{seqno}"));
+    assert_ne!(changed, answer);
+    changed
+}
+
+fn with_exit(answer: &str, code: i32) -> String {
+    let changed = answer.replacen("\"exit_code\":0", &format!("\"exit_code\":{code}"), 1);
+    assert_ne!(changed, answer);
+    changed
+}
+
+/// Each endpoint-specific failure of the first endpoint's answer moves the read to
+/// the next endpoint, which answers: the read succeeds from it, under the same
+/// id and parameters, without touching stored state.
 #[test]
-fn a_malformed_bounded_answer_is_not_retried() {
+fn an_endpoint_specific_answer_failure_fails_over() {
+    let valid = list_answer(2, 0);
+    let runtime = runtime();
+    for (case, first) in [
+        (
+            "an error envelope",
+            Reply::raw(
+                200,
+                r#"{"ok":false,"jsonrpc":"2.0","id":"@@ID@@","error":"node failure","code":500}"#,
+            ),
+        ),
+        ("malformed JSON", Reply::raw(200, "{\"ok\":true,")),
+        ("trailing data", Reply::raw(200, format!("{valid} {{}}"))),
+        ("a mismatched id", Reply::raw(200, valid.replace("\"@@ID@@\"", "\"another\""))),
+        ("no result", Reply::raw(200, r#"{"ok":true,"jsonrpc":"2.0","id":"@@ID@@"}"#)),
+        (
+            "a duplicate envelope key",
+            Reply::raw(200, valid.replacen("{\"ok\":true,", "{\"ok\":true,\"ok\":true,", 1)),
+        ),
+        ("over-deep garbage", Reply::raw(200, nested_arrays_answer(MAX_JSON_DEPTH + 1))),
+        ("another block", Reply::raw(200, at_block(&valid, SEQNO - 1))),
+        ("no block", Reply::raw(200, valid.replacen("\"block_id\":", "\"block\":", 1))),
+        (
+            "exit 13 from another block",
+            Reply::raw(200, with_exit(&at_block(&valid, SEQNO + 1), 13)),
+        ),
+    ] {
+        runtime.block_on(async {
+            let failing = endpoint(first).await;
+            let serving = endpoint(Reply::raw(200, valid.clone())).await;
+            let nodes = [&failing, &serving];
+            let list = listed(read_over(&nodes).await.unwrap_or_else(|e| panic!("{case}: {e:#}")));
+            assert_eq!(list.len(), 2, "{case}");
+            assert_eq!(failing.requests_for("runGetMethodStd").len(), 1, "{case}: not tried first");
+            assert_eq!(serving.requests_for("runGetMethodStd").len(), 1, "{case}: not retried");
+            assert_eq!(account_reads(&nodes), 0, "{case} read stored state");
+            assert_one_request_per_endpoint(&nodes);
+        });
+    }
+}
+
+/// A valid envelope at the checkpoint settles the read: a non-zero exit or a result
+/// the strict decoder refuses ends it without asking the next endpoint, and exit
+/// 13 of the list goes to stored state.
+#[test]
+fn a_valid_envelope_at_the_checkpoint_settles_the_read() {
+    let valid = list_answer(2, 0);
+    let runtime = runtime();
+    for (case, first, expect) in [
+        ("exit 11", Reply::raw(200, with_exit(&valid, 11)), "exited with code 11"),
+        (
+            "a stack the decoder refuses",
+            Reply::raw(200, valid.replacen("\"number\":\"1900000000\"", "\"number\":\"-5\"", 1)),
+            "proposal expiry",
+        ),
+        (
+            "a result without a stack",
+            Reply::raw(200, valid.replacen("\"stack\":[", "\"stock\":[", 1)),
+            "no stack",
+        ),
+    ] {
+        runtime.block_on(async {
+            let settling = endpoint(first).await;
+            let other = endpoint(Reply::raw(200, valid.clone())).await;
+            let nodes = [&settling, &other];
+            let error =
+                read_over(&nodes).await.err().unwrap_or_else(|| panic!("{case} was accepted"));
+            assert!(format!("{error:#}").contains(expect), "{case}: {error:#}");
+            assert_eq!(
+                other.requests_for("runGetMethodStd").len(),
+                0,
+                "{case}: the next endpoint was asked"
+            );
+            assert_eq!(account_reads(&nodes), 0, "{case} read stored state");
+        });
+    }
+    runtime.block_on(async {
+        let exit13 = endpoint(Reply::raw(200, with_exit(&valid, 13))).await;
+        let other = endpoint(Reply::raw(200, valid.clone())).await;
+        let nodes = [&exit13, &other];
+        let list = listed(read_over(&nodes).await.expect("read from stored state"));
+        assert_eq!(list.len(), 1);
+        assert_eq!(other.requests_for("runGetMethodStd").len(), 0, "the getter was asked again");
+        assert_eq!(account_reads(&nodes), 1);
+    });
+    // A retryable failure first, then a terminal answer: the read stops there.
+    runtime.block_on(async {
+        let retry = endpoint(Reply::raw(200, "{\"ok\":true,")).await;
+        let terminal = endpoint(Reply::raw(200, with_exit(&valid, 11))).await;
+        let third = endpoint(Reply::raw(200, valid.clone())).await;
+        let nodes = [&retry, &terminal, &third];
+        let error = read_over(&nodes).await.err().expect("refused");
+        assert!(format!("{error:#}").contains("exited with code 11"), "{error:#}");
+        assert_eq!(third.requests_for("runGetMethodStd").len(), 0);
+        assert_eq!(account_reads(&nodes), 0);
+    });
+}
+
+/// With no valid envelope from any endpoint, only an oversized successful answer
+/// makes the read too large; envelope failures and HTTP errors never do.
+#[test]
+fn envelope_failures_never_make_the_answer_too_large() {
+    let envelope = || {
+        Reply::raw(
+            200,
+            r#"{"ok":false,"jsonrpc":"2.0","id":"@@ID@@","error":"node failure","code":500}"#,
+        )
+    };
+    let runtime = runtime();
+    for (case, replies, falls_back) in [
+        ("envelope error then oversized 200", vec![envelope(), big(200)], true),
+        ("oversized 200 then envelope error", vec![big(200), envelope()], true),
+        ("envelope error then 503", vec![envelope(), small_error(503)], false),
+        ("503 then envelope error", vec![small_error(503), envelope()], false),
+        ("all envelope errors", vec![envelope(), Reply::raw(200, "{")], false),
+    ] {
+        runtime.block_on(async {
+            let mut nodes = Vec::new();
+            for reply in replies {
+                nodes.push(endpoint(reply).await);
+            }
+            let refs: Vec<&ServedNode> = nodes.iter().collect();
+            let outcome = read_over(&refs).await;
+            assert_eq!(
+                account_reads(&refs) > 0,
+                falls_back,
+                "{case}: {:?}",
+                outcome.as_ref().err()
+            );
+            if !falls_back {
+                let error = outcome.err().unwrap_or_else(|| panic!("{case} was accepted"));
+                assert!(
+                    format!("{error:#}").contains("all chain-rpc endpoints failed"),
+                    "{case}: {error:#}"
+                );
+            }
+            assert_one_request_per_endpoint(&refs);
+        });
+    }
+}
+
+/// One read's attempts run one at a time under its one permit: three endpoints
+/// whose answers each take a worker to refuse never have two workers alive.
+#[test]
+fn a_reads_attempts_never_overlap() {
+    let (deep, _) = deepest_valid_answer();
     let runtime = runtime();
     runtime.block_on(async {
-        let malformed = endpoint(Reply::raw(200, "{\"ok\":true,")).await;
-        let serving = endpoint(Reply::raw(200, list_answer(1, 0))).await;
-        let nodes = [&malformed, &serving];
-        assert!(read_over(&nodes).await.is_err());
-        assert_eq!(
-            serving.requests_for("runGetMethodStd").len(),
-            0,
-            "a malformed answer was retried"
+        let first = endpoint(Reply::raw(200, at_block(&deep, SEQNO - 1))).await;
+        let second = endpoint(Reply::raw(200, at_block(&deep, SEQNO - 2))).await;
+        let third = endpoint(Reply::raw(200, list_answer(1, 0))).await;
+        let nodes = [&first, &second, &third];
+        let admission = Admission::new(2, Duration::from_secs(30), WORKER_STACK_BYTES);
+        let mut urls: Vec<(String, Option<String>)> =
+            nodes.iter().map(|n| (n.url.clone(), None)).collect();
+        urls.rotate_right(1);
+        let client = ClientJsonRpc::connect_many(urls, None).expect("client");
+        let address: MsgAddressInt = CONFIG.parse().expect("address");
+        let list = listed(
+            read_proposals_with(&client, &address, ProposalRead::List, &admission)
+                .await
+                .expect("read"),
         );
-        assert_eq!(account_reads(&nodes), 0);
+        assert_eq!(list.len(), 1);
+        assert_eq!(admission.worker_counts(), (0, 1), "attempts overlapped");
+    });
+}
+
+/// Cancelling a read while its worker runs leaves the permit with the worker until
+/// it ends; cancelling it between attempts, with no worker running, frees it.
+#[test]
+fn cancellation_releases_the_permit_only_when_no_work_is_running() {
+    let (deep, _) = deepest_valid_answer();
+    let runtime = runtime();
+    runtime.block_on(async {
+        let address: MsgAddressInt = CONFIG.parse().expect("address");
+        let admission = Arc::new(Admission::new(1, Duration::from_millis(50), WORKER_STACK_BYTES));
+        let quick = endpoint(Reply::raw(200, list_answer(1, 0))).await;
+        let quick_client =
+            Arc::new(ClientJsonRpc::connect(quick.url.clone(), None).expect("client"));
+
+        // During a worker: the slow-to-refuse answer keeps the worker busy.
+        let busy = endpoint(Reply::raw(200, at_block(&deep, SEQNO - 1))).await;
+        let client = Arc::new(ClientJsonRpc::connect(busy.url.clone(), None).expect("client"));
+        let task = {
+            let (client, admission, address) = (client.clone(), admission.clone(), address.clone());
+            tokio::spawn(async move {
+                read_proposals_with(&client, &address, ProposalRead::List, &admission)
+                    .await
+                    .map(|_| ())
+            })
+        };
+        while admission.worker_counts().0 == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        task.abort();
+        let _ = task.await;
+        // The worker outlives the cancelled read; while it lives, its permit is not
+        // free. (The free count is read before the live count, and a worker drops
+        // its live mark before its permit.)
+        let mut samples_while_working = 0;
+        loop {
+            let idle = admission.idle_permits();
+            if admission.worker_counts().0 == 0 {
+                break;
+            }
+            assert_eq!(idle, 0, "a cancelled read freed the permit of a running worker");
+            samples_while_working += 1;
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert!(samples_while_working > 0, "the worker ended before the control could look");
+        assert_eq!(admission.idle_permits(), 1);
+        assert!(
+            read_proposals_with(&quick_client, &address, ProposalRead::List, &admission)
+                .await
+                .is_ok()
+        );
+
+        // Between attempts: the second endpoint is slow to answer HTTP, no worker runs.
+        let failing = endpoint(small_error(503)).await;
+        let slow = ServedNode::start(|method, _| match method {
+            "getMasterchainInfo" => masterchain_info(SEQNO),
+            _ => {
+                std::thread::sleep(Duration::from_secs(5));
+                Reply::raw(200, list_answer(1, 0))
+            }
+        })
+        .await;
+        // The checkpoint takes the first configured endpoint and the getter starts at
+        // the second: the failing one, then the slow one.
+        let urls = vec![(slow.url.clone(), None), (failing.url.clone(), None)];
+        let client = Arc::new(ClientJsonRpc::connect_many(urls, None).expect("client"));
+        let task = {
+            let (client, admission, address) = (client.clone(), admission.clone(), address.clone());
+            tokio::spawn(async move {
+                read_proposals_with(&client, &address, ProposalRead::List, &admission)
+                    .await
+                    .map(|_| ())
+            })
+        };
+        while slow.requests_for("runGetMethodStd").is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(admission.worker_counts().0, 0);
+        assert_eq!(
+            admission.idle_permits(),
+            0,
+            "the read does not hold its permit between attempts"
+        );
+        task.abort();
+        let _ = task.await;
+        assert_eq!(
+            admission.idle_permits(),
+            1,
+            "a read cancelled between attempts kept its permit"
+        );
+        assert!(
+            read_proposals_with(&quick_client, &address, ProposalRead::List, &admission)
+                .await
+                .is_ok()
+        );
     });
 }

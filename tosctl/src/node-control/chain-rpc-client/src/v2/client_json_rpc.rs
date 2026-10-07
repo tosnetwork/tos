@@ -35,27 +35,31 @@ pub struct RawRpcResponse {
     pub request_id: String,
 }
 
-/// Why a raw read produced no body.
-#[derive(Debug)]
-pub enum RawReadError {
-    /// The body exceeded the transport limit and was refused whole.
-    TooLarge { limit: usize },
-    /// Every endpoint failed before answering; the text is a bounded category.
-    Failed(String),
+/// One raw read: the endpoints to try, in order, and the id every attempt carries.
+pub struct RawReadPlan {
+    pub endpoints: Vec<usize>,
+    pub request_id: String,
 }
 
-impl std::fmt::Display for RawReadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+/// What one endpoint answered.
+pub enum RawAttempt {
+    /// A successful status with a body within the transport limit.
+    Body(RawRpcResponse),
+    /// A successful status with a body above the transport limit.
+    TooLarge { limit: usize },
+    /// A transport error or a non-success status, as a fixed category.
+    Failed(&'static str),
+}
+
+impl RawAttempt {
+    pub fn category(&self) -> &'static str {
         match self {
-            RawReadError::TooLarge { limit } => {
-                write!(f, "the response exceeds the {limit}-byte transport limit")
-            }
-            RawReadError::Failed(message) => f.write_str(message),
+            RawAttempt::Body(_) => "body",
+            RawAttempt::TooLarge { .. } => "response_too_large",
+            RawAttempt::Failed(category) => category,
         }
     }
 }
-
-impl std::error::Error for RawReadError {}
 
 struct EndpointClient {
     url: String,
@@ -253,95 +257,60 @@ impl ClientJsonRpc {
         }
     }
 
-    /// A side-effect-free read whose response is returned unparsed, for a caller
-    /// that parses it under its own depth and ownership rules. Each endpoint is
-    /// tried at most once with the same request id and parameters: a transport
-    /// error or a non-success HTTP status moves on to the next endpoint, and so
-    /// does a successful answer above the transport limit, since another endpoint
-    /// may serve the same state within it. The first bounded successful answer is
-    /// returned. If none arrives, the read ends as [`RawReadError::TooLarge`] only
-    /// when some endpoint answered successfully with an oversized body, and as
-    /// [`RawReadError::Failed`] otherwise; an answer is never cut down to a
-    /// smaller or partial one.
-    async fn json_rpc_read_text(
-        &self,
-        method: &'static str,
-        params: serde_json::Value,
-    ) -> Result<RawRpcResponse, RawReadError> {
+    /// The plan for one raw read: every endpoint once, in round-robin order from
+    /// the next start, under one request id. A caller that validates each answer
+    /// itself walks the plan with [`Self::raw_attempt`] and moves to the next
+    /// endpoint on an endpoint-specific failure.
+    pub fn raw_read_plan(&self) -> RawReadPlan {
         let total = self.endpoints.len();
         let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % total;
-        // One id, one set of parameters, every endpoint at most once.
-        let request_id = uuid::Uuid::new_v4().to_string();
-        let mut last_error_category: Option<&'static str> = None;
-        let mut oversized: Option<usize> = None;
-        for attempt in 0..total {
-            let idx = (start + attempt) % total;
-            let endpoint = &self.endpoints[idx];
-            let outcome = endpoint
-                .client
-                .json_rpc_text(method, params.clone(), serde_json::json!(request_id))
-                .await;
-            let error_category = match outcome {
-                Ok((status, text)) if (200..300).contains(&status) => {
-                    return Ok(RawRpcResponse { status, text, request_id });
-                }
-                // A non-success status is this endpoint's failure, whatever its body
-                // says or how large it is: the body is not interpreted or logged here.
-                Ok((status, _)) => http_status_category(status),
-                Err(ToscenterError::HttpStatus { code }) => http_status_category(code),
-                // An oversized successful answer is a property of the answer, but
-                // another endpoint may still serve it within the limit.
-                Err(ToscenterError::ResponseTooLarge { limit }) => {
-                    oversized = Some(limit);
-                    "response_too_large"
-                }
-                Err(err) => bounded_rpc_error_category(&err),
-            };
-            tracing::debug!(
-                method,
-                endpoint = %endpoint.display_origin,
-                attempt = attempt + 1,
-                total_attempts = total,
-                error_category,
-                "chain-rpc request failed"
-            );
-            last_error_category = Some(error_category);
+        RawReadPlan {
+            endpoints: (0..total).map(|attempt| (start + attempt) % total).collect(),
+            request_id: uuid::Uuid::new_v4().to_string(),
         }
-        // Only an oversized successful answer is "too large"; HTTP errors alone
-        // never are.
-        if let Some(limit) = oversized {
-            return Err(RawReadError::TooLarge { limit });
-        }
-        Err(RawReadError::Failed(format!(
-            "all chain-rpc endpoints failed; endpoint_count={total}; rpc_error_category={}",
-            last_error_category.unwrap_or("internal")
-        )))
     }
 
-    /// `runGetMethodStd` with its response unparsed; see [`Self::json_rpc_read_text`].
-    pub async fn run_get_method_raw(
+    /// One side-effect-free request to one endpoint of a plan, with the plan's id.
+    /// The answer comes back unparsed: a bounded successful body, a successful body
+    /// above the transport limit (refused whole), or a fixed failure category for a
+    /// transport error or a non-success HTTP status, whose body is not interpreted
+    /// or logged.
+    pub async fn raw_attempt(
         &self,
-        args: &RunGetMethodParams,
-    ) -> Result<RawRpcResponse, RawReadError> {
-        self.json_rpc_read_text("runGetMethodStd", serde_json::json!(args)).await
-    }
-
-    /// `getAddressInformation` at masterchain block `seqno`, unparsed.
-    pub async fn get_address_information_raw(
-        &self,
-        address: &MsgAddressInt,
-        seqno: u32,
-    ) -> Result<RawRpcResponse, RawReadError> {
-        if seqno == 0 {
-            return Err(RawReadError::Failed(
-                "a pinned read needs a masterchain seqno above zero".to_string(),
-            ));
-        }
-        self.json_rpc_read_text(
-            "getAddressInformation",
-            serde_json::json!({"address": address.to_string(), "seqno": seqno}),
-        )
-        .await
+        endpoint: usize,
+        method: &'static str,
+        params: &serde_json::Value,
+        request_id: &str,
+    ) -> RawAttempt {
+        let Some(target) = self.endpoints.get(endpoint) else {
+            return RawAttempt::Failed("internal");
+        };
+        let outcome = target
+            .client
+            .json_rpc_text(method, params.clone(), serde_json::json!(request_id))
+            .await;
+        let attempt = match outcome {
+            Ok((status, text)) if (200..300).contains(&status) => {
+                return RawAttempt::Body(RawRpcResponse {
+                    status,
+                    text,
+                    request_id: request_id.to_string(),
+                });
+            }
+            Ok((status, _)) => RawAttempt::Failed(http_status_category(status)),
+            Err(ToscenterError::HttpStatus { code }) => {
+                RawAttempt::Failed(http_status_category(code))
+            }
+            Err(ToscenterError::ResponseTooLarge { limit }) => RawAttempt::TooLarge { limit },
+            Err(err) => RawAttempt::Failed(bounded_rpc_error_category(&err)),
+        };
+        tracing::debug!(
+            method,
+            endpoint = %target.display_origin,
+            category = attempt.category(),
+            "chain-rpc raw read attempt failed"
+        );
+        attempt
     }
 
     /// Executes a state-changing JSON-RPC request against the configured
