@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run each control-read mutation in an isolated detached worktree and target."""
+
 import argparse
 import concurrent.futures
 import hashlib
@@ -36,8 +37,13 @@ def main():
     def run(mutation):
         root = output / ("worktree-" + mutation["name"])
         with lock:
-            subprocess.run(["git", "worktree", "add", "--detach", str(root), base], cwd=source, check=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(
+                ["git", "worktree", "add", "--detach", str(root), base],
+                cwd=source,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         try:
             if patch:
                 subprocess.run(["git", "apply", "-"], input=patch, cwd=root, check=True)
@@ -49,7 +55,7 @@ def main():
                 if start < 0:
                     raise RuntimeError("zero source anchors for " + mutation["name"])
             line = text[:start].count("\n") + 1
-            path.write_text(text[:start] + mutation["new"] + text[start + len(mutation["old"]):])
+            path.write_text(text[:start] + mutation["new"] + text[start + len(mutation["old"]) :])
             command = ["cargo", "test", "-p", mutation["package"], "--locked", "-j", str(args.jobs)]
             if mutation["kind"] == "test":
                 command += ["--test", "control_reads"]
@@ -59,27 +65,56 @@ def main():
             if mutation["kind"] != "doc":
                 command += ["--exact"]
             env = os.environ.copy()
-            env.update(RUSTC_WRAPPER="sccache", CARGO_TARGET_DIR=str(root / ".cargo-target"),
-                       CARGO_TERM_COLOR="never", RUST_BACKTRACE="0", SCCACHE_BASEDIRS=str(root))
+            env.update(
+                RUSTC_WRAPPER="sccache",
+                CARGO_TARGET_DIR=str(root / ".cargo-target"),
+                CARGO_TERM_COLOR="never",
+                RUST_BACKTRACE="0",
+                SCCACHE_BASEDIRS=str(root),
+            )
             log = output / (mutation["name"] + ".log")
             with log.open("w") as stream:
-                result = subprocess.run(command, cwd=root / "tosctl/src", env=env,
-                                        stdout=stream, stderr=subprocess.STDOUT, timeout=1800)
+                result = subprocess.run(
+                    command,
+                    cwd=root / "tosctl/src",
+                    env=env,
+                    stdout=stream,
+                    stderr=subprocess.STDOUT,
+                    timeout=1800,
+                )
             text = log.read_text(errors="replace")
-            anchor_failed = any(mutation["anchor"] in line and "FAILED" in line
-                                for line in text.splitlines())
+            anchor_failed = any(
+                mutation["anchor"] in line and "FAILED" in line for line in text.splitlines()
+            )
             # Compiler failures, timeouts and a filtered-out suite are not red evidence.
-            red = result.returncode != 0 and anchor_failed and bool(re.search(r"running [1-9][0-9]* tests?", text))
-            record = dict(name=mutation["name"], base=base, file=mutation["file"], line=line,
-                          command=command, exit=result.returncode, anchor_failed=anchor_failed,
-                          red=red, sha256=hashlib.sha256(log.read_bytes()).hexdigest())
+            red = (
+                result.returncode != 0
+                and anchor_failed
+                and bool(re.search(r"running [1-9][0-9]* tests?", text))
+            )
+            record = dict(
+                name=mutation["name"],
+                base=base,
+                file=mutation["file"],
+                line=line,
+                command=command,
+                exit=result.returncode,
+                anchor_failed=anchor_failed,
+                red=red,
+                sha256=hashlib.sha256(log.read_bytes()).hexdigest(),
+            )
             (output / (mutation["name"] + ".json")).write_text(json.dumps(record, indent=2) + "\n")
             print(mutation["name"], "RED" if red else "INVALID", result.returncode, flush=True)
             return record
         finally:
             with lock:
-                subprocess.run(["git", "worktree", "remove", "--force", str(root)], cwd=source, check=True,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", str(root)],
+                    cwd=source,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallel) as pool:
         records = list(pool.map(run, mutations))
