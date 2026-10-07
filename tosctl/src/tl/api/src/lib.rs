@@ -114,6 +114,8 @@ impl<'r> Deserializer<'r> {
     pub fn read_bare<D: BareDeserialize>(&mut self) -> Result<D> {
         // The generated structs do not retain presence flags. Check these new
         // control types before delegation so unknown fields cannot disappear.
+        // Type names are static strings fixed by monomorphization: release builds
+        // can fold these comparisons, and unequal lengths reject before byte scans.
         let name = type_name::<D>();
         let mask = if name
             == type_name::<tos::engine::validator::configproposaldetail::ConfigProposalDetail>()
@@ -331,12 +333,7 @@ impl TLObject {
     }
     pub fn downcast<I: AnyBoxedSerialize>(self) -> std::result::Result<I, Self> {
         if self.is::<I>() {
-            // Retain the original response if an erased implementation reports
-            // inconsistent type information instead of panicking during decoding.
-            match self.0.clone_boxed().0.into_boxed_any().downcast::<I>() {
-                Ok(value) => Ok(*value),
-                Err(_) => Err(self),
-            }
+            Ok(*self.0.into_boxed_any().downcast::<I>().unwrap())
         } else {
             Err(self)
         }
