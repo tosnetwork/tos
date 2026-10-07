@@ -15,6 +15,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "adnl-query-id-trace-source",
         "benchmark-exclusion-source",
         "branch-chain-python-ci-source",
+        "branch-chain-python-ci-source-conditions",
         "classical-stake-callers-source",
         "config-genesis-data-layout-source",
         "config-validator-set-parity-source",
