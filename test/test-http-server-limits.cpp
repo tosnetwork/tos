@@ -21,10 +21,12 @@
 // simultaneously open connections, and the deadline for delivering request
 // headers (which also covers idle keep-alive connections).
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <fcntl.h>
 #include <functional>
 #include <ifaddrs.h>
 #include <limits>
@@ -467,26 +469,69 @@ struct TransportObservation {
 };
 class LargeResponseCallback final : public tos::http::HttpServer::Callback {
  public:
-  explicit LargeResponseCallback(TransportObservation *observation, size_t response_bytes = 1024 * 1024)
-      : observation_(observation), response_bytes_(response_bytes) {
+  using ResponsePromise =
+      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>>;
+
+  explicit LargeResponseCallback(TransportObservation *observation, size_t response_bytes = 1024 * 1024,
+                                 bool defer_responses = false)
+      : observation_(observation)
+      , response_bytes_(response_bytes)
+      , released_(std::make_shared<std::atomic<bool>>(!defer_responses)) {
   }
-  void receive_request(
-      std::unique_ptr<tos::http::HttpRequest>, std::shared_ptr<tos::http::HttpPayload>,
-      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise)
-      override {
+  void receive_request(std::unique_ptr<tos::http::HttpRequest>, std::shared_ptr<tos::http::HttpPayload>,
+                       ResponsePromise promise) override {
     ++observation_->calls;
+    if (!released_->load()) {
+      td::actor::create_actor<DeferredAnswer>("deferred-response", released_, std::move(promise), response_bytes_)
+          .release();
+      return;
+    }
+    answer(std::move(promise), response_bytes_);
+  }
+
+  void release_responses() {
+    released_->store(true);
+  }
+
+ private:
+  // Resolve the transport promise in its scheduler context, while the client
+  // thread controls only an atomic release signal.
+  class DeferredAnswer final : public td::actor::Actor {
+   public:
+    DeferredAnswer(std::shared_ptr<std::atomic<bool>> released, ResponsePromise promise, size_t response_bytes)
+        : released_(std::move(released)), promise_(std::move(promise)), response_bytes_(response_bytes) {
+    }
+    void start_up() override {
+      alarm_timestamp() = td::Timestamp::in(0.005);
+    }
+    void alarm() override {
+      if (released_->load()) {
+        answer(std::move(promise_), response_bytes_);
+        stop();
+      } else {
+        alarm_timestamp() = td::Timestamp::in(0.005);
+      }
+    }
+
+   private:
+    std::shared_ptr<std::atomic<bool>> released_;
+    ResponsePromise promise_;
+    size_t response_bytes_;
+  };
+
+  static void answer(ResponsePromise promise, size_t response_bytes) {
     auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
     response->add_header({"Transfer-Encoding", "Chunked"});
     response->complete_parse_header();
     auto payload = response->create_empty_payload().move_as_ok();
-    payload->add_chunk(td::BufferSlice(std::string(response_bytes_, 'x')));
+    payload->add_chunk(td::BufferSlice(std::string(response_bytes, 'x')));
     payload->complete_parse();
     promise.set_value({std::move(response), std::move(payload)});
   }
 
- private:
   TransportObservation *observation_;
   size_t response_bytes_;
+  std::shared_ptr<std::atomic<bool>> released_;
 };
 class ObservedInbound final : public tos::http::HttpInboundConnection {
  public:
@@ -597,6 +642,7 @@ TEST(HttpServerLimits, eight_slow_replies_expire_and_the_listener_recovers_its_s
   limits.request_header_timeout = 5;
   limits.response_timeout = 0.5;
   TransportObservation observation;
+  auto callback = std::make_shared<LargeResponseCallback>(&observation, 4 * 1024 * 1024, true);
   with_server(
       limits,
       [&](int port) {
@@ -606,6 +652,11 @@ TEST(HttpServerLimits, eight_slow_replies_expire_and_the_listener_recovers_its_s
           ASSERT_TRUE(client->connect_with_retries());
           ASSERT_TRUE(client->send_all("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"));
           held.push_back(std::move(client));
+          if (i == 0) {
+            // Exercise a setup slower than the response deadline. No response
+            // starts until all eight slots and the refusal have been observed.
+            std::this_thread::sleep_for(std::chrono::milliseconds(600));
+          }
         }
         const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (observation.calls < 8 && std::chrono::steady_clock::now() < until)
@@ -613,16 +664,27 @@ TEST(HttpServerLimits, eight_slow_replies_expire_and_the_listener_recovers_its_s
         ASSERT_EQ(observation.calls.load(), 8);
         Client extra(port);
         ASSERT_TRUE(extra.connect_with_retries());
-        // The ninth connection is closed at accept; the close is immediate on this
-        // host but a loaded CI runner needs the same allowance the other EOF waits use.
-        ASSERT_TRUE(extra.wait_for_eof(5000));
-        std::this_thread::sleep_for(std::chrono::milliseconds(800));
-        Client recovered(port);
-        ASSERT_TRUE(recovered.connect_with_retries());
-        ASSERT_TRUE(recovered.request_ok(1000));
+        // A complete request makes accidental admission observable in the
+        // callback, rather than an idle-header timeout looking like refusal.
+        extra.send_all("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        ASSERT_TRUE(extra.wait_for_eof(2000));
+        ASSERT_EQ(observation.calls.load(), 8);
+        callback->release_responses();
+        // Keep the eight clients nonreading. Retry until the response deadline
+        // frees a slot, rather than guessing when its actor runs on this host.
+        const auto recovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        bool recovered = false;
+        while (!recovered && std::chrono::steady_clock::now() < recovery_deadline) {
+          Client client(port);
+          recovered = client.connect_with_retries() && client.request_ok(1000);
+          if (!recovered) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          }
+        }
+        ASSERT_TRUE(recovered);
         ASSERT_EQ(observation.calls.load(), 9);
       },
-      std::make_shared<LargeResponseCallback>(&observation, 4 * 1024 * 1024));
+      callback);
 }
 
 // A handler that answers from the request headers (the JSON-RPC API key check,
@@ -848,6 +910,11 @@ void with_pipelined_inbound(double response_timeout, std::function<void(int, Pip
   int small = 4096;
   CHECK(::setsockopt(client, SOL_SOCKET, SO_RCVBUF, &small, sizeof(small)) == 0);
   CHECK(::connect(client, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+  // Bound send_for's own syscall as well as its retry loop when the server's
+  // read window fills. Per-call flags alone need not bound a blocking socket.
+  int flags = ::fcntl(client, F_GETFL, 0);
+  CHECK(flags >= 0);
+  CHECK(::fcntl(client, F_SETFL, flags | O_NONBLOCK) == 0);
   int accepted = ::accept(listener, nullptr, nullptr);
   CHECK(accepted >= 0);
   ::close(listener);
@@ -1067,6 +1134,10 @@ void with_gated_inbound(std::shared_ptr<tos::http::BodyBudget> budget,
   CHECK(::listen(listener, 1) == 0);
   int client = ::socket(AF_INET, SOCK_STREAM, 0);
   CHECK(client >= 0);
+  // Enqueue more than the server's bounded read-ahead even on hosts with a
+  // small default TCP send buffer. The client queue is not the server window.
+  int send_buffer = 4 * tos::http::HttpInboundConnection::header_read_ahead();
+  CHECK(::setsockopt(client, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer)) == 0);
   CHECK(::connect(client, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
   int accepted = ::accept(listener, nullptr, nullptr);
   CHECK(accepted >= 0);
@@ -1098,7 +1169,8 @@ void with_gated_inbound(std::shared_ptr<tos::http::BodyBudget> budget,
 void send_for(int fd, const std::string &data, size_t &offset, int ms) {
   auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
   while (offset < data.size() && std::chrono::steady_clock::now() < until) {
-    auto n = ::send(fd, data.data() + offset, data.size() - offset, MSG_NOSIGNAL | MSG_DONTWAIT);
+    auto n =
+        ::send(fd, data.data() + offset, std::min(data.size() - offset, size_t{16 << 10}), MSG_NOSIGNAL | MSG_DONTWAIT);
     if (n > 0) {
       offset += static_cast<size_t>(n);
     } else {
@@ -1143,6 +1215,7 @@ const std::string kGatedHeaders =
 // held to the read-ahead and counted as such.
 void expect_held(AdmissionGate &gate, tos::http::BodyBudget &budget) {
   ASSERT_TRUE(wait_for([&] { return gate.asked == 1; }, 2000));
+  ASSERT_TRUE(wait_for([&] { return budget.read_ahead() > 0; }, 2000));
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
   ASSERT_EQ(gate.received.load(), 0);
   ASSERT_EQ(gate.body_bytes.load(), static_cast<size_t>(0));

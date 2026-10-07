@@ -152,3 +152,32 @@ clock; five cases fail on macOS because that preload is ineffective and the
 recorded block is correctly rejected as stale. No production freshness check
 is relaxed. That suite and complete final-head acceptance remain Linux CI
 gates; the local sweep is not claimed as entirely green.
+
+## HTTP fixture timing follow-up to 5a4677ef6
+
+That head passed 22 of its 23 pull-request workflows, including the complete
+Linux contract suite, historical proof/indexer checks, both Falcon platforms
+and parity, strict-build, service and JSON-RPC/ASAN. Network-safety/ASAN found
+a scheduling race in `eight_slow_replies_expire_and_the_listener_recovers_its_slots`:
+the eight replies started their 0.5-second deadlines during setup, so a slot
+could correctly expire before the ninth connection was attempted. An admitted
+ninth connection then waited for its header deadline instead of closing at
+accept, contradicting the test's assumption.
+
+The fixture now holds its responses in scheduler actors until all eight
+requests and the ninth connection's refusal have been observed. Setup includes
+a delay longer than the response timeout. A complete ninth request distinguishes
+real cap refusal from an idle-header timeout. After the responses start, the
+clients remain nonreading and recovery is observed within a bounded window.
+Disabling the connection cap or the response deadline causes the corresponding
+runtime assertion to fail (exit 1); restoring both passes one executed test.
+Production connection and timeout limits are unchanged.
+
+The complete local HTTP run also reproduced the earlier macOS admission-fixture
+limit: a large send on its blocking client could wait for the held admission
+window and outlive `send_for`'s intended retry deadline. The test client now uses
+an explicit nonblocking descriptor, bounded send chunks and a known send buffer;
+the test waits for real read-ahead before asserting it remains bounded and the
+body remains undispatched. All 31 HTTP tests pass locally. The local link uses
+the existing collectors-only metrics archive because of the baseline Linux-only
+exporter constants; final-head Linux/ASAN remains the full instrumented gate.
