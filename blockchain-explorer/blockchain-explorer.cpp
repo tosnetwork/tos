@@ -332,16 +332,17 @@ class CoreActor : public CoreActorInterface {
 
     *ptr = nullptr; /* clear context pointer */
 
-    auto pos = url_s.rfind('/');
-    std::string prefix;
-    std::string command;
-    if (pos == std::string::npos) {
-      prefix = "";
-      command = url_s;
-    } else {
-      prefix = url_s.substr(0, pos + 1);
-      command = url_s.substr(pos + 1);
+    auto route = split_explorer_url(url_s);
+    if (!route) {
+      static const char bad_path[] = "bad request path\n";
+      auto R =
+          MHD_create_response_from_buffer(sizeof(bad_path) - 1, const_cast<char*>(bad_path), MHD_RESPMEM_PERSISTENT);
+      MHD_add_response_header(R, "Content-Type", "text/plain");
+      ret = MHD_queue_response(connection, MHD_HTTP_BAD_REQUEST, R);
+      MHD_destroy_response(R);
+      return ret;
     }
+    auto [prefix, command] = std::move(*route);
 
     MHD_get_connection_values(connection, MHD_GET_ARGUMENT_KIND, get_arg_iterate, static_cast<void*>(&opts));
 

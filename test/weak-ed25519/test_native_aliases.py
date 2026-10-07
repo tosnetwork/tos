@@ -31,7 +31,16 @@ sys.path.insert(0, str(ROOT / "test/auth-extensions"))
 from cells import Cell, from_boc, make_dict
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from native import NOW, Emulator, active_account, compile_contract, external, internal, state_init
+from native import (
+    GLOBAL_ID,
+    NOW,
+    Emulator,
+    active_account,
+    compile_contract,
+    external,
+    internal,
+    state_init,
+)
 
 IDENTITY_ALIAS = bytes.fromhex("0100000000000000000000000000000000000000000000000000000000000080")
 ORDER2_ALIAS = bytes.fromhex("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
@@ -236,7 +245,9 @@ def multisig_data(owners, k):
 
 
 def multisig_root_query(root, query_id, sign):
-    signed = Cell().uint(root, 8).uint(0, 1).uint(WALLET_ID, 32).uint(query_id, 64)
+    signed = (
+        Cell().uint(root, 8).uint(0, 1).uint(WALLET_ID, 32).uint(GLOBAL_ID, 32).uint(query_id, 64)
+    )
     signature = sign(signed.hash)
     if signature is None:
         return None

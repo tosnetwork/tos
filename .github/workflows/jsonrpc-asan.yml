@@ -56,9 +56,7 @@ jobs:
 
     - name: Install Clang 21
       run: |
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 all
+        sudo scripts/install-llvm-toolchain.sh 21 all
 
     - name: Configure with AddressSanitizer
       run: |
@@ -116,14 +114,16 @@ jobs:
 
     - name: Install Clang 21
       run: |
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 all
+        sudo scripts/install-llvm-toolchain.sh 21 all
 
     - name: Install uv
       run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        tool_dir="$(mktemp -d)"
+        trap 'rm -rf "$tool_dir"' EXIT
+        curl -fsSL "$(python3 scripts/verify-build-tool.py --url uv-x86_64)" -o "$tool_dir/uv.tar.gz"
+        python3 scripts/verify-build-tool.py uv-x86_64 "$tool_dir/uv.tar.gz"
+        tar -xzf "$tool_dir/uv.tar.gz" -C "$tool_dir"
+        sudo install -m 0755 "$tool_dir/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
 
     - name: Configure with AddressSanitizer
       # QUIC stays on: with it off the adnl and overlay libraries still
@@ -151,11 +151,12 @@ jobs:
 
     - name: Prepare the harness environment
       # The harness needs the tostester dependencies; a bare system
-      # python does not have them. tosapi is generated and untracked, so
-      # a fresh checkout has to produce it before anything can import.
+      # python does not have them. They are installed exactly as uv.lock
+      # pins them (tostester is a workspace member). tosapi is generated and
+      # untracked, so a fresh checkout has to produce it before anything can
+      # import.
       run: |
-        uv venv .venv
-        uv pip install --python .venv/bin/python -e test/tostester
+        uv sync --frozen --no-dev
         .venv/bin/python test/tostester/generate_tl.py
 
     - name: Bring up an instrumented local chain
@@ -170,7 +171,7 @@ jobs:
 
     - name: Drive the corpus
       run: |
-        uv run --with requests python scripts/asan-jsonrpc-corpus.py http://127.0.0.1:18545/
+        uv run --frozen --no-dev python scripts/asan-jsonrpc-corpus.py http://127.0.0.1:18545/
 
     - name: Fail on any sanitizer report
       # The corpus itself asserts little on purpose: most of these

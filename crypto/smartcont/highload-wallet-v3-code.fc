@@ -1,3 +1,4 @@
+#include "strong-ed25519-key.fc";
 ;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
 ;;
 ;; High-volume wallet: one Ed25519 key, any number of concurrent signed requests, bounded
@@ -128,6 +129,7 @@ cell my_code() asm "MYCODE";
   msg_body.end_parse();
 
   (int public_key, int subwallet_id, [cell, cell, int, int] guard) = load_data();
+  throw_if(error::invalid_signature, weak_ed25519_key?(public_key));
   throw_unless(error::invalid_signature, check_signature(inner.cell_hash(), signature, public_key));
 
   slice request = inner.begin_parse();

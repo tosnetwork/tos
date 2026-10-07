@@ -49,7 +49,9 @@ fi
 for binary in $binaries; do
   if ! "$build/$binary" --regression "$scratch/answers.ans" >"$scratch/$binary.log" 2>&1; then
     echo "regression check failed: $binary" >&2
-    grep -oE "Test [A-Za-z_0-9]+ changed: \[[^]]*\]\[[^]]*\]" "$scratch/$binary.log" >&2 || true
+    if ! grep -oE "Test [A-Za-z_0-9]+ changed: \[[^]]*\]\[[^]]*\]" "$scratch/$binary.log" >&2; then
+      tail -n 60 "$scratch/$binary.log" >&2
+    fi
     failed=1
   fi
 done
@@ -78,8 +80,9 @@ fi
 for binary in $binaries; do
   fresh="$scratch/fresh-$binary.ans"
   printf 'abce\n' >"$fresh"
-  if ! "$build/$binary" --regression "$fresh" >/dev/null 2>&1; then
+  if ! "$build/$binary" --regression "$fresh" >"$scratch/fresh-$binary.log" 2>&1; then
     echo "regression check failed: $binary could not record into an empty record" >&2
+    tail -n 60 "$scratch/fresh-$binary.log" >&2
     failed=1
     continue
   fi

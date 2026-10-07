@@ -269,6 +269,10 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
   // Armed before the response is appended, so it can tell output left over
   // from an earlier response from this one's.
   arm_response_deadline();
+  if (!response->keep_alive()) {
+    close_after_write_ = true;
+  }
+  response->set_keep_alive(!close_after_write_);
   response->store_http(buffered_fd_.output_buffer());
 
   metrics_.responses_total->label(response->code())->add(1);

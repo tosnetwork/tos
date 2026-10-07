@@ -58,3 +58,10 @@ jobs:
           pnpm --filter @tos/wallets --filter @tos/client typecheck
           pnpm --filter @tos/wallets test
           git diff --exit-code
+
+      - name: Run multisig domain and legacy wallet authority transactions
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+        run: |
+          scripts/install-rust-toolchain.sh
+          cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --test multisig_code_sandbox --test legacy_wallet_key_sandbox --test wallet_sandbox --test highload_wallet_v3_sandbox

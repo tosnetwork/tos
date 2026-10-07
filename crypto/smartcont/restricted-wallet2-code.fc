@@ -1,3 +1,4 @@
+#include "strong-ed25519-key.fc";
 ;; Restricted wallet (a variant of wallet-code.fc)
 ;; restricts access to parts of balance until certain dates
 
@@ -25,6 +26,7 @@ int get_global_id() asm "GLOBALID";
   var ds = get_data().begin_parse();
   var (stored_seqno, public_key, start_at, rdict) = (ds~load_uint(32), ds~load_uint(256), ds~load_uint(32), ds~load_dict());
   ds.end_parse();
+  throw_if(34, weak_ed25519_key?(public_key));
   throw_unless(33, msg_seqno == stored_seqno);
   ifnot (msg_seqno) {
     accept_message();
