@@ -25,6 +25,13 @@ use contracts::{
 use mockall::mock;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
+mod elector_fixture {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../test/validator/elector-control-fixture.rs"
+    ));
+}
+
 // ---- Address helpers ----
 
 const POOL_ADDR: [u8; 32] = [0xBBu8; 32];
@@ -114,6 +121,7 @@ mock! {
 
     #[async_trait::async_trait]
     impl ElectionsProvider for ElectionsProviderImpl {
+        async fn elector_snapshot(&mut self, wallets: &[[u8; 32]]) -> anyhow::Result<ElectorSnapshot>;
         async fn setup(&self) -> anyhow::Result<()>;
         async fn shutdown(&mut self) -> anyhow::Result<()>;
         async fn new_validator_key(
@@ -416,6 +424,8 @@ impl TestHarness {
         let mut wallets: HashMap<String, Arc<dyn Wallet>> = HashMap::new();
         wallets.insert(node_id.to_string(), wallet);
 
+        let elector = Arc::new(self.elector_mock);
+        fixture_snapshot(&mut self.provider_mock, elector.clone());
         let mut providers: HashMap<String, Box<dyn ElectionsProvider>> = HashMap::new();
         providers.insert(node_id.to_string(), Box::new(self.provider_mock));
 
@@ -423,8 +433,6 @@ impl TestHarness {
         if let Some(pool) = self.pool_mock {
             pools.insert(node_id.to_string(), Arc::new(pool));
         }
-
-        let elector: Arc<dyn ElectorWrapper> = Arc::new(self.elector_mock);
 
         ElectionRunner::new(
             &self.elections_config,
@@ -435,6 +443,300 @@ impl TestHarness {
             Arc::new(pools),
         )
     }
+}
+
+// Existing lifecycle fixtures describe their fields independently. Assemble them
+// in memory before the provider delivers one snapshot; these mocks do no I/O.
+fn ready<T>(future: impl std::future::Future<Output = anyhow::Result<T>>) -> anyhow::Result<T> {
+    let mut future = std::pin::pin!(future);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match future.as_mut().poll(&mut context) {
+        std::task::Poll::Ready(value) => value,
+        std::task::Poll::Pending => anyhow::bail!("in-memory fixture unexpectedly awaited I/O"),
+    }
+}
+fn fixture_snapshot(
+    provider: &mut MockElectionsProviderImpl,
+    elector: Arc<MockElectorWrapperImpl>,
+) {
+    provider.expect_elector_snapshot().returning(move |wallets| {
+        let election_id = ready(elector.get_active_election_id())?;
+        let elections = if election_id == 0 {
+            ElectionsInfo {
+                election_id: 0,
+                elect_close: 0,
+                min_stake: 0,
+                total_stake: 0,
+                failed: false,
+                finished: false,
+                participants: vec![],
+            }
+        } else {
+            ready(elector.elections_info())?
+        };
+        let past_elections = if election_id == 0 || elections.finished {
+            vec![]
+        } else {
+            ready(elector.past_elections())?
+        };
+        let returned = wallets
+            .iter()
+            .map(|wallet| {
+                let amount = if election_id == 0 || elections.finished {
+                    0
+                } else {
+                    ready(elector.compute_returned_stake(wallet))?
+                };
+                Ok((*wallet, amount))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(ElectorSnapshot { block: snapshot_block(), elections, past_elections, returned })
+    });
+}
+fn snapshot_block() -> chain_block::BlockIdExt {
+    chain_block::BlockIdExt::with_params(
+        chain_block::ShardIdent::masterchain(),
+        17,
+        chain_block::UInt256::from([8; 32]),
+        chain_block::UInt256::from([9; 32]),
+    )
+}
+
+async fn control_runner(fixture: &elector_fixture::Fixture) -> anyhow::Result<ElectionRunner> {
+    let mut harness = TestHarness::new();
+    harness.elector_mock.expect_address().returning(elector_address);
+    setup_wallet(&mut harness.wallet_mock);
+    harness.bindings.insert("node-1".into(), default_binding(false));
+    let mut runner = harness.build("node-1");
+    let config = fixture.config()?;
+    let adnl = config.nodes.get("test").context("fixture node")?.to_node_adnl_config(None).await?;
+    let rpc = Arc::new(chain_rpc_client::v2::client_json_rpc::ClientJsonRpc::connect(
+        fixture.public_url.clone(),
+        None,
+    )?);
+    runner.nodes.get_mut("node-1").context("fixture runner node")?.api =
+        Box::new(crate::providers::DefaultElectionsProvider::new(
+            adnl,
+            Arc::new(contracts::DefaultChainProvider::new(rpc)),
+        ));
+    Ok(runner)
+}
+
+#[tokio::test]
+async fn runner_uses_one_control_snapshot_and_no_public_elector_getters() -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    for (election_id, finished, count) in [
+        (1_700_000_000, true, 1),
+        (1_700_000_002, false, 100),
+        (1_700_000_002, false, 256),
+        (0, false, 0),
+    ] {
+        let fixture = elector_fixture::Fixture::new(elector_fixture::Reply {
+            election_id,
+            finished,
+            participants: count,
+            ..Default::default()
+        })
+        .await?;
+        let mut runner = control_runner(&fixture).await?;
+        runner.run().await?;
+        fixture.no_public_elector()?;
+        assert_eq!(
+            fixture.counts.control.load(Ordering::SeqCst),
+            1,
+            "one elector query per runner decision"
+        );
+        let snapshot =
+            runner.snapshot_cache.last_elections.as_ref().context("election snapshot")?;
+        assert_eq!(snapshot.election_id, u64::from(election_id));
+        assert_eq!(snapshot.finished, finished);
+        assert_eq!(snapshot.participants_count, u32::try_from(count)?);
+        assert_eq!(runner.past_elections.len(), 1);
+        assert_eq!(runner.past_elections[0].election_id, 1_600_000_000);
+        assert_eq!(runner.past_elections[0].frozen_map[&[5; 32]].wallet_addr, [6; 32]);
+        assert_eq!(runner.past_elections[0].frozen_map[&[5; 32]].weight, u64::MAX);
+        {
+            let wallets =
+                fixture.counts.wallets.lock().map_err(|_| anyhow::anyhow!("wallet counter"))?;
+            assert_eq!(*wallets, vec![vec![[0xaa; 32]]]);
+        }
+        runner.shutdown().await?;
+        fixture.stop().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failed_control_snapshot_changes_no_acceptance_or_snapshot_state() -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    for reply in [
+        elector_fixture::Reply { unsupported: true, ..Default::default() },
+        elector_fixture::Reply { overflow: true, ..Default::default() },
+        elector_fixture::Reply { wrong_wallet: true, ..Default::default() },
+    ] {
+        let fixture = elector_fixture::Fixture::new(reply.clone()).await?;
+        let mut runner = control_runner(&fixture).await?;
+        runner.snapshot_cache.last_elections_status = ElectionsStatus::Finished;
+        runner.nodes.get_mut("node-1").context("fixture node")?.stake_accepted = true;
+        runner.nodes.get_mut("node-1").context("fixture node")?.accepted_stake_amount = Some(123);
+        let error = runner.run().await.err().context("invalid snapshot was accepted")?;
+        if reply.unsupported {
+            assert!(
+                error.downcast_ref::<control_client::UnsupportedControlQuery>().is_some(),
+                "upgrade error lost: {error:#}"
+            );
+        } else {
+            assert!(
+                format!("{error:#}").contains(if reply.overflow {
+                    "participant stake exceeds u64"
+                } else {
+                    "wallet order or address"
+                }),
+                "wrong refusal: {error:#}"
+            );
+        }
+        assert_eq!(runner.snapshot_cache.last_elections_status, ElectionsStatus::Finished);
+        assert!(runner.snapshot_cache.last_elections.is_none());
+        assert!(runner.nodes["node-1"].stake_accepted);
+        assert_eq!(runner.nodes["node-1"].accepted_stake_amount, Some(123));
+        fixture.no_public_elector()?;
+        assert_eq!(fixture.counts.control.load(Ordering::SeqCst), 1);
+        runner.shutdown().await?;
+        fixture.stop().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_runner_loop_propagates_the_named_upgrade_error_before_publishing() -> anyhow::Result<()>
+{
+    use std::sync::atomic::Ordering;
+    let fixture = elector_fixture::Fixture::new(elector_fixture::Reply {
+        unsupported: true,
+        ..Default::default()
+    })
+    .await?;
+    let mut runner = control_runner(&fixture).await?;
+    let store = Arc::new(SnapshotStore::new());
+    let error = tokio::time::timeout(
+        Duration::from_secs(10),
+        runner.run_loop(Duration::from_secs(60), CancellationCtx::new(), store.clone(), None),
+    )
+    .await?
+    .err()
+    .context("unsupported node did not stop the runner")?;
+    assert!(
+        error.downcast_ref::<control_client::UnsupportedControlQuery>().is_some(),
+        "upgrade error lost: {error:#}"
+    );
+    assert!(runner.snapshot_cache.last_elections.is_none());
+    assert_eq!(fixture.counts.control.load(Ordering::SeqCst), 1);
+    fixture.no_public_elector()?;
+    runner.shutdown().await?;
+    fixture.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn one_runner_tick_requests_exactly_one_elector_snapshot() -> anyhow::Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut harness = TestHarness::new();
+    harness.elector_mock.expect_address().returning(elector_address);
+    setup_wallet(&mut harness.wallet_mock);
+    setup_default_provider(&mut harness.provider_mock, WALLET_BALANCE, None);
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counter = reads.clone();
+    let mut stop = CancellationCtx::new();
+    let cancellation = stop.clone();
+    harness.provider_mock.expect_elector_snapshot().returning(move |wallets| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        stop.cancel(CancellationReason::GracefullyShutdown());
+        Ok(ElectorSnapshot {
+            block: snapshot_block(),
+            elections: ElectionsInfo {
+                election_id: 0,
+                elect_close: 0,
+                min_stake: 0,
+                total_stake: 0,
+                failed: false,
+                finished: false,
+                participants: vec![],
+            },
+            past_elections: vec![],
+            returned: wallets.iter().map(|wallet| (*wallet, 0)).collect(),
+        })
+    });
+    let mut runner = harness.build("node-1");
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        runner.run_loop(
+            Duration::from_secs(600),
+            cancellation,
+            Arc::new(SnapshotStore::new()),
+            None,
+        ),
+    )
+    .await??;
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "one elector query per runner tick");
+    Ok(())
+}
+
+#[tokio::test]
+async fn too_many_distinct_wallets_fails_before_a_query_or_state_change() -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    let fixture = elector_fixture::Fixture::new(Default::default()).await?;
+    let mut runner = control_runner(&fixture).await?;
+    runner.snapshot_cache.last_elections_status = ElectionsStatus::Finished;
+    for index in 0..16 {
+        let mut other = TestHarness::new();
+        other.elector_mock.expect_address().returning(elector_address);
+        let mut address = [0; 32];
+        address[31] = index;
+        other.wallet_mock.expect_address().returning(move || MsgAddressInt::standard(-1, address));
+        let name = format!("node-extra-{index:02}");
+        let mut other = other.build(&name);
+        runner.nodes.insert(name.clone(), other.nodes.remove(&name).context("extra node")?);
+    }
+    let error = runner.run().await.err().context("seventeen wallets accepted")?;
+    assert!(error.to_string().contains("more than 16 distinct"), "wrong refusal: {error:#}");
+    assert_eq!(fixture.counts.control.load(Ordering::SeqCst), 0);
+    assert_eq!(runner.snapshot_cache.last_elections_status, ElectionsStatus::Finished);
+    assert!(runner.snapshot_cache.last_elections.is_none());
+    fixture.no_public_elector()?;
+    fixture.stop().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn shared_wallets_are_requested_once_in_sorted_order() -> anyhow::Result<()> {
+    use std::sync::atomic::Ordering;
+    let fixture = elector_fixture::Fixture::new(elector_fixture::Reply {
+        election_id: 0,
+        participants: 0,
+        ..Default::default()
+    })
+    .await?;
+    let mut runner = control_runner(&fixture).await?;
+    for (name, address) in [("node-2", [0xaa; 32]), ("node-3", [0x01; 32])] {
+        let mut extra = TestHarness::new();
+        extra.elector_mock.expect_address().returning(elector_address);
+        extra.provider_mock.expect_election_parameters().returning(|| Ok(default_cfg15()));
+        extra.wallet_mock.expect_address().returning(move || MsgAddressInt::standard(-1, address));
+        let mut extra = extra.build(name);
+        runner.nodes.insert(name.into(), extra.nodes.remove(name).context("extra node")?);
+    }
+    runner.run().await?;
+    {
+        let requests =
+            fixture.counts.wallets.lock().map_err(|_| anyhow::anyhow!("wallet counter"))?;
+        assert_eq!(*requests, vec![vec![[0x01; 32], [0xaa; 32]]]);
+    }
+    assert_eq!(fixture.counts.control.load(Ordering::SeqCst), 1);
+    fixture.no_public_elector()?;
+    // Only the real provider owns a connection; the extra mock nodes have none.
+    runner.nodes.get_mut("node-1").context("fixture node")?.api.shutdown().await?;
+    fixture.stop().await;
+    Ok(())
 }
 
 // ---- Expectation helpers ----
@@ -1285,7 +1587,7 @@ async fn test_multiple_nodes_one_excluded() {
     let mut elector_mock = MockElectorWrapperImpl::new();
     setup_default_elector(&mut elector_mock, ELECTION_ID, 0);
 
-    let elector: Arc<dyn ElectorWrapper> = Arc::new(elector_mock);
+    let elector = Arc::new(elector_mock);
 
     let elections_config = ElectionsConfig {
         policy: StakePolicy::Minimum,
@@ -1331,6 +1633,7 @@ async fn test_multiple_nodes_one_excluded() {
 
     let mut provider1 = MockElectionsProviderImpl::new();
     setup_default_provider(&mut provider1, WALLET_BALANCE, None);
+    fixture_snapshot(&mut provider1, elector.clone());
 
     let mut provider2 = MockElectionsProviderImpl::new();
     provider2.expect_election_parameters().returning(|| Ok(default_cfg15()));
@@ -1728,7 +2031,7 @@ async fn test_build_elections_snapshot() {
 async fn test_node_without_wallet_skipped() {
     let mut elector_mock = MockElectorWrapperImpl::new();
     setup_elector_no_elections(&mut elector_mock);
-    let elector: Arc<dyn ElectorWrapper> = Arc::new(elector_mock);
+    let elector = Arc::new(elector_mock);
 
     let elections_config = ElectionsConfig {
         policy: StakePolicy::Minimum,

@@ -739,6 +739,31 @@ pub(crate) fn sender_can_pay(
 
 /// The expiry of a proposal the configuration contract holds, or `None`, read
 /// through the bounded proposal-read path.
+/// Read-only governance uses the authenticated node and propagates upgrade errors.
+async fn operator_control_client(
+    config: &common::app_config::AppConfig,
+    vault: Option<std::sync::Arc<secrets_vault::vault::SecretVault>>,
+) -> anyhow::Result<control_client::client_adnl::ControlClientAdnl> {
+    let (_, node) = config
+        .nodes
+        .iter()
+        .min_by(|(a, _), (b, _)| a.cmp(b))
+        .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+    let vault = match vault {
+        Some(vault) => Some(vault),
+        None if matches!(node.server_key, common::app_config::KeyConfig::VaultKey { .. })
+            || matches!(node.client_key, common::app_config::KeyConfig::VaultKey { .. }) =>
+        {
+            Some(secrets_vault::vault_builder::SecretVaultBuilder::from_env().await?)
+        }
+        None => None,
+    };
+    Ok(control_client::client_adnl::ControlClientAdnl::new(
+        node.to_node_adnl_config(vault).await?,
+        1,
+    ))
+}
+
 async fn proposal_expiry(
     chain: &contracts::DefaultChainProvider,
     config_address: &chain_block::MsgAddressInt,
@@ -1615,6 +1640,9 @@ impl VoteComplaintCastCmd {
     }
 }
 
+#[cfg(test)]
+mod elector_control_tests;
+
 impl VoteElectionCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
         match &self.action {
@@ -1626,29 +1654,26 @@ impl VoteElectionCmd {
 
 impl VoteElectionLsCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use super::utils::try_create_rpc_client;
         use colored::Colorize;
         use common::app_config::AppConfig;
         use common::chain_utils::display_tos;
-        use contracts::{
-            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, contract_provider_from,
-        };
         use std::path::Path;
-        use std::sync::Arc;
 
         let config_path = Path::new(config_path);
 
         let config = AppConfig::load(config_path)?;
-        let rpc_client = try_create_rpc_client(&config).await?;
 
         if self.format != super::output_format::OutputFormat::Json {
             println!("\n{}", "Querying elector for election participants...".cyan());
         }
 
-        let chain_provider = Arc::new(DefaultChainProvider::new(rpc_client.clone()));
-        let elector = ElectorWrapperImpl::new(contract_provider_from(chain_provider));
-
-        let info = elector.elections_info().await?;
+        let mut client = operator_control_client(&config, None).await?;
+        let info = contracts::control_reads::read_elector_snapshot(
+            &mut client,
+            &control_client::operator_reads::ElectorStateRequest::default(),
+        )
+        .await?
+        .elections;
 
         if info.participants.is_empty() {
             if self.format == super::output_format::OutputFormat::Json {
@@ -1727,25 +1752,24 @@ impl VoteElectionLsCmd {
 
 impl VoteElectionCastCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use super::utils::load_config_vault_rpc_client;
         use colored::Colorize;
         use common::chain_utils::display_tos;
-        use contracts::{
-            DefaultChainProvider, ElectorWrapper, ElectorWrapperImpl, contract_provider_from,
-        };
         use std::path::Path;
-        use std::sync::Arc;
 
         let config_path = Path::new(config_path);
 
-        let (_config, _vault, rpc_client) = load_config_vault_rpc_client(config_path).await?;
+        let config = common::app_config::AppConfig::load(config_path)?;
 
         println!("\n{}", "Querying elector for active election...".cyan());
 
-        let chain_provider = Arc::new(DefaultChainProvider::new(rpc_client.clone()));
-        let elector = ElectorWrapperImpl::new(contract_provider_from(chain_provider));
-
-        let election_id = elector.get_active_election_id().await?;
+        let mut client = operator_control_client(&config, None).await?;
+        let elections_info = contracts::control_reads::read_elector_snapshot(
+            &mut client,
+            &control_client::operator_reads::ElectorStateRequest::default(),
+        )
+        .await?
+        .elections;
+        let election_id = elections_info.election_id;
 
         if election_id == 0 {
             println!("\n{}\n", "No active election".yellow());
@@ -1758,7 +1782,6 @@ impl VoteElectionCastCmd {
             election_id.to_string().white().bold()
         );
 
-        let elections_info = elector.elections_info().await?;
         println!("  Total stake:    {} TOS", display_tos(elections_info.total_stake));
         println!("  Participants:   {}", elections_info.participants.len());
         println!("  Min stake:      {} TOS", display_tos(elections_info.min_stake));

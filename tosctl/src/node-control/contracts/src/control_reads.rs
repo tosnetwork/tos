@@ -9,6 +9,17 @@ pub use control_client::operator_reads::ConfigProposalMeta;
 use control_client::operator_reads::{ConfigProposalDetail, ElectorState};
 use std::collections::HashMap;
 
+/// Validate the complete answer before a decision can consume any of its facts.
+pub async fn read_elector_snapshot(
+    client: &mut dyn control_client::client_api::ClientAPI,
+    request: &control_client::operator_reads::ElectorStateRequest,
+) -> anyhow::Result<ElectorSnapshot> {
+    request.validate()?;
+    let state = client.get_elector_state(request).await.context("getElectorState")?;
+    state.validate_request(request)?;
+    ElectorSnapshot::try_from(state)
+}
+
 /// All elector facts used by one decision, from one returned block.
 pub struct ElectorSnapshot {
     pub block: BlockIdExt,

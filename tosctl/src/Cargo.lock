@@ -783,6 +783,7 @@ version = "0.3.0"
 dependencies = [
  "adnl",
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "bip39",
  "chain-rpc-client",
@@ -811,6 +812,7 @@ dependencies = [
  "service",
  "sha2",
  "tempfile",
+ "tl_api",
  "tokio",
  "tracing",
  "zeroize",
@@ -1349,6 +1351,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tl_api",
  "tokio",
  "tracing",
 ]

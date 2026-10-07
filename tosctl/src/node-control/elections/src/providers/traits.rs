@@ -92,6 +92,10 @@ impl Account {
 // standard ADNL control protocol.
 #[async_trait::async_trait]
 pub trait ElectionsProvider: Send + Sync {
+    async fn elector_snapshot(
+        &mut self,
+        wallets: &[[u8; 32]],
+    ) -> anyhow::Result<contracts::control_reads::ElectorSnapshot>;
     async fn setup(&self) -> anyhow::Result<()>;
     async fn shutdown(&mut self) -> anyhow::Result<()>;
     async fn new_validator_key(
