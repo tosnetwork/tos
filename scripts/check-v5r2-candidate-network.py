@@ -16,6 +16,8 @@ from pathlib import Path
 from pytosiq_core.boc.deserialize import Boc
 from pytosiq_core.tlb.config import ConfigParam20, ConfigParam21
 
+ABSENT_ACCOUNT = "0:" + hashlib.sha256(b"TOS-V5R2-ABSENT-CANDIDATE-PROBE-v1").hexdigest()
+
 
 def require(value, message):
     if not value:
@@ -117,7 +119,15 @@ def verify_live_config(root, build, network, out, cells):
         )
     )
     request.write_text(
-        json.dumps({"mode": "live", "max_age_seconds": 300, "config_params": list(cells)}) + "\n"
+        json.dumps(
+            {
+                "mode": "live",
+                "max_age_seconds": 300,
+                "config_params": list(cells),
+                "account": ABSENT_ACCOUNT,
+            }
+        )
+        + "\n"
     )
     result = subprocess.run(
         [
@@ -155,7 +165,17 @@ def verify_live_config(root, build, network, out, cells):
         hashes == {index: cell.hash.hex() for index, cell in cells.items()},
         "authenticated configuration differs from RPC readback",
     )
-    return {"target": verified["target"], "chain": verified["chain"], "live": verified["live"]}
+    account = verified.get("account", {})
+    require(
+        account.get("address") == ABSENT_ACCOUNT and account.get("exists") is False,
+        "basechain absence proof identity mismatch",
+    )
+    return {
+        "target": verified["target"],
+        "chain": verified["chain"],
+        "live": verified["live"],
+        "absent_basechain_account": account,
+    }
 
 
 def main():

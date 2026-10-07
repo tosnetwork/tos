@@ -86,6 +86,7 @@ class CandidateReadbackTests(unittest.TestCase):
             "mode": "live",
             "interface": "tos-proof-verify/1",
             "config_params": [{"index": k, "cell_hash": v.hash.hex()} for k, v in cells.items()],
+            "account": {"address": self.module.ABSENT_ACCOUNT, "exists": False},
             "target": {"seqno": 1},
             "chain": {"links": 1},
             "live": {"age_seconds": 1},
@@ -115,6 +116,13 @@ class CandidateReadbackTests(unittest.TestCase):
                 invoke(result, 1)
             with self.assertRaisesRegex(ValueError, "identity mismatch"):
                 invoke(dict(result, mode="historical"))
+            for account in [
+                {"address": "0:" + "00" * 32, "exists": False},
+                {"address": self.module.ABSENT_ACCOUNT, "exists": True},
+                {},
+            ]:
+                with self.assertRaisesRegex(ValueError, "basechain absence proof"):
+                    invoke(dict(result, account=account))
 
 
 if __name__ == "__main__":
