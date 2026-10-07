@@ -101,7 +101,48 @@ static Ref<Cell> join(const Elector& e) {
 }
 
 // The open election with its member book replaced by n copies of its first member.
-static Ref<Cell> grow_members(Ref<Cell> elect, int n) {
+enum class Book { Hashed, Deepest, DeepestMaxStake };
+
+// i ones followed by zeros: keys 0..n-1 form one path of n levels, the deepest a
+// 256-bit-key dictionary allows.
+static td::BitArray<256> chain_key(int i) {
+  td::BitArray<256> key;
+  key.set_zero();
+  for (int b = 0; b < i; ++b) {
+    key[b] = true;
+  }
+  return key;
+}
+
+// The member record with its stake (the record's only variable-width field) set to the
+// largest Coins value, 2^120 - 1.
+static Ref<CellSlice> with_max_stake(Ref<CellSlice> member) {
+  CellSlice ms = *member;
+  vm_amount_skip(ms);
+  CellBuilder b;
+  require(b.store_long_bool(15, 4), "stake length");
+  for (int k = 0; k < 15; ++k) {
+    require(b.store_long_bool(0xff, 8), "stake byte");
+  }
+  require(b.append_cellslice_bool(ms), "rest of the member");
+  return load_cell_slice_ref(b.finalize());
+}
+
+static Ref<Cell> book_of(Ref<CellSlice> member, Book shape, int n) {
+  if (shape == Book::Hashed) {
+    return filled(member, "member-", n);
+  }
+  require(n <= 257, "a 256-bit key path holds at most 257 keys");
+  auto value = shape == Book::DeepestMaxStake ? with_max_stake(member) : member;
+  Dictionary d{256};
+  for (int i = 0; i < n; ++i) {
+    auto key = chain_key(i);
+    require(d.set(key.bits(), 256, value), "insert member");
+  }
+  return d.get_root_cell();
+}
+
+static Ref<Cell> grow_members(Ref<Cell> elect, int n, Book shape) {
   CellSlice es = load_cell_slice(elect);
   CellSlice orig = es;
   require(es.advance(64), "elect_at, elect_close");
@@ -116,7 +157,7 @@ static Ref<Cell> grow_members(Ref<Cell> elect, int n) {
   require(prefix.only_first(prefix_bits, 0), "prefix");
   CellBuilder b;
   require(
-      b.append_cellslice_bool(prefix) && b.store_maybe_ref(filled(member, "member-", n)) && b.append_cellslice_bool(es),
+      b.append_cellslice_bool(prefix) && b.store_maybe_ref(book_of(member, shape, n)) && b.append_cellslice_bool(es),
       "rebuild election");
   return b.finalize();
 }
@@ -244,11 +285,33 @@ int main(int argc, char** argv) {
   require(saved.elect.not_null(), "the saved state has an open election");
 
   std::cout << "== participant_list_extended (N members)\n";
-  for (int n : {0, 21, 99, 256}) {
-    Elector e = saved;
-    e.elect = grow_members(saved.elect, n);
-    auto ans = run(code, join(e), "participant_list_extended", no_args());
-    std::cout << "N=" << n << " gas=" << ans.gas_used << "\n";
+  const char* names[] = {"hashed keys", "deepest path", "deepest path, maximum stake"};
+  for (Book shape : {Book::Hashed, Book::Deepest, Book::DeepestMaxStake}) {
+    for (int n : {0, 21, 99, 256}) {
+      Elector e = saved;
+      e.elect = grow_members(saved.elect, n, shape);
+      auto ans = run(code, join(e), "participant_list_extended", no_args());
+      const Stack& st = *ans.stack;
+      require(st.depth() == 7, "participant_list_extended returns 7 values");
+      int count = 0;
+      StackEntry cur = st[2];
+      while (!cur.empty()) {
+        require(cur.is_tuple() && cur.as_tuple()->size() == 2, "cons cell");
+        StackEntry head = cur.as_tuple()->at(0);
+        StackEntry next = cur.as_tuple()->at(1);
+        require(head.is_tuple() && head.as_tuple()->size() == 2, "[id, entry]");
+        StackEntry inner = head.as_tuple()->at(1);
+        require(inner.is_tuple() && inner.as_tuple()->size() == 6, "6-field participant");
+        if (shape == Book::DeepestMaxStake) {
+          auto max = (td::make_refint(1) << 120) - td::make_refint(1);
+          require(td::cmp(inner.as_tuple()->at(0).as_int(), max) == 0, "maximum stake returned");
+        }
+        ++count;
+        cur = std::move(next);
+      }
+      require(count == n, "participant count");
+      std::cout << names[static_cast<int>(shape)] << " N=" << n << " gas=" << ans.gas_used << "\n";
+    }
   }
 
   std::cout << "== past_elections (K elections x F frozen entries)\n";

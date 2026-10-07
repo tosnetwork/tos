@@ -10,7 +10,9 @@
   against the real getters; the elector reads one decision needs come from one control
   query (§5.1, §5.4). Revision 5: per-getter elector budgets from measurements of all three
   getters, the combined query's total cost and native-work limits, and the extended
-  combined-response tests (§5.2, §6, §7).
+  combined-response tests (§5.2, §6, §7). Revision 6: the participant budget is
+  raised to cover the deepest member dictionary (1.11M gas at 256), and the
+  aggregate guard gets a test of its own.
 - Repository: `tosnetwork/tos`, base `main` at `6da705c8a` (includes PR #151).
 - Branch / PR: `fix/elector-participant-list`, draft PR #152.
 - Also kept in the team notes (`memo/elector-participant-list/`).
@@ -60,8 +62,9 @@ Gas grows by about 1.33k and depth by exactly 3 per participant.
 `list_proposals` (no voters): ~2,270 gas per proposal. The gas column is the Rust
 sandbox with real registrations; the node's C++ VM running the elector code saved from
 the local network, with its member book re-filled by cloned members, measures 131,621
-gas at 99 members and 345,395 at 256 (Appendix A). Budgets are derived from the larger
-figure.
+gas at 99 members and 345,395 at 256 with hashed (random-like) keys, and 1,114,595 at
+256 when the member keys form the deepest path a 256-bit-key dictionary allows
+(Appendix A). Budgets are derived from that worst shape.
 
 **Serialization budget accounting (measured, reproducible — Appendix A).** The lite
 server serializes the result stack under a 1,000-operation budget (§3.3). Measured with
@@ -121,7 +124,7 @@ generic `-32603` envelope.
 ### 3.4 Public-surface limit 3 — getter gas (≈ 212 participants)
 
 `client_method_gas_limit = 300000` (`validator/impl/liteserver.hpp:83`) bounds every
-anonymous getter call. The elector's own 256-member cap needs ≈ 369k.
+anonymous getter call. The elector's own 256-member cap needs ≈ 369k with random-like keys and about 1.11M on the deepest dictionary shape.
 
 ## 4. Solution from first principles
 
@@ -262,14 +265,18 @@ value missing.
 
   | Getter (per run) | What its cost depends on | Measured worst case | Budget |
   | --- | --- | --- | --- |
-  | `participant_list_extended` | members (protocol cap 256) | 345,395 C++ / 368,795 Rust sandbox at 256 | `kElectorParticipantsGasLimit = 500,000` |
+  | `participant_list_extended` | members (protocol cap 256) and the member dictionary's path length | 1,114,595 at 256 on the deepest path (345,395 C++ / 368,795 Rust sandbox with random-like keys); a maximum-width stake (2^120 − 1, the record's only variable-width field) costs the same | `kElectorParticipantsGasLimit = 1,500,000` |
   | `past_elections` | retained past elections K (≈ 0.9k each; independent of frozen entries, returned as a cell) | 15,953 at K = 16 | `kPastElectionsGasLimit = 50,000` |
   | `compute_returned_stake` | credits dictionary path length | 2,896 at 65,536 random credits; 26,804 on the deepest path 256-bit keys allow | `kReturnedStakeGasLimit = 40,000` per wallet |
   | `list_proposals` / `get_proposal` | proposals, voters | — | `kConfigProposalsGasLimit = 10,000,000`, an operational ceiling, not a capacity claim |
 
-  Gas exhaustion in any run is an explicit error; no partial result.
+  Gas exhaustion in any run is an explicit error; no partial result. The budgets are
+  provisional until the implementation measures the same worst cases (the deepest
+  256-member book included) in the production VM context of §5.2; each must keep at
+  least the headroom stated here (about 35 % for participants) or be revised before
+  merge.
 - **Combined cost of `getElectorState`**: at most 2 + `kMaxReturnedStakeWallets` = 18
-  getter runs; aggregate VM gas at most 500,000 + 50,000 + 16 × 40,000 = 1,190,000
+  getter runs; aggregate VM gas at most 1,500,000 + 50,000 + 16 × 40,000 = 2,190,000
   (`kElectorStateGasLimit`), each run also held to its own budget. Native work is
   bounded separately: `kMaxPastElections = 16` (an **operational** limit — the elector
   retains past elections until their stakes are unfrozen, about two at the local
@@ -420,8 +427,14 @@ the #151 machinery for proposals.
     missing, extra, reordered or wrong-address entry is refused by tosctl;
   - a frozen entry whose validator id differs from its owner is carried with both;
   - weight `2^63` and `2^64 − 1` round-trip as unsigned;
-  - aggregate-budget exhaustion in a returned-stake run after the participant and
-    past-election runs succeeded rejects the whole response;
+  - the aggregate guard on its own: the aggregate ceiling equals the sum of the
+    per-run ceilings, so it cannot trip while every run stays within its own budget.
+    The test injects an aggregate limit below the sum, lets the participant and
+    past-election runs succeed, and asserts that a returned-stake run within its own
+    budget fails on the aggregate and rejects the whole response; a per-getter gas
+    failure does not count as coverage of the aggregate guard;
+  - the deepest 256-member book (member keys on one 256-level path) and a maximum
+    stake succeed within `kElectorParticipantsGasLimit`;
   - every run starts from the original snapshot, shown by a test getter that rewrites
     its own c4 before a second run reads it.
 - **Executor**: queue saturation (`busy`), cancellation (admission held until work
