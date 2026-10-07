@@ -157,7 +157,7 @@ if (NOT TOS_USE_ABSEIL)
 if (WIN32)
   set(WINGETOPT_TARGET wingetopt)
 endif()
-install(TARGETS tdnet keys crc32c tdactor adnllite tl_api tl-utils tl_lite_api tl-lite-utils tos_crypto tos_crypto_core tos_block smc-envelope ${WINGETOPT_TARGET}
+install(TARGETS tdnet keys crc32c tdactor adnllite tl_api tl-utils tl_lite_api tl-lite-utils tos_crypto tos_slhdsa128s tos_slhdsa_native tos_lms_fee tos_crypto_core tos_block smc-envelope ${WINGETOPT_TARGET}
   tdutils tl_toslib_api toslib lite-client-common tddb_utils emulator_static Toslib EXPORT Toslib
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

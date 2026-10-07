@@ -353,7 +353,7 @@ set_target_properties(tos_slhdsa_native PROPERTIES C_STANDARD 99 POSITION_INDEPE
 # to errors. This exception is private to the upstream C target, not our adapter.
 target_compile_options(tos_slhdsa_native PRIVATE
   "$<$<C_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-error=conversion>")
-target_include_directories(tos_slhdsa_native PUBLIC "${TOS_SLHDSA_SOURCE_DIR}")
+target_include_directories(tos_slhdsa_native PUBLIC "$<BUILD_INTERFACE:${TOS_SLHDSA_SOURCE_DIR}>")
 add_library(tos_slhdsa128s STATIC slhdsa128s.cpp)
 target_compile_features(tos_slhdsa128s PUBLIC cxx_std_17)
 set_target_properties(tos_slhdsa128s PROPERTIES POSITION_INDEPENDENT_CODE ON)
