@@ -1,0 +1,36 @@
+{
+  "tests": 1,
+  "controls": [
+    {
+      "guard": "enrollment",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "record",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "route",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "wipe",
+      "exit": 2,
+      "semantic_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "iOS Simulator native seed binding, record parser and failed import/route gates; successful protected Keychain import and user-presence signing require real device acceptance",
+  "ios_commit": "f441c7d",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-fee-custody",
+  "logs": {
+    "route.log": "617c5538dfb3419b3103ee7bfd1f079ff713f6f615053c880a1e94531fa9c472",
+    "wipe.log": "6238fdd7eee69070a5fe8082347c75e8e99c8662025945c0b512cb12f91fce6f",
+    "restored.log": "86e8a8f1f6526a36c728de3bd17a9614a190ba41ba082da19603ef8ffcba2a6e",
+    "record.log": "6d1490a589546514d6fabdc20c16bfefac39565e2e3ff936aeade91c0711100b",
+    "enrollment.log": "a3c843519c426bcde583b122c9e977743e7cbd352be3ac8ec3d7c7c94bdc8d2e"
+  }
+}
