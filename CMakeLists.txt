@@ -1664,6 +1664,9 @@ set_tests_properties(full-node-master-startup PROPERTIES LABELS "security-findin
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
+add_test(NAME branch-chain-python-ci-source-conditions
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_branch_chain_conditions.py)
+set_tests_properties(branch-chain-python-ci-source-conditions PROPERTIES LABELS "source-guard")
 add_test(NAME n6-diagnostic-observations
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-diagnostic-observations.py)
 set_tests_properties(n6-diagnostic-observations PROPERTIES LABELS "source-guard")

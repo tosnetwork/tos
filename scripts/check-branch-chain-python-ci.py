@@ -129,6 +129,13 @@ def main() -> int:
         "C09 Config34 anchored-verifier behavior gate is absent",
     )
     cmake_text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    require(
+        "add_test(NAME branch-chain-python-ci-source-conditions" in cmake_text
+        and "scripts/test_branch_chain_conditions.py)" in cmake_text
+        and 'set_tests_properties(branch-chain-python-ci-source-conditions PROPERTIES LABELS "source-guard")'
+        in cmake_text,
+        "branch condition refusal regression is absent from the source-guard suite",
+    )
     for registration in (
         r"tos_test\(test-proof-verify\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data\)",
         r"add_test\(NAME test-proof-verify-cli-verified\s",
