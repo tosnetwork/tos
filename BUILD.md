@@ -38,14 +38,12 @@ sudo apt install -y \
   gnupg
 ```
 
-Install `clang-21` if it is not already available:
+Install `clang-21` if it is not already available. The installer checks the
+apt.llvm.org signing key committed in this repository instead of running a
+downloaded script:
 
 ```bash
-cd /tmp
-rm -f llvm.sh
-wget -q https://apt.llvm.org/llvm.sh
-chmod +x llvm.sh
-sudo ./llvm.sh 21
+sudo scripts/install-llvm-toolchain.sh 21
 ```
 
 ## C++ Configure

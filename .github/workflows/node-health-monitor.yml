@@ -29,7 +29,7 @@ jobs:
         with:
           fetch-depth: 0
       - run: scripts/install-rust-toolchain.sh
-      - run: python3 -m pip install jsonschema==4.26.0
+      - run: python3 -m pip install --require-hashes -r tools/node-health-monitor/requirements-ci.txt
       - name: Restore Rust dependency cache
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         continue-on-error: true
@@ -71,7 +71,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build autoconf automake libtool pkg-config libgflags-dev libreadline-dev libgsl-dev libjemalloc-dev ccache
           sudo scripts/install-llvm-toolchain.sh 21
-      - run: python3 -m pip install jsonschema==4.26.0
+      - run: python3 -m pip install --require-hashes -r tools/node-health-monitor/requirements-ci.txt
       - name: Restore native compiler cache
         id: native-cache
         uses: ./.github/actions/native-cache

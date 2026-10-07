@@ -151,11 +151,12 @@ jobs:
 
     - name: Prepare the harness environment
       # The harness needs the tostester dependencies; a bare system
-      # python does not have them. tosapi is generated and untracked, so
-      # a fresh checkout has to produce it before anything can import.
+      # python does not have them. They are installed exactly as uv.lock
+      # pins them (tostester is a workspace member). tosapi is generated and
+      # untracked, so a fresh checkout has to produce it before anything can
+      # import.
       run: |
-        uv venv .venv
-        uv pip install --python .venv/bin/python -e test/tostester
+        uv sync --frozen --no-dev
         .venv/bin/python test/tostester/generate_tl.py
 
     - name: Bring up an instrumented local chain
@@ -170,7 +171,7 @@ jobs:
 
     - name: Drive the corpus
       run: |
-        uv run --with requests python scripts/asan-jsonrpc-corpus.py http://127.0.0.1:18545/
+        uv run --frozen --no-dev python scripts/asan-jsonrpc-corpus.py http://127.0.0.1:18545/
 
     - name: Fail on any sanitizer report
       # The corpus itself asserts little on purpose: most of these

@@ -48,6 +48,35 @@ fi
 
 mkdir -p "$EMSCRIPTEN_3PP_DIR"
 
+# Third-party sources are built and executed (configure scripts, make), so each
+# is pinned to a reviewed commit. A fresh clone must be at that commit with no
+# modified tracked file. A directory left by an earlier local build is reused
+# only at the pinned commit, and its build output is not re-verified; run with
+# -f for a clean, verified build.
+clone_pinned() {
+  local url="$1" dir="$2" commit="$3"
+  if [ ! -d "$dir" ]; then
+    git clone --no-checkout "$url" "$dir" || exit 1
+    git -C "$dir" checkout --detach "$commit" || exit 1
+    if [ "$(git -C "$dir" rev-parse HEAD)" != "$commit" ] || ! git -C "$dir" diff --quiet HEAD --; then
+      echo "$dir does not match the pinned commit $commit" >&2
+      exit 1
+    fi
+    return 0
+  fi
+  if [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" != "$commit" ]; then
+    echo "$dir is not at the pinned commit $commit; run with -f to rebuild it" >&2
+    exit 1
+  fi
+  echo "cached $(basename "$dir") build output is reused without re-verifying it; run with -f for a clean verified build" >&2
+  return 1
+}
+
+OPENSSL_COMMIT=c1eeb9406b6142148f267594197d853403d10208 # openssl-3.5.4
+ZLIB_COMMIT=51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf    # v1.3.1
+LZ4_COMMIT=5ff839680134437dbf4678f3d0c7b371d84f4964     # v1.9.4
+SODIUM_COMMIT=940ef42797baa0278df6b7fd9e67c7590f87744b  # 1.0.18-RELEASE
+
 # emsdk is executed below, so it is pinned to a reviewed commit (tag 4.0.17)
 # and refused if the checked-out commit or any tracked file differs.
 EMSDK_COMMIT=dadf06a88d62a20b4f711250b8447409352aa4d7
@@ -77,10 +106,10 @@ export CCACHE_DISABLE=1
 
 cd ..
 
-if [ ! -d "$EMSCRIPTEN_3PP_DIR/openssl_em" ]; then
-  git clone https://github.com/openssl/openssl "$EMSCRIPTEN_3PP_DIR/openssl_em"
+if clone_pinned https://github.com/openssl/openssl "$EMSCRIPTEN_3PP_DIR/openssl_em" "$OPENSSL_COMMIT"; then
   cd "$EMSCRIPTEN_3PP_DIR/openssl_em" || exit
-  emconfigure ./Configure linux-generic32 no-shared no-dso no-unit-test no-tests no-fuzz-afl no-fuzz-libfuzzer enable-quic
+  # AF_ALG is a Linux kernel interface; it has no meaning in wasm.
+  emconfigure ./Configure linux-generic32 no-shared no-dso no-unit-test no-tests no-fuzz-afl no-fuzz-libfuzzer no-afalgeng enable-quic
   sed -i 's/CROSS_COMPILE=.*/CROSS_COMPILE=/g' Makefile
   sed -i 's/-ldl//g' Makefile
   sed -i 's/-O3/-Os/g' Makefile
@@ -94,10 +123,8 @@ else
   echo Using compiled with empscripten openssl at $opensslPath
 fi
 
-if [ ! -d "$EMSCRIPTEN_3PP_DIR/zlib" ]; then
-  git clone https://github.com/madler/zlib.git "$EMSCRIPTEN_3PP_DIR/zlib"
+if clone_pinned https://github.com/madler/zlib.git "$EMSCRIPTEN_3PP_DIR/zlib" "$ZLIB_COMMIT"; then
   cd "$EMSCRIPTEN_3PP_DIR/zlib" || exit
-  git checkout v1.3.1
   ZLIB_DIR=`pwd`
   emconfigure ./configure --static
   emmake make -j$(nproc)
@@ -108,10 +135,8 @@ else
   echo Using compiled zlib with emscripten at $ZLIB_DIR
 fi
 
-if [ ! -d "$EMSCRIPTEN_3PP_DIR/lz4" ]; then
-  git clone https://github.com/lz4/lz4.git "$EMSCRIPTEN_3PP_DIR/lz4"
+if clone_pinned https://github.com/lz4/lz4.git "$EMSCRIPTEN_3PP_DIR/lz4" "$LZ4_COMMIT"; then
   cd "$EMSCRIPTEN_3PP_DIR/lz4" || exit
-  git checkout v1.9.4
   LZ4_DIR=`pwd`
   emmake make -j$(nproc)
   test $? -eq 0 || { echo "Can't compile lz4 with emmake "; exit 1; }
@@ -121,10 +146,8 @@ else
   echo Using compiled lz4 with emscripten at $LZ4_DIR
 fi
 
-if [ ! -d "$EMSCRIPTEN_3PP_DIR/libsodium" ]; then
-  git clone https://github.com/jedisct1/libsodium "$EMSCRIPTEN_3PP_DIR/libsodium"
+if clone_pinned https://github.com/jedisct1/libsodium "$EMSCRIPTEN_3PP_DIR/libsodium" "$SODIUM_COMMIT"; then
   cd "$EMSCRIPTEN_3PP_DIR/libsodium" || exit
-  git checkout 1.0.18-RELEASE
   SODIUM_DIR=`pwd`
   emconfigure ./configure --disable-ssp
   emmake make -j$(nproc)

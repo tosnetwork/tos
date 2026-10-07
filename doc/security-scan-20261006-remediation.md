@@ -214,9 +214,24 @@ written, and the implementation was reviewed until it was accepted.
 - A4, tooling (finding 4):
   - Every workflow installs LLVM through the committed-key installer and uv
     through the pinned archive.
-  - pip packages are pinned, and a test refuses unverified installers and
-    remote pip arguments.
-  - emsdk is pinned to a verified commit.
+  - Python dependencies are resolved from pinned sources: `uv.lock` (with
+    `--frozen`) or a hashed requirements file installed with
+    `--require-hashes`.
+  - A test scans every workflow and composite action and refuses:
+    - a download piped into a shell or an interpreter;
+    - `llvm.sh` and `apt-key`;
+    - pip arguments that are neither a pinned version nor a local path, and
+      custom package indexes;
+    - unpinned `uv run --with`, `uv tool`, `uvx`, `pipx`, `npx` and
+      `cargo install`.
+
+    A file downloaded in one step and run in a later one is not detected
+    generically. Review and the digest verifier remain the control there.
+  - The wasm build pins emsdk and the OpenSSL, zlib, lz4 and libsodium
+    sources to verified commits. OpenSSL moves from master to 3.5.4 LTS. A
+    reused local build directory must be at the pinned commit but its output
+    is not re-verified; `-f` gives a clean, verified build, and CI always
+    builds clean.
   - The verifier also checks a recorded upstream SHA-1.
 - A5, regressions:
   - The Android build no longer aborts on a fresh OpenSSL tree.
@@ -230,8 +245,26 @@ written, and the implementation was reviewed until it was accepted.
   - The resolved directory is re-checked.
   - Configuration and vault directories follow one policy: owned by the user,
     not group- or other-writable. A refusal names the directory and the
-    `chmod go-w` fix.
+    `chmod go-w` fix, including for a group-writable ancestor directory.
   - The Docker examples mount a private directory as the host user.
+  - The e2e harnesses keep tosctl's configuration, vault and index database in
+    a fresh private directory outside the checkout, which is group-writable
+    under umask 002. Evidence stays in the harness work directory. A test run
+    under umask 002 checks this, and it also checks the real writer when a
+    tosctl binary is present.
+- A3, second pass: the send form escapes its prefix, and routing obtains the
+  prefix only from `split_explorer_url`, which applies the path allowlist.
+
+Accepted residuals:
+
+- One IPv6 /64 is one ADNL source. A /56 (256 sources) still sustains about
+  776 packets/s, above one local id's 512/s budget, and a /48 can reach the
+  process budget. This is the accepted multi-source residual: the budgets
+  bound CPU, and no capacity is reserved for known peers.
+- The uv and appimagetool digests come from the same origin as the downloads.
+  They are trust-on-first-use pins, reviewed in this repository.
+- The Android workflow runs only on master/testnet pushes, so pull-request CI
+  does not exercise the Android build fix.
 
 Local verification on the final head:
 
@@ -246,4 +279,4 @@ Local verification on the final head:
 
 Each new guard has a red/green control: removing it fails its test, and
 restoring it passes. That covers 19 controls across native, Rust, JS and
-Python.
+Python, plus 10 more in the second pass.
