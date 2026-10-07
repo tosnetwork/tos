@@ -1,0 +1,22 @@
+{
+  "tests": 1,
+  "controls": [
+    {
+      "guard": "caller-wipe",
+      "exit": 2
+    },
+    {
+      "guard": "atomic-state",
+      "exit": 2
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Actual iOS Simulator full-profile native LMS signing with public full-tree paths and state/cache; live proofs, fee custody and complete wallet acceptance remain required",
+  "ios_commit": "abede0f",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-atomic-fee-sign",
+  "logs": {
+    "caller-wipe.log": "7bdb45db2887e200b28c4f0122663f1803a6ba2a0f2db5c762f33e4669a37906",
+    "atomic-state.log": "884f2ad2e9337287ee8755608eff34ac33c6fa7432c426af61849a8ae5be0e58",
+    "restored.log": "8afb8cef1202ef78c13f88d890c3c6cd9076e1b255325d3e1d6cbc6315dc4ed4"
+  }
+}
