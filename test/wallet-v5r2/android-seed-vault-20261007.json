@@ -1,0 +1,22 @@
+{
+  "tests": 1,
+  "controls": [
+    {
+      "guard": "context",
+      "exit": 1
+    },
+    {
+      "guard": "wipe",
+      "exit": 1
+    }
+  ],
+  "restored_exit": 0,
+  "android_commit": "714f776",
+  "scope": "Actual Android encrypted role seed record, context rejection and real POP signing; not hardware-keystore authentication, encrypted backup, complete wallet lifecycle or independent-device custody acceptance",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-seed-vault",
+  "logs": {
+    "context.log": "77441f11fda6dd370df01e21f9d88d84c843a39feb24bc10bc2c45d15b1154c3",
+    "wipe.log": "a28db9bfc7cd03512b664f74c0cfb30fc50bb0c8cad3e58c02f9194f6938b1b0",
+    "restored.log": "419b3ce2550b807321d23497a0507a1b17bb8da55cee5f2b38615b3d9948df80"
+  }
+}
