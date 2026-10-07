@@ -1,0 +1,25 @@
+{
+  "tests": 4,
+  "controls": [
+    {
+      "field": "wallet-id",
+      "exit": 2,
+      "compiled_runtime_failure": true
+    },
+    {
+      "field": "workchain",
+      "exit": 2,
+      "compiled_runtime_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "iOS public creation metadata export only; not current authority, possession, funded bootstrap or full creation/restore",
+  "component_commit": "63ad26a",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-manifest-export",
+  "logs": {
+    "workchain-verified.log": "6c11ed1ab932b4c8850a72862df765f710acd1a2200b5e2eb13bc0641935fdb5",
+    "wallet-id-verified.log": "2877bd53e19ffa045bd80cf921420dd9a15c14117ba5cdcce8d992ab9b6ef839",
+    "wallet-id.log": "2b9d7398f0b5af058f51938700b9f0f29f7a56fc0e9c0b1594a6a90b4a0181b3",
+    "restored.log": "1df35785438f49bf244524e78c356741ffa3d1511129d3f61ebc9922849fcea5"
+  }
+}

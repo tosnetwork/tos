@@ -1,0 +1,26 @@
+{
+  "device_tests": 1,
+  "roles": [
+    "ML-DSA-44",
+    "SLH-SHA2-128s"
+  ],
+  "controls": [
+    {
+      "guard": "profile",
+      "exit": 1
+    },
+    {
+      "guard": "key-binding",
+      "exit": 1
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Actual Android native derived initial-key binding and encrypted seed persistence; not current chain authority, mnemonic validation, cold-device or full wallet restore acceptance",
+  "component_commit": "ffa6c38",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-derived-restore",
+  "logs": {
+    "key-binding.log": "342f1dee893e613ad6250f2b17f4a43bb192af2d40d79d7d546a6e5aaa19ae29",
+    "profile.log": "a775aacfeacb77db0ef42f991da09edaf136fee25d19cadfeb91acb3d529180a",
+    "restored.log": "ac25389e7a7c34fc30f82e3cdcb904b1ff9c55f8f6677d791cf005a8851d09f7"
+  }
+}
