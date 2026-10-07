@@ -1,0 +1,14 @@
+{
+  "android_commit": "eda5f00",
+  "native_source_commit": "24bcceb58",
+  "scope": "Android JNI native dual-root derivation and caller master wipe only; not encrypted custody or complete creation/restore acceptance",
+  "frozen_derivations": 7,
+  "baseline_tests": 2,
+  "control": "Delete caller master.fill(0): invalidContextStillWipesMaster failed",
+  "restored_tests": 2,
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-kdf",
+  "logs": {
+    "restored.log": "87ed3ecfcabd42f66ed8eb50455ce1a5f5c7f7dd64deb29a5a455162d8cedcf8",
+    "master-wipe.log": "7ecdabf049b8bcf30e12a2f87a48579d2a97d7c320c0c33e7a63305364403025"
+  }
+}
