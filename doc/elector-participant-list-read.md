@@ -224,14 +224,14 @@ value missing.
   consumer's output is unchanged.
 - If the node does not know the query (pre-upgrade engine), fail with an explicit
   "upgrade the node" error; TOS is pre-launch, so no compatibility path is kept.
-- Every operator consumer is moved as listed in §5.5; operator commands never
+- Every operator consumer is moved as listed in §5.4; operator commands never
   silently use the public path, and tests assert the public-RPC call count stays zero
   in each migrated workflow.
 - The hardened public proposal path from #151 stays, explicitly separate, for public
   consumers; it is removed only after every remaining caller is inventoried and
   replaced.
 
-### 5.5 Routing of every consumer
+### 5.4 Routing of every consumer
 
 | Consumer (call site on `main`) | Today | After |
 | --- | --- | --- |
@@ -249,7 +249,7 @@ The zero-public-RPC assertion covers every "After" row except the explorer. The
 explorer is a public service without a control key; it keeps the public path and
 the #151 machinery for proposals.
 
-### 5.4 Out of scope
+### 5.5 Out of scope
 
 - The explorer's public `/staking` endpoint and other public consumers keep the public
   path and its limits (76 participants / 49 proposals), documented; a paginated public
