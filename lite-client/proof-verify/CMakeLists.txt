@@ -17,6 +17,8 @@ endif()
 
 add_library(proof-material-acquisition STATIC acquisition.cpp material.h)
 target_link_libraries(proof-material-acquisition PUBLIC proof-verify-engine)
+target_sources(tos-proof-embedded PRIVATE acquisition-c.cpp acquisition.h)
+target_link_libraries(tos-proof-embedded PRIVATE proof-material-acquisition)
 
 # Desktop acquisition/storage adapters remain outside the embedded engine.
 add_library(proof-verify-core STATIC material.cpp material.h)
@@ -38,6 +40,10 @@ add_test(NAME proof-verify-embedded COMMAND test-proof-verify-embedded
 
 if(NOT CMAKE_CROSSCOMPILING)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME proof-acquisition-c COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/test/pq-native/proof-acquisition-c-test.py
+    $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
+
   add_library(proof-persisted-fsync-shim SHARED ../../test/pq-native/proof-persisted-fsync-shim.cpp)
   target_link_libraries(proof-persisted-fsync-shim PRIVATE ${CMAKE_DL_LIBS})
   if(APPLE)

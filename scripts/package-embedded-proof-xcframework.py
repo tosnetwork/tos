@@ -40,9 +40,9 @@ def main():
             else:
                 subprocess.run(['xcrun', 'lipo', '-create', *map(str, binaries), '-output', str(binary)], check=True)
             subprocess.run(['xcrun', 'install_name_tool', '-id', '@rpath/TOSProofVerify.framework/TOSProofVerify', str(binary)], check=True)
-            for header in ['embedded.h', 'persisted.h']:
+            for header in ['embedded.h', 'persisted.h', 'acquisition.h']:
                 shutil.copy2(root / 'lite-client/proof-verify' / header, framework / 'Headers' / header)
-            (framework / 'Headers/TOSProofVerify.h').write_text('#include "embedded.h"\n#include "persisted.h"\n')
+            (framework / 'Headers/TOSProofVerify.h').write_text('#include "embedded.h"\n#include "persisted.h"\n#include "acquisition.h"\n')
             (framework / 'Modules/module.modulemap').write_text('framework module TOSProofVerify {\n  umbrella header "TOSProofVerify.h"\n  export *\n}\n')
             info = {'CFBundleIdentifier': 'network.tos.proofverify', 'CFBundleExecutable': 'TOSProofVerify',
                     'CFBundleName': 'TOSProofVerify', 'CFBundlePackageType': 'FMWK', 'CFBundleVersion': '1',
