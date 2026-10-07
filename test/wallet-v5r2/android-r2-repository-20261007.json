@@ -1,0 +1,22 @@
+{
+  "app_instrumentation_tests": 1,
+  "controls": [
+    {
+      "guard": "authentication",
+      "exit": 1
+    },
+    {
+      "guard": "duplicate",
+      "exit": 1
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Actual Android emulator wallet repository registration/auth cancellation and derived KeyStore custody; no user UI, current proof, funded POP or complete recovery acceptance",
+  "android_commit": "2d3caed",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-r2-repository",
+  "logs": {
+    "duplicate.log": "5fab40d50f9052a6586b6759cdf8fa2e755e1d44dcdafce550008d13c6d40572",
+    "restored.log": "47d8156d7ae14dc3f066e3f299dbc2a4a99dda026f351de07c7aafb6232d779b",
+    "authentication.log": "a407f358f3c8d2a9b6736bc99af9846adf14fa3d7b0a06fd30230cf088fb9438"
+  }
+}
