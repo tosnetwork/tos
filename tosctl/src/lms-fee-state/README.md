@@ -36,8 +36,10 @@ are bounded at 256 and 1,024 respectively. Contention returns BUSY; a poisoned
 registry returns INTERNAL and must not be treated as a retryable capacity hint.
 Close invalidates handles/tokens while leaving reservations burned on disk.
 
-The C interface exposes verified cache storage/read callbacks, but not signing or
-broadcast. Callbacks must be trusted native cryptographic primitives, never RPC
+The C interface exposes verified cache storage/read callbacks and an atomic
+reservation/sign/verify/cache/export operation, but no broadcast. The atomic
+operation calls the signer only after the reservation is persisted, and exports
+bytes only after verification and immutable cache synchronization. Callbacks must be trusted native cryptographic primitives, never RPC
 verdicts. Storage consumes a same-session token once; failed verification keeps
 the leaf burned. Cache reads reverify before copying bytes to caller output.
 A reservation receipt is not crypto approval. Caller-provided time

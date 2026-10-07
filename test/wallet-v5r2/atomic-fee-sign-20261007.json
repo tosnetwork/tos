@@ -1,0 +1,25 @@
+{
+  "tests": 25,
+  "controls": [
+    {
+      "guard": "verification",
+      "exit": 101,
+      "semantic_failure": true
+    },
+    {
+      "guard": "failure-output",
+      "exit": 101,
+      "semantic_failure": true
+    },
+    {
+      "guard": "reservation-order",
+      "exit": 101,
+      "semantic_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Trusted callback ordering and state persistence only; callback doubles are not LMS crypto, mobile or live chain acceptance",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-atomic-fee-sign-controls",
+  "restored_full_log": "restored-full.log",
+  "source_sha256": "b8a070006ca8c10fcb574815f2be8550882e39241ece8bd08ffc77e8077f6c77"
+}

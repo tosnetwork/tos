@@ -1,5 +1,5 @@
 //! Process-local opaque state handles. Caller buffers must be valid for their
-//! declared lengths. These calls do not authenticate chain observations or sign.
+//! declared lengths. These calls do not authenticate chain observations.
 use crate::lms_fee_journal::{FeeJournal, ReservedLeaf};
 use crate::lms_fee_schedule::FeeRoute;
 use std::{
@@ -18,6 +18,8 @@ const MAX_RESERVATIONS: usize = 1024;
 const SIGNATURE_SIZE: usize = 2832;
 pub type FeeVerify =
     unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, u32, *const u8, *const u8, usize) -> i32;
+pub type FeeSign =
+    unsafe extern "C" fn(*mut std::ffi::c_void, *const u8, u32, *const u8, *mut u8, usize) -> i32;
 
 #[derive(Default)]
 struct Registry {
@@ -172,6 +174,79 @@ pub extern "C" fn tos_fee_state_close(handle: u64) -> i32 {
     })
 }
 
+/// Reserve durably before invoking a trusted native signer. Verify and cache
+/// before export. Failed callbacks never refund a leaf. Chain observations and
+/// enrollment must already be authenticated by the caller.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tos_fee_state_sign_once(
+    handle: u64,
+    time: u32,
+    chain_next: u32,
+    leaf: u32,
+    digest: *const u8,
+    public_key: *const u8,
+    sign: Option<FeeSign>,
+    verify: Option<FeeVerify>,
+    context: *mut std::ffi::c_void,
+    output: *mut u8,
+    size: usize,
+) -> i32 {
+    boundary(|| {
+        if output.is_null() || size != SIGNATURE_SIZE {
+            return Err(INVALID);
+        }
+        unsafe { std::ptr::write_bytes(output, 0, size) };
+        if public_key.is_null() {
+            return Err(INVALID);
+        }
+        let digest = unsafe { array32(digest)? };
+        let sign = sign.ok_or(INVALID)?;
+        let verify = verify.ok_or(INVALID)?;
+        let key = unsafe { std::slice::from_raw_parts(public_key, 60) };
+        let mut r = lock(registry())?;
+        let journal = r.sessions.get_mut(&handle).ok_or(INVALID)?;
+        let signature = journal
+            .sign_once(
+                time,
+                chain_next,
+                leaf,
+                digest,
+                |q, hash| {
+                    let mut signature = vec![0u8; SIGNATURE_SIZE];
+                    anyhow::ensure!(
+                        unsafe {
+                            sign(
+                                context,
+                                key.as_ptr(),
+                                q,
+                                hash.as_ptr(),
+                                signature.as_mut_ptr(),
+                                signature.len(),
+                            )
+                        } == 1,
+                        "native signer refused"
+                    );
+                    Ok(signature)
+                },
+                |q, hash, signature| {
+                    Ok(unsafe {
+                        verify(
+                            context,
+                            key.as_ptr(),
+                            q,
+                            hash.as_ptr(),
+                            signature.as_ptr(),
+                            signature.len(),
+                        )
+                    } == 1)
+                },
+            )
+            .map_err(|_| STATE)?;
+        unsafe { std::ptr::copy_nonoverlapping(signature.as_ptr(), output, size) };
+        Ok(())
+    })
+}
+
 /// Verify with a trusted native primitive, then consume the reservation token
 /// and persist immutable signature bytes. Verification failure burns the token.
 /// Callback returns exactly 1 for valid; it must not unwind or use RPC verdicts.
@@ -271,6 +346,162 @@ mod tests {
     use super::*;
     use std::os::unix::{ffi::OsStrExt, fs::PermissionsExt};
     static FFI_TEST: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn atomic_signing_reserves_before_callback_and_burns_failures() -> anyhow::Result<()> {
+        let _serial = FFI_TEST.lock().expect("isolated registry fixture");
+        struct Context {
+            path: std::path::PathBuf,
+            calls: usize,
+            valid: bool,
+        }
+        unsafe extern "C" fn sign(
+            ctx: *mut std::ffi::c_void,
+            _: *const u8,
+            q: u32,
+            _: *const u8,
+            out: *mut u8,
+            size: usize,
+        ) -> i32 {
+            let ctx = unsafe { &mut *ctx.cast::<Context>() };
+            ctx.calls += 1;
+            let Ok(record) = std::fs::read(ctx.path.join("fee-reservations")) else {
+                return 0;
+            };
+            if record.len() < 184 || record[record.len() - 72..record.len() - 68] != q.to_be_bytes()
+            {
+                return 0;
+            }
+            // Framing-only signer double; not cryptographic acceptance evidence.
+            let output = unsafe { std::slice::from_raw_parts_mut(out, size) };
+            output.fill(0x55);
+            output[..4].copy_from_slice(&0u32.to_be_bytes());
+            output[4..8].copy_from_slice(&q.to_be_bytes());
+            output[8..12].copy_from_slice(&3u32.to_be_bytes());
+            output[2188..2192].copy_from_slice(&8u32.to_be_bytes());
+            1
+        }
+        unsafe extern "C" fn verify(
+            ctx: *mut std::ffi::c_void,
+            _: *const u8,
+            _: u32,
+            _: *const u8,
+            _: *const u8,
+            _: usize,
+        ) -> i32 {
+            i32::from(unsafe { &*ctx.cast::<Context>() }.valid)
+        }
+        let dir = tempfile::tempdir()?;
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))?;
+        let path = dir.path().as_os_str().as_bytes();
+        let route = [1; 32];
+        let digest = [9; 32];
+        let key = [0; 60];
+        let mut handle = 0;
+        assert_eq!(
+            unsafe {
+                tos_fee_state_open(
+                    path.as_ptr(),
+                    path.len(),
+                    42,
+                    route.as_ptr(),
+                    route.as_ptr(),
+                    route.as_ptr(),
+                    100,
+                    100,
+                    &mut handle,
+                )
+            },
+            0
+        );
+        let mut ctx = Context { path: dir.path().to_path_buf(), calls: 0, valid: true };
+        let context = (&mut ctx as *mut Context).cast();
+        let mut output = [0xa5; SIGNATURE_SIZE];
+        assert_eq!(
+            unsafe {
+                tos_fee_state_sign_once(
+                    handle,
+                    3700,
+                    0,
+                    4,
+                    digest.as_ptr(),
+                    key.as_ptr(),
+                    Some(sign),
+                    Some(verify),
+                    context,
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            },
+            0
+        );
+        let signed = output;
+        assert_eq!(ctx.calls, 1);
+        assert_eq!(
+            unsafe {
+                tos_fee_state_sign_once(
+                    handle,
+                    3700,
+                    0,
+                    4,
+                    digest.as_ptr(),
+                    key.as_ptr(),
+                    Some(sign),
+                    Some(verify),
+                    context,
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            },
+            STATE
+        );
+        assert_eq!(ctx.calls, 1);
+        assert_eq!(output, [0; SIGNATURE_SIZE]);
+        ctx.valid = false;
+        assert_eq!(
+            unsafe {
+                tos_fee_state_sign_once(
+                    handle,
+                    3700,
+                    0,
+                    5,
+                    digest.as_ptr(),
+                    key.as_ptr(),
+                    Some(sign),
+                    Some(verify),
+                    context,
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            },
+            STATE
+        );
+        assert_eq!(ctx.calls, 2);
+        assert_eq!(output, [0; SIGNATURE_SIZE]);
+        let mut next = 0;
+        assert_eq!(unsafe { tos_fee_state_preview(handle, 3700, 0, &mut next) }, 0);
+        assert_eq!(next, 6);
+        ctx.valid = true;
+        assert_eq!(
+            unsafe {
+                tos_fee_state_cached_verified(
+                    handle,
+                    4,
+                    digest.as_ptr(),
+                    key.as_ptr(),
+                    Some(verify),
+                    context,
+                    output.as_mut_ptr(),
+                    output.len(),
+                )
+            },
+            0
+        );
+        assert_eq!(output, signed);
+        assert_eq!(ctx.calls, 2);
+        assert_eq!(tos_fee_state_close(handle), 0);
+        Ok(())
+    }
 
     #[test]
     fn cache_tokens_are_single_use_and_export_is_reverified() -> anyhow::Result<()> {
