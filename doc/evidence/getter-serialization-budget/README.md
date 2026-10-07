@@ -26,7 +26,7 @@ Evidence for `doc/elector-participant-list-read.md` §2 and Appendix A.
 `elector-snapshot/` — committed because the state cannot be regenerated once the
 election has moved on. Saved with the lite client, all at the block in
 `elector-block.txt`: `saveaccountcode`, `saveaccountdata` and
-`runmethod <elector> <block> participant_list_extended` (`elector-real-dump.txt`), its `result:` line with trailing whitespace removed).
+`runmethod <elector> <block> participant_list_extended` (`elector-real-dump.txt`, its `result:` line with trailing whitespace removed).
 
 The configuration BOCs are regenerated, not committed. Append
 `export_list_proposals_states.rs` to
