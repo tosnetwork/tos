@@ -26,6 +26,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/check-proof.h"
+#include "block/get-method-context.h"
 #include "block/signature-set.h"
 #include "block/validator-set.h"
 #include "td/actor/MultiPromise.h"
@@ -1412,58 +1413,6 @@ void LiteQuery::finish_getAccountState(td::BufferSlice shard_proof) {
   finish_query(std::move(b));
 }
 
-// same as in lite-client/lite-client-common.cpp
-static td::Ref<vm::Tuple> prepare_vm_c7(tos::UnixTime now, tos::LogicalTime lt, td::Ref<vm::CellSlice> my_addr,
-                                        const block::CurrencyCollection& balance,
-                                        const block::ConfigInfo* config = nullptr, td::Ref<vm::Cell> my_code = {},
-                                        td::RefInt256 due_payment = td::zero_refint()) {
-  td::BitArray<256> rand_seed;
-  td::RefInt256 rand_seed_int{true};
-  td::Random::secure_bytes(rand_seed.as_slice());
-  if (!rand_seed_int.unique_write().import_bits(rand_seed.cbits(), 256, false)) {
-    return {};
-  }
-  std::vector<vm::StackEntry> tuple = {
-      td::make_refint(0x076ef1ea),                         // [ magic:0x076ef1ea
-      td::make_refint(0),                                  //   actions:Integer
-      td::make_refint(0),                                  //   msgs_sent:Integer
-      td::make_refint(now),                                //   unixtime:Integer
-      td::make_refint(lt),                                 //   block_lt:Integer
-      td::make_refint(lt),                                 //   trans_lt:Integer
-      std::move(rand_seed_int),                            //   rand_seed:Integer
-      balance.as_vm_tuple(),                               //   balance_remaining:[Integer (Maybe Cell)]
-      my_addr,                                             //   myself:MsgAddressInt
-      config ? config->get_root_cell() : vm::StackEntry()  //   global_config:(Maybe Cell) ] = SmartContractInfo;
-  };
-  if (config && config->get_global_version() >= 4) {
-    tuple.push_back(vm::StackEntry::maybe(my_code));                   // code:Cell
-    tuple.push_back(block::CurrencyCollection::zero().as_vm_tuple());  // in_msg_value:[Integer (Maybe Cell)]
-    tuple.push_back(td::zero_refint());                                // storage_fees:Integer
-
-    // [ wc:Integer shard:Integer seqno:Integer root_hash:Integer file_hash:Integer] = BlockId;
-    // [ last_mc_blocks:[BlockId...]
-    //   prev_key_block:BlockId ] : PrevBlocksInfo
-    auto info = config->get_prev_blocks_info();
-    tuple.push_back(info.is_ok() ? info.move_as_ok() : vm::StackEntry());
-  }
-  if (config && config->get_global_version() >= 6) {
-    tuple.push_back(vm::StackEntry::maybe(config->get_unpacked_config_tuple(now)));  // unpacked_config_tuple:[...]
-    tuple.push_back(due_payment);                                                    // due_payment:Integer
-    // precompiled_gas_usage:(Maybe Integer)
-    td::optional<block::PrecompiledContractsConfig::Contract> precompiled;
-    if (my_code.not_null()) {
-      precompiled = config->get_precompiled_contracts_config().get_contract(my_code->get_hash().bits());
-    }
-    tuple.push_back(precompiled ? td::make_refint(precompiled.value().gas_usage) : vm::StackEntry());
-  }
-  if (config && config->get_global_version() >= 11) {
-    tuple.push_back(block::transaction::Transaction::prepare_in_msg_params_tuple(nullptr, {}, {}));
-  }
-  auto tuple_ref = td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple));
-  LOG(DEBUG) << "SmartContractInfo initialized with " << vm::StackEntry(tuple_ref).to_string();
-  return vm::make_tuple_ref(std::move(tuple_ref));
-}
-
 void LiteQuery::finish_runSmcMethod(td::BufferSlice shard_proof, td::BufferSlice state_proof, Ref<vm::Cell> acc_root,
                                     UnixTime gen_utime, LogicalTime gen_lt) {
   LOG(DEBUG) << "completing runSmcMethod() query";
@@ -1526,13 +1475,7 @@ void LiteQuery::finish_runSmcMethod(td::BufferSlice shard_proof, td::BufferSlice
     return;
   }
   auto config = r_config.move_as_ok();
-  std::vector<td::Ref<vm::Cell>> libraries;
-  if (config->get_libraries_root().not_null()) {
-    libraries.push_back(config->get_libraries_root());
-  }
-  if (acc_libs.not_null() && config->get_global_version() < 15) {
-    libraries.push_back(acc_libs);
-  }
+  auto libraries = block::get_method_libraries(*config, acc_libs);
   vm::GasLimits gas{gas_limit, gas_limit};
   vm::VmState vm{code,
                  config->get_global_version(),
@@ -1542,8 +1485,10 @@ void LiteQuery::finish_runSmcMethod(td::BufferSlice shard_proof, td::BufferSlice
                  std::move(data),
                  vm::VmLog::Null(),
                  std::move(libraries)};
-  auto c7 = prepare_vm_c7(gen_utime, gen_lt, td::make_ref<vm::CellSlice>(acc.addr->clone()), balance, config.get(),
-                          std::move(code), due_payment);
+  td::BitArray<256> rand_seed;
+  td::Random::secure_bytes(rand_seed.as_slice());
+  auto c7 = block::prepare_get_method_c7(gen_utime, gen_lt, td::make_ref<vm::CellSlice>(acc.addr->clone()), balance,
+                                         config.get(), std::move(code), due_payment, rand_seed);
   vm.set_c7(c7);  // tuple with SmartContractInfo
   // vm.incr_stack_trace(1);    // enable stack dump after each step
   LOG(DEBUG) << "starting VM to run GET-method of smart contract " << acc_workchain_ << ":" << acc_addr_.to_hex();
@@ -1560,7 +1505,9 @@ void LiteQuery::finish_runSmcMethod(td::BufferSlice shard_proof, td::BufferSlice
   if (mode & 8) {
     // serialize c7
     if (!(mode & 32)) {
-      c7 = prepare_vm_c7(gen_utime, gen_lt, td::make_ref<vm::CellSlice>(acc.addr->clone()), balance);
+      td::Random::secure_bytes(rand_seed.as_slice());
+      c7 = block::prepare_get_method_c7(gen_utime, gen_lt, td::make_ref<vm::CellSlice>(acc.addr->clone()), balance,
+                                        nullptr, {}, td::zero_refint(), rand_seed);
     }
     vm::CellBuilder cb;
     if (!(vm::StackEntry{std::move(c7)}.serialize(cb) && cb.finalize_to(cell))) {

@@ -68,7 +68,7 @@ jobs:
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim \
-            test-n5-manager-db-fixture test-consensus \
+            test-n5-manager-db-fixture test-consensus test-get-method-context \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
@@ -79,6 +79,9 @@ jobs:
 
       # These security regressions previously ran only after merging to main.
       # Check registration too: ctest must not silently pass a reduced set.
+      - name: Verify the extracted getter context against its independent oracle
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^getter-context-(context|vm|libraries|liteserver)$'
+
       - name: Run the network and wallet-index security regressions
         run: |
           ctest --test-dir build --show-only=json-v1 -L security-findings > security-tests.json

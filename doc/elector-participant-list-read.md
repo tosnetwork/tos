@@ -1,6 +1,6 @@
 # Reading election participants and proposals for operator automation
 
-- Opened: 2026-10-07. Status: **design for review — no code written.** Revision 2:
+- Opened: 2026-10-07. Status: **design approved; implementation in progress.** Revision 2:
   the owner redirected the design from "harden the public RPC path" to "operator
   automation uses the node's authenticated control channel, not the public RPC".
   Revision 3: amendments from the design pre-review (off-actor execution with
@@ -241,6 +241,16 @@ value missing.
   one query use one coherent applied snapshot, and the answer names that block.
 
 ### 5.2 Node implementation (`validator-engine/`)
+
+The shared context foundation is `crypto/block/get-method-context.{h,cpp}`.
+The lite server calls it for both execution c7 and exported c7, and uses its library
+lookup policy. The caller supplies the random seed; the lite server retains its
+secure-random policy. VM flags, signature checks and gas limits remain unchanged.
+`test/validator/getter-context-reference.h` retains the original construction as
+an independent oracle; parity covers every c7 field and actual library resolution.
+`getter-context-liteserver` runs the real lite-server handler on a fixture state and
+compares exit codes and full result BOCs with the pre-extraction capture. Gas parity
+is checked by executing the original VM path because the wire reply has no gas field.
 
 - **Authorization first**: `vep_default` (read-only), checked before any state lookup,
   admission or allocation; unauthorized and insufficient-permission callers are tested.

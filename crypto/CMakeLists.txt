@@ -208,6 +208,8 @@ set(BLOCK_SOURCE
   block/block-parse.cpp
   block/check-proof.cpp
   block/mc-config.cpp
+  block/get-method-context.cpp
+  block/get-method-context.h
   block/output-queue-merger.cpp
   block/transaction.cpp
   block/account-storage-stat.h

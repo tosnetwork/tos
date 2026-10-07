@@ -22,6 +22,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-c04-real-state-proof",
     "tos-proof-verify",
     "test-proof-verify",
+    "test-get-method-context",
     "proof-verify-fs-shim",
     "test-n5-manager-db-fixture",
     "test-consensus",
@@ -99,6 +100,11 @@ def main() -> int:
         re.search(rf"(?m)^\s*run: {re.escape(verifier_ctest)}\s*$", text) is not None,
         "anchored proof verifier behavior gate is absent",
     )
+    require(
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^getter-context-(context|vm|libraries|liteserver)$'" in text,
+        "getter-context independent parity gate is absent",
+    )
     c09_pytest = (
         "uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py "
         "test/pq-native/test_x02_stage_a_capture.py"
@@ -109,6 +115,11 @@ def main() -> int:
         "C09 Config34 anchored-verifier behavior gate is absent",
     )
     cmake_text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    require(
+        "foreach(context_case context vm libraries liteserver)" in cmake_text
+        and "FIXTURES_REQUIRED getter-context-state" in cmake_text,
+        "getter-context CTest registrations or fixture dependency are absent",
+    )
     for registration in (
         r"tos_test\(test-proof-verify\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data\)",
         r"add_test\(NAME test-proof-verify-cli-verified\s",
