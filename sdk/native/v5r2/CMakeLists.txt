@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(tos_v5r2_native LANGUAGES C)
+project(tos_v5r2_native LANGUAGES C CXX)
 get_filename_component(TOS_SOURCE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 set(ML "${TOS_SOURCE_ROOT}/third-party/mldsa-native/mldsa")
 set(SLH "${TOS_SOURCE_ROOT}/third-party/slhdsa-c")
@@ -13,7 +13,18 @@ set_target_properties(tos_v5r2_native PROPERTIES C_STANDARD 99 POSITION_INDEPEND
 target_include_directories(tos_v5r2_native PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${ML}" "${SLH}")
 target_compile_definitions(tos_v5r2_native PRIVATE MLD_CONFIG_FILE="mldsa-config.h" TOS_V5R2_ML_PREFIX=tos_v5r2_mldsa44)
 target_link_libraries(tos_v5r2_native PUBLIC tos_v5r2_backends)
+add_library(tos_v5r2_fee_verify STATIC
+  "${TOS_SOURCE_ROOT}/crypto/pq/lms-fee.cpp"
+  "${TOS_SOURCE_ROOT}/crypto/pq/wallet-lms-fee-c.cpp")
+set_target_properties(tos_v5r2_fee_verify PROPERTIES CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED YES POSITION_INDEPENDENT_CODE YES)
+target_compile_definitions(tos_v5r2_fee_verify PRIVATE TOS_LMS_PORTABLE_SHA256=1)
+target_include_directories(tos_v5r2_fee_verify PRIVATE "${SLH}")
+target_link_libraries(tos_v5r2_fee_verify PUBLIC tos_v5r2_backends)
 enable_testing()
+add_executable(test-v5r2-mobile-lms "${TOS_SOURCE_ROOT}/test/wallet-v5r2/mobile-lms-verify-test.c")
+target_link_libraries(test-v5r2-mobile-lms PRIVATE tos_v5r2_fee_verify)
+add_test(NAME v5r2-mobile-lms COMMAND test-v5r2-mobile-lms)
 add_executable(test-v5r2-mobile-native "${TOS_SOURCE_ROOT}/test/wallet-v5r2/mobile-native-test.c")
 target_link_libraries(test-v5r2-mobile-native PRIVATE tos_v5r2_native)
 target_include_directories(test-v5r2-mobile-native PRIVATE "${ML}" "${SLH}")

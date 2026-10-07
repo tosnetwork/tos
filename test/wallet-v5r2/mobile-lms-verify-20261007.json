@@ -1,0 +1,18 @@
+{
+  "scope": "Host portable SHA backend and public H20/W4 native-signer vector; not mobile device or full cache integration acceptance",
+  "controls": [
+    {
+      "guard": "leaf",
+      "compiled": true,
+      "semantic_failure": true
+    },
+    {
+      "guard": "crypto",
+      "compiled": true,
+      "semantic_failure": true
+    }
+  ],
+  "restored_pass": true,
+  "build_policy": "clean-first for every control and restore; initial incremental receipts excluded due stale binary",
+  "artifacts": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-portable-lms"
+}

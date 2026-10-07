@@ -1,13 +1,26 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #include <array>
 #include <cstring>
+#ifdef TOS_LMS_PORTABLE_SHA256
+extern "C" {
+#include "sha2_api.h"
+}
+#else
 #include <openssl/sha.h>
+#endif
 #include <string>
 
 #include "lms-fee.h"
 
 namespace tos::pq {
 namespace {
+void hash256(const unsigned char* data, std::size_t size, unsigned char* output) {
+#ifdef TOS_LMS_PORTABLE_SHA256
+  sha2_256(output, data, size);
+#else
+  SHA256(data, size, output);
+#endif
+}
 constexpr std::size_t n = 32;
 constexpr std::uint16_t d_pblc = 0x8080, d_mesg = 0x8181, d_leaf = 0x8282, d_intr = 0x8383;
 
@@ -49,7 +62,7 @@ void put16(std::string& s, std::uint16_t v) {
 
 std::array<unsigned char, n> sha256(const std::string& data) {
   std::array<unsigned char, n> out{};
-  SHA256(reinterpret_cast<const unsigned char*>(data.data()), data.size(), out.data());
+  hash256(reinterpret_cast<const unsigned char*>(data.data()), data.size(), out.data());
   return out;
 }
 
@@ -146,7 +159,7 @@ VerifyResult verify_lms_fee(std::string_view message, std::string_view signature
       for (unsigned j = coef(qc.data(), i, ots.w); j < maxv; j++) {
         chain_input[22] = static_cast<unsigned char>(j);
         std::memcpy(chain_input.data() + 23, tmp.data(), n);
-        SHA256(chain_input.data(), chain_input.size(), tmp.data());
+        hash256(chain_input.data(), chain_input.size(), tmp.data());
       }
       kin.append(reinterpret_cast<const char*>(tmp.data()), n);
     }
