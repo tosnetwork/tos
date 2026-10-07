@@ -9,6 +9,7 @@ It does not validate the full daemon or a malicious consensus block.
 
 import argparse
 import json
+import re
 import shlex
 import subprocess
 import tempfile
@@ -49,8 +50,13 @@ def run(build: Path, test_filter: str | None = None):
         output = str(Path(tmp) / "test-security-boundaries")
         args[args.index("-o") + 1] = output
         subprocess.run(args, cwd=build, check=True)
-        test_args = [output] + (["-f", test_filter] if test_filter else [])
-        subprocess.run(test_args, cwd=build, check=True)
+        test_args = [output] + (["--filter", test_filter] if test_filter else [])
+        result = subprocess.run(test_args, cwd=build, capture_output=True, text=True)
+        print(result.stdout, end="")
+        print(result.stderr, end="")
+        result.check_returncode()
+        if not re.search(r"\b[1-9][0-9]* test\(s\) passed", result.stderr + result.stdout):
+            raise RuntimeError("native filter executed no tests")
 
 
 if __name__ == "__main__":

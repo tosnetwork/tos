@@ -69,3 +69,34 @@ These controls do not establish the explicitly pending integration boundaries in
 - ADNL budgets bound admission and memory; they do not establish availability under a full network flood. Tool pins authenticate the cited downloaded tools, not every release dependency or reproducible container build.
 
 The PR stays draft for final-head Linux checks and the remaining integration/activation boundaries. Required branch checks remain hard gates; no merge or deployment is requested here.
+
+## CI follow-up to f6e1de245
+
+The first full run found integration omissions that the narrower local checks
+had not exercised. They are fixed without relaxing the security controls:
+
+- The online multisig caller now reads the proof-checked ConfigParam 19 and
+  supplies its signed network identity. Its translation unit failed to compile
+  before the fix and compiles after it. No live funded online test was run.
+- The service auth fixture creates its file-vault directory with mode 0700.
+  Its 12 failures reproduce locally before the fixture correction; afterward
+  all 16 user-store tests pass, and the service library passes 274 tests with
+  two existing ignored tests (local loopback networking enabled).
+- HTTP/1.1 JSON-RPC response factories permit persistence. The inbound actor
+  still clamps client-requested closure, early-answer closure and explicit
+  response closure; neither close enforcement nor framing validation is
+  removed. Persistent connection-cap and pipelined-output test callbacks now
+  declare their intended connection policy. The slow-reader test queues 1 MiB
+  so kernel buffering cannot flush its entire sample before the deadline.
+  All three targeted socket tests execute and pass on macOS. The complete
+  Linux network-safety/ASAN suite remains a CI gate; the full macOS socket run
+  also encountered a separate header-admission timing assumption.
+- Temporary AUTH mutation workspaces include the wallet's strong-key library.
+  All three nonce mutants now compile and reach their expected failing runtime
+  assertion, with the restored source passing.
+- The local native runner uses the test driver's actual `--filter` flag and
+  refuses a successful process that ran zero tests. The HTTP framing filter
+  executes one test and passes.
+
+Full strict-build, service, AUTH mutation and network-safety jobs must be
+rechecked at the new head; an older successful job is not clearance for it.

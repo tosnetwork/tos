@@ -56,9 +56,9 @@ class OkCallback : public tos::http::HttpServer::Callback {
           promise) override {
     // Refuse tunnels the way a non-proxy API server does.
     int status = request->method() == "CONNECT" ? 405 : 200;
-    auto response =
-        tos::http::HttpResponse::create("HTTP/1.1", status, status == 200 ? "OK" : "Method Not Allowed", false, false)
-            .move_as_ok();
+    auto response = tos::http::HttpResponse::create("HTTP/1.1", status, status == 200 ? "OK" : "Method Not Allowed",
+                                                    false, request->keep_alive())
+                        .move_as_ok();
     response->add_header({"Content-Type", "text/plain"});
     response->add_header({"Transfer-Encoding", "Chunked"});
     response->complete_parse_header();
@@ -798,7 +798,7 @@ class SmallReplyCallback final : public tos::http::HttpServer::Callback {
       td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise)
       override {
     ++observation_->calls;
-    auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+    auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
     response->add_header({"Transfer-Encoding", "Chunked"});
     response->complete_parse_header();
     auto payload = response->create_empty_payload().move_as_ok();
@@ -910,10 +910,12 @@ TEST(HttpServerLimits, replies_queued_behind_unread_output_do_not_extend_its_dea
 TEST(HttpServerLimits, a_trickle_reader_does_not_renew_the_response_deadline) {
   const double timeout = 0.5;
   with_pipelined_inbound(timeout, [timeout](int fd, PipelineObservation &observation) {
-    // Eight replies requested at once: 128 KB the client then reads 64
-    // bytes every 10 ms.
+    // Queue enough replies to exceed kernel buffering on either platform;
+    // the client reads only 64 bytes every 10 ms. An already-flushed reply
+    // cannot exercise the response writing deadline.
+    constexpr int reply_count = 64;
     std::string requests;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < reply_count; i++) {
       requests += "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
     }
     double start = td::Time::now();
@@ -930,7 +932,7 @@ TEST(HttpServerLimits, a_trickle_reader_does_not_renew_the_response_deadline) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     ASSERT_TRUE(received > 0);
-    ASSERT_TRUE(received < 8 * (16u << 10));
+    ASSERT_TRUE(received < reply_count * (16u << 10));
     ASSERT_TRUE(observation.closed);
     ASSERT_TRUE(observation.closed_at.load() - start < timeout + 0.5);
   });

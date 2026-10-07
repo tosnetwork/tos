@@ -283,7 +283,7 @@ mod tests {
     };
     use std::collections::HashMap;
 
-    /// A test-only RuntimeConfig backed by an in-memory vault.
+    /// A test-only RuntimeConfig backed by a private temporary file vault.
     struct TestRuntimeConfig {
         config: std::sync::RwLock<Arc<AppConfig>>,
         vault: Arc<SecretVault>,
@@ -310,7 +310,13 @@ mod tests {
     async fn create_test_vault() -> SecretVault {
         let master_key = create_test_master_key().await;
 
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let mut temp_builder = tempfile::Builder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            temp_builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let temp_dir = temp_builder.tempdir().unwrap();
         let file_path = temp_dir.path().join("secrets.json");
         std::mem::forget(temp_dir); // Leak the temp_dir to keep it alive
         let storage = Arc::new(
