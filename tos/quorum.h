@@ -36,7 +36,8 @@ namespace tos {
 //
 // Enforced at validator-set load (see crypto/block/mc-config.cpp). Once
 // enforced there, the helpers below are safe to use on uint64 inputs;
-// they additionally widen to 128-bit as defence in depth.
+// they additionally widen to 128-bit where available, or use the exact
+// quotient/remainder decomposition on 32-bit targets.
 inline constexpr ValidatorWeight kMaxTotalValidatorWeight = UINT64_MAX / 3;
 
 // Returns true iff signed_weight is at least 2/3 of total_weight (≥, not
@@ -51,16 +52,25 @@ inline constexpr ValidatorWeight kMaxTotalValidatorWeight = UINT64_MAX / 3;
 // the form "f < N/3 byzantine ⇒ safe" are equally valid against the ≥
 // threshold for the N=3k cases.
 //
-// Computed in 128-bit so the result is correct even if a future loader
-// change ever lets total_weight exceed kMaxTotalValidatorWeight.
+// Correct for full-width inputs even beyond the protocol cap: use 128-bit
+// products where available and an exact uint64 decomposition elsewhere.
+// Exact ceil(2t/3) without a wide integer. Both terms fit uint64 for every t.
+inline constexpr ValidatorWeight quorum_threshold_portable(ValidatorWeight total_weight) noexcept {
+  return (total_weight / 3) * 2 + ((total_weight % 3) * 2 + 2) / 3;
+}
+
 inline bool has_quorum(ValidatorWeight signed_weight, ValidatorWeight total_weight) noexcept {
+#if defined(__SIZEOF_INT128__) && !defined(TOS_QUORUM_FORCE_PORTABLE)
   __uint128_t lhs = static_cast<__uint128_t>(signed_weight) * 3;
   __uint128_t rhs = static_cast<__uint128_t>(total_weight) * 2;
   return lhs >= rhs;
+#else
+  return signed_weight >= quorum_threshold_portable(total_weight);
+#endif
 }
 
 // Returns ceil(total_weight * 2 / 3): the smallest weight that passes
-// has_quorum() above. Computed in 128-bit; throws if the 64-bit cap is
+// has_quorum() above. Uses 128-bit products where available; throws if the 64-bit cap is
 // somehow exceeded (should be impossible while the loader enforces
 // kMaxTotalValidatorWeight).
 //
@@ -68,6 +78,7 @@ inline bool has_quorum(ValidatorWeight signed_weight, ValidatorWeight total_weig
 //   N=2 → 2,  N=3 → 2,  N=4 → 3,  N=5 → 4,
 //   N=6 → 4,  N=7 → 5,  N=9 → 6,  N=10 → 7
 inline ValidatorWeight quorum_threshold(ValidatorWeight total_weight) {
+#if defined(__SIZEOF_INT128__) && !defined(TOS_QUORUM_FORCE_PORTABLE)
   __uint128_t t = static_cast<__uint128_t>(total_weight);
   // ceil(2t/3) = (2t + 2) / 3 (integer division)
   __uint128_t q = (t * 2 + 2) / 3;
@@ -75,6 +86,9 @@ inline ValidatorWeight quorum_threshold(ValidatorWeight total_weight) {
     throw std::overflow_error("validator quorum threshold overflow");
   }
   return static_cast<ValidatorWeight>(q);
+#else
+  return quorum_threshold_portable(total_weight);
+#endif
 }
 
 // Audit #8 (2026-04-26): defence-in-depth helper for any path that

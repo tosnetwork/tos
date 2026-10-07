@@ -1099,7 +1099,7 @@ namespace {
 // scratch buffer of size `chunk_bytes_`, regardless of direction.
 class StreamingFileReader {
  public:
-  StreamingFileReader(td::FileFd& file, td::uint64 file_size, td::uint64 chunk_bytes, StreamingBocImportStats* stats)
+  StreamingFileReader(td::FileFd& file, td::uint64 file_size, std::size_t chunk_bytes, StreamingBocImportStats* stats)
       : file_(&file), file_size_(file_size), chunk_bytes_(chunk_bytes), stats_(stats) {
   }
 
@@ -1231,7 +1231,7 @@ class StreamingFileReader {
 
   td::FileFd* file_;
   td::uint64 file_size_;
-  td::uint64 chunk_bytes_;
+  std::size_t chunk_bytes_;
   StreamingBocImportStats* stats_;
   td::BufferSlice scratch_;
   td::uint64 cache_offset_{0};
@@ -1355,7 +1355,7 @@ td::Result<td::Ref<Cell>> std_boc_deserialize_from_file_bounded_impl(td::FileFd&
   // chunk size is intentionally larger than the per-cell ceiling
   // (~64 KiB after data + refs + hash bytes) so a typical cell is
   // satisfied from the cached chunk without an extra pread.
-  constexpr td::uint64 kStreamingChunkBytes = 4ULL << 20;
+  constexpr std::size_t kStreamingChunkBytes = 4u << 20;
   StreamingFileReader reader(file, size, kStreamingChunkBytes, opts.stats);
 
   // Layer 2: read the BoC header. The header is a small fixed prefix

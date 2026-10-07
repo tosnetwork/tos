@@ -697,6 +697,10 @@ add_executable(test-quic-sender test/net/test-quic-sender.cpp)
 target_link_libraries(test-quic-sender adnl dht tl_api quic)
 add_executable(test-quorum test/test-quorum.cpp)
 target_link_libraries(test-quorum tos_block tdutils)
+add_executable(test-quorum-portable test/test-quorum.cpp)
+target_compile_definitions(test-quorum-portable PRIVATE TOS_QUORUM_FORCE_PORTABLE=1)
+target_link_libraries(test-quorum-portable tos_block tdutils)
+add_test(NAME test-quorum-portable COMMAND test-quorum-portable)
 add_test(
   NAME test-quorum-static-grep
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-quorum-static.sh
@@ -1896,6 +1900,7 @@ set_tests_properties(
   test-rldp2-decoder-heap
   PROPERTIES LABELS "security-findings")
 tos_test(test-quorum)
+add_dependencies(all-tests test-quorum-portable)
 tos_test(test-emulator)
 
 tos_test(test-fec)
