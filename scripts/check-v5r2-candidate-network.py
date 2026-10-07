@@ -167,7 +167,7 @@ def main():
             report = {
                 "scope": "Disposable candidate boot/config readback only, no wallet signature or lifecycle acceptance",
                 "source": subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"], cwd=root, text=True
+                    ["git", "-c", f"safe.directory={root}", "rev-parse", "HEAD"], cwd=root, text=True
                 ).strip(),
                 "config_hashes": {str(k): v.hash.hex() for k, v in cells.items()},
                 "gas": gas,
