@@ -917,6 +917,32 @@ fn only_an_oversized_success_makes_the_answer_too_large() {
     }
 }
 
+/// A non-success status is reported under its fixed category, from the status
+/// alone, whatever its body says; the body is not read as an answer.
+#[test]
+fn an_http_error_is_reported_by_its_status_category() {
+    let runtime = runtime();
+    let answer_body = list_answer(1, 0);
+    for (case, reply, category) in [
+        ("503 with an error envelope", small_error(503), "http_server_error"),
+        ("500 with a valid answer", Reply::raw(500, answer_body.clone()), "http_server_error"),
+        ("429", small_error(429), "rate_limit"),
+        ("404 with a valid answer", Reply::raw(404, answer_body.clone()), "http_client_error"),
+        ("302", Reply::raw(302, answer_body.clone()), "http_non_success"),
+    ] {
+        runtime.block_on(async {
+            let node = endpoint(reply).await;
+            let error =
+                read_over(&[&node]).await.err().unwrap_or_else(|| panic!("{case} was accepted"));
+            assert!(
+                format!("{error:#}").contains(&format!("rpc_error_category={category}")),
+                "{case}: {error:#}"
+            );
+            assert_eq!(account_reads(&[&node]), 0, "{case}");
+        });
+    }
+}
+
 /// An answer whose result is read at `seqno` instead of the checkpoint.
 fn at_block(answer: &str, seqno: u32) -> String {
     let changed = answer.replace(&format!("\"seqno\":{SEQNO}"), &format!("\"seqno\":{seqno}"));
