@@ -1,9 +1,14 @@
 # Shared proof verification core and its installed command-line front end.
-add_library(proof-verify-core STATIC proof-verify.cpp proof-verify.h embedded.cpp embedded.h material.cpp material.h)
-target_include_directories(proof-verify-core PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+# The engine accepts borrowed in-memory material and has no transport/file API.
+add_library(proof-verify-engine STATIC proof-verify.cpp proof-verify.h embedded.cpp embedded.h)
+target_include_directories(proof-verify-engine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}>)
-target_link_libraries(proof-verify-core PUBLIC lite-client-common tos_block smc-envelope tl_api tl_lite_api
-  tl-lite-utils tdactor tdutils)
+target_link_libraries(proof-verify-engine PUBLIC lite-client-proof-common tos_block smc-envelope tl_api tl_lite_api
+  tl-lite-utils tdutils)
+
+# Desktop acquisition/storage adapters remain outside the embedded engine.
+add_library(proof-verify-core STATIC material.cpp material.h)
+target_link_libraries(proof-verify-core PUBLIC proof-verify-engine lite-client-common tdactor)
 
 add_executable(tos-proof-verify main.cpp)
 target_link_libraries(tos-proof-verify PRIVATE proof-verify-core)
