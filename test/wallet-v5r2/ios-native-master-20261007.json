@@ -1,0 +1,23 @@
+{
+  "tests": 2,
+  "frozen_vectors": 2,
+  "controls": [
+    {
+      "guard": "salt",
+      "exit": 2
+    },
+    {
+      "guard": "password-wipe",
+      "exit": 2
+    }
+  ],
+  "restored_exit": 0,
+  "ios_commit": "9742fe5",
+  "scope": "iOS Simulator native mnemonic master mapping and password clearing; not full creation/restore/custody acceptance",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-native-master",
+  "logs": {
+    "password-wipe.log": "52b320c9814fd5b1c03113a9ff7497de85233e28f04130fd98ba3d20b004eb28",
+    "restored.log": "ced3093ac45fcbc0e89af387052e1e19b31743d714b3fe3814ea29e8a3102cdc",
+    "salt.log": "7403d69e42e525331766ae71ad273459f81940c8f0490019ada68e0f1b8d4f9f"
+  }
+}
