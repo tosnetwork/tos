@@ -62,14 +62,15 @@ td::Result<std::string> reflected_request_id(const td::JsonValue &id);
 td::Result<td::Ref<vm::Stack>> parse_get_method_result_stack(td::Slice result_boc);
 
 // The liteserver's answer for a get-method whose result was requested (mode 4)
-// leaves the result empty only for an inactive account (absent, uninitialized
-// or frozen), which it reports with this exit code.
+// leaves the result empty only when the account is unavailable -- absent,
+// uninitialized, frozen, or not unpackable -- and reports that with this exit
+// code.
 inline constexpr td::int32 kInactiveAccountExitCode = -0x100;
 
 // Resolves the result stack of a liteServer.runMethodResult requested with
-// mode 4. An empty result is an empty stack only for an inactive account; for
-// any other exit code it is an error, and a result that does not parse is an
-// error too, never an empty stack.
+// mode 4. An empty result is an empty stack only for an unavailable account;
+// for any other exit code it is an error, and a result that does not parse is
+// an error too, never an empty stack.
 td::Result<td::Ref<vm::Stack>> resolve_run_method_result_stack(td::int32 exit_code, td::Slice result_boc);
 
 // Walks the `(Hashmap 8 PublicKey)` returned by a multisig's get_public_keys

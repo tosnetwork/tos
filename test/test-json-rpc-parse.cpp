@@ -118,7 +118,9 @@ TEST(JsonRpcParse, result_stack_rejects_slice_over_exotic_cell) {
 }
 
 TEST(JsonRpcParse, run_method_inactive_account_resolves_to_an_empty_stack) {
-  auto resolved = tos::resolve_run_method_result_stack(tos::kInactiveAccountExitCode, td::Slice());
+  // The liteserver's own value, pinned independently of the production constant.
+  ASSERT_EQ(-256, tos::kInactiveAccountExitCode);
+  auto resolved = tos::resolve_run_method_result_stack(-256, td::Slice());
   ASSERT_TRUE(resolved.is_ok());
   ASSERT_EQ(0, resolved.ok()->depth());
 }
@@ -169,7 +171,7 @@ TEST(JsonRpcParse, run_method_unparsable_result_keeps_the_parser_error) {
 
 TEST(JsonRpcParse, run_method_inactive_exit_code_does_not_excuse_unparsable_bytes) {
   auto resolved =
-      tos::resolve_run_method_result_stack(tos::kInactiveAccountExitCode, td::Slice("\xff\xff\xff\xff\x00\x01"));
+      tos::resolve_run_method_result_stack(-256, td::Slice("\xff\xff\xff\xff\x00\x01"));
   ASSERT_TRUE(resolved.is_error());
 }
 
