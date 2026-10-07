@@ -260,7 +260,7 @@ jobs:
         run: |
           sh test/rescue-fee-gate/tools/build.sh build-signers
           signing_time=$(date +%s)
-          uv run --with cryptography python test/wallet-quantum/test_fee_delivery.py \
+          uv run --with cryptography==46.0.4 python test/wallet-quantum/test_fee_delivery.py \
             --chain-config build/quantum-candidate-ci/candidate-config.boc \
             --transaction-time "$signing_time" --export-network-input --output build/quantum-payment-input
           uv run python scripts/test_quantum_transaction_chain.py --input build/quantum-payment-input
