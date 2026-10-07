@@ -309,7 +309,9 @@ td::Result<vm::StackEntry> parse_stack_entry(const td::JsonValue& value, std::si
 }
 
 td::Result<std::string> render_cell_boc(const td::Ref<vm::Cell>& cell) {
-  TRY_RESULT(raw, vm::std_boc_serialize(cell, 31));
+  // SDK output uses CRC-only BOCs, without optional cached cell hashes/depths.
+  // Proof material retains its original wire bytes; cell identity is unchanged.
+  TRY_RESULT(raw, vm::std_boc_serialize(cell, 2));
   return td::base64_encode(raw.as_slice());
 }
 
@@ -510,7 +512,7 @@ td::Result<std::vector<ProvenParam>> verify_params(const tos::BlockIdExt& target
     if (cell.is_null()) {
       return td::Status::Error(PSLICE() << "ConfigParam " << index << " is absent from the proven configuration");
     }
-    auto boc = vm::std_boc_serialize(cell, 31);
+    auto boc = vm::std_boc_serialize(cell, 2);
     if (boc.is_error()) {
       return td::Status::Error(PSLICE() << "ConfigParam " << index << " is not fully contained in the proof");
     }
@@ -570,7 +572,7 @@ td::Result<AccountRecord> verify_account(const tos::BlockIdExt& target, const bl
   }
   view.exists = true;
   view.state_hash = td::Bits256{info.true_root->get_hash().bits()};
-  TRY_RESULT(serialized, vm::std_boc_serialize(info.true_root, 31));
+  TRY_RESULT(serialized, vm::std_boc_serialize(info.true_root, 2));
   view.state_boc = serialized.as_slice().str();
 
   block::gen::Account::Record_account account;
@@ -792,7 +794,7 @@ td::Result<std::string> serialize_stack(const td::Ref<vm::Stack>& stack) {
   if (!(stack->serialize(builder) && builder.finalize_to(cell))) {
     return td::Status::Error("get-method result stack cannot be serialized");
   }
-  TRY_RESULT(raw, vm::std_boc_serialize(cell, 31));
+  TRY_RESULT(raw, vm::std_boc_serialize(cell, 2));
   return td::base64_encode(raw.as_slice());
 }
 
