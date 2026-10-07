@@ -63,3 +63,25 @@ contract. It is not a V5R2 authorization or lifecycle acceptance substitute.
 Local macOS full-node builds encounter a separate Linux diagnostic IPC boundary;
 Linux CI validates the node path. This status does not waive that gate or alter
 unrelated peer-authentication checks.
+
+## Disposable candidate network launcher
+
+`localnet-jsonrpc.py --v5r2-admission-candidate` explicitly selects a **fresh
+isolated test network** with version 18, global ID 1, namespace `42` repeated
+32 bytes, deployment fee schedule and candidate ConfigParam21 credit 20,000.
+ConfigParam20 retains credit 10,000. Ordinary launcher defaults are unchanged.
+The flag refuses `--reuse`, an existing saved network, a conflicting namespace
+or a conflicting `TOS_GLOBAL_VERSION`. It does not switch deployed defaults.
+
+Example after building the Linux node tools, using an unused owned scratch path:
+
+```sh
+TOS_BUILD_DIR=/path/to/reviewed/build uv run python scripts/localnet-jsonrpc.py \
+  --v5r2-admission-candidate --workdir /path/to/new/owned/candidate-network
+```
+
+The configured-profile/CLI/refusal tests and fee renderer tests are local
+Python evidence. A successfully booted chain, frozen config comparison, PQ-only
+R2 funding/signing/POP/rotation/proof capture and recipient delivery remain
+required. The launcher's existing faucet/control demo is not R2 PQ-only wallet
+lifecycle evidence.
