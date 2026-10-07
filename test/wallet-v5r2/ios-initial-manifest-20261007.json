@@ -1,0 +1,36 @@
+{
+  "tests": 3,
+  "controls": [
+    {
+      "guard": "duplicate",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "trusted-wallet",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "commitment",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "generic-error",
+      "exit": 2,
+      "semantic_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "iOS public initial identity reconstruction only; no current authority, POP, fee continuity or full recovery acceptance",
+  "component_commit": "4120feb",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-initial-manifest",
+  "logs": {
+    "commitment.log": "95f6c5f7cb9901c9db199236068cb7900d434d2389b52775c5e18c5ed4ced981",
+    "generic-error.log": "ae4e12fdf420436aa6d9f8f8dc1990a49ef9fd0b4cd909af36f462f109453887",
+    "duplicate.log": "087824656e7ef90845fe06a1998ea9fe0e4886aebd9f88ae3ace93113d1634d7",
+    "trusted-wallet.log": "340672ab7f3468d638d1ed14b35395fb33b26106d10e4a615f59bab7b8a16f49",
+    "restored.log": "2e553ba5348be049ac624918502d317ac58432833c90d5458210d8be892bc7f1"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "tests": 5,
+  "controls": [
+    {
+      "field": "wallet-id",
+      "exit": 1,
+      "failure_type": "java.lang.IllegalArgumentException"
+    },
+    {
+      "field": "field-profile",
+      "exit": 1,
+      "failure_type": "java.lang.IllegalArgumentException"
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Android public initial manifest preparation/export and immutable round trip only; not current authority or full wallet creation/restore",
+  "component_commit": "596eaa2",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-android-manifest-export",
+  "logs": {
+    "field-profile.log": "ce5832b839a38a35f48c44bd609395f7dd8e1e6d940967d3e15accb8cb181108",
+    "wallet-id.log": "f77296bc69944943cd5503781629298aad7dd5ae934a177c9a15ea888b739e4d",
+    "restored.log": "ef323330b37ffd8f86918aa48aeb9638b6d833cbea37fdf30f309cd2191e4bc9"
+  }
+}
