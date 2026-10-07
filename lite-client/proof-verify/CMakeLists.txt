@@ -15,9 +15,12 @@ if(ANDROID)
   target_link_options(tos-proof-embedded PRIVATE "-Wl,-z,max-page-size=16384")
 endif()
 
+add_library(proof-material-acquisition STATIC acquisition.cpp material.h)
+target_link_libraries(proof-material-acquisition PUBLIC proof-verify-engine)
+
 # Desktop acquisition/storage adapters remain outside the embedded engine.
 add_library(proof-verify-core STATIC material.cpp material.h)
-target_link_libraries(proof-verify-core PUBLIC proof-verify-engine lite-client-common tdactor)
+target_link_libraries(proof-verify-core PUBLIC proof-material-acquisition lite-client-common tdactor)
 
 add_executable(tos-proof-verify main.cpp)
 target_link_libraries(tos-proof-verify PRIVATE proof-verify-core)
@@ -51,3 +54,7 @@ if(NOT CMAKE_CROSSCOMPILING)
     ${PROJECT_SOURCE_DIR}/test/pq-native/proof-verify-persisted-test.py
     $<TARGET_FILE:tos-proof-embedded> ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)
 endif()
+
+add_executable(test-proof-acquisition ../../test/pq-native/proof-acquisition-test.cpp)
+target_link_libraries(test-proof-acquisition PRIVATE proof-verify-core)
+add_test(NAME proof-material-acquisition COMMAND test-proof-acquisition ${PROJECT_SOURCE_DIR}/test/pq-native/data/proof-verify-real)

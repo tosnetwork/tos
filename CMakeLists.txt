@@ -1805,7 +1805,7 @@ add_test(NAME test-proof-verify-cli-refused
           --request ${PROOF_VERIFY_REAL}/wrong-target-request.json --material ${PROOF_VERIFY_REAL}/historical)
 set_tests_properties(test-proof-verify-cli-refused PROPERTIES
   PASS_REGULAR_EXPRESSION "^\\{\"status\":\"refused\".*does not end at the exact target block")
-add_dependencies(all-tests tos-proof-verify test-proof-verify-embedded)
+add_dependencies(all-tests tos-proof-verify test-proof-verify-embedded test-proof-acquisition)
 add_library(proof-verify-fs-shim SHARED test/pq-native/proof-verify-fs-shim.cpp)
 target_link_libraries(proof-verify-fs-shim PRIVATE ${CMAKE_DL_LIBS})
 add_test(NAME test-proof-verify-live-commit
