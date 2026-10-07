@@ -428,7 +428,15 @@ Protocol changes are activated by configuration votes.
   `--wallet` it sends from a configured masterchain wallet after confirmation;
   without it, it prints the body and value for an external masterchain wallet.
 - List proposals with `tosctl vote offer ls` and inspect one with
-  `tosctl vote offer diff --hash HASH`.
+  `tosctl vote offer diff --hash HASH`. Both read at one masterchain block. The
+  list comes from the contract's `list_proposals` getter; when that answer is
+  larger than the client's 1 MiB response limit, or the getter returns exit
+  code 13 (which it does once its walk over many proposals outgrows the node's
+  get-method gas, around 130 small proposals), the list is read instead from
+  the contract's stored account at the same block. A dictionary too large for
+  both is refused with an error naming both limits; a partial list is never
+  shown. Reading such a dictionary needs paginated or incremental state reads,
+  which `tosctl` does not have yet.
 - Vote with the consensus key, on the validator host, as the node's service
   account:
 

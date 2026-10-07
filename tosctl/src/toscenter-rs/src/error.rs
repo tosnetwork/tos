@@ -23,6 +23,16 @@ pub enum ToscenterError {
     ProtocolError {
         message: String,
     },
+    /// The response body exceeded the client's transport limit. It is refused
+    /// whole: nothing of it is read or returned.
+    ResponseTooLarge {
+        limit: usize,
+    },
+    /// A non-success HTTP status whose body was not read (it exceeded the
+    /// transport limit). Only the status is kept.
+    HttpStatus {
+        code: u16,
+    },
 }
 
 #[derive(Debug)]
@@ -52,6 +62,14 @@ impl fmt::Display for ToscenterError {
             ToscenterError::ProtocolError { message } => {
                 write!(f, "JSON-RPC protocol error: {}", message)
             }
+            ToscenterError::HttpStatus { code } => {
+                write!(f, "HTTP status {code} with an oversized body")
+            }
+            ToscenterError::ResponseTooLarge { limit } => write!(
+                f,
+                "Server error 502: configured endpoint response exceeds the one-megabyte limit \
+                 ({limit} bytes)"
+            ),
         }
     }
 }

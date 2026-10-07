@@ -71,7 +71,8 @@ pub use chain_provider::{
     ChainProvider, DefaultChainProvider, MasterchainCheckpoint, contract_provider_from,
 };
 pub use config_contract::{
-    ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposedParam,
+    ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposalAnswer, ProposalRead,
+    ProposedParam,
 };
 pub use contract_version::VersionedContract;
 pub use dispute::{

@@ -6,11 +6,8 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use super::{ConfigContractWrapper, ConfigProposal, ProposalHash, ProposedParam};
-use crate::{
-    ContractProvider, SmartContract,
-    stack_utils::{bytes_to_stack_entry, i64_to_stack_entry},
-};
+use super::{ConfigContractWrapper, ConfigProposal, ProposalAnswer, ProposalHash, ProposalRead};
+use crate::{ContractProvider, SmartContract, stack_utils::i64_to_stack_entry};
 use anyhow::Context;
 use chain_block::MsgAddressInt;
 use std::sync::Arc;
@@ -38,6 +35,14 @@ impl ConfigContractImpl {
     }
 }
 
+impl ConfigContractImpl {
+    async fn read(&self, read: ProposalRead) -> anyhow::Result<ProposalAnswer> {
+        let address: MsgAddressInt =
+            self.config_addr.parse().map_err(|e| anyhow::anyhow!("config address: {e}"))?;
+        self.provider.read_proposals(&address, read).await
+    }
+}
+
 #[async_trait::async_trait]
 impl SmartContract for ConfigContractImpl {
     async fn balance(&self) -> anyhow::Result<u64> {
@@ -57,79 +62,17 @@ impl ConfigContractWrapper for ConfigContractImpl {
     }
 
     async fn get_proposal(&self, phash: ProposalHash) -> anyhow::Result<Option<ConfigProposal>> {
-        let stack_entry = bytes_to_stack_entry(&phash);
-        let stack = self
-            .provider
-            .get_method(self.config_addr.clone(), "get_proposal", vec![stack_entry])
-            .await?;
-        super::decode_proposal(phash, &stack).context("parse proposal")
+        match self.read(ProposalRead::One(phash)).await.context("parse proposal")? {
+            ProposalAnswer::One(proposal) => Ok(proposal),
+            _ => anyhow::bail!("the provider answered another proposal read"),
+        }
     }
 
     async fn list_proposals(&self) -> anyhow::Result<Vec<ConfigProposal>> {
-        let stack =
-            self.provider.get_method(self.config_addr.clone(), "list_proposals", vec![]).await?;
-
-        let parse_proposals = || -> anyhow::Result<Vec<ConfigProposal>> {
-            let list = stack.list(0)?;
-            let mut proposals = Vec::new();
-
-            // Each element in the list is a tuple: [phash, [fields...]]
-            for i in 0..list.stack.len() {
-                let pair = list.tuple(i)?;
-                // the first element is the proposal hash
-                let mut phash = [0u8; 32];
-                phash.copy_from_slice(&pair.number_bytes(0, 32)?);
-                // the second element is the proposal fields
-                let fields = pair.tuple(1)?;
-                let expires = fields.i64(0)? as u32;
-                let is_critical = fields.bool(1)?;
-                // Parse param tuple [param_id, param_val, param_hash]
-                let param_tuple = fields.tuple(2)?;
-                let param = ProposedParam {
-                    id: param_tuple.i64(0)? as i32,
-                    cell: param_tuple.cell(1).ok(),
-                    hash: param_tuple.number_bytes(2, 32).ok().map(|h| {
-                        let mut hash = [0u8; 32];
-                        hash.copy_from_slice(&h);
-                        hash
-                    }),
-                };
-                // parse vset hash
-                let mut vset_id = [0u8; 32];
-                vset_id.copy_from_slice(&fields.number_bytes(3, 32)?);
-
-                // Parse voters: list of validator indexes
-                let voters_list = fields.list(4)?;
-                let mut voters = Vec::new();
-                for j in 0..voters_list.stack.len() {
-                    let voter_idx = u16::try_from(voters_list.i64(j)?)
-                        .context("voter index out of u16 range")?;
-                    voters.push(voter_idx);
-                }
-
-                let weight_remaining = fields.i64(5)?;
-                let rounds_remaining = fields.i64(6)? as u8;
-                let losses = fields.i64(7)? as u8;
-                let wins = fields.i64(8)? as u8;
-
-                proposals.push(ConfigProposal {
-                    hash: phash,
-                    expires,
-                    is_critical,
-                    param,
-                    vset_id,
-                    voters,
-                    weight_remaining,
-                    rounds_remaining,
-                    losses,
-                    wins,
-                });
-            }
-
-            Ok(proposals)
-        };
-
-        parse_proposals().context("parse proposals list")
+        match self.read(ProposalRead::List).await.context("parse proposals list")? {
+            ProposalAnswer::List(proposals) => Ok(proposals),
+            _ => anyhow::bail!("the provider answered another proposal read"),
+        }
     }
 
     async fn proposal_storage_price(
@@ -160,6 +103,7 @@ impl ConfigContractWrapper for ConfigContractImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stack_utils::bytes_to_stack_entry;
     use chain_block::{BuilderData, Cell, IBitstring, write_boc};
     use common::tvm_stack_parser::TvmStackParser;
     use std::collections::HashMap;
@@ -195,8 +139,9 @@ mod tests {
         StackEntry::Tvm_StackEntryCell(StackEntryCell { cell: cell::Cell { bytes: boc } })
     }
 
+    /// A 256-bit value as the node prints it: a canonical decimal.
     fn bytes_to_hex_number(bytes: &[u8; 32]) -> String {
-        format!("0x{}", hex::encode_upper(bytes))
+        bytes_to_decimal(bytes)
     }
 
     // ===== Mock ContractProvider =====
@@ -249,17 +194,43 @@ mod tests {
         async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
             Ok(self.balance_value)
         }
+
+        /// Test-only: decodes the handler's stack in process. The bounded worker
+        /// path is exercised over HTTP by the transport and sandbox tests.
+        async fn read_proposals(
+            &self,
+            address: &MsgAddressInt,
+            read: ProposalRead,
+        ) -> anyhow::Result<ProposalAnswer> {
+            let address = address.to_string();
+            match read {
+                ProposalRead::List => {
+                    let stack = self.get_method(address, "list_proposals", vec![]).await?;
+                    super::super::decode_proposal_list(&stack).map(ProposalAnswer::List)
+                }
+                ProposalRead::One(hash) => {
+                    let stack = self
+                        .get_method(address, "get_proposal", vec![bytes_to_stack_entry(&hash)])
+                        .await?;
+                    super::super::decode_proposal(hash, &stack).map(ProposalAnswer::One)
+                }
+                ProposalRead::Expiry(hash) => {
+                    let stack = self
+                        .get_method(address, "get_proposal", vec![bytes_to_stack_entry(&hash)])
+                        .await?;
+                    super::super::decode_proposal_expiry(&stack).map(ProposalAnswer::Expiry)
+                }
+            }
+        }
     }
 
     // ===== Test helpers =====
 
     fn create_param_tuple(id: i32, cell: Option<&Cell>, hash: Option<&[u8; 32]>) -> StackEntry {
-        let cell_entry = cell.map(create_cell_entry).unwrap_or_else(|| {
-            // Create empty cell entry for None case
-            create_cell_entry(&Cell::default())
-        });
+        // The getter returns null for an absent value and -1 for an absent hash.
+        let cell_entry = cell.map(create_cell_entry).unwrap_or_else(|| create_list_entry(vec![]));
         let hash_entry = hash.map_or_else(
-            || create_number_entry("0"),
+            || create_number_entry("-1"),
             |h| create_number_entry(&bytes_to_hex_number(h)),
         );
         create_tuple_entry(vec![create_number_entry(&id.to_string()), cell_entry, hash_entry])
@@ -389,6 +360,76 @@ mod tests {
         assert_eq!((proposal.rounds_remaining, proposal.losses, proposal.wins), (3, 0, 0));
     }
 
+    /// `list_proposals` over the node's real answers (`tests/fixtures/list_proposals`),
+    /// through the same stack conversion the chain provider applies.
+    #[tokio::test]
+    async fn test_list_proposals_live_answers() {
+        fn served(response: &'static str) -> TvmStackParser {
+            let value: serde_json::Value = serde_json::from_str(response).unwrap();
+            let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
+                serde_json::from_value(value["result"].clone()).unwrap();
+            crate::chain_provider::stack_from_rpc(result.stack)
+        }
+        let read = |response: &'static str| async move {
+            let provider = MockContractProvider::new()
+                .on_method("list_proposals", move |_| Ok(served(response)));
+            ConfigContractImpl::new(Arc::new(provider)).list_proposals().await
+        };
+        let empty = include_str!("../../tests/fixtures/list_proposals/empty-live.json");
+        let two = include_str!("../../tests/fixtures/list_proposals/two-live.json");
+        assert!(read(empty).await.unwrap().is_empty());
+        let proposals = read(two).await.unwrap();
+        let hashes: Vec<String> = proposals.iter().map(|p| hex::encode(p.hash)).collect();
+        assert_eq!(
+            hashes,
+            vec![
+                "472b34cc4214f8c3d028bc1f47dcc7d8c2e040b093a9b32f4afe2485be597cc9",
+                "caf342eb8fdd9adc97379f44c7740735097dd210430f79dc410a3690639888f0",
+            ]
+        );
+        for (proposal, (param, expires)) in
+            proposals.iter().zip([(1000, 1_792_326_266u32), (1001, 1_792_326_268)])
+        {
+            assert_eq!(proposal.param.id, param);
+            assert_eq!(proposal.expires, expires);
+            assert!(!proposal.is_critical);
+            assert!(proposal.param.cell.is_none(), "a removal carries no value");
+            assert!(proposal.param.hash.is_none(), "an unbound proposal carries no hash");
+            assert!(proposal.voters.is_empty());
+            assert_eq!(proposal.weight_remaining, 864_691_128_455_135_232);
+            assert_eq!((proposal.rounds_remaining, proposal.losses, proposal.wins), (3, 0, 0));
+        }
+    }
+
+    /// A provider that serves get-methods but does not implement proposal reads.
+    struct GetMethodOnly;
+
+    #[async_trait::async_trait]
+    impl ContractProvider for GetMethodOnly {
+        async fn get_method(
+            &self,
+            _address: String,
+            _method: &str,
+            _stack: Vec<StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            Ok(TvmStackParser::new(vec![create_list_entry(vec![])]))
+        }
+
+        async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            Ok(0)
+        }
+    }
+
+    /// Proposal reads fail closed: the wrapper never falls back to `get_method`.
+    #[tokio::test]
+    async fn test_proposal_reads_need_the_provider_to_implement_them() {
+        let config = ConfigContractImpl::new(Arc::new(GetMethodOnly));
+        let list = config.list_proposals().await.err().expect("refused");
+        assert!(format!("{list:#}").contains("proposal reads are unsupported"), "{list:#}");
+        let one = config.get_proposal([1; 32]).await.err().expect("refused");
+        assert!(format!("{one:#}").contains("proposal reads are unsupported"), "{one:#}");
+    }
+
     // ===== Tests for seqno() =====
 
     #[tokio::test]
@@ -509,7 +550,7 @@ mod tests {
                 create_tuple_entry(vec![
                     create_number_entry("20"),            // param_id
                     create_cell_entry(&param_cell_clone), // param_cell
-                    create_number_entry("0"),             // param_hash (None)
+                    create_number_entry("-1"),            // param_hash (None)
                 ]),
                 create_number_entry(&bytes_to_hex_number(&vset_id)),
                 create_list_entry(vec![]),  // empty voters
@@ -551,28 +592,59 @@ mod tests {
         assert!(proposals.is_empty());
     }
 
+    /// A 256-bit big-endian value as the canonical decimal the node prints.
+    fn bytes_to_decimal(bytes: &[u8; 32]) -> String {
+        let mut value = bytes.to_vec();
+        let mut digits = Vec::new();
+        while value.iter().any(|byte| *byte != 0) {
+            let mut remainder = 0u32;
+            for byte in value.iter_mut() {
+                let current = (remainder << 8) | u32::from(*byte);
+                *byte = (current / 10) as u8;
+                remainder = current % 10;
+            }
+            digits.push(b'0' + remainder as u8);
+        }
+        if digits.is_empty() {
+            digits.push(b'0');
+        }
+        digits.reverse();
+        String::from_utf8(digits).unwrap()
+    }
+
+    /// `list_proposals` as the node serves it: `cons([phash, proposal], ...)` as
+    /// nested two-element tuples ending in the empty list.
+    fn served_proposal_list(entries: Vec<([u8; 32], StackEntry)>) -> StackEntry {
+        entries.into_iter().rev().fold(create_list_entry(vec![]), |tail, (hash, proposal)| {
+            let pair =
+                create_tuple_entry(vec![create_number_entry(&bytes_to_decimal(&hash)), proposal]);
+            create_tuple_entry(vec![pair, tail])
+        })
+    }
+
     #[tokio::test]
     async fn test_list_proposals_single() {
         let phash = [0x44u8; 32];
         let vset_id = [0x55u8; 32];
 
         let provider = MockContractProvider::new().on_method("list_proposals", move |_| {
-            let proposal_fields = create_tuple_entry(vec![
-                create_number_entry("2000000000"), // expires
-                create_number_entry("-1"),         // is_critical
-                create_param_tuple(10, None, None),
-                create_number_entry(&bytes_to_hex_number(&vset_id)),
-                create_list_entry(vec![create_number_entry("5")]), // voters
-                create_number_entry("100"),                        // weight_remaining
-                create_number_entry("2"),                          // rounds_remaining
-                create_number_entry("1"),                          // losses
-                create_number_entry("4"),                          // wins
-            ]);
-            let proposal_pair = create_tuple_entry(vec![
-                create_number_entry(&bytes_to_hex_number(&phash)),
-                proposal_fields,
-            ]);
-            Ok(TvmStackParser::new(vec![create_list_entry(vec![proposal_pair])]))
+            let proposal = with_served_voters(
+                create_proposal_tuple(
+                    2000000000,
+                    true,
+                    10,
+                    None,
+                    None,
+                    &vset_id,
+                    &[],
+                    100,
+                    2,
+                    1,
+                    4,
+                ),
+                &[5],
+            );
+            Ok(TvmStackParser::new(vec![served_proposal_list(vec![(phash, proposal)])]))
         });
 
         let config = ConfigContractImpl::new(Arc::new(provider));
@@ -600,27 +672,29 @@ mod tests {
         let vset_id = [0x00u8; 32];
 
         let provider = MockContractProvider::new().on_method("list_proposals", move |_| {
-            let make_proposal = |phash: &[u8; 32], param_id: i32, wins: u8| {
-                let fields = create_tuple_entry(vec![
-                    create_number_entry("2100000000"),
-                    create_number_entry("0"), // not critical
-                    create_param_tuple(param_id, None, None),
-                    create_number_entry(&bytes_to_hex_number(&vset_id)),
-                    create_list_entry(vec![]),
-                    create_number_entry("50"),
-                    create_number_entry("1"),
-                    create_number_entry("0"),
-                    create_number_entry(&wins.to_string()),
-                ]);
-                create_tuple_entry(vec![create_number_entry(&bytes_to_hex_number(phash)), fields])
+            let make = |param_id: i32, wins: u8, voters: &[u16]| {
+                with_served_voters(
+                    create_proposal_tuple(
+                        2100000000,
+                        false,
+                        param_id,
+                        None,
+                        None,
+                        &vset_id,
+                        &[],
+                        50,
+                        1,
+                        0,
+                        wins,
+                    ),
+                    voters,
+                )
             };
-
-            let proposals = vec![
-                make_proposal(&phash1, 1, 1),
-                make_proposal(&phash2, 2, 2),
-                make_proposal(&phash3, 3, 3),
-            ];
-            Ok(TvmStackParser::new(vec![create_list_entry(proposals)]))
+            Ok(TvmStackParser::new(vec![served_proposal_list(vec![
+                (phash1, make(1, 1, &[])),
+                (phash2, make(2, 2, &[3, 9])),
+                (phash3, make(3, 3, &[])),
+            ])]))
         });
 
         let config = ConfigContractImpl::new(Arc::new(provider));
@@ -633,9 +707,24 @@ mod tests {
         assert_eq!(proposals[1].hash, phash2);
         assert_eq!(proposals[1].param.id, 2);
         assert_eq!(proposals[1].wins, 2);
+        assert_eq!(proposals[1].voters, vec![3, 9]);
         assert_eq!(proposals[2].hash, phash3);
         assert_eq!(proposals[2].param.id, 3);
         assert_eq!(proposals[2].wins, 3);
+    }
+
+    /// The shape the previous decoder expected (a flat outer list) is one the node
+    /// never serves for a non-empty list; it is refused rather than read.
+    #[tokio::test]
+    async fn test_list_proposals_flat_list_is_refused() {
+        let provider = MockContractProvider::new().on_method("list_proposals", |_| {
+            let proposal =
+                create_proposal_tuple(2000000000, false, 10, None, None, &[0; 32], &[], 1, 1, 0, 0);
+            let pair = create_tuple_entry(vec![create_number_entry("1"), proposal]);
+            Ok(TvmStackParser::new(vec![create_list_entry(vec![pair])]))
+        });
+        let config = ConfigContractImpl::new(Arc::new(provider));
+        assert!(config.list_proposals().await.is_err());
     }
 
     // ===== Tests for proposal_storage_price() =====
@@ -790,7 +879,7 @@ mod tests {
         let result = config.get_proposal([0u8; 32]).await;
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert!(err.to_string().contains("Error text"));
+        assert!(format!("{err:#}").contains("Error text"), "{err:#}");
     }
 
     #[tokio::test]
@@ -802,7 +891,7 @@ mod tests {
         let result = config.list_proposals().await;
         assert!(result.is_err());
         let err = result.err().unwrap();
-        assert!(err.to_string().contains("Error text"));
+        assert!(format!("{err:#}").contains("Error text"), "{err:#}");
     }
 
     #[tokio::test]

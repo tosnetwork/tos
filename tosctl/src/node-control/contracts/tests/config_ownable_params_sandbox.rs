@@ -20,7 +20,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, compile_func_with_stdlib};
 use tos_vm::stack::{StackItem, integer::IntegerData};
 
+mod served;
 mod weak_ed25519;
+
+use served::as_served;
 
 const TOS: u64 = 1_000_000_000;
 const ERR_WEAK_VALIDATOR_KEY: i32 = 45;
@@ -549,45 +552,6 @@ fn the_guard_fits_the_external_gas_credit() {
     eprintln!("worst {worst}, worst guard overhead {worst_overhead}");
     assert!(worst_overhead <= 1_050, "the guard adds {worst_overhead} gas");
     assert!(worst * 10 <= EXTERNAL_GAS_CREDIT * 9, "{worst} leaves under 10% of the credit");
-}
-
-/// A sandbox stack item rendered as the node's `runGetMethodStd` serializer
-/// (`serialize_stack_entry_std` in `validator-engine/json-rpc-server-runmethod.cpp`)
-/// renders it: a tuple is tested before a list, so a TVM null, which only the list
-/// test accepts, becomes an empty `tvm.stackEntryList`, and a cons cell stays a
-/// two-element tuple. This mirrors that code and is no evidence of it on its own;
-/// `tests/fixtures/get_proposal` holds the node's real answers.
-fn as_served(item: &StackItem) -> serde_json::Value {
-    use base64::Engine;
-    let b64 = |cell: &Cell| {
-        base64::engine::general_purpose::STANDARD
-            .encode(chain_block::write_boc(cell).expect("a boc"))
-    };
-    if item.is_null() {
-        return serde_json::json!({
-            "@type": "tvm.stackEntryList",
-            "list": {"@type": "tvm.list", "elements": []}
-        });
-    }
-    if let Ok(int) = item.as_integer() {
-        return serde_json::json!({
-            "@type": "tvm.stackEntryNumber",
-            "number": {"@type": "tvm.numberDecimal", "number": int.to_string()}
-        });
-    }
-    if let Ok(items) = item.as_tuple() {
-        return serde_json::json!({
-            "@type": "tvm.stackEntryTuple",
-            "tuple": {"@type": "tvm.tuple", "elements": items.iter().map(as_served).collect::<Vec<_>>()}
-        });
-    }
-    if let Ok(cell) = item.as_cell() {
-        return serde_json::json!({
-            "@type": "tvm.stackEntryCell",
-            "cell": {"@type": "tvm.cell", "bytes": b64(cell)}
-        });
-    }
-    panic!("get_proposal returned an item this test does not render: {item:?}");
 }
 
 /// The configuration contract's own `get_proposal`, rendered as the node serves it
