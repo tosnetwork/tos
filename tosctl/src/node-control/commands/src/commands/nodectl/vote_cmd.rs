@@ -438,7 +438,7 @@ impl VoteOfferCreateCmd {
         let wallet_cfg =
             get_wallet_config(wallet_name, &config.wallets, config.master_wallet.as_ref())?;
         let (wallet_address, info, secret) =
-            wallet_info(rpc_client.clone(), wallet_cfg, vault).await?;
+            wallet_info(rpc_client.clone(), wallet_cfg, vault.clone()).await?;
         anyhow::ensure!(
             wallet_address.workchain_id() == -1,
             "wallet '{wallet_name}' is on workchain {}; the configuration contract only hears \
@@ -470,7 +470,9 @@ impl VoteOfferCreateCmd {
                 return Ok(());
             }
         }
-        let prior = proposal_expiry(&chain, &config_address, &prepared.proposal_hash).await?;
+        let proposal_client =
+            tokio::sync::Mutex::new(operator_control_client(&config, Some(vault.clone())).await?);
+        let prior = proposal_expiry(&proposal_client, prepared.proposal_hash).await?;
         let wallet = make_wallet(rpc_client.clone(), wallet_cfg, secret, wallet_name).await?;
         let message = wallet
             .build_message(
@@ -503,7 +505,7 @@ impl VoteOfferCreateCmd {
         let observed = if accepted.is_ok() {
             poll_registration(
                 prior,
-                || proposal_expiry(&chain, &config_address, &prepared.proposal_hash),
+                || proposal_expiry(&proposal_client, prepared.proposal_hash),
                 REGISTRATION_POLLS,
                 REGISTRATION_POLL_INTERVAL,
             )
@@ -737,21 +739,67 @@ pub(crate) fn sender_can_pay(
     Ok(())
 }
 
-/// The expiry of a proposal the configuration contract holds, or `None`, read
-/// through the bounded proposal-read path.
-async fn proposal_expiry(
-    chain: &contracts::DefaultChainProvider,
-    config_address: &chain_block::MsgAddressInt,
-    proposal_hash: &[u8; 32],
-) -> anyhow::Result<Option<u32>> {
-    use contracts::ChainProvider;
-    match chain
-        .read_proposals(config_address, contracts::ProposalRead::Expiry(*proposal_hash))
+/// Read-only governance uses the authenticated node and propagates upgrade errors.
+async fn operator_control_client(
+    config: &common::app_config::AppConfig,
+    vault: Option<std::sync::Arc<secrets_vault::vault::SecretVault>>,
+) -> anyhow::Result<control_client::client_adnl::ControlClientAdnl> {
+    let (_, node) = config
+        .nodes
+        .iter()
+        .min_by(|(a, _), (b, _)| a.cmp(b))
+        .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+    let vault = match vault {
+        Some(vault) => Some(vault),
+        None if matches!(node.server_key, common::app_config::KeyConfig::VaultKey { .. })
+            || matches!(node.client_key, common::app_config::KeyConfig::VaultKey { .. }) =>
+        {
+            Some(secrets_vault::vault_builder::SecretVaultBuilder::from_env().await?)
+        }
+        None => None,
+    };
+    Ok(control_client::client_adnl::ControlClientAdnl::new(
+        node.to_node_adnl_config(vault).await?,
+        1,
+    ))
+}
+
+async fn offer_metadata(
+    client: &mut dyn control_client::client_api::ClientAPI,
+) -> anyhow::Result<Vec<control_client::operator_reads::ConfigProposalMeta>> {
+    Ok(client
+        .get_config_proposals(&control_client::operator_reads::ConfigProposalsRequest::default())
         .await?
-    {
-        contracts::ProposalAnswer::Expiry(expiry) => Ok(expiry),
-        _ => anyhow::bail!("the provider answered another proposal read"),
-    }
+        .proposals)
+}
+
+async fn offer_detail(
+    client: &mut dyn control_client::client_api::ClientAPI,
+    hash: [u8; 32],
+) -> anyhow::Result<Option<contracts::ConfigProposal>> {
+    let detail = client
+        .get_config_proposal(&control_client::operator_reads::ConfigProposalRequest {
+            block: None,
+            hash,
+        })
+        .await?;
+    contracts::control_reads::config_proposal_from_detail(detail)
+}
+
+async fn proposal_expiry(
+    client: &tokio::sync::Mutex<control_client::client_adnl::ControlClientAdnl>,
+    hash: [u8; 32],
+) -> anyhow::Result<Option<u32>> {
+    use control_client::client_api::ClientAPI;
+    let detail = client
+        .lock()
+        .await
+        .get_config_proposal(&control_client::operator_reads::ConfigProposalRequest {
+            block: None,
+            hash,
+        })
+        .await?;
+    Ok(detail.meta.map(|meta| meta.expires))
 }
 
 /// Decodes a `get_proposal` answer: `None` for the getter's null, the expiry for its
@@ -918,37 +966,24 @@ impl VoteOfferCmd {
 
 impl VoteOfferLsCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use super::utils::try_create_rpc_client;
         use colored::Colorize;
-        use common::app_config::AppConfig;
-        use contracts::{
-            ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, contract_provider_from,
-        };
-        use std::path::Path;
-        use std::sync::Arc;
-
-        let config_path = Path::new(config_path);
-
-        let config = AppConfig::load(config_path)?;
-        let rpc_client = try_create_rpc_client(&config).await?;
-
+        let config = common::app_config::AppConfig::load(std::path::Path::new(config_path))?;
+        let mut client = operator_control_client(&config, None).await?;
         if self.format != super::output_format::OutputFormat::Json {
             println!("\n{}", "Querying config contract for proposals...".cyan());
         }
-
-        let chain_provider = Arc::new(DefaultChainProvider::new(rpc_client.clone()));
-        let wrapper = ConfigContractImpl::new(contract_provider_from(chain_provider));
-
-        let proposals = wrapper.list_proposals().await?;
-        let json = self.format == super::output_format::OutputFormat::Json;
-        print!("{}", render_offer_list(&proposals, json)?);
+        let proposals = offer_metadata(&mut client).await?;
+        print!(
+            "{}",
+            render_offer_list(&proposals, self.format == super::output_format::OutputFormat::Json)?
+        );
         Ok(())
     }
 }
 
 /// What `vote offer ls` prints for `proposals`, in the getter's order.
 fn render_offer_list(
-    proposals: &[contracts::ConfigProposal],
+    proposals: &[control_client::operator_reads::ConfigProposalMeta],
     json: bool,
 ) -> anyhow::Result<String> {
     use colored::Colorize;
@@ -970,8 +1005,8 @@ fn render_offer_list(
             .iter()
             .map(|p| {
                 serde_json::json!({
-                    "param_id": p.param.id,
-                    "is_critical": p.is_critical,
+                    "param_id": p.param_id,
+                    "is_critical": p.critical,
                     "expires": format_ts(p.expires as u64),
                     "voters": p.voters.len(),
                     "weight_remaining": p.weight_remaining,
@@ -997,13 +1032,13 @@ fn render_offer_list(
         writeln!(out, "  {}", "\u{2500}".repeat(76))?;
 
         for (i, p) in proposals.iter().enumerate() {
-            let critical = if p.is_critical { "Yes" } else { "No" };
+            let critical = if p.critical { "Yes" } else { "No" };
             let expires = format_ts(p.expires as u64);
             writeln!(
                 out,
                 "  {:<4} {:<8} {:<11} {:<22} {:<9} {}",
                 i + 1,
-                p.param.id,
+                p.param_id,
                 critical,
                 expires,
                 p.voters.len(),
@@ -1018,7 +1053,7 @@ fn render_offer_list(
 
 /// Which listed proposal `vote offer cast` targets.
 enum OfferChoice<'a> {
-    One(&'a contracts::ConfigProposal),
+    One(&'a control_client::operator_reads::ConfigProposalMeta),
     /// Several proposals are listed and no hash was given.
     Ambiguous,
     /// The given hash is not among the listed proposals.
@@ -1026,7 +1061,7 @@ enum OfferChoice<'a> {
 }
 
 fn select_offer<'a>(
-    proposals: &'a [contracts::ConfigProposal],
+    proposals: &'a [control_client::operator_reads::ConfigProposalMeta],
     target: Option<&[u8; 32]>,
 ) -> OfferChoice<'a> {
     match target {
@@ -1043,20 +1078,10 @@ fn select_offer<'a>(
 
 impl VoteOfferDiffCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        use super::utils::try_create_rpc_client;
         use colored::Colorize;
-        use common::app_config::AppConfig;
         use common::time_format::format_ts;
-        use contracts::{
-            ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, contract_provider_from,
-        };
-        use std::path::Path;
-        use std::sync::Arc;
-
-        let config_path = Path::new(config_path);
-
-        let config = AppConfig::load(config_path)?;
-        let rpc_client = try_create_rpc_client(&config).await?;
+        let config = common::app_config::AppConfig::load(std::path::Path::new(config_path))?;
+        let mut client = operator_control_client(&config, None).await?;
 
         let hash_bytes_vec = hex::decode(self.hash.trim_start_matches("0x"))
             .map_err(|e| anyhow::anyhow!("Invalid hex hash: {}", e))?;
@@ -1071,10 +1096,7 @@ impl VoteOfferDiffCmd {
 
         println!("\n{}", "Querying config contract for proposal...".cyan());
 
-        let chain_provider = Arc::new(DefaultChainProvider::new(rpc_client.clone()));
-        let wrapper = ConfigContractImpl::new(contract_provider_from(chain_provider));
-
-        let proposal = wrapper.get_proposal(hash_bytes).await?;
+        let proposal = offer_detail(&mut client, hash_bytes).await?;
 
         match proposal {
             None => {
@@ -1124,26 +1146,25 @@ impl VoteOfferCastCmd {
         use colored::Colorize;
         use common::time_format::format_ts;
         use contracts::{
-            ConfigContractImpl, ConfigContractWrapper, DefaultChainProvider, SmartContract, Wallet,
-            contract_provider_from,
+            ConfigContractImpl, DefaultChainProvider, SmartContract, Wallet, contract_provider_from,
         };
-        use control_client::{
-            client_adnl::ControlClientAdnl, client_api::ClientAPI,
-            config_params::parse_config_param_34,
-        };
+        use control_client::{client_api::ClientAPI, config_params::parse_config_param_34};
         use std::path::Path;
         use std::sync::Arc;
 
         let config_path = Path::new(config_path);
 
-        let (config, vault, rpc_client) = load_config_vault_rpc_client(config_path).await?;
+        let config = common::app_config::AppConfig::load(config_path)?;
 
         println!("\n{}", "Querying config contract for proposals...".cyan());
 
-        let chain_provider = Arc::new(DefaultChainProvider::new(rpc_client.clone()));
-        let wrapper = ConfigContractImpl::new(contract_provider_from(chain_provider));
-
-        let proposals = wrapper.list_proposals().await?;
+        let (node_name, _node_cfg) = config
+            .nodes
+            .iter()
+            .min_by(|(a, _), (b, _)| a.cmp(b))
+            .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+        let mut client = operator_control_client(&config, None).await?;
+        let proposals = offer_metadata(&mut client).await?;
 
         if proposals.is_empty() {
             println!("\n{}\n", "No active proposals to vote on.".yellow());
@@ -1183,13 +1204,13 @@ impl VoteOfferCastCmd {
         println!("  {}", "\u{2500}".repeat(76));
 
         for (i, p) in proposals.iter().enumerate() {
-            let critical = if p.is_critical { "Yes" } else { "No" };
+            let critical = if p.critical { "Yes" } else { "No" };
             let expires = format_ts(p.expires as u64);
             let hash_short = hex::encode(&p.hash[..8]);
             println!(
                 "  {:<4} {:<8} {:<11} {:<22} {:<9} {}...",
                 i + 1,
-                p.param.id,
+                p.param_id,
                 critical,
                 expires,
                 p.voters.len(),
@@ -1222,16 +1243,12 @@ impl VoteOfferCastCmd {
 
         println!(
             "  Target proposal: param {} (hash={})",
-            proposal.param.id,
+            proposal.param_id,
             hex::encode(proposal.hash)
         );
 
         // --- Connect to node via ADNL control ---
         println!("\n{}", "Connecting to validator node...".cyan());
-        let (node_name, node_cfg) =
-            config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
-        let adnl_config = node_cfg.to_node_adnl_config(None).await?;
-        let mut client = ControlClientAdnl::new(adnl_config, 1);
         client.connect().await.context("Failed to connect to validator node via ADNL")?;
         println!("  {} Connected to node '{}'", "OK".green().bold(), node_name);
 
@@ -1288,7 +1305,7 @@ impl VoteOfferCastCmd {
                  Only active validators can vote on config proposals."
             )
         })?;
-        let key_id = found_key_id.unwrap();
+        let key_id = found_key_id.context("validator key not found")?;
 
         // Check if we already voted
         if proposal.voters.contains(&validator_idx) {
@@ -1322,11 +1339,15 @@ impl VoteOfferCastCmd {
             .get(wallet_name)
             .ok_or_else(|| anyhow::anyhow!("Wallet '{}' not found in config", wallet_name))?;
 
+        let (_, vault, rpc_client) = load_config_vault_rpc_client(config_path).await?;
         let (_wallet_address, _wallet_info_res, secret) =
             wallet_info(rpc_client.clone(), wallet_cfg, vault.clone()).await?;
 
         let wallet = make_wallet(rpc_client.clone(), wallet_cfg, secret, wallet_name).await?;
 
+        let wrapper = ConfigContractImpl::new(contract_provider_from(Arc::new(
+            DefaultChainProvider::new(rpc_client.clone()),
+        )));
         let config_addr = wrapper.address();
         let send_value = 1_000_000_000u64; // 1 TOS for gas
         let msg_cell = wallet.message(config_addr, send_value, vote_body).await?;
@@ -1335,7 +1356,7 @@ impl VoteOfferCastCmd {
 
         println!("\n{} Vote cast successfully!", "OK".green().bold());
         println!("  Proposal hash:    {}", hex::encode(proposal.hash));
-        println!("  Param ID:         {}", proposal.param.id);
+        println!("  Param ID:         {}", proposal.param_id);
         println!("  Validator index:  {}", validator_idx);
         println!();
         println!("  {}", "Use 'tosctl vote offer ls' to verify your vote is recorded.".dimmed());
@@ -2286,14 +2307,31 @@ mod offer_list_tests {
 
     /// The node's real `list_proposals` answer with two proposals, decoded as the
     /// wrapper decodes it.
-    fn live_proposals() -> Vec<contracts::ConfigProposal> {
+    pub(super) fn live_proposals() -> Vec<control_client::operator_reads::ConfigProposalMeta> {
         let response =
             include_str!("../../../../contracts/tests/fixtures/list_proposals/two-live.json");
         let value: serde_json::Value = serde_json::from_str(response).unwrap();
         let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
             serde_json::from_value(value["result"].clone()).unwrap();
         let stack = contracts::chain_provider::stack_from_rpc(result.stack);
-        contracts::config_contract::decode_proposal_list(&stack).unwrap()
+        contracts::config_contract::decode_proposal_list(&stack)
+            .unwrap()
+            .into_iter()
+            .map(|p| control_client::operator_reads::ConfigProposalMeta {
+                hash: p.hash,
+                expires: p.expires,
+                critical: p.is_critical,
+                param_id: p.param.id,
+                param_hash: p.param.hash,
+                has_value: p.param.cell.is_some(),
+                vset_id: p.vset_id,
+                voters: p.voters,
+                weight_remaining: p.weight_remaining,
+                rounds_remaining: p.rounds_remaining,
+                wins: p.wins,
+                losses: p.losses,
+            })
+            .collect()
     }
 
     const FIRST: &str = "472b34cc4214f8c3d028bc1f47dcc7d8c2e040b093a9b32f4afe2485be597cc9";
@@ -2354,7 +2392,7 @@ mod offer_list_tests {
         let mut second = [0u8; 32];
         hex::decode_to_slice(SECOND, &mut second).unwrap();
         match select_offer(&proposals, Some(&second)) {
-            OfferChoice::One(p) => assert_eq!((p.hash, p.param.id), (second, 1001)),
+            OfferChoice::One(p) => assert_eq!((p.hash, p.param_id), (second, 1001)),
             _ => panic!("the listed hash is selected"),
         }
         assert!(matches!(select_offer(&proposals, Some(&[0x11; 32])), OfferChoice::Missing));
@@ -2365,3 +2403,7 @@ mod offer_list_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "vote_cmd/proposal_control_tests.rs"]
+mod proposal_control_tests;
