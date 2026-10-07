@@ -1,0 +1,24 @@
+{
+  "simulator_tests": 1,
+  "controls": [
+    {
+      "guard": "code-pin",
+      "exit": 2,
+      "semantic_failure": true
+    },
+    {
+      "guard": "chain-binding",
+      "exit": 2,
+      "semantic_failure": true
+    }
+  ],
+  "restored_exit": 0,
+  "scope": "Actual iOS fixed development code loading/network restriction only; not approved release, config proof, deployment or funded recovery acceptance",
+  "ios_commit": "518f01c",
+  "retained_path": "/Users/tomisetsu/tos-v5r2-rescue-artifacts/20261007-ios-candidate-codes",
+  "logs": {
+    "code-pin.log": "a9db699a75a784b672cb3741f084ad36f3070f6073132bf8cee9949d65718290",
+    "chain-binding.log": "96f48cc93fee2b4d705253734619ee3e3900f7dfcadbb2ff3416745028e85bce",
+    "restored.log": "c1ffaac93137b668f61782e55f56abab3696e26c9c0aad80d9df0698a01ee59c"
+  }
+}
