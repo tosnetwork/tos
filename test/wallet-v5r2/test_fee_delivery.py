@@ -565,6 +565,7 @@ def main():
                 scope="Disposable private network only; deterministic keys; export is not broadcast or delivery evidence",
                 global_id=global_id, network=f"{network:064x}", signing_time=now, valid_until=now + 600,
                 message_sha256=hashlib.sha256(message).hexdigest(), accounts=accounts,
+                payment_amount=1_000_000_000,
             ), indent=2) + "\n")
         if chain_config is None:
             entries = read_dict(native.config(17), 32)

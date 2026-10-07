@@ -45,6 +45,10 @@ def verify(exported, message, observations):
                       if tx.in_msg is not None and tx.in_msg.cell.hash == expected]
         require(len(candidates) == 1, "missing or ambiguous transaction-bound " + role)
         tx = candidates[0]
+        if role == "recipient":
+            require(tx.in_msg.is_internal and tx.in_msg.info.bounced is False,
+                    "recipient received bounce or external message")
+            require(tx.in_msg.info.value_coins == exported["payment_amount"], "recipient payment amount mismatch")
         description = tx.description
         require(description.type_ == "ordinary" and description.aborted is False
                 and description.destroyed is False, "aborted or nonordinary " + role)

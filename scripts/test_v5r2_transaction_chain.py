@@ -21,7 +21,7 @@ def run(directory):
         observations[role] = dict(ok=True, result=[dict(data=raw, transaction_id=dict(
             lt=str(tx.lt), hash=base64.b64encode(cell.hash).decode()))])
     assert len(verify(exported, message, observations)["receipts"]) == 4
-    for fault in ("missing_recipient", "wrong_hash", "wrong_external"):
+    for fault in ("missing_recipient", "wrong_hash", "wrong_external", "wrong_amount"):
         changed = copy.deepcopy(observations)
         external = message
         changed_export = copy.deepcopy(exported)
@@ -29,19 +29,21 @@ def run(directory):
             changed["recipient"]["result"] = []
         elif fault == "wrong_hash":
             changed["wallet"]["result"][0]["transaction_id"]["hash"] = base64.b64encode(bytes(32)).decode()
+        elif fault == "wrong_amount":
+            changed_export["payment_amount"] += 1
         else:
             from pytosiq_core import Builder
             external = Builder().store_uint(0, 8).end_cell().to_boc()
             changed_export["message_sha256"] = hashlib.sha256(external).hexdigest()
         expected = {"missing_recipient": "transaction-bound recipient", "wrong_hash": "transaction hash mismatch",
-                    "wrong_external": "transaction-bound vault"}[fault]
+                    "wrong_external": "transaction-bound vault", "wrong_amount": "payment amount mismatch"}[fault]
         try:
             verify(changed_export, external, changed)
         except ValueError as error:
             assert expected in str(error), (fault, str(error))
         else:
             raise AssertionError("Transaction chain guard missing: " + fault)
-    print("Native BOC linkage and three exact negative controls pass")
+    print("Native BOC linkage and four exact negative controls pass")
 
 
 if __name__ == "__main__":
