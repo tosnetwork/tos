@@ -37,6 +37,19 @@ impl DefaultElectionsProvider {
 
 #[async_trait::async_trait]
 impl ElectionsProvider for DefaultElectionsProvider {
+    async fn elector_snapshot(
+        &mut self,
+        wallets: &[[u8; 32]],
+    ) -> anyhow::Result<contracts::control_reads::ElectorSnapshot> {
+        contracts::control_reads::read_elector_snapshot(
+            &mut self.client,
+            &control_client::operator_reads::ElectorStateRequest {
+                block: None,
+                wallets: wallets.to_vec(),
+            },
+        )
+        .await
+    }
     async fn setup(&self) -> anyhow::Result<()> {
         Ok(())
     }

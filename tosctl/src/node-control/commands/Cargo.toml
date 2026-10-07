@@ -49,3 +49,8 @@ tempfile = "3"
 
 # TODO: remove after debug
 tokio = { version = "1.48.0", features = ["full"] }
+
+[dev-dependencies]
+tl_api = { path = "../../tl/api" }
+adnl = { path = "../../adnl", features = ["server"] }
+async-trait = "0.1"

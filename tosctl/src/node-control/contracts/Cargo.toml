@@ -5,6 +5,7 @@ edition = "2024"
 license = 'GPL-3.0'
 
 [dependencies]
+control-client = { path = "../control-client" }
 anyhow = "1.0"
 async-trait = "0.1.89"
 common = { path = "../common" }

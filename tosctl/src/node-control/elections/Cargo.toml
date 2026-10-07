@@ -30,3 +30,5 @@ secrets-vault = { path = '../../secrets-vault', default-features = false, featur
 mockall = "0.13"
 tempfile = "3"
 tokio = { version = "1.40", features = ["full", "test-util"] }
+tl_api = { path = "../../tl/api" }
+adnl = { path = "../../adnl", features = ["server"] }

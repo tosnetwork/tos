@@ -73,7 +73,7 @@ jobs:
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim \
-            test-n5-manager-db-fixture test-consensus \
+            test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
@@ -84,6 +84,34 @@ jobs:
 
       # These security regressions previously ran only after merging to main.
       # Check registration too: ctest must not silently pass a reduced set.
+      - name: Verify authenticated control-getter queries and transport
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^control-getter-(query-(service|boundary|admission|completion)|transport)$'
+
+      - name: Install repository-pinned Rust toolchain for engine integration
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Verify Rust operator reads against the actual engine
+        # The job runs in a container: the default sh has no pipefail, and the
+        # workspace path inside the container is $GITHUB_WORKSPACE, not the host's.
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: 4
+        run: |
+          set -euo pipefail
+          export TOS_SOURCE="$GITHUB_WORKSPACE"
+          export TOS_ENGINE_BUILD="$GITHUB_WORKSPACE/build"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p control-client \
+            --test engine_operator_reads real_engine_ -- --ignored --nocapture \
+            | tee build/operator-engine-tests.log
+          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored' build/operator-engine-tests.log
+
+      - name: Verify bounded control getters and their production-context budgets
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^control-getter-(executor|shutdown|limits|actor|vm|context|delete|budget)$'
+
+      - name: Verify the extracted getter context against its independent oracle
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^getter-context-(context|vm|libraries|liteserver)$'
+
       - name: Run the network and wallet-index security regressions
         run: |
           ctest --test-dir build --show-only=json-v1 -L security-findings > security-tests.json
