@@ -130,7 +130,7 @@ def main():
         assert source.count(guard) == 1, name
         with tempfile.TemporaryDirectory() as work:
             work = Path(work)
-            for file in ["wallet-v5-code.fc", "auth-extension.fc"]:
+            for file in ["wallet-v5-code.fc", "auth-extension.fc", "strong-ed25519-key.fc"]:
                 shutil.copy2(ROOT / "crypto/smartcont" / file, work / file)
             (work / helper.name).write_text(source.replace(guard, ""))
             mutant = compile_contract(

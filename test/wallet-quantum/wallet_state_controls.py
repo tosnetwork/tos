@@ -63,12 +63,52 @@ def main():
             "accepted bad wallet observation classic",
         )
     )
-    for label, old, count in [
-        ("nonce", "self.rescue_nonce < u64::MAX", 1),
-        ("seqno", "self.seqno < u32::MAX", 2),
+    # Each counter guard is deleted on its own, so one surviving guard cannot
+    # hide the loss of another.
+    rescue_seqno = (
+        'anyhow::ensure!(self.rescue_nonce < u64::MAX, "rescue nonce exhausted");\n'
+        '                anyhow::ensure!(self.seqno < u32::MAX, "wallet seqno exhausted");'
+    )
+    configure_seqno = (
+        'anyhow::ensure!(self.seqno < u32::MAX, "wallet seqno exhausted");\n'
+        '                anyhow::ensure!(self.epoch < u64::MAX, "wallet epoch exhausted");'
+    )
+    primary = "self.primary_nonce < u64::MAX && self.seqno < u32::MAX"
+    assert source.count("self.seqno < u32::MAX") == 3
+    for label, old, new, reason in [
+        (
+            "nonce",
+            rescue_seqno,
+            rescue_seqno.replace("self.rescue_nonce < u64::MAX", "true"),
+            "accepted exhausted execute counter",
+        ),
+        (
+            "seqno",
+            rescue_seqno,
+            rescue_seqno.replace("self.seqno < u32::MAX", "true"),
+            "accepted exhausted execute counter",
+        ),
+        (
+            "configure_seqno",
+            configure_seqno,
+            configure_seqno.replace("self.seqno < u32::MAX", "true"),
+            "accepted exhausted configure counter",
+        ),
+        (
+            "primary_nonce",
+            primary,
+            primary.replace("self.primary_nonce < u64::MAX", "true"),
+            "accepted exhausted primary counter",
+        ),
+        (
+            "primary_seqno",
+            primary,
+            primary.replace("self.seqno < u32::MAX", "true"),
+            "accepted exhausted primary counter",
+        ),
     ]:
-        assert source.count(old) == count
-        cases.append((label, source.replace(old, "true"), "accepted exhausted execute counter"))
+        assert source.count(old) == 1, label
+        cases.append((label, source.replace(old, new), reason))
 
     def run(label):
         result = subprocess.run(
@@ -81,7 +121,9 @@ def main():
                 "-p",
                 "contracts",
                 "--lib",
+                "--",
                 "proven_wallet",
+                "primary_request_requires_current_proven_policy",
             ],
             capture_output=True,
             text=True,
@@ -93,7 +135,7 @@ def main():
     results = {}
     try:
         code, log = run("baseline")
-        assert code == 0 and "5 passed" in log, log[-3000:]
+        assert code == 0 and "6 passed" in log, log[-3000:]
         for label, mutated, reason in cases:
             SOURCE.write_text(mutated)
             code, log = run(label)
@@ -102,9 +144,9 @@ def main():
     finally:
         SOURCE.write_text(source)
         code, log = run("restored")
-        assert code == 0 and "5 passed" in log, log[-3000:]
+        assert code == 0 and "6 passed" in log, log[-3000:]
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
-    print("11 wallet state guard controls detected; restored tests pass")
+    print(f"{len(results)} wallet state guard controls detected; restored tests pass")
 
 
 if __name__ == "__main__":

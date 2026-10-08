@@ -2575,7 +2575,8 @@ mod fee_state_tests {
         );
         assert!(
             view.rescue_request(4620, 4700, AuthAction::Configure { fee_replacement: None })
-                .is_err()
+                .is_err(),
+            "accepted exhausted configure counter"
         );
         assert!(
             view.rescue_request(4620, 4700, AuthAction::LockPrimary).is_ok(),
