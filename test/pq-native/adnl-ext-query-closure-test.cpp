@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <memory>
 #include <mutex>
 #include <netinet/in.h>
@@ -483,12 +484,24 @@ void disconnected_refusal() {
 
 // A loopback peer the test owns: it accepts the client's TCP connection and
 // later closes it, so the client connection actor stops on a peer close.
+// SOCK_NONBLOCK and accept4 are Linux-only; set O_NONBLOCK portably.
+int set_nonblocking(int fd) {
+  if (fd < 0)
+    return fd;
+  const int flags = ::fcntl(fd, F_GETFL, 0);
+  if (flags < 0 || ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) != 0) {
+    ::close(fd);
+    return -1;
+  }
+  return fd;
+}
+
 struct RawPeer {
   int listener = -1;
   int accepted = -1;
   td::uint16 port = 0;
   RawPeer() {
-    listener = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
+    listener = set_nonblocking(::socket(AF_INET, SOCK_STREAM, 0));
     require(listener >= 0, "cannot create raw peer socket");
     sockaddr_in address{};
     address.sin_family = AF_INET;
@@ -576,7 +589,7 @@ void dead_nonempty_refusal() {
   const auto accept_limit = td::Timestamp::in(5.0);
   while (peer.accepted < 0) {
     scheduler.run(0.01);
-    peer.accepted = ::accept4(peer.listener, nullptr, nullptr, SOCK_NONBLOCK);
+    peer.accepted = set_nonblocking(::accept(peer.listener, nullptr, nullptr));
     require(peer.accepted >= 0 || !accept_limit.is_in_past(), "client never connected to the raw peer");
   }
   // No second connection can be accepted: a reconnect could not replace conn_

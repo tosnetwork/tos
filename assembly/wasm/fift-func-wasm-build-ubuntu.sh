@@ -37,7 +37,8 @@ fi
 NATIVE_BUILD_DIR="$ROOT_DIR/build-native"
 mkdir -p "$NATIVE_BUILD_DIR"
 if [ ! -f "$NATIVE_BUILD_DIR/build.ninja" ]; then
-  cmake -S "$ROOT_DIR" -B "$NATIVE_BUILD_DIR" -GNinja -DTOS_USE_JEMALLOC=ON -DCMAKE_BUILD_TYPE=Release
+  cmake -S "$ROOT_DIR" -B "$NATIVE_BUILD_DIR" -GNinja -DTOS_USE_JEMALLOC=ON -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER="$CC" -DCMAKE_CXX_COMPILER="$CXX"
   test $? -eq 0 || { echo "Can't configure TOS build"; exit 1; }
 fi
 ninja -C "$NATIVE_BUILD_DIR" fift smc-envelope

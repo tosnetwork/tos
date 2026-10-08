@@ -1,7 +1,7 @@
 add_executable(test-consensus test-consensus.cpp)
 add_executable(test-health-actions test-health-actions.cpp)
 add_executable(test-health-ledger test-health-ledger.cpp)
-target_include_directories(test-health-ledger PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(test-health-ledger PRIVATE ${TOS_SOURCE_DIR})
 add_test(NAME c04-health-ledger COMMAND test-health-ledger)
 target_link_libraries(test-health-actions PRIVATE validator tos_validator tos_block adnl overlay dht tl_api
     tl-utils tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 tdactor tdutils)
@@ -13,7 +13,7 @@ endforeach()
 if(USE_QUIC)
   add_executable(test-twostep-wiring ../../test-td-main.cpp test-twostep-wiring.cpp
       ../../plumtree/transport.cpp ../../plumtree/scheduler.cpp ../../plumtree/util.cpp)
-  target_include_directories(test-twostep-wiring PRIVATE ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/crypto)
+  target_include_directories(test-twostep-wiring PRIVATE ${TOS_SOURCE_DIR} ${TOS_SOURCE_DIR}/crypto)
   target_link_libraries(test-twostep-wiring PRIVATE validator validator-common validator-db full-node quic tos_validator tos_block tos_crypto
       tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl adnltest overlay dht tl_api tdactor tdutils)
   add_test(NAME test-twostep-wiring COMMAND test-twostep-wiring)
@@ -455,7 +455,7 @@ if(Python3_Interpreter_FOUND)
              COMMAND ${Python3_EXECUTABLE} ${MERKLE_PROSPECTIVE_NOTAR_CHECK}
                      $<TARGET_FILE:test-merkle-prospective-notar> gate --n 5)
     add_test(NAME simplex-exact-ancestor-source-guard
-             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check-simplex-exact-ancestor-resolution.py ${CMAKE_SOURCE_DIR})
+             COMMAND ${Python3_EXECUTABLE} ${TOS_SOURCE_DIR}/scripts/check-simplex-exact-ancestor-resolution.py ${TOS_SOURCE_DIR})
     set_tests_properties(simplex-exact-ancestor-source-guard PROPERTIES LABELS "source-guard")
     add_test(NAME consensus-no-fallback
              COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check-no-fallback.py)
@@ -538,9 +538,9 @@ add_test(
 add_test(
     NAME test-consensus-simplex2-genesis-config
     COMMAND $<TARGET_FILE:create-state>
-            -I ${CMAKE_SOURCE_DIR}/crypto/fift/lib
+            -I ${TOS_SOURCE_DIR}/crypto/fift/lib
             -I ${CMAKE_BINARY_DIR}/crypto/smartcont
-            -I ${CMAKE_SOURCE_DIR}/crypto/smartcont
+            -I ${TOS_SOURCE_DIR}/crypto/smartcont
             -s ${CMAKE_CURRENT_SOURCE_DIR}/simplex2-genesis-config.fif
 )
 
@@ -564,7 +564,7 @@ add_test(NAME c04-native-pipeline COMMAND test-consensus --duration 8 --n-nodes 
 set_tests_properties(c04-native-pipeline PROPERTIES TIMEOUT 45)
 
 add_executable(test-health-c04-publisher ../../test-health-c04-publisher.cpp)
-target_include_directories(test-health-c04-publisher PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(test-health-c04-publisher PRIVATE ${TOS_SOURCE_DIR})
 target_link_libraries(test-health-c04-publisher PRIVATE metrics tdactor tdutils)
 add_test(NAME c04-publisher-unit COMMAND test-health-c04-publisher)
 foreach(mode nested deadline oversize family parent-family v1)

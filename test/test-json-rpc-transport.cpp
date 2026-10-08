@@ -68,7 +68,11 @@ int find_free_port() {
 
 size_t open_fd_count() {
   size_t count = 0;
+  // /proc/self/fd on Linux; /dev/fd lists the same descriptors on macOS.
   DIR *dir = ::opendir("/proc/self/fd");
+  if (dir == nullptr) {
+    dir = ::opendir("/dev/fd");
+  }
   CHECK(dir != nullptr);
   while (::readdir(dir) != nullptr) {
     ++count;

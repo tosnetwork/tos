@@ -21,8 +21,17 @@ for relative in tracked:
     path = root / relative
     lines = path.read_text().splitlines()
     for line_number, line in enumerate(lines):
-        marker = "${CMAKE_SOURCE_DIR}/scripts/embed-"
-        if marker not in line or ".sh" not in line:
+        # Rules name the source root as ${CMAKE_SOURCE_DIR} or, where the tree may be
+        # built as a subproject, ${TOS_SOURCE_DIR}.
+        marker = next(
+            (
+                m
+                for m in ("${CMAKE_SOURCE_DIR}/scripts/embed-", "${TOS_SOURCE_DIR}/scripts/embed-")
+                if m in line
+            ),
+            None,
+        )
+        if marker is None or ".sh" not in line:
             continue
         script = line.split(marker, 1)[1].split(".sh", 1)[0] + ".sh"
         command_start = line_number

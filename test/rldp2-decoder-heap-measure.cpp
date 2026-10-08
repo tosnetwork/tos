@@ -29,7 +29,13 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+// Darwin's equivalent of glibc's malloc_usable_size.
+#define malloc_usable_size malloc_size
+#else
 #include <malloc.h>
+#endif
 #include <new>
 #include <vector>
 

@@ -1,16 +1,30 @@
 #pragma once
-#include <cstring>
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
+
+#include "diagnostic-producer.h"
+
+// The diagnostic channel authenticates its peer with Linux socket credentials
+// (SO_PASSCRED/SCM_CREDENTIALS on an autobound datagram socket), which other
+// systems do not offer. Elsewhere the channel is unavailable and refuses to
+// start. TOS_DIAGNOSTIC_IPC_FORCE_UNSUPPORTED selects that implementation on
+// Linux so a test can check it.
+#if defined(__linux__) && !defined(TOS_DIAGNOSTIC_IPC_FORCE_UNSUPPORTED)
+#define TOS_DIAGNOSTIC_IPC_SUPPORTED 1
+#include <cstring>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <thread>
 #include <unistd.h>
-
-#include "diagnostic-producer.h"
+#else
+#define TOS_DIAGNOSTIC_IPC_SUPPORTED 0
+#endif
 
 namespace tos::health {
+#if TOS_DIAGNOSTIC_IPC_SUPPORTED
 // A single pump owns the socket. Validator actors only try the scalar ring.
 class DiagnosticIpc {
  public:
@@ -177,6 +191,20 @@ class DiagnosticIpc {
   int fd_ = -1;
   bool ready_ = false;
 };
+#else
+// Unavailable channel: it opens no socket, starts no thread and never
+// enables or publishes a producer, so diagnostics stay off.
+class DiagnosticIpc {
+ public:
+  DiagnosticIpc(std::string, long long, std::array<std::uint8_t, 16>, std::uint32_t) {
+  }
+  bool start() {
+    return false;
+  }
+  void stop() noexcept {
+  }
+};
+#endif
 // Retained until process teardown: no business actor can see freed storage.
 inline std::unique_ptr<DiagnosticIpc> diagnostic_ipc;
 }  // namespace tos::health

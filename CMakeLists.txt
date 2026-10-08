@@ -1,14 +1,6 @@
 cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
 
-# Prefer clang — GCC has C++20 compatibility issues with this codebase.
-if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER)
-  find_program(_CLANG_C   clang)
-  find_program(_CLANG_CXX clang++)
-  if(_CLANG_C AND _CLANG_CXX)
-    set(CMAKE_C_COMPILER   "${_CLANG_C}"   CACHE FILEPATH "C compiler"   FORCE)
-    set(CMAKE_CXX_COMPILER "${_CLANG_CXX}" CACHE FILEPATH "C++ compiler" FORCE)
-  endif()
-endif()
+include(${CMAKE_CURRENT_LIST_DIR}/CMake/CompilerAutodetect.cmake)
 
 project(TOS VERSION 0.5 LANGUAGES C CXX)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -287,7 +279,7 @@ if (USE_QUIC)
       set(HAVE_SSL_SET_QUIC_TLS_CBS TRUE CACHE BOOL "OpenSSL QUIC support" FORCE)
     endif()
     add_subdirectory(third-party/ngtcp2 EXCLUDE_FROM_ALL)
-    set(NGTCP2_ROOT ${CMAKE_SOURCE_DIR}/third-party/ngtcp2)
+    set(NGTCP2_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/third-party/ngtcp2)
   endfunction()
   ngtcp2_scope()
 
@@ -1167,7 +1159,13 @@ target_link_libraries(test-health-core-registry PRIVATE metrics tdutils)
 add_executable(test-health-diagnostic-action test/test-health-diagnostic-action.cpp)
 target_include_directories(test-health-diagnostic-action PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-health-diagnostic-action PRIVATE metrics tdutils)
-foreach(diagnostic_test producer ipc)
+# The diagnostic channel authenticates with Linux socket credentials, so its
+# test exists only there; elsewhere the channel is unavailable by design.
+set(TOS_HEALTH_DIAGNOSTIC_TESTS producer)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  list(APPEND TOS_HEALTH_DIAGNOSTIC_TESTS ipc)
+endif()
+foreach(diagnostic_test IN LISTS TOS_HEALTH_DIAGNOSTIC_TESTS)
   add_executable(test-health-diagnostic-${diagnostic_test}
     tools/node-health-monitor/tests/native/diagnostic-${diagnostic_test}.cpp)
   target_include_directories(test-health-diagnostic-${diagnostic_test} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1901,12 +1899,16 @@ add_test(NAME test-proof-verify-cli-refused
 set_tests_properties(test-proof-verify-cli-refused PROPERTIES
   PASS_REGULAR_EXPRESSION "^\\{\"status\":\"refused\".*does not end at the exact target block")
 add_dependencies(all-tests tos-proof-verify test-proof-verify-embedded test-proof-acquisition test-proof-readonly-query)
-add_library(proof-verify-fs-shim SHARED test/pq-native/proof-verify-fs-shim.cpp)
-target_link_libraries(proof-verify-fs-shim PRIVATE ${CMAKE_DL_LIBS})
-add_test(NAME test-proof-verify-live-commit
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/proof-verify-live-commit-test.py
-          $<TARGET_FILE:tos-proof-verify> $<TARGET_FILE:test-proof-verify> $<TARGET_FILE:proof-verify-fs-shim>)
-add_dependencies(all-tests proof-verify-fs-shim)
+# The live-commit check interposes file calls with LD_PRELOAD and resolves
+# descriptors through /proc, both Linux-specific.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(proof-verify-fs-shim SHARED test/pq-native/proof-verify-fs-shim.cpp)
+  target_link_libraries(proof-verify-fs-shim PRIVATE ${CMAKE_DL_LIBS})
+  add_test(NAME test-proof-verify-live-commit
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/proof-verify-live-commit-test.py
+            $<TARGET_FILE:tos-proof-verify> $<TARGET_FILE:test-proof-verify> $<TARGET_FILE:proof-verify-fs-shim>)
+  add_dependencies(all-tests proof-verify-fs-shim)
+endif()
 tos_test(test-adnl-ext-query-closure)
 tos_test(test-adnl-ext-query-refusal)
 tos_test(test-adnl-ext-output-backpressure)
@@ -2113,6 +2115,15 @@ if (NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
     blockchain-explorer/blockchain-explorer-http.cpp)
   target_link_libraries(test-security-boundaries PRIVATE toshttp adnl tdutils lite-client-common)
   tos_test(test-security-boundaries)
+  # The unavailable diagnostic channel (as built off Linux) refuses to start.
+  # The check counts descriptors and threads through /proc.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test-diagnostic-ipc-unsupported test/test-diagnostic-ipc-unsupported.cpp)
+    target_include_directories(test-diagnostic-ipc-unsupported PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(test-diagnostic-ipc-unsupported PRIVATE tdutils)
+    tos_test(test-diagnostic-ipc-unsupported)
+    set_tests_properties(test-diagnostic-ipc-unsupported PROPERTIES LABELS "security-findings")
+  endif()
 
   set_tests_properties(test-security-boundaries PROPERTIES LABELS "security-findings")
 endif()

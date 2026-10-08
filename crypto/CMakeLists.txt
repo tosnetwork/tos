@@ -582,19 +582,19 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   set(NATIVE_REGISTRY_CPP "${SMARTCONT_AUTO_DIR}/native-registry-code.cpp")
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Native Service Registry BOC"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    WORKING_DIRECTORY ${TOS_SOURCE_DIR}
     COMMAND ${CMAKE_COMMAND} -E env
       FUNC_BIN=$<TARGET_FILE:func>
       FIFT_BIN=$<TARGET_FILE:fift>
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+      ${TOS_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
     DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc
       smartcont/tos-service-native-registry-v1.boc.base64
       smartcont/tos-service-native-registry-v1.release.json
-      ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-native-registry-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/test-tos-service-native-registry-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+      ${TOS_SOURCE_DIR}/scripts/build-tos-service-native-registry-v1.sh
+      ${TOS_SOURCE_DIR}/scripts/test-tos-service-native-registry-v1.sh
+      ${TOS_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
     OUTPUT ${NATIVE_REGISTRY_CPP}
   )
   add_custom_target(gen_fif_smartcont_auto_native_registry_code DEPENDS ${NATIVE_REGISTRY_CPP})
@@ -602,19 +602,19 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   set(TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP "${SMARTCONT_AUTO_DIR}/tos-service-stablecoin-escrow-v2.cpp")
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    WORKING_DIRECTORY ${TOS_SOURCE_DIR}
     COMMAND ${CMAKE_COMMAND} -E env
       FUNC_BIN=$<TARGET_FILE:func>
       FIFT_BIN=$<TARGET_FILE:fift>
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
+      ${TOS_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
     DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc
       smartcont/tos-service-stablecoin-escrow-v2.boc.base64
       smartcont/tos-service-stablecoin-escrow-v2.release.json
-      ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v2.sh
-      ${CMAKE_SOURCE_DIR}/scripts/test-tos-service-stablecoin-escrow-v2.sh
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
+      ${TOS_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v2.sh
+      ${TOS_SOURCE_DIR}/scripts/test-tos-service-stablecoin-escrow-v2.sh
+      ${TOS_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
     OUTPUT ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP}
   )
   add_custom_target(gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v2
