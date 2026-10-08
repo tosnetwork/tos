@@ -1,9 +1,8 @@
 name: Runner verification
 
-# Archive cap control: with the host writer's cap lowered to 8 MiB for this
-# round, an admitted job floods the audit stream with execve records. The
-# archive must stop at exactly the cap, the writer must stay alive, the drain
-# must time out and the lifetime must be invalid.
+# Memory-pressure control: three admitted jobs touch most of their VM's RAM at
+# the same time while the host has lowered the CI slice's MemoryMax below the
+# total. The OOM kill must land inside a CI unit, never outside the slice.
 on:
   pull_request:
   push:
@@ -17,11 +16,23 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  audit-flood:
+  memory-pressure:
+    if: github.event_name == 'pull_request'
     runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 10
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3]
     steps:
       - run: |
-          echo TOS_CI_PROBE_FLOOD
-          for i in $(seq 40000); do /bin/true; done
-          echo "flood done; log $(sudo stat -c %s /var/log/audit/audit.log) bytes"
+          echo TOS_CI_PROBE_MEMORY_${{ matrix.n }}
+          python3 - <<'EOF'
+          import time
+          size = int(13.5 * 2**30)
+          block = bytearray(size)
+          for i in range(0, size, 4096):
+              block[i] = 1
+          print("touched", size, "bytes", flush=True)
+          time.sleep(240)
+          EOF
