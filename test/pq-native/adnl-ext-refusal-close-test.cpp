@@ -58,7 +58,6 @@ namespace {
 using namespace tos;
 
 constexpr size_t kPayload = 932;
-constexpr size_t kFrame = kPayload + 4 + 32 + 32;
 // Answers the probe gives before refusing; matches the server's reply budget.
 constexpr size_t kAnswers = 16;
 constexpr size_t kBatch = 20;

@@ -336,7 +336,7 @@ void AdnlExtConnection::closing_loop() {
   // and drop it at once, until the peer has closed its side.
   if (!read_eof_) {
     auto &input = buffered_fd_.input_buffer();
-    input.cut_head(input.size());
+    input.advance(input.size());
     account_input();
     std::size_t allowance = kDiscardChunkBytes;
     if (input_budget_) {
@@ -347,7 +347,7 @@ void AdnlExtConnection::closing_loop() {
     }
     if (allowance > 0) {
       auto r_read = buffered_fd_.flush_read(allowance);
-      input.cut_head(input.size());
+      input.advance(input.size());
       account_input();
       if (r_read.is_error()) {
         // A reset: nothing more can be delivered to this peer.
