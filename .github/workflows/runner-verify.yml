@@ -48,3 +48,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: ./.github/actions/tos-ci-probe
+  # Control, test-only: kill the audit forwarder as root inside an admitted
+  # job. That lifetime's drain must time out and the run must be invalid.
+  forwarder-kill:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 10
+    steps:
+      - run: |
+          echo TOS_CI_PROBE_FORWARDER_KILL
+          sudo systemctl kill --signal=SIGKILL tos-ci-audit-forward.service
