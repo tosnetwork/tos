@@ -169,9 +169,8 @@ def validate_snapshot(value: Any) -> None:
     commit, tree = _oid(value["commit"]), _oid(value["tree"])
     if len(commit) != len(tree) or tree_oid(value["entries"], len(tree)) != tree:
         raise InventoryError("Workflow directory identity does not match its entries")
-    if (
-        type(value["workflow_count"]) is not int
-        or value["workflow_count"] != workflow_count(value["entries"])
+    if type(value["workflow_count"]) is not int or value["workflow_count"] != workflow_count(
+        value["entries"]
     ):
         raise InventoryError("Workflow count does not match its entries")
 
