@@ -86,7 +86,8 @@ jobs:
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
             test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
             test-rate-limiter test-security-boundaries test-full-node-shard-admission test-full-node-master-admission \
-            test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap
+            test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap \
+            test-diagnostic-ipc-unsupported
           ccache --show-stats
 
       # These security regressions previously ran only after merging to main.
@@ -132,6 +133,7 @@ jobs:
               "test-rate-limiter", "test-security-boundaries", "test-full-node-shard-admission", "test-full-node-master-admission",
               "full-node-master-startup",
               "test-rldp2-inbound-budget", "test-rldp2-inbound-transfer-bound", "test-rldp2-decoder-heap",
+              "test-diagnostic-ipc-unsupported",
           }
           actual = {test["name"] for test in json.load(open("security-tests.json"))["tests"]}
           if expected - actual:
