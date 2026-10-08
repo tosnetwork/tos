@@ -19,6 +19,8 @@ R7  an inherited platform workflow runs only through the matrix, by hand, or on 
     release tag: no pull_request trigger and no push trigger without tags
 R8  every release build workflow keeps its v* tag trigger
 R9  a matrix member uses no secret except GITHUB_TOKEN, and the matrix passes none
+R10 every status badge in README.md names a workflow that runs for the event and
+    branch it filters on; a badge that can never update shows a stale or empty status
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs
 
 import yaml
 
@@ -147,8 +150,56 @@ def check(root: Path) -> list[str]:
         if not tags or "v*" not in tags:
             problems.append(f"R8 {entry['workflow']}: release build lost its v* tag trigger")
 
+    problems.extend(check_badges(root, docs))
     problems.extend(check_matrix(docs.get(matrix["orchestrator"]), matrix))
     problems.extend(check_nightly(docs.get(matrix["nightly"]), matrix))
+    return problems
+
+
+BADGE = re.compile(r"actions/workflows/([^/\s)]+)/badge\.svg(?:\?([^)\s]*))?")
+
+
+def runs_for(on: dict, event: str, branch: str | None) -> bool:
+    """Whether a workflow with these triggers runs for this event on this branch."""
+    if event not in on:
+        return False
+    spec = on[event]
+    if branch is None or not isinstance(spec, dict):
+        return True
+    if spec.get("tags") and not spec.get("branches"):
+        return False  # tag-only push
+    branches = spec.get("branches")
+    if branches is not None and branch not in branches:
+        return False
+    return branch not in (spec.get("branches-ignore") or [])
+
+
+def check_badges(root: Path, docs: dict) -> list[str]:
+    readme = root / "README.md"
+    if not readme.is_file():
+        return []
+    problems = []
+    for name, query in BADGE.findall(readme.read_text()):
+        params = {k: v[0] for k, v in parse_qs(query).items()}
+        doc = docs.get(name)
+        if doc is None:
+            problems.append(f"R10 {name}: README badge names a workflow that does not exist")
+            continue
+        event = params.get("event", "push")
+        branch = params.get("branch")
+        on = triggers(doc)
+        if event == "push" and "event" not in params:
+            ok = runs_for(on, "push", branch) or (
+                branch is None and any(e in on for e in ("schedule", "workflow_dispatch"))
+            )
+        else:
+            ok = runs_for(on, event, branch if event in ("push", "pull_request") else None)
+        if not ok:
+            problems.append(
+                f"R10 {name}: README badge filters on event={event}"
+                + (f", branch={branch}" if branch else "")
+                + " but the workflow never runs there"
+            )
     return problems
 
 

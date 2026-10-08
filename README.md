@@ -11,6 +11,36 @@ encrypted note delivery**.
 [Technical overview (PDF)](doc/pq.pdf) · [Overview source](doc/pq.tex) ·
 [Documentation](doc/README.md) · [Build guide](BUILD.md)
 
+## Build and test status
+
+These GitHub Actions badges show the latest matching **workflow** run on `main`,
+not a live verification of the current commit or an overall security approval.
+
+**Every platform** ([platform matrix](.github/workflows/platform-matrix.yml): Linux x86-64
+and ARM64, macOS 14 and 15 on ARM64 and Intel, WebAssembly, and the Windows client
+toolchain with MSVC, MinGW64 and UCRT64; each run's `platform-gate` summary lists every
+platform's result)
+
+[![Platform matrix](https://github.com/tosnetwork/tos/actions/workflows/platform-matrix.yml/badge.svg?branch=main&event=push)](https://github.com/tosnetwork/tos/actions/workflows/platform-matrix.yml?query=branch%3Amain+event%3Apush)
+[![Platform nightly](https://github.com/tosnetwork/tos/actions/workflows/platform-nightly.yml/badge.svg?event=schedule)](https://github.com/tosnetwork/tos/actions/workflows/platform-nightly.yml)
+
+The nightly run adds the Android toslib build, both AppImages, cppcheck and a build
+without the compile cache.
+
+**Per-change gates**
+
+[![Lint](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-werror.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-werror.yml)
+[![PQ chain + Python](https://github.com/tosnetwork/tos/actions/workflows/branch-chain-python.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/branch-chain-python.yml)
+[![Source guards](https://github.com/tosnetwork/tos/actions/workflows/source-guards.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/source-guards.yml)
+[![Source hygiene](https://github.com/tosnetwork/tos/actions/workflows/source-hygiene.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/source-hygiene.yml)
+
+A green badge means that workflow's run succeeded, including every job and matrix entry
+it runs. It does **not** mean every TOS test or release gate passed: the Windows lanes
+build and package the client toolchain without running its tests, and some tests are
+Linux-only by design. For a PR or a release, use the checks tied to its exact commit; the
+[platform CI scope](doc/ci-platform-scope.md) lists what each tier covers and every
+deliberate exclusion.
+
 ## Security by layer
 
 Different mechanisms protect different things. TOS does not treat a PQ

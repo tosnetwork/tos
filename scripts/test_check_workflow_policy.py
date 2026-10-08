@@ -26,6 +26,7 @@ class PolicyTest(unittest.TestCase):
         (self.root / "scripts").mkdir()
         for name in ("platform-matrix.json", "release-artifacts.json"):
             shutil.copy(HERE / name, self.root / "scripts" / name)
+        shutil.copy(ROOT / "README.md", self.root / "README.md")
 
     def tearDown(self) -> None:
         self.dir.cleanup()
@@ -179,6 +180,33 @@ class PolicyTest(unittest.TestCase):
         )
         for rule in ("R1", "R3", "R4"):
             self.assert_red(rule, "extra.yaml")
+
+    def badge(self, url: str) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(readme.read_text() + f"\n[![x]({url})](x)\n")
+
+    def test_r10_badge_on_a_matrix_callee(self) -> None:
+        # Called workflows' runs belong to the caller; their own badge never updates on main.
+        self.badge(
+            "https://github.com/tosnetwork/tos/actions/workflows/"
+            "build-tos-macos-15-arm64-shared.yml/badge.svg?branch=main"
+        )
+        self.assert_red("R10", "build-tos-macos-15-arm64-shared.yml")
+
+    def test_r10_badge_on_a_missing_workflow(self) -> None:
+        self.badge("https://github.com/tosnetwork/tos/actions/workflows/gone.yml/badge.svg")
+        self.assert_red("R10", "gone.yml")
+
+    def test_r10_schedule_badge_on_a_workflow_without_a_schedule(self) -> None:
+        self.badge(
+            "https://github.com/tosnetwork/tos/actions/workflows/"
+            "platform-matrix.yml/badge.svg?event=schedule"
+        )
+        self.assert_red("R10", "platform-matrix.yml")
+
+    def test_r10_the_readme_badges_hold(self) -> None:
+        self.assertFalse([p for p in policy.check(ROOT) if p.startswith("R10")])
+        self.assertTrue(policy.BADGE.findall((ROOT / "README.md").read_text()))
 
     def test_r6_member_without_workflow_call(self) -> None:
         self.mutate("build-tos-wasm-emscripten.yml", "  workflow_call:\n", "")
