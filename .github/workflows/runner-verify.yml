@@ -1,8 +1,7 @@
 name: Runner verification
 
-# Live controls for the self-hosted CI VMs. The pull_request run must be
-# admitted and pass every probe; the push run (a branch other than main) must
-# be refused by the admission hook before its first step.
+# Live controls for the self-hosted CI VMs, round 2: concurrency bound and
+# lifecycle (timeout, runner crash). The push run must still be denied.
 on:
   pull_request:
   push:
@@ -16,61 +15,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  probes:
+  concurrency:
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     runs-on: [self-hosted, linux, x64, tos-vm]
     timeout-minutes: 15
     steps:
-      - name: Identity, sudo and Docker inside the VM
+      - name: Hold a slot
         run: |
-          set -eux
-          id
-          sudo -n true && echo "SUDO_OK"
-          sudo -n docker run --rm hello-world | grep -q 'Hello from Docker' && echo "DOCKER_OK"
-          nproc; free -g | sed -n 2p; df -h / | tail -1
-          cat /etc/tos-ci/slot
-      - name: Network probes
-        shell: python3 {0}
+          echo "job ${{ matrix.n }} in slot $(cat /etc/tos-ci/slot) at $(date -u +%T)"
+          sleep 45
+  timeout:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 1
+    steps:
+      - name: Outlive the job timeout
+        run: sleep 600
+  crash:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 10
+    steps:
+      - name: Kill the runner's worker
         run: |
-          import socket, subprocess, sys
-          failures = 0
-          def tcp(host, port):
-              s = socket.socket(); s.settimeout(4)
-              try:
-                  s.connect((host, port)); return True
-              except OSError:
-                  return False
-              finally:
-                  s.close()
-          def check(name, ok):
-              global failures
-              print(("PASS  " if ok else "FAIL  ") + name, flush=True)
-              failures += 0 if ok else 1
-          # Positive controls: the probe can reach what the rules allow.
-          check("reaches github.com:443", tcp("github.com", 443))
-          check("reaches ghcr.io:443", tcp("ghcr.io", 443))
-          check("resolves through the bridge DNS",
-                subprocess.run(["getent", "hosts", "api.github.com"], capture_output=True).returncode == 0)
-          # Each target below was reachable from the host itself.
-          for host, port, what in [
-              ("10.231.37.1", 22, "host SSH via the bridge address"),
-              ("10.231.37.1", 2003, "host validator port via the bridge address"),
-              ("192.168.1.156", 22, "host SSH via its LAN address"),
-              ("192.168.1.156", 2003, "host validator port via its LAN address"),
-              ("100.91.25.120", 51285, "host tailnet port"),
-              ("192.168.1.1", 80, "LAN router"),
-              ("180.27.202.143", 22, "host public address"),
-              ("10.0.0.1", 80, "another private range"),
-          ]:
-              check(f"cannot reach {what} ({host}:{port})", not tcp(host, port))
-          for vm in ("10.231.37.11", "10.231.37.12", "10.231.37.13"):
-              me = subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()
-              if vm in me:
-                  continue
-              ok = subprocess.run(["ping", "-c", "2", "-W", "2", vm], capture_output=True).returncode != 0
-              check(f"cannot reach another VM ({vm})", ok)
-          v6 = subprocess.run(["curl", "-6", "-sS", "--max-time", "6", "https://github.com"], capture_output=True)
-          check("no IPv6 egress", v6.returncode != 0)
-          addrs = subprocess.run(["ip", "-6", "addr", "show", "scope", "global"], capture_output=True, text=True).stdout
-          check("no global IPv6 address", "inet6" not in addrs)
-          print(f"{failures} failure(s)")
-          sys.exit(1 if failures else 0)
+          echo "slot $(cat /etc/tos-ci/slot)"
+          sudo -n pkill -9 -f Runner.Worker
+          sleep 60
