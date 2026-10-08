@@ -679,15 +679,21 @@ TEST(HttpServerLimits, eight_slow_replies_expire_and_the_listener_recovers_its_s
         // frees a slot, rather than guessing when its actor runs on this host.
         const auto recovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         bool recovered = false;
+        int attempts = 0;
         while (!recovered && std::chrono::steady_clock::now() < recovery_deadline) {
           Client client(port);
+          ++attempts;
           recovered = client.connect_with_retries() && client.request_ok(1000);
           if (!recovered) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
           }
         }
         ASSERT_TRUE(recovered);
-        ASSERT_EQ(observation.calls.load(), 9);
+        // The recovery request reached the handler. On a slow host an earlier
+        // attempt can be admitted too and still miss its 1 s answer, so every
+        // attempt may add one call; none may be added without an attempt.
+        ASSERT_TRUE(observation.calls.load() >= 9);
+        ASSERT_TRUE(observation.calls.load() <= 8 + attempts);
       },
       callback);
 }
@@ -854,6 +860,9 @@ struct PipelineObservation {
   std::atomic<bool> closed{false};
   std::atomic<size_t> output_peak{0};
   std::atomic<double> closed_at{0};
+  // What the kernel granted for the requested 4096-byte buffers; platforms differ.
+  size_t granted_client_rcvbuf = 0;
+  size_t granted_server_sndbuf = 0;
 };
 
 class SmallReplyCallback final : public tos::http::HttpServer::Callback {
@@ -935,6 +944,8 @@ void with_pipelined_inbound(double response_timeout, std::function<void(int, Pip
   std::fprintf(stderr, "pipelined inbound: client SO_RCVBUF=%d server SO_SNDBUF=%d (requested %d)\n", granted_rcv,
                granted_snd, small);
   PipelineObservation observation;
+  observation.granted_client_rcvbuf = static_cast<size_t>(granted_rcv);
+  observation.granted_server_sndbuf = static_cast<size_t>(granted_snd);
   td::actor::Scheduler scheduler({2});
   scheduler.run_in_context([&] {
     auto fd = td::SocketFd::from_native_fd(td::NativeFd(accepted)).move_as_ok();
@@ -966,7 +977,30 @@ TEST(HttpServerLimits, replies_queued_behind_unread_output_do_not_extend_its_dea
   with_pipelined_inbound(timeout, [timeout](int fd, PipelineObservation &observation) {
     const std::string request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
     double start = td::Time::now();
-    // One request every 20 ms for four deadlines, never reading.
+    // Open with enough requests that their 16 KiB replies overflow whatever
+    // the kernel granted on both ends (macOS ignores the 4 KiB request on the
+    // client) plus 128 KiB, so replies must pile up in the server's own
+    // buffer. Bounded, and sent through partial sends on the non-blocking fd.
+    const size_t kernel_bytes = observation.granted_client_rcvbuf + observation.granted_server_sndbuf + (128u << 10);
+    const size_t burst = std::min<size_t>((kernel_bytes + (16u << 10) - 1) / (16u << 10), 256);
+    std::string opening;
+    for (size_t i = 0; i < burst; i++) {
+      opening += request;
+    }
+    size_t sent = 0;
+    const double burst_deadline = start + 2.0;
+    while (sent < opening.size() && td::Time::now() < burst_deadline) {
+      auto n = ::send(fd, opening.data() + sent, opening.size() - sent, MSG_NOSIGNAL);
+      if (n > 0) {
+        sent += static_cast<size_t>(n);
+      } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+        break;
+      } else {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    }
+    ASSERT_EQ(sent, opening.size());
+    // Then one request every 20 ms for four deadlines, never reading.
     while (td::Time::now() < start + 4 * timeout && !observation.closed) {
       if (::send(fd, request.data(), request.size(), MSG_NOSIGNAL) != static_cast<ssize_t>(request.size())) {
         break;

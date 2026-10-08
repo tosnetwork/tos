@@ -22,7 +22,9 @@
 
 #include <arpa/inet.h>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <dirent.h>
 #include <functional>
 #include <limits>
@@ -198,9 +200,17 @@ class Client {
   // Returns false once the connection is closed by the server.
   bool send_some(const std::string &stream, size_t &offset) {
     while (offset < stream.size()) {
-      auto n = ::send(fd_, stream.data() + offset, stream.size() - offset, MSG_NOSIGNAL | MSG_DONTWAIT);
+      // Bounded chunks: Darwin can refuse one huge non-blocking send outright
+      // (ENOBUFS) where Linux takes what fits.
+      const size_t chunk = std::min<size_t>(stream.size() - offset, 64u << 10);
+      auto n = ::send(fd_, stream.data() + offset, chunk, MSG_NOSIGNAL | MSG_DONTWAIT);
       if (n < 0) {
-        return errno == EAGAIN || errno == EWOULDBLOCK;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+          return true;
+        }
+        send_errno_ = errno;
+        LOG(WARNING) << "send failed at offset " << offset << ": " << std::strerror(errno);
+        return false;
       }
       if (n == 0) {
         return false;
@@ -256,6 +266,10 @@ class Client {
   int receive_window_;
   int fd_ = -1;
   std::string pending_;
+
+ public:
+  // The errno of the last send that was neither "try again" nor ENOBUFS.
+  int send_errno_ = 0;
 };
 
 std::string post(const std::string &body, bool with_key) {
@@ -556,6 +570,13 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
     }
     LOG(WARNING) << "peak buffer memory over baseline: " << (peak_mem - baseline_mem) << " bytes; sent " << offset
                  << " bytes; released " << released_after << " s after the stall was seen";
+    // Nothing sent means the test never exercised the server: report why,
+    // rather than letting it pass or fail as "not stalled".
+    if (offset == 0) {
+      LOG(ERROR) << "no request bytes were sent; last send errno " << client.send_errno_ << " ("
+                 << std::strerror(client.send_errno_) << ")";
+    }
+    ASSERT_TRUE(offset > 0);
     // The stall was real: the server held well over a megabyte of replies
     // for this client.
     ASSERT_TRUE(stalled);

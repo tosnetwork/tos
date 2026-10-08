@@ -523,7 +523,10 @@ class RawExtPeer {
     sockaddr_in local{};
     local.sin_family = AF_INET;
     require(::inet_pton(AF_INET, source_ip.c_str(), &local.sin_addr) == 1, "bad source address");
-    require(::bind(fd_, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0, "cannot bind source " + source_ip);
+    // Linux routes all of 127.0.0.0/8 to lo. macOS has only 127.0.0.1 until
+    // an alias is added: sudo ifconfig lo0 alias 127.0.0.2 up.
+    require(::bind(fd_, reinterpret_cast<sockaddr*>(&local), sizeof(local)) == 0,
+            "cannot bind source " + source_ip + " (on macOS: sudo ifconfig lo0 alias " + source_ip + " up)");
     sockaddr_in remote{};
     remote.sin_family = AF_INET;
     remote.sin_port = htons(port);

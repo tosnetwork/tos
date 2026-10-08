@@ -19,11 +19,29 @@
 */
 #include <algorithm>
 
+#include "td/utils/port/config.h"
+
+#if TD_PORT_POSIX
+#include <sys/socket.h>
+#endif
+
 #include "adnl-ext-connection.hpp"
 
 namespace tos {
 
 namespace adnl {
+
+namespace {
+// Half-close: the peer sees EOF after the last queued byte, while this side
+// can still read (and discard) what the peer sends.
+void shutdown_write(const td::SocketFd &fd) {
+#if TD_PORT_POSIX
+  ::shutdown(fd.get_native_fd().socket(), SHUT_WR);
+#elif TD_PORT_WINDOWS
+  ::shutdown(fd.get_native_fd().socket(), SD_SEND);
+#endif
+}
+}  // namespace
 
 void AdnlExtConnection::send_uninit(td::BufferSlice data) {
   buffered_fd_.output_buffer().append(std::move(data));
@@ -32,7 +50,9 @@ void AdnlExtConnection::send_uninit(td::BufferSlice data) {
 
 bool AdnlExtConnection::send(td::BufferSlice data) {
   LOG(DEBUG) << "sending packet of size " << data.size();
-  if (output_overflowed_) {
+  if (output_overflowed_ || closing_) {
+    // While closing, answers completing late are dropped: only what was
+    // already queued when the refusal closed the connection goes out.
     return false;
   }
   auto size_status = check_adnl_ext_payload_size(data.size());
@@ -90,8 +110,9 @@ bool AdnlExtConnection::send(td::BufferSlice data) {
 }
 
 td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_loop) {
-  // Once closing for unread output, take no further queries from the buffer.
-  if (stop_read_ || output_overflowed_) {
+  // Once closing for unread output or after a refusal, take no further
+  // queries from the buffer.
+  if (stop_read_ || output_overflowed_ || closing_) {
     exit_loop = true;
     return td::Status::OK();
   }
@@ -254,18 +275,25 @@ void AdnlExtConnection::update_partial_frame_deadline() {
 }
 
 void AdnlExtConnection::loop() {
+  if (closing_) {
+    closing_loop();
+    return;
+  }
   auto status = [&] {
     auto &input = buffered_fd_.input_buffer();
     // Read a reserved chunk, take every complete frame off the buffer, and
     // repeat while the socket has more, so what is held between reads is at
     // most one unfinished frame.
     while (true) {
-      TRY_RESULT(read, read_input_within_budget());
+      auto r_read = read_input_within_budget();
       bool exit_loop = false;
       while (!exit_loop) {
+        // Frames that arrived together with a read error (bytes, then a
+        // reset) are still delivered; the error then closes the connection.
         TRY_STATUS(receive(input, exit_loop));
       }
       account_input();
+      TRY_RESULT(read, std::move(r_read));
       if (read == 0) {
         break;
       }
@@ -279,18 +307,88 @@ void AdnlExtConnection::loop() {
     return td::Status::OK();
   }();
   if (status.is_error()) {
-    // Answers already queued while this batch was processed still go out before
-    // the socket closes. A refusal that ends in a close is an intended terminal
-    // state for the peer's queries, not a fault of this side, so it is not an error.
-    buffered_fd_.flush_write().ignore();
     if (status.code() == ErrorCode::notready) {
-      LOG(INFO) << "Closing external connection: " << status;
-    } else {
-      LOG(ERROR) << "Client got error " << status;
+      // A refusal that ends in a close is an intended terminal state for the
+      // peer's queries, not a fault of this side. The answers already queued
+      // must reach the peer, so close in order rather than at once.
+      begin_closing(status);
+      return;
     }
+    buffered_fd_.flush_write().ignore();
+    LOG(ERROR) << "Client got error " << status;
     stop();
   } else {
     send_ready();
+  }
+}
+
+void AdnlExtConnection::begin_closing(const td::Status &reason) {
+  LOG(INFO) << "Closing external connection: " << reason;
+  closing_ = true;
+  stop_read_ = true;
+  closing_deadline_ = td::Timestamp::in(kClosingSeconds);
+  alarm_timestamp() = closing_deadline_;
+  closing_loop();
+}
+
+void AdnlExtConnection::closing_loop() {
+  // Input: never parsed again. Read only into what the input budget grants,
+  // and drop it at once, until the peer has closed its side.
+  if (!read_eof_) {
+    auto &input = buffered_fd_.input_buffer();
+    input.cut_head(input.size());
+    account_input();
+    std::size_t allowance = kDiscardChunkBytes;
+    if (input_budget_) {
+      if (input_accounted_ < kDiscardChunkBytes) {
+        input_accounted_ += reserve_input(kDiscardChunkBytes - input_accounted_);
+      }
+      allowance = input_accounted_;
+    }
+    if (allowance > 0) {
+      auto r_read = buffered_fd_.flush_read(allowance);
+      input.cut_head(input.size());
+      account_input();
+      if (r_read.is_error()) {
+        // A reset: nothing more can be delivered to this peer.
+        stop();
+        return;
+      }
+    }
+    if (td::can_close(buffered_fd_)) {
+      read_eof_ = true;
+    }
+  }
+  // Output: what was queued before the refusal goes out in full.
+  if (read_eof_ && buffered_fd_.ready_for_flush_write() > 0) {
+    // The poll layer treats the peer's half-close as a close and drops the
+    // write flag, also on every later writable edge. The socket can still be
+    // written after the peer's SHUT_WR, so try the write directly; a full
+    // kernel buffer clears the flag again (EAGAIN) and the retry below comes
+    // back, bounded by the closing deadline.
+    buffered_fd_.get_poll_info().add_flags(td::PollFlags::Write());
+  }
+  auto r_written = buffered_fd_.flush_write();
+  account_output();
+  if (r_written.is_error()) {
+    stop();
+    return;
+  }
+  if (!write_shut_ && buffered_fd_.ready_for_flush_write() == 0) {
+    shutdown_write(buffered_fd_);
+    write_shut_ = true;
+  }
+  if (write_shut_ && read_eof_) {
+    stop();
+    return;
+  }
+  // The closing deadline is enforced in alarm(), whose timestamp never moves
+  // past it.
+  if (read_eof_ && !write_shut_) {
+    // No writable edge will arrive after the peer's half-close (see above):
+    // retry shortly, never past the deadline.
+    alarm_timestamp() = td::Timestamp::in(kClosingRetrySeconds);
+    alarm_timestamp().relax(closing_deadline_);
   }
 }
 
