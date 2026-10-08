@@ -1035,10 +1035,14 @@ class TestConsensus : public td::actor::Actor {
       run_write_status().start().detach();
     }
 
+    // The modes below end as soon as their sub-tests complete, and DURATION is only
+    // their deadline. They also wait for the finalized-height floor, so the floor is
+    // judged within the deadline rather than at whatever height the sub-tests ended.
+    auto below_floor = [&] { return last_accepted_block_.seqno() < MIN_FINALIZED_BLOCKS; };
     if (EMPTY_CHAIN_RESTART_TEST) {
       auto deadline = td::Timestamp::in(DURATION);
       while (((!empty_chain_restart_completed_ && empty_chain_restart_error_.empty()) ||
-              (PQ_FINALITY_E2E_TEST && !pq_finality_completed_ && pq_finality_error_.empty())) &&
+              (PQ_FINALITY_E2E_TEST && !pq_finality_completed_ && pq_finality_error_.empty()) || below_floor()) &&
              !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
@@ -1050,7 +1054,7 @@ class TestConsensus : public td::actor::Actor {
       }
     } else if (VOTE_JOURNAL_TEST) {
       auto deadline = td::Timestamp::in(DURATION);
-      while (!vote_journal_completed_ && vote_journal_error_.empty() && !deadline.is_in_past()) {
+      while (((!vote_journal_completed_ && vote_journal_error_.empty()) || below_floor()) && !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
       if (!vote_journal_completed_ && vote_journal_error_.empty()) {
@@ -1059,7 +1063,7 @@ class TestConsensus : public td::actor::Actor {
     } else if (CATCH_UP_DOWNTIME >= 0.0 && PQ_FINALITY_E2E_TEST) {
       auto deadline = td::Timestamp::in(DURATION);
       while (((!catch_up_completed_ && catch_up_error_.empty()) ||
-              (!pq_finality_completed_ && pq_finality_error_.empty())) &&
+              (!pq_finality_completed_ && pq_finality_error_.empty()) || below_floor()) &&
              !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
@@ -1071,7 +1075,7 @@ class TestConsensus : public td::actor::Actor {
       }
     } else if (PQ_FINALITY_E2E_TEST) {
       auto deadline = td::Timestamp::in(DURATION);
-      while (!pq_finality_completed_ && pq_finality_error_.empty() && !deadline.is_in_past()) {
+      while (((!pq_finality_completed_ && pq_finality_error_.empty()) || below_floor()) && !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
       if (!pq_finality_completed_ && pq_finality_error_.empty()) {
