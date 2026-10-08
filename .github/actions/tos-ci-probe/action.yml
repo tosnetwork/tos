@@ -1,0 +1,7 @@
+name: tos-ci probe
+description: Writes a marker, so its execution shows in the audit stream.
+runs:
+  using: composite
+  steps:
+    - run: echo TOS_CI_PROBE_COMPOSITE_STEP
+      shell: bash

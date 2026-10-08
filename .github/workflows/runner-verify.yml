@@ -1,8 +1,9 @@
 name: Runner verification
 
-# Live controls for the self-hosted CI VMs: the pull_request run must be
-# admitted and pass every probe; the push run (not main) must be refused by
-# the admission hook before its first step.
+# Adversarial set, with execution auditing on in the VMs. The push run (not
+# main) must be refused by the admission hook before anything job-controlled
+# executes, whatever the job sets; the pull_request run is the positive
+# control and must execute visibly.
 on:
   pull_request:
   push:
@@ -16,55 +17,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  probes:
+  env-and-shell:
     runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 15
+    timeout-minutes: 10
+    env:
+      ACTIONS_RUNNER_HOOK_JOB_STARTED: ''
+    defaults:
+      run:
+        shell: bash --noprofile --norc -e {0}
     steps:
-      - name: Identity, sudo and Docker inside the VM
-        run: |
-          set -eux
-          id
-          sudo -n true && echo "SUDO_OK"
-          sudo -n docker run --rm hello-world | grep -q 'Hello from Docker' && echo "DOCKER_OK"
-          cat /etc/tos-ci/slot
-      - name: Network probes
-        shell: python3 {0}
-        run: |
-          import socket, subprocess, sys
-          failures = 0
-          def tcp(host, port):
-              s = socket.socket(); s.settimeout(4)
-              try:
-                  s.connect((host, port)); return True
-              except OSError:
-                  return False
-              finally:
-                  s.close()
-          def check(name, ok):
-              global failures
-              print(("PASS  " if ok else "FAIL  ") + name, flush=True)
-              failures += 0 if ok else 1
-          check("reaches github.com:443", tcp("github.com", 443))
-          check("reaches ghcr.io:443", tcp("ghcr.io", 443))
-          check("resolves through the bridge DNS",
-                subprocess.run(["getent", "hosts", "api.github.com"], capture_output=True).returncode == 0)
-          for host, port, what in [
-              ("10.231.37.1", 22, "host SSH via the bridge address"),
-              ("10.231.37.1", 2003, "host validator port via the bridge address"),
-              ("192.168.1.156", 22, "host SSH via its LAN address"),
-              ("192.168.1.156", 2003, "host validator port via its LAN address"),
-              ("100.91.25.120", 51285, "host tailnet port"),
-              ("192.168.1.1", 80, "LAN router"),
-              ("180.27.202.143", 22, "host public address"),
-              ("10.0.0.1", 80, "another private range"),
-          ]:
-              check(f"cannot reach {what} ({host}:{port})", not tcp(host, port))
-          me = subprocess.run(["hostname", "-I"], capture_output=True, text=True).stdout.split()
-          for vm in ("10.231.37.11", "10.231.37.12", "10.231.37.13"):
-              if vm not in me:
-                  ok = subprocess.run(["ping", "-c", "2", "-W", "2", vm], capture_output=True).returncode != 0
-                  check(f"cannot reach another VM ({vm})", ok)
-          v6 = subprocess.run(["curl", "-6", "-sS", "--max-time", "6", "https://github.com"], capture_output=True)
-          check("no IPv6 egress", v6.returncode != 0)
-          print(f"{failures} failure(s)")
-          sys.exit(1 if failures else 0)
+      - run: echo TOS_CI_PROBE_ENV_SHELL_STEP
+  container:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 10
+    container:
+      image: busybox:1.36
+    steps:
+      - run: echo TOS_CI_PROBE_CONTAINER_STEP
+  services:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 10
+    services:
+      probe:
+        image: redis:7-alpine
+    steps:
+      - run: echo TOS_CI_PROBE_SERVICES_STEP
+  composite:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: ./.github/actions/tos-ci-probe
