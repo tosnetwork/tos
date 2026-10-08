@@ -579,6 +579,28 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     EXTRA_DEPS smartcont/multisig-order.fc)
   GenFif(DEST smartcont/auto/multisig-order-code SOURCE smartcont/multisig-order-code.fc NAME multisig-order
     EXTRA_DEPS smartcont/multisig-order.fc)
+  # The frozen-artifact rules run bash scripts that call python. Name both
+  # interpreters explicitly: a Windows shell cannot run a .sh file itself, and
+  # C:/Windows/System32/bash.exe is the WSL launcher, not a POSIX shell for this
+  # tree. Git for Windows and MSYS2 provide a usable bash.
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  find_program(TOS_BASH_EXECUTABLE NAMES bash)
+  string(TOLOWER "${TOS_BASH_EXECUTABLE}" _tos_bash_lower)
+  if(WIN32 AND (NOT TOS_BASH_EXECUTABLE OR _tos_bash_lower MATCHES "/windows/system32/"))
+    # An MSYS2 shell puts its own bash first on PATH; a plain Windows shell
+    # (the MSVC build) may only reach the WSL launcher, so use Git for Windows.
+    unset(TOS_BASH_EXECUTABLE CACHE)
+    find_program(TOS_BASH_EXECUTABLE NAMES bash
+      PATHS "$ENV{ProgramFiles}/Git/bin" "$ENV{ProgramW6432}/Git/bin" NO_DEFAULT_PATH)
+    string(TOLOWER "${TOS_BASH_EXECUTABLE}" _tos_bash_lower)
+  endif()
+  if(NOT TOS_BASH_EXECUTABLE)
+    message(FATAL_ERROR "bash is required to verify the frozen contract artifacts")
+  endif()
+  if(_tos_bash_lower MATCHES "/windows/system32/")
+    message(FATAL_ERROR "bash resolved to the WSL launcher ${TOS_BASH_EXECUTABLE}; "
+      "put Git for Windows or MSYS2 bash first on PATH")
+  endif()
   set(NATIVE_REGISTRY_CPP "${SMARTCONT_AUTO_DIR}/native-registry-code.cpp")
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Native Service Registry BOC"
@@ -586,7 +608,8 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     COMMAND ${CMAKE_COMMAND} -E env
       FUNC_BIN=$<TARGET_FILE:func>
       FIFT_BIN=$<TARGET_FILE:fift>
-      ${TOS_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+      PYTHON=${Python3_EXECUTABLE}
+      ${TOS_BASH_EXECUTABLE} ${TOS_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
     DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc
@@ -606,7 +629,8 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     COMMAND ${CMAKE_COMMAND} -E env
       FUNC_BIN=$<TARGET_FILE:func>
       FIFT_BIN=$<TARGET_FILE:fift>
-      ${TOS_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
+      PYTHON=${Python3_EXECUTABLE}
+      ${TOS_BASH_EXECUTABLE} ${TOS_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
     DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc
@@ -668,21 +692,25 @@ if (WINGETOPT_FOUND)
   target_link_libraries_system(create-state wingetopt)
 endif()
 
-# The node's own vote producer, reachable from a command line so the bytes it makes can
-# be handed to the real contract and required to be counted. It signs a vote and nothing
-# else, and it holds no controller root.
-add_executable(tos-pq-vote pq/vote-tool.cpp)
-target_include_directories(tos-pq-vote PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos-pq-vote PUBLIC tos_crypto tos_pq_consensus_signer)
+# The vote and controller tools use the key-file libraries, which a client-only build
+# does not define (see pq/CMakeLists.txt).
+if(NOT TOS_CLIENT_ONLY)
+  # The node's own vote producer, reachable from a command line so the bytes it makes can
+  # be handed to the real contract and required to be counted. It signs a vote and nothing
+  # else, and it holds no controller root.
+  add_executable(tos-pq-vote pq/vote-tool.cpp)
+  target_include_directories(tos-pq-vote PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+  target_link_libraries(tos-pq-vote PUBLIC tos_crypto tos_pq_consensus_signer)
 
-# The operator's root-authorisation tool. It links the offline root library and no node
-# code, which is the boundary itself rather than a note about one: the only program in
-# this build that can sign a controller authorisation is the one an operator runs.
-add_executable(tos-pq-controller pq/controller-tool.cpp)
-target_include_directories(tos-pq-controller PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos-pq-controller PUBLIC tos_crypto tos_pq_controller_root)
+  # The operator's root-authorisation tool. It links the offline root library and no node
+  # code, which is the boundary itself rather than a note about one: the only program in
+  # this build that can sign a controller authorisation is the one an operator runs.
+  add_executable(tos-pq-controller pq/controller-tool.cpp)
+  target_include_directories(tos-pq-controller PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+  target_link_libraries(tos-pq-controller PUBLIC tos_crypto tos_pq_controller_root)
+endif()
 
 add_executable(dump-block block/dump-block.cpp)
 target_include_directories(dump-block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>

@@ -97,6 +97,91 @@ jobs:
         path: .ccache
         key: strict-build-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
 
+  # The client-only graph Windows ships (TOS_CLIENT_ONLY=ON), built and tested on Linux
+  # with warnings as errors. Windows runs are slow and rare; this one catches a change
+  # that makes a client target need the node, or a node target leak into the client.
+  client-only-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 2G
+      BUILD_ARCH: x86-64-v2
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+    - name: Date Stamp
+      shell: bash
+      id: date-stamp
+      run: |
+        echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
+
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git cmake ninja-build ccache
+
+    - name: Install Clang 21
+      run: |
+        sudo scripts/install-llvm-toolchain.sh 21 all
+
+    - name: Restore compile cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .ccache
+        key: client-only-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
+        restore-keys: client-only-ccache-${{ env.BUILD_ARCH }}-
+
+    - name: Check the client-only configuration rules
+      run: python3 test/cmake/client-only/run.py
+
+    - name: Build the client-only tree
+      run: |
+        cmake -S . -B build-client -G Ninja \
+          -DCMAKE_C_COMPILER=clang-21 \
+          -DCMAKE_CXX_COMPILER=clang++-21 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DTOS_CLIENT_ONLY=ON \
+          -DTOS_USE_LLD=On \
+          -DTOS_WERROR_BUILD=On \
+          -DTOS_ARCH="$BUILD_ARCH" \
+          -DPORTABLE="$BUILD_ARCH" \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        ccache --zero-stats
+        ninja -C build-client
+        ninja -C build-client all-tests
+
+    - name: Run the client-only tests
+      run: ctest --test-dir build-client --output-on-failure -j4 --timeout 900
+
+    # The node is not part of this graph; a request for it is an unknown target.
+    - name: Node targets are not defined
+      shell: bash
+      run: |
+        for target in validator-engine tos-pq-consensus-key tos-pq-vote tos-proof-verify storage-daemon; do
+          if ninja -C build-client -n "$target" > "probe-$target.log" 2>&1; then
+            echo "node target $target is defined in the client-only build" >&2
+            exit 1
+          fi
+          grep -q "unknown target '$target'" "probe-$target.log" || { cat "probe-$target.log"; exit 1; }
+        done
+
+    - name: Compile cache statistics
+      if: always()
+      run: ccache --show-stats
+
+    - name: Save compile cache
+      if: always()
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .ccache
+        key: client-only-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
+
   # Formatting and whitespace, judged on the lines this change actually touches.
   #
   # The tree carries older deviations that a whole-tree check would report on every

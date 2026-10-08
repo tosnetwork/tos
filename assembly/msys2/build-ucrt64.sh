@@ -39,6 +39,7 @@ PACMAN_PKGS=(
   ${PKG_PREFIX}-ninja
   ${PKG_PREFIX}-cmake
   ${PKG_PREFIX}-pkgconf
+  ${PKG_PREFIX}-python
   autoconf automake libtool m4 make git diffutils autogen
 )
 
@@ -68,8 +69,10 @@ git checkout .
 git clean -fdx
 cd -
 
+# Windows builds the client toolchain only (see BUILD.md).
 cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
+  -DTOS_CLIENT_ONLY=ON \
   -DCMAKE_C_COMPILER=clang \
   -DCMAKE_CXX_COMPILER=clang++ \
   -DCMAKE_AR=llvm-ar \
@@ -78,37 +81,19 @@ cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -G Ninja \
   -DBUILD_SHARED_LIBS=OFF \
   -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
 
-ninja -C "$BUILD_DIR" \
-  storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
-  validator-engine lite-client validator-engine-console blockchain-explorer \
-  generate-random-id json2tlo dht-server http-proxy rldp-http-proxy \
- create-state emulator proxy-liteserver dht-ping-servers dht-resolve
+ninja -C "$BUILD_DIR" fift func tlbc tol toslib toslibjson toslib-cli lite-client emulator
 
 if [ "$with_artifacts" = true ]; then
   rm -rf artifacts
   mkdir artifacts
-  cp $BUILD_DIR/storage/storage-daemon/storage-daemon \
-     $BUILD_DIR/storage/storage-daemon/storage-daemon-cli \
-     $BUILD_DIR/crypto/fift \
+  cp $BUILD_DIR/crypto/fift \
      $BUILD_DIR/crypto/tlbc \
      $BUILD_DIR/crypto/func \
      $BUILD_DIR/tol/tol \
-     $BUILD_DIR/crypto/create-state \
-     $BUILD_DIR/blockchain-explorer/blockchain-explorer \
-     $BUILD_DIR/validator-engine-console/validator-engine-console \
      $BUILD_DIR/toslib/toslib-cli \
-     $BUILD_DIR/utils/proxy-liteserver \
      $BUILD_DIR/toslib/libtoslibjson.dll \
-     $BUILD_DIR/http/http-proxy \
-     $BUILD_DIR/rldp-http-proxy/rldp-http-proxy \
-     $BUILD_DIR/dht-server/dht-server \
      $BUILD_DIR/lite-client/lite-client \
-     $BUILD_DIR/validator-engine/validator-engine \
-     $BUILD_DIR/utils/generate-random-id \
-     $BUILD_DIR/utils/json2tlo \
      $BUILD_DIR/emulator/libemulator.dll \
-     $BUILD_DIR/dht/dht-ping-servers \
-     $BUILD_DIR/dht/dht-resolve \
      artifacts
   test $? -eq 0 || { echo "Can't copy final binaries"; exit 1; }
   cp -R crypto/smartcont artifacts

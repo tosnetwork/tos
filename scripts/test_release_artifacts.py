@@ -1066,5 +1066,71 @@ class PqToolPackagingTest(unittest.TestCase):
             self.assertIn(f"COPY --from=builder {source} /usr/local/bin/\n", dockerfile)
 
 
+class WindowsClientPackagingTest(unittest.TestCase):
+    """Windows builds and publishes the client toolchain, and only that.
+
+    The node's key and configuration file handling is POSIX-only, so the
+    Windows scripts configure with TOS_CLIENT_ONLY=ON. A Windows asset that
+    names a node binary would make a release that cannot be collected.
+    """
+
+    TARGETS = [
+        "fift",
+        "func",
+        "tlbc",
+        "tol",
+        "toslib",
+        "toslibjson",
+        "toslib-cli",
+        "lite-client",
+        "emulator",
+    ]
+    # Published binary -> where the MSVC script copies it from.
+    PUBLISHED = {
+        "fift.exe": r"build\crypto\fift.exe",
+        "func.exe": r"build\crypto\func.exe",
+        "tol.exe": r"build\tol\tol.exe",
+        "lite-client.exe": r"build\lite-client\lite-client.exe",
+        "toslibjson.dll": r"build\toslib\toslibjson.dll",
+        "emulator.dll": r"build\emulator\emulator.dll",
+        "toslib-cli.exe": r"build\toslib\toslib-cli.exe",
+    }
+    MSVC = HERE.parent / "assembly" / "native" / "build-windows-2022.bat"
+    MSYS2 = [
+        HERE.parent / "assembly" / "msys2" / n for n in ("build-mingw64.sh", "build-ucrt64.sh")
+    ]
+
+    def test_windows_release_publishes_exactly_the_client_set(self) -> None:
+        config = json.loads((HERE / "release-artifacts.json").read_text())
+        paths = {
+            asset.get("path")
+            for asset in config["release_sets"]["full"]["assets"]
+            if asset["artifact"] == "tos-x86-64-windows" and not asset.get("zip")
+        }
+        self.assertEqual(paths, set(self.PUBLISHED))
+
+    def test_msvc_script_builds_and_copies_the_client_set(self) -> None:
+        script = self.MSVC.read_text()
+        self.assertIn("-DTOS_CLIENT_ONLY=ON ^", script)
+        targets = script.split("SET TOS_CLIENT_TARGETS=", 1)[1].splitlines()[0].split()
+        self.assertEqual(targets, self.TARGETS)
+        self.assertEqual(script.count("\nninja "), 1, "one ninja invocation")
+        self.assertIn("\nninja %TOS_CLIENT_TARGETS%", script)
+        for source in self.PUBLISHED.values():
+            self.assertIn(source, script)
+
+    def test_msys2_scripts_build_and_copy_the_client_set(self) -> None:
+        for path in self.MSYS2:
+            script = path.read_text()
+            self.assertIn("  -DTOS_CLIENT_ONLY=ON \\\n", script, path.name)
+            lines = [
+                line for line in script.splitlines() if line.startswith('ninja -C "$BUILD_DIR"')
+            ]
+            self.assertEqual(len(lines), 1, path.name)
+            self.assertEqual(lines[0].split()[3:], self.TARGETS, path.name)
+            for binary in ("fift", "func", "tol", "lite-client", "toslib-cli"):
+                self.assertRegex(script, rf"\$BUILD_DIR/[\w/-]*/{binary} ", path.name)
+
+
 if __name__ == "__main__":
     unittest.main()

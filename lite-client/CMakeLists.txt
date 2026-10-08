@@ -10,4 +10,8 @@ target_link_libraries(lite-client tdutils tdactor adnllite tl_api tl_lite_api tl
 
 install(TARGETS lite-client RUNTIME DESTINATION bin)
 
-add_subdirectory(proof-verify)
+# The proof verifier persists and locks its state with POSIX file calls; it is
+# node-side tooling, not part of a client-only build.
+if(NOT TOS_CLIENT_ONLY)
+  add_subdirectory(proof-verify)
+endif()

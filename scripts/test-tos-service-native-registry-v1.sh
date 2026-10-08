@@ -2,13 +2,15 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# CMake passes its Python; a direct invocation uses python3 from PATH.
+PYTHON=${PYTHON:-python3}
 TEST_DIR=$(mktemp -d)
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 "$REPO_ROOT/scripts/build-tos-service-native-registry-v1.sh" "$TEST_DIR/first.boc" >/dev/null
 "$REPO_ROOT/scripts/build-tos-service-native-registry-v1.sh" "$TEST_DIR/second.boc" >/dev/null
 cmp "$TEST_DIR/first.boc" "$TEST_DIR/second.boc"
-python3 - "$REPO_ROOT/crypto/smartcont/tos-service-native-registry-v1.boc.base64" "$TEST_DIR/frozen.boc" <<'PY'
+"$PYTHON" - "$REPO_ROOT/crypto/smartcont/tos-service-native-registry-v1.boc.base64" "$TEST_DIR/frozen.boc" <<'PY'
 import base64
 import pathlib
 import sys
@@ -18,7 +20,7 @@ pathlib.Path(sys.argv[2]).write_bytes(base64.b64decode(encoded, validate=True))
 PY
 cmp "$TEST_DIR/first.boc" "$TEST_DIR/frozen.boc"
 
-python3 - "$REPO_ROOT/crypto/smartcont/tos-service-native-registry-v1.release.json" <<'PY'
+"$PYTHON" - "$REPO_ROOT/crypto/smartcont/tos-service-native-registry-v1.release.json" <<'PY'
 import json
 import pathlib
 import sys

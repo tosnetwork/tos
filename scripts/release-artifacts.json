@@ -59,31 +59,6 @@
         },
         {
           "artifact": "tos-x86-64-windows",
-          "path": "proxy-liteserver.exe",
-          "name": "proxy-liteserver.exe"
-        },
-        {
-          "artifact": "tos-x86-64-windows",
-          "path": "rldp-http-proxy.exe",
-          "name": "rldp-http-proxy.exe"
-        },
-        {
-          "artifact": "tos-x86-64-windows",
-          "path": "http-proxy.exe",
-          "name": "http-proxy.exe"
-        },
-        {
-          "artifact": "tos-x86-64-windows",
-          "path": "storage-daemon-cli.exe",
-          "name": "storage-daemon-cli.exe"
-        },
-        {
-          "artifact": "tos-x86-64-windows",
-          "path": "storage-daemon.exe",
-          "name": "storage-daemon.exe"
-        },
-        {
-          "artifact": "tos-x86-64-windows",
           "path": "toslibjson.dll",
           "name": "toslibjson.dll"
         },

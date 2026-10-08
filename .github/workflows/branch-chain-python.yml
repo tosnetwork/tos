@@ -56,6 +56,9 @@ jobs:
       - name: Check compiler selection rules
         run: python3 test/cmake/compiler-autodetect/run.py
 
+      - name: Check client-only configuration rules
+        run: python3 test/cmake/client-only/run.py
+
       - name: Configure the minimal native fixture build
         run: >-
           cmake -S . -B build -G Ninja

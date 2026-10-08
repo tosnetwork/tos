@@ -43,6 +43,18 @@ target_compile_features(tos_pq_consensus PUBLIC cxx_std_20)
 target_include_directories(tos_pq_consensus PUBLIC "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>" "$<INSTALL_INTERFACE:include/tos/pq>")
 target_link_libraries(tos_pq_consensus PUBLIC tos_mldsa44 PRIVATE OpenSSL::Crypto)
 
+# The TVM's PQ opcodes are part of the VM in every build.
+if(TARGET tos_crypto)
+  target_sources(tos_crypto PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../vm/pqops.cpp")
+  target_link_libraries(tos_crypto PRIVATE tos_mldsa44)
+endif()
+
+# A client-only build needs the verify-only primitives above (block parsing links
+# them) and the wallet primitives after this section, but none of the consensus
+# signing side: the key-file libraries, the key tools and their tests are node
+# tooling that relies on POSIX file semantics. The section is not re-indented.
+if(NOT TOS_CLIENT_ONLY)
+
 # Validator CONSENSUS PQ signer: a separate sign-enabled backend (own namespace),
 # never linked into the consensus verify path or the ADNL keyring.
 add_library(tos_pq_consensus_signer_backend STATIC "${TOS_MLDSA_SOURCE_DIR}/mldsa/mldsa_native.c")
@@ -138,8 +150,6 @@ set_target_properties(test-pq-signer PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQ
 target_link_libraries(test-pq-signer PRIVATE tos_pq_consensus_signer tos_pq_consensus tos_mldsa44)
 add_test(NAME pq-signer COMMAND test-pq-signer)
 if(TARGET tos_crypto)
-  target_sources(tos_crypto PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../vm/pqops.cpp")
-  target_link_libraries(tos_crypto PRIVATE tos_mldsa44)
   add_executable(test-pq-mldsa44 "${PQ_TEST_DIR}/test.cpp")
   add_executable(test-pq-bytes "${PQ_TEST_DIR}/pq-bytes-test.cpp")
   set_target_properties(test-pq-bytes PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -364,6 +374,7 @@ if(TARGET tos_crypto)
   add_executable(test-pq-v16-parity "${PQ_TEST_DIR}/../pq-readiness/parity.cpp")
   target_link_libraries(test-pq-v16-parity PRIVATE tos_crypto)
 endif()
+endif()  # NOT TOS_CLIENT_ONLY
 
 install(FILES "${TOS_MLDSA_SOURCE_DIR}/LICENSE"
   DESTINATION share/tos/licenses/mldsa-native)
