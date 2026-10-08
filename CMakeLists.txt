@@ -1727,11 +1727,18 @@ add_test(NAME n6-microbench-results
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-microbench-results.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(n6-microbench-results PROPERTIES LABELS "source-guard")
+# The timing bounds are calibrated on Linux; elsewhere they are reported, not enforced.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(N6_MICROBENCH_TIMING enforce)
+else()
+  set(N6_MICROBENCH_TIMING report)
+endif()
 add_test(NAME n6-microbench-smoke
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-microbench-smoke.py
           --binary $<TARGET_FILE:n6-microbench-smoke>
           --baseline ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/n6-microbench-smoke-baseline.json
-          --vectors ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/block-signature-carrier-measurements.tsv)
+          --vectors ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/block-signature-carrier-measurements.tsv
+          --timing ${N6_MICROBENCH_TIMING})
 set_tests_properties(n6-microbench-smoke PROPERTIES LABELS "n6-microbench-smoke")
 add_test(NAME n6-cluster-runner
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/n6-cluster-runner-test.py)

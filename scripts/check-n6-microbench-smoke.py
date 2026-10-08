@@ -19,6 +19,9 @@ parser.add_argument("--binary", type=Path)
 parser.add_argument("--result", type=Path)
 parser.add_argument("--baseline", type=Path, required=True)
 parser.add_argument("--vectors", type=Path, required=True)
+# The timing bounds are calibrated on Linux, the validator platform. Elsewhere
+# they are reported and not enforced; every other check is enforced everywhere.
+parser.add_argument("--timing", choices=("enforce", "report"), default="enforce")
 args = parser.parse_args()
 if (args.binary is None) == (args.result is None):
     fail("exactly one of --binary or --result is required")
@@ -105,12 +108,24 @@ ratios = {
     "lite_verify_21_per_signature_over_single_verify_p95": p95("lite_verify_21")
     / (21 * single_verify),
 }
+exceeded = []
 for name, ratio in ratios.items():
+    print(f"N6_MICROBENCH_SMOKE_RATIO {name}={ratio:.3f} bound={timing[name]:.3f}")
     if ratio > timing[name]:
-        fail(
+        exceeded.append(
             f"large timing regression {name}: normalized p95 {ratio:.3f} exceeds {timing[name]:.3f}"
         )
+if exceeded and args.timing == "enforce":
+    fail(exceeded[0])
+for line in exceeded:
+    print(f"N6_MICROBENCH_SMOKE_TIMING_REPORT {line}")
 
-print(
-    "N6_MICROBENCH_SMOKE_OK: exact sizes, verification counts, structural cap, and repeated-sample large-regression bounds hold"
-)
+if args.timing == "enforce":
+    print(
+        "N6_MICROBENCH_SMOKE_OK: exact sizes, verification counts, structural cap, and repeated-sample large-regression bounds hold"
+    )
+else:
+    print(
+        "N6_MICROBENCH_SMOKE_OK: exact sizes, verification counts and structural cap hold; "
+        "timing bounds were reported, not enforced, on this uncalibrated platform"
+    )
