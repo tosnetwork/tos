@@ -76,7 +76,7 @@ std::atomic<size_t> g_budget_used{0};
 std::atomic<size_t> g_budget_limit{0};
 // The condition being waited for. Each character is atomic, so a report made
 // while the test thread rewrites it may mix two labels but never races.
-constexpr size_t kWaitingForSize = 160;
+constexpr size_t kWaitingForSize = 480;
 std::atomic<char> g_waiting_for[kWaitingForSize];
 std::atomic<size_t> g_waiting_for_len{0};
 
@@ -108,7 +108,7 @@ void publish_step(const adnl::AdnlExtByteBudget& budget) {
   for (size_t i = 0; i < wait_len; i++) {
     waiting_for[i] = g_waiting_for[i].load(std::memory_order_relaxed);
   }
-  char line[512];
+  char line[1024];
   int n = std::snprintf(line, sizeof(line),
                         "ADNL_EXT_INPUT_CASE %s hung after %lld s: scheduler_steps=%llu budget_used=%zu "
                         "budget_limit=%zu waiting_for=\"%.*s\"\n",
@@ -588,6 +588,86 @@ void source_share() {
   std::printf("ADNL_EXT_INPUT_CASE source_share ok share=%zu\n", share);
 }
 
+// Bytes queued for a non-blocking socket, written in bounded chunks from a
+// cursor: Darwin can refuse one huge non-blocking send outright (ENOBUFS) where
+// Linux takes what fits, and erasing the front of a multi-megabyte buffer after
+// every chunk would itself copy megabytes per step. EAGAIN, EWOULDBLOCK and
+// ENOBUFS mean "later"; a send that moves nothing returns without spinning;
+// anything else is final. The last refusal is kept for the failure report.
+class SendQueue {
+ public:
+  using SendFn = ssize_t (*)(int, const void*, size_t, int);
+  static constexpr size_t kChunk = 64 << 10;
+
+  explicit SendQueue(SendFn send = &::send) : send_(send) {
+  }
+  void append(const std::string& bytes) {
+    if (sent_ == data_.size()) {
+      data_.clear();
+      sent_ = 0;
+    }
+    data_ += bytes;
+  }
+  // Writes what the socket takes now; false once a send failed for good.
+  bool flush(int fd) {
+    while (sent_ < data_.size()) {
+      const size_t chunk = std::min(data_.size() - sent_, kChunk);
+      auto n = send_(fd, data_.data() + sent_, chunk, MSG_NOSIGNAL | MSG_DONTWAIT);
+      if (n > 0) {
+        sent_ += static_cast<size_t>(n);
+        continue;
+      }
+      last_offset_ = sent_;
+      if (n == 0) {
+        last_errno_ = 0;
+        zero_sends_++;
+        return true;
+      }
+      last_errno_ = errno;
+      if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+        refusals_++;
+        return true;
+      }
+      failed_ = true;
+      return false;
+    }
+    data_.clear();
+    sent_ = 0;
+    return true;
+  }
+  size_t pending() const {
+    return data_.size() - sent_;
+  }
+  bool failed() const {
+    return failed_;
+  }
+  size_t refusals() const {
+    return refusals_;
+  }
+  size_t zero_sends() const {
+    return zero_sends_;
+  }
+  std::string describe() const {
+    std::string out = "pending=" + std::to_string(pending()) + " sent=" + std::to_string(sent_) +
+                      " refusals=" + std::to_string(refusals_) + " zero_sends=" + std::to_string(zero_sends_);
+    if (last_errno_ != 0) {
+      out += " last_errno=" + std::to_string(last_errno_) + " (" + std::strerror(last_errno_) + ") at offset " +
+             std::to_string(last_offset_);
+    }
+    return out + (failed_ ? " failed" : "");
+  }
+
+ private:
+  SendFn send_;
+  std::string data_;
+  size_t sent_ = 0;
+  int last_errno_ = 0;
+  size_t last_offset_ = 0;
+  size_t refusals_ = 0;
+  size_t zero_sends_ = 0;
+  bool failed_ = false;
+};
+
 // The real external server, accepting real TCP connections with its production
 // budgets: a source's connections are charged to the source. Two connections
 // from 127.0.0.1 hold most of the source's 32 MiB share with unfinished frames;
@@ -627,7 +707,7 @@ class RawExtPeer {
     auto encrypted = encryptor.ok()->encrypt(secret.as_slice());
     require(encrypted.is_ok() && encrypted.ok().size() == 224, "cannot encrypt init block");
     std::string init = server.compute_short_id().as_slice().str() + encrypted.ok().as_slice().str();
-    pending_ = init;
+    out_queue_.append(init);
   }
   ~RawExtPeer() {
     close();
@@ -640,7 +720,7 @@ class RawExtPeer {
   void queue_partial_frame(td::uint32 packet_bytes, size_t body) {
     std::string plain(4 + body, 'p');
     std::memcpy(plain.data(), &packet_bytes, 4);
-    pending_ += encrypt(plain);
+    out_queue_.append(encrypt(plain));
   }
   // Queue a complete keepalive-sized ping; the server answers with a pong.
   void queue_ping() {
@@ -652,7 +732,7 @@ class RawExtPeer {
     td::Random::secure_bytes(body.substr(0, 32));
     body.substr(32, ping.size()).copy_from(ping.as_slice());
     td::sha256(body.substr(0, 32 + ping.size()), body.substr(32 + ping.size(), 32));
-    pending_ += encrypt(plain);
+    out_queue_.append(encrypt(plain));
   }
   // Write what is queued without blocking, and take whatever the server sent.
   // Returns false once the server has closed this connection.
@@ -660,16 +740,9 @@ class RawExtPeer {
     if (fd_ < 0) {
       return false;
     }
-    while (!pending_.empty()) {
-      auto n = ::send(fd_, pending_.data(), pending_.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
-      if (n < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-          break;
-        }
-        closed_by_server_ = true;
-        return false;
-      }
-      pending_.erase(0, static_cast<size_t>(n));
+    if (!out_queue_.flush(fd_)) {
+      closed_by_server_ = true;
+      return false;
     }
     char buffer[4096];
     while (true) {
@@ -686,7 +759,11 @@ class RawExtPeer {
     }
   }
   bool flushed() const {
-    return pending_.empty();
+    return out_queue_.pending() == 0;
+  }
+  std::string describe() const {
+    return out_queue_.describe() + " received=" + std::to_string(received_) +
+           (closed_by_server_ ? " closed_by_server" : "");
   }
   bool closed_by_server() const {
     return closed_by_server_;
@@ -711,7 +788,7 @@ class RawExtPeer {
   }
   int fd_ = -1;
   td::AesCtrState out_;
-  std::string pending_;
+  SendQueue out_queue_;
   size_t received_ = 0;
   bool closed_by_server_ = false;
 };
@@ -771,8 +848,14 @@ void server_source_share() {
                                   }));
         }));
   });
+  auto peers_state = [](const std::vector<RawExtPeer*>& peers) {
+    std::string out;
+    for (size_t i = 0; i < peers.size(); i++) {
+      out += " peer" + std::to_string(i) + "{" + peers[i]->describe() + "}";
+    }
+    return out;
+  };
   auto run_until = [&](auto&& done, double bound_s, const std::string& what, std::vector<RawExtPeer*> peers) {
-    publish_waiting_for(what);
     auto deadline = td::Timestamp::in(bound_s);
     while (!done()) {
       scheduler->run(0.005);
@@ -780,8 +863,10 @@ void server_source_share() {
       for (auto* peer : peers) {
         peer->pump();
       }
+      // This case's progress, for the watchdog: what it waits for and where each peer's output stands.
+      publish_waiting_for(what + ":" + peers_state(peers));
       if (deadline.is_in_past()) {
-        fail(what);
+        fail(what + ":" + peers_state(peers));
       }
     }
   };
@@ -909,6 +994,70 @@ void unit_checks() {
   std::printf("ADNL_EXT_INPUT_CASE unit ok\n");
 }
 
+// The peer's send queue, deterministically: a transient ENOBUFS keeps the bytes
+// and the peer, a send that moves nothing does not spin, a hard error is final
+// and reported with its errno and offset.
+int g_fake_refusals = 0;
+int g_fake_errno = 0;
+ssize_t refusing_send(int fd, const void* data, size_t size, int flags) {
+  if (g_fake_refusals > 0) {
+    g_fake_refusals--;
+    errno = g_fake_errno;
+    return -1;
+  }
+  return ::send(fd, data, size, flags);
+}
+ssize_t zero_send(int, const void*, size_t, int) {
+  return 0;
+}
+
+void send_queue_checks() {
+  int fds[2];
+  require(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
+  const std::string bytes(10000, 'q');
+
+  // Transient ENOBUFS, three times: nothing is lost, the peer stays open, and
+  // a later flush delivers everything.
+  g_fake_refusals = 3;
+  g_fake_errno = ENOBUFS;
+  SendQueue transient(&refusing_send);
+  transient.append(bytes);
+  for (int i = 0; i < 3; i++) {
+    require(transient.flush(fds[0]), "a transient ENOBUFS was treated as final");
+    require(transient.pending() == bytes.size(), "a refused send lost or sent bytes");
+  }
+  require(transient.flush(fds[0]) && transient.pending() == 0, "the send after the refusals did not complete");
+  require(transient.refusals() == 3 && !transient.failed(), "the refusals were not counted as transient");
+  std::string got(bytes.size(), '\0');
+  require(::recv(fds[1], got.data(), got.size(), MSG_WAITALL) == static_cast<ssize_t>(got.size()) && got == bytes,
+          "the bytes delivered after the refusals differ");
+
+  // A send that moves nothing returns at once and keeps the bytes.
+  SendQueue stalled(&zero_send);
+  stalled.append(bytes);
+  require(stalled.flush(fds[0]) && stalled.pending() == bytes.size() && stalled.zero_sends() == 1,
+          "a zero-byte send was not handled as no progress");
+
+  // A hard error is final, and the report names it.
+  g_fake_refusals = 1;
+  g_fake_errno = EPIPE;
+  SendQueue broken(&refusing_send);
+  broken.append(bytes);
+  require(!broken.flush(fds[0]) && broken.failed(), "a hard send error was not final");
+  require(broken.describe().find("Broken pipe") != std::string::npos &&
+              broken.describe().find("at offset 0") != std::string::npos,
+          "the failure report does not name the errno and offset: " + broken.describe());
+
+  // The report from a real failure: our own fd closed mid-stream.
+  SendQueue real;
+  real.append(bytes);
+  ::close(fds[0]);
+  require(!real.flush(fds[0]) && real.describe().find(std::strerror(EBADF)) != std::string::npos,
+          "a real send failure is not reported: " + real.describe());
+  ::close(fds[1]);
+  std::printf("ADNL_EXT_INPUT_CASE send_queue ok\n");
+}
+
 // Watchdog control, never part of "all": a wait that cannot finish must end in
 // the watchdog's report, not in the harness's own timeout.
 void watchdog_control() {
@@ -932,6 +1081,7 @@ int main(int argc, char** argv) {
   const std::string only = argc > 1 ? argv[1] : "all";
   const std::vector<std::tuple<std::string, void (*)(), bool>> cases = {
       {"unit", unit_checks, true},
+      {"send-queue", send_queue_checks, true},
       {"holds", holds_and_returns, true},
       {"per-connection", per_connection_bound, true},
       {"shared", shared_budget, true},
