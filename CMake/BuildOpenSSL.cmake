@@ -163,6 +163,13 @@ if (NOT OPENSSL_CRYPTO_LIBRARY)
       if (NOT OPENSSL_MAKE_RESULT EQUAL 0)
         message(FATAL_ERROR "OpenSSL build failed with code ${OPENSSL_MAKE_RESULT}")
       endif()
+      # OpenSSL's Windows install step copies ossl_static.pdb for a static build,
+      # which clang-cl does not emit without debug information. A placeholder keeps
+      # install_sw from failing on that copy; the libraries are unaffected.
+      execute_process(
+        COMMAND ${CMAKE_COMMAND} -E touch ossl_static.pdb
+        WORKING_DIRECTORY ${OPENSSL_BUILD_DIR}
+      )
       execute_process(
         COMMAND ${OPENSSL_MSVC_ENV} nmake install_sw
         WORKING_DIRECTORY ${OPENSSL_BUILD_DIR}
