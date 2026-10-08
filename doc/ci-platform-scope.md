@@ -64,6 +64,45 @@ minutes. Lanes without a successful sample start at 240 minutes (macOS, Windows)
 minutes (Linux, wasm). Each is revisited after ten successful runs. Existing values are
 never lowered.
 
+## Self-hosted routing
+
+The heaviest Linux jobs can run on the project's own runner instead of a GitHub-hosted
+machine. Each runs in a fresh VM that is discarded after the job. The routed jobs are:
+
+| Workflow | Job | Timeout (min) |
+|---|---|---|
+| `branch-chain-python.yml` | `python-and-pq-chain` | 120 |
+| `network-safety-asan.yml` | `network-safety` | 100 |
+| `jsonrpc-asan.yml` | `unit`, `corpus` | 40, 120 |
+| `build-tos-linux-x86-64-werror.yml` | `strict-build` | 150 |
+
+Each of these jobs chooses its runner with one fixed `runs-on` expression. It selects the
+`tos-vm` label only when all of the following hold:
+
+- the repository variable `SELF_HOSTED_LINUX` is `true`; and
+- the event is either a push to `main`, or a pull request whose head branch is in this
+  repository and whose author and triggering actor (for a re-run, the person re-running it)
+  are both in the JSON list in the repository variable `CI_TRUSTED_LOGINS`.
+
+Every other event runs on `ubuntu-24.04`, as before. That covers fork pull requests,
+pull requests from anyone not listed, dispatches and schedules. Clearing the variable or
+setting it to anything but `true` sends every job back to hosted runners without a commit.
+
+Each of the four workflows carries one weekly schedule. A scheduled run is never routed,
+so the hosted path runs at least once a week whatever the variable says. The jobs keep
+their own package-install steps for the same reason: the VM image has those packages
+preinstalled, so on the VM the steps find nothing to do, but the hosted fallback needs
+them.
+
+R12 in `scripts/check-workflow-policy.py` enforces this:
+
+- the expression must be exactly this one (whitespace aside);
+- no job may name a self-hosted label any other way;
+- a workflow with a routed job must grant no write permission, use no secret beyond
+  `GITHUB_TOKEN`, and have exactly one weekly schedule;
+- each routed job's timeout plus a 15-minute setup margin must fit the runner host's
+  165-minute per-job cap, so a hang ends at the job's own timeout.
+
 ## Deliberate exclusions
 
 - **Windows builds the client toolchain only** (`TOS_CLIENT_ONLY`, see `BUILD.md`):

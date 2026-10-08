@@ -304,6 +304,132 @@ class PolicyTest(unittest.TestCase):
         self.mutate("source-guards.yml", self.SOURCE_GUARDS_PUSH, "  push:\n")
         self.assertFalse(self.violations("R11", "source-guards.yml"))
 
+    ROUTED = "network-safety-asan.yml"
+    TRUSTED_ACTOR = (
+        " &&\n       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.triggering_actor))))"
+    )
+
+    def routed_jobs(self) -> dict[str, list[str]]:
+        found: dict[str, list[str]] = {}
+        for path in sorted((self.root / ".github" / "workflows").glob("*.yml")):
+            doc = policy.yaml.safe_load(path.read_text()) or {}
+            for job_id, job in (doc.get("jobs") or {}).items():
+                labels = job.get("runs-on")
+                if isinstance(labels, str) and " ".join(labels.split()) == policy.ROUTED_RUNS_ON:
+                    found.setdefault(path.name, []).append(job_id)
+        return found
+
+    def test_r12_the_routing_expression_matches_the_routed_jobs(self) -> None:
+        # Without this, a constant that matched no job would leave every R12
+        # rule below with nothing to check.
+        self.assertEqual(
+            self.routed_jobs(),
+            {
+                "branch-chain-python.yml": ["python-and-pq-chain"],
+                "build-tos-linux-x86-64-werror.yml": ["strict-build"],
+                "jsonrpc-asan.yml": ["unit", "corpus"],
+                "network-safety-asan.yml": ["network-safety"],
+            },
+        )
+
+    def test_r12_literal_self_hosted_label(self) -> None:
+        self.mutate(
+            "connect-trust.yml", "runs-on: ubuntu-24.04\n", "runs-on: [self-hosted, linux]\n"
+        )
+        self.assert_red("R12", "connect-trust.yml")
+
+    def test_r12_routing_without_the_trusted_actor(self) -> None:
+        self.mutate(self.ROUTED, self.TRUSTED_ACTOR, ")))")
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_routing_a_fork_or_target_event(self) -> None:
+        for before, after in (
+            (
+                "       github.event.pull_request.head.repo.full_name == github.repository &&\n",
+                "",
+            ),
+            (
+                "(github.event_name == 'pull_request' &&",
+                "(github.event_name == 'pull_request_target' &&",
+            ),
+            ("github.ref == 'refs/heads/main'", "startsWith(github.ref, 'refs/heads/')"),
+        ):
+            with self.subTest(before=before):
+                self.tearDown()
+                self.setUp()
+                self.mutate(self.ROUTED, before, after)
+                self.assert_red("R12", self.ROUTED)
+
+    def test_r12_routing_whitespace_is_not_significant(self) -> None:
+        self.mutate(self.ROUTED, self.TRUSTED_ACTOR, self.TRUSTED_ACTOR.replace("\n       ", " "))
+        self.assertEqual(self.violations("R12", self.ROUTED), [])
+
+    def test_r12_write_permission(self) -> None:
+        self.mutate(
+            self.ROUTED, "permissions:\n  contents: read\n", "permissions:\n  contents: write\n"
+        )
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_default_permissions(self) -> None:
+        self.mutate(self.ROUTED, "permissions:\n  contents: read\n", "")
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_write_all_permission(self) -> None:
+        self.mutate(self.ROUTED, "permissions:\n  contents: read\n", "permissions: write-all\n")
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_job_write_permission(self) -> None:
+        self.mutate(
+            self.ROUTED,
+            "    timeout-minutes: 100\n",
+            "    timeout-minutes: 100\n    permissions:\n      pull-requests: write\n",
+        )
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_secret(self) -> None:
+        self.mutate(
+            self.ROUTED,
+            "    timeout-minutes: 100\n",
+            "    timeout-minutes: 100\n    env:\n      KEY: ${{ secrets.DEPLOY_KEY }}\n",
+        )
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_indexed_secret(self) -> None:
+        self.mutate(
+            self.ROUTED,
+            "    timeout-minutes: 100\n",
+            "    timeout-minutes: 100\n    env:\n      KEY: ${{ secrets['DEPLOY_KEY'] }}\n",
+        )
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_schedule(self) -> None:
+        schedule = "  schedule:\n    - cron: '37 3 * * 0'\n"
+        for after in (
+            "",
+            schedule + "    - cron: '37 3 * * 3'\n",
+            "  schedule:\n    - cron: '37 3 * * *'\n",
+            "  schedule:\n    - cron: '37 3 * * 1-5'\n",
+            "  schedule:\n    - cron: '*/5 * * * *'\n",
+        ):
+            with self.subTest(after=after):
+                self.tearDown()
+                self.setUp()
+                self.mutate(self.ROUTED, schedule, after)
+                self.assert_red("R12", self.ROUTED)
+
+    def test_r12_timeout_beyond_the_host_cap(self) -> None:
+        limit = policy.HOST_JOB_CAP_MINUTES - policy.HOST_SETUP_MARGIN_MINUTES
+        self.mutate(self.ROUTED, "    timeout-minutes: 100\n", f"    timeout-minutes: {limit}\n")
+        self.assertEqual(self.violations("R12", self.ROUTED), [])
+        self.mutate(
+            self.ROUTED, f"    timeout-minutes: {limit}\n", f"    timeout-minutes: {limit + 1}\n"
+        )
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_timeout_from_an_expression(self) -> None:
+        self.mutate(self.ROUTED, "    timeout-minutes: 100\n", "    timeout-minutes: ${{ 100 }}\n")
+        self.assert_red("R12", self.ROUTED)
+
 
 if __name__ == "__main__":
     unittest.main()

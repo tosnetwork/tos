@@ -85,6 +85,11 @@ def validate_unconditional_steps(text: str) -> None:
 
 
 TRIGGERS = "on:\n  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:\n"
+# One run a week on a fixed minute, hour and weekday. A scheduled run is not a
+# trusted event, so it takes the hosted runner: the fallback stays exercised.
+WEEKLY_SCHEDULE = re.compile(
+    r"  schedule:\n    - cron: '(?:[0-9]|[1-5][0-9]) (?:[0-9]|1[0-9]|2[0-3]) \* \* [0-6]'\n"
+)
 
 
 def validate_triggers(text: str) -> None:
@@ -93,9 +98,11 @@ def validate_triggers(text: str) -> None:
     head = text.split("\npermissions:", 1)[0]
     match = re.search(r"(?ms)^on:\n.*", head)
     require(match is not None, "workflow has no trigger map")
+    block = match.group(0).rstrip("\n") + "\n"
     require(
-        match.group(0).rstrip("\n") + "\n" == TRIGGERS,
-        "triggers are not exactly: every pull request, pushes to main, and dispatch",
+        block.startswith(TRIGGERS) and WEEKLY_SCHEDULE.fullmatch(block[len(TRIGGERS) :]),
+        "triggers are not exactly: every pull request, pushes to main, dispatch, "
+        "and one weekly schedule",
     )
 
 
