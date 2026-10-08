@@ -1220,6 +1220,8 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
   // Existing methods
   if (method == "sendBoc") {
     handle_sendBoc(params, std::move(req_id), source_ip, std::move(promise));
+  } else if (method == "getProofQuery") {
+    handle_getProofQuery(params, std::move(req_id), std::move(promise));
   } else if (method == "getConfigParam") {
     handle_getConfigParam(params, std::move(req_id), std::move(promise));
   } else if (method == "getAddressInformation") {
@@ -1338,8 +1340,7 @@ void JsonRpcServer::dispatch_method_impl(const std::string &method, td::JsonObje
     handle_runGetMethodStd(params, std::move(req_id), std::move(promise));
   } else if (method == "sendBocReturnHashNoError") {
     handle_sendBocReturnHashNoError(params, std::move(req_id), source_ip, std::move(promise));
-  }
-  else {
+  } else {
     // Unknown method via JSON-RPC envelope dispatch — emit spec-compliant
     // error so generic JSON-RPC clients can decode it. See process_body
     // for the rationale.

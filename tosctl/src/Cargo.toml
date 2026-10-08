@@ -19,6 +19,9 @@ members = [
     'tl/api',
     'toscenter-rs',
     'vm',
+    'wallet-pq-signer',
+    'lms-fee-state',
+    'tos-native-mnemonic',
     'sandbox',
 ]
 resolver = '2'

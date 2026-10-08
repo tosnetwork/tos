@@ -24,14 +24,23 @@
 #include "td/utils/PersistentTreap.h"
 #include "td/utils/RateLimiterWindow.h"
 
+#include "ext-message-admission-budget.hpp"
 #include "ext-message-checker.hpp"
+#include "ext-message-work-profile.hpp"
 
 namespace tos::validator {
 
 class ExtMessagePool : public td::actor::Actor {
  public:
-  ExtMessagePool(td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager)
-      : opts_(opts), manager_(manager) {
+  ExtMessagePool(td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager,
+                 std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget =
+                     std::make_shared<adnl::AdnlExtByteBudget>(ext_message_admission_bytes),
+                 std::unique_ptr<ExtMessageWorkAdmission> work_admission = nullptr)
+      : opts_(opts)
+      , manager_(manager)
+      , admission_budget_(std::move(admission_budget))
+      , work_admission_(std::move(work_admission)) {
+    CHECK(admission_budget_ != nullptr);
   }
 
   struct CheckResult {
@@ -49,20 +58,29 @@ class ExtMessagePool : public td::actor::Actor {
   void complete_external_messages(std::vector<ExtMessage::Hash> to_delay, std::vector<ExtMessage::Hash> to_delete);
   void erase_external_messages(std::vector<ExtMessage::Hash> to_delete);
 
-  void update_last_masterchain_state(td::Ref<MasterchainState> state) {
-    last_masterchain_state_ = std::move(state);
-  }
-  void update_options(td::Ref<ValidatorManagerOptions> opts) {
-    opts_ = std::move(opts);
-  }
+  void update_last_masterchain_state(td::Ref<MasterchainState> state);
+  void update_options(td::Ref<ValidatorManagerOptions> opts);
+  td::Result<td::Unit> configure_work_profile(ExtMessageWorkProfile profile);
   std::vector<std::pair<std::string, std::string>> prepare_stats();
 
   void alarm() override;
+  void tear_down() override;
   void start_up() override {
+    if (opts_.not_null()) {
+      auto profile = opts_->get_ext_message_work_profile();
+      if (profile) {
+        auto status = configure_work_profile(profile.value());
+        if (status.is_error()) {
+          LOG(FATAL) << "Cannot install external admission work profile: " << status.move_as_error();
+        }
+      }
+    }
     alarm_timestamp().relax(admission_stats_at_);
   }
 
  private:
+  friend class ExtMessagePoolTestHarness;
+
   struct MessageId {
     AccountIdPrefixFull dst;
     ExtMessage::Hash hash;
@@ -165,8 +183,11 @@ class ExtMessagePool : public td::actor::Actor {
   void init_checkers();
 
   size_t inflight_checks_{0};
+  std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget_;
+  std::unique_ptr<ExtMessageWorkAdmission> work_admission_;
+  bool work_profile_supported_{false};
   std::deque<td::actor::StartedTask<>::ExternalPromise> admission_waiters_;
-  void release_check_slot();
+  void release_check_slot(bool dispatched);
 
   double check_completion_rate_{2000.0};
   td::uint64 completions_in_rate_window_{0};

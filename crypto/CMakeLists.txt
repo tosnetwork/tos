@@ -204,6 +204,7 @@ set(BLOCK_SOURCE
   block/Binlog.h
   block/Binlog.cpp
   block/block.cpp
+  block/auth-policy.cpp
   block/block-db.cpp
   block/block-parse.cpp
   block/check-proof.cpp
@@ -550,11 +551,11 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   endfunction()
 
   GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config
-    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/pq-launch-limits.fc)
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/auth-policy.fc smartcont/pq-launch-limits.fc)
   GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
-  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5 EXTRA_DEPS smartcont/auth-extension.fc smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5 EXTRA_DEPS smartcont/auth-extension.fc smartcont/wallet-v5-action-list.fc smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
@@ -716,7 +717,7 @@ target_compile_definitions(test-storage-fee-vectors PRIVATE
   STORAGE_FEE_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/block/storage-fee-vectors.tsv")
 tos_test(test-storage-fee-vectors)
 
-install(TARGETS fift func create-state tlbc RUNTIME DESTINATION bin)
+install(TARGETS fift func create-state tlbc RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
 install(DIRECTORY fift/lib/ DESTINATION lib/fift)
 install(DIRECTORY smartcont DESTINATION share/tos)
 

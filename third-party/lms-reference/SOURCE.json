@@ -1,0 +1,123 @@
+{
+  "repository": "https://github.com/cisco/hash-sigs",
+  "commit": "44e6c7de934c05942bf17cc819a81e765cfe67d7",
+  "scope": "Unmodified selected LMOTS signing/derivation primitives and headers. SECRET_METHOD=2, OpenSSL SHA-256. Stateful HSS APIs are not built.",
+  "files": [
+    {
+      "file": "common_defs.h",
+      "sha256": "3b004f851b30bf95d2370445473af82c4fe4a96d5f22cfba479c0a7f7d797fd5"
+    },
+    {
+      "file": "config.h",
+      "sha256": "17b50f6bd48b6e657fc6dc2c8baf76fa9a53fc9b4b2cdaaa93939b178a1bb10e"
+    },
+    {
+      "file": "endian.c",
+      "sha256": "76d2a636c7c2d8754a8a12fc430cc9a6bd4bd0b16ae69618a22328dcc2df2a0c"
+    },
+    {
+      "file": "endian.h",
+      "sha256": "9680941b2189c191442b91f8e84c099afe9537c288e52ae4d096c45a889d4d5c"
+    },
+    {
+      "file": "hash.c",
+      "sha256": "69ae3720e45d7efa1778d7d88e52f8c0e515d8fa977bf9b9534ad700af146aaa"
+    },
+    {
+      "file": "hash.h",
+      "sha256": "d16296148d483ecb4752fa4f033d0e0c185f12c1319533067af72f00c1fa96f4"
+    },
+    {
+      "file": "hss.h",
+      "sha256": "44bd50d44d1abc0b2928758818d23284837691112433f0c89976dc00964e4127"
+    },
+    {
+      "file": "hss_aux.h",
+      "sha256": "4be69859201d66c9c58fce7cfb423535c60d42722e35a869b952fef25e60d0c0"
+    },
+    {
+      "file": "hss_common.h",
+      "sha256": "a0029b0b59fe1ee70ad2883ab093611e64a0947d134aabb52be96112b33a033a"
+    },
+    {
+      "file": "hss_derive.c",
+      "sha256": "f15377eade2b6237617254a33fcea39fdeba817a0cdea1e81b30260088db9b5d"
+    },
+    {
+      "file": "hss_derive.h",
+      "sha256": "9d13cbd19d96f9b5af2f6a7410f1e126c0980e59a1dd0ea319f614c758f8b892"
+    },
+    {
+      "file": "hss_internal.h",
+      "sha256": "e9edfc2f1ea2999819d92d6c71714925760aa8e0d6b92faa717c6b2404af94a3"
+    },
+    {
+      "file": "hss_reserve.h",
+      "sha256": "d6d27386bed656ea7fcf5040bb5c0dfa1c5f5236e380312c925a7b4ed266f99b"
+    },
+    {
+      "file": "hss_sign_inc.h",
+      "sha256": "eda887461af3ce3a466690798e1c97b94353eeb48b37b7a12fd1be5d9195ad2b"
+    },
+    {
+      "file": "hss_thread.h",
+      "sha256": "bad363a629a0842ff3605cce1bcde42a5c46671155a1cf0ee8a9c05fa86e0bd1"
+    },
+    {
+      "file": "hss_verify.h",
+      "sha256": "f221354dc3a9b992ee8cc44df781487ae1599f14add12f086166a66fceb54c02"
+    },
+    {
+      "file": "hss_verify_inc.h",
+      "sha256": "d5600836c8f7daf0526e2178452b74e3c79bc67f323de48a75ed9719c73922e7"
+    },
+    {
+      "file": "hss_zeroize.c",
+      "sha256": "ae6594248a04790e692ddb46a0aadd7c41a1f2f9360d61718c2c4456ebbe3fc0"
+    },
+    {
+      "file": "hss_zeroize.h",
+      "sha256": "eecd00e8d0c0d19dd223d61fd832a7d10b31cccf403c199828a2495154a6b1e9"
+    },
+    {
+      "file": "license.txt",
+      "sha256": "becfee09d72fb931a6a73153db6688175b63dfb80e16a92a98520ca5a138ca64"
+    },
+    {
+      "file": "lm_common.c",
+      "sha256": "97acd718ed44a007b731c19d48748cc4eafd2e0af8716de5e660f33dd292ba0f"
+    },
+    {
+      "file": "lm_common.h",
+      "sha256": "90b2d676f8eb41d24b930d206c2cfc74d87fa045344d5d7f3dda7cd35f8be056"
+    },
+    {
+      "file": "lm_ots.h",
+      "sha256": "8a76840ecd6f9c4075d7639e1c0e2f07a4827d6f9e3e6b2a918fa9c9fef4dd59"
+    },
+    {
+      "file": "lm_ots_common.c",
+      "sha256": "8f807a4cce19ce165bcdaac18d49a08951202e38fd7f601d21f24138a6904dbd"
+    },
+    {
+      "file": "lm_ots_common.h",
+      "sha256": "c8e6ad6b972cad749042bcc4a06266dfebee1158a6cddd471661e2296d901bee"
+    },
+    {
+      "file": "lm_ots_sign.c",
+      "sha256": "820ebfc2fec1a640df0b8eab3c56f528f90b3cc10ed7fbc95aad7f6c12d1fe1d"
+    },
+    {
+      "file": "lm_ots_verify.h",
+      "sha256": "6ce19c8ef36c8936ee34088a031acf9ace38cd22b1e2e8e5053d355959b4d68c"
+    },
+    {
+      "file": "lm_verify.h",
+      "sha256": "7131c642a4778f3b78c4743e5b88b5d59a144725aa3e59978ec17a147908293c"
+    },
+    {
+      "file": "sha256.h",
+      "sha256": "6c26814482c7eb74ffe9b1a7cf8d05cf483fa386ca96d5ee90097f682c963128"
+    }
+  ]
+}

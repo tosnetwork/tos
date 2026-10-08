@@ -152,18 +152,18 @@ def main():
         oracle_valid = oracle(ss, len(ss), 2, kk, len(kk), mm, len(mm), scratch, len(scratch)) == 0
         assert oracle_valid == (v["expected"] == "V"), v["id"]
         cs.append(
-            (v["id"], [chain(mm), "skip", chain(ss), chain(kk)], 16, 1000000, 0, 1, v["expected"])
+            (v["id"], [chain(mm), "skip", chain(ss), chain(kk)], 19, 1000000, 0, 1, v["expected"])
         )
     inp = [chain(m), "skip", chain(s), chain(k)]
-    for version in range(16):
+    for version in range(19):
         cs.append((f"version-{version}", inp, version, 1000000, 0, 1, "E6"))
     for budget in (0, 9, 10, 33, 34, 20033, 20034, 22000):
-        cs.append((f"gas-{budget}", inp, 16, budget, 0, 1, "E-14"))
+        cs.append((f"gas-{budget}", inp, 19, budget, 0, 1, "E-14"))
     for i in (0, 2, 3):
         for marker, expected in [("int", "E7"), ("skip", "E2")]:
             cells = inp.copy()
             cells[i] = marker
-            cs.append((f"{marker}-{i}", cells, 16, 1000000, 0, 1, expected))
+            cs.append((f"{marker}-{i}", cells, 19, 1000000, 0, 1, expected))
         for label, bad in [
             ("unaligned", Cell().uint(1, 1)),
             ("fork", Cell().ref(Cell()).ref(Cell())),
@@ -172,20 +172,20 @@ def main():
         ]:
             cells = inp.copy()
             cells[i] = bad
-            cs.append((f"{label}-{i}", cells, 16, 1000000, 0, 1, "M"))
-    cs.append(("eleven-paid", inp, 16, 1000000, 0, 11, "V"))
+            cs.append((f"{label}-{i}", cells, 19, 1000000, 0, 1, "M"))
+    cs.append(("eleven-paid", inp, 19, 1000000, 0, 11, "V"))
     cs.append(
         (
             "invalid-ignore-classic",
             [chain(m), "skip", chain(bytes(666)), chain(k)],
-            16,
+            19,
             1000000,
             1,
             1,
             "I",
         )
     )
-    for ver in range(16):
+    for ver in range(19):
         for budget in (0, 9, 10, 59, 60):
             cs.append(
                 (

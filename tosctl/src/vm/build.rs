@@ -45,4 +45,18 @@ fn main() {
         .std("c99")
         .warnings(false)
         .compile("tos_rust_falcon512");
+    // PROTOTYPE suite 3: the same pinned SLH-DSA import as the C++ VM, verify-only shim.
+    let slh = root.join("../../../third-party/slhdsa-c");
+    println!("cargo:rerun-if-changed={}", slh.display());
+    println!("cargo:rerun-if-changed=slh-shim.c");
+    let mut build = cc::Build::new();
+    for source in ["slh_dsa.c", "slh_sha2.c", "sha2_256.c", "sha2_512.c"] {
+        build.file(slh.join(source));
+    }
+    build
+        .file(root.join("slh-shim.c"))
+        .include(&slh)
+        .std("c99")
+        .warnings(false)
+        .compile("tos_rust_slhdsa128s");
 }

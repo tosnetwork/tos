@@ -1,0 +1,371 @@
+{
+  "code": {
+    "module": {
+      "bytes": 3055,
+      "cells": 46,
+      "code_hash": "f818dd311152d6ea13ef7f38002eb6f7390fac06bbe5df71bb8a2dd0c09c5b6d",
+      "depth": 15,
+      "external_libraries": 0,
+      "sha256": "500dc4c115c636291a880c2d2874ab8c1c557dcaa5147421827b06824bba8475"
+    },
+    "vault": {
+      "bytes": 690,
+      "cells": 11,
+      "code_hash": "9fa07637d49c4176766847251cfd820d5a11ade70fe92a45e11e419dba0452a0",
+      "depth": 5,
+      "external_libraries": 0,
+      "sha256": "0a8dd10e6450a3e469e86572fc52b49bfc64e10fe2cd61071747f4ba4922e38e"
+    },
+    "wallet": {
+      "bytes": 3410,
+      "cells": 59,
+      "code_hash": "06203e98d4d8bf97b0cab37523ec435f5ab0e1d6d2c5253926eebf20ef1712f5",
+      "depth": 14,
+      "external_libraries": 0,
+      "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
+    }
+  },
+  "compiler_binaries": {
+    "FIFT_PATH": {
+      "bytes": 7483864,
+      "sha256": "4e2e3973bd8ac1f3b302743f344b8a2526f74d0235e0cf0f7d15718d119ae66d"
+    },
+    "FUNC_PATH": {
+      "bytes": 1717208,
+      "sha256": "17de335d53a3ff689ddd90a75e269eb91531e76ecc3b8d1243dca512a41db27c"
+    }
+  },
+  "config": {
+    "bytes": 7387,
+    "gas": {
+      "20": {
+        "block_gas_limit": 2500000,
+        "gas_credit": 10000,
+        "gas_limit": 1000000
+      },
+      "21": {
+        "block_gas_limit": 60000000,
+        "gas_credit": 20000,
+        "gas_limit": 30000000
+      }
+    },
+    "global_id": 1,
+    "network": "4242424242424242424242424242424242424242424242424242424242424242",
+    "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+    "version": 18
+  },
+  "files": {
+    "abi/contract-constants.json": {
+      "bytes": 3968,
+      "sha256": "220ad3c6e348873364614d3e4b63d976ffa1b6a98722c9f0db632e71c22a6ce4"
+    },
+    "code/module.boc": {
+      "bytes": 3055,
+      "sha256": "500dc4c115c636291a880c2d2874ab8c1c557dcaa5147421827b06824bba8475"
+    },
+    "code/vault.boc": {
+      "bytes": 690,
+      "sha256": "0a8dd10e6450a3e469e86572fc52b49bfc64e10fe2cd61071747f4ba4922e38e"
+    },
+    "code/wallet.boc": {
+      "bytes": 3410,
+      "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
+    },
+    "config.boc": {
+      "bytes": 7387,
+      "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7"
+    },
+    "repository/LICENSE": {
+      "bytes": 35149,
+      "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986"
+    },
+    "repository/THIRD_PARTY_NOTICES.md": {
+      "bytes": 1188,
+      "sha256": "4e30874f0e49807d6d8d6d967649332c9370bda0449c8727a7e6bdebf3453d75"
+    },
+    "repository/crypto/block/block.tlb": {
+      "bytes": 45253,
+      "sha256": "afd2756faf499a32d83c4e1defe3ccb4cb79e63d12ec58e399c5d75ebc45ad74"
+    },
+    "repository/crypto/fift/lib/Asm.fif": {
+      "bytes": 49768,
+      "sha256": "a1df048428646f7f5ea2addc206a0cb2089982d967d589d5408aba90d2fedc4e"
+    },
+    "repository/crypto/fift/lib/Fift.fif": {
+      "bytes": 4653,
+      "sha256": "bad419afb217f533cfba08eaec1ba33dbbd8b061bf5299447ea672e2561ed7a4"
+    },
+    "repository/crypto/pq/lms-fee.cpp": {
+      "bytes": 6977,
+      "sha256": "8acad863da2539542d4ec22d7ba1c326b63a13464326ff74df5cbc4df0388d0f"
+    },
+    "repository/crypto/pq/lms-fee.h": {
+      "bytes": 1315,
+      "sha256": "601bda498c7a67bc870b4248bd2036a2a14287f17e8dbb4c83dc7bb670885443"
+    },
+    "repository/crypto/pq/wallet-pq-signer-c.h": {
+      "bytes": 1893,
+      "sha256": "ae118544a5d14f10ebc733aec5b78494a01104f84018b2e074de42c23187b9e3"
+    },
+    "repository/crypto/smartcont/auth-policy.fc": {
+      "bytes": 3347,
+      "sha256": "8cbe92ade5089e39785292cdc7643246c6e17a4001773366e7d5c3f260769e10"
+    },
+    "repository/crypto/smartcont/pq-bytes.fc": {
+      "bytes": 6817,
+      "sha256": "0ef93769adb8db5c2665e9e9a78d239683a0a975e2ffc0034f9f58cb5f9fd011"
+    },
+    "repository/crypto/smartcont/pq.fc": {
+      "bytes": 857,
+      "sha256": "04c582149605adbeeb7d0ab0733ebcc2d3af15b44455162255541be6aebf3bf3"
+    },
+    "repository/crypto/smartcont/stdlib.fc": {
+      "bytes": 37585,
+      "sha256": "77d121550d99c533cffe10d5f479c04777e6e7c34b712421473cfe6a24615717"
+    },
+    "repository/crypto/smartcont/wallet-quantum-auth.fc": {
+      "bytes": 5109,
+      "sha256": "2f08b2d44505b6dae340aadef3e21aa38c4c8c094c7e94768388c6867b66d0dd"
+    },
+    "repository/crypto/smartcont/wallet-quantum-code.fc": {
+      "bytes": 4730,
+      "sha256": "5e28748896c38521c10062dafe41abd8ffb2e66e5c8b32d0235ff7de01742c2c"
+    },
+    "repository/crypto/smartcont/wallet-quantum-common.fc": {
+      "bytes": 764,
+      "sha256": "bf4425ef33cd29570ba2d28a8239b5091a6455eb4589396795e7591627cdc697"
+    },
+    "repository/crypto/smartcont/wallet-quantum-fee-identity.fc": {
+      "bytes": 3144,
+      "sha256": "ca50b51836496b1400c759f69c8e0871ace565bf28b5de6a77aa4c6206b97fda"
+    },
+    "repository/crypto/smartcont/wallet-quantum-fee-vault.fc": {
+      "bytes": 7240,
+      "sha256": "01c8cad555fe8c8d672f2d9a5f5ef617b2e6908ea976d41b8e77fd6398832d78"
+    },
+    "repository/crypto/smartcont/wallet-quantum-identity.fc": {
+      "bytes": 2601,
+      "sha256": "85773817d6293bb8e60f60665b3c75fcb25d3521e0eeaee31c45701e7232d514"
+    },
+    "repository/crypto/smartcont/wallet-quantum-module.fc": {
+      "bytes": 8249,
+      "sha256": "169b1ba56714b744fcad7b9b7736eef6d2cd5ad3d0bb4dd183efdbfb0e231c01"
+    },
+    "repository/crypto/smartcont/wallet-quantum-pop.fc": {
+      "bytes": 1993,
+      "sha256": "baafa17be77a84719d9cb9274323abf03a17e6ff2259f5d7310b9e2917cd4071"
+    },
+    "repository/crypto/smartcont/wallet-quantum-rescue.tlb": {
+      "bytes": 12124,
+      "sha256": "9e712ba8712cb5c7c6cd0a7aaa20073f6461a41a54edefca314f1d0162cebeb2"
+    },
+    "repository/crypto/smartcont/wallet-quantum-state.fc": {
+      "bytes": 3386,
+      "sha256": "df5687bdd2b45f3f739b1c788788765a2bf05c8f43371dff0e57bf278cd66a67"
+    },
+    "repository/crypto/smartcont/wallet-v5-action-list.fc": {
+      "bytes": 2230,
+      "sha256": "9d5dd51a9c37ffeedf4482b229af84cf9303532bf80fe2bfb3b740a704338cbb"
+    },
+    "repository/crypto/vm/excno.hpp": {
+      "bytes": 4609,
+      "sha256": "976d9ab3cbdc02ff56a85be02212ace5b30cacef341aeb785c90ed5e2319a652"
+    },
+    "repository/crypto/vm/pqops.cpp": {
+      "bytes": 11603,
+      "sha256": "86a9991fad0e8abbaf2f4ea3b2ba623ce0b976f6150ef3c04a49894f69c697ee"
+    },
+    "repository/crypto/vm/pqops.h": {
+      "bytes": 2493,
+      "sha256": "d4d4002761939a8ae7a909fa751e0e1ff76c8ebc9ce7044420e3fc4f8befb3d0"
+    },
+    "repository/doc/auth-policy-v1.md": {
+      "bytes": 5894,
+      "sha256": "c87c4f0e17e770271d803108ee7f557d57c4d6e12ad58b44bb964b1ff21e03af"
+    },
+    "repository/doc/tvm-lms-fee-hash.md": {
+      "bytes": 5976,
+      "sha256": "e839b211e61ea7f981d184b30aa6a44abaa39644a9f5e760440852a2dffd3c42"
+    },
+    "repository/scripts/build-wallet-quantum-bundle.py": {
+      "bytes": 13187,
+      "sha256": "ce69521fcae93c7ad472987203bd350d63818d39e806ea5700b29d289e5edb30"
+    },
+    "repository/test/auth-extensions/cells.py": {
+      "bytes": 7222,
+      "sha256": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281"
+    },
+    "repository/test/auth-extensions/native.py": {
+      "bytes": 8243,
+      "sha256": "aa6c3baa80129b1127e19bfe65c0f38e5e5ac72e2d6aa14d734dace3ad52f2ae"
+    },
+    "repository/test/pq-falcon512/vectors.json": {
+      "bytes": 129214,
+      "sha256": "9624a340e5e0df5c54476f8f0f2bc8ba73df3fef5c30c60c9a984e994940ca02"
+    },
+    "repository/test/pq-mldsa44/fixtures.json": {
+      "bytes": 17936,
+      "sha256": "eec0c9046f66c05419a56ed110d6c77f22d5404fca056d2a909e832a2a7714b8"
+    },
+    "repository/test/rescue-fee-gate/fee-kdf-vectors.json": {
+      "bytes": 2770,
+      "sha256": "e521f4cbfd2a641a01ce87356fe45d316b62475176f93a291acdca90f4ff67fe"
+    },
+    "repository/test/rescue-fee-gate/suite-expected.tsv": {
+      "bytes": 1026,
+      "sha256": "407f5ff98cf4dd68b264ccb98efd6badb23ced01b8f9c51bd03e404528cafb5d"
+    },
+    "repository/test/rescue-fee-gate/suite-scenarios.tsv": {
+      "bytes": 316784,
+      "sha256": "820d8a08ab22b0bf794823e80ca11cd9295942cad31ca792936f76998dee3e03"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum.rs": {
+      "bytes": 15289,
+      "sha256": "38f42c6c97fb4e78d71c506963db0914bdb39d1b4b9afc813beaaa3e76d623c5"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_fee.rs": {
+      "bytes": 15137,
+      "sha256": "49fe39df6d7943597ad5248cf97fd836a6b64a9ae9fe4c7911e0377e12b10e79"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_fee_decode.rs": {
+      "bytes": 2337,
+      "sha256": "a0460678b51e3672cfc5318456312b97368e47656e79e211b483373f9da2be9f"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_fee_decode_tests.rs": {
+      "bytes": 3308,
+      "sha256": "c0a4d5634188d82e9aad1ab13615ffa84123d5fce6393e75697d867c077cb9da"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_genesis.rs": {
+      "bytes": 17951,
+      "sha256": "bc514452ea8ee2919ef8df62d05617ba5409723047b9fb3862046fddceed72f8"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_manifest.rs": {
+      "bytes": 29743,
+      "sha256": "058c170afeda46b05ce93b5f16bac201c70c4e4bef0c9ba01af00f25874681ee"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_manifest_fee.rs": {
+      "bytes": 11778,
+      "sha256": "3139e26d785ef39e8a55a40717ce76d44d2df4776b5bc4fc6b15d5733732c1c3"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_policy.rs": {
+      "bytes": 4651,
+      "sha256": "85fe11b34555f58281c43ea7406f50191d0676cab70485ffc675615f87960085"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_pop.rs": {
+      "bytes": 23883,
+      "sha256": "3ada00e699e5ceb7a1485719cceacae942b3449fee82d82e80266b6670e4a061"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_prepare.rs": {
+      "bytes": 6613,
+      "sha256": "487424a190599d55aca3809e9c363bbc91ec6fddc300b2b6ec8fd06cf5b1c2fe"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_receipts.rs": {
+      "bytes": 9290,
+      "sha256": "3aa004e7975d45205eee3db4fd230b430542ad252e6d799a99295ea49f4ab46e"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_recorded_fee_tests.rs": {
+      "bytes": 13225,
+      "sha256": "c1503a0fa8d939deb4c21f7ae2ba7de94924c719fa5f18b05f223fd5c0d64c73"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_recorded_migration_tests.rs": {
+      "bytes": 12895,
+      "sha256": "15759584d8a29f3a99a7b2ddb5aabb4eef676834f25ddbc740ac9812711b108c"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_state.rs": {
+      "bytes": 10928,
+      "sha256": "881d0d257febd9ab075a98b345f4dc9e18169a7c73700ed68faac9bd2c45d5f3"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_vault.rs": {
+      "bytes": 6557,
+      "sha256": "8268e9e807059a8002ef5b29c388a5ee362454baa09ba6f06e56c2bad901c33b"
+    },
+    "repository/tosctl/src/node-control/contracts/src/wallet_quantum_wallet_state.rs": {
+      "bytes": 24076,
+      "sha256": "377dd67bf1ba7f9e083dadf6d2af8f1aee00d63f4316792a54b246355cbed872"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/quantum/auth-wire.json": {
+      "bytes": 1952,
+      "sha256": "2e5da727d762e642eac704b54602bf915ba7f45fdb8517e620244c18adb1f606"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/quantum/fee-wire.json": {
+      "bytes": 935,
+      "sha256": "d7e77e992e304edbd845ec862c4ec1f9d2ea2e3b7fb1b81fa6e746b4dc15e779"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/quantum/genesis-wire.json": {
+      "bytes": 3031,
+      "sha256": "bfaa382f35e6045921e92387223996489f6010aa67ebfa8dc204634dd2776ec5"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/quantum/initial-recovery-mobile.json": {
+      "bytes": 4185,
+      "sha256": "7c9c78b10bba36ed888be0b1c32d1fb3505b73e81711a812375e6d3f0ea38942"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/quantum/pop-wire.json": {
+      "bytes": 1207,
+      "sha256": "431da18e7af8a044f971906223e74b75960b63cc62aaeb7061691b4cbc7504ea"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/quantum/prepare-wire.json": {
+      "bytes": 792,
+      "sha256": "5b6622bd82a9db21db5e038b026634ae6bb520056c06895375b690208d5460d2"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/quantum/receipt-transactions.json": {
+      "bytes": 127803,
+      "sha256": "d4f440d3e9495511906766c445de90ecf7fc8957fa462b304eda515694539629"
+    },
+    "repository/tosctl/src/node-control/contracts/tests/fixtures/quantum/successor-wire.json": {
+      "bytes": 3391,
+      "sha256": "9f91d78252965ce19bf3939918630a1f24ee9049ca1e5b0425954045f9e65ee0"
+    },
+    "repository/tosctl/src/tos-native-mnemonic/tests/fixtures/native-pq.json": {
+      "bytes": 1462,
+      "sha256": "a8aa654107f705f907981951f3f6db62e9fbf1fc1b5864264144a78cb0fb91cc"
+    },
+    "repository/tosctl/src/vm/src/executor/engine/handlers.rs": {
+      "bytes": 49500,
+      "sha256": "d1c230a43c7043d6e688dbe505d0d9d259f2fbd43d651537451060e8381b253e"
+    },
+    "repository/tosctl/src/vm/src/executor/lms_fee.rs": {
+      "bytes": 5582,
+      "sha256": "ff6ae2ffc152a193695c7f152be4a1063f958bc5e16a6f43be0262694f609f66"
+    },
+    "repository/tosctl/src/vm/src/executor/pq.rs": {
+      "bytes": 16734,
+      "sha256": "28836e293b23ddb10c2f3bab82ba3bf15767144e4016552b298fc83ee311762c"
+    },
+    "repository/tosctl/src/wallet-pq-signer/src/kdf.rs": {
+      "bytes": 9772,
+      "sha256": "7fafeb1316d17ef27d2d7bf368e2a3451dced935c9210f5f1554423bf46c999f"
+    },
+    "repository/tosctl/src/wallet-pq-signer/tests/fixtures/dual-root-kdf.json": {
+      "bytes": 2483,
+      "sha256": "dc77c31594168f0bca6fdf491f8e147e9ae7faada5d9cf888d2accc52bfb2bb2"
+    },
+    "repository/tosctl/src/wallet-pq-signer/tests/fixtures/lms-fee-signature.json": {
+      "bytes": 6137,
+      "sha256": "22e4ce39d6e2bf20d3cb51797c081671230a9d10da4889b5021c18dda7524da0"
+    },
+    "repository/tosctl/src/wallet-pq-signer/tests/fixtures/native-fee-recovery.json": {
+      "bytes": 2425,
+      "sha256": "0832b942ba7a4be8a0d3446b7fc3b07cfd3f96b50e7540169053a00bd3b5ff19"
+    },
+    "wrappers/module.fc": {
+      "bytes": 1524,
+      "sha256": "8c01ffcf2ec02269666e2c697cfc84e2b26bd724ec61dd8df9838f36309c48b3"
+    },
+    "wrappers/wallet.fc": {
+      "bytes": 1754,
+      "sha256": "9ebb16e79a8c5ecbd71293a65552e598156099b5053cf4aecdeaf63f0ec8f160"
+    }
+  },
+  "format": "tos-wallet-quantum-review-bundle/1",
+  "remaining_release_gates": [
+    "independent source/crypto review",
+    "complete ACVP and adversarial acceptance corpus",
+    "mobile and real-network recovery",
+    "hardware admission calibration",
+    "final-head CI and activation approval"
+  ],
+  "scope": "Build or reproduce a reviewable Quantum candidate from an explicit chain config.\n\nThe bundle contains ordinary, self-contained code, its exact source and public\nwire/crypto/KDF vectors. It is not a reviewed release, a wallet enrollment, a\ncustody backup, or authorization to activate the candidate configuration.\n",
+  "source_revision": "0d2bce93eae0ab368a9e5a833c714abf0a3d1a00",
+  "status": "unapproved-review-candidate",
+  "tracked_working_tree_changes": true
+}

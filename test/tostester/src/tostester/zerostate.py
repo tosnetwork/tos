@@ -5,6 +5,7 @@ from pathlib import Path
 import nacl.signing
 from contract import Provider, WalletV1
 from pytosiq_core import Address, Builder, Cell
+from pytosiq_core.boc.deserialize import Boc
 from tosapi import tos_api
 
 from .install import Install, run_fift
@@ -67,6 +68,13 @@ class NetworkConfig:
     monitor_min_split: int = 0
     split: int = 0
     global_version: int = 16
+    # Mandatory public namespace for the experimental Quantum activation profile.
+    # Deliberately no default: it must not depend on a generated genesis hash.
+    auth_network_tag: bytes | None = None
+    # Explicit version-18 admission candidate; requires the deployment fee table.
+    quantum_admission_candidate: bool = False
+    # Test-only funded basechain genesis; allocation is deducted from the faucet.
+    basechain_fixture: bytes | None = field(default=None, repr=False)
     shard_validators: int = 1  # DEV-SPECIFIC: single-validator bootstrap rehearsal
     block_limit_mul: int = 1
     mc_valgroup_lifetime: int = 100000  # DEV: long lifetime for local testnet stability
@@ -216,7 +224,7 @@ wc_master setworkchain
 
 // Initial state of Workchain 0 (Basic workchain)
 
-0 mkemptyShardState
+{basechain_state}
 
 {{ <b x{{a7}} s, 5 roll 32 u, 4 roll 8 u, 3 roll 8 u, rot 8 u, x{{e000}} s,
   3 roll 256 u, rot 256 u, 0 32 u, x{{1}} s, -1 32 i, 0 64 u, x{{0}} s, 20 32 u, 20 32 u, 10 32 u, 1000 32 u, 0 8 u, b>
@@ -414,8 +422,9 @@ untriple make-block-limits 23 config!
 
 // ConfigParam 19 (global_id) is mandatory and critical, as in gen-zerostate.fif:
 // every wallet contract fails closed without it.
-( 0 1 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 ) config.mandatory_params!
-( -999 -1000 -1001 0 1 3 4 9 10 12 14 15 16 17 19 32 34 36 ) config.critical_params!
+( 0 1 9 10 12 14 15 16 17 18 19 20 21 22 23 24 25 28 34 {auth_policy_membership} ) config.mandatory_params!
+( -999 -1000 -1001 0 1 3 4 9 10 12 14 15 16 17 19 32 34 36 {auth_policy_membership} ) config.critical_params!
+{auth_policy_param}
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
 // first for ordinary proposals, then for critical proposals
@@ -512,9 +521,21 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     is not made to the other fails rather than quietly producing a localnet
     whose fees are nobody's.
     """
+    if type(config.quantum_admission_candidate) is not bool:
+        raise ValueError("Quantum admission candidate flag must be boolean")
+    if config.quantum_admission_candidate and (
+        config.global_version != 18
+        or not config.deployment_fee_schedule
+        or not isinstance(config.auth_network_tag, bytes)
+        or len(config.auth_network_tag) != 32
+    ):
+        raise ValueError(
+            "Quantum admission candidate requires version 18, deployment fees and a 32-byte AUTH network tag"
+        )
     if config.deployment_fee_schedule:
+        credit = 20000 if config.quantum_admission_candidate else 10000
         return {
-            "gas_prices": "436907 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
+            "gas_prices": f"436907 30 *M 30 *M {credit} 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
             "mc_gas_prices": "655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000"
             " config.mc_gas_prices!",
             "fwd_prices": "66667 4369067 436906667 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
@@ -531,6 +552,56 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     }
 
 
+def basechain_fixture_balance(encoded: bytes, global_id: int) -> int:
+    """Check the fixture envelope and aggregate allocation; native genesis checks its dictionary."""
+    if not isinstance(encoded, bytes) or not 1 <= len(encoded) <= 64 * 1024 * 1024:
+        raise ValueError("basechain fixture size")
+    roots = Boc(encoded).deserialize()
+    if len(roots) != 1:
+        raise ValueError("basechain fixture root count")
+    root = roots[0]
+    if root.is_exotic or root.level_mask.mask != 0:
+        raise ValueError("basechain fixture must be ordinary level zero")
+    s = root.begin_parse()
+    if (
+        s.load_uint(32) != 0x9023AFE2
+        or s.load_int(32) != global_id
+        or s.load_uint(8) != 0
+        or s.load_int(32) != 0
+    ):
+        raise ValueError("basechain fixture identity")
+    s.skip_bits(64)
+    if s.load_uint(32) != 0 or s.load_uint(32) != 0:
+        raise ValueError("basechain fixture must be genesis")
+    s.skip_bits(32 + 64 + 32)
+    if s.load_bit() or s.load_bit() or s.remaining_bits or s.remaining_refs != 3:
+        raise ValueError("basechain fixture state shape")
+    accounts = root.refs[1].begin_parse()
+    if accounts.load_bit() != 1 or accounts.load_uint(5) != 0:
+        raise ValueError("basechain fixture account aggregate")
+    allocated = accounts.load_coins()
+    if (
+        allocated <= 0
+        or accounts.load_bit()
+        or accounts.remaining_bits
+        or accounts.remaining_refs != 1
+    ):
+        raise ValueError("basechain fixture balance shape")
+    totals = root.refs[2].begin_parse()
+    totals.skip_bits(128)
+    if totals.load_coins() != allocated or totals.load_bit() or totals.load_coins() != 0:
+        raise ValueError("basechain fixture balance mismatch")
+    if (
+        totals.load_bit()
+        or totals.load_bit()
+        or totals.load_bit()
+        or totals.remaining_bits
+        or totals.remaining_refs
+    ):
+        raise ValueError("unsupported basechain fixture extras")
+    return allocated
+
+
 def create_zerostate(
     install: Install,
     state_dir: Path,
@@ -538,6 +609,17 @@ def create_zerostate(
     validator_keys: list[Key],
     pq_validators: list[PqInitialValidator] | None = None,
 ) -> Zerostate:
+    fee_schedule = fee_schedule_for(config)
+    if config.global_version >= 17:
+        if not isinstance(config.auth_network_tag, bytes) or len(config.auth_network_tag) != 32:
+            raise ValueError("version 17 Genesis requires an explicit 32-byte AUTH network tag")
+        auth_policy_param = f"0x{config.auth_network_tag.hex()} config.auth_policy!"
+        auth_policy_membership = "48"
+    else:
+        if config.auth_network_tag is not None:
+            raise ValueError("AUTH network tag requires Genesis version 17 or newer")
+        auth_policy_param = ""
+        auth_policy_membership = ""
     fixed_time = config.genesis_time
     wallet_seed = config.genesis_wallet_seed
     if (fixed_time is None) != (wallet_seed is None):
@@ -757,7 +839,22 @@ def create_zerostate(
     if config.global_id < -(1 << 31) or config.global_id >= (1 << 31):
         raise ValueError("global_id must fit a signed int32")
 
-    fee_schedule = fee_schedule_for(config)
+    basechain_state = "0 mkemptyShardState"
+    if config.basechain_fixture is not None:
+        if not config.quantum_admission_candidate or config.validator_economics_profile:
+            raise ValueError("funded basechain fixture requires isolated Quantum candidate profile")
+        allocated = basechain_fixture_balance(config.basechain_fixture, config.global_id)
+        # The three ordinary system allocations consume 21 TOS independently.
+        if allocated > (5_000_000_000 - 21) * NANOTOS_PER_TOS:
+            raise ValueError("basechain fixture exceeds available genesis allocation")
+        with (state_dir / "basechain-fixture.boc").open("xb") as output:
+            output.write(config.basechain_fixture)
+        basechain_state = (
+            '"basechain-fixture.boc" file>B B>boc dup isShardState? '
+            'not abort"invalid basechain fixture"'
+        )
+        profile["main_wallet_genesis_balance"] += f" {allocated} -"
+        profile["expected_genesis_supply"] += f" {allocated} -"
 
     if wallet_seed is not None:
         # Refuse existing custody files rather than replacing an old run's key.
@@ -769,11 +866,14 @@ def create_zerostate(
     run_fift(
         install,
         _TEMPLATE.format(
+            basechain_state=basechain_state,
             genesis_now="now" if fixed_time is None else str(fixed_time),
             monitor_min_split=config.monitor_min_split,
             split=config.split,
             global_id=config.global_id,
             global_version=config.global_version,
+            auth_policy_param=auth_policy_param,
+            auth_policy_membership=auth_policy_membership,
             block_limit_mul=config.block_limit_mul,
             validators="\n".join(keys),
             mc_validators=len(keys),

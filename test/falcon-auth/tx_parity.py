@@ -165,7 +165,7 @@ def main():
     submit("module-refuses-a-stale-request", request(valid_until=NOW - 1))
     # Enough to verify, too little to forward: the action phase is the one that
     # fails, and only a whole-transaction comparison can see the difference.
-    probe = Emulator(16)
+    probe = Emulator(19)
     try:
         _, sig = signer.sign(signing_message(module, commitment(good)), CONTEXT, 0)
         body = submission(Cell().uint(AUTH, 32).ref(good).maybe(None), sig)
@@ -188,7 +188,7 @@ def main():
         probe.close()
     submit("module-verifies-but-cannot-forward", good, value=low - 1)
 
-    emulator = Emulator(16)
+    emulator = Emulator(19)
     logical_times = []
     try:
         for name, shard, message in scenarios:
@@ -224,7 +224,7 @@ def main():
     # ConfigParams is the address plus the dictionary; the emulator takes the
     # dictionary alone, so the same configuration is wrapped for the executor.
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
-    (out / "config.boc").write_bytes(Cell().uint(int(fixture.bits, 2), 256).ref(config(16)).boc())
+    (out / "config.boc").write_bytes(Cell().uint(int(fixture.bits, 2), 256).ref(config(19)).boc())
 
     rust = subprocess.run(
         [str(args.driver.resolve()), str(out / "config.boc"), str(out / "scenarios.tsv")],

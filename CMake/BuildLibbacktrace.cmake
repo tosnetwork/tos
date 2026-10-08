@@ -8,6 +8,7 @@
 #   2. Build from submodule (default): uses third-party/libbacktrace
 
 include(ExternalProject)
+include(AppleMobileThirdParty)
 
 # Skip libbacktrace on Android/emscripten - it doesn't work well there
 if(ANDROID OR USE_EMSCRIPTEN OR EMSCRIPTEN)
@@ -63,7 +64,9 @@ set(LIBBACKTRACE_CONFIGURE_ARGS
 )
 
 # For cross-compilation, pass the host triplet
-if(CMAKE_CROSSCOMPILING AND CMAKE_C_COMPILER_TARGET)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  list(APPEND LIBBACKTRACE_CONFIGURE_ARGS --host=${TOS_IOS_CONFIGURE_HOST})
+elseif(CMAKE_CROSSCOMPILING AND CMAKE_C_COMPILER_TARGET)
   list(APPEND LIBBACKTRACE_CONFIGURE_ARGS --host=${CMAKE_C_COMPILER_TARGET})
 endif()
 
@@ -81,7 +84,10 @@ if(CMAKE_RANLIB)
 endif()
 
 # Pass C flags (important for cross-compilation sysroot, etc.)
-if(CMAKE_C_FLAGS)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  list(APPEND LIBBACKTRACE_ENV "CFLAGS=${CMAKE_C_FLAGS} ${TOS_IOS_THIRD_PARTY_FLAGS}"
+    "LDFLAGS=${CMAKE_EXE_LINKER_FLAGS} ${TOS_IOS_THIRD_PARTY_FLAGS}")
+elseif(CMAKE_C_FLAGS)
   list(APPEND LIBBACKTRACE_ENV "CFLAGS=${CMAKE_C_FLAGS}")
 endif()
 

@@ -1,0 +1,42 @@
+{
+  "scope": "Four ABI API24 compile/link, exported symbols and 16KB alignment; host proof/quorum regression",
+  "changes": [
+    "Streaming scratch length uses size_t while file offsets remain uint64",
+    "32-bit quorum uses overflow-free exact ceil(2t/3); 128-bit path retained where available"
+  ],
+  "quorum_cases": "4096 deterministic full-width values checked against independent 128-bit reference on host, plus frozen max/table boundaries",
+  "control": "Remove portable ceiling in isolated header: compiled executable failed independent reference assertions; canonical header unchanged",
+  "artifacts": [
+    {
+      "file": "20261007-proof-four-abi.json",
+      "sha256": "7bbc4bef3c1aa1323be7bd4864e78230c77c3ba4541373acf1fec436e2a90938",
+      "bytes": 1369
+    },
+    {
+      "file": "20261007-quorum-portable-tests.log",
+      "sha256": "8a0a5a0a040d9afe4462f0029d9e52650bf9d69a984a134ba03ea9daf8d04ce2",
+      "bytes": 275
+    },
+    {
+      "file": "20261007-quorum-control/runtime.log",
+      "sha256": "5d878cad8889c993ce7fbc06e38f35a529e70df747b67df09735fad58cc0bb4a",
+      "bytes": 339870
+    },
+    {
+      "file": "20261007-proof-portable-final-core-tests.log",
+      "sha256": "32ce8e331e730f09a9752cbdc2853f79fede4445fe88a3fb8a6bd462b19295db",
+      "bytes": 13462
+    },
+    {
+      "file": "20261007-proof-portable-final-ctest.log",
+      "sha256": "c65259b5a574a4c5a39374ec68a211b4fa8947cf50951b35d74b7ae2b72052ad",
+      "bytes": 761
+    }
+  ],
+  "limits": [
+    "Only arm64 runtime on API36 has been exercised",
+    "API24 system installation awaits SDK license decision",
+    "No runtime acceptance for armv7/x86/x86_64",
+    "No full wallet readiness, live-state persistence or iOS proof acceptance"
+  ]
+}

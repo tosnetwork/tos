@@ -5,10 +5,15 @@ on:
     paths:
       - 'crypto/smartcont/**'
       - 'crypto/CMakeLists.txt'
+      - 'crypto/block/auth-policy.*'
+      - 'crypto/block/block.cpp'
+      - 'crypto/block/block.tlb'
+      - 'test/test-config-transition.cpp'
       - 'tosctl/src/node-control/contracts/**'
       - 'sdk/js/packages/wallets/**'
       - 'sdk/js/packages/client/src/client/TosClient.ts'
       - 'test/auth-extensions/**'
+      - 'test/wallet-quantum/**'
       - 'test/weak-ed25519/**'
       - 'scripts/update-auth-contract-code.py'
       - '.github/workflows/auth-extension-validation.yml'
@@ -32,7 +37,7 @@ jobs:
       - name: Configure and build native contract tools
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target func fift tol emulator -j2
+          cmake --build build --target func fift tol emulator test-config-transition -j2
       - name: Install deterministic-signature test dependency
         run: python3 -m pip install cryptography==46.0.4
       - name: Native action-phase authentication tests and mutation checks
@@ -45,6 +50,18 @@ jobs:
           python3 scripts/update-auth-contract-code.py --check
           python3 test/auth-extensions/test_auth.py
           python3 test/auth-extensions/mutations.py
+          python3 test/wallet-quantum/test_v5r1_action_baseline.py --output "$RUNNER_TEMP/v5r1-baseline"
+          python3 test/wallet-quantum/test_auth_policy.py --output "$RUNNER_TEMP/auth-policy"
+          python3 test/wallet-quantum/test_receiver_auth.py --output "$RUNNER_TEMP/quantum-receiver-auth"
+          python3 test/wallet-quantum/test_identity.py --output "$RUNNER_TEMP/quantum-identity"
+          python3 test/wallet-quantum/test_state.py --output "$RUNNER_TEMP/quantum-state"
+          python3 test/wallet-quantum/test_fee_identity.py --output "$RUNNER_TEMP/quantum-fee-identity"
+          python3 test/wallet-quantum/test_fee_cells.py --output "$RUNNER_TEMP/quantum-fee-cells"
+          python3 test/wallet-quantum/test_fee_bounds.py --output "$RUNNER_TEMP/quantum-fee-bounds"
+          python3 test/wallet-quantum/test_fee_gas_config.py --output "$RUNNER_TEMP/quantum-fee-gas-config"
+          python3 test/wallet-quantum/test_wallet.py --output "$RUNNER_TEMP/quantum-wallet"
+          build/test-config-transition
+          python3 test/wallet-quantum/policy_native_mutations.py --build build --output "$RUNNER_TEMP/auth-policy-native"
           python3 test/auth-extensions/test_sdk_wallet_vectors.py
           python3 test/weak-ed25519/test_native_aliases.py
           git diff --exit-code
@@ -58,6 +75,34 @@ jobs:
           pnpm --filter @tos/wallets --filter @tos/client typecheck
           pnpm --filter @tos/wallets test
           git diff --exit-code
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: v5r1-action-baseline
+          path: ${{ runner.temp }}/v5r1-baseline/results.json
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: auth-policy-validation
+          path: |
+            ${{ runner.temp }}/auth-policy/results.json
+            ${{ runner.temp }}/auth-policy-native/
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: quantum-receiver-identity-validation
+          path: |
+            ${{ runner.temp }}/quantum-receiver-auth/
+            ${{ runner.temp }}/quantum-identity/
+            ${{ runner.temp }}/quantum-state/
+            ${{ runner.temp }}/quantum-fee-identity/
+            ${{ runner.temp }}/quantum-fee-cells/
+            ${{ runner.temp }}/quantum-fee-bounds/
+            ${{ runner.temp }}/quantum-fee-gas-config/
+            ${{ runner.temp }}/quantum-wallet/
+          retention-days: 14
 
       - name: Run multisig domain and legacy wallet authority transactions
         env:

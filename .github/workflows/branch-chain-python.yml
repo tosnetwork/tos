@@ -67,12 +67,12 @@ jobs:
         run: |
           ccache --zero-stats
           cmake --build build --parallel 4 --target \
-            gen_fif create-state toslibjson \
+            gen_fif create-state toslibjson func fift emulator \
             generate-random-id tos-pq-consensus-key tos-pq-controller \
             dht-server validator-engine-console validator-engine \
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
-            tos-proof-verify test-proof-verify proof-verify-fs-shim \
+            tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport \
             test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
@@ -132,6 +132,12 @@ jobs:
           print(f"all {len(expected)} security regressions are registered")
           PY
           ctest --test-dir build -L security-findings --no-tests=error --output-on-failure
+
+      - name: Check read-only proof relay and real HTTP ingress
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(proof-readonly-query|test-json-rpc-transport)$'
+
+      - name: Remove and restore proof relay route control
+        run: python3 scripts/test-proof-query-rpc-controls.py --build-dir build
 
       # A virtualized key-block proof must retain every PQ finality context
       # field. This is a compiled behavior test, not a source-only guard.
@@ -235,6 +241,61 @@ jobs:
       - name: Run the complete Python suite
         run: uv run pytest
 
+      - name: Read back the disposable Quantum admission candidate
+        timeout-minutes: 5
+        run: |
+          uv run python scripts/test_quantum_candidate_network.py
+          uv run python scripts/check-quantum-candidate-network.py --build-dir build --out build/quantum-candidate-ci --sdk-fixture test/wallet-quantum/fixtures/public-genesis-accounts.json
+
+      - name: Broadcast disposable Quantum payment and verify execution linkage
+        timeout-minutes: 15
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+          SLH_TOOL: ${{ github.workspace }}/build-signers/slh_tool
+          MLDSA_TOOL: ${{ github.workspace }}/build-signers/mldsa_tool
+          LMS_TOOL: ${{ github.workspace }}/build-signers/lms_tool
+        run: |
+          sh test/rescue-fee-gate/tools/build.sh build-signers
+          signing_time=$(date +%s)
+          uv run --with cryptography==46.0.4 python test/wallet-quantum/test_fee_delivery.py \
+            --chain-config build/quantum-candidate-ci/candidate-config.boc \
+            --transaction-time "$signing_time" --export-network-input --output build/quantum-payment-input
+          uv run python scripts/test_quantum_transaction_chain.py --input build/quantum-payment-input
+          uv run python scripts/check-quantum-candidate-network.py --build-dir build \
+            --out build/quantum-payment-ci --network-input build/quantum-payment-input/PUBLIC-TEST-ONLY-network-input.json --broadcast
+
+      - name: Retain Quantum candidate configuration and boot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quantum-candidate-${{ github.sha }}
+          path: |
+            build/quantum-payment-ci/report.json
+            build/quantum-payment-ci/network.log
+            build/quantum-payment-ci/broadcast-result.json
+            build/quantum-payment-ci/transaction-observations.json
+            build/quantum-payment-ci/transaction-chain.json
+            build/quantum-payment-ci/anchor.json
+            build/quantum-payment-ci/*-proof-result.json
+            build/quantum-payment-ci/*-proof-verifier.log
+            build/quantum-candidate-ci/candidate-config.boc
+            build/quantum-candidate-ci/report.json
+            build/quantum-candidate-ci/network.log
+            build/quantum-candidate-ci/proof-result.json
+            build/quantum-candidate-ci/proof-verifier.log
+            build/quantum-candidate-ci/anchor.json
+            build/quantum-candidate-ci/proof-request.json
+            build/quantum-candidate-ci/proof-material/
+            build/quantum-candidate-ci/*-proof-request.json
+            build/quantum-candidate-ci/*-proof-result.json
+            build/quantum-candidate-ci/*-proof-verifier.log
+            build/quantum-candidate-ci/*-material/
+            build/quantum-candidate-ci/funded-accounts/accounts.json
+          if-no-files-found: ignore
+          retention-days: 14
       # The e2e harnesses keep tosctl's configuration and vault outside the
       # checkout, which tosctl refuses when it is group-writable.
       - name: Check e2e harness private directories

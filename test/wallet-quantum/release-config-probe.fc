@@ -1,0 +1,37 @@
+;; Transaction probe for generated configuration; not a wallet contract.
+int check_suite(cell message, cell context, cell signature, cell key, int suite)
+  asm "PQCHECKSIG_SUITE";
+int check_falcon(cell message, cell signature, cell key)
+  asm "PQCHECKSIG_FALCON512_PADDED";
+
+int credit(int parameter) inline {
+  slice price = config_param(parameter).begin_parse();
+  int tag = price~load_uint(8);
+  if (tag == 0xd1) {
+    price~skip_bits(128);
+    tag = price~load_uint(8);
+  }
+  throw_unless(902, tag == 0xde);
+  price~skip_bits(192);
+  return price~load_uint(64);
+}
+
+() recv_internal(int balance, int value, cell incoming, slice body) impure {
+  slice version = config_param(8).begin_parse();
+  throw_unless(902, version~load_uint(8) == 0xc4);
+  throw_unless(903, version~load_uint(32) == 18);
+  throw_unless(904, credit(21) == 20000);
+  throw_unless(905, credit(20) == 10000);
+  slice ds = get_data().begin_parse();
+  int suite = ds~load_uint(8);
+  cell message = ds~load_ref();
+  cell context = ds~load_ref();
+  cell signature = ds~load_ref();
+  cell key = ds~load_ref();
+  ds.end_parse();
+  int valid = suite == 255
+    ? check_falcon(message, signature, key)
+    : check_suite(message, context, signature, key, suite);
+  throw_unless(901, valid);
+  set_data(begin_cell().store_uint(1, 1).end_cell());
+}

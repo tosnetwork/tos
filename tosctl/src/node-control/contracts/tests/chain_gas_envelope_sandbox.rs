@@ -19,9 +19,90 @@
 //!
 //! This test needs `build/crypto/create-state`, which `TOS_ROOT` locates.
 
-use chain_block::{GasLimitsPrices, MsgForwardPrices};
+use chain_block::{GasLimitsPrices, MsgForwardPrices, Serializable};
 
 const ACTIVE_VERSION: u32 = 16;
+
+fn assert_gas_prices_match(name: &str, expected: &GasLimitsPrices, actual: &GasLimitsPrices) {
+    let rows = [
+        ("gas_price", expected.gas_price, actual.gas_price),
+        ("gas_limit", expected.gas_limit, actual.gas_limit),
+        ("special_gas_limit", expected.special_gas_limit, actual.special_gas_limit),
+        ("gas_credit", expected.gas_credit, actual.gas_credit),
+        ("block_gas_limit", expected.block_gas_limit, actual.block_gas_limit),
+        ("flat_gas_limit", expected.flat_gas_limit, actual.flat_gas_limit),
+        ("flat_gas_price", expected.flat_gas_price, actual.flat_gas_price),
+        ("freeze_due_limit", expected.freeze_due_limit, actual.freeze_due_limit),
+        ("delete_due_limit", expected.delete_due_limit, actual.delete_due_limit),
+    ];
+    for (field, expected_value, actual_value) in rows {
+        assert_eq!(expected_value, actual_value, "{name} {field}");
+    }
+    assert_eq!(expected.max_gas_threshold, actual.max_gas_threshold, "{name} max_gas_threshold");
+}
+
+#[test]
+fn admission_candidate_executor_loads_the_generated_chain_configuration() {
+    let directory = tempfile::tempdir().expect("candidate wrapper directory");
+    let wrapper = directory.path().join("admission-candidate.fif");
+    let template =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont/gen-zerostate.fif");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "0x{} constant quantum-network-tag\ntrue constant quantum-admission-candidate\n\"{template}\" include\n",
+            "42".repeat(32)
+        ),
+    )
+    .expect("write explicit candidate wrapper");
+    let state =
+        tos_sandbox::generate_zerostate_state(&wrapper).expect("generate candidate genesis");
+    let config = state.read_custom().expect("masterchain extra").expect("masterchain").config;
+    assert_eq!(config.get_global_version().expect("version").version, 18);
+    assert_eq!(config.gas_prices(false).expect("basechain prices").gas_credit, 20000);
+    assert_eq!(config.gas_prices(true).expect("masterchain prices").gas_credit, 10000);
+    if let Ok(path) = std::env::var("Quantum_ADMISSION_CONFIG_OUT") {
+        config.write_to_file(&path).expect("retain generated public configuration");
+    }
+    // No set_gas_credit, version replacement or fallback defaults on this path.
+    let executor = tos_executor::BlockchainConfig::with_config(config.clone())
+        .expect("load generated candidate configuration");
+    assert_eq!(executor.global_version(), 18);
+    for (masterchain, name) in [(false, "basechain"), (true, "masterchain")] {
+        let expected = config.gas_prices(masterchain).expect("generated gas prices");
+        let actual = executor.get_gas_config(masterchain);
+        assert_gas_prices_match(&format!("candidate {name}"), &expected, actual);
+    }
+}
+
+/// Selecting an instruction version does not select a new network fee profile.
+/// The candidate must come from a generated, explicitly selected configuration.
+#[test]
+fn changing_the_vm_version_does_not_activate_the_candidate_credit() {
+    let default = tos_executor::BlockchainConfig::default_with_global_version(18)
+        .expect("explicit version with the default gas profile");
+    assert_eq!(default.global_version(), 18);
+    for masterchain in [false, true] {
+        let raw = default.raw_config().gas_prices(masterchain).expect("default raw gas prices");
+        assert_eq!(raw.gas_credit, 10000, "version selection activated candidate credit");
+        assert_eq!(default.get_gas_config(masterchain).gas_credit, 10000);
+    }
+}
+
+/// Cached execution fields must agree with the serialized profile, including
+/// the derived balance threshold which is not serialized into ConfigParam 21.
+#[test]
+fn default_execution_prices_match_the_serialized_configuration() {
+    let default = tos_executor::BlockchainConfig::default();
+    for (masterchain, name) in [(false, "basechain"), (true, "masterchain")] {
+        let raw = default.raw_config().gas_prices(masterchain).expect("default raw gas prices");
+        assert_gas_prices_match(
+            &format!("default {name} cached"),
+            &raw,
+            default.get_gas_config(masterchain),
+        );
+    }
+}
 
 fn zerostate_config() -> chain_block::ConfigParams {
     let template =
@@ -44,6 +125,16 @@ fn the_executor_default_and_the_zero_state_grant_the_same_gas_envelope() {
     let zero = zerostate_config();
     let default = tos_executor::BlockchainConfig::default_with_global_version(ACTIVE_VERSION)
         .expect("a default configuration");
+    for (masterchain, name) in [(false, "basechain"), (true, "masterchain")] {
+        let generated = zero.gas_prices(masterchain).expect("generated gas prices");
+        let raw = default.raw_config().gas_prices(masterchain).expect("default raw gas prices");
+        assert_gas_prices_match(&format!("generated {name} raw"), &generated, &raw);
+        assert_gas_prices_match(
+            &format!("generated {name} cached"),
+            &generated,
+            default.get_gas_config(masterchain),
+        );
+    }
 
     let zero_wc: GasLimitsPrices = match zero.config(21).expect("param 21").expect("param 21") {
         chain_block::ConfigParamEnum::ConfigParam21(p) => p,

@@ -22,7 +22,7 @@ namespace tos {
 // The ceiling this binary is capable of executing, not a switch that enables
 // anything. What a network runs comes from ConfigParam 8; a configured version
 // above this one is logged and then executed anyway, so raising this does not
-// activate v16 and leaving it low would not have prevented it.
-constexpr int SUPPORTED_VERSION = 16;
+// activate an instruction on a network without the corresponding configuration.
+constexpr int SUPPORTED_VERSION = 19;
 
 }  // namespace tos

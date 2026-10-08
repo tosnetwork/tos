@@ -42,6 +42,10 @@ def main():
                 shutil.copy2(ROOT / "crypto/smartcont" / source, work / source)
                 if impl == "wallet-func":
                     shutil.copy2(
+                        ROOT / "crypto/smartcont/wallet-v5-action-list.fc",
+                        work / "wallet-v5-action-list.fc",
+                    )
+                    shutil.copy2(
                         ROOT / "crypto/smartcont/strong-ed25519-key.fc",
                         work / "strong-ed25519-key.fc",
                     )

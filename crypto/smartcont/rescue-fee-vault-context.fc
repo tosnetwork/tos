@@ -1,0 +1,106 @@
+;; EXPERIMENT ONLY: version-17 executor-context admission; not production activated.
+;; Body: intent:^Cell signature:^Cell. Intent: FEE3:uint32 class:uint8 (=1),
+;; vault:MsgAddressInt leaf:uint32 deadline:uint32 value:Coins payload:^Cell header:^Cell.
+;; Data: next_leaf:uint32 measured_gas:uint32 epoch0:uint32 fixed_value:Coins header_hash:uint256
+;; target:MsgAddressInt key:^Cell auth_prefix:^Cell (851 bits, includes role).
+;; Trusted input statistics bound the entire graph, including StateInit, to 128 cells.
+;; The outgoing wrapper plus payload is also <=128 cells; no independent 72-cell cap.
+;; The immutable header/prefix/key/target must be consistently derived by a factory.
+#include "pq.fc";
+
+const int fee::wrong_vault = 2002;
+const int fee::expired = 2003;
+const int fee::stale_leaf = 2004;
+const int fee::bad_signature = 2007;
+const int fee::insufficient_balance = 2008;
+const int fee::wrong_slot = 2009;
+const int fee::wrong_value = 2010;
+;; Experimental compute/state bounds still require worst-case production calibration.
+const int fee::max_gas = 65536;           ;; conservative experimental compute reserve
+const int fee::max_in_cells = 128;        ;; complete external message DAG
+const int fee::max_in_bits = 128 * 1024;
+const int fee::state_cells = 32;          ;; code + data, generous
+const int fee::state_bits = 32 * 1024;
+const int fee::storage_horizon = 33554432; ;; > one year of storage after paying
+
+(slice, ()) fee_prefix(slice s) asm "x{4645453301} SDBEGINS";
+(slice, ()) submit_prefix(slice s) asm "x{53554231} SDBEGINS";
+(slice, ()) auth_prefix(slice s, slice prefix) asm "SDBEGINSX";
+
+int incoming_cells() asm "18 GETPARAMLONG" "2 INDEX";
+
+int gas_consumed() asm "GASCONSUMED";
+
+() recv_internal(slice body) impure {
+  ;; Deposits only.
+}
+
+() recv_external(int balance, int msg_value, cell in_msg_full, slice body) impure {
+  ;; Count the complete external message, including optional StateInit.
+  ;; This entry receives the executor's original input, never a caller-selected cell.
+  ;; c7[18] is executor-owned. Its version-17 shape is fixed; null fails closed.
+  ;; Every ordinary cell has <=1023 bits, so the cell bound also bounds total bits.
+  throw_unless(2015, incoming_cells() <= fee::max_in_cells);
+  cell intent = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+
+  slice state = get_data().begin_parse();
+  int next_leaf = state~load_uint(32);
+  state~skip_bits(32);
+  slice config = state;
+  slice ds = config;
+  int epoch0 = ds~load_uint(32);
+  int fixed_value = ds~load_coins();
+  int expected_header = ds~load_uint(256);
+  cell public_key = ds~load_ref();
+  slice expected_auth_prefix = ds~load_ref().begin_parse();
+
+  slice is = intent.begin_parse();
+  is~fee_prefix(); ;; FEE3 + SUB1 class
+  throw_unless(fee::wrong_vault, equal_slice_bits(is~load_msg_addr(), my_address()));
+  int leaf = is~load_uint(32);
+  int valid_until = is~load_uint(32);
+  int value = is~load_coins();
+  cell payload = is~load_ref();
+  throw_unless(2013, cell_hash(is~load_ref()) == expected_header);
+  is.end_parse();
+
+  throw_unless(fee::bad_signature, lms_check_fee_hash(cell_hash(intent), leaf, signature, public_key));
+
+  int t = now();
+  int remaining = valid_until - t;
+  throw_unless(fee::expired, (remaining > 0) & (remaining <= 3600));
+  throw_unless(fee::stale_leaf, leaf >= next_leaf);
+  int slot = (t - epoch0) / 3600;
+  int leaf_slot = leaf / 4;
+  ;; Arithmetic shift yields zero exactly for differences 0 and 1.
+  throw_if(fee::wrong_slot, (slot - leaf_slot) >> 1);
+  throw_unless(fee::wrong_value, value == fixed_value);
+  slice ps = payload.begin_parse();
+  ps~submit_prefix();
+  slice request = ps~load_ref().begin_parse();
+  ps~load_ref(); ;; SLH bytes; verification remains the module's responsibility.
+  ps.end_parse();
+  ;; Exact canonical prefix: AU2R, global id, network tag, std wallet, module hash, role.
+  request~auth_prefix(expected_auth_prefix);
+  request~skip_bits(64 + 64 + 32);
+  int kind = request~load_uint(8);
+  throw_unless(2012, (1 << kind) & 0x1b);
+  request~load_ref();
+  request.end_parse();
+
+  int fresh_budget = get_compute_fee(0, fee::max_gas)
+    + 2 * get_forward_fee(0, fee::max_in_bits, fee::max_in_cells)
+    + get_storage_fee(0, fee::storage_horizon, fee::state_bits, fee::state_cells);
+  throw_unless(fee::insufficient_balance, value + fresh_budget <= balance);
+
+  accept_message();
+  int gas = gas_consumed();
+  slice target = ds~load_msg_addr();
+  set_data(begin_cell().store_uint(leaf + 1, 32).store_uint(gas, 32)
+    .store_slice(config).end_cell());
+  commit();
+  send_raw_message(begin_cell().store_uint(0x18, 6).store_slice(target).store_coins(value)
+    .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1).store_ref(payload).end_cell(), 1 + 2);
+}

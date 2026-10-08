@@ -1,0 +1,30 @@
+[
+  {
+    "role": 1,
+    "policy": 1,
+    "request_hash": "e682e38a1b36f00d9966585725ea68ca07f329cd74a7a76c05d7dec6ce796a8c",
+    "digest": "630841d36514c55c64864274186ff52e5bfa2037e6595d7bc1424637b37f68e7",
+    "submission_hash": "c5ff27d2b8a7c38512a3a9a51eb51a6513334a449f923700a2ad64b8ae8272c6"
+  },
+  {
+    "role": 1,
+    "policy": 2,
+    "request_hash": "7bffd24f044a0d62937d40460395e831b9727fa616296d28f11122f61d8cc830",
+    "digest": "ff1ec79c0992df5aaf5cee15b3a9eaaf78846a68e2ee3c73bb55f60a335695cb",
+    "submission_hash": "ca2a338a44237aae86214ed782cc5e177fac82a7f89876fd0ec296fb07f71dcc"
+  },
+  {
+    "role": 2,
+    "policy": 1,
+    "request_hash": "a22770697e7487a6422418fc91d2483fe6959f60b6a4d37fc2f65b3583c87db2",
+    "digest": "f2b831b48815d699990607b21539e8ed34550ec530d4743edb620da61fd0e1ae",
+    "submission_hash": "a3ffad86b32d1db2b30ed068f1b8c4b283ab9783ed6685510531daeef181bcbc"
+  },
+  {
+    "role": 2,
+    "policy": 2,
+    "request_hash": "9277bdb7d71f9b72b55f09ac32c982c0d9c089d242a8fb9d4439b12bd363ad8a",
+    "digest": "368b1dc85f92b8968b825a7e21da3a332e54aeaa5ad1141efbab13406445519b",
+    "submission_hash": "c204539096696abb9a34c3505434cd38a9e80d2246e92d609a92c9868e306d30"
+  }
+]

@@ -1,0 +1,36 @@
+{
+  "scope": "Host same-lock acquisition/verification/durable commit callback interface; captured reply replay only",
+  "cases_passed": 7,
+  "validation": [
+    "Captured live material acquired and verified",
+    "All query callbacks run while checkpoint flock is held",
+    "Checkpoint committed before result returned",
+    "Reopen acquisition uses persisted key block",
+    "Transport failure and expired proof preserve state",
+    "Enrolled lost checkpoint refuses before any network query"
+  ],
+  "control": "Remove flock: compiled and failed callback-lock assertion; restored seven passed",
+  "artifacts": [
+    {
+      "file": "20261007-acquire-persisted-tests.log",
+      "bytes": 3941,
+      "sha256": "f8b1319fe5e296ff70f6f7530b1c4036980115aae175f10a1cd962b8d059d4d5"
+    },
+    {
+      "file": "20261007-acquire-persisted-lock-control.log",
+      "bytes": 3021,
+      "sha256": "539e684b87b0d2ca9d91a269a5254daf1f24c93ffff2cd0b01a252f0e62f1f48"
+    },
+    {
+      "file": "20261007-acquire-persisted-restored.log",
+      "bytes": 3941,
+      "sha256": "12a66a58692656a8d35213fafe2ae4b8c0417b5f94d83988672629c48461ff0c"
+    }
+  ],
+  "remaining": [
+    "Phone callback bindings and actual live transport",
+    "Independent anchor provisioning and wallet account/config binding",
+    "Complete creation, dual POP, rotation and delivery",
+    "Final-head cross-platform CI and physical/release acceptance"
+  ]
+}

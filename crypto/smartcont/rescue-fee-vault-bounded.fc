@@ -1,0 +1,119 @@
+;; EXPERIMENT ONLY: bounded SUB1 admission, not deployable under current credit.
+;; Data extends rescue-fee-vault-layout.fc with expected_header:^Cell and
+;; expected_auth_prefix:^Cell after the public-key reference. The immutable suffix
+;; retains all three references. Deployment/factory validation is not implemented.
+;; Intent: FEE2:uint32 global_id:int32 vault:MsgAddressInt leaf:uint32 deadline:uint32
+;;         value:Coins class:uint8 payload:^Cell header:^Cell; class 1 is SUB1 only.
+;; Header is a canonical off-chain-built commitment to domain, network, profile,
+;; fee tree and wallet/module parties. The outer intent binds the actual vault via
+;; my_address(); the stored header never embeds this vault's self-referential address.
+;; Auth prefix is exactly 843 bits and has no refs. See probe_bounded_admission.py.
+;; Existing fee/state bounds and lifecycle gates remain experimental.
+#include "pq.fc";
+
+const int fee::wrong_network = 2001;
+const int fee::wrong_vault = 2002;
+const int fee::expired = 2003;
+const int fee::stale_leaf = 2004;
+const int fee::leaf_mismatch = 2005;
+const int fee::digest_mismatch = 2006;
+const int fee::bad_signature = 2007;
+const int fee::insufficient_balance = 2008;
+const int fee::wrong_slot = 2009;
+const int fee::value_too_high = 2010;
+const int fee::not_rescue = 2011;
+const int fee::suite_lms = 4;
+const int fee::rescue_submit = 0x53554231; ;; "SUB1": rescue_submit_v1 to the dual module
+;; Prototype fee bounds are not proven input-size limits. Do not deploy.
+const int fee::max_gas = 40000;           ;; diagnostic bound, not a proven worst case
+const int fee::max_in_cells = 128;        ;; intent + payload cap + digest + signature chains
+const int fee::max_in_bits = 128 * 1023;
+const int fee::state_cells = 32;          ;; code + data, generous
+const int fee::state_bits = 32 * 1023;
+const int fee::storage_horizon = 31536000; ;; keep one year of storage after paying
+
+int gas_consumed() asm "GASCONSUMED";
+
+() recv_internal(slice body) impure {
+  ;; Deposits only.
+}
+
+() recv_external(cell in_msg_full, slice body) impure {
+  ;; Count the complete external message, including optional StateInit.
+  compute_data_size(in_msg_full, fee::max_in_cells);
+  cell intent = body~load_ref();
+  cell digest = body~load_ref();
+  cell context = body~load_ref();
+  cell signature = body~load_ref();
+  body.end_parse();
+
+  slice state = get_data().begin_parse();
+  int next_leaf = state~load_uint(32);
+  state~skip_bits(32);
+  slice config = state;
+  slice ds = config;
+  int network = ds~load_int(32);
+  int epoch0 = ds~load_uint(32);
+  int max_value = ds~load_coins();
+  cell public_key = ds~load_ref();
+  cell expected_header = ds~load_ref();
+  slice expected_auth_prefix = ds~load_ref().begin_parse();
+
+  slice dg = digest.begin_parse();
+  throw_unless(fee::digest_mismatch, dg~load_uint(256) == cell_hash(intent));
+  dg.end_parse();
+
+  throw_unless(fee::bad_signature, pq_check_suite(digest, context, signature, public_key, fee::suite_lms));
+  slice is = intent.begin_parse();
+  throw_unless(2012, is~load_uint(32) == 0x46454532); ;; FEE2
+  throw_unless(fee::wrong_network, is~load_int(32) == network);
+  throw_unless(fee::wrong_vault, equal_slice_bits(is~load_msg_addr(), my_address()));
+  int leaf = is~load_uint(32);
+  int valid_until = is~load_uint(32);
+  int value = is~load_coins();
+  throw_unless(2012, is~load_uint(8) == 1); ;; SUB1 class only
+  cell payload = is~load_ref();
+  throw_unless(2013, cell_hash(is~load_ref()) == cell_hash(expected_header));
+  compute_data_size(payload, 72);
+  is.end_parse();
+
+  int t = now();
+  throw_unless(fee::expired, (valid_until > t) & (valid_until <= t + 3600));
+  throw_unless(fee::stale_leaf, leaf >= next_leaf);
+  int slot = (t - epoch0) / 3600;
+  int leaf_slot = leaf / 4;
+  ;; Arithmetic shift yields zero exactly for differences 0 and 1.
+  throw_if(fee::wrong_slot, (slot - leaf_slot) >> 1);
+  throw_unless(fee::value_too_high, value <= max_value);
+  slice ps = payload.begin_parse();
+  throw_unless(fee::not_rescue, ps~load_uint(32) == fee::rescue_submit);
+  slice request = ps~load_ref().begin_parse();
+  ps~load_ref(); ;; SLH bytes; verification remains the module's responsibility.
+  ps.end_parse();
+  ;; Exact canonical prefix: AU2R, global id, network tag, std wallet, module hash.
+  throw_unless(2014, equal_slice_bits(request~load_bits(843), expected_auth_prefix));
+  throw_unless(fee::not_rescue, request~load_uint(8) == 2);
+  request~skip_bits(64 + 64 + 32);
+  int kind = request~load_uint(8);
+  throw_unless(2012, (kind == 0) | (kind == 1) | (kind == 3) | (kind == 4));
+  request~load_ref();
+  request.end_parse();
+
+  slice ss = signature.begin_parse();
+  ;; The upper word must be zero (one-level HSS), the lower word exactly q.
+  throw_unless(fee::leaf_mismatch, ss.preload_uint(64) == leaf);
+
+  int fresh_budget = get_compute_fee(0, fee::max_gas)
+    + 2 * get_forward_fee(0, fee::max_in_bits, fee::max_in_cells)
+    + get_storage_fee(0, fee::storage_horizon, fee::state_bits, fee::state_cells);
+  throw_unless(fee::insufficient_balance, value + fresh_budget <= get_balance().pair_first());
+
+  accept_message();
+  int gas = gas_consumed();
+  slice target = ds~load_msg_addr();
+  set_data(begin_cell().store_uint(leaf + 1, 32).store_uint(gas, 32)
+    .store_slice(config).end_cell());
+  commit();
+  send_raw_message(begin_cell().store_uint(0x18, 6).store_slice(target).store_coins(value)
+    .store_uint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1).store_ref(payload).end_cell(), 1 + 2);
+}

@@ -1,0 +1,56 @@
+;; Canonical paired-vault identity for the complete wallet construction DAG.
+;; Code is a compiled dependency, never a witness-selected implementation.
+;; This codec confers no fee authority and does not establish reserve or POP.
+#include "wallet-quantum-state.fc";
+
+slice quantumpair_address(int address) inline {
+  return begin_cell().store_uint(4, 3).store_int(0, 8).store_uint(address, 256).end_cell().begin_parse();
+}
+
+int quantumpair_basechain(slice address) impure inline {
+  throw_unless(quantumid::invalid, (address.slice_bits() == 267) & (address.slice_refs() == 0));
+  throw_unless(quantumid::invalid, address.preload_uint(3) == 4);
+  (int wc, int hash) = parse_std_addr(address);
+  throw_unless(quantumid::invalid, wc == 0);
+  return hash;
+}
+
+;; Genesis next_leaf is zero. No self-address/header hash appears in vault data;
+;; external fee intents bind the derived vault address explicitly.
+cell quantumpair_data(int global_id, int network, slice wallet, slice module, cell metadata) impure inline_ref {
+  quantumpair_basechain(wallet);
+  quantumpair_basechain(module);
+  quantumstate_fee(metadata);
+  cell config = begin_cell().store_uint(1, 8).store_int(global_id, 32).store_uint(network, 256)
+      .store_slice(wallet).store_slice(module).store_ref(metadata).end_cell();
+  slice m = metadata.begin_parse().skip_bits(16 + 256);
+  int epoch0 = m~load_uint(32);
+  cell key = m~load_ref();
+  int root = quantumpair_basechain(module);
+  cell prefix = begin_cell().store_uint(0x41553252, 32).store_int(global_id, 32)
+      .store_uint(network, 256).store_slice(wallet).store_uint(root, 256).store_uint(2, 8).end_cell();
+  int pop_parties = cell_hash(begin_cell().store_slice(wallet).store_uint(root, 256).end_cell());
+  ;; Canonical caches avoid reparsing the metadata graph within external credit.
+  ;; The whole expected data hash is checked when the wallet/module pairs a vault.
+  return begin_cell().store_uint(3, 8).store_uint(0, 32).store_uint(cell_hash(config), 256)
+      .store_uint(epoch0, 32).store_slice(module).store_uint(pop_parties, 256)
+      .store_ref(key).store_ref(prefix).end_cell();
+}
+
+cell quantumpair_init(cell vault_code, int global_id, int network, slice wallet, slice module,
+    cell metadata) impure inline_ref {
+  cell data = quantumpair_data(global_id, network, wallet, module, metadata);
+  cell witness = begin_cell().store_uint(6, 5).store_ref(vault_code).store_ref(data).end_cell();
+  quantumid_check_dag(witness, 1024, 0);
+  return witness;
+}
+
+;; The whole data commitment binds all parties and the exact metadata, including
+;; slot origin, public restore tree id and key. It binds these values but cannot
+;; prove their off-chain KDF relationship or possession.
+() quantumpair_validate(cell witness, int compiled_vault_code_hash, int claimed_address,
+    int global_id, int network, slice wallet, slice module, cell metadata) impure inline_ref {
+  cell actual = quantumid_state_init(witness, compiled_vault_code_hash, claimed_address);
+  cell expected = quantumpair_data(global_id, network, wallet, module, metadata);
+  throw_unless(quantumid::invalid, cell_hash(actual) == cell_hash(expected));
+}

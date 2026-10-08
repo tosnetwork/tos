@@ -217,6 +217,7 @@ add_library(validator-common OBJECT
   shard-client.cpp
   validator-full-id.cpp
   validator-options.cpp
+  admission-work-profile.cpp
 )
 target_link_libraries(validator-common PUBLIC validator-db validator-state-download-budget)
 

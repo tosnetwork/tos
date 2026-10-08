@@ -150,6 +150,7 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
             ..TransactionDescrOrdinary::default()
         };
 
+        let mut incoming_storage = None;
         // first check if contract can pay for importing external message
         if is_ext_msg && !is_special {
             // extranal message comes serialized
@@ -170,6 +171,15 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
                 log::debug!(target: "executor", "inbound external message has too big merkle depth, invalid");
                 fail!(ExecutorError::InvalidExtMessage)
             }
+            let cells = calc
+                .cells()
+                .checked_add(1)
+                .ok_or_else(|| error!("incoming cell count overflow"))?;
+            let bits = calc
+                .bits()
+                .checked_add(in_msg_cell.bit_length() as u64)
+                .ok_or_else(|| error!("incoming bit count overflow"))?;
+            incoming_storage = Some((in_msg_hash.clone(), cells, bits));
             let fwd_prices = self.config.get_fwd_prices(in_msg.is_masterchain());
             let in_fwd_fee = fwd_prices.calc_fwd_fee(calc.bits(), calc.cells());
             log::debug!(target: "executor", "import message fee: {}, acc_balance: {}", in_fwd_fee, acc_balance.coins);
@@ -259,6 +269,7 @@ impl TransactionExecutor for OrdinaryTransactionExecutor {
 
         let config_params = self.config.raw_config().clone();
         let mut smc_info = SmartContractInfo {
+            incoming_storage,
             myself: account_address.write_to_bitstring()?,
             block_lt: params.block_lt,
             trans_lt: lt,

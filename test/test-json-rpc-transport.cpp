@@ -34,11 +34,14 @@
 #include <unistd.h>
 #include <vector>
 
+#include "auto/tl/lite_api.hpp"
 #include "http/http-inbound-connection.h"
 #include "td/actor/actor.h"
+#include "td/utils/base64.h"
 #include "td/utils/buffer.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/tests.h"
+#include "tl-utils/lite-utils.hpp"
 
 #include "json-rpc-http-policy.h"
 #include "json-rpc-server.h"
@@ -929,6 +932,31 @@ TEST(JsonRpcTransport, a_drained_body_stays_charged_until_its_request_is_answere
       ASSERT_EQ(budget->reserved(), max_body);
       hold->release = true;
       ASSERT_TRUE(wait_until([&] { return budget->reserved() == 0 && hold->held == 0; }, 5000));
+    });
+  }
+}
+
+TEST(JsonRpcTransport, proof_relay_refuses_send_and_nested_queries_without_backend) {
+  auto send = tos::serialize_tl_object(
+      tos::create_tl_object<tos::lite_api::liteServer_sendMessage>(td::BufferSlice("public test")), true);
+  auto info = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  auto nested = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(info)), true);
+  const std::vector<std::string> requests = {"!", td::base64_encode(send.as_slice()),
+                                             td::base64_encode(nested.as_slice())};
+  for (bool with_key : {false, true}) {
+    with_json_rpc(options_for(with_key), [with_key, &requests](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      for (const auto &query : requests) {
+        const std::string request =
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"getProofQuery\",\"params\":{\"query\":\"" + query + "\"}}";
+        ASSERT_TRUE(client.send_all(post(request, with_key)));
+        std::string status, body;
+        ASSERT_TRUE(client.read_response(5000, status, body));
+        ASSERT_EQ(status, std::string("HTTP/1.1 422 Unprocessable Entity"));
+        ASSERT_TRUE(body.find("\"code\":-32602") != std::string::npos);
+        ASSERT_TRUE(body.find(id_field("7")) != std::string::npos);
+      }
     });
   }
 }

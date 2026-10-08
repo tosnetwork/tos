@@ -1847,6 +1847,9 @@ td::Status ValidatorEngine::load_global_config() {
   if (test_crash_cleanup_before_erase_) {
     validator_options_.write().set_test_crash_cleanup_before_erase(true);
   }
+  if (ext_message_work_profile_) {
+    TRY_STATUS(validator_options_.write().set_ext_message_work_profile(ext_message_work_profile_.value()));
+  }
   if (max_mempool_num_ != 0) {
     validator_options_.write().set_max_mempool_num(max_mempool_num_);
   }
@@ -6787,6 +6790,21 @@ int main(int argc, char *argv[]) {
                            return td::Status::Error("state-ttl should be positive");
                          }
                          acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_state_ttl, v); });
+                         return td::Status::OK();
+                       });
+  bool work_profile_seen = false;
+  p.add_checked_option('\0', "ext-message-work-profile",
+                       "Explicit experimental work budget: "
+                       "config-root-hex,capacity,refill-units,interval-ns,attempt-units,max-bytes,max-depth",
+                       [&](td::Slice text) -> td::Status {
+                         if (work_profile_seen) {
+                           return td::Status::Error("ext-message-work-profile must be specified only once");
+                         }
+                         TRY_RESULT(profile, tos::validator::ExtMessageWorkProfile::parse(text));
+                         work_profile_seen = true;
+                         acts.push_back([&x, profile]() {
+                           td::actor::send_closure(x, &ValidatorEngine::set_ext_message_work_profile, profile);
+                         });
                          return td::Status::OK();
                        });
   p.add_checked_option('m', "mempool-num", "Maximal number of mempool external message", [&](td::Slice s) {

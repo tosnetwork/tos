@@ -288,6 +288,33 @@ td::BufferSlice oversized_chain(const BlockIdExt& from, const BlockIdExt& to, bo
 }
 
 void real_cases(const RealFixture& fixture, const pv::Anchor& foreign_anchor, const td::BufferSlice& foreign_chain) {
+  if (selected("real-sdk-boc-output")) {
+    expect_verified("real-sdk-boc-output", verify_historical(fixture, fixture.historical),
+                    [&](const pv::Verified& verified) -> std::string {
+                      if (!verified.account || verified.params.empty()) {
+                        return "SDK output fixture did not exercise account and configuration";
+                      }
+                      auto check = [](const std::string& encoded, const td::Bits256& expected) -> std::string {
+                        if (encoded.size() < 5 || (static_cast<unsigned char>(encoded[4]) & 0xe0) != 0x40) {
+                          return "SDK BOC output must use CRC-only serialization";
+                        }
+                        auto parsed = vm::std_boc_deserialize(td::Slice(encoded));
+                        if (parsed.is_error() || td::Bits256{parsed.ok()->get_hash().bits()} != expected) {
+                          return "SDK BOC output changed proven cell identity";
+                        }
+                        return {};
+                      };
+                      auto error = check(verified.account->state_boc, verified.account->state_hash);
+                      if (!error.empty())
+                        return error;
+                      for (const auto& param : verified.params) {
+                        error = check(param.boc, param.cell_hash);
+                        if (!error.empty())
+                          return error;
+                      }
+                      return {};
+                    });
+  }
   if (selected("real-historical-baseline")) {
     // The real chain must cross a membership/key rotation for this baseline to
     // show that a legitimate rotation is followed.
@@ -1095,7 +1122,7 @@ int main(int argc, char** argv) {
   synthetic_cases(synthetic, real.anchor);
   real_cases(real, synthetic.anchor, synthetic.chain(synthetic.good_k1(), synthetic.good_t()));
   std::printf("PROOF_VERIFY_SUMMARY passed=%d failed=%d\n", passes, failures);
-  if (passes == 0) {
+  if (passes == 0 && failures == 0) {
     std::fprintf(stderr, "PROOF_VERIFY_TEST_SETUP_FAILURE: no case ran\n");
     return 2;
   }

@@ -374,6 +374,20 @@ async def resume_saved_network(
         await asyncio.gather(*drainers, return_exceptions=True)
 
 
+def configure_quantum_candidate(config, auth_network_tag, version_override=None):
+    """Explicit frozen candidate for a fresh disposable network; never a default switch."""
+    tag = bytes.fromhex("42" * 32)
+    if auth_network_tag is not None and auth_network_tag != tag:
+        raise ValueError("Quantum candidate requires the frozen 0x42 AUTH namespace")
+    if version_override is not None and int(version_override) != 18:
+        raise ValueError("Quantum candidate conflicts with TOS_GLOBAL_VERSION")
+    config.global_version = 18
+    config.global_id = 1
+    config.auth_network_tag = tag
+    config.deployment_fee_schedule = True
+    config.quantum_admission_candidate = True
+
+
 async def main(
     rpc_addr,
     control_addr,
@@ -385,9 +399,32 @@ async def main(
     reuse,
     base_port,
     bootstrap_validator_set_valid_for,
+    auth_network_tag=None,
+    quantum_admission_candidate=False,
+    basechain_fixture=None,
 ):
+    fixture_bytes = None
+    if basechain_fixture is not None:
+        if not quantum_admission_candidate:
+            raise ValueError("basechain fixture requires --quantum-admission-candidate")
+        from tostester.zerostate import basechain_fixture_balance
+
+        fixture_path = Path(basechain_fixture)
+        if not 1 <= fixture_path.stat().st_size <= 64 * 1024 * 1024:
+            raise ValueError("basechain fixture size")
+        fixture_bytes = fixture_path.read_bytes()
+        basechain_fixture_balance(fixture_bytes, 1)
+    if quantum_admission_candidate and saved_network_exists(workdir, num_validators):
+        raise ValueError("Quantum candidate cannot overwrite an existing network")
     install = Install(BUILD_DIR, REPO)
+    if reuse and quantum_admission_candidate:
+        raise ValueError("Quantum candidate is fresh-network only; cannot use --reuse")
     if reuse and saved_network_exists(workdir, num_validators):
+        if auth_network_tag is not None:
+            raise ValueError(
+                "--auth-network-tag only applies while creating a fresh localnet; "
+                "refuse to imply it changed an existing genesis"
+            )
         if bootstrap_validator_set_valid_for is not None:
             raise ValueError(
                 "--bootstrap-validator-set-valid-for only applies while creating "
@@ -411,6 +448,13 @@ async def main(
         if os.environ.get("TOS_GLOBAL_VERSION"):
             network.config.global_version = int(os.environ["TOS_GLOBAL_VERSION"])
             print(f"   version  : global_version={network.config.global_version}", flush=True)
+        if quantum_admission_candidate:
+            configure_quantum_candidate(
+                network.config, auth_network_tag, os.environ.get("TOS_GLOBAL_VERSION")
+            )
+        elif auth_network_tag is not None:
+            network.config.auth_network_tag = auth_network_tag
+        network.config.basechain_fixture = fixture_bytes
         if bootstrap_validator_set_valid_for is not None:
             # A long-running acceptance chain without an election exercise
             # must retain an active ConfigParam 34 for its entire run. The
@@ -507,13 +551,38 @@ async def main(
             await asyncio.gather(*node_tasks, return_exceptions=True)
 
 
-if __name__ == "__main__":
+def parse_auth_network_tag(value):
+    if re.fullmatch(r"[0-9a-fA-F]{64}", value) is None:
+        raise argparse.ArgumentTypeError("AUTH network tag must be exactly 64 hexadecimal digits")
+    return bytes.fromhex(value)
+
+
+def parse_args(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--rpc", default="127.0.0.1:18545")
     p.add_argument("--control", default="127.0.0.1:18745")
     p.add_argument("--validators", type=int, default=1)
     p.add_argument("--workdir", default=str(REPO / "test/integration/.localnet"))
     p.add_argument("--boot-timeout", type=float, default=120.0)
+    p.add_argument(
+        "--quantum-admission-candidate",
+        action="store_true",
+        help="fresh test-only v18/global-ID-1/0x42 candidate with deployment fees and basechain credit 20000",
+    )
+    p.add_argument(
+        "--auth-network-tag",
+        type=parse_auth_network_tag,
+        default=os.environ.get("TOS_AUTH_NETWORK_TAG"),
+        help=(
+            "explicit public 32-byte AUTH namespace for a fresh version >=17 genesis "
+            "(64 hex digits; defaults to TOS_AUTH_NETWORK_TAG when set)"
+        ),
+    )
+    p.add_argument(
+        "--basechain-fixture",
+        type=Path,
+        help="test-only funded basechain genesis BOC for a fresh Quantum candidate",
+    )
     p.add_argument(
         "--base-port",
         type=int,
@@ -537,7 +606,11 @@ if __name__ == "__main__":
         action="store_true",
         help="resume an existing validator database; create it when absent",
     )
-    a = p.parse_args()
+    return p.parse_args(argv)
+
+
+if __name__ == "__main__":
+    a = parse_args()
     try:
         asyncio.run(
             main(
@@ -551,6 +624,9 @@ if __name__ == "__main__":
                 a.reuse,
                 a.base_port,
                 a.bootstrap_validator_set_valid_for,
+                a.auth_network_tag,
+                a.quantum_admission_candidate,
+                basechain_fixture=a.basechain_fixture,
             )
         )
     except KeyboardInterrupt:

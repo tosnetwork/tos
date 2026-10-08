@@ -1,3 +1,4 @@
+include(AppleMobileThirdParty)
 include(AndroidThirdParty)
 
 get_filename_component(TOS_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
@@ -80,7 +81,10 @@ if (MSVC)
     OUTPUT ${ZLIB_LIBRARY}
   )
 else()
+  set(ZLIB_CONFIGURE_ENV)
   if (ANDROID)
+    # zlib otherwise detects the macOS build host and replaces llvm-ar with Apple libtool.
+    set(ZLIB_CONFIGURE_ENV CHOST=${TOS_ANDROID_HOST})
     set(ZLIB_BINARY_DIR ${TOS_ANDROID_THIRD_PARTY_DIR}/zlib/${TOS_ANDROID_ARCH_DIR})
     set(ZLIB_BUILD_DIR ${ZLIB_BINARY_DIR}/src)
     set(ZLIB_CC ${TOS_ANDROID_CC})
@@ -105,6 +109,9 @@ else()
     set(ZLIB_CFLAGS "${CMAKE_C_FLAGS} -fPIC")
   else()
     set(ZLIB_CFLAGS "-fPIC")
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    string(APPEND ZLIB_CFLAGS " ${TOS_IOS_THIRD_PARTY_FLAGS}")
   endif()
 
   if (MINGW)
@@ -139,6 +146,7 @@ else()
         AR=${ZLIB_AR}
         RANLIB=${ZLIB_RANLIB}
         CFLAGS=${ZLIB_CFLAGS}
+        ${ZLIB_CONFIGURE_ENV}
         ./configure --static --prefix=${ZLIB_BINARY_DIR}
       COMMAND ${CMAKE_COMMAND} -E chdir ${ZLIB_BUILD_DIR} ${CMAKE_COMMAND} -E env
         CC=${ZLIB_CC}

@@ -1,0 +1,62 @@
+{
+  "status": "local source-bound component evidence",
+  "scope": "LMS fee framing only; not a signer, reservation, live proof check, funded mobile transaction or recovery readiness",
+  "android": {
+    "independent_vectors": 4,
+    "baseline_tests": 3,
+    "controls": {
+      "source_sha256": "64de60e25c435f8c3d0c76b873439adf91a82f66789a66e130b631d4b85492bd",
+      "controls": [
+        {
+          "name": "primary",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<Fee vault cannot fund PRIMARY AUTH> but was:<null>"
+        },
+        {
+          "name": "slot",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<New fee signature requires current slot> but was:<null>"
+        },
+        {
+          "name": "hss",
+          "semantic_failure": true,
+          "message": "java.lang.AssertionError: expected:<Fee signature profile or leaf mismatch> but was:<null>"
+        }
+      ],
+      "restored_exit": 0
+    }
+  },
+  "ios": {
+    "independent_vectors": 4,
+    "baseline_tests": 3,
+    "sliced_signature_case": "passed",
+    "controls": {
+      "source_sha256": "27346a966e4152536c76a4a64c87a5c1aab3d44cf8d2e3bc32f94f7b4f5eaa92",
+      "controls": [
+        {
+          "name": "primary",
+          "method": "testPrimaryFeeAuthAndClassAliasesRefused",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "3274d18e283b8fb5cdd252304c6cd8f02d1e17e5d449e375c8ffce1006766dc2"
+        },
+        {
+          "name": "slot",
+          "method": "testSlotTerminalLeafSignatureProfileAndAmountsRefused",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "f0d07f81dd710a9f6929b2574b78f62df662de37b1c951097c15586d809660af"
+        },
+        {
+          "name": "hss",
+          "method": "testSlotTerminalLeafSignatureProfileAndAmountsRefused",
+          "exit": 2,
+          "semantic_failure": true,
+          "log_sha256": "2484e2d202f2b081d3ae50a6cd4463068b4ef9913359ff4f3da953384d1ca4ce"
+        }
+      ],
+      "restored_exit": 0
+    },
+    "scope": "framing, class, slot and fixed HSS profile; not durable signing or live proof acceptance"
+  }
+}

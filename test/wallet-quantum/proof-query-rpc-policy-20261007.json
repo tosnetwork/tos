@@ -1,0 +1,46 @@
+{
+  "scope": "Readonly getProofQuery JSON-RPC handler source/object compilation and pure query-policy tests; full node runtime acceptance pending Linux CI",
+  "validation": [
+    "RPC config/dispatch objects compile",
+    "Real HTTP refusal test translation unit compiles",
+    "Ten pure readonly policy cases pass",
+    "Send-message allowlist mutation compiles and fails expected refusal; restored passes"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-proof-rpc-object-build.log",
+      "bytes": 1000,
+      "sha256": "b56c56e32c74dd5187dc2e22044855694c67144b0a1a2bec96f48b491ba524b8"
+    },
+    {
+      "file": "20261007-proof-rpc-transport-object-build.log",
+      "bytes": 191,
+      "sha256": "ce2732efdf9cfc2429691fc9106ea4d5da2200fcdb6365fadede9e605bcf1fe5"
+    },
+    {
+      "file": "20261007-proof-readonly-tests.log",
+      "bytes": 493,
+      "sha256": "11e910ce958f81a8b7d124c1b7762dd92b5a64541165bfacc78f1043b7aff78d"
+    },
+    {
+      "file": "20261007-proof-readonly-write-control.log",
+      "bytes": 493,
+      "sha256": "842717eee7e58285a2aa73be38bd90491476be03e13e262cd8d433d31b1ff672"
+    },
+    {
+      "file": "20261007-proof-readonly-restored.log",
+      "bytes": 493,
+      "sha256": "11e910ce958f81a8b7d124c1b7762dd92b5a64541165bfacc78f1043b7aff78d"
+    }
+  ],
+  "linux_ci_gates": [
+    "Full validator-engine build",
+    "Real HTTP ingress test with API key enabled/disabled",
+    "Remove route, compiled named HTTP test must fail, restore must pass"
+  ],
+  "limits": [
+    "Full macOS node build blocked by existing Linux-only metrics diagnostic IPC",
+    "Actual node/liteserver proof forwarding and live wallet acceptance not yet proven",
+    "No new signing authority follows from raw RPC responses"
+  ]
+}

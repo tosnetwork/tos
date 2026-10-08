@@ -1,0 +1,16 @@
+;; Test fixture: persist the executor context so every field can be compared.
+(int, int, int, int) incoming_storage() asm "18 GETPARAMLONG" "4 UNTUPLE";
+int no_incoming_storage() asm "18 GETPARAMLONG" "ISNULL";
+() recv_external(slice body) impure {
+  (int version, int digest, int cells, int bits) = incoming_storage();
+  accept_message();
+  set_data(begin_cell().store_uint(version, 8).store_uint(digest, 256)
+    .store_uint(cells, 64).store_uint(bits, 64).end_cell());
+}
+() recv_internal(slice body) impure {
+  throw_unless(2100, no_incoming_storage());
+  set_data(begin_cell().store_uint(0, 8).end_cell());
+}
+int context_is_absent() method_id(12345) {
+  return no_incoming_storage();
+}

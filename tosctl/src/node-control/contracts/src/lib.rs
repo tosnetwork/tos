@@ -32,12 +32,18 @@ pub mod dispute;
 pub mod dns;
 pub mod elector;
 pub mod liquid_controller;
+#[cfg(unix)]
+pub mod lms_fee_journal;
+pub mod lms_fee_schedule;
+#[cfg(feature = "native-wallet-vault")]
+pub mod lms_fee_vault;
 pub mod native_registry;
 pub mod nominator;
 pub mod nominator_pool;
 pub mod prediction_market;
 pub mod proof_attestation;
 pub mod proven_getters;
+pub mod proven_transactions;
 pub mod provider;
 pub mod service_actor;
 pub mod smart_contract;
@@ -45,6 +51,18 @@ pub mod stack_utils;
 pub mod task_escrow;
 pub mod validator_controller;
 pub mod wallet;
+pub mod wallet_quantum;
+pub mod wallet_quantum_fee;
+pub mod wallet_quantum_genesis;
+pub mod wallet_quantum_manifest;
+mod wallet_quantum_policy;
+pub mod wallet_quantum_pop;
+pub mod wallet_quantum_prepare;
+pub mod wallet_quantum_receipts;
+pub mod wallet_quantum_state;
+#[cfg(feature = "native-wallet-vault")]
+pub mod wallet_quantum_vault;
+pub mod wallet_quantum_wallet_state;
 
 pub use agent_account::{
     AGENT_ACCOUNT_MAX_ACTION_GAS, AGENT_ACCOUNT_MAX_ACTION_VALUE,
@@ -104,8 +122,8 @@ pub use prediction_market::{
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
 pub use proven_getters::{
-    GetMethodArg, GetMethodCall, ProvenAccount, ProvenGetMethod, ProvenGetterProvider,
-    ProvenGetterResults, ReadPolicy,
+    GetMethodArg, GetMethodCall, ProvenAccount, ProvenAccountState, ProvenGetMethod,
+    ProvenGetterProvider, ProvenGetterResults, ReadPolicy,
 };
 pub use provider::ContractProvider;
 pub use service_actor::{

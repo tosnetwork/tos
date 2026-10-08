@@ -141,7 +141,7 @@ def run_cases(args):
                         a, m = p.account, p.module
                         snapshot = TrustedChainSnapshot(
                             GLOBAL_ID,
-                            16,
+                            19,
                             NOW,
                             addr(a.address),
                             sdk(e2e.CODES[impl]),
@@ -204,7 +204,7 @@ def run_cases(args):
                             new_mode = 3 if mode == 2 else 2
                             proof = TrustedModuleSnapshot(
                                 GLOBAL_ID,
-                                16,
+                                19,
                                 NOW,
                                 addr(destination.address),
                                 sdk(destination.code),
@@ -390,9 +390,9 @@ def parity(out, driver):
     (out / "receipt-cpp.tsv").write_text("\n".join(left) + "\n")
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
     cfg = out / "receipt-config.boc"
-    cfg.write_bytes(NativeCell().uint(int(fixture.bits, 2), 256).ref(config(16)).boc())
+    cfg.write_bytes(NativeCell().uint(int(fixture.bits, 2), 256).ref(config(19)).boc())
     result = subprocess.run(
-        [str(driver.resolve()), str(cfg), str(cases), "16"],
+        [str(driver.resolve()), str(cfg), str(cases), "19"],
         capture_output=True,
         text=True,
         check=True,

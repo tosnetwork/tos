@@ -1,0 +1,19 @@
+[package]
+name = "tos-native-mnemonic"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+
+[dependencies]
+anyhow = "1"
+bip39 = { version = "2.2", default-features = false, features = ["std"] }
+hmac = "0.12"
+pbkdf2 = "0.12"
+rand = "0.8"
+sha2 = "0.10"
+zeroize = "1.8"
+
+[dev-dependencies]
+hex = "0.4"
+serde_json = "1"
