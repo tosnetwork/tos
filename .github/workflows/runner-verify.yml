@@ -1,14 +1,37 @@
 name: Runner verification
 
-# Idle between control rounds: runs only when dispatched by hand.
+# Pre-admission control: remotely referenced, commit-pinned container and
+# JavaScript actions. The pull_request run (admitted) must show each action's
+# build step and entrypoint executing; the push run (denied) must show none
+# of them, before or after the admission hook.
 on:
-  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [ci/runner-verify]
 
 permissions:
   contents: read
 
+concurrency:
+  group: runner-verify-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  idle:
-    runs-on: ubuntu-24.04
+  remote-docker:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 15
     steps:
-      - run: echo idle
+      - uses: tosnetwork/tos/.github/actions/probe-docker@8ffce508ee312773b385e2c9c5a74b952f50e95b
+  remote-js:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 15
+    steps:
+      - uses: tosnetwork/tos/.github/actions/probe-js@8ffce508ee312773b385e2c9c5a74b952f50e95b
+  docker-uri:
+    runs-on: [self-hosted, linux, x64, tos-vm]
+    timeout-minutes: 15
+    steps:
+      - uses: docker://busybox:1.36
+        with:
+          entrypoint: /bin/echo
+          args: TOS_CI_PROBE_DOCKER_URI
