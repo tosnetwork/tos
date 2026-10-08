@@ -157,6 +157,29 @@ class PolicyTest(unittest.TestCase):
         self.mutate("platform-matrix.yml", "  workflow_call:\n", "")
         self.assert_red("R6", "platform-matrix.yml")
 
+    def test_r6_platform_removed_from_manifest_and_matrix_together(self) -> None:
+        manifest = self.root / "scripts" / "platform-matrix.json"
+        text = manifest.read_text()
+        line = '    "wasm": {"workflow": "build-tos-wasm-emscripten.yml", "tier": "platform"},\n'
+        self.assertEqual(text.count(line), 1)
+        manifest.write_text(text.replace(line, ""))
+        self.mutate(
+            "platform-matrix.yml",
+            "  wasm:\n    needs: changes\n    if: needs.changes.outputs.relevant == 'true'\n"
+            "    uses: ./.github/workflows/build-tos-wasm-emscripten.yml\n",
+            "",
+        )
+        self.mutate("platform-matrix.yml", "      - wasm\n", "")
+        self.assert_red("R6", "build-tos-wasm-emscripten.yml")
+
+    def test_yaml_extension_is_checked(self) -> None:
+        (self.root / ".github" / "workflows" / "extra.yaml").write_text(
+            "name: extra\non:\n  push:\n    branches: [main]\npermissions:\n  contents: read\n"
+            "jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n"
+        )
+        for rule in ("R1", "R3", "R4"):
+            self.assert_red(rule, "extra.yaml")
+
     def test_r6_member_without_workflow_call(self) -> None:
         self.mutate("build-tos-wasm-emscripten.yml", "  workflow_call:\n", "")
         self.assert_red("R6", "build-tos-wasm-emscripten.yml")

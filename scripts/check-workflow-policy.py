@@ -10,7 +10,8 @@ R3  every workflow triggered by a push, a pull request or a schedule declares
     release workflow never cancels a run in progress
 R4  no job runs on a moving *-latest runner label
 R5  no trigger names a branch this repository does not have
-R6  the platform matrix runs exactly the members scripts/platform-matrix.json
+R6  every platform workflow in the inventory below is a matrix member; the
+    platform matrix runs exactly the members scripts/platform-matrix.json
     lists, each under its tier's condition, and its gate needs all of them; the
     nightly workflow calls the matrix and reports on the schedule alone, and its
     report is the only job holding a write grant
@@ -42,6 +43,26 @@ GATE_JOB = "platform-gate"
 REPORT_JOB = "nightly-report"
 REPORT_CONDITION = "always() && github.event_name == 'schedule'"
 REPORT_PERMISSIONS = {"actions": "read", "issues": "write"}
+# The platform workflows the matrix must cover. Kept here, apart from the
+# manifest, so that removing a platform from the manifest and the matrix
+# together is still refused: losing one is a change to this list, made on purpose.
+INHERITED_PLATFORM_WORKFLOWS = {
+    "build-tos-linux-android-toslib.yml",
+    "build-tos-linux-arm64-appimage.yml",
+    "build-tos-linux-arm64-shared.yml",
+    "build-tos-linux-x86-64-appimage.yml",
+    "build-tos-linux-x86-64-shared.yml",
+    "build-tos-macos-14-arm64-portable.yml",
+    "build-tos-macos-15-arm64-shared.yml",
+    "build-tos-macos-15-x86-64-portable.yml",
+    "build-tos-macos-15-x86-64-shared.yml",
+    "build-tos-macos-arm64-shared.yml",
+    "build-tos-wasm-emscripten.yml",
+    "build-tos-windows-mingw64.yml",
+    "build-tos-windows-ucrt64.yml",
+    "tos-ccpcheck.yml",
+    "tos-x86-64-windows.yml",
+}
 
 
 def triggers(doc: dict) -> dict:
@@ -55,14 +76,18 @@ def triggers(doc: dict) -> dict:
 
 def check(root: Path) -> list[str]:
     workflows_dir = root / ".github" / "workflows"
-    docs = {
-        p.name: yaml.safe_load(p.read_text()) or {} for p in sorted(workflows_dir.glob("*.yml"))
-    }
-    texts = {p.name: p.read_text() for p in sorted(workflows_dir.glob("*.yml"))}
+    paths = sorted([*workflows_dir.glob("*.yml"), *workflows_dir.glob("*.yaml")])
+    docs = {p.name: yaml.safe_load(p.read_text()) or {} for p in paths}
+    texts = {p.name: p.read_text() for p in paths}
     matrix = json.loads((root / "scripts" / "platform-matrix.json").read_text())
     release = json.loads((root / "scripts" / "release-artifacts.json").read_text())
-    member_files = {m["workflow"] for m in matrix["members"].values()}
+    manifest_files = {m["workflow"] for m in matrix["members"].values()}
+    member_files = manifest_files | INHERITED_PLATFORM_WORKFLOWS
     problems: list[str] = []
+    for name in sorted(INHERITED_PLATFORM_WORKFLOWS - manifest_files):
+        problems.append(f"R6 {name}: platform workflow is not a matrix member")
+    for name in sorted(INHERITED_PLATFORM_WORKFLOWS - set(docs)):
+        problems.append(f"R6 {name}: platform workflow is missing")
 
     for name, doc in docs.items():
         on = triggers(doc)

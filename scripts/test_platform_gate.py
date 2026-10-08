@@ -105,6 +105,11 @@ class GitRelevanceTest(unittest.TestCase):
         self.vcs("commit", "-q", "-m", path)
         return self.vcs("rev-parse", "HEAD").strip()
 
+    def move(self, source: str, target: str) -> None:
+        (self.repo / target).parent.mkdir(parents=True, exist_ok=True)
+        self.vcs("mv", source, target)
+        self.vcs("commit", "-q", "-m", f"move {source}")
+
     def changes(self, event: str, env: dict[str, str]) -> bool:
         old = Path.cwd()
         try:
@@ -129,6 +134,25 @@ class GitRelevanceTest(unittest.TestCase):
     def test_push_documentation_only(self) -> None:
         after = self.commit("README.md", "words")
         self.assertFalse(self.changes("push", {"BEFORE": self.base, "AFTER": after}))
+
+    def test_pull_request_moving_a_source_into_doc_is_relevant(self) -> None:
+        self.base = self.commit("crypto/example.cpp", "int x;")
+        self.vcs("update-ref", "refs/remotes/origin/main", self.base)
+        self.move("crypto/example.cpp", "doc/example.md")
+        head = self.vcs("rev-parse", "HEAD").strip()
+        self.assertTrue(self.changes("pull_request", {"BASE_REF": "main", "HEAD_SHA": head}))
+
+    def test_push_moving_a_source_into_doc_is_relevant(self) -> None:
+        before = self.commit("crypto/example.cpp", "int x;")
+        self.move("crypto/example.cpp", "doc/example.md")
+        after = self.vcs("rev-parse", "HEAD").strip()
+        self.assertTrue(self.changes("push", {"BEFORE": before, "AFTER": after}))
+
+    def test_moving_documentation_within_doc_is_not_relevant(self) -> None:
+        before = self.commit("doc/a.md", "words")
+        self.move("doc/a.md", "doc/b.md")
+        after = self.vcs("rev-parse", "HEAD").strip()
+        self.assertFalse(self.changes("push", {"BEFORE": before, "AFTER": after}))
 
     def test_push_of_a_new_branch_is_relevant(self) -> None:
         after = self.commit("README.md", "words")
@@ -179,6 +203,13 @@ class GateTest(unittest.TestCase):
 
     def test_relevance_output_invalid_fails(self) -> None:
         self.assertFalse(self.verdict("pull_request", needs(relevant="yes", **all_of(PLATFORM))))
+
+    def test_full_run_answered_not_relevant_fails(self) -> None:
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertFalse(self.verdict(event, needs(relevant="false")), event)
+            self.assertFalse(
+                self.verdict(event, needs(relevant="false", **all_of(PLATFORM | NIGHTLY))), event
+            )
 
     def test_member_missing_from_needs_fails(self) -> None:
         context = needs(**all_of(PLATFORM))

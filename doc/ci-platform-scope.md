@@ -36,8 +36,9 @@ permission (`scripts/check-workflow-supply-chain.py`).
 
 ## Workflow rules
 
-`scripts/check-workflow-policy.py` runs in the `workflow-policy` job of the Lint workflow,
-together with actionlint's structural checks. It requires:
+`scripts/check-workflow-policy.py` runs in the Lint workflow's `hygiene` job, a required check,
+on every change, together with actionlint's structural checks. A policy violation therefore
+blocks a merge. It requires:
 
 - every job that runs steps has `timeout-minutes`;
 - every workflow declares `permissions`;

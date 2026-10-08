@@ -183,19 +183,27 @@ jobs:
         path: .ccache
         key: client-only-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
 
-  # The workflow policy (scripts/check-workflow-policy.py) and its tests, the
-  # platform matrix's gate and reporter tests, and actionlint's structural checks:
-  # expressions, contexts, needs, and reusable-workflow inputs and permissions.
-  # Shell inside steps is not linted here.
-  workflow-policy:
+  # Formatting and whitespace, judged on the lines this change actually touches.
+  #
+  # The tree carries older deviations that a whole-tree check would report on every
+  # change, which teaches everyone to ignore the result. Judging only the changed lines
+  # means this passes today and still refuses new deviations, and the backlog shrinks as
+  # files are edited rather than in one reformatting commit.
+  #
+  # It also enforces the workflow policy on every change, whatever it touches, so a
+  # policy violation fails this required check: scripts/check-workflow-policy.py and
+  # its tests, the platform matrix's gate and reporter tests, and actionlint's
+  # structural checks (expressions, contexts, needs, reusable-workflow inputs and
+  # permissions; shell inside steps is not linted).
+  hygiene:
+    timeout-minutes: 40
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
 
     steps:
     - name: Check out repository
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
-        persist-credentials: false
+        fetch-depth: 0
 
     - name: Install the YAML parser
       run: |
@@ -218,22 +226,6 @@ jobs:
         python3 scripts/verify-build-tool.py actionlint-x86_64 "$tool_dir/actionlint.tar.gz"
         tar -xzf "$tool_dir/actionlint.tar.gz" -C "$tool_dir" actionlint
         "$tool_dir/actionlint" -shellcheck= -pyflakes=
-
-  # Formatting and whitespace, judged on the lines this change actually touches.
-  #
-  # The tree carries older deviations that a whole-tree check would report on every
-  # change, which teaches everyone to ignore the result. Judging only the changed lines
-  # means this passes today and still refuses new deviations, and the backlog shrinks as
-  # files are edited rather than in one reformatting commit.
-  hygiene:
-    timeout-minutes: 30
-    runs-on: ubuntu-24.04
-
-    steps:
-    - name: Check out repository
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      with:
-        fetch-depth: 0
 
     - name: Determine what this change touches
       id: changed

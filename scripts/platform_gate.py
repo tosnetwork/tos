@@ -88,6 +88,13 @@ def commit_exists(sha: str) -> bool:
     )
 
 
+def diff_paths(old: str, new: str) -> list[str]:
+    """Every path the diff touches. Without rename detection a rename is its
+    deletion and its addition, so moving a source into doc/ still names the source."""
+    listed = git("diff", "--name-only", "--no-renames", "-z", old, new)
+    return [path for path in listed.split("\0") if path]
+
+
 def changed_files(event: str, env: dict[str, str]) -> list[str] | None:
     """The files a change touches, or None when that cannot be known."""
     if event == "pull_request":
@@ -95,12 +102,12 @@ def changed_files(event: str, env: dict[str, str]) -> list[str] | None:
         if not base_ref or not commit_exists(head):
             return None
         base = git("merge-base", f"origin/{base_ref}", head).strip()
-        return [line for line in git("diff", "--name-only", base, head).splitlines() if line]
+        return diff_paths(base, head)
     if event == "push":
         before, after = env.get("BEFORE", ""), env.get("AFTER", "")
         if not commit_exists(before) or not commit_exists(after):
             return None
-        return [line for line in git("diff", "--name-only", before, after).splitlines() if line]
+        return diff_paths(before, after)
     return None
 
 
@@ -151,6 +158,10 @@ def evaluate(event: str, needs: dict, config: dict) -> tuple[bool, list[str]]:
             problems.append(f"the relevance job gave no valid answer ({value!r})")
         else:
             relevant = value == "true"
+    if event in FULL_EVENTS and relevant is False:
+        # A full run always runs every member; "not relevant" can only be an error.
+        problems.append(f"the relevance job answered false for a full {event} run")
+        relevant = True
     members = config["members"]
     for job in sorted(set(needs) - set(members) - {"changes"}):
         problems.append(f"{job} is in needs but not a matrix member")
