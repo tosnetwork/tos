@@ -92,7 +92,7 @@ jobs:
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
-            test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
+            test-adnl-ext-input-budget test-adnl-ext-output-backpressure test-adnl-ext-refusal-close \
             test-rate-limiter test-security-boundaries test-full-node-shard-admission test-full-node-master-admission \
             test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap \
             test-diagnostic-ipc-unsupported
@@ -137,7 +137,7 @@ jobs:
           expected = {
               "test-wallet-index", "test-wallet-index-apply", "test-candidate-data-cache",
               "test-shard-block-confirmations",
-              "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure",
+              "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure", "test-adnl-ext-refusal-close",
               "test-rate-limiter", "test-security-boundaries", "test-full-node-shard-admission", "test-full-node-master-admission",
               "full-node-master-startup",
               "test-rldp2-inbound-budget", "test-rldp2-inbound-transfer-bound", "test-rldp2-decoder-heap",

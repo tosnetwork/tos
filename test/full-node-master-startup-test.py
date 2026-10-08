@@ -25,6 +25,7 @@ import base64
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -35,6 +36,7 @@ MASTER_REFUSAL = "refusing to start the full-node master"
 SLAVE_REFUSAL = "refusing to start the full-node slave"
 REFUSAL_TIMEOUT_S = 30.0
 SURVIVAL_S = 6.0
+DEBUGGER_TIMEOUT_S = 180
 
 
 def fail(message: str) -> None:
@@ -157,8 +159,51 @@ class Node:
         if MASTER_REFUSAL in output or SLAVE_REFUSAL in output:
             fail(f"{case}: a valid configuration was refused: {output[-2000:]}")
         if code is not None:
+            # The whole engine log: the frames before a crash are often far
+            # from its last lines.
+            print(f"FULL_NODE_MASTER_STARTUP {case} engine log follows", file=sys.stderr)
+            print(output, file=sys.stderr)
+            if code < 0 or "Signal: " in output:
+                self.debugger_backtrace(extra, case)
             fail(f"{case}: the engine exited {code} within {SURVIVAL_S} s: {output[-2000:]}")
         print(f"FULL_NODE_MASTER_STARTUP {case}=started")
+
+    def debugger_backtrace(self, extra: list[str], case: str) -> None:
+        """Diagnostics only: rerun the case once under lldb on macOS to print a
+        backtrace. The original crash fails the case whatever this run does."""
+        if sys.platform != "darwin" or shutil.which("lldb") is None:
+            return
+        command = [
+            "lldb",
+            "--batch",
+            "-o",
+            "run",
+            "-k",
+            "bt all",
+            "-k",
+            "quit",
+            "--",
+            *self.command(extra),
+        ]
+        print(
+            f"FULL_NODE_MASTER_STARTUP {case}: rerunning once under lldb for a backtrace",
+            file=sys.stderr,
+        )
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            start_new_session=True,
+        )
+        try:
+            out, _ = process.communicate(timeout=DEBUGGER_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            out, _ = process.communicate()
+            out += f"\n(lldb run killed after {DEBUGGER_TIMEOUT_S} s)"
+        print(out, file=sys.stderr)
 
 
 def adnl_hex(base64_id: str) -> str:
