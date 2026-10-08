@@ -32,8 +32,10 @@
 #include <limits>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <optional>
 #include <poll.h>
 #include <string>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -54,8 +56,8 @@ class OkCallback : public tos::http::HttpServer::Callback {
  public:
   void receive_request(
       std::unique_ptr<tos::http::HttpRequest> request, std::shared_ptr<tos::http::HttpPayload> payload,
-      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>>
-          promise) override {
+      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise)
+      override {
     // Refuse tunnels the way a non-proxy API server does.
     int status = request->method() == "CONNECT" ? 405 : 200;
     auto response = tos::http::HttpResponse::create("HTTP/1.1", status, status == 200 ? "OK" : "Method Not Allowed",
@@ -92,7 +94,7 @@ class Client {
       addr.sin_family = AF_INET;
       addr.sin_port = htons(static_cast<uint16_t>(port_));
       addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-      if (::connect(fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0) {
+      if (::connect(fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0) {
         return true;
       }
       ::close(fd_);
@@ -102,7 +104,7 @@ class Client {
     return false;
   }
 
-  bool send_all(const std::string& data) {
+  bool send_all(const std::string &data) {
     size_t sent = 0;
     while (sent < data.size()) {
       auto n = ::send(fd_, data.data() + sent, data.size() - sent, MSG_NOSIGNAL);
@@ -252,6 +254,10 @@ class Client {
     }
   }
 
+  int fd() const {
+    return fd_;
+  }
+
  private:
   int port_;
   int receive_window_ = 0;
@@ -265,9 +271,9 @@ int find_free_port() {
   addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   addr.sin_port = 0;
-  CHECK(::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+  CHECK(::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
   socklen_t len = sizeof(addr);
-  CHECK(::getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0);
+  CHECK(::getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) == 0);
   int port = ntohs(addr.sin_port);
   ::close(fd);
   return port;
@@ -359,8 +365,7 @@ TEST(HttpServerLimits, request_header_deadline_closes_silent_and_partial_connect
     // the connection alive either: the deadline covers the whole request.
     Client body_stall(port);
     ASSERT_TRUE(body_stall.connect_with_retries());
-    ASSERT_TRUE(body_stall.send_all(
-        "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial"));
+    ASSERT_TRUE(body_stall.send_all("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial"));
     ASSERT_TRUE(body_stall.wait_for_eof(5000));
 
     // A refused CONNECT must not linger as an exempt tunnel: the handler
@@ -1705,4 +1710,227 @@ TEST(HttpPayloadEnd, ACompletedBodyCannotBeFailed) {
     ASSERT_TRUE(!body->is_error());
     ASSERT_EQ(completed.load(), 1);
   }
+}
+
+namespace {
+
+using ReplyPromise =
+    td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>>;
+
+// A single-chunk, non-keep-alive chunked reply of `size` bytes, the shape the
+// health exporter uses for /metrics.
+std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>> sized_reply(size_t size) {
+  auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, false).move_as_ok();
+  response->add_header({"Transfer-Encoding", "Chunked"});
+  response->add_header({"Content-Type", "text/plain"});
+  response->complete_parse_header();
+  auto out = response->create_empty_payload().move_as_ok();
+  out->add_chunk(td::BufferSlice(std::string(size, 'm')));
+  out->complete_parse();
+  return {std::move(response), std::move(out)};
+}
+
+// Answers after a short timer, so the reply is stored from a later actor turn
+// than the one that read the request.
+class DelayedReply final : public td::actor::Actor {
+ public:
+  DelayedReply(size_t size, ReplyPromise promise) : size_(size), promise_(std::move(promise)) {
+  }
+  void start_up() override {
+    alarm_timestamp() = td::Timestamp::in(0.02);
+  }
+  void alarm() override {
+    promise_.set_value(sized_reply(size_));
+    stop();
+  }
+
+ private:
+  size_t size_;
+  ReplyPromise promise_;
+};
+
+class SizedCallback final : public tos::http::HttpServer::Callback {
+ public:
+  SizedCallback(size_t size, bool delayed) : size_(size), delayed_(delayed) {
+  }
+  void receive_request(std::unique_ptr<tos::http::HttpRequest>, std::shared_ptr<tos::http::HttpPayload>,
+                       ReplyPromise promise) override {
+    if (delayed_) {
+      td::actor::create_actor<DelayedReply>("delayed-reply", size_, std::move(promise)).release();
+      return;
+    }
+    promise.set_value(sized_reply(size_));
+  }
+
+ private:
+  size_t size_;
+  bool delayed_;
+};
+
+struct SlowRead {
+  int receive_window = 0;
+  int pause_ms = 0;
+};
+
+struct Fetched {
+  std::string raw;
+  bool clean_eof = false;
+  // Bytes already queued at the client when it started reading; only
+  // measured when the client pauses first.
+  size_t queued_after_pause = 0;
+};
+
+Fetched fetch(int port, SlowRead slow) {
+  Fetched out;
+  Client client(port, slow.receive_window);
+  if (!client.connect_with_retries()) {
+    return out;
+  }
+  int fd = client.fd();
+  if (!client.send_all("GET /metrics HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")) {
+    return out;
+  }
+  if (slow.pause_ms > 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(slow.pause_ms));
+    int queued = 0;
+    CHECK(::ioctl(fd, FIONREAD, &queued) == 0);
+    out.queued_after_pause = static_cast<size_t>(queued);
+  }
+  char buf[4096];
+  while (true) {
+    pollfd pfd{fd, POLLIN, 0};
+    if (::poll(&pfd, 1, 10000) <= 0) {
+      return out;
+    }
+    auto n = ::recv(fd, buf, sizeof(buf), 0);
+    if (n == 0) {
+      out.clean_eof = true;
+      return out;
+    }
+    if (n < 0) {
+      return out;
+    }
+    out.raw.append(buf, static_cast<size_t>(n));
+  }
+}
+
+// Decodes a chunked body that must end with the zero-size terminator and an
+// empty trailer, with nothing after it. Returns nullopt on any other framing.
+std::optional<std::string> decode_chunked(const std::string &raw) {
+  auto at = raw.find("\r\n\r\n");
+  if (at == std::string::npos) {
+    return std::nullopt;
+  }
+  at += 4;
+  std::string body;
+  while (true) {
+    auto eol = raw.find("\r\n", at);
+    if (eol == std::string::npos || eol == at) {
+      return std::nullopt;
+    }
+    auto line = raw.substr(at, eol - at);
+    char *end = nullptr;
+    auto size = std::strtoul(line.c_str(), &end, 16);
+    if (end != line.c_str() + line.size()) {
+      return std::nullopt;
+    }
+    if (size == 0) {
+      if (raw.compare(eol, std::string::npos, "\r\n\r\n") != 0) {
+        return std::nullopt;
+      }
+      return body;
+    }
+    if (raw.size() < eol + 2 + size + 2 || raw.compare(eol + 2 + size, 2, "\r\n") != 0) {
+      return std::nullopt;
+    }
+    body.append(raw, eol + 2, size);
+    at = eol + 2 + size + 2;
+  }
+}
+
+tos::http::HttpServer::Limits exporter_limits() {
+  tos::http::HttpServer::Limits limits;
+  limits.max_connections = 8;
+  limits.reject_request_bodies = true;
+  limits.io_buffer_bytes = 16 * 1024;
+  limits.request_header_timeout = 5.0;
+  limits.response_timeout = 10.0;
+  return limits;
+}
+
+// Fetches one reply of `size` bytes and checks the exact body, the terminator
+// and a clean close.
+Fetched expect_whole_reply(size_t size, bool delayed, SlowRead slow) {
+  Fetched fetched;
+  with_server(
+      exporter_limits(), [&](int port) { fetched = fetch(port, slow); },
+      std::make_shared<SizedCallback>(size, delayed));
+  auto body = decode_chunked(fetched.raw);
+  bool whole = body && *body == std::string(size, 'm');
+  if (!whole || !fetched.clean_eof) {
+    LOG(ERROR) << "reply of " << size << " bytes (" << (delayed ? "delayed" : "immediate") << "): received "
+               << fetched.raw.size() << " raw bytes, framing " << (body ? "complete" : "incomplete") << ", decoded "
+               << (body ? body->size() : 0) << ", clean eof " << fetched.clean_eof;
+  }
+  ASSERT_TRUE(whole);
+  ASSERT_TRUE(fetched.clean_eof);
+  return fetched;
+}
+
+}  // namespace
+
+// Without a network: a complete chunked payload drained the way a connection
+// drains it yields every byte that was added, framed and terminated, so the
+// transport is what must keep the tail.
+TEST(HttpPayloadEnd, a_complete_payload_drains_every_byte) {
+  for (size_t size : {size_t{20000}, size_t{33000}, size_t{100000}}) {
+    auto reply = sized_reply(size);
+    td::ChainBufferWriter writer;
+    auto reader = writer.extract_reader();
+    for (int rounds = 0; !reply.second->written() && rounds < 10000; ++rounds) {
+      reply.second->store_http(writer, 1024, tos::http::HttpPayload::PayloadType::pt_chunked);
+    }
+    reader.sync_with_writer();
+    auto body = decode_chunked("\r\n\r\n" + reader.move_as_buffer_slice().as_slice().str());
+    ASSERT_TRUE(body.has_value());
+    ASSERT_TRUE(*body == std::string(size, 'm'));
+  }
+}
+
+// A reply that closes the connection and is larger than the connection's I/O
+// window arrives whole: every body byte, the terminating chunk, then EOF.
+static void expect_closing_replies_whole(bool delayed) {
+  for (size_t size : {size_t{20000}, size_t{33000}, size_t{40000}, size_t{64000}, size_t{100000}, size_t{200000}}) {
+    expect_whole_reply(size, delayed, SlowRead{});
+  }
+}
+
+TEST(HttpServerLimits, a_closing_reply_larger_than_the_window_is_written_in_full) {
+  expect_closing_replies_whole(false);
+}
+
+// The same when the reply is stored from a later actor turn than the one that
+// read the request.
+TEST(HttpServerLimits, a_delayed_closing_reply_larger_than_the_window_is_written_in_full) {
+  expect_closing_replies_whole(true);
+}
+
+// The same when the client cannot take the reply as fast as it is produced:
+// with a small receive window and a pause before reading, an 8 MiB reply is
+// more than any default socket send buffer holds, so the server's writes are
+// partial and the close has to wait for the connection's own buffer to drain.
+static void expect_whole_reply_to_slow_reader(bool delayed) {
+  const size_t size = size_t{8} << 20;
+  auto seen = expect_whole_reply(size, delayed, SlowRead{4096, 300});
+  // Writing started while the client was not reading, and stalled.
+  ASSERT_TRUE(seen.queued_after_pause > 0);
+  ASSERT_TRUE(seen.queued_after_pause < seen.raw.size());
+}
+
+TEST(HttpServerLimits, a_closing_reply_survives_a_slow_reader) {
+  expect_whole_reply_to_slow_reader(false);
+}
+
+TEST(HttpServerLimits, a_delayed_closing_reply_survives_a_slow_reader) {
+  expect_whole_reply_to_slow_reader(true);
 }

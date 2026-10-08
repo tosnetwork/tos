@@ -62,7 +62,10 @@ void HttpConnection::loop() {
       if (writing_payload_ && buffered_fd_.left_unwritten() < fd_high_watermark()) {
         written = continue_payload_write();
       }
-      if (close_after_write_ && !writing_payload_ && !buffered_fd_.left_unwritten()) {
+      // ready_for_flush_write() syncs the output reader with what was just
+      // appended; left_unwritten() would still report the size before the
+      // final part of the payload was stored, and closing then drops it.
+      if (close_after_write_ && !writing_payload_ && buffered_fd_.ready_for_flush_write() == 0) {
         LOG(INFO) << "close after write";
         stop();
         break;
