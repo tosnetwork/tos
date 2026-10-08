@@ -1,9 +1,7 @@
 name: Runner verification
 
-# Negative control for the execution classification: admitted jobs that run
-# a custom-shell command, a container entrypoint and a job-created systemd
-# service, none matching the old name patterns. Judged as if denied, every
-# one of these lifetimes must fail, naming the execution.
+# Contention control: three admitted jobs compile tos at full parallelism for
+# up to 20 minutes, while the host runs the chain and an interactive build.
 on:
   pull_request:
 
@@ -15,21 +13,22 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  custom-shell:
+  build-load:
     runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 10
-    defaults:
-      run:
-        shell: bash --noprofile --norc -e {0}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3]
     steps:
-      - run: /bin/touch /tmp/tos-ci-probe-touch
-  container-entrypoint:
-    runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 10
-    steps:
-      - run: docker run --rm busybox:1.36 touch /tos-ci-probe-container
-  job-created-service:
-    runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 10
-    steps:
-      - run: sudo systemd-run --wait /usr/bin/touch /tmp/tos-ci-probe-unit
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: tosnetwork/tos
+          ref: main
+          submodules: recursive
+      - run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 > /dev/null
+          echo "TOS_CI_LOAD_START $(date -u +%s)"
+          timeout 1200 ninja -C build -j16 > build.log 2>&1 || true
+          echo "TOS_CI_LOAD_END $(date -u +%s) $(grep -c '^\[' build.log) steps"
