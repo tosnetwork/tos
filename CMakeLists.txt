@@ -1947,9 +1947,16 @@ tos_test(test-pq-consensus-key-rotation)
 # deadline's clock; only the rotation test's signer does. See the script for every check.
 if(TARGET validator-engine AND TARGET tos-pq-consensus-key)
   find_program(TOS_NM_EXECUTABLE NAMES llvm-nm-21 llvm-nm nm REQUIRED)
+  # The header probe compiles the way the build does: with its C++ flags and,
+  # on macOS, its SDK.
+  separate_arguments(_pq_clock_flags NATIVE_COMMAND "${CMAKE_CXX_FLAGS}")
+  if(CMAKE_OSX_SYSROOT)
+    list(APPEND _pq_clock_flags -isysroot "${CMAKE_OSX_SYSROOT}")
+  endif()
+  list(TRANSFORM _pq_clock_flags PREPEND "--cxx-flag=")
   add_test(NAME pq-signer-no-test-clock
            COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-pq-signer-no-test-clock.py"
-                   --nm "${TOS_NM_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}"
+                   --nm "${TOS_NM_EXECUTABLE}" --cxx "${CMAKE_CXX_COMPILER}" ${_pq_clock_flags}
                    --source-root "${CMAKE_CURRENT_SOURCE_DIR}"
                    --production "$<TARGET_FILE:tos_pq_consensus_signer>"
                    --binary "$<TARGET_FILE:validator-engine>"
