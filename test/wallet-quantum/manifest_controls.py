@@ -2,10 +2,14 @@
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# The filter selects the whole manifest module, which gains tests over time;
+# require a clean, non-empty run that includes the target, not a fixed count.
+PASSED = re.compile(r"test result: ok\. [1-9][0-9]* passed; 0 failed")
 TEST = "manifest_rejects_profile_code_identity_and_trusted_wallet_changes"
 FORMAT = "manifest_rejects_unknown_duplicate_oversized_and_noncanonical_inputs"
 
@@ -125,7 +129,7 @@ def main():
 
     def positive(label):
         code, log = run(label)
-        assert code == 0 and "4 passed; 0 failed" in log and f"::{TEST} ... ok" in log, log[-4000:]
+        assert code == 0 and PASSED.search(log) and f"::{TEST} ... ok" in log, log[-4000:]
 
     results = {}
     try:
