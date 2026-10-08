@@ -35,7 +35,6 @@
 #include <optional>
 #include <poll.h>
 #include <string>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -1767,35 +1766,16 @@ class SizedCallback final : public tos::http::HttpServer::Callback {
   bool delayed_;
 };
 
-struct SlowRead {
-  int receive_window = 0;
-  int pause_ms = 0;
-};
+const std::string kMetricsRequest = "GET /metrics HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
 
 struct Fetched {
   std::string raw;
   bool clean_eof = false;
-  // Bytes already queued at the client when it started reading; only
-  // measured when the client pauses first.
-  size_t queued_after_pause = 0;
 };
 
-Fetched fetch(int port, SlowRead slow) {
+// Reads from `fd` until the peer closes it.
+Fetched read_to_eof(int fd) {
   Fetched out;
-  Client client(port, slow.receive_window);
-  if (!client.connect_with_retries()) {
-    return out;
-  }
-  int fd = client.fd();
-  if (!client.send_all("GET /metrics HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")) {
-    return out;
-  }
-  if (slow.pause_ms > 0) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(slow.pause_ms));
-    int queued = 0;
-    CHECK(::ioctl(fd, FIONREAD, &queued) == 0);
-    out.queued_after_pause = static_cast<size_t>(queued);
-  }
   char buf[4096];
   while (true) {
     pollfd pfd{fd, POLLIN, 0};
@@ -1812,6 +1792,14 @@ Fetched fetch(int port, SlowRead slow) {
     }
     out.raw.append(buf, static_cast<size_t>(n));
   }
+}
+
+Fetched fetch(int port) {
+  Client client(port);
+  if (!client.connect_with_retries() || !client.send_all(kMetricsRequest)) {
+    return Fetched{};
+  }
+  return read_to_eof(client.fd());
 }
 
 // Decodes a chunked body that must end with the zero-size terminator and an
@@ -1848,6 +1836,19 @@ std::optional<std::string> decode_chunked(const std::string &raw) {
   }
 }
 
+// The exact body, the terminating chunk, nothing after it, then a clean EOF.
+void expect_whole(const Fetched &fetched, size_t size, bool delayed) {
+  auto body = decode_chunked(fetched.raw);
+  bool whole = body && *body == std::string(size, 'm');
+  if (!whole || !fetched.clean_eof) {
+    LOG(ERROR) << "reply of " << size << " bytes (" << (delayed ? "delayed" : "immediate") << "): received "
+               << fetched.raw.size() << " raw bytes, framing " << (body ? "complete" : "incomplete") << ", decoded "
+               << (body ? body->size() : 0) << ", clean eof " << fetched.clean_eof;
+  }
+  ASSERT_TRUE(whole);
+  ASSERT_TRUE(fetched.clean_eof);
+}
+
 tos::http::HttpServer::Limits exporter_limits() {
   tos::http::HttpServer::Limits limits;
   limits.max_connections = 8;
@@ -1858,23 +1859,104 @@ tos::http::HttpServer::Limits exporter_limits() {
   return limits;
 }
 
-// Fetches one reply of `size` bytes and checks the exact body, the terminator
-// and a clean close.
-Fetched expect_whole_reply(size_t size, bool delayed, SlowRead slow) {
-  Fetched fetched;
-  with_server(
-      exporter_limits(), [&](int port) { fetched = fetch(port, slow); },
-      std::make_shared<SizedCallback>(size, delayed));
-  auto body = decode_chunked(fetched.raw);
-  bool whole = body && *body == std::string(size, 'm');
-  if (!whole || !fetched.clean_eof) {
-    LOG(ERROR) << "reply of " << size << " bytes (" << (delayed ? "delayed" : "immediate") << "): received "
-               << fetched.raw.size() << " raw bytes, framing " << (body ? "complete" : "incomplete") << ", decoded "
-               << (body ? body->size() : 0) << ", clean eof " << fetched.clean_eof;
+// A server connection that records when its reply was completely stored in
+// its output buffer.
+struct CompletionObservation {
+  std::atomic<int64_t> completed_ns{0};
+  std::atomic<int> closed{0};
+};
+
+int64_t steady_ns() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+class CompletionInbound final : public tos::http::HttpInboundConnection {
+ public:
+  CompletionInbound(td::SocketFd fd, std::shared_ptr<tos::http::HttpServer::Callback> callback,
+                    CompletionObservation *observation)
+      : HttpInboundConnection(std::move(fd), std::move(callback), tos::http::HttpServer::AllMetrics{}, 5, 5, true,
+                              16 * 1024, 10.0)
+      , observation_(observation) {
   }
-  ASSERT_TRUE(whole);
-  ASSERT_TRUE(fetched.clean_eof);
-  return fetched;
+  ~CompletionInbound() override {
+    ++observation_->closed;
+  }
+  void payload_written() override {
+    observation_->completed_ns = steady_ns();
+    HttpInboundConnection::payload_written();
+  }
+
+ private:
+  CompletionObservation *observation_;
+};
+
+struct SlowReaderRun {
+  Fetched fetched;
+  int server_send_buffer = 0;
+  int client_receive_buffer = 0;
+  int64_t resumed_ns = 0;
+  int64_t completed_ns = 0;
+  int closed = 0;
+};
+
+// Serves one reply over a loopback connection whose server send buffer and
+// client receive window are both pinned small and read back, while the client
+// does not read for `pause_ms`.
+SlowReaderRun serve_to_slow_reader(size_t size, bool delayed, int pause_ms) {
+  SlowReaderRun run;
+  int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(listener >= 0);
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  CHECK(::bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+  socklen_t length = sizeof(address);
+  CHECK(::getsockname(listener, reinterpret_cast<sockaddr *>(&address), &length) == 0);
+  CHECK(::listen(listener, 1) == 0);
+  int client = ::socket(AF_INET, SOCK_STREAM, 0);
+  CHECK(client >= 0);
+  int small = 4096;
+  CHECK(::setsockopt(client, SOL_SOCKET, SO_RCVBUF, &small, sizeof(small)) == 0);
+  CHECK(::connect(client, reinterpret_cast<sockaddr *>(&address), sizeof(address)) == 0);
+  int server = ::accept(listener, nullptr, nullptr);
+  CHECK(server >= 0);
+  ::close(listener);
+  CHECK(::setsockopt(server, SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) == 0);
+  length = sizeof(run.server_send_buffer);
+  CHECK(::getsockopt(server, SOL_SOCKET, SO_SNDBUF, &run.server_send_buffer, &length) == 0);
+  length = sizeof(run.client_receive_buffer);
+  CHECK(::getsockopt(client, SOL_SOCKET, SO_RCVBUF, &run.client_receive_buffer, &length) == 0);
+  CHECK(::send(client, kMetricsRequest.data(), kMetricsRequest.size(), MSG_NOSIGNAL) ==
+        static_cast<ssize_t>(kMetricsRequest.size()));
+
+  CompletionObservation observation;
+  td::actor::Scheduler scheduler({2});
+  scheduler.run_in_context([&] {
+    auto fd = td::SocketFd::from_native_fd(td::NativeFd(server)).move_as_ok();
+    td::actor::create_actor<CompletionInbound>(td::actor::ActorOptions().with_name("slow-reader-inbound").with_poll(),
+                                               std::move(fd), std::make_shared<SizedCallback>(size, delayed),
+                                               &observation)
+        .release();
+  });
+  std::atomic<bool> done{false};
+  std::thread reader([&] {
+    std::this_thread::sleep_for(std::chrono::milliseconds(pause_ms));
+    run.resumed_ns = steady_ns();
+    run.fetched = read_to_eof(client);
+    done = true;
+  });
+  while (!done) {
+    scheduler.run(0.01);
+  }
+  reader.join();
+  ::close(client);
+  scheduler.run_in_context([&] { td::actor::SchedulerContext::get().stop(); });
+  while (scheduler.run(1)) {
+  }
+  run.completed_ns = observation.completed_ns.load();
+  run.closed = observation.closed.load();
+  return run;
 }
 
 }  // namespace
@@ -1901,7 +1983,10 @@ TEST(HttpPayloadEnd, a_complete_payload_drains_every_byte) {
 // window arrives whole: every body byte, the terminating chunk, then EOF.
 static void expect_closing_replies_whole(bool delayed) {
   for (size_t size : {size_t{20000}, size_t{33000}, size_t{40000}, size_t{64000}, size_t{100000}, size_t{200000}}) {
-    expect_whole_reply(size, delayed, SlowRead{});
+    Fetched fetched;
+    with_server(
+        exporter_limits(), [&](int port) { fetched = fetch(port); }, std::make_shared<SizedCallback>(size, delayed));
+    expect_whole(fetched, size, delayed);
   }
 }
 
@@ -1915,16 +2000,21 @@ TEST(HttpServerLimits, a_delayed_closing_reply_larger_than_the_window_is_written
   expect_closing_replies_whole(true);
 }
 
-// The same when the client cannot take the reply as fast as it is produced:
-// with a small receive window and a pause before reading, an 8 MiB reply is
-// more than any default socket send buffer holds, so the server's writes are
-// partial and the close has to wait for the connection's own buffer to drain.
+// The same when the client cannot take the reply as fast as it is produced.
+// The server's send buffer and the client's receive window are pinned small,
+// and the client does not read for 300 ms. The connection stores more of the
+// reply only once its output drains below the window, so the reply completes
+// in the server's buffer only after the client resumed: the server's writes
+// were blocked, and the close had to wait for pending output.
 static void expect_whole_reply_to_slow_reader(bool delayed) {
-  const size_t size = size_t{8} << 20;
-  auto seen = expect_whole_reply(size, delayed, SlowRead{4096, 300});
-  // Writing started while the client was not reading, and stalled.
-  ASSERT_TRUE(seen.queued_after_pause > 0);
-  ASSERT_TRUE(seen.queued_after_pause < seen.raw.size());
+  const size_t size = size_t{1} << 20;
+  auto run = serve_to_slow_reader(size, delayed, 300);
+  expect_whole(run.fetched, size, delayed);
+  ASSERT_EQ(run.closed, 1);
+  // The pinned buffers together hold far less than the reply.
+  ASSERT_TRUE(run.server_send_buffer > 0 && run.client_receive_buffer > 0);
+  ASSERT_TRUE(static_cast<size_t>(run.server_send_buffer) + static_cast<size_t>(run.client_receive_buffer) < size / 8);
+  ASSERT_TRUE(run.completed_ns > run.resumed_ns);
 }
 
 TEST(HttpServerLimits, a_closing_reply_survives_a_slow_reader) {
