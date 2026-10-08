@@ -1,6 +1,7 @@
 name: Runner verification
 
-# Contention control: three admitted jobs compile tos at full parallelism for
+# Contention control, and the image's positive control: with no install step of
+# their own, three admitted jobs compile tos at full parallelism for
 # up to 20 minutes, while the host runs the chain and an interactive build.
 on:
   pull_request:
