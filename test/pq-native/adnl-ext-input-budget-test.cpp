@@ -1011,13 +1011,30 @@ ssize_t zero_send(int, const void*, size_t, int) {
   return 0;
 }
 
+// Flushes and reads in turn until everything queued has arrived: no assumption
+// about how much the socket buffers hold. Returns what the reader received.
+std::string deliver(SendQueue& queue, int writer, int reader, size_t expected) {
+  std::string got;
+  char buffer[4096];
+  for (int rounds = 0; rounds < 100000 && (queue.pending() > 0 || got.size() < expected); rounds++) {
+    require(queue.flush(writer), "a transient refusal was treated as final: " + queue.describe());
+    auto n = ::recv(reader, buffer, sizeof(buffer), MSG_DONTWAIT);
+    if (n > 0) {
+      got.append(buffer, static_cast<size_t>(n));
+    } else {
+      require(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK), "the reader saw the stream end early");
+    }
+  }
+  return got;
+}
+
 void send_queue_checks() {
   int fds[2];
   require(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
   const std::string bytes(10000, 'q');
 
   // Transient ENOBUFS, three times: nothing is lost, the peer stays open, and
-  // a later flush delivers everything.
+  // later flushes, interleaved with reading, deliver everything exactly.
   g_fake_refusals = 3;
   g_fake_errno = ENOBUFS;
   SendQueue transient(&refusing_send);
@@ -1026,11 +1043,31 @@ void send_queue_checks() {
     require(transient.flush(fds[0]), "a transient ENOBUFS was treated as final");
     require(transient.pending() == bytes.size(), "a refused send lost or sent bytes");
   }
-  require(transient.flush(fds[0]) && transient.pending() == 0, "the send after the refusals did not complete");
-  require(transient.refusals() == 3 && !transient.failed(), "the refusals were not counted as transient");
-  std::string got(bytes.size(), '\0');
-  require(::recv(fds[1], got.data(), got.size(), MSG_WAITALL) == static_cast<ssize_t>(got.size()) && got == bytes,
-          "the bytes delivered after the refusals differ");
+  require(deliver(transient, fds[0], fds[1], bytes.size()) == bytes, "the bytes delivered after the refusals differ");
+  require(transient.refusals() >= 3 && !transient.failed(), "the refusals were not counted as transient");
+
+  // Small socket buffers: a partial send followed by EAGAIN must happen, and
+  // the queue still delivers everything exactly.
+  int small_fds[2];
+  require(::socketpair(AF_UNIX, SOCK_STREAM, 0, small_fds) == 0, "socketpair failed");
+  const int small = 4096;
+  for (int fd : small_fds) {
+    require(::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) == 0 &&
+                ::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &small, sizeof(small)) == 0,
+            "cannot shrink the socket buffers");
+  }
+  std::string large(256 << 10, '\0');
+  for (size_t i = 0; i < large.size(); i++) {
+    large[i] = static_cast<char>(i * 131);
+  }
+  SendQueue partial;
+  partial.append(large);
+  require(partial.flush(small_fds[0]) && partial.pending() > 0 && partial.refusals() > 0,
+          "small buffers did not force a partial send and a refusal: " + partial.describe());
+  require(deliver(partial, small_fds[0], small_fds[1], large.size()) == large,
+          "the bytes delivered through small buffers differ");
+  ::close(small_fds[0]);
+  ::close(small_fds[1]);
 
   // A send that moves nothing returns at once and keeps the bytes.
   SendQueue stalled(&zero_send);
