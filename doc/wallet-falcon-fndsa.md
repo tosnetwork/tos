@@ -12,7 +12,7 @@ identity, acceptance vectors and migration. Unknown profiles fail closed.
   The node/Rust verifier compiles only integer verification, encoding and SHAKE.
   The complete signer is a separate offline shared library in `tools/falcon`.
 - C++ and Rust TVM opcode `PQCHECKSIG_FALCON512_PADDED`, candidate allocation
-  `F93101`, candidate activation version 16, proposed base gas 20,000. It takes
+  `F93101`, candidate activation version 19, proposed base gas 20,000. It takes
   three canonical byte-chain Cells: message, signature, public key. Base gas
   follows stack-depth validation and precedes type/operand decoding. Every byte
   is charged before copying. Length/shape failures throw 9, invalid encodings or
@@ -107,7 +107,7 @@ generate the SDK API before starting a fresh test directory:
 ```sh
 cmake --build build --target validator-engine dht-server validator-engine-console lite-client create-state generate-random-id tos-pq-consensus-key toslibjson -j2
 python test/tostester/generate_tl.py
-PYTHONPATH=test/tostester/src TOS_BUILD_DIR=$PWD/build TOS_GLOBAL_VERSION=16 python scripts/localnet-jsonrpc.py --rpc 127.0.0.1:28545 --control 127.0.0.1:28745 --base-port 29000 --workdir work/falcon-devnet
+PYTHONPATH=test/tostester/src TOS_BUILD_DIR=$PWD/build TOS_GLOBAL_VERSION=19 python scripts/localnet-jsonrpc.py --rpc 127.0.0.1:28545 --control 127.0.0.1:28745 --base-port 29000 --workdir work/falcon-devnet
 # In another terminal, after the test chain is ready:
 python test/falcon-auth/live_relay.py --build build --library build-falcon/libtos_falcon_offline.so --lite-client build/lite-client/lite-client --lite-config work/falcon-devnet/lite-client.json --control 127.0.0.1:28745 --out work/falcon-live-artifacts
 ```

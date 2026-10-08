@@ -90,6 +90,17 @@ pub fn select_source(
 
 /// Reads the secret from `source`. The result is wiped from memory on drop.
 pub fn read_secret(source: &SecretSource) -> Result<Zeroizing<Vec<u8>>, SecretInputError> {
+    let data = read_secret_exact(source)?;
+    if trim_ascii(&data).is_empty() {
+        return Err(SecretInputError::Empty);
+    }
+    Ok(data)
+}
+
+/// Read exact bytes with the same protected-source and size checks, allowing an
+/// empty or whitespace-only value. Use for passwords whose bytes are semantic;
+/// do not apply this to mandatory key or mnemonic inputs.
+pub fn read_secret_exact(source: &SecretSource) -> Result<Zeroizing<Vec<u8>>, SecretInputError> {
     let data = match source {
         SecretSource::File(path) => read_protected_file(path)?,
         SecretSource::Fd(fd) => read_fd(*fd)?,
@@ -101,9 +112,6 @@ pub fn read_secret(source: &SecretSource) -> Result<Zeroizing<Vec<u8>>, SecretIn
             Zeroizing::new(line.as_bytes().to_vec())
         }
     };
-    if trim_ascii(&data).is_empty() {
-        return Err(SecretInputError::Empty);
-    }
     Ok(data)
 }
 
@@ -253,6 +261,23 @@ mod tests {
         file.write_all(contents).expect("write");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
         path
+    }
+
+    #[test]
+    fn exact_password_input_preserves_empty_and_whitespace() {
+        let dir = tempfile::tempdir().expect("directory");
+        for input in [b"".as_slice(), b" ", b" password \n"] {
+            let path = write_file(dir.path(), "password", input, 0o600);
+            let source = SecretSource::File(path);
+            assert_eq!(
+                read_secret_exact(&source).expect("exact password").as_slice(),
+                input,
+                "password bytes changed"
+            );
+            if input.trim_ascii().is_empty() {
+                assert!(matches!(read_secret(&source), Err(SecretInputError::Empty)));
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,444 @@
+{
+  "schema_version": 1,
+  "purpose": "Diagnose Rescue run 37486477438 and record the minimal per-architecture job timeout repair.",
+  "observed_run": {
+    "id": 37486477438,
+    "url": "https://github.com/tosnetwork/tos/actions/runs/37486477438",
+    "head_sha": "18349b79b401d249db0c464d99d81b7218f1f33b",
+    "attempt": 1,
+    "name": "Experimental rescue context parity",
+    "path": ".github/workflows/rescue-context.yml",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-10-06T15:19:12Z",
+    "started_at": "2026-10-06T15:19:12Z",
+    "updated_at": "2026-10-06T18:30:09Z"
+  },
+  "cause": {
+    "classification": "ARM job exceeded the configured 150-minute execution timeout.",
+    "explicit_annotation": "The job has exceeded the maximum execution time of 2h30m0s",
+    "annotation_url": "https://api.github.com/repos/tosnetwork/tos/check-runs/112347683389/annotations",
+    "attribution": "The annotation establishes job timeout, not a user cancellation or a failing test assertion. Trigger actor is not cancellation attribution.",
+    "cutoff": "Step 47 was still executing its first command, cmake --build build --target test-ext-message-pool -j2; [483/548] was the final completed native build action.",
+    "cutoff_excerpts": [
+      "2026-10-06T18:02:35.9103885Z [483/548] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-plumtree-stats.cpp.o",
+      "2026-10-06T18:02:39.6664119Z ##[error]The operation was canceled."
+    ]
+  },
+  "jobs": [
+    {
+      "runner": "ubuntu-24.04",
+      "id": 112347683840,
+      "url": "https://github.com/tosnetwork/tos/actions/runs/37486477438/job/112347683840",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-10-06T16:38:00Z",
+      "completed_at": "2026-10-06T18:30:09Z",
+      "queued_seconds": 4728,
+      "elapsed_seconds": 6729,
+      "actual_checkout": {
+        "command": "git log -1 --format=%H",
+        "sha": "18349b79b401d249db0c464d99d81b7218f1f33b",
+        "log_timestamp": "2026-10-06T16:40:21.9591887Z"
+      },
+      "completed_scope": "All selected steps passed, including native ingress controls, remaining tail controls, restored binaries and git diff --exit-code.",
+      "not_completed": [],
+      "intentionally_x86_only_after_cutoff": [],
+      "selected_step_timings": [
+        {
+          "number": 6,
+          "name": "Build native Release tools and both Rust drivers",
+          "conclusion": "success",
+          "seconds": 518
+        },
+        {
+          "number": 17,
+          "name": "Rust native wallet signer and proven-key controls",
+          "conclusion": "success",
+          "seconds": 1186
+        },
+        {
+          "number": 18,
+          "name": "PQ custody restore CLI and protected input controls",
+          "conclusion": "success",
+          "seconds": 307
+        },
+        {
+          "number": 36,
+          "name": "Fee session dual-role POP and challenge controls",
+          "conclusion": "success",
+          "seconds": 220
+        },
+        {
+          "number": 37,
+          "name": "POP receipt CLI authenticated history and binding controls",
+          "conclusion": "success",
+          "seconds": 281
+        },
+        {
+          "number": 38,
+          "name": "Fee session successor preparation and deployment controls",
+          "conclusion": "success",
+          "seconds": 269
+        },
+        {
+          "number": 39,
+          "name": "Successor fee tree and funded POP lifecycle controls",
+          "conclusion": "success",
+          "seconds": 483
+        },
+        {
+          "number": 40,
+          "name": "Reject active LMS key reuse in successor routes",
+          "conclusion": "success",
+          "seconds": 219
+        },
+        {
+          "number": 41,
+          "name": "Joint fee sessions and native client migration controls",
+          "conclusion": "success",
+          "seconds": 417
+        },
+        {
+          "number": 42,
+          "name": "Installed fee route promotion and repeated recovery controls",
+          "conclusion": "success",
+          "seconds": 624
+        },
+        {
+          "number": 46,
+          "name": "Receipt-checked native transaction timing smoke",
+          "conclusion": "success",
+          "seconds": 8
+        },
+        {
+          "number": 47,
+          "name": "Native ingress parser boundary controls",
+          "conclusion": "success",
+          "seconds": 725
+        },
+        {
+          "number": 49,
+          "name": "Receipt-bound module rent invariant",
+          "conclusion": "success",
+          "seconds": 0
+        },
+        {
+          "number": 54,
+          "name": "Falcon version-19 boundary in both VMs",
+          "conclusion": "success",
+          "seconds": 0
+        },
+        {
+          "number": 56,
+          "name": "Verify context, opcode, complete transactions and legacy pricing",
+          "conclusion": "success",
+          "seconds": 39
+        },
+        {
+          "number": 58,
+          "name": "Record exact source and public evidence hashes",
+          "conclusion": "success",
+          "seconds": 3
+        },
+        {
+          "number": 59,
+          "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "conclusion": "success",
+          "seconds": 5
+        }
+      ],
+      "controls_log_excerpts": [
+        "2026-10-06T17:12:25.9445114Z 14 migration signing controls detected; restored test passes",
+        "2026-10-06T18:14:02.4272890Z 14 rotation semantic mutations detected; restored native two-rotation flow passed",
+        "2026-10-06T18:26:09.4203160Z 4 admission byte-budget controls detected; restored tests pass",
+        "2026-10-06T18:26:40.0750942Z Two native ingress boundary controls detected; restored tests pass"
+      ]
+    },
+    {
+      "runner": "ubuntu-24.04-arm",
+      "id": 112347683389,
+      "url": "https://github.com/tosnetwork/tos/actions/runs/37486477438/job/112347683389",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "started_at": "2026-10-06T15:31:20Z",
+      "completed_at": "2026-10-06T18:02:49Z",
+      "queued_seconds": 728,
+      "elapsed_seconds": 9089,
+      "actual_checkout": {
+        "command": "git log -1 --format=%H",
+        "sha": "18349b79b401d249db0c464d99d81b7218f1f33b",
+        "log_timestamp": "2026-10-06T15:31:36.0974395Z"
+      },
+      "completed_scope": "All selected steps through 46 passed; steps 10, 15, 22, 23 were intentionally x86-only. Always-run hash/upload steps 58 and 59 also passed.",
+      "not_completed": [
+        {
+          "step": 47,
+          "name": "Native ingress parser boundary controls",
+          "state": "Cancelled during initial target compilation; pool tests, four admission budget controls, two ingress boundary controls and fixture probe did not run."
+        },
+        {
+          "step": 49,
+          "name": "Receipt-bound module rent invariant",
+          "state": "Skipped after cancellation"
+        },
+        {
+          "step": 54,
+          "name": "Falcon version-19 boundary in both VMs",
+          "state": "Skipped after cancellation"
+        },
+        {
+          "step": 56,
+          "name": "Verify context, opcode, complete transactions and legacy pricing",
+          "state": "Skipped after cancellation"
+        }
+      ],
+      "intentionally_x86_only_after_cutoff": [
+        48,
+        50,
+        51,
+        52,
+        53,
+        55,
+        57
+      ],
+      "selected_step_timings": [
+        {
+          "number": 6,
+          "name": "Build native Release tools and both Rust drivers",
+          "conclusion": "success",
+          "seconds": 866
+        },
+        {
+          "number": 17,
+          "name": "Rust native wallet signer and proven-key controls",
+          "conclusion": "success",
+          "seconds": 2216
+        },
+        {
+          "number": 18,
+          "name": "PQ custody restore CLI and protected input controls",
+          "conclusion": "success",
+          "seconds": 450
+        },
+        {
+          "number": 36,
+          "name": "Fee session dual-role POP and challenge controls",
+          "conclusion": "success",
+          "seconds": 258
+        },
+        {
+          "number": 37,
+          "name": "POP receipt CLI authenticated history and binding controls",
+          "conclusion": "success",
+          "seconds": 334
+        },
+        {
+          "number": 38,
+          "name": "Fee session successor preparation and deployment controls",
+          "conclusion": "success",
+          "seconds": 319
+        },
+        {
+          "number": 39,
+          "name": "Successor fee tree and funded POP lifecycle controls",
+          "conclusion": "success",
+          "seconds": 539
+        },
+        {
+          "number": 40,
+          "name": "Reject active LMS key reuse in successor routes",
+          "conclusion": "success",
+          "seconds": 257
+        },
+        {
+          "number": 41,
+          "name": "Joint fee sessions and native client migration controls",
+          "conclusion": "success",
+          "seconds": 463
+        },
+        {
+          "number": 42,
+          "name": "Installed fee route promotion and repeated recovery controls",
+          "conclusion": "success",
+          "seconds": 1015
+        },
+        {
+          "number": 46,
+          "name": "Receipt-checked native transaction timing smoke",
+          "conclusion": "success",
+          "seconds": 16
+        },
+        {
+          "number": 47,
+          "name": "Native ingress parser boundary controls",
+          "conclusion": "cancelled",
+          "seconds": 815
+        },
+        {
+          "number": 49,
+          "name": "Receipt-bound module rent invariant",
+          "conclusion": "skipped",
+          "seconds": 0
+        },
+        {
+          "number": 54,
+          "name": "Falcon version-19 boundary in both VMs",
+          "conclusion": "skipped",
+          "seconds": 0
+        },
+        {
+          "number": 56,
+          "name": "Verify context, opcode, complete transactions and legacy pricing",
+          "conclusion": "skipped",
+          "seconds": 0
+        },
+        {
+          "number": 58,
+          "name": "Record exact source and public evidence hashes",
+          "conclusion": "success",
+          "seconds": 1
+        },
+        {
+          "number": 59,
+          "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "conclusion": "success",
+          "seconds": 7
+        }
+      ],
+      "controls_log_excerpts": [
+        "2026-10-06T16:25:22.3391309Z 14 migration signing controls detected; restored test passes",
+        "2026-10-06T17:47:33.6033941Z 14 rotation semantic mutations detected; restored native two-rotation flow passed"
+      ]
+    }
+  ],
+  "timeout_change": {
+    "workflow": ".github/workflows/rescue-context.yml",
+    "old_minutes": {
+      "ubuntu-24.04": 150,
+      "ubuntu-24.04-arm": 150
+    },
+    "new_minutes": {
+      "ubuntu-24.04": 150,
+      "ubuntu-24.04-arm": 180
+    },
+    "binding": "timeout-minutes: ${{ matrix.timeout_minutes }}",
+    "scope": "Only explicit matrix timeout values and their binding/comment change. Both runners, all steps, step conditions, commands, fail-fast setting and concurrency configuration are preserved.",
+    "before_sha256": "cb1ec85078ff5abb16a9badc553d07acd0891ee02057d430d1978ef0400f15af",
+    "after_sha256": "603e7e66cf449ccc30b2c040585b96fd800137565bd071c28c690bfd4b8a72c5"
+  },
+  "budget_estimate": {
+    "classification": "Single-run planning inference; not an observed completed ARM runtime or guaranteed upper bound.",
+    "matched_translation_unit": "overlay/CMakeFiles/overlay.dir/broadcast-plumtree-stats.cpp.o",
+    "x86": {
+      "ingress_start": "2026-10-06T18:14:43.6755605Z",
+      "matched_unit_at": "2026-10-06T18:21:57.6445717Z",
+      "seconds_to_matched_unit": 433.969,
+      "remaining_ingress_seconds": 290.463
+    },
+    "arm": {
+      "ingress_start": "2026-10-06T17:49:04.2318204Z",
+      "matched_unit_at": "2026-10-06T18:02:35.9103885Z",
+      "seconds_to_matched_unit": 811.679
+    },
+    "relative_time": 1.87036,
+    "inferred_remaining_ingress_seconds": 543.27,
+    "mandatory_arm_tail_steps": [
+      49,
+      54,
+      56
+    ],
+    "observed_x86_mandatory_tail_seconds": 39,
+    "inferred_arm_tail_seconds": 72.95,
+    "estimated_total_arm_minutes": [
+      161,
+      163
+    ],
+    "margin_at_180_minutes": [
+      17,
+      19
+    ],
+    "alternatives": "210 minutes gives about 47\u201349 minutes beyond this estimate, without a measured need. A separate ingress job would require same-head/same-architecture fixture and native-build handoff; moving the initial compile earlier within this job does not reduce total time.",
+    "follow_up": "The repaired timeout still needs a hosted run after integration; this index records no rerun or new successful ARM completion."
+  },
+  "artifacts": [
+    {
+      "id": 11434383521,
+      "name": "rescue-context-ubuntu-24.04",
+      "size_bytes": 41198926,
+      "digest": "sha256:a5243f22e73f6a0fab532160d94499840455f9e5a22de9a9cc36b7dbb2e72aa0",
+      "created_at": "2026-10-06T18:30:05Z",
+      "expires_at": "2026-10-20T18:30:01Z",
+      "expired": false,
+      "url": "https://github.com/tosnetwork/tos/actions/runs/37486477438/artifacts/11434383521",
+      "verification": "GitHub artifact metadata/digest and successful-upload log checked; ZIP contents not inspected."
+    },
+    {
+      "id": 11432164134,
+      "name": "rescue-context-ubuntu-24.04-arm",
+      "size_bytes": 36360596,
+      "digest": "sha256:54c10703720a9eecf954d23f117d7e24c531937bf765891c05538497cd06d784",
+      "created_at": "2026-10-06T18:02:46Z",
+      "expires_at": "2026-10-20T18:02:41Z",
+      "expired": false,
+      "url": "https://github.com/tosnetwork/tos/actions/runs/37486477438/artifacts/11432164134",
+      "verification": "GitHub artifact metadata/digest and successful-upload log checked; ZIP contents not inspected."
+    }
+  ],
+  "evidence_access": {
+    "logs": "Full decoded visible job logs retrieved through the GitHub connector. The bounded historical checkout, cancellation and success excerpts are retained here because a later rerun cannot regenerate those historical events.",
+    "annotations": "Public read-only GitHub REST check-run annotations; the connector fetch endpoint does not support check-runs.",
+    "zip_limitation": "The ARM artifact tool returned a download descriptor, but fetching its blob URL returned HTTP 403. Neither archive was unpacked or used to verify internal files.",
+    "github_artifact_retention": "14 days; exact expiration timestamps are listed above.",
+    "raw_diagnosis_path": "/workspace/scratch/58828491a8ce/artifacts/ci-rescue-37486477438",
+    "raw_diagnosis_retention": "Transient workspace only; no independent durable retention promise.",
+    "scope": "Successful hosted fixture controls are not live RPC/finality, network rollout, globally authenticated fee-key history or production readiness evidence.",
+    "raw_files": [
+      {
+        "file": "diagnosis.json",
+        "bytes": 35071,
+        "sha256": "8f2be7460e8c46625c6d5c05f2d31affc5cc17f324aa616ab64d813c5f9c4789"
+      },
+      {
+        "file": "timings.md",
+        "bytes": 6122,
+        "sha256": "7574d5d0451e021082bbffd8a287a1b732d3764496f7b4e8830493df7a4837c1"
+      },
+      {
+        "file": "check-112347683389-annotations.json",
+        "bytes": 1539,
+        "sha256": "2d1a83efed06c5501442aeca73daf8ec96c3b05e2c87274ed7b23a509c0c8f48"
+      },
+      {
+        "file": "check-112347683840-annotations.json",
+        "bytes": 756,
+        "sha256": "364d8ff9556e8c21331f24939e5070838d7665a5dd4233b1af231b3807c9b5db"
+      }
+    ]
+  },
+  "local_validation": {
+    "scope": "YAML and static evidence validation only; no compile, guard mutation or workflow dispatch",
+    "yaml_parser": "PyYAML 6.0.3 BaseLoader",
+    "checks": [
+      {
+        "name": "Both original runner labels preserved; x86 150 and ARM 180 resolve through matrix timeout_minutes",
+        "exit": 0
+      },
+      {
+        "name": "All workflow steps/commands/conditions byte values and all other parsed YAML fields unchanged after removing the two intended matrix/timeout differences",
+        "exit": 0
+      },
+      {
+        "name": "git diff --check for the two assigned files",
+        "exit": 0
+      },
+      {
+        "name": "Evidence JSON parses and explicit checkout SHA matches observed run head on both architectures",
+        "exit": 0
+      }
+    ],
+    "preserved_step_count": 58,
+    "preserved_canonical_steps_sha256": "714997e9ed0af4b791507c6025b265ecea2362e6f754975a96aad84ef13b446c",
+    "hosted_completion_after_repair": "Not run; pending integration and hosted validation."
+  }
+}

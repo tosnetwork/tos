@@ -1,0 +1,43 @@
+{
+  "scope": "Android main-app loopback HTTP proof transport; no live-chain or wallet completion claim",
+  "android_revision": "2d3bdeb",
+  "native_revision": "ad42e72ab55529e935babf851682ae4db79c0b6d",
+  "validation": [
+    "Two instrumentation tests passed on owned API36 arm64 16KB emulator",
+    "Valid reply and surrounding whitespace accepted",
+    "Wrong request ID, oversized decoded reply, redirects, trailing documents/garbage and deep nesting refused"
+  ],
+  "control": "Removing ID equality compiled and failed the named Wrong ID accepted assertion; restored test passed",
+  "artifacts": [
+    {
+      "file": "20261007-proof-http-id-control.log",
+      "bytes": 79185,
+      "sha256": "8691a87ca92d551d026a698193194861cdbf79650c15b49600ba8c2e69ec61ae"
+    },
+    {
+      "file": "20261007-proof-http-id-control.xml",
+      "bytes": 1324,
+      "sha256": "ceb94add777e7cd316012569807b410a544f6ec18543b1183b990827b25cd6d2"
+    },
+    {
+      "file": "20261007-proof-http-restored.log",
+      "bytes": 78297,
+      "sha256": "22b22a6028d7a8d97edd503e210979f84a9b24df5b6202b5d3edd7083b041527"
+    },
+    {
+      "file": "20261007-proof-http-envelope.log",
+      "bytes": 77995,
+      "sha256": "7f8bdbd8937ffffd25e3f6895c6fdcac1e82fa2fd11e44392352c5c63cfdf62b"
+    },
+    {
+      "file": "20261007-proof-http-envelope.xml",
+      "bytes": 714,
+      "sha256": "d1701500687f873882bd2bbe949282b71d64c0dbdfc5769e1d7783800dd4b7c1"
+    }
+  ],
+  "limits": [
+    "Loopback fixture does not prove authenticated chain acquisition",
+    "No physical device or API24 runtime validation",
+    "Transport is not yet connected to the full wallet authorization/broadcast flow"
+  ]
+}

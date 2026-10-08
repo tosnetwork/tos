@@ -1,0 +1,24 @@
+{
+  "android_commit": "2123078",
+  "tos_source_pin": "663e50dca",
+  "validation": "make compile passed: wallet and signer application and Android-test APKs; both applications contain all four proof-library ABIs",
+  "build_fix": "Serialize source checkout and shared host generator graph with an OS process lock",
+  "artifacts": [
+    {
+      "file": "20261007-proof-four-abi-full-android-serialized.log",
+      "bytes": 115717,
+      "sha256": "72456f21debddb45b3d1cd27ac1c45706842c7e1003f7a3304d150f651a7721e"
+    },
+    {
+      "file": "20261007-proof-full-apk-manifest.json",
+      "bytes": 745,
+      "sha256": "5a665d5886e9a3b0bae78b2b24cb371a8e7053015918e6d3845a2855cd07c9cd"
+    }
+  ],
+  "limits": [
+    "No full wallet transaction readiness asserted",
+    "Runtime validated only arm64 API36 so far",
+    "API24 system runtime pending SDK license approval",
+    "iOS proof integration and durable mobile checkpoint state remain unfinished"
+  ]
+}

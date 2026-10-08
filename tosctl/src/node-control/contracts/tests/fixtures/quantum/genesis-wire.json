@@ -1,0 +1,54 @@
+[
+  {
+    "policy": 1,
+    "wallet_id": 42,
+    "tree_id": 456,
+    "module_data": "f1d1ff72ce84dbeacdfbf0a31ed0a4be15e5423fd9b19133435e723b889da9bc",
+    "module_init": "043d7e85c0cd0e096fc0bd6816f688cd93e743385c1193ea5e8ddac8fce411f8",
+    "metadata": "107d0974c49a501a7ddf761b580966fdda4316f176d062ff48f959fabbe26bb6",
+    "wallet_data": "6320f2e41590635aed8388908b801e0194b85ffdafa20e8cd470d84967c71807",
+    "wallet_init": "017b4078cbfce4b21954669c79ed5f9785176eae6518e8f3bb9448ed2ab12b46",
+    "vault_data": "7ecd9d82f218338adb9763f511c1141a2996b50c0774af98cc6408cd716b5e97",
+    "vault_init": "433e7d2c2b2955c2079a17a276b2331fb7b1efbd469f656adb8a55fa250f7afd",
+    "config_hash": "1d54665e5652d75d891c35b1c80b09c52b5186c28b2533ed054feb9c51b85876"
+  },
+  {
+    "policy": 2,
+    "wallet_id": 42,
+    "tree_id": 456,
+    "module_data": "21b3efa098e049be0aabda9fd266cdac4744d8e228047c82e951a69c99711ae0",
+    "module_init": "c34811e4422614bedc4ea883a675ffd4ff18bb77673567f1113f82f5c8ba5a33",
+    "metadata": "107d0974c49a501a7ddf761b580966fdda4316f176d062ff48f959fabbe26bb6",
+    "wallet_data": "b0d754362a81298b1dbe06b4c1aeb83cb554b1a52859208063070b7c27b0b84c",
+    "wallet_init": "5769fe67d7141f63346aba455fcf0eb36a3b55c86021b4a91c0764eee923899e",
+    "vault_data": "5359d93fa355b44b8d30a5e87d965c0a431724ad11d14b5557c7242c0141aef3",
+    "vault_init": "f62b41d4271152737e17624e9138eeb8f7b07e00b0b987c5457080c3913592e4",
+    "config_hash": "e110fcc89ec54ee6e18a38882a7c6bac1f66adff2dd8a330cacc6b4caa355a91"
+  },
+  {
+    "policy": 1,
+    "wallet_id": 43,
+    "tree_id": 456,
+    "module_data": "f1d1ff72ce84dbeacdfbf0a31ed0a4be15e5423fd9b19133435e723b889da9bc",
+    "module_init": "043d7e85c0cd0e096fc0bd6816f688cd93e743385c1193ea5e8ddac8fce411f8",
+    "metadata": "107d0974c49a501a7ddf761b580966fdda4316f176d062ff48f959fabbe26bb6",
+    "wallet_data": "67c95184a1c213232a488a25aff9e3275898b1cce46c5e6a1ba6a76aa358fd6a",
+    "wallet_init": "86123870dad5229fba84a186e9040f14f182e796be6b2c31a38066c8fc63f5ba",
+    "vault_data": "99b0d8f5ac2e1740e17b5467e46d84a00418dc8fc53fbd8f9110028ff4c5ecf6",
+    "vault_init": "089d0ec603f54745f1d9f3f2109761ed307ce6b6704aa30ce7d85d6adfb41339",
+    "config_hash": "77dd04adce7c35f2a2af90c2938a931664d6c41acfb8ec7294269b30e7b61706"
+  },
+  {
+    "policy": 1,
+    "wallet_id": 42,
+    "tree_id": 457,
+    "module_data": "f1d1ff72ce84dbeacdfbf0a31ed0a4be15e5423fd9b19133435e723b889da9bc",
+    "module_init": "043d7e85c0cd0e096fc0bd6816f688cd93e743385c1193ea5e8ddac8fce411f8",
+    "metadata": "8cb16702242436745e2dd6244f4f082cde637a2ef1ed8b4ba0a1013da0046e1b",
+    "wallet_data": "f99422dfa02e4d50880e2f8ab2d4daf27c2b982faada9c9ec3a3d21379870048",
+    "wallet_init": "710d84cb20364d617a56c258a9fdf714f5a5eb007318d725ad27aaf2d2c7c4d6",
+    "vault_data": "1f45ed3975e8802fa35fd269ea47825d5c9fe105d7b818a3c13c77a58dd009a2",
+    "vault_init": "c6ea7d129c1323435694f07e5a1cd04e568332292c8e2f3081a4065c98278a2f",
+    "config_hash": "328e42b663d97b88b397796a14aff998a0d656054012cd89875c91e036ca711c"
+  }
+]

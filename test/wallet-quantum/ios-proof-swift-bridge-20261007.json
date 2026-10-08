@@ -1,0 +1,41 @@
+{
+  "ios_commit": "7177108",
+  "scope": "Swift raw verifier bridge, source-built XCFramework Make integration and simulator test; persistence/transport/wallet authority not complete",
+  "validation": [
+    "Real historical proof accepted and missing material refused",
+    "Always-verified replacement compiled and failed XCTAssertThrowsError",
+    "Restored test passed",
+    "make compile complete app build succeeded",
+    "make prepare generates all source-built framework slices and retains identical bytes"
+  ],
+  "head_note": "Final commit additionally includes public fixture provenance resource and CI tool installation; final-head CI remains to be verified",
+  "artifacts": [
+    {
+      "file": "20261007-ios-proof-swift-control.raw.log",
+      "bytes": 439066,
+      "sha256": "4b1a924a75c1da65982fcab19fe420989f4b61b0e87b137f688a3ee89fbb2627"
+    },
+    {
+      "file": "20261007-ios-proof-swift-restored.log",
+      "bytes": 11915,
+      "sha256": "798d67fec93b5bb52f09f40070d0adb1feb01adc37d70d1c1ee1de46443860db"
+    },
+    {
+      "file": "20261007-ios-proof-full-app-build.log",
+      "bytes": 139951,
+      "sha256": "19f9e73499292a81333297916b8a15484b6173221f3b06fa9f4a2b215847781e"
+    },
+    {
+      "file": "20261007-ios-proof-make-prepare-fixed.log",
+      "bytes": 18804,
+      "sha256": "66bf227b9c08d68a3633deda9a5945280206ecc948adcd70b4f0a3c240c874fd"
+    }
+  ],
+  "remaining": [
+    "iOS durable private/no-backup session",
+    "Live proof acquisition and independent anchor provisioning",
+    "Wallet account/config binding, full creation and dual POP",
+    "Staged rotation and transaction delivery",
+    "Physical hardware, independent crypto/release review and final-head CI"
+  ]
+}

@@ -40,6 +40,7 @@
 #include "td/actor/coro_utils.h"
 #include "tos/tos-types.h"
 
+#include "admission-work-profile.h"
 #include "state-download-buffer.h"
 #include "types.h"
 
@@ -154,6 +155,7 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual double block_ttl() const = 0;
   virtual double state_ttl() const = 0;
   virtual size_t max_mempool_num() const = 0;
+  virtual td::optional<ExtMessageWorkProfile> get_ext_message_work_profile() const = 0;
   virtual double archive_ttl() const = 0;
   virtual double key_proof_ttl() const = 0;
   virtual bool initial_sync_disabled() const = 0;
@@ -221,6 +223,7 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual void set_block_ttl(double value) = 0;
   virtual void set_state_ttl(double value) = 0;
   virtual void set_max_mempool_num(size_t value) = 0;
+  virtual td::Status set_ext_message_work_profile(ExtMessageWorkProfile profile) = 0;
   virtual void set_archive_ttl(double value) = 0;
   virtual void set_key_proof_ttl(double value) = 0;
   virtual void set_initial_sync_disabled(bool value) = 0;

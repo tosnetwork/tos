@@ -1,0 +1,29 @@
+{
+  "scope": "Public native mnemonic and PQ derivation vectors. Never use these words or keys for funds. Generated with Python hmac/hashlib independently of the Rust implementation.",
+  "context": {
+    "network_hex": "0101010101010101010101010101010101010101010101010101010101010101",
+    "global_id": 42,
+    "account_index": 5,
+    "key_generation": 7
+  },
+  "vectors": [
+    {
+      "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon amateur",
+      "password": "",
+      "master_hex": "cc97dcca0bed763026ad0174ad4c38a057fca97863005b181e11f9f0a0c39bc6",
+      "derived": {
+        "ML-DSA-44": "8f9b8b0dc52e232efa16c2747fdd7cd6393308426a5a30b5059be33068301f74",
+        "SLH-DSA-SHA2-128s": "1674f7e6ca5a5b9ad518147c2236b7dfb8e5f45d22feea7883c7f0917b05a80316b11dd9e69dc38f569419098be1c868"
+      }
+    },
+    {
+      "phrase": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon chicken",
+      "password": " public test password ",
+      "master_hex": "5baee244077bdb19c1d9a4670a7c2a3c6dc88815a039eb9c75f3e4d7185f6c39",
+      "derived": {
+        "ML-DSA-44": "5c073e06d0af742d47bc00148774171e1583786305b4b811187d634a43a14313",
+        "SLH-DSA-SHA2-128s": "496404e6cb37cf10664af87e277335a70aca6bf3b48c6fa8f04b8c13777d013a083aa9d24ef345fb5e1f29745e8175cb"
+      }
+    }
+  ]
+}

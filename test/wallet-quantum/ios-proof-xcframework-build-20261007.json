@@ -1,0 +1,38 @@
+{
+  "scope": "Source-built iOS device arm64 and simulator arm64/x86_64 library/XCFramework; no Swift or device runtime acceptance yet",
+  "validation": [
+    "All slices compiled and linked",
+    "vtool platform IOS/IOSSIMULATOR correct, minimum15.0",
+    "Architecture and C verification/persistence exports checked",
+    "Framework install names and XCFramework structure verified",
+    "Host proof/persistence CTest and Android arm64 regression passed"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-proof-ios-script-build.log",
+      "bytes": 3091,
+      "sha256": "c257ffb64c3d193305477f068b14f734f5b1a7b0e68a24db417209906670c384"
+    },
+    {
+      "file": "20261007-proof-ios-device-build.log",
+      "bytes": 1476399,
+      "sha256": "bee76eccf646fa7e5773104d995bfe7fb01c120e8bd66e77b5378b6b13a261b3"
+    },
+    {
+      "file": "20261007-proof-ios-x86_64-build.log",
+      "bytes": 1589865,
+      "sha256": "8b1df678643678ab3849577557afb36e9904dcc81edf0b3d1e2a48ecd39a5b9f"
+    },
+    {
+      "file": "20261007-proof-xcframework-manifest.json",
+      "bytes": 2751,
+      "sha256": "2aacbb3192ce5f210a634cfadc6a429f1f57bcd38176e27491fc797a8b8be568"
+    }
+  ],
+  "remaining": [
+    "SwiftPM integration and simulated runtime",
+    "Device authentication/runtime and release review",
+    "Proof acquisition and wallet authority binding",
+    "Complete creation, dual POP, rotation and delivery"
+  ]
+}

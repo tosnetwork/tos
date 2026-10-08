@@ -1,0 +1,61 @@
+name: Quantum mobile native crypto
+on:
+  pull_request:
+    paths:
+      - 'sdk/native/quantum/**'
+      - 'tosctl/src/lms-fee-state/**'
+      - 'tosctl/src/node-control/contracts/src/lms_fee_journal.rs'
+      - 'tosctl/src/node-control/contracts/src/lms_fee_cache.rs'
+      - 'tosctl/src/node-control/contracts/src/lms_fee_schedule.rs'
+      - 'tosctl/src/Cargo.toml'
+      - 'tosctl/src/Cargo.lock'
+      - 'test/wallet-quantum/mobile-native-test.c'
+      - 'test/wallet-quantum/fee-state-ffi-test.c'
+      - 'sdk/native/quantum/tos_fee_state.h'
+      - 'third-party/mldsa-native/**'
+      - 'third-party/slhdsa-c/**'
+      - '.github/workflows/quantum-mobile-native.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: quantum-mobile-native-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Build fixed-profile native API and run assertions
+        run: |
+          cmake -S sdk/native/quantum -B "$RUNNER_TEMP/quantum-native" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/quantum-native" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/quantum-native" --output-on-failure
+      - name: Shared durable fee state and real process handoff
+        working-directory: tosctl/src
+        run: cargo test -p lms-fee-state --locked --target-dir "$RUNNER_TEMP/quantum-fee-state"
+      - name: Link and execute the C state API
+        run: |
+          cargo build --manifest-path tosctl/src/Cargo.toml -p lms-fee-state --release --locked --target-dir "$RUNNER_TEMP/quantum-fee-state"
+          python3 - <<'PY'
+          import os, platform, subprocess, tempfile
+          target = os.environ["RUNNER_TEMP"] + "/quantum-fee-state"
+          binary = target + "/c-state-test"
+          libraries = ["-lpthread", "-lm"]
+          if platform.system() == "Linux":
+              libraries += ["-ldl", "-lrt", "-lutil"]
+          subprocess.run(["cc", "-std=c99", "-O2", "-I", "sdk/native/quantum",
+                          "test/wallet-quantum/fee-state-ffi-test.c", target + "/release/liblms_fee_state.a",
+                          *libraries, "-o", binary], check=True)
+          with tempfile.TemporaryDirectory() as directory:
+              os.chmod(directory, 0o700)
+              subprocess.run([binary, directory], check=True)
+          PY

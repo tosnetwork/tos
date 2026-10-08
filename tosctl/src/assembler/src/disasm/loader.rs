@@ -1878,6 +1878,11 @@ impl Loader {
         Ok(Instruction::new("PQCHECKSIG_FALCON512_PADDED"))
     }
 
+    pub(super) fn lms_fee_hash(&mut self, slice: &mut SliceData) -> Result<Instruction> {
+        check_eq!(slice.get_next_int(24)?, 0xf93103);
+        Ok(Instruction::new("LMSCHECKFEEHASH"))
+    }
+
     pub(super) fn pq_mldsa44(&mut self, slice: &mut SliceData) -> Result<Instruction> {
         check_eq!(slice.get_next_int(24)?, 0xf93100);
         Ok(Instruction::new("PQCHECKSIG_MLDSA44"))

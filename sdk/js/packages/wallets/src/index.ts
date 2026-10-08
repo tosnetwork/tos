@@ -34,6 +34,15 @@ import { WalletV5R1 } from "./WalletV5R1.js";
 
 export { WalletV3R2, WalletV4R2, WalletV5R1 };
 
+export { QuantumAuthRequest, validateQuantumActions } from "./QuantumAuth.js";
+export type { QuantumRole, QuantumAction, QuantumBinding } from "./QuantumAuth.js";
+export { WalletQuantum } from "./WalletQuantum.js";
+export { QuantumPopRequest, QuantumPreparationRequest } from "./QuantumRecovery.js";
+export type { QuantumRecoveryBinding, QuantumPreparationPlan } from "./QuantumRecovery.js";
+export { QuantumFeeIntent, validateQuantumFeePayload } from "./QuantumFee.js";
+export type { QuantumFeeClass, QuantumFeeBinding } from "./QuantumFee.js";
+export type { QuantumPolicy, QuantumCodeBundle, QuantumCodePins, QuantumGenesisParameters } from "./WalletQuantum.js";
+
 // Signer
 export { KeyPairSigner } from "./KeyPairSigner.js";
 

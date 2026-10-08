@@ -174,3 +174,15 @@ fn ignore_errors_skips_an_oversized_message() {
         send(&config(cells as u32 - 1, bits as u32), PLENTY, false, SENDMSG_IGNORE_ERROR);
     assert_eq!(res, Err(RESULT_CODE_SKIPPED));
 }
+
+#[test]
+fn zero_cell_limit_refuses_messages_including_special_accounts() {
+    let cfg = config(0, 1 << 21);
+    for special in [false, true] {
+        let (res, fine, _) = send(&cfg, PLENTY, special, 0);
+        assert_eq!(res, Err(RESULT_CODE_INVALID_BALANCE));
+        assert!(fine.is_zero(), "zero visited-cell allowance must not charge a cell fine");
+        let (res, _, _) = send(&cfg, PLENTY, special, SENDMSG_IGNORE_ERROR);
+        assert_eq!(res, Err(RESULT_CODE_SKIPPED));
+    }
+}

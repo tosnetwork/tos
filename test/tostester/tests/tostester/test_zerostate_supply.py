@@ -4,9 +4,11 @@ import hashlib
 import json
 import os
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import tostester.zerostate as zerostate_module
 from pytosiq_core import ShardStateUnsplit
 from pytosiq_core.boc.deserialize import Boc
 from pytosiq_core.tlb.config import (
@@ -20,6 +22,8 @@ from pytosiq_core.tlb.config import (
     ConfigParam15,
     ConfigParam16,
     ConfigParam17,
+    ConfigParam20,
+    ConfigParam21,
     ConfigParam28,
     ConfigParam34,
 )
@@ -966,3 +970,246 @@ def test_public_pq_manifest_packer_roundtrip_and_rejections(tmp_path):
     source.write_text(json.dumps(records))
     assert subprocess.run(command, capture_output=True).returncode != 0
     assert not dest.exists()
+
+
+def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
+    network_tag = bytes(range(32))
+    baseline_wc = None
+    baseline_mc = None
+    for label, enabled, admission in (
+        ("default16", False, False),
+        ("candidate17", True, False),
+        ("admission18", True, True),
+    ):
+        directory = tmp_path / label
+        directory.mkdir()
+        _write_pq_manifest(directory)
+        (directory / "main-wallet.pk").write_bytes(b"\x53" * 32)
+        wrapper = directory / "profile.fif"
+        wrapper.write_text(
+            (f"0x{network_tag.hex()} constant quantum-network-tag\n" if enabled else "")
+            + ("true constant quantum-admission-candidate\n" if admission else "")
+            + f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n'
+        )
+        subprocess.run(
+            _create_state_command(wrapper),
+            cwd=directory,
+            check=True,
+            capture_output=True,
+            env=_mainnet_genesis_env(),
+        )
+        state = _load_masterchain_state(directory / "zerostate.boc")
+        cfg = state.custom.config.config
+        assert ConfigParam8.deserialize(cfg[8].copy()).version == (
+            18 if admission else 17 if enabled else 16
+        )
+        mc_gas = ConfigParam20.deserialize(cfg[20].copy())
+        wc_gas = ConfigParam21.deserialize(cfg[21].copy())
+        assert mc_gas.other.gas_credit == 10000
+        assert wc_gas.other.gas_credit == (20000 if admission else 10000)
+        wc_fields = dict(vars(wc_gas.other))
+        wc_fields.pop("gas_credit")
+        wc_fields.update(flat_gas_limit=wc_gas.flat_gas_limit, flat_gas_price=wc_gas.flat_gas_price)
+        mc_fields = dict(vars(mc_gas.other))
+        mc_fields.update(flat_gas_limit=mc_gas.flat_gas_limit, flat_gas_price=mc_gas.flat_gas_price)
+        if baseline_wc is None:
+            baseline_wc, baseline_mc = wc_fields, mc_fields
+        assert wc_fields == baseline_wc, "candidate changed another basechain gas field"
+        assert mc_fields == baseline_mc, "candidate changed a masterchain gas field"
+        assert (48 in cfg) == enabled
+        assert (48 in ConfigParam9.deserialize(cfg[9].copy()).mandatory_params) == enabled
+        assert (48 in ConfigParam10.deserialize(cfg[10].copy()).critical_params) == enabled
+        if enabled:
+            record = cfg[48].copy()
+            assert record.load_uint(8) == 0xA1
+            assert record.load_bytes(32) == network_tag
+            assert record.load_uint(64) == record.load_uint(16) == 0
+            assert record.load_dict(8) is None
+            assert (
+                record.load_bytes(32).hex()
+                == "5e4380aedc95f8cb72de55f7506de0269b47c03ad1d1ed0e5184c332544262c0"
+            )
+            assert record.remaining_bits == record.remaining_refs == 0
+
+
+def _generate_admission_candidate(directory, source):
+    directory.mkdir()
+    _write_pq_manifest(directory)
+    (directory / "main-wallet.pk").write_bytes(b"\x53" * 32)
+    template = directory / "candidate-template.fif"
+    template.write_text(source)
+    wrapper = directory / "candidate.fif"
+    wrapper.write_text(
+        f"0x{bytes(range(32)).hex()} constant quantum-network-tag\n"
+        "true constant quantum-admission-candidate\n"
+        f'"{template}" include\n'
+    )
+    result = subprocess.run(
+        _create_state_command(wrapper),
+        cwd=directory,
+        capture_output=True,
+        env=_mainnet_genesis_env(),
+    )
+    (directory / "generation.stdout.raw").write_bytes(result.stdout)
+    (directory / "generation.stderr.raw").write_bytes(result.stderr)
+    result.check_returncode()
+    return _load_masterchain_state(directory / "zerostate.boc").custom.config.config
+
+
+def _assert_admission_candidate(cfg):
+    assert ConfigParam8.deserialize(cfg[8].copy()).version == 18, "candidate version"
+    assert ConfigParam21.deserialize(cfg[21].copy()).other.gas_credit == 20000, "candidate credit"
+    assert ConfigParam20.deserialize(cfg[20].copy()).other.gas_credit == 10000, "masterchain credit"
+
+
+@pytest.mark.parametrize("boundary", ["version", "credit"])
+def test_admission_candidate_parameter_mutation_is_detected(tmp_path, boundary):
+    source = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    if boundary == "version":
+        anchor, replacement = "18 capCreateStats", "17 capCreateStats"
+    else:
+        anchor, replacement = "30 *M 30 *M 20000 60 *M", "30 *M 30 *M 10000 60 *M"
+    assert source.count(anchor) == 1
+    mutated = _generate_admission_candidate(
+        tmp_path / "mutated", source.replace(anchor, replacement)
+    )
+    with pytest.raises(AssertionError, match="candidate " + boundary):
+        _assert_admission_candidate(mutated)
+    _assert_admission_candidate(_generate_admission_candidate(tmp_path / "restored", source))
+
+
+def test_admission_candidate_requires_namespace_before_generating_keys(tmp_path):
+    wrapper = tmp_path / "missing-tag.fif"
+    wrapper.write_text(
+        "true constant quantum-admission-candidate\n"
+        f'"{REPO / "crypto/smartcont/gen-zerostate.fif"}" include\n'
+    )
+    result = subprocess.run(
+        _create_state_command(wrapper),
+        cwd=tmp_path,
+        capture_output=True,
+        env=_mainnet_genesis_env(),
+    )
+    assert result.returncode != 0
+    assert b"Quantum admission candidate requires an explicit AUTH network tag" in result.stderr
+    assert not (tmp_path / "main-wallet.pk").exists()
+    (tmp_path / "guarded.stderr.raw").write_bytes(result.stderr)
+
+    # Removing the early guard must make this boundary check fail, even if a
+    # later configuration validation eventually rejects the missing policy.
+    source = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    guard = '  def? quantum-network-tag not abort"Quantum admission candidate requires an explicit AUTH network tag"'
+    assert source.count(guard) == 1
+    mutated = tmp_path / "without-guard.fif"
+    mutated.write_text(
+        source.replace(guard, "  // Controlled deletion of early namespace validation.")
+    )
+    wrapper.write_text(f'true constant quantum-admission-candidate\n"{mutated}" include\n')
+    result = subprocess.run(
+        _create_state_command(wrapper),
+        cwd=tmp_path,
+        capture_output=True,
+        env=_mainnet_genesis_env(),
+    )
+    (tmp_path / "unguarded.stderr.raw").write_bytes(result.stderr)
+    with pytest.raises(AssertionError, match="early namespace guard"):
+        assert (
+            b"Quantum admission candidate requires an explicit AUTH network tag" in result.stderr
+        ), "early namespace guard"
+    assert (tmp_path / "main-wallet.pk").exists(), "unguarded candidate reached custody generation"
+
+
+def test_admission_candidate_localnet_matches_generated_canonical_gas_fields(tmp_path, monkeypatch):
+    canonical = _generate_admission_candidate(
+        tmp_path / "canonical", (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
+    )
+    config = NetworkConfig(
+        global_version=18,
+        auth_network_tag=bytes(range(32)),
+        quantum_admission_candidate=True,
+        deployment_fee_schedule=True,
+        genesis_time=EXPECTED_MAINNET_GENESIS_UTIME,
+        genesis_wallet_seed=b"\x53" * 32,
+    )
+
+    def generate_and_compare(local_dir):
+        local_dir.mkdir()
+        local = create_zerostate(Install(BUILD_DIR, REPO), local_dir, config, [Key()])
+        cfg = _load_masterchain_state(local.masterchain.file).custom.config.config
+        _assert_admission_candidate(cfg)
+        for param in (20, 21):
+            assert cfg[param].to_cell().hash == canonical[param].to_cell().hash, (
+                f"ConfigParam {param} differs"
+            )
+
+    generate_and_compare(tmp_path / "local")
+    original = zerostate_module.fee_schedule_for
+
+    def wrong_credit(cfg):
+        schedule = original(cfg)
+        assert " 20000 " in schedule["gas_prices"]
+        schedule["gas_prices"] = schedule["gas_prices"].replace(" 20000 ", " 10000 ")
+        return schedule
+
+    with monkeypatch.context() as context:
+        context.setattr(zerostate_module, "fee_schedule_for", wrong_credit)
+        with pytest.raises(AssertionError, match="candidate credit"):
+            generate_and_compare(tmp_path / "mutated-credit")
+    generate_and_compare(tmp_path / "restored")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"global_version": 17},
+        {"global_version": 19},
+        {"deployment_fee_schedule": False},
+        {"auth_network_tag": None},
+        {"quantum_admission_candidate": "yes"},
+    ],
+)
+def test_admission_candidate_localnet_rejects_incompatible_profile(tmp_path, change):
+    config = NetworkConfig(
+        global_version=18,
+        auth_network_tag=bytes(range(32)),
+        quantum_admission_candidate=True,
+        deployment_fee_schedule=True,
+    )
+    with pytest.raises(ValueError, match="Quantum admission candidate"):
+        create_zerostate(Install(BUILD_DIR, REPO), tmp_path, replace(config, **change), [Key()])
+    assert not (tmp_path / "main-wallet.pk").exists()
+
+
+def test_admission_candidate_localnet_validation_deletion_is_detected(tmp_path, monkeypatch):
+    config = NetworkConfig(
+        global_version=17,
+        auth_network_tag=bytes(range(32)),
+        quantum_admission_candidate=True,
+        deployment_fee_schedule=True,
+        genesis_time=EXPECTED_MAINNET_GENESIS_UTIME,
+        genesis_wallet_seed=b"\x53" * 32,
+    )
+
+    def require_rejection(directory):
+        directory.mkdir()
+        try:
+            create_zerostate(Install(BUILD_DIR, REPO), directory, config, [Key()])
+        except ValueError as error:
+            assert "Quantum admission candidate" in str(error)
+            assert not (directory / "main-wallet.pk").exists()
+            return
+        raise AssertionError("incompatible candidate reached genesis generation")
+
+    require_rejection(tmp_path / "baseline")
+    original = zerostate_module.fee_schedule_for
+    with monkeypatch.context() as context:
+        context.setattr(
+            zerostate_module,
+            "fee_schedule_for",
+            lambda cfg: original(replace(cfg, quantum_admission_candidate=False)),
+        )
+        with pytest.raises(
+            AssertionError, match="incompatible candidate reached genesis generation"
+        ):
+            require_rejection(tmp_path / "mutated")
+    require_rejection(tmp_path / "restored")

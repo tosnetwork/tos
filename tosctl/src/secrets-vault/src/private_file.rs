@@ -213,7 +213,10 @@ mod tests {
             write_private_atomic(&private_child.join("config.json"), b"secret").unwrap_err();
         let message = error.to_string();
         assert!(
-            message.contains(&format!("chmod go-w {}", shared_ancestor.display())),
+            message.contains(&format!(
+                "chmod go-w {}",
+                fs::canonicalize(&shared_ancestor).unwrap().display()
+            )),
             "{message}"
         );
         fs::set_permissions(&shared_ancestor, fs::Permissions::from_mode(0o755)).unwrap();

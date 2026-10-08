@@ -69,6 +69,12 @@ class ConfigHolderQ : public ConfigHolder {
   td::optional<SelectedNewConsensusConfig> get_selected_new_consensus_config(WorkchainId wc) const override {
     return config_->get_selected_new_consensus_config(wc);
   }
+  td::Result<td::Ref<vm::Cell>> get_auth_policy_config_root() const override {
+    if (!config_) {
+      return td::Status::Error("AUTH policy configuration is unavailable");
+    }
+    return config_->get_root_cell();
+  }
   td::Status validate_pq_launch_resource_config() const override {
     return config_->validate_pq_launch_resource_config();
   }

@@ -115,7 +115,7 @@ def record(label, phase, result, shard):
 
 
 class Module:
-    def __init__(self, language, workchain=-1, key=0, version=16, profile=1, network=GLOBAL_ID):
+    def __init__(self, language, workchain=-1, key=0, version=19, profile=1, network=GLOBAL_ID):
         self.language, self.workchain, self.key = language, workchain, key
         self.version = version
         self.code = MODULE_CODES[language]
@@ -153,7 +153,7 @@ class Module:
         )
         prior = self.shard
         result = self.e.send(self.shard, msg)
-        if result["success"] and not ext and self.version >= 16:
+        if result["success"] and not ext and self.version >= 19:
             capture_transaction(label + "/module", prior, msg, self.e.lt, result)
         if result["success"]:
             self.shard = from_boc(result["shard_account"])
@@ -173,7 +173,7 @@ class Pair:
         a = self.account
         data = a.data
         a.e.close()
-        a.e = Emulator(16)
+        a.e = Emulator(19)
         a.address = (workchain, int.from_bytes(state_init(CODES[impl], data).hash, "big"))
         a.shard = active_account(a.address, CODES[impl], data, BALANCE)
         self.label = f"{language}/{impl}/wc{workchain}"
@@ -511,7 +511,7 @@ class FalconAuthTests(unittest.TestCase):
                 a, m = p.account, p.module
                 # Destination-only failure injection, not calibration or network configuration.
                 a.e.close()
-                a.e = Emulator(16, max_msg_cells=0)
+                a.e = Emulator(19, max_msg_cells=0)
                 p.limit_injection = True
                 req = a.request(payload=a.execute_payload(operation=0x41475003))
                 body = m.signed(a, req)
@@ -608,9 +608,9 @@ class FalconAuthTests(unittest.TestCase):
             _, out = m.call(Cell(), label=self.label(p, "top-up"))
             self.assertFalse(out)
             m.call(body, 1900, ext=True, label=self.label(p, "external-rejected"))
-            m.set_version(15)
+            m.set_version(18)
             m.call(body, 6, label=self.label(p, "v18-rejected"))
-            m.set_version(16)
+            m.set_version(19)
             p.execute(body, label=self.label(p, "v19-positive-control"))
 
     def test_refused_relay_bounces_the_value_back_into_the_module(self):
@@ -729,9 +729,9 @@ def main():
         (out / "two-hop-cpp.tsv").write_text("\n".join(left) + "\n")
         fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
         cfg = out / "two-hop-config.boc"
-        cfg.write_bytes(Cell().uint(int(fixture.bits, 2), 256).ref(config(16)).boc())
+        cfg.write_bytes(Cell().uint(int(fixture.bits, 2), 256).ref(config(19)).boc())
         other = subprocess.run(
-            [str(args.driver.resolve()), str(cfg), str(cases), "16"],
+            [str(args.driver.resolve()), str(cfg), str(cases), "19"],
             capture_output=True,
             text=True,
             check=True,

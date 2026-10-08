@@ -785,7 +785,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
- "bip39",
  "chain-rpc-client",
  "chain_block",
  "chain_block_json",
@@ -799,9 +798,7 @@ dependencies = [
  "elections",
  "futures-util",
  "hex",
- "hmac",
  "libc",
- "pbkdf2",
  "rand 0.8.5",
  "reqwest",
  "rpassword",
@@ -814,7 +811,9 @@ dependencies = [
  "tempfile",
  "tl_api",
  "tokio",
+ "tos-native-mnemonic",
  "tracing",
+ "wallet-pq-signer",
  "zeroize",
 ]
 
@@ -874,16 +873,20 @@ dependencies = [
  "fs2",
  "hex",
  "libc",
+ "secrets-vault",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "tl_api",
  "tokio",
+ "tos-native-mnemonic",
  "tos_executor",
  "tos_sandbox",
  "tos_vm",
  "tracing",
+ "wallet-pq-signer",
+ "zeroize",
 ]
 
 [[package]]
@@ -2542,6 +2545,17 @@ name = "litemap"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
+
+[[package]]
+name = "lms-fee-state"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "libc",
+ "sha2",
+ "tempfile",
+]
 
 [[package]]
 name = "lock_api"
@@ -4880,6 +4894,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tos-native-mnemonic"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bip39",
+ "hex",
+ "hmac",
+ "pbkdf2",
+ "rand 0.8.5",
+ "serde_json",
+ "sha2",
+ "zeroize",
+]
+
+[[package]]
 name = "tos_assembler"
 version = "1.9.3"
 dependencies = [
@@ -5306,6 +5335,26 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
+]
+
+[[package]]
+name = "wallet-pq-signer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cc",
+ "chrono",
+ "fips204",
+ "hex",
+ "openssl",
+ "openssl-sys",
+ "secrets-vault",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tos-native-mnemonic",
+ "zeroize",
 ]
 
 [[package]]

@@ -1,0 +1,36 @@
+{
+  "scope": "Growable readonly proof RPC result encoding; local compile/unit behavior only",
+  "validation": [
+    "RPC handler object compiles",
+    "256KiB raw reply encodes without old 128KiB truncation",
+    "Empty response refused",
+    "Twelve policy/encoding cases pass"
+  ],
+  "control": "Reintroduce fixed-size truncation: compiled and failed large-response equality; restored passes",
+  "artifacts": [
+    {
+      "file": "20261007-proof-reply-size-build.log",
+      "bytes": 761,
+      "sha256": "8f66d7dcc8fbec4ecff3f773aa84530643124fdec1dd99b4b1e70ff648a2ba5f"
+    },
+    {
+      "file": "20261007-proof-reply-size-tests.log",
+      "bytes": 607,
+      "sha256": "0cd4106452def0ab109a1a2af47a12fb348270ca42cf73fc7253164afb7d4f20"
+    },
+    {
+      "file": "20261007-proof-reply-truncation-control.log",
+      "bytes": 607,
+      "sha256": "1be37d191d19f5ba854ae006b83acc4444b9671dc5f2acd830910441b0d1909c"
+    },
+    {
+      "file": "20261007-proof-reply-restored.log",
+      "bytes": 607,
+      "sha256": "0cd4106452def0ab109a1a2af47a12fb348270ca42cf73fc7253164afb7d4f20"
+    }
+  ],
+  "limits": [
+    "Full Linux HTTP proof forwarding remains a CI/live-chain gate",
+    "No mobile or wallet readiness acceptance inferred"
+  ]
+}

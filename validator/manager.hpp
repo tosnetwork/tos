@@ -99,6 +99,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   friend class PendingFinalityManagerActorProbe;
   friend class N5ManagerDbFixture;
   friend class TwostepManagerProbe;
+  friend class ExtMessageManagerTestHarness;
 
  private:
   // WAITERS

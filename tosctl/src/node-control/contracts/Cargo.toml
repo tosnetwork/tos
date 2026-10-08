@@ -4,7 +4,14 @@ version = "0.3.0"
 edition = "2024"
 license = 'GPL-3.0'
 
+[features]
+native-wallet-signer = ["dep:wallet-pq-signer"]
+native-wallet-vault = ["native-wallet-signer", "wallet-pq-signer/vault", "dep:secrets-vault", "dep:tos-native-mnemonic"]
+
 [dependencies]
+tos-native-mnemonic = { path = "../../tos-native-mnemonic", optional = true }
+secrets-vault = { path = "../../secrets-vault", optional = true }
+wallet-pq-signer = { path = "../../wallet-pq-signer", optional = true }
 control-client = { path = "../control-client" }
 anyhow = "1.0"
 async-trait = "0.1.89"
@@ -16,6 +23,7 @@ serde = { version = "1", features = ["derive"] }
 # their own depth preflight, on a worker whose stack is sized for that depth.
 serde_json = { version = "1", features = ["unbounded_depth"] }
 sha2 = "0.10"
+zeroize = "1"
 tl_api = { version = "0.4.32", path = "../../tl/api" }
 tracing = "0.1"
 chain-rpc-client = { path = "../chain-rpc-client" }

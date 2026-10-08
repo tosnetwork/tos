@@ -11,6 +11,10 @@ if(NOT DEFINED CMAKE_C_COMPILER AND NOT DEFINED CMAKE_CXX_COMPILER)
 endif()
 
 project(TOS VERSION 0.5 LANGUAGES C CXX)
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  # This build packages libraries, not iOS application bundles.
+  set(CMAKE_MACOSX_BUNDLE OFF)
+endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Define the two required variables before including the source code for watching a git repository.
@@ -697,6 +701,10 @@ add_executable(test-quic-sender test/net/test-quic-sender.cpp)
 target_link_libraries(test-quic-sender adnl dht tl_api quic)
 add_executable(test-quorum test/test-quorum.cpp)
 target_link_libraries(test-quorum tos_block tdutils)
+add_executable(test-quorum-portable test/test-quorum.cpp)
+target_compile_definitions(test-quorum-portable PRIVATE TOS_QUORUM_FORCE_PORTABLE=1)
+target_link_libraries(test-quorum-portable tos_block tdutils)
+add_test(NAME test-quorum-portable COMMAND test-quorum-portable)
 add_test(
   NAME test-quorum-static-grep
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-quorum-static.sh
@@ -765,7 +773,32 @@ target_link_libraries(test-tos-collator overlay tdutils tdactor adnl tl_api dht
   validator-disk tos_validator validator-disk )
 
 add_executable(test-ext-message-pool test/test-td-main.cpp test/test-ext-message-pool.cpp)
-target_link_libraries(test-ext-message-pool PRIVATE tos_validator tos_crypto tdactor tdutils)
+target_link_libraries(test-ext-message-pool PRIVATE tos_validator validator-common tos_crypto common tdactor tdutils)
+
+add_executable(test-ext-message-manager test/test-td-main.cpp test/test-ext-message-manager.cpp)
+target_link_libraries(test-ext-message-manager PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-ext-message-manager PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+add_executable(test-ext-message-generated-checker test/test-td-main.cpp test/test-ext-message-generated-checker.cpp)
+target_link_libraries(test-ext-message-generated-checker PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-ext-message-generated-checker PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+add_dependencies(test-ext-message-generated-checker create-state func fift)
+add_dependencies(all-tests test-ext-message-generated-checker)
+add_test(NAME test-ext-message-generated-checker
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-ext-message-generated.py
+          --build-dir ${CMAKE_CURRENT_BINARY_DIR}
+          --output-dir ${CMAKE_CURRENT_BINARY_DIR}/Testing/generated-admission)
+
+add_executable(test-ext-message-ingress test/test-td-main.cpp test/test-ext-message-ingress.cpp)
+target_link_libraries(test-ext-message-ingress PRIVATE tos_external_message_parser)
+
+add_executable(test-ext-message-ingress-fixtures test/test-ext-message-ingress-fixtures.cpp)
+target_link_libraries(test-ext-message-ingress-fixtures PRIVATE tos_external_message_parser)
+
+add_executable(test-ext-message-admission-budget test/test-td-main.cpp test/test-ext-message-admission-budget.cpp)
+target_link_libraries(test-ext-message-admission-budget PRIVATE tos_crypto tdutils tdactor)
 
 add_executable(test-msg-envelope test/test-td-main.cpp test/test-msg-envelope.cpp)
 target_link_libraries(test-msg-envelope PRIVATE tos_crypto)
@@ -1297,6 +1330,7 @@ slice1_func_to_boc(${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/stdlib.fc
                    ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-code.fc
                    INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/auth-extension.fc
+                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5-action-list.fc
                             ${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/strong-ed25519-key.fc)
 
 # Compile a production FunC contract from crypto/smartcont to a .boc, with
@@ -1716,6 +1750,9 @@ add_test(NAME validator-consensus-cleanup-flags
 add_test(NAME branch-chain-python-ci-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-branch-chain-python-ci.py)
 set_tests_properties(branch-chain-python-ci-source PROPERTIES LABELS "source-guard")
+add_test(NAME branch-chain-python-ci-source-conditions
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_branch_chain_conditions.py)
+set_tests_properties(branch-chain-python-ci-source-conditions PROPERTIES LABELS "source-guard")
 add_test(NAME n6-diagnostic-observations
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-n6-diagnostic-observations.py)
 set_tests_properties(n6-diagnostic-observations PROPERTIES LABELS "source-guard")
@@ -1863,7 +1900,7 @@ add_test(NAME test-proof-verify-cli-refused
           --request ${PROOF_VERIFY_REAL}/wrong-target-request.json --material ${PROOF_VERIFY_REAL}/historical)
 set_tests_properties(test-proof-verify-cli-refused PROPERTIES
   PASS_REGULAR_EXPRESSION "^\\{\"status\":\"refused\".*does not end at the exact target block")
-add_dependencies(all-tests tos-proof-verify)
+add_dependencies(all-tests tos-proof-verify test-proof-verify-embedded test-proof-acquisition test-proof-readonly-query)
 add_library(proof-verify-fs-shim SHARED test/pq-native/proof-verify-fs-shim.cpp)
 target_link_libraries(proof-verify-fs-shim PRIVATE ${CMAKE_DL_LIBS})
 add_test(NAME test-proof-verify-live-commit
@@ -1879,6 +1916,9 @@ tos_test(test-adnl-ext-input-budget)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-ext-message-pool)
+tos_test(test-ext-message-manager)
+tos_test(test-ext-message-ingress)
+tos_test(test-ext-message-admission-budget)
 tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
 tos_test(test-full-node-shard-admission)
@@ -1974,6 +2014,10 @@ set_tests_properties(
   test-rldp2-decoder-heap
   PROPERTIES LABELS "security-findings")
 tos_test(test-quorum)
+add_dependencies(all-tests test-quorum-portable)
+if(TARGET proof-persisted-fsync-shim)
+  add_dependencies(all-tests proof-persisted-fsync-shim)
+endif()
 tos_test(test-emulator)
 
 tos_test(test-fec)

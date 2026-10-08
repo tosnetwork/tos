@@ -491,3 +491,37 @@ fn test_convert_stack_tuple_pair_with_inner_tuple() {
         other => panic!("expected tuple, got {:?}", other),
     }
 }
+
+#[test]
+fn incoming_storage_context_is_versioned_and_optional() {
+    use chain_block::{ConfigParam8, ConfigParamEnum, GlobalVersion};
+    for version in [16, 17, 18, 19] {
+        let mut sci = SmartContractInfo::default();
+        sci.config_params
+            .set_config(ConfigParamEnum::ConfigParam8(ConfigParam8 {
+                global_version: GlobalVersion { version, capabilities: 0 },
+            }))
+            .unwrap();
+        for present in [false, true] {
+            sci.incoming_storage = present.then(|| ([0xabu8; 32].into(), 129, 131073));
+            let item = sci.as_temp_data_item();
+            let params = item.as_tuple().unwrap()[0].as_tuple().unwrap();
+            assert_eq!(params.len(), if version < 17 { 18 } else { 19 });
+            if version >= 17 {
+                if present {
+                    let stats = params[18].as_tuple().unwrap();
+                    assert_eq!(stats.len(), 4);
+                    assert_eq!(stats[0], StackItem::int(1));
+                    assert_eq!(
+                        stats[1],
+                        StackItem::int(IntegerData::from_unsigned_bytes_be(&[0xab; 32]))
+                    );
+                    assert_eq!(stats[2], StackItem::int(129));
+                    assert_eq!(stats[3], StackItem::int(131073));
+                } else {
+                    assert_eq!(params[18], StackItem::None);
+                }
+            }
+        }
+    }
+}

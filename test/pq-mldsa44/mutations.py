@@ -39,8 +39,8 @@ def run(build: Path, vectors: Path):
         (
             "base-gas",
             ROOT / "crypto/vm/pqops.cpp",
-            "st->consume_gas_chk(pq_mldsa44_base_gas);",
-            "st->consume_gas_chk(0);",
+            "stack.check_underflow(4);\n  // Charge on every call; do not inherit the classic signature free allowance.\n  st->consume_gas_chk(pq_mldsa44_base_gas);",
+            "stack.check_underflow(4);\n  // Charge on every call; do not inherit the classic signature free allowance.\n  st->consume_gas_chk(0);",
         ),
         (
             "byte-gas",
@@ -67,6 +67,9 @@ def run(build: Path, vectors: Path):
             "(false)",
         ),
     ]
+    for name, path, before, _ in cases:
+        if path.read_text().count(before) != 1:
+            raise RuntimeError("mutation anchor must match exactly once: " + name)
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "result.tsv"
         baseline = check(out)

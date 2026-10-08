@@ -61,8 +61,8 @@ for name, file, old, new in [
     (
         "version",
         "crypto/vm/pqops.h",
-        "pq_falcon512_min_version = 16",
-        "pq_falcon512_min_version = 15",
+        "pq_falcon512_min_version = 19",
+        "pq_falcon512_min_version = 18",
     ),
     ("base-gas", "crypto/vm/pqops.h", "pq_falcon512_base_gas = 20000", "pq_falcon512_base_gas = 0"),
     (
