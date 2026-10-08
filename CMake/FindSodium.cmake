@@ -103,14 +103,16 @@ elseif (WIN32)
     )
 
   if (MSVC)
-    # detect target architecture
+    # detect target architecture. Exactly one #error is active: cl stops at the
+    # first, but clang-cl reports every one, and the match below takes the last.
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/arch.cpp" [=[
             #if defined _M_IX86
             #error ARCH_VALUE x86_32
-            #elif defined _M_X64
+            #elif defined _M_X64 || defined _M_AMD64
             #error ARCH_VALUE x86_64
-            #endif
+            #else
             #error ARCH_VALUE unknown
+            #endif
         ]=])
     try_compile(_UNUSED_VAR "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/arch.cpp"
       OUTPUT_VARIABLE _COMPILATION_LOG
