@@ -163,7 +163,7 @@ jobs:
     - name: Node targets are not defined
       shell: bash
       run: |
-        for target in validator-engine tos-pq-consensus-key tos-pq-vote tos-proof-verify storage-daemon; do
+        for target in validator-engine create-state tos-pq-consensus-key tos-pq-vote tos-proof-verify storage-daemon; do
           if ninja -C build-client -n "$target" > "probe-$target.log" 2>&1; then
             echo "node target $target is defined in the client-only build" >&2
             exit 1

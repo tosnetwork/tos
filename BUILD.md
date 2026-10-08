@@ -102,8 +102,8 @@ the Windows scripts choose the compiler themselves.
 the `emulator` library, with their tests. Node targets are not defined in this
 configuration, so asking for one (for example `--target validator-engine`) fails
 as an unknown target. This covers the validator and its engine, the network
-stack above ADNL lite, storage, the proxies, the consensus and controller key
-tools, and the proof verifier.
+stack above ADNL lite, storage, the proxies, the genesis state tool
+(`create-state`), the consensus and controller key tools, and the proof verifier.
 
 Windows builds the client toolchain only. On Windows `TOS_CLIENT_ONLY` is on by
 default, and an explicit `-DTOS_CLIENT_ONLY=OFF` stops the configure. The node's

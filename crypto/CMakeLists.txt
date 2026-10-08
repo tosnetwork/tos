@@ -666,30 +666,33 @@ if (NOT CMAKE_CROSSCOMPILING)
   add_dependencies(smc-envelope gen_fif)
 endif()
 
-add_executable(create-state block/create-state.cpp)
-target_include_directories(create-state PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
-  # CreateState.fif preloads these generated contracts.  Keep create-state
-  # independently buildable instead of relying on the default ALL target to
-  # have populated the build-tree smartcont/auto directory first.
-  add_dependencies(create-state
-    gen_fif_smartcont_auto_wallet_code
-    gen_fif_smartcont_auto_restricted_wallet_code
-    gen_fif_smartcont_auto_restricted_wallet2_code
-    gen_fif_smartcont_auto_restricted_wallet3_code)
-endif()
-if (INTERNAL_COMPILE)
-  target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
-else()
-  if (TOSLIB_COMPILE)
+# Genesis and configuration state for a node; not part of a client-only build.
+if(NOT TOS_CLIENT_ONLY)
+  add_executable(create-state block/create-state.cpp)
+  target_include_directories(create-state PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+  if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
+    # CreateState.fif preloads these generated contracts.  Keep create-state
+    # independently buildable instead of relying on the default ALL target to
+    # have populated the build-tree smartcont/auto directory first.
+    add_dependencies(create-state
+      gen_fif_smartcont_auto_wallet_code
+      gen_fif_smartcont_auto_restricted_wallet_code
+      gen_fif_smartcont_auto_restricted_wallet2_code
+      gen_fif_smartcont_auto_restricted_wallet3_code)
+  endif()
+  if (INTERNAL_COMPILE)
     target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
   else()
-    target_link_libraries(create-state PUBLIC tos_crypto fift-lib git)
+    if (TOSLIB_COMPILE)
+      target_link_libraries(create-state PUBLIC tos_crypto fift-lib toslib git)
+    else()
+      target_link_libraries(create-state PUBLIC tos_crypto fift-lib git)
+    endif()
   endif()
-endif()
-if (WINGETOPT_FOUND)
-  target_link_libraries_system(create-state wingetopt)
+  if (WINGETOPT_FOUND)
+    target_link_libraries_system(create-state wingetopt)
+  endif()
 endif()
 
 # The vote and controller tools use the key-file libraries, which a client-only build
@@ -745,7 +748,10 @@ target_compile_definitions(test-storage-fee-vectors PRIVATE
   STORAGE_FEE_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/block/storage-fee-vectors.tsv")
 tos_test(test-storage-fee-vectors)
 
-install(TARGETS fift func create-state tlbc RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
+install(TARGETS fift func tlbc RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
+if(NOT TOS_CLIENT_ONLY)
+  install(TARGETS create-state RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
+endif()
 install(DIRECTORY fift/lib/ DESTINATION lib/fift)
 install(DIRECTORY smartcont DESTINATION share/tos)
 
