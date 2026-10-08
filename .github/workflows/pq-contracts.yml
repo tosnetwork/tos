@@ -32,6 +32,7 @@ defaults:
 jobs:
   # GitHub's default job limit remains protection against a hung runner.
   contracts:
+    timeout-minutes: 40
     runs-on: ubuntu-24.04
     outputs:
       policy_diagnostics: ${{ steps.policy.outputs.diagnostics }}
@@ -132,6 +133,7 @@ jobs:
       matrix:
         diagnostic: ${{ fromJSON(needs.contracts.outputs.policy_diagnostics) }}
     name: "Policy diagnostic — ${{ matrix.diagnostic }}"
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
       - name: Show diagnostic (does not override the contracts job result)

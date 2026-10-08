@@ -24,12 +24,17 @@ on:
       - "scripts/toscan-explorer-e2e.py"
       - ".github/workflows/tosctl-service.yml"
 
+concurrency:
+  group: tosctl-service-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
 jobs:
   service:
-    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: tosctl/src/node-control
@@ -54,7 +59,8 @@ jobs:
   # regression should name itself rather than arrive as "the service job
   # failed".
   secrets-vault:
-    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: tosctl/src
@@ -76,7 +82,8 @@ jobs:
   # process. It has no third-party Python dependency and must stay unable to
   # leak its generated capability into source, logs, or a caller's environment.
   local-test-vault-harness:
-    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify local ephemeral Vault runner

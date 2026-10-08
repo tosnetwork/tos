@@ -18,7 +18,7 @@ name: JSON-RPC ASAN
 
 on:
   pull_request:
-    branches: [master, testnet, main]
+    branches: [main]
     types: [opened, reopened, synchronize, ready_for_review]
     paths:
       - 'validator-engine/json-rpc-*'
@@ -30,7 +30,7 @@ on:
   workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: jsonrpc-asan-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -45,6 +45,7 @@ permissions:
 jobs:
   unit:
     name: instrumented unit tests
+    timeout-minutes: 40
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

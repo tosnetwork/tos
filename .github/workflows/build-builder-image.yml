@@ -5,11 +5,20 @@ on:
   schedule:
     - cron: '0 0 1 * *'  # Monthly rebuild for security patches
 
+# Each job declares the permissions it needs; nothing is granted by default.
+permissions: {}
+
+# It publishes an image; a run in progress is never cancelled.
+concurrency:
+  group: build-builder-image
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
 
 jobs:
   build-ubuntu-22:
+    timeout-minutes: 40
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -32,6 +41,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-ubuntu-24:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     permissions:
       contents: read

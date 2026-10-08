@@ -5,7 +5,7 @@ on:
       - '.github/actions/native-cache/**'
       - '.github/workflows/**'
   push:
-    branches: [main, master, testnet]
+    branches: [main]
     paths:
       - '.github/actions/native-cache/**'
       - '.github/workflows/**'
@@ -17,6 +17,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   cache-contract:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

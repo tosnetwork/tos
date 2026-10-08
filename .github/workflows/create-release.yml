@@ -33,6 +33,7 @@ concurrency:
 
 jobs:
   collect:
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -96,9 +97,12 @@ jobs:
   # close the window between the last check and publication.
   publish:
     needs: collect
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ inputs.tag }}
@@ -129,6 +133,13 @@ jobs:
           listed="$(cut -d' ' -f3- SHA256SUMS | sort)"
           present="$(find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort)"
           [ "$listed" = "$present" ] || { echo "staged files differ from SHA256SUMS" >&2; exit 1; }
+
+      # A signed provenance statement for every published file, bound to this
+      # workflow run; consumers check it with `gh attestation verify`.
+      - name: Attest build provenance for every staged file
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release/stage/*
 
       - name: Refuse an existing release, then create the draft
         run: |

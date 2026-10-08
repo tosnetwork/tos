@@ -28,7 +28,7 @@ on:
       - ".github/workflows/shielded-pool-ceremony.yml"
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [main, master, testnet]
+    branches: [main]
     paths:
       - "tools/shielded-pool-ceremony/**"
       - "tools/shielded-pool-circuit/src/groth16.rs"

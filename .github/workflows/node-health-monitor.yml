@@ -16,10 +16,15 @@ on:
       - '.github/workflows/node-health-monitor.yml'
       - '.github/actions/native-cache/**'
   workflow_dispatch:
+concurrency:
+  group: node-health-monitor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 jobs:
   rust-contracts:
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     env:
       CARGO_INCREMENTAL: "0"
@@ -62,6 +67,7 @@ jobs:
   # finished before a deadline. The build uses every core and a compiler cache instead;
   # GitHub's default limit remains only as protection against a hung runner.
   native:
+    timeout-minutes: 110
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

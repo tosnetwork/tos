@@ -62,7 +62,7 @@ on:
   # are covered by the pull_request trigger above; this one exists so a merge
   # commit is verified on the branch it landed on.
   push:
-    branches: [main, master, testnet]
+    branches: [main]
     paths:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
@@ -419,6 +419,7 @@ jobs:
       matrix:
         diagnostic: ${{ fromJSON(needs.sandboxes.outputs.executor_diagnostics) }}
     name: "Executor diagnostic — ${{ matrix.diagnostic }}"
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     steps:
       - name: Display native executor evidence without changing the gate

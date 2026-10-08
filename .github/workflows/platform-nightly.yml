@@ -1,0 +1,53 @@
+name: Platform nightly
+
+# Every night the whole platform matrix runs, including the members that are too
+# slow or costly per pull request (see platform-matrix.yml and
+# scripts/platform-matrix.json). A failing night opens or updates one tracking
+# issue and a green night closes it (scripts/nightly_report.py).
+#
+# The report needs an issue grant, so it lives here rather than in the matrix: a
+# workflow that pull requests trigger holds no write permission. This one runs
+# only on the schedule or by hand, from the default branch's own code.
+
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-nightly
+  cancel-in-progress: false
+
+jobs:
+  matrix:
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/platform-matrix.yml
+
+  nightly-report:
+    needs: matrix
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      issues: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - name: Update the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONCLUSION: ${{ needs.matrix.result }}
+        run: python3 scripts/nightly_report.py

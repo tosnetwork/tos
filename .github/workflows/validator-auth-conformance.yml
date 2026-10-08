@@ -118,6 +118,7 @@ jobs:
   conformance:
     needs: native
     if: always()
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - name: Require every architecture and the sanitizer build

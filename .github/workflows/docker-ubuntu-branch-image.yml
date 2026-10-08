@@ -2,10 +2,6 @@ name: Docker Ubuntu 22.04 branch image
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - 'testnet'
-
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -15,6 +11,7 @@ permissions:
 
 jobs:
   build-arm64:
+    timeout-minutes: 180
     runs-on: ubuntu-22.04-arm
     steps:
       - name: Check out repository
@@ -50,6 +47,7 @@ jobs:
 
 
   build-amd64:
+    timeout-minutes: 180
     runs-on: ubuntu-22.04
     steps:
       - name: Check out repository
@@ -85,6 +83,7 @@ jobs:
 
 
   merge:
+    timeout-minutes: 60
     runs-on: ubuntu-22.04
     needs:
       - build-amd64

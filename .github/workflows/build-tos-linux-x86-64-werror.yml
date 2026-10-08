@@ -2,15 +2,15 @@ name: Lint
 
 on:
   pull_request:
-    branches: [main, master, testnet]
+    branches: [main]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [main, master, testnet]
+    branches: [main]
   workflow_dispatch:
   workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: lint-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -20,6 +20,7 @@ jobs:
   # The whole tree, warnings as errors. This one gates: it passes today, so a failure
   # means the change under test introduced it.
   strict-build:
+    timeout-minutes: 150
     runs-on: ubuntu-24.04
     env:
       # A compile cache carried between runs. ccache stores only successful compilations and
@@ -182,6 +183,42 @@ jobs:
         path: .ccache
         key: client-only-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
 
+  # The workflow policy (scripts/check-workflow-policy.py) and its tests, the
+  # platform matrix's gate and reporter tests, and actionlint's structural checks:
+  # expressions, contexts, needs, and reusable-workflow inputs and permissions.
+  # Shell inside steps is not linted here.
+  workflow-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        persist-credentials: false
+
+    - name: Install the YAML parser
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-yaml
+
+    - name: Check the workflow policy
+      run: |
+        python3 scripts/check-workflow-policy.py
+        python3 scripts/test_check_workflow_policy.py
+        cd scripts
+        python3 test_platform_gate.py
+        python3 test_nightly_report.py
+
+    - name: Lint the workflows
+      run: |
+        tool_dir="$(mktemp -d)"
+        trap 'rm -rf "$tool_dir"' EXIT
+        curl -fsSL "$(python3 scripts/verify-build-tool.py --url actionlint-x86_64)" -o "$tool_dir/actionlint.tar.gz"
+        python3 scripts/verify-build-tool.py actionlint-x86_64 "$tool_dir/actionlint.tar.gz"
+        tar -xzf "$tool_dir/actionlint.tar.gz" -C "$tool_dir" actionlint
+        "$tool_dir/actionlint" -shellcheck= -pyflakes=
+
   # Formatting and whitespace, judged on the lines this change actually touches.
   #
   # The tree carries older deviations that a whole-tree check would report on every
@@ -189,6 +226,7 @@ jobs:
   # means this passes today and still refuses new deviations, and the backlog shrinks as
   # files are edited rather than in one reformatting commit.
   hygiene:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
 
     steps:
@@ -295,6 +333,7 @@ jobs:
   # learns to ignore. Run it by hand to measure that debt while it is being paid down.
   python-types:
     if: github.event_name == 'workflow_dispatch'
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
 
     steps:

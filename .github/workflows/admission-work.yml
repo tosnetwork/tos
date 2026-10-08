@@ -26,6 +26,10 @@ on:
       - 'scripts/check-ext-message-*.py'
       - 'tdutils/td/utils/misc.h'
 
+concurrency:
+  group: admission-work-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -39,6 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    timeout-minutes: 130
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

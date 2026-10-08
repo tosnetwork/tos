@@ -1,37 +1,25 @@
 name: Ubuntu TOS build (x86-64)
 
 on:
-  # The full native build is expensive, so it does not run per pull request.
-  # It runs once on what actually lands, and only when the merge carries
-  # something a native build can fail on. A documentation-only merge changes
-  # nothing this job compiles and is filtered out by the paths below.
-  push:
-    branches: [main]
-    paths:
-      - 'CMakeLists.txt'
-      - '**/CMakeLists.txt'
-      - 'CMake/**'
-      - '**/*.cmake'
-      - '**/*.c'
-      - '**/*.cc'
-      - '**/*.cpp'
-      - '**/*.h'
-      - '**/*.hpp'
-      - '**/*.rs'
-      # A manifest or lockfile decides what the Rust half compiles, and the
-      # build script and toolchain pin decide how any of it is built, so a
-      # change to one of them can break the build without touching a source.
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - 'assembly/native/**'
-      - 'scripts/install-rust-toolchain.sh'
-      - 'third-party/**'
-      - '.github/workflows/build-tos-linux-x86-64-shared.yml'
+  # The platform matrix (platform-matrix.yml) runs this for every pull request
+  # into main and every push to main that can affect a build, and nightly
+  # without the compile cache. It decides relevance itself, so this workflow
+  # has no path filter of its own.
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      no_ccache:
+        description: Build without the compile cache, so a cached object cannot hide a broken build
+        type: boolean
+        default: false
 
+# A literal group: inside a call, github.workflow is the caller's name, so every
+# matrix member would share one group. A pull request cancels its own older run;
+# any other run (a push, the nightly run) is never cancelled by another. The
+# cached and uncached builds of one run are separate groups.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: linux-x86-64-shared-${{ inputs.no_ccache && 'no-ccache' || 'ccache' }}-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io
@@ -49,6 +37,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04]
+    timeout-minutes: 190
     runs-on: ${{ matrix.os }}
     # Use pre-built builder image with Clang 21 + uv already installed.
     # No external script downloads at build time — eliminates supply chain risk.
@@ -80,8 +69,11 @@ jobs:
       run: |
         echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
 
+    # Pull requests read the cache that pushes to main save; saving one per pull
+    # request would evict it. The uncached build neither reads nor writes it.
     - name: Restore cache TOS
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      if: ${{ !inputs.no_ccache }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ~/.ccache
         key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
@@ -92,12 +84,21 @@ jobs:
       run: scripts/install-rust-toolchain.sh
 
     - name: Build TOS
+      env:
+        CCACHE_FLAG: ${{ !inputs.no_ccache && '-c' || '' }}
       run: |
         mkdir -p ~/.ccache
         cp assembly/native/build-ubuntu-shared.sh .
         chmod +x build-ubuntu-shared.sh
-        ./build-ubuntu-shared.sh -t -c
-        ccache -sp
+        ./build-ubuntu-shared.sh -t $CCACHE_FLAG
+        if [ -n "$CCACHE_FLAG" ]; then ccache -sp; fi
+
+    - name: Save cache TOS
+      if: ${{ always() && !inputs.no_ccache && github.event_name != 'pull_request' }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ~/.ccache
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
 
     - name: Verify the build does not modify the source tree
       run: |

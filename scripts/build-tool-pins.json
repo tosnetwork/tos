@@ -19,5 +19,10 @@
     "sha256": "601246087a682d1944e1e16dd85bc6e49560fe8b6d61255be2829178c8ed15d9",
     "upstream_sha1": "22105e410cf29afcf163760cc95522b9fb981121",
     "source": "Official HTTPS archive; upstream r27d release SHA-1 cross-check"
+  },
+  "actionlint-x86_64": {
+    "url": "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz",
+    "sha256": "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8",
+    "source": "v1.7.12 release asset; matched the release checksums file and the GitHub asset digest 2026-10-08"
   }
 }

@@ -1,0 +1,178 @@
+name: Platform matrix
+
+# Every supported platform builds and tests a change before it lands: Linux on
+# x86-64 and arm64, macOS 14 and 15 on arm64 and x86-64, the wasm toolchain, and
+# the Windows client toolchain with MSVC, MinGW64 and UCRT64. The nightly run and
+# a manual dispatch add the packaging lanes (AppImages, Android), cppcheck and a
+# build without the compile cache.
+#
+# The nightly run is platform-nightly.yml, which calls this workflow and then
+# reports. Members and tiers are defined in scripts/platform-matrix.json, and
+# scripts/check-workflow-policy.py checks that this file matches it. The
+# `changes` job decides relevance and fails safe; `platform-gate` judges every
+# member against the set the event requires (scripts/platform_gate.py).
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# A pull request cancels its own older run. A push to main and the nightly run
+# are never cancelled, so every landed commit gets its own verdict. Inside a
+# call, github.run_id is the caller's run.
+concurrency:
+  group: platform-matrix-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      relevant: ${{ steps.decide.outputs.relevant }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide relevance
+        id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: python3 scripts/platform_gate.py changes
+
+  linux-arm64-shared:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-linux-arm64-shared.yml
+
+  linux-x86-64-shared:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/build-tos-linux-x86-64-shared.yml
+
+  macos-14-arm64-portable:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-macos-14-arm64-portable.yml
+
+  macos-14-arm64-shared:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-macos-arm64-shared.yml
+
+  macos-15-arm64-shared:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-macos-15-arm64-shared.yml
+
+  macos-15-x86-64-portable:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-macos-15-x86-64-portable.yml
+
+  macos-15-x86-64-shared:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-macos-15-x86-64-shared.yml
+
+  wasm:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-wasm-emscripten.yml
+
+  windows-msvc:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/tos-x86-64-windows.yml
+
+  windows-mingw64:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-windows-mingw64.yml
+
+  windows-ucrt64:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ./.github/workflows/build-tos-windows-ucrt64.yml
+
+  android-toslib:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/build-tos-linux-android-toslib.yml
+
+  linux-x86-64-appimage:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/build-tos-linux-x86-64-appimage.yml
+
+  linux-arm64-appimage:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/build-tos-linux-arm64-appimage.yml
+
+  cppcheck:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    uses: ./.github/workflows/tos-ccpcheck.yml
+
+  linux-x86-64-shared-no-ccache:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/build-tos-linux-x86-64-shared.yml
+    with:
+      no_ccache: true
+
+  platform-gate:
+    needs:
+      - changes
+      - linux-arm64-shared
+      - linux-x86-64-shared
+      - macos-14-arm64-portable
+      - macos-14-arm64-shared
+      - macos-15-arm64-shared
+      - macos-15-x86-64-portable
+      - macos-15-x86-64-shared
+      - wasm
+      - windows-msvc
+      - windows-mingw64
+      - windows-ucrt64
+      - android-toslib
+      - linux-x86-64-appimage
+      - linux-arm64-appimage
+      - cppcheck
+      - linux-x86-64-shared-no-ccache
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - name: Judge the members
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 scripts/platform_gate.py gate

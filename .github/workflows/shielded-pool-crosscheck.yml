@@ -40,7 +40,7 @@ on:
       - ".github/actions/native-cache/**"
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [main, master, testnet]
+    branches: [main]
     paths:
       - "crypto/smartcont/shielded/**"
       - "crypto/smartcont/tos-shielded-pool-v1.fc"

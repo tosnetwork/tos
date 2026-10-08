@@ -19,7 +19,7 @@ name: Network safety ASAN
 
 on:
   pull_request:
-    branches: [master, testnet, main]
+    branches: [main]
     types: [opened, reopened, synchronize, ready_for_review]
     paths:
       - 'adnl/**'
@@ -40,7 +40,7 @@ on:
   workflow_call:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: network-safety-asan-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -55,6 +55,7 @@ permissions:
 jobs:
   network-safety:
     name: instrumented network-safety tests
+    timeout-minutes: 100
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

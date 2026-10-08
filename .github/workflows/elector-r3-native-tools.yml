@@ -8,6 +8,10 @@ on:
     paths: [.github/workflows/elector-r3-native-tools.yml]
   workflow_dispatch:
 
+concurrency:
+  group: elector-r3-native-tools-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

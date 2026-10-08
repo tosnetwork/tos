@@ -3,9 +3,9 @@ name: Source hygiene
 on:
   pull_request:
     # feature/** keeps stacked PRs covered; see contract-sandboxes.yml.
-    branches: [master, testnet, main, 'feature/**']
+    branches: [main, 'feature/**']
   push:
-    branches: [master, testnet, main]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   rust-format:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -26,6 +27,7 @@ jobs:
         run: make -C tosctl/src fmt-check
 
   native-registry-reproducibility:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

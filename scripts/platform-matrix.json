@@ -1,0 +1,38 @@
+{
+  "orchestrator": "platform-matrix.yml",
+  "nightly": "platform-nightly.yml",
+  "documentation_only": [
+    "doc/**",
+    "**/*.md",
+    "memo/**",
+    "LICENSE*",
+    ".gitignore",
+    ".github/ISSUE_TEMPLATE/**"
+  ],
+  "tiers": {
+    "platform": "every relevant pull request into main and push to main, the nightly run and a manual dispatch",
+    "nightly": "the nightly run and a manual dispatch only"
+  },
+  "members": {
+    "linux-arm64-shared": {"workflow": "build-tos-linux-arm64-shared.yml", "tier": "platform"},
+    "linux-x86-64-shared": {"workflow": "build-tos-linux-x86-64-shared.yml", "tier": "platform"},
+    "macos-14-arm64-portable": {"workflow": "build-tos-macos-14-arm64-portable.yml", "tier": "platform"},
+    "macos-14-arm64-shared": {"workflow": "build-tos-macos-arm64-shared.yml", "tier": "platform"},
+    "macos-15-arm64-shared": {"workflow": "build-tos-macos-15-arm64-shared.yml", "tier": "platform"},
+    "macos-15-x86-64-portable": {"workflow": "build-tos-macos-15-x86-64-portable.yml", "tier": "platform"},
+    "macos-15-x86-64-shared": {"workflow": "build-tos-macos-15-x86-64-shared.yml", "tier": "platform"},
+    "wasm": {"workflow": "build-tos-wasm-emscripten.yml", "tier": "platform"},
+    "windows-msvc": {"workflow": "tos-x86-64-windows.yml", "tier": "platform"},
+    "windows-mingw64": {"workflow": "build-tos-windows-mingw64.yml", "tier": "platform"},
+    "windows-ucrt64": {"workflow": "build-tos-windows-ucrt64.yml", "tier": "platform"},
+    "android-toslib": {"workflow": "build-tos-linux-android-toslib.yml", "tier": "nightly"},
+    "linux-x86-64-appimage": {"workflow": "build-tos-linux-x86-64-appimage.yml", "tier": "nightly"},
+    "linux-arm64-appimage": {"workflow": "build-tos-linux-arm64-appimage.yml", "tier": "nightly"},
+    "cppcheck": {"workflow": "tos-ccpcheck.yml", "tier": "nightly"},
+    "linux-x86-64-shared-no-ccache": {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "tier": "nightly",
+      "with": {"no_ccache": true}
+    }
+  }
+}

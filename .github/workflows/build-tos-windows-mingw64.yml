@@ -1,24 +1,23 @@
 name: MSYS2 MinGW64 Build
 
 on:
-  pull_request:
-    branches: [master, testnet]
-    types: [opened, reopened, synchronize, ready_for_review]
-  push:
-    branches: [master, testnet]
   workflow_dispatch:
   workflow_call:
 
+# A literal group: inside a call, github.workflow is the caller's name, so every
+# matrix member would share one group. A pull request cancels its own older run;
+# any other run (a push, the nightly run, a tag) is never cancelled by another.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: windows-mingw64-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: windows-latest
+    timeout-minutes: 240
+    runs-on: windows-2025
 
     defaults:
       run:
