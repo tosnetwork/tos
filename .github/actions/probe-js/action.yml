@@ -1,0 +1,5 @@
+name: tos-ci javascript probe
+description: A JavaScript action whose entrypoint leaves a recognisable exec in the audit stream.
+runs:
+  using: node20
+  main: index.js

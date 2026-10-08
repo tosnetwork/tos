@@ -1,38 +1,14 @@
 name: Runner verification
 
-# Memory-pressure control: three admitted jobs touch most of their VM's RAM at
-# the same time while the host has lowered the CI slice's MemoryMax below the
-# total. The OOM kill must land inside a CI unit, never outside the slice.
+# Idle between control rounds: runs only when dispatched by hand.
 on:
-  pull_request:
-  push:
-    branches: [ci/runner-verify]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: runner-verify-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  memory-pressure:
-    if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        n: [1, 2, 3]
+  idle:
+    runs-on: ubuntu-24.04
     steps:
-      - run: |
-          echo TOS_CI_PROBE_MEMORY_${{ matrix.n }}
-          python3 - <<'EOF'
-          import time
-          size = int(13.5 * 2**30)
-          block = bytearray(size)
-          for i in range(0, size, 4096):
-              block[i] = 1
-          print("touched", size, "bytes", flush=True)
-          time.sleep(240)
-          EOF
+      - run: echo idle

@@ -1,0 +1,5 @@
+name: tos-ci docker probe
+description: A Dockerfile action whose build step and entrypoint leave recognisable execs in the audit stream.
+runs:
+  using: docker
+  image: Dockerfile
