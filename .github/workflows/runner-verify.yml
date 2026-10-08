@@ -1,9 +1,10 @@
 name: Runner verification
 
-# Adversarial set, with execution auditing on in the VMs. The push run (not
-# main) must be refused by the admission hook before anything job-controlled
-# executes, whatever the job sets; the pull_request run is the positive
-# control and must execute visibly.
+# Audit-loss evidence round: the docker-pull load that showed a serial gap,
+# three times, each printing guest-side evidence after its load: the audit
+# log's size and digest (compared byte-for-byte with the host archive), serial
+# gaps in the guest's own log, and audit records the kernel printed to its log
+# instead of delivering them.
 on:
   pull_request:
   push:
@@ -17,43 +18,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  env-and-shell:
+  audit-evidence:
     runs-on: [self-hosted, linux, x64, tos-vm]
     timeout-minutes: 10
-    env:
-      ACTIONS_RUNNER_HOOK_JOB_STARTED: ''
-    defaults:
-      run:
-        shell: bash --noprofile --norc -e {0}
-    steps:
-      - run: echo TOS_CI_PROBE_ENV_SHELL_STEP
-  container:
-    runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 10
-    container:
-      image: busybox:1.36
-    steps:
-      - run: echo TOS_CI_PROBE_CONTAINER_STEP
-  services:
-    runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3]
     services:
       probe:
         image: redis:7-alpine
     steps:
-      - run: echo TOS_CI_PROBE_SERVICES_STEP
-  composite:
-    runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: ./.github/actions/tos-ci-probe
-  # Control, test-only: kill the audit forwarder as root inside an admitted
-  # job. That lifetime's drain must time out and the run must be invalid.
-  forwarder-kill:
-    runs-on: [self-hosted, linux, x64, tos-vm]
-    timeout-minutes: 10
-    steps:
-      - run: |
-          echo TOS_CI_PROBE_FORWARDER_KILL
-          sudo systemctl kill --signal=SIGKILL tos-ci-audit-forward.service
+      - run: echo TOS_CI_PROBE_EVIDENCE_${{ matrix.n }}
+      - name: Guest-side audit evidence
+        run: |
+          sudo python3 - <<'EOF'
+          import hashlib, re, subprocess
+          data = open("/var/log/audit/audit.log", "rb").read()
+          print(f"GUEST-LOG size={len(data)} sha256={hashlib.sha256(data).hexdigest()}")
+          rec = re.compile(rb"^type=([A-Z_]+) msg=audit\(\d+\.\d+:(\d+)\):")
+          serials = sorted({int(m.group(2)) for l in data.split(b"\n") if (m := rec.match(l)) and not m.group(1).startswith(b"DAEMON_")})
+          gaps = [(a, b) for a, b in zip(serials, serials[1:]) if b - a > 1]
+          print(f"GUEST-GAPS first={serials[0]} last={serials[-1]} gaps={gaps}")
+          kmsg = subprocess.run(["dmesg"], capture_output=True, text=True).stdout
+          printed = sorted({int(s) for s in re.findall(r"audit\(\d+\.\d+:(\d+)\)", kmsg)})
+          print(f"KMSG-AUDIT count={len(printed)} serials={printed[:40]}")
+          print("KMSG-LINES", [l for l in kmsg.splitlines() if "audit" in l and ("lost" in l or "backlog" in l or "kauditd" in l)][:10])
+          print("STATUS", subprocess.run(["auditctl", "-s"], capture_output=True, text=True).stdout.replace("\n", " "))
+          EOF
