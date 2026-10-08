@@ -68,8 +68,16 @@ if [ "${GITHUB_ACTIONS}" = "true" ] || \
   CMAKE_EXTRA_ARGS+=(-DTOS_PRODUCTION_BUILD=ON)
 fi
 
+debug_flag=""
+if [ "${TOS_MACOS_DEBUG_INFO:-0}" = "1" ]; then
+  # Keep DWARF in the objects, so a crash backtrace taken in CI resolves to
+  # source frames through the debug map (the objects stay in the build tree).
+  debug_flag="-g "
+  CMAKE_EXTRA_ARGS+=(-DCMAKE_C_FLAGS=-g)
+fi
+
 cmake -GNinja -DCMAKE_BUILD_TYPE=Release .. \
--DCMAKE_CXX_FLAGS="-nostdinc++ -isystem ${SDKROOT}/usr/include/c++/v1 -isystem ${SDKROOT}/usr/include" \
+-DCMAKE_CXX_FLAGS="${debug_flag}-nostdinc++ -isystem ${SDKROOT}/usr/include/c++/v1 -isystem ${SDKROOT}/usr/include" \
 -DCMAKE_SYSROOT="$(xcrun --show-sdk-path)" \
 -DCMAKE_INSTALL_PREFIX="$(pwd)/install" \
 "${CMAKE_EXTRA_ARGS[@]}"
