@@ -14,11 +14,14 @@
 // amount (tens of MiB) once and reads what the server answers.
 #include <arpa/inet.h>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
 #include <memory>
 #include <netinet/in.h>
+#include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -104,6 +107,10 @@ class TestConnection final : public adnl::AdnlExtConnection {
 class Peer {
  public:
   explicit Peer(int fd) : fd_(fd) {
+    // Writes happen on the thread that later runs the reader, so a write that
+    // the socket cannot hold must fail instead of blocking forever.
+    const int flags = ::fcntl(fd_, F_GETFL, 0);
+    require(flags >= 0 && ::fcntl(fd_, F_SETFL, flags | O_NONBLOCK) == 0, "cannot make the peer non-blocking");
     td::SecureString init(256);
     td::Random::secure_bytes(init.as_mutable_slice());
     // The server decrypts its input with the second key and IV of the block.
@@ -153,10 +160,21 @@ class Peer {
     return out;
   }
   void write_raw(td::Slice bytes) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (!bytes.empty()) {
       auto n = ::send(fd_, bytes.data(), bytes.size(), MSG_NOSIGNAL);
-      require(n > 0, "peer write failed");
-      bytes.remove_prefix(static_cast<size_t>(n));
+      if (n > 0) {
+        bytes.remove_prefix(static_cast<size_t>(n));
+        continue;
+      }
+      require(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK), "peer write failed");
+      const auto left =
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+      require(
+          left > 0,
+          "peer write did not drain within 10 s: the socket buffer cannot hold a write made before the reader runs");
+      pollfd ready{fd_, POLLOUT, 0};
+      ::poll(&ready, 1, static_cast<int>(left));
     }
   }
   int fd_;
@@ -186,6 +204,18 @@ class Harness {
   Opened open(size_t max_pending, double lifetime, std::string source = "v4:192.0.2.1") {
     int fds[2];
     require(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
+    // A test writes up to a few hundred KB before the reader runs. Linux's
+    // default socketpair buffers hold that; macOS's (about 8 KB) do not, so size
+    // them explicitly and check what the kernel granted.
+    const int wanted = 1 << 20;
+    for (int fd : fds) {
+      require(::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &wanted, sizeof(wanted)) == 0, "cannot size SO_SNDBUF");
+      require(::setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &wanted, sizeof(wanted)) == 0, "cannot size SO_RCVBUF");
+      int granted = 0;
+      socklen_t size = sizeof(granted);
+      require(::getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &granted, &size) == 0 && granted >= (256 << 10),
+              "the kernel granted a socket buffer below 256 KB");
+    }
     auto socket = td::SocketFd::from_native_fd(td::NativeFd(fds[0]));
     require(socket.is_ok(), "cannot wrap the server end");
     auto probe = std::make_shared<Probe>();

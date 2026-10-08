@@ -645,7 +645,10 @@ TEST(JsonRpcTransport, a_wrong_key_never_reaches_the_body_or_the_body_reservatio
     // Headers and the first megabyte of the body in one write.
     Client together(port, 0);
     ASSERT_TRUE(together.connect());
-    ASSERT_TRUE(together.send_all(post_headers(declared, "wrong-key") + body.substr(0, 1 << 20)));
+    // The server answers from the headers and closes without reading the body,
+    // so the tail of this write may fail once it has: the reply below is the
+    // check. (A large kernel send buffer, as on Linux, absorbs the whole write.)
+    (void)together.send_all(post_headers(declared, "wrong-key") + body.substr(0, 1 << 20));
     std::string status, reply;
     ASSERT_TRUE(together.read_response(5000, status, reply));
     ASSERT_EQ(status, std::string("HTTP/1.1 401 Unauthorized"));
