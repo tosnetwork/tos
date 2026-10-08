@@ -11,6 +11,37 @@ encrypted note delivery**.
 [Technical overview (PDF)](doc/pq.pdf) · [Overview source](doc/pq.tex) ·
 [Documentation](doc/README.md) · [Build guide](BUILD.md)
 
+## Build and test status
+
+These GitHub Actions badges show the latest matching **workflow** run on `main`,
+not a live verification of the current commit or an overall security approval.
+
+**Core native and chain validation**
+
+[![Linux x86-64 native](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-shared.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-shared.yml)
+[![Linux x86-64 Werror](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-werror.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-werror.yml)
+[![Linux ARM64 native](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-arm64-shared.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-arm64-shared.yml)
+[![PQ chain + Python](https://github.com/tosnetwork/tos/actions/workflows/branch-chain-python.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/branch-chain-python.yml)
+
+**Platform and distributable builds**
+
+[![macOS ARM64 shared](https://github.com/tosnetwork/tos/actions/workflows/build-tos-macos-15-arm64-shared.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-macos-15-arm64-shared.yml)
+[![macOS Intel shared](https://github.com/tosnetwork/tos/actions/workflows/build-tos-macos-15-x86-64-shared.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-macos-15-x86-64-shared.yml)
+[![Linux x86-64 AppImage](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-appimage.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-x86-64-appimage.yml)
+[![Linux ARM64 AppImage](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-arm64-appimage.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-arm64-appimage.yml)
+[![macOS ARM64 portable](https://github.com/tosnetwork/tos/actions/workflows/build-tos-macos-14-arm64-portable.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-macos-14-arm64-portable.yml)
+[![macOS Intel portable](https://github.com/tosnetwork/tos/actions/workflows/build-tos-macos-15-x86-64-portable.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-macos-15-x86-64-portable.yml)
+[![Windows x86-64](https://github.com/tosnetwork/tos/actions/workflows/tos-x86-64-windows.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/tos-x86-64-windows.yml)
+[![WebAssembly](https://github.com/tosnetwork/tos/actions/workflows/build-tos-wasm-emscripten.yml/badge.svg?branch=main)](https://github.com/tosnetwork/tos/actions/workflows/build-tos-wasm-emscripten.yml)
+
+**Android:** [Toslib Android build](https://github.com/tosnetwork/tos/actions/workflows/build-tos-linux-android-toslib.yml) runs on `master`/`testnet`, release tags or manual dispatch, not `main`; no `main` badge is shown.
+
+A green badge means that workflow's run succeeded (including its matrix jobs);
+it does **not** mean every TOS test or release gate passed. Windows and WASM
+badges primarily cover builds/artifacts, not full native CTest. Path-filtered
+or infrequently run workflows may display an older result. For a PR or release,
+use the checks tied to its exact commit and the [CI coverage contract](ci/README.md).
+
 ## Security by layer
 
 Different mechanisms protect different things. TOS does not treat a PQ

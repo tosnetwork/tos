@@ -351,6 +351,33 @@ Actions-owned required check with an unauthenticated local status of the same na
 A wrapper must propagate failure, cancellation, missing evidence and skipped
 prerequisites; `always()` followed by unconditional success is not a gate.
 
+### README workflow status badges (presentation only)
+
+Expose native GitHub Actions workflow status badges near the top of the root
+`README.md`. Use **existing** workflow filenames in `.github/workflows/`, an
+`actions/workflows/<filename>/badge.svg?branch=main` image and a link to its
+workflow run page. This is read-only GitHub UI: add no badge publisher, new
+check contexts, privileges, triggers or CI scheduling changes just for badges.
+
+Show Linux x86 shared/strict, ARM shared and PQ/Python separately from macOS
+shared/portable, Linux AppImage, Windows and WASM checks. Each badge reports
+one workflow (including all matrix jobs), not an individual OS version/job.
+A green build-only workflow cannot certify CTest, real-chain security, release
+eligibility, or another platform's success. These are status displays, not
+the three-tier CI qualification result or an exact-commit coverage ledger.
+
+Only show `main`-filtered badges for workflows that actually trigger on `main`.
+The Android Toslib workflow currently targets `master`, `testnet`, `v*` tags
+and manual dispatch, not `main`; link to it but show no misleading main badge.
+If that trigger policy changes, review the README mapping with the workflow.
+
+After workflow rename, event/path-filter or OS matrix changes, update the
+badge mapping. Path-filtered or seldom-run green badges can predate current
+`main`; missing/stale badge data cannot qualify a build. The authoritative
+merge/release evidence remains required checks at the **exact** PR merge commit
+and immutable release source. README badges do not satisfy branch protection
+or replace source/test/asset completeness verification.
+
 ## 9. Quantum-specific acceptance cannot be optimized away
 
 Retain all eight changed/new workflow boundaries in section 2, including the existing
