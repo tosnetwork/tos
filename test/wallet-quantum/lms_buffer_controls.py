@@ -20,7 +20,7 @@ def main():
     source = SOURCE.read_text()
     controls = [
         ("chain-index", "chain_input[21] = static_cast<unsigned char>(i);", "chain_input[21] = 0;"),
-        ("chain-hash", "SHA256(chain_input.data(), chain_input.size(), tmp.data());", ""),
+        ("chain-hash", "hash256(chain_input.data(), chain_input.size(), tmp.data());", ""),
     ]
 
     def command(label, argv):

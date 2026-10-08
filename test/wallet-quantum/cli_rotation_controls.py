@@ -272,8 +272,13 @@ def main():
             "--features",
             "native-wallet-vault",
             "--lib",
-            "checkpoint",
             "--",
+            "--exact",
+            # Named in full: a bare "checkpoint" filter also picks up any
+            # unrelated test that mentions a checkpoint.
+            "chain_provider::checkpoint_tests::checkpoint_rejects_same_height_reorganization",
+            "proven_getters::fee_state_tests::account_checkpoint_binding_includes_anchor_time_and_block",
+            "proven_getters::fee_state_tests::historical_fee_requires_matching_fresh_live_checkpoint",
             "--nocapture",
         ]
         code, log, record = execute(command, label + "-units", 1200)
