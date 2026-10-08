@@ -2,10 +2,10 @@ name: Ubuntu TOS build (AppImages, arm64)
 
 on:
   pull_request:
-    branches: [master, testnet]
+    branches: [main, master, testnet]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [master, testnet]
+    branches: [main, master, testnet]
     tags: ['v*']
   workflow_dispatch:
   workflow_call:
@@ -93,3 +93,4 @@ jobs:
         name: tos-arm64-linux
         path: appimages/artifacts
         retention-days: 14
+        if-no-files-found: error

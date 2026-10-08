@@ -2,10 +2,10 @@ name: Ubuntu TOS build (AppImages, x86-64)
 
 on:
   pull_request:
-    branches: [master, testnet]
+    branches: [main, master, testnet]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [master, testnet]
+    branches: [main, master, testnet]
     tags: ['v*']
   workflow_dispatch:
   workflow_call:
@@ -43,7 +43,8 @@ jobs:
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-portable-ccache
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-portable-ccache-${{ steps.date-stamp.outputs.timestamp }}
+        restore-keys: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-portable-ccache-
 
     # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install repository-pinned Rust toolchain
@@ -92,3 +93,4 @@ jobs:
         name: tos-x86_64-linux
         path: appimages/artifacts
         retention-days: 14
+        if-no-files-found: error

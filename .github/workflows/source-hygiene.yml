@@ -23,26 +23,20 @@ jobs:
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
       - name: Check Rust formatting with the pinned stable toolchain
-        run: make -C tosctl/src fmt-check
+        run: ci/run rust-format
 
   native-registry-reproducibility:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Configure compiler toolchain
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - name: Build FunC and Fift
-        run: cmake --build build --target func fift -j2
-      - name: Reproduce the frozen Native Registry release
-        run: scripts/test-tos-service-native-registry-v1.sh
-      - name: Verify the nominator pool code lock
-        run: scripts/check-nominator-pool-code-lock.sh
-      - name: Verify the single-nominator code lock
-        run: scripts/check-single-nominator-code-lock.sh
-      - name: Verify a validator node cannot authorise a controller
-        run: scripts/check-root-authority-off-the-node.sh
-      - name: Verify generated intermediates stay in the build tree
-        run: |
-          cmake --build build --target gen_fif -j2
-          test ! -e crypto/smartcont/auto
-          git diff --exit-code
+      - name: Validate CI entrypoints before building native tools
+        run: ci/run preflight
+      - name: Restore compatible native compiler objects
+        uses: ./.github/actions/native-cache
+        with:
+          profile: native-registry-release
+      - name: Build and verify native registry, staking locks and node authority
+        run: ci/run native-registry
+      - name: Report native compiler cache statistics
+        if: always()
+        run: ccache --show-stats

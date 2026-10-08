@@ -51,6 +51,9 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache
 
+    - name: Validate CI entrypoints before installing the build toolchain
+      run: ci/run preflight
+
     - name: Install Clang 21
       run: |
         sudo scripts/install-llvm-toolchain.sh 21 all
@@ -69,20 +72,7 @@ jobs:
       run: scripts/install-rust-toolchain.sh
 
     - name: Build TOS
-      run: |
-        cmake -S . -B build -G Ninja \
-          -DCMAKE_C_COMPILER=clang-21 \
-          -DCMAKE_CXX_COMPILER=clang++-21 \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DTOS_USE_JEMALLOC=ON \
-          -DTOS_USE_LLD=On \
-          -DTOS_WERROR_BUILD=On \
-          -DTOS_ARCH="$BUILD_ARCH" \
-          -DPORTABLE="$BUILD_ARCH" \
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-        ccache --zero-stats
-        ninja -C build
+      run: ci/run strict-build
 
     # The hit rate is the evidence that the cache works; a run that hits nothing is a cold
     # build, not a broken one.
@@ -134,9 +124,12 @@ jobs:
           ':(exclude)third-party/' > changed-files.txt
         grep -cE '\.py$' changed-files.txt > python-count.txt || echo 0 > python-count.txt
         echo "python_count=$(cat python-count.txt)" >> "$GITHUB_OUTPUT"
+        grep -cE '\.(h|hpp|cpp)$' changed-files.txt > cpp-count.txt || echo 0 > cpp-count.txt
+        echo "cpp_count=$(cat cpp-count.txt)" >> "$GITHUB_OUTPUT"
         echo "Files touched: $(wc -l < changed-files.txt)"
 
     - name: Install Clang 21 formatting tools
+      if: steps.changed.outputs.cpp_count != '0'
       run: |
         sudo scripts/install-llvm-toolchain.sh 21
         sudo apt-get install -y clang-format-21
@@ -157,6 +150,7 @@ jobs:
         fi
 
     - name: Check C++ formatting of changed lines
+      if: steps.changed.outputs.cpp_count != '0'
       shell: bash
       run: |
         # The formatter exits non-zero when it has something to say, and this step runs

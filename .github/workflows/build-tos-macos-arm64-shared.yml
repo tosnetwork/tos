@@ -2,10 +2,10 @@ name: MacOS-14 TOS build (shared, arm64)
 
 on:
   pull_request:
-    branches: [master, testnet]
+    branches: [main, master, testnet]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [master, testnet]
+    branches: [main, master, testnet]
   workflow_dispatch:
   workflow_call:
 
@@ -29,8 +29,9 @@ jobs:
         run: |
           echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
 
-      - name: Create ~/.ccache
+      - name: Prepare native test tools
         run: |
+          brew install ccache ripgrep
           mkdir -p ~/.ccache
 
       - name: Cache TOS
@@ -53,10 +54,7 @@ jobs:
           ccache -sp
 
       - name: Run Tests
-        run: |
-          cd build
-          ctest --output-on-failure --timeout 1800
+        run: ci/run native-tests
 
       - name: Run toslib integration test
-        run: |
-          ./test/toslib/integration/test_integration.sh
+        run: ci/run installed-consumer

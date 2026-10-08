@@ -4,6 +4,10 @@ on:
     paths:
       - '.github/actions/native-cache/**'
       - '.github/workflows/**'
+      - 'ci/**'
+      - 'scripts/test_ci_entrypoints.py'
+      - 'scripts/test_ci_native.py'
+      - 'scripts/test_ci_docker.py'
       - 'scripts/ci_workflow_inventory.py'
       - 'scripts/test_ci_workflow_inventory.py'
       - 'doc/ci-local-first-baseline.json'
@@ -12,6 +16,10 @@ on:
     paths:
       - '.github/actions/native-cache/**'
       - '.github/workflows/**'
+      - 'ci/**'
+      - 'scripts/test_ci_entrypoints.py'
+      - 'scripts/test_ci_native.py'
+      - 'scripts/test_ci_docker.py'
       - 'scripts/ci_workflow_inventory.py'
       - 'scripts/test_ci_workflow_inventory.py'
       - 'doc/ci-local-first-baseline.json'
@@ -26,10 +34,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Check workflow inventory metadata and drift rejection
-        run: |
-          python3 scripts/ci_workflow_inventory.py --verify-baseline doc/ci-local-first-baseline.json
-          python3 scripts/test_ci_workflow_inventory.py -v
+      - name: Check shared CI entrypoints and workflow inventory
+        run: ci/run preflight
       - name: Prepare the cache exactly as consuming jobs do
         uses: ./.github/actions/native-cache
         with:

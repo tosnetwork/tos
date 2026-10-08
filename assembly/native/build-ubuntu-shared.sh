@@ -17,10 +17,20 @@ while getopts 'tac' flag; do
   esac
 done
 
+# Bound worker count on local development hosts without changing compiler flags.
+NINJA_PARALLEL=()
+if [ -n "${CI_BUILD_JOBS:-}" ]; then
+  if [[ ! "$CI_BUILD_JOBS" =~ ^[1-9][0-9]{0,3}$ ]]; then
+    echo "CI_BUILD_JOBS must be an integer from 1 to 9999" >&2
+    exit 2
+  fi
+  NINJA_PARALLEL=(-j "$CI_BUILD_JOBS")
+fi
+
 if [ "$with_ccache" = true ]; then
-  mkdir -p ~/.ccache
-  export CCACHE_DIR=~/.ccache
-  ccache -M 0
+  export CCACHE_DIR="${CCACHE_DIR:-$HOME/.ccache}"
+  mkdir -p "$CCACHE_DIR"
+  ccache -M "${CCACHE_MAXSIZE:-2G}"
   test $? -eq 0 || { echo "ccache not installed"; exit 1; }
 else
   export CCACHE_DISABLE=1
@@ -69,13 +79,13 @@ cmake -GNinja .. \
 test $? -eq 0 || { echo "Can't configure tos"; exit 1; }
 
 if [ "$with_tests" = true ]; then
-ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
+ninja "${NINJA_PARALLEL[@]}" storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
       validator-engine lite-client validator-engine-console blockchain-explorer \
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy dht-ping-servers dht-resolve \
  create-state emulator proxy-liteserver tos-pq-consensus-key tos-pq-controller tos-pq-vote all-tests install
       test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 else
-ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
+ninja "${NINJA_PARALLEL[@]}" storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
       validator-engine lite-client validator-engine-console blockchain-explorer \
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy \
  create-state emulator proxy-liteserver tos-pq-consensus-key tos-pq-controller tos-pq-vote dht-ping-servers dht-resolve
@@ -90,7 +100,7 @@ cmake -GNinja -S ../crypto/pq/tools -B pq-key \
 -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Release \
 -DOPENSSL_ROOT_DIR="$(pwd)/third-party/openssl" -DOPENSSL_USE_STATIC_LIBS=TRUE
 test $? -eq 0 || { echo "Can't configure tos-pq-key"; exit 1; }
-ninja -C pq-key tos-pq-key
+ninja "${NINJA_PARALLEL[@]}" -C pq-key tos-pq-key
 test $? -eq 0 || { echo "Can't compile tos-pq-key"; exit 1; }
 
 # simple binaries' test

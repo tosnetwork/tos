@@ -1,0 +1,82 @@
+{
+  "base_commit": "fcd7f6bcab3f2d4fa4bddca96c0848af77fedc1a",
+  "scope": "CI execution contracts and miniature CMake/CTest; not project build qualification",
+  "tests": {
+    "scripts/test_ci_entrypoints.py": {
+      "tests": 27,
+      "exit": 0
+    },
+    "scripts/test_ci_native.py": {
+      "tests": 23,
+      "exit": 0
+    },
+    "scripts/test_ci_docker.py": {
+      "tests": 6,
+      "exit": 0
+    }
+  },
+  "controls": [
+    {
+      "control": "core-test-floor",
+      "exit": 1,
+      "tests": [
+        "NativeReceiptTests.test_each_missing_core_test_is_rejected"
+      ],
+      "failure_summary": "FAILED (failures=13)"
+    },
+    {
+      "control": "complete-result-set",
+      "exit": 1,
+      "tests": [
+        "NativeReceiptTests.test_each_omitted_execution_is_rejected",
+        "NativeReceiptTests.test_unexpected_execution_is_rejected"
+      ],
+      "failure_summary": "FAILED (failures=14)"
+    },
+    {
+      "control": "skipped-status",
+      "exit": 1,
+      "tests": [
+        "NativeReceiptTests.test_nonrun_and_missing_status_are_rejected"
+      ],
+      "failure_summary": "FAILED (failures=3)"
+    },
+    {
+      "control": "stale-green-removal",
+      "exit": 1,
+      "tests": [
+        "NativeReceiptTests.test_real_ctest_failure_propagates_and_removes_old_green"
+      ],
+      "failure_summary": "FAILED (failures=1)"
+    },
+    {
+      "control": "main-trigger",
+      "exit": 1,
+      "tests": [
+        "WorkflowCoverageTests.test_all_platforms_cover_main_with_original_runner_identities"
+      ],
+      "failure_summary": "FAILED (errors=1)"
+    },
+    {
+      "control": "empty-artifact",
+      "exit": 1,
+      "tests": [
+        "WorkflowCoverageTests.test_packaging_fails_when_artifacts_are_missing"
+      ],
+      "failure_summary": "FAILED (failures=1)"
+    }
+  ],
+  "restored_tests_passed": true,
+  "not_run": [
+    "complete TOS build",
+    "Docker daemon or image build",
+    "native ARM/macOS/Windows execution",
+    "performance benchmark"
+  ],
+  "coverage_boundary": {
+    "main_platform_adapters": 10,
+    "empty_artifact_producers": 6,
+    "native_ctest": "every registered test, with an independent foundational floor",
+    "local_aggregate": "native only; not all workflows"
+  }
+}

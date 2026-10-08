@@ -1,0 +1,33 @@
+{
+  "source_commit": "fcd7f6bcab3f2d4fa4bddca96c0848af77fedc1a",
+  "local_entrypoint": "ci/run",
+  "full_native_test_driver": "ci/native_tests.py",
+  "platform_workflows": [
+    "build-tos-linux-arm64-shared.yml",
+    "build-tos-linux-arm64-appimage.yml",
+    "build-tos-linux-x86-64-appimage.yml",
+    "build-tos-macos-14-arm64-portable.yml",
+    "build-tos-macos-15-arm64-shared.yml",
+    "build-tos-macos-15-x86-64-portable.yml",
+    "build-tos-macos-15-x86-64-shared.yml",
+    "build-tos-macos-arm64-shared.yml",
+    "build-tos-wasm-emscripten.yml",
+    "tos-x86-64-windows.yml"
+  ],
+  "coverage": {
+    "strict-build": "Clang 21 Release Werror; not a runtime test pass",
+    "native": "Linux shared + all registered CTest + full Python + live chain + installed consumer",
+    "source-guards": "Exact configured source-guard inventory and execution",
+    "native-registry": "Frozen registry, staking code locks, controller authority, generated-source cleanliness",
+    "rust-format": "Repository-pinned Rust formatter",
+    "falcon": "Existing x86/ARM AUTH, compiled mutations, sanitizers, live-chain and parity; cache-only changes"
+  },
+  "not_claimed": [
+    "all-workflow local parity",
+    "macOS/Windows execution on Linux",
+    "Clang 22 qualification",
+    "full-project Python typecheck debt resolved",
+    "measured speedup",
+    "branch-protection changes"
+  ]
+}

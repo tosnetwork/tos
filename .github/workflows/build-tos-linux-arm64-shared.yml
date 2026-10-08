@@ -2,10 +2,10 @@ name: Ubuntu TOS build (arm64)
 
 on:
   pull_request:
-    branches: [master, testnet]
+    branches: [main, master, testnet]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [master, testnet]
+    branches: [main, master, testnet]
   workflow_dispatch:
   workflow_call:
 
@@ -69,10 +69,7 @@ jobs:
         ccache -sp
 
     - name: Run Tests
-      run: |
-        cd build
-        ctest --output-on-failure --timeout 1800
+      run: ci/run native-tests
 
     - name: Run toslib integration test
-      run: |
-        ./test/toslib/integration/test_integration.sh
+      run: ci/run installed-consumer

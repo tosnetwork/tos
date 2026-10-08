@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Run only the Linux profiles supported by the builder, in an isolated container.
+set -euo pipefail
+if [ "$#" -ne 2 ]; then
+  echo 'Usage: ci/docker <builder-image@sha256:digest> <task>' >&2
+  exit 2
+fi
+image="$1"
+task="$2"
+if [[ ! "$image" =~ ^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$ ]] &&
+   [[ ! "$image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo 'An immutable builder digest or local image ID is required, not a mutable tag.' >&2
+  exit 2
+fi
+case "$task" in
+  native|native-build|native-tests|native-python-env|native-python|native-integrations|installed-consumer|strict-build|preflight) ;;
+  *) echo 'Task is not a supported builder-image profile.' >&2; exit 2 ;;
+esac
+if [ "$(uname -s)" != Linux ] || [ "$(uname -m)" != x86_64 ]; then
+  echo 'This builder adapter requires native Linux x86_64; emulation is not parity.' >&2
+  exit 2
+fi
+jobs="${CI_BUILD_JOBS:-8}"
+memory="${CI_DOCKER_MEMORY:-16g}"
+if [[ ! "$jobs" =~ ^[1-9][0-9]{0,3}$ ]] || [[ ! "$memory" =~ ^[1-9][0-9]*[kmg]$ ]]; then
+  echo 'Invalid worker count or Docker memory limit.' >&2
+  exit 2
+fi
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+if [ ! -d "$root/.git" ]; then
+  echo 'Use a dedicated self-contained clone; linked worktree metadata is outside this mount.' >&2
+  exit 2
+fi
+cache="${TOS_CI_CACHE_DIR:-$HOME/.cache/tos-ci}"
+mkdir -p -- "$cache"
+cache="$(cd -- "$cache" && pwd -P)"
+if [[ "$root$cache" == *','* || "$root$cache" == *$'\n'* || "$root$cache" == *$'\r'* ]]; then
+  echo 'Unsupported Docker mount path.' >&2
+  exit 2
+fi
+profile=linux-shared-clang21
+if [ "$task" = strict-build ]; then profile=strict-clang21-x86-64-v2; fi
+mkdir -p "$cache/cargo" "$cache/rustup" "$cache/uv" "$cache/ccache/$profile"
+printf 'Builder: %s; task: %s; workers: %s; memory: %s\n' "$image" "$task" "$jobs" "$memory"
+# No real home, wallet, validator directory, host network or Docker socket is mounted.
+# HOME is ephemeral; only package/tool/compiler caches persist between containers.
+exec docker run --rm --init --read-only --cap-drop ALL \
+  --security-opt no-new-privileges --pids-limit 4096 --cpus "$jobs" --memory "$memory" \
+  --tmpfs /tmp:rw,nosuid,nodev,size=4g --user "$(id -u):$(id -g)" \
+  --mount "type=bind,src=$root,dst=/workspace" \
+  --mount "type=bind,src=$cache,dst=/ci-cache" \
+  --workdir /workspace --env HOME=/tmp/tos-ci-home \
+  --env CARGO_HOME=/ci-cache/cargo --env RUSTUP_HOME=/ci-cache/rustup \
+  --env UV_CACHE_DIR=/ci-cache/uv --env "CCACHE_DIR=/ci-cache/ccache/$profile" \
+  --env CCACHE_MAXSIZE=2G --env CCACHE_COMPILERCHECK=content \
+  --env "CI_BUILD_JOBS=$jobs" --env "CARGO_BUILD_JOBS=$jobs" \
+  --env "CMAKE_BUILD_PARALLEL_LEVEL=$jobs" \
+  --env PATH=/ci-cache/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  --entrypoint bash "$image" -c \
+  'set -euo pipefail; mkdir -p "$HOME"; if [ "$1" = strict-build ]; then scripts/install-rust-toolchain.sh || exit; fi; exec ci/run "$1"' \
+  -- "$task"

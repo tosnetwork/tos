@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# Shared execution commands. Environment provisioning stays in the caller.
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: ci/run <task>
+  preflight        Offline CI infrastructure tests; not the project test suite
+  native           Linux shared build, full CTest, Python, chain and installed consumer
+  native-build     Build and install the Linux shared profile (all-tests included)
+  native-tests     Execute/account for the complete configured CTest registry
+  native-python-env  Prepare locked Python dependencies and generated TL API
+  native-python    Run the complete Python suite plus Q01/Z01 regressions
+  native-integrations  Run the real chain and manager-session regressions
+  installed-consumer  Build/run an out-of-tree consumer of build/install
+  strict-build     Whole-tree Clang 21 Release/Werror build
+  source-guards    Configure, verify inventory, then run every source guard
+  native-registry  Reproduce registry and staking code locks, check node authority
+  rust-format      Check formatting with the already installed pinned toolchain
+  list             Show these implemented tasks without executing them
+
+No full/fast aggregate is implemented. Run platform and unmigrated suites in CI.
+Use separate checkouts for incompatible builds and concurrent mutation suites.
+EOF
+}
+
+if [ "$#" -ne 1 ]; then
+  usage >&2
+  exit 2
+fi
+case "$1" in
+  list|--help|-h) usage; exit 0 ;;
+  preflight|native|native-build|native-tests|native-python-env|native-python|native-integrations|installed-consumer|strict-build|source-guards|native-registry|rust-format) ;;
+  *) echo "Unsupported CI task: $1" >&2; usage >&2; exit 2 ;;
+esac
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd -- "$root"
+# Refuse to recycle one build directory across incompatible local suites.
+claim_profile() {
+  local profile="$1"
+  if [ -f build/CMakeCache.txt ] && [ ! -f build/.tos-ci-profile ]; then
+    echo 'Existing unowned build directory; use a fresh checkout/build directory.' >&2
+    exit 2
+  fi
+  if [ -f build/.tos-ci-profile ] && [ "$(cat build/.tos-ci-profile)" != "$profile" ]; then
+    echo 'Incompatible CI build profile; use a separate checkout/build directory.' >&2
+    exit 2
+  fi
+  mkdir -p build
+  printf '%s\n' "$profile" > build/.tos-ci-profile
+}
+
+# Keep failure semantics inside this script, including when called from sh.
+# Do not call a task function in an if/&& condition, which disables errexit.
+case "$1" in
+  preflight)
+    python3 scripts/ci_workflow_inventory.py --verify-baseline doc/ci-local-first-baseline.json
+    python3 scripts/test_ci_workflow_inventory.py -v
+    python3 scripts/test_ci_entrypoints.py -v
+    python3 scripts/test_ci_native.py -v
+    python3 scripts/test_ci_docker.py -v
+    ;;
+  native)
+    ci/run native-build
+    ci/run native-tests
+    ci/run native-python-env
+    ci/run native-python
+    ci/run native-integrations
+    ci/run installed-consumer
+    ;;
+  native-build)
+    claim_profile linux-shared-clang21
+    # The same production determinism guard applies on local and hosted builds.
+    export TOS_PRODUCTION_BUILD=1
+    scripts/install-rust-toolchain.sh
+    mkdir -p ~/.ccache
+    cp assembly/native/build-ubuntu-shared.sh .
+    chmod +x build-ubuntu-shared.sh
+    ./build-ubuntu-shared.sh -t -c
+    ccache -sp
+    test ! -e crypto/smartcont/auto
+    git diff --exit-code
+    ;;
+  native-tests)
+    python3 ci/native_tests.py --build-dir build
+    ;;
+  native-python-env)
+    uv sync --frozen --no-dev
+    uv run --frozen test/tostester/generate_tl.py
+    ;;
+  native-python)
+    PYTHONDONTWRITEBYTECODE=1 uv run --frozen python -m pytest \
+      test/pq-native/test_n6_startup_not_synced.py \
+      test/pq-native/test_z01_final_capture.py \
+      test/pq-native/test_z01_proof_controls.py
+    uv run --frozen pytest
+    ;;
+  native-integrations)
+    uv run --frozen python test/integration/test_basic.py
+    # A fresh directory avoids reusing live-chain or custody state on local reruns.
+    integration_dir="$(mktemp -d "$root/build/manager-session-identity-XXXXXXXX")"
+    uv run --frozen python test/integration/test_manager_session_identity.py \
+      --build-dir build --artifact-dir "$integration_dir/results"
+    # Help is only a CLI parse check, not a release-level multi-node scenario.
+    uv run --frozen python test/integration/test_simplex2_release.py --help
+    ;;
+  installed-consumer)
+    ./test/toslib/integration/test_integration.sh
+    ;;
+  strict-build)
+    # The floor is part of this suite's contract, not an ambient CPU preference.
+    if [ "${BUILD_ARCH:-x86-64-v2}" != x86-64-v2 ]; then
+      echo 'strict-build requires BUILD_ARCH=x86-64-v2' >&2
+      exit 2
+    fi
+    if [ -n "${CI_BUILD_JOBS:-}" ] && [[ ! "$CI_BUILD_JOBS" =~ ^[1-9][0-9]{0,3}$ ]]; then
+      echo 'CI_BUILD_JOBS must be an integer from 1 to 9999' >&2
+      exit 2
+    fi
+    claim_profile strict-clang21-x86-64-v2
+    cmake -S . -B build -G Ninja \
+      -DCMAKE_C_COMPILER=clang-21 \
+      -DCMAKE_CXX_COMPILER=clang++-21 \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DTOS_USE_JEMALLOC=ON \
+      -DTOS_USE_LLD=On \
+      -DTOS_WERROR_BUILD=On \
+      -DTOS_ARCH=x86-64-v2 \
+      -DPORTABLE=x86-64-v2 \
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+      -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+    ccache --zero-stats
+    # The hosted default remains unchanged; local operators can cap workers.
+    if [ -n "${CI_BUILD_JOBS:-}" ]; then
+      ninja -C build -j"$CI_BUILD_JOBS"
+    else
+      ninja -C build
+    fi
+    ;;
+  source-guards)
+    cmake -S . -B build-source-guards -G Ninja -DCMAKE_BUILD_TYPE=Release
+    python3 scripts/check-source-guard-inventory.py --build-dir build-source-guards
+    cd build-source-guards
+    ctest -L source-guard --no-tests=error --output-on-failure
+    ;;
+  native-registry)
+    claim_profile native-registry-system
+    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --target func fift -j2
+    scripts/test-tos-service-native-registry-v1.sh
+    scripts/check-nominator-pool-code-lock.sh
+    scripts/check-single-nominator-code-lock.sh
+    scripts/check-root-authority-off-the-node.sh
+    cmake --build build --target gen_fif -j2
+    test ! -e crypto/smartcont/auto
+    git diff --exit-code
+    ;;
+  rust-format)
+    make -C tosctl/src fmt-check
+    ;;
+esac

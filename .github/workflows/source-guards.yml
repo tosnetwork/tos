@@ -31,17 +31,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build ripgrep
 
-      - name: Configure the CTest registry
-        run: cmake -S . -B build-source-guards -G Ninja -DCMAKE_BUILD_TYPE=Release
-
-      - name: Verify the complete source-guard inventory
-        run: >-
-          python3 scripts/check-source-guard-inventory.py
-          --build-dir build-source-guards
-
-      - name: Run every registered source guard
-        working-directory: build-source-guards
-        run: ctest -L source-guard --no-tests=error --output-on-failure
+      - name: Configure and verify every registered source guard
+        run: ci/run source-guards
 
   # Offline regression tests for the local PQ testnet tooling: the root-run
   # service drivers, the root-service snapshot installer, planning, and the
