@@ -63,6 +63,18 @@ never lowered.
   fift, func, tlbc, tol, lite-client, toslib, toslibjson, toslib-cli and the emulator. The
   node's key and configuration files rely on POSIX file semantics that are not ported.
   Windows CI builds the client set and its tests but does not run them, as upstream does not.
+- **Linux-only tests.** These are registered only on Linux, and the reason is recorded where
+  each is registered:
+  - `docker-validator-role` and `snapshot-import-offline`: they test the node container's
+    entrypoint scripts, which run only in the Linux image (bash 4, GNU coreutils, the LP64
+    `struct flock` layout, `/proc/locks`).
+  - `quic-admission-global-limit` and `quic-admission-full-table`: they need 38 distinct
+    loopback sources (127.0.0.2–39). Linux routes 127/8 to loopback; macOS has only 127.0.0.1.
+  - The `LD_PRELOAD`/`/proc` live-commit check, and the diagnostic IPC test. The diagnostic
+    channel authenticates its peer with Linux socket credentials.
+- **Open on macOS:** `test-http-server-limits`, the unread-output case. It assumes the kernel
+  honours 4 KiB socket buffers. The test now prints the buffer sizes the kernel actually
+  granted; this item stays open until the test passes on macOS.
 - **Packaging lanes are nightly, not per pull request.** This covers the AppImages and
   Android. They also run on every `v*` tag, which is what release collection uses. cppcheck
   reports nightly and gates nothing.
