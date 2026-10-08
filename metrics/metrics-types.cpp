@@ -183,19 +183,32 @@ std::size_t MetricSet::resident_bytes() const {
   return total;
 }
 
+std::optional<std::string> reserve_bounded(std::size_t max_bytes, std::size_t allowance) {
+  if (max_bytes == std::numeric_limits<std::size_t>::max() || allowance >= max_bytes)
+    return std::nullopt;
+  std::string result;
+  result.reserve(max_bytes - allowance);
+  // A library that rounds by more than the allowance has already allocated
+  // past the budget by that rounding; refuse rather than hand the string on.
+  if (result.capacity() > max_bytes)
+    return std::nullopt;
+  return result;
+}
+
+// One allocation's rounding the renderer allows for (see reserve_bounded).
+constexpr std::size_t kReservationRounding = 64;
+
 std::optional<std::string> MetricSet::render_bounded(std::size_t max_bytes) && {
   // Stream into one reserved body. Labels and HELP strings are appended from
   // existing storage; the only formatting scratch is a fixed numeric buffer.
-  std::string result;
-  if (max_bytes == std::numeric_limits<std::size_t>::max())
+  auto reserved = reserve_bounded(max_bytes, kReservationRounding);
+  if (!reserved)
     return std::nullopt;
-  result.reserve(max_bytes);
-  // The pinned standard library is checked too; a larger actual reservation
-  // cannot silently escape the caller's remaining capacity budget.
-  if (result.capacity() > max_bytes)
-    return std::nullopt;
+  std::string result = std::move(*reserved);
+  // The body is bounded by what was granted, so it never regrows the string.
+  const std::size_t limit = result.capacity();
   auto append = [&](std::string_view part) {
-    if (part.size() > max_bytes - result.size())
+    if (part.size() > limit - result.size())
       return false;
     result.append(part);
     return true;

@@ -1,6 +1,10 @@
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <new>
+#include <optional>
+#include <string>
 
 #include "metrics/metrics-collectors.h"
 #include "metrics/native-core-snapshot.h"
@@ -8,6 +12,38 @@
 
 using namespace tos;
 using namespace tos::health;
+namespace {
+// The largest single allocation request made while tracking is on. Global
+// operator new is replaced below, so every std::string reservation is seen.
+std::atomic<bool> tracking{false};
+std::atomic<std::size_t> largest_request{0};
+template <class F>
+std::size_t largest_request_during(F &&f) {
+  largest_request.store(0);
+  tracking.store(true);
+  f();
+  tracking.store(false);
+  return largest_request.load();
+}
+}  // namespace
+
+void *operator new(std::size_t size) {
+  if (tracking.load(std::memory_order_relaxed)) {
+    auto seen = largest_request.load(std::memory_order_relaxed);
+    while (size > seen && !largest_request.compare_exchange_weak(seen, size, std::memory_order_relaxed)) {
+    }
+  }
+  if (void *p = std::malloc(size == 0 ? 1 : size))
+    return p;
+  throw std::bad_alloc();
+}
+void operator delete(void *p) noexcept {
+  std::free(p);
+}
+void operator delete(void *p, std::size_t) noexcept {
+  std::free(p);
+}
+
 namespace {
 void require(bool condition, const char *message) {
   if (!condition) {
@@ -49,13 +85,27 @@ void unit() {
   constexpr std::size_t limit = 1048576;
   auto baseline = sample(0).render_bounded(limit);
   require(baseline.has_value(), "empty padding renders valid complete body");
-  const auto padding = limit - baseline->size();
+  // The body is bounded by the capacity the library granted, which is within the
+  // budget whatever its rounding; a body that fills it exactly still renders.
+  const auto granted = baseline->capacity();
+  require(granted <= limit, "the granted body capacity is within the budget");
+  const auto padding = granted - baseline->size();
   auto data = sample(padding);
   const auto resident = data.resident_bytes();
-  auto boundary = std::move(data).render_bounded(limit);
-  require(boundary && boundary->size() == limit && boundary->capacity() == limit,
-          "exact one MiB complete body and actual reservation capacity");
+  std::optional<std::string> boundary;
+  const auto request = largest_request_during([&] { boundary = std::move(data).render_bounded(limit); });
+  require(boundary && boundary->size() == granted && boundary->capacity() == granted,
+          "a body filling the granted capacity renders without regrowing it");
+  require(request <= limit + 1, "the largest allocation request while rendering is within the budget");
   require(!sample(padding + 1).render_bounded(limit), "one extra byte refuses the complete publication");
+  // A budget that is a multiple of no allocation granularity.
+  std::optional<std::string> small;
+  const auto small_request = largest_request_during([&] { small = sample(0).render_bounded(1000); });
+  require(small && small->capacity() <= 1000 && small_request <= 1000 + 1,
+          "a 1000-byte budget keeps the body and its allocation request within it");
+  // Without an allowance a rounding library over-grants; that must be refused.
+  const auto exact = metrics::reserve_bounded(1000, 0);
+  require(!exact || exact->capacity() <= 1000, "an over-granted reservation is refused");
   auto invalid = sample(0);
   invalid.families[0].metrics[0].samples[0].value = std::numeric_limits<double>::infinity();
   require(!std::move(invalid).render_bounded(limit), "non-finite body refuses without partial output");
