@@ -55,7 +55,10 @@ set_target_properties(tos_pq_consensus_signer PROPERTIES POSITION_INDEPENDENT_CO
 target_compile_features(tos_pq_consensus_signer PUBLIC cxx_std_20)
 target_include_directories(tos_pq_consensus_signer PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
 target_compile_definitions(tos_pq_consensus_signer PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
-target_link_libraries(tos_pq_consensus_signer PUBLIC tos_pq_consensus PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
+# OpenSSL is public: consensus-key-file.h includes seed-file.h, which includes
+# <openssl/crypto.h>, so every consumer compiles against OpenSSL's headers.
+target_link_libraries(tos_pq_consensus_signer PUBLIC tos_pq_consensus OpenSSL::Crypto
+                      PRIVATE tos_pq_consensus_signer_backend)
 
 # The same signer for tests that need to move the key deadline's wall clock. Only this
 # library is compiled with TOS_PQ_SIGNER_TEST_CLOCK; the production library above has no
@@ -67,8 +70,8 @@ target_include_directories(tos_pq_consensus_signer_test_clock PUBLIC "${CMAKE_CU
                            PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
 target_compile_definitions(tos_pq_consensus_signer_test_clock PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h"
                            PUBLIC TOS_PQ_SIGNER_TEST_CLOCK=1)
-target_link_libraries(tos_pq_consensus_signer_test_clock PUBLIC tos_pq_consensus
-                      PRIVATE tos_pq_consensus_signer_backend OpenSSL::Crypto)
+target_link_libraries(tos_pq_consensus_signer_test_clock PUBLIC tos_pq_consensus OpenSSL::Crypto
+                      PRIVATE tos_pq_consensus_signer_backend)
 
 # The offline controller-root domain. A separate library on purpose: the boundary the offline-root split
 # created is between two machines, so it is a link boundary here. validator-engine links

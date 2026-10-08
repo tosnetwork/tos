@@ -57,6 +57,16 @@ cmake .. -GNinja \
 -DCMAKE_BUILD_TYPE=Release \
 -DANDROID_ABI=${ABI} || exit 1
 
+# A cross build cannot run its own FunC and Fift, so it takes the contract
+# sources that prepare_cross_compiling generated in the native tree; its
+# smc-envelope includes them from its own binary tree.
+echo "[build.sh] hand over generated contract sources (ARCH=${ARCH})"
+mkdir -p tos/crypto/smartcont/auto
+cp ../tos/crypto/smartcont/auto/*.cpp tos/crypto/smartcont/auto/ || exit 1
+for generated in $(sed -n 's|^#include "smartcont/auto/\(.*\.cpp\)"$|\1|p' ../../../crypto/smc-envelope/SmartContractCode.cpp); do
+  test -f "tos/crypto/smartcont/auto/$generated" || { echo "generated contract source $generated is missing" >&2; exit 1; }
+done
+
 echo "[build.sh] build native-lib (ARCH=${ARCH})"
 ninja native-lib || exit 1
 popd
