@@ -50,7 +50,14 @@ blocks a merge. It requires:
 - the matrix matches `scripts/platform-matrix.json`;
 - inherited platform workflows run only through the matrix, by hand, or on a `v*` tag;
 - release builders keep their `v*` tag;
-- matrix members use no secret but `GITHUB_TOKEN`.
+- matrix members use no secret but `GITHUB_TOKEN`;
+- a workflow that pull requests run is push-triggered only for `main`, the
+  `node-health-monitor` integration branch, or tags. A push to a pull request's own branch
+  falls in a different concurrency group and would run the same change a second time, and
+  CI concurrency is shared by every open pull request. The cost: a pull request run tests
+  the merge with its base while a branch push tests the branch head, and a branch has no
+  automatic run until it has a pull request. Dispatch a workflow on the branch to test its
+  head deliberately.
 
 Timeouts follow max(30, 2 × the longest successful run in the last 20), rounded up to 10
 minutes. Lanes without a successful sample start at 240 minutes (macOS, Windows) and 180

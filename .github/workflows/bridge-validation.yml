@@ -3,7 +3,7 @@ name: TOS bridge validation
 on:
   push:
     branches:
-      - agent/tos-jusdt-bridge
+      - main
   pull_request:
     branches:
       - main

@@ -21,6 +21,11 @@ R8  every release build workflow keeps its v* tag trigger
 R9  a matrix member uses no secret except GITHUB_TOKEN, and the matrix passes none
 R10 every status badge in README.md names a workflow that runs for the event and
     branch it filters on; a badge that can never update shows a stale or empty status
+R11 a workflow triggered by pull requests is push-triggered only for main, an
+    integration branch listed below, or tags: a push to a pull request's own branch
+    falls in a different concurrency group and runs the same change a second time.
+    An unfiltered push, branches-ignore, a pattern or a negation is refused, since
+    each admits branches nobody listed.
 """
 
 from __future__ import annotations
@@ -66,6 +71,39 @@ INHERITED_PLATFORM_WORKFLOWS = {
     "tos-ccpcheck.yml",
     "tos-x86-64-windows.yml",
 }
+
+
+# Branches besides main whose pushes may run a workflow that pull requests also
+# run, each with the reason the push run is not a duplicate.
+INTEGRATION_BRANCHES = {
+    "node-health-monitor": "integration branch for node-health-monitor work; a push "
+    "there is the post-merge check of a reviewed isolation pull request",
+}
+PUSH_BRANCHES = {"main", *INTEGRATION_BRANCHES}
+
+
+def duplicate_push(on: dict) -> str | None:
+    """Why this workflow's push trigger duplicates its pull request runs, or None."""
+    if not any(event in on for event in ("pull_request", "pull_request_target")):
+        return None
+    if "push" not in on:
+        return None
+    push = on["push"]
+    if not isinstance(push, dict):
+        return "push has no branch filter"
+    if "branches-ignore" in push:
+        return "push uses branches-ignore"
+    branches = push.get("branches")
+    if branches is None:
+        if push.get("tags") or push.get("tags-ignore"):
+            return None
+        return "push has no branch filter"
+    if not isinstance(branches, list) or not branches:
+        return "push branches is not a non-empty list"
+    others = [b for b in branches if b not in PUSH_BRANCHES]
+    if others:
+        return f"push names branches beyond main and the integration branches: {others}"
+    return None
 
 
 def triggers(doc: dict) -> dict:
@@ -118,6 +156,9 @@ def check(root: Path) -> list[str]:
             isinstance(concurrency, dict) and concurrency.get("cancel-in-progress") is False
         ):
             problems.append(f"R3 {name}: release workflow must not cancel a run in progress")
+        reason = duplicate_push(on)
+        if reason:
+            problems.append(f"R11 {name}: {reason}")
         for event, spec in on.items():
             if not isinstance(spec, dict):
                 continue

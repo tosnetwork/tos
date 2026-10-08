@@ -240,6 +240,70 @@ class PolicyTest(unittest.TestCase):
         )
         self.assert_red("R9", "platform-matrix.yml")
 
+    SOURCE_GUARDS_PUSH = "  push:\n    branches: [main]\n  pull_request:\n"
+
+    def test_r11_unfiltered_push_beside_pull_requests(self) -> None:
+        self.mutate("source-guards.yml", self.SOURCE_GUARDS_PUSH, "  push:\n  pull_request:\n")
+        self.assert_red("R11", "source-guards.yml")
+
+    def test_r11_push_to_another_branch(self) -> None:
+        self.mutate(
+            "source-guards.yml",
+            self.SOURCE_GUARDS_PUSH,
+            "  push:\n    branches: [main, 'feat/**']\n  pull_request:\n",
+        )
+        self.assert_red("R11", "source-guards.yml")
+
+    def test_r11_branches_ignore_admits_unlisted_branches(self) -> None:
+        self.mutate(
+            "source-guards.yml",
+            self.SOURCE_GUARDS_PUSH,
+            "  push:\n    branches-ignore: [wip]\n  pull_request:\n",
+        )
+        self.assert_red("R11", "source-guards.yml")
+
+    def test_r11_negation_and_pattern_are_refused(self) -> None:
+        for branches in ("['!main']", "['ma*']", "['**']"):
+            with self.subTest(branches):
+                self.tearDown()
+                self.setUp()
+                self.mutate(
+                    "source-guards.yml",
+                    self.SOURCE_GUARDS_PUSH,
+                    f"  push:\n    branches: {branches}\n  pull_request:\n",
+                )
+                self.assert_red("R11", "source-guards.yml")
+
+    def test_r11_path_filter_alone_is_unfiltered(self) -> None:
+        self.mutate(
+            "source-guards.yml",
+            self.SOURCE_GUARDS_PUSH,
+            "  push:\n    paths: ['scripts/**']\n  pull_request:\n",
+        )
+        self.assert_red("R11", "source-guards.yml")
+
+    def test_r11_tag_only_push_is_accepted(self) -> None:
+        self.mutate(
+            "source-guards.yml",
+            self.SOURCE_GUARDS_PUSH,
+            "  push:\n    tags: ['v*']\n  pull_request:\n",
+        )
+        self.assertFalse(self.violations("R11", "source-guards.yml"))
+
+    def test_r11_the_integration_branch_exception(self) -> None:
+        self.assertIn("node-health-monitor", policy.INTEGRATION_BRANCHES)
+        self.assertFalse(self.violations("R11", "node-health-monitor.yml"))
+        self.mutate(
+            "node-health-monitor.yml",
+            "    branches: [node-health-monitor]\n",
+            "    branches: [node-health-monitor-2]\n",
+        )
+        self.assert_red("R11", "node-health-monitor.yml")
+
+    def test_r11_push_without_pull_requests_is_out_of_scope(self) -> None:
+        self.mutate("source-guards.yml", self.SOURCE_GUARDS_PUSH, "  push:\n")
+        self.assertFalse(self.violations("R11", "source-guards.yml"))
+
 
 if __name__ == "__main__":
     unittest.main()

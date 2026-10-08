@@ -1,7 +1,9 @@
 name: N6 microbench smoke
 
 on:
+  # A branch push beside its pull request would run this twice.
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
