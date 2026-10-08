@@ -126,9 +126,7 @@ def snapshot(repo: Path, ref: str) -> dict[str, Any]:
         .decode()
         .strip()
     )
-    tree = _oid(
-        _git(repo, "rev-parse", "--verify", f"{commit}:.github/workflows").decode().strip()
-    )
+    tree = _oid(_git(repo, "rev-parse", "--verify", f"{commit}:.github/workflows").decode().strip())
     if _git(repo, "cat-file", "-t", tree).strip() != b"tree":
         raise InventoryError("The workflow path is not a directory")
     entries: dict[str, list[str]] = {}
@@ -185,6 +183,8 @@ def validate_report(value: Any) -> None:
         raise InventoryError("Unsupported inventory format")
     validate_snapshot(value["base"])
     validate_snapshot(value["candidate"])
+    if len(value["base"]["commit"]) != len(value["candidate"]["commit"]):
+        raise InventoryError("Snapshots use different repository object formats")
     if value["changes"] != changes(value["base"], value["candidate"]):
         raise InventoryError("Change list does not match the two snapshots")
 

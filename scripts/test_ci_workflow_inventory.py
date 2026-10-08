@@ -226,6 +226,45 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(inventory.InventoryError):
             inventory.validate_report(report)
 
+    def mixed_format_report(self) -> dict:
+        report = self.report()
+        entries = {"base.yml": ["100644", "1" * 64]}
+        report["candidate"] = {
+            "commit": "2" * 64,
+            "tree": inventory.tree_oid(entries, 64),
+            "workflow_count": 1,
+            "entries": entries,
+        }
+        report["changes"] = inventory.changes(report["base"], report["candidate"])
+        return report
+
+    def test_mixed_snapshot_formats_refused_in_both_directions(self) -> None:
+        report = self.mixed_format_report()
+        # Each snapshot is internally valid. Only their pairing is invalid.
+        inventory.validate_snapshot(report["base"])
+        inventory.validate_snapshot(report["candidate"])
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse):
+                if reverse:
+                    report["base"], report["candidate"] = report["candidate"], report["base"]
+                    report["changes"] = inventory.changes(report["base"], report["candidate"])
+                with self.assertRaisesRegex(inventory.InventoryError, "object format"):
+                    inventory.validate_report(report)
+
+    def test_cli_mixed_snapshot_formats_refused(self) -> None:
+        path = self.repo / "mixed.json"
+        path.write_text(json.dumps(self.mixed_format_report()))
+        result = self.cli("--verify-baseline", str(path))
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("object format", result.stderr)
+
+    def test_matching_sha256_snapshots_remain_supported(self) -> None:
+        report = self.mixed_format_report()
+        report["base"] = copy.deepcopy(report["candidate"])
+        report["changes"] = inventory.changes(report["base"], report["candidate"])
+        inventory.validate_report(report)
+
     def test_recorded_metadata_has_exact_tree_identities(self) -> None:
         baseline = Path(__file__).parent.parent / "doc" / "ci-local-first-baseline.json"
         value = inventory.read_report(baseline)
