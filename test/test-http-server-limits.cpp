@@ -25,6 +25,7 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <fcntl.h>
 #include <functional>
@@ -919,6 +920,16 @@ void with_pipelined_inbound(double response_timeout, std::function<void(int, Pip
   CHECK(accepted >= 0);
   ::close(listener);
   CHECK(::setsockopt(accepted, SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) == 0);
+  // The scenarios depend on the kernel honouring these small buffers. Report
+  // what it granted, so a platform where output does not pile up shows why.
+  int granted_rcv = 0;
+  int granted_snd = 0;
+  socklen_t granted_size = sizeof(granted_rcv);
+  CHECK(::getsockopt(client, SOL_SOCKET, SO_RCVBUF, &granted_rcv, &granted_size) == 0);
+  granted_size = sizeof(granted_snd);
+  CHECK(::getsockopt(accepted, SOL_SOCKET, SO_SNDBUF, &granted_snd, &granted_size) == 0);
+  std::fprintf(stderr, "pipelined inbound: client SO_RCVBUF=%d server SO_SNDBUF=%d (requested %d)\n", granted_rcv,
+               granted_snd, small);
   PipelineObservation observation;
   td::actor::Scheduler scheduler({2});
   scheduler.run_in_context([&] {
