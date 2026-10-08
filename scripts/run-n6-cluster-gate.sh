@@ -14,10 +14,10 @@ rmdir "$artifact_dir"
 # that one generation step; validator databases, ports, logs, traces and
 # resource outputs remain disjoint and the node processes may run concurrently.
 (
-  flock 9
   cd "$source_root"
-  uv run test/tostester/generate_tl.py
-) 9>"$build_root/n6-cluster-gates/tl-generation.lock"
+  python3 scripts/with-lock.py "$build_root/n6-cluster-gates/tl-generation.lock" \
+    uv run test/tostester/generate_tl.py
+)
 
 cd "$source_root"
 exec uv run python scripts/pq-n6-cluster.py \

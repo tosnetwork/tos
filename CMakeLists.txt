@@ -1799,12 +1799,17 @@ set_tests_properties(image-digest-pinning PROPERTIES LABELS "source-guard")
 add_test(NAME llvm-apt-key-pin
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_install_llvm_toolchain.py)
 set_tests_properties(llvm-apt-key-pin PROPERTIES LABELS "source-guard")
-add_test(NAME snapshot-import-offline
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_import_snapshot.py)
-set_tests_properties(snapshot-import-offline PROPERTIES LABELS "source-guard")
-add_test(NAME docker-validator-role
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_docker_validator_role.py)
-set_tests_properties(docker-validator-role PROPERTIES LABELS "source-guard")
+# The node image's entrypoint scripts run only in its Linux container (bash 4,
+# GNU coreutils, the LP64 struct flock layout, /proc/locks), so their tests are
+# Linux-only rather than the scripts carrying paths production never runs.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(NAME snapshot-import-offline
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_import_snapshot.py)
+  set_tests_properties(snapshot-import-offline PROPERTIES LABELS "source-guard")
+  add_test(NAME docker-validator-role
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_docker_validator_role.py)
+  set_tests_properties(docker-validator-role PROPERTIES LABELS "source-guard")
+endif()
 add_test(NAME global-config-init-block-refresh
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_refresh_global_config_init_block.py)
 set_tests_properties(global-config-init-block-refresh PROPERTIES LABELS "source-guard")
@@ -2080,10 +2085,15 @@ add_test(NAME quic-outbound-query-deadline COMMAND test-quic-sender
   -p 31000 -d tmp-dir-test-quic-outbound -f PartialResponseDoesNotExtendDeadline)
 add_test(NAME quic-connection-count-cap COMMAND test-quic-sender
   -p 41000 -d tmp-dir-test-quic-cap -f MaxConnectionsRejectsBeyondCap)
-add_test(NAME quic-admission-global-limit COMMAND test-quic-sender
-  -p 43000 -d tmp-dir-test-quic-admission-global -f SourcesRefusedByTheGlobalLimitAreNotTracked)
-add_test(NAME quic-admission-full-table COMMAND test-quic-sender
-  -p 45000 -d tmp-dir-test-quic-admission-table -f AFullSourceTableAdmitsAgainOnceEntriesRefill)
+# Admission is per source address: these cases send from 127.0.0.2-39, which
+# Linux routes on loopback and macOS does not, so they are Linux-only.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_test(NAME quic-admission-global-limit COMMAND test-quic-sender
+    -p 43000 -d tmp-dir-test-quic-admission-global -f SourcesRefusedByTheGlobalLimitAreNotTracked)
+  add_test(NAME quic-admission-full-table COMMAND test-quic-sender
+    -p 45000 -d tmp-dir-test-quic-admission-table -f AFullSourceTableAdmitsAgainOnceEntriesRefill)
+  set_tests_properties(quic-admission-global-limit quic-admission-full-table PROPERTIES LABELS "network-safety")
+endif()
 add_test(NAME quic-inbound-budget COMMAND test-quic-sender
   -p 47000 -d tmp-dir-test-quic-inbound-budget -f QuicInboundBudget)
 add_test(NAME quic-transport-budget COMMAND test-quic-sender
@@ -2094,8 +2104,6 @@ set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
   quic-connection-count-cap
-  quic-admission-global-limit
-  quic-admission-full-table
   quic-inbound-budget
   quic-transport-budget
   quic-source-share

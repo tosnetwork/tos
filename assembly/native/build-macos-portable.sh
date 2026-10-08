@@ -79,10 +79,12 @@ cmake -GNinja .. \
 test $? -eq 0 || { echo "Can't configure tos"; exit 1; }
 
 if [ "$with_tests" = true ]; then
+  # `all` as well: CTest registers tests whose executables are not part of
+  # all-tests, and an unbuilt executable makes its test fail as Not Run.
   ninja storage-daemon storage-daemon-cli blockchain-explorer   \
   toslib toslibjson toslib-cli validator-engine func tol fift \
   lite-client validator-engine-console generate-random-id json2tlo dht-server dht-ping-servers dht-resolve \
-  http-proxy rldp-http-proxy create-state create-hardfork tlbc emulator proxy-liteserver all-tests
+  http-proxy rldp-http-proxy create-state create-hardfork tlbc emulator proxy-liteserver all-tests all
   test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 else
   ninja storage-daemon storage-daemon-cli blockchain-explorer   \

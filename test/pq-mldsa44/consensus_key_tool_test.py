@@ -16,9 +16,11 @@ import json
 import os
 import pty
 import re
+import select
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 SEED_HEX = "2a" * 32
@@ -220,29 +222,44 @@ def check(tool: Path, work: Path, shim: Path | None) -> None:
 
 
 def export_through_pty(tool: Path, key: Path) -> tuple[int, bytes]:
-    """Run export with a terminal as its standard output, and collect what reached it."""
+    """Run export with a terminal as its standard output, and collect what reached it.
+
+    The controller is read while the tool runs, and this process keeps its own
+    copy of the terminal side open until the end: on macOS output still queued
+    when the last terminal descriptor closes is discarded, and Linux reports EIO
+    instead of end-of-file there. Collection ends once the tool has exited and
+    nothing more is ready.
+    """
     controller, terminal = pty.openpty()
+    child = None
     try:
-        done = subprocess.run(
+        child = subprocess.Popen(
             [str(tool), "export", str(key)],
             stdout=terminal,
             stderr=terminal,
             stdin=subprocess.DEVNULL,
-            timeout=120,
         )
+        deadline = time.monotonic() + 120
+        seen = b""
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise Failure("CONSENSUS_KEY_TOOL_FAILED export did not finish within 120 s")
+            ready, _, _ = select.select([controller], [], [], min(left, 0.05))
+            if ready:
+                chunk = os.read(controller, 4096)  # any error here is a tool failure
+                if not chunk:
+                    break
+                seen += chunk
+            elif child.poll() is not None:
+                break
+        return child.wait(), seen
     finally:
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.wait()
         os.close(terminal)
-    seen = b""
-    while True:
-        try:
-            chunk = os.read(controller, 4096)
-        except OSError:  # EIO once the terminal side is closed and drained
-            break
-        if not chunk:
-            break
-        seen += chunk
-    os.close(controller)
-    return done.returncode, seen
+        os.close(controller)
 
 
 def check_export(tool: Path, work: Path, home: Path) -> None:

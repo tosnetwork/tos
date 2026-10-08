@@ -18,12 +18,30 @@ require_marker() {
   fi
 }
 
+# Matches a regular expression against the whole file (it may span lines). A
+# failure to run the check is reported as such, never as a source finding.
 require_regex() {
   local file="$1"
   local pattern="$2"
   local description="$3"
-  if ! grep -qPzo "$pattern" "$root/$file"; then
+  local status=0
+  python3 - "$pattern" "$root/$file" <<'PY' || status=$?
+import re
+import sys
+
+try:
+    text = open(sys.argv[2], encoding="utf-8").read()
+    found = re.search(sys.argv[1], text) is not None
+except Exception as error:  # an unreadable file or a bad pattern
+    print(error, file=sys.stderr)
+    sys.exit(2)
+sys.exit(0 if found else 1)
+PY
+  if [ "$status" -eq 1 ]; then
     echo "PENDING_FINALITY_RETRY_SOURCE_FAILURE: $description ($file)" >&2
+    failed=1
+  elif [ "$status" -ne 0 ]; then
+    echo "PENDING_FINALITY_RETRY_TOOL_FAILURE: cannot check $file for: $description" >&2
     failed=1
   fi
 }
