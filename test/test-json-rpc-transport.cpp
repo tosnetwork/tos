@@ -31,6 +31,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <string>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -233,6 +234,12 @@ class Client {
     }
     received += static_cast<size_t>(n);
     return true;
+  }
+
+  // True when reply bytes are waiting unread in this socket's receive buffer.
+  bool responses_pending() const {
+    int unread = 0;
+    return ::ioctl(fd_, FIONREAD, &unread) == 0 && unread > 0;
   }
 
   void close() {
@@ -536,28 +543,47 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
     size_t offset = 0;
     auto start = Clock::now();
     auto give_up = start + std::chrono::seconds(20);
-    // Once the server holds this much more than at the start, replies are
-    // queued behind output the client has not read: the request read-ahead
-    // alone stays far below it.
+    // The stall is seen one of two ways. Either the server holds this much more
+    // than at the start, so replies are queued behind output the client has
+    // not read (the request read-ahead alone stays far below it). Or the
+    // server stopped taking requests: for kNoProgress the client's sends made
+    // no progress while request bytes remained and replies sat unread in its
+    // socket. Where the kernel's buffers absorb the backlog, only the second
+    // shows; then the stall is dated from the start of that window.
     const size_t stalled_mem = baseline_mem + (512 << 10);
+    const auto kNoProgress = std::chrono::milliseconds(200);
     Clock::time_point stalled_at{};
+    Clock::time_point no_progress_since{};
     bool stalled = false;
     size_t peak_mem = 0;
     size_t trickled = 0;
     bool server_closed = false;
     double released_after = -1;
     while (Clock::now() < give_up) {
+      const size_t offset_before = offset;
       if (!server_closed && !client.send_some(stream, offset)) {
         server_closed = true;
       }
       if (trickle && !server_closed && !client.trickle(64, trickled)) {
         server_closed = true;
       }
+      auto now = Clock::now();
       auto mem = td::BufferAllocator::get_buffer_mem();
       peak_mem = std::max(peak_mem, mem);
       if (!stalled && mem > stalled_mem) {
         stalled = true;
-        stalled_at = Clock::now();
+        stalled_at = now;
+      }
+      // Only a live connection with request bytes left and replies unread can
+      // be stalled; any send progress, exhaustion or a terminal error resets.
+      bool blocked = !server_closed && offset == offset_before && offset < stream.size() && client.responses_pending();
+      if (!blocked) {
+        no_progress_since = Clock::time_point{};
+      } else if (no_progress_since == Clock::time_point{}) {
+        no_progress_since = now;
+      } else if (!stalled && now - no_progress_since >= kNoProgress) {
+        stalled = true;
+        stalled_at = no_progress_since;
       }
       if (stalled && mem <= baseline_mem + (256 << 10) && open_fd_count() < fds_connected) {
         released_after = std::chrono::duration<double>(Clock::now() - stalled_at).count();
@@ -577,10 +603,10 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
                  << std::strerror(client.send_errno_) << ")";
     }
     ASSERT_TRUE(offset > 0);
-    // The stall was real: the server held well over a megabyte of replies
-    // for this client.
+    // The stall was real, by either signal. Peak memory is reported above as
+    // a diagnostic: how much the server holds before the deadline depends on
+    // how much the platform's socket buffers absorb.
     ASSERT_TRUE(stalled);
-    ASSERT_TRUE(peak_mem > baseline_mem + (1 << 20));
     // Released by the deadline plus tolerance, counted from the moment the
     // stall was seen (the first unwritten reply was queued no later): the
     // server's socket is closed and its input and output buffers are freed.

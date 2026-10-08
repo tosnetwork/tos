@@ -13,6 +13,7 @@
 // server charges each accepted connection to its source; it writes a bounded
 // amount (tens of MiB) once and reads what the server answers.
 #include <arpa/inet.h>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
@@ -24,6 +25,8 @@
 #include <poll.h>
 #include <string>
 #include <sys/socket.h>
+#include <thread>
+#include <tuple>
 #include <unistd.h>
 #include <vector>
 
@@ -61,6 +64,78 @@ void require(bool condition, const std::string& message) {
   if (!condition) {
     fail(message);
   }
+}
+
+// What the watchdog reports when a case hangs. The test thread publishes these
+// after each scheduler step; the watchdog only reads atomics, so it can report
+// while the test thread is stuck in a socket call or inside the scheduler.
+std::atomic<const char*> g_case{nullptr};  // a case name from main's table
+std::atomic<long long> g_case_started_ms{0};
+std::atomic<unsigned long long> g_steps{0};
+std::atomic<size_t> g_budget_used{0};
+std::atomic<size_t> g_budget_limit{0};
+// The condition being waited for. Each character is atomic, so a report made
+// while the test thread rewrites it may mix two labels but never races.
+constexpr size_t kWaitingForSize = 160;
+std::atomic<char> g_waiting_for[kWaitingForSize];
+std::atomic<size_t> g_waiting_for_len{0};
+
+long long now_ms() {
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+void publish_waiting_for(const std::string& what) {
+  g_waiting_for_len.store(0);
+  size_t n = std::min(what.size(), kWaitingForSize);
+  for (size_t i = 0; i < n; i++) {
+    g_waiting_for[i].store(what[i], std::memory_order_relaxed);
+  }
+  g_waiting_for_len.store(n);
+}
+
+void publish_step(const adnl::AdnlExtByteBudget& budget) {
+  g_steps.fetch_add(1);
+  g_budget_used.store(budget.used());
+  g_budget_limit.store(budget.limit());
+}
+
+// Writes the hang report straight to the file descriptors, then aborts: no
+// stdio lock, actor call or allocation that the stuck thread might hold.
+[[noreturn]] void report_hang(long long seconds) {
+  char waiting_for[kWaitingForSize];
+  size_t wait_len = std::min(g_waiting_for_len.load(), kWaitingForSize);
+  for (size_t i = 0; i < wait_len; i++) {
+    waiting_for[i] = g_waiting_for[i].load(std::memory_order_relaxed);
+  }
+  char line[512];
+  int n = std::snprintf(line, sizeof(line),
+                        "ADNL_EXT_INPUT_CASE %s hung after %lld s: scheduler_steps=%llu budget_used=%zu "
+                        "budget_limit=%zu waiting_for=\"%.*s\"\n",
+                        g_case.load() ? g_case.load() : "?", seconds, g_steps.load(), g_budget_used.load(),
+                        g_budget_limit.load(), static_cast<int>(wait_len), waiting_for);
+  if (n > 0) {
+    size_t len = std::min(static_cast<size_t>(n), sizeof(line) - 1);
+    (void)!::write(STDOUT_FILENO, line, len);
+    (void)!::write(STDERR_FILENO, line, len);
+  }
+  std::abort();
+}
+
+// Aborts with a report when one case runs longer than `limit_s`.
+void start_watchdog(long long limit_s) {
+  std::thread([limit_s] {
+    while (true) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      if (g_case.load() == nullptr) {
+        continue;
+      }
+      long long elapsed = now_ms() - g_case_started_ms.load();
+      if (elapsed > limit_s * 1000) {
+        report_hang(elapsed / 1000);
+      }
+    }
+  }).detach();
 }
 
 struct Probe {
@@ -238,9 +313,11 @@ class Harness {
   // shared budget never passed its limit.
   template <class F>
   void wait_until(F&& done, double bound_s, const std::string& what) {
+    publish_waiting_for(what);
     auto deadline = td::Timestamp::in(bound_s);
     while (!done()) {
       scheduler_->run(0.005);
+      publish_step(*budget_);
       require(budget_->used() <= budget_->limit(), "shared input budget exceeded its limit");
       check_shares();
       if (deadline.is_in_past()) {
@@ -249,9 +326,11 @@ class Harness {
     }
   }
   void pump(double seconds) {
+    publish_waiting_for("pump");
     auto until = td::Timestamp::in(seconds);
     while (!until.is_in_past()) {
       scheduler_->run(0.005);
+      publish_step(*budget_);
       require(budget_->used() <= budget_->limit(), "shared input budget exceeded its limit");
       check_shares();
     }
@@ -693,9 +772,11 @@ void server_source_share() {
         }));
   });
   auto run_until = [&](auto&& done, double bound_s, const std::string& what, std::vector<RawExtPeer*> peers) {
+    publish_waiting_for(what);
     auto deadline = td::Timestamp::in(bound_s);
     while (!done()) {
       scheduler->run(0.005);
+      g_steps.fetch_add(1);
       for (auto* peer : peers) {
         peer->pump();
       }
@@ -828,25 +909,48 @@ void unit_checks() {
   std::printf("ADNL_EXT_INPUT_CASE unit ok\n");
 }
 
+// Watchdog control, never part of "all": a wait that cannot finish must end in
+// the watchdog's report, not in the harness's own timeout.
+void watchdog_control() {
+  Harness h(1 << 20);
+  auto c = h.open(64 << 10, kLongLifetime);
+  h.wait_until([] { return false; }, 1e9, "a condition that never holds");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(WARNING));
+  // Case markers must reach the log even if the test is killed mid-case.
+  std::setvbuf(stdout, nullptr, _IOLBF, 0);
+  long long watchdog_s = 120;
+  if (const char* env = std::getenv("ADNL_EXT_INPUT_WATCHDOG_SECONDS")) {
+    watchdog_s = std::atoll(env);
+    require(watchdog_s > 0, "ADNL_EXT_INPUT_WATCHDOG_SECONDS must be positive");
+  }
+  start_watchdog(watchdog_s);
   const std::string only = argc > 1 ? argv[1] : "all";
-  const std::vector<std::pair<std::string, void (*)()>> cases = {
-      {"unit", unit_checks},
-      {"holds", holds_and_returns},
-      {"per-connection", per_connection_bound},
-      {"shared", shared_budget},
-      {"lifetime", partial_frame_lifetime},
-      {"error", release_on_error},
-      {"source-share", source_share},
-      {"server-source-share", server_source_share},
+  const std::vector<std::tuple<std::string, void (*)(), bool>> cases = {
+      {"unit", unit_checks, true},
+      {"holds", holds_and_returns, true},
+      {"per-connection", per_connection_bound, true},
+      {"shared", shared_budget, true},
+      {"lifetime", partial_frame_lifetime, true},
+      {"error", release_on_error, true},
+      {"source-share", source_share, true},
+      {"server-source-share", server_source_share, true},
+      {"watchdog-control", watchdog_control, false},
   };
   bool ran = false;
-  for (auto& [name, run] : cases) {
-    if (only == "all" || only == name) {
+  for (auto& [name, run, in_all] : cases) {
+    if ((only == "all" && in_all) || only == name) {
+      std::printf("ADNL_EXT_INPUT_CASE %s start\n", name.c_str());
+      g_waiting_for_len.store(0);
+      g_steps.store(0);
+      g_case_started_ms.store(now_ms());
+      g_case.store(name.c_str());
       run();
+      g_case.store(nullptr);
       ran = true;
     }
   }

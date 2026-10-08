@@ -2052,7 +2052,9 @@ TEST(HttpServerLimits, a_delayed_closing_reply_larger_than_the_window_is_written
 // in the server's buffer only after the client resumed: the server's writes
 // were blocked, and the close had to wait for pending output.
 static void expect_whole_reply_to_slow_reader(bool delayed) {
-  const size_t size = size_t{1} << 20;
+  // Darwin does not shrink a loopback receive window below about 320 KiB
+  // however small it is asked to be, so the reply is sized to dwarf that too.
+  const size_t size = size_t{4} << 20;
   auto run = serve_to_slow_reader(size, delayed, 300);
   expect_whole(run.fetched, size, delayed);
   ASSERT_EQ(run.closed, 1);
