@@ -635,8 +635,11 @@ mod persistence_tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock, reason = "the guard must cover the drop and reopen")]
     async fn writer_lock_blocks_reopen_and_migration_until_drop() {
         use crate::storage::storage_trait::Storage;
+        // No child may be forked while this test's lock is meant to be released.
+        let _guard = crate::process_test_guard();
         let dir = tempfile::tempdir().expect("directory");
         let path = dir.path().join("vault.json");
         let first = open(&path).await.expect("first instance");
@@ -663,7 +666,10 @@ mod persistence_tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock, reason = "the guard must cover both spawns and the drop")]
     async fn writer_lock_blocks_other_process() {
+        // Spawns children, and relies on its own lock's release between them.
+        let _guard = crate::process_test_guard();
         const CHILD_PATH: &str = "TOS_TEST_VAULT_LOCK_CHILD_PATH";
         if let Some(path) = std::env::var_os(CHILD_PATH) {
             let should_open = std::env::var_os("TOS_TEST_VAULT_LOCK_RELEASED").is_some();
