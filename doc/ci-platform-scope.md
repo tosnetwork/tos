@@ -75,6 +75,11 @@ never lowered.
 - **Open on macOS:** `test-http-server-limits`, the unread-output case. It assumes the kernel
   honours 4 KiB socket buffers. The test now prints the buffer sizes the kernel actually
   granted; this item stays open until the test passes on macOS.
+- **Timing bounds are enforced on Linux only.** `n6-microbench-smoke` bounds normalised
+  p95 timing ratios, calibrated on Linux, the validator platform. Elsewhere the ratios are
+  printed and reported, not enforced: macOS is uncalibrated, and one macOS 14 run exceeded
+  a bound (3.05 against 3.0). Sizes, verification counts and the structural cap are
+  enforced everywhere.
 - **Packaging lanes are nightly, not per pull request.** This covers the AppImages and
   Android. They also run on every `v*` tag, which is what release collection uses. cppcheck
   reports nightly and gates nothing.
