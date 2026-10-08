@@ -75,11 +75,12 @@ def check_symbols(nm: str, production: list[Path], test_clock: Path) -> None:
         raise Failure(f"{test_clock} defines no clock seam; this check would see nothing")
 
 
-def check_header(cxx: str, include_dir: Path) -> None:
+def check_header(cxx: str, flags: list[str], include_dir: Path) -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "caller.cpp"
         source.write_text(CALLER)
-        base = [cxx, "-std=c++20", "-fsyntax-only", f"-I{include_dir}", str(source)]
+        # The build's own flags: on macOS they name the SDK's C++ headers.
+        base = [cxx, *flags, "-std=c++20", "-fsyntax-only", f"-I{include_dir}", str(source)]
         production = subprocess.run(base, capture_output=True, text=True, check=False)
         if production.returncode == 0:
             raise Failure("code compiled against the production header can call the clock seam")
@@ -125,6 +126,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nm", required=True)
     parser.add_argument("--cxx", required=True)
+    parser.add_argument(
+        "--cxx-flag",
+        action="append",
+        default=[],
+        help="a flag the build passes to the compiler (repeatable; use --cxx-flag=VALUE)",
+    )
     parser.add_argument("--source-root", required=True, type=Path)
     parser.add_argument(
         "--production", required=True, type=Path, help="the production signer archive"
@@ -142,7 +149,7 @@ def main() -> int:
         if shutil.which(args.cxx) is None and not os.access(args.cxx, os.X_OK):
             raise Failure(f"no compiler at {args.cxx}")
         check_symbols(args.nm, [args.production, *args.binary], args.test_clock)
-        check_header(args.cxx, args.source_root / "crypto/pq")
+        check_header(args.cxx, args.cxx_flag, args.source_root / "crypto/pq")
         check_wiring(args.source_root)
     except Failure as failure:
         print(f"PQ_SIGNER_TEST_CLOCK_FAILED {failure}")
