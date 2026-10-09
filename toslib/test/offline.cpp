@@ -23,6 +23,7 @@
 #include "block/block-auto.h"
 #include "block/block.h"
 #include "block/mc-config.h"
+#include "common/util.h"
 #include "smc-envelope/WalletV3.h"
 #include "td/utils/PathView.h"
 #include "td/utils/benchmark.h"
@@ -132,6 +133,28 @@ TEST(Toslib, Address) {
   CHECK(block::StdAddress::parse("Ef9Tj6fMJp-OqhAdhKXxq36DL-HYSzCc3-9O6UNzqsgPfYFX").is_error());
   CHECK(block::StdAddress::parse("Ef9Tj6fMJp+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX").is_error());
   CHECK(block::StdAddress::parse(a.rserialize()).move_as_ok() == a);
+}
+
+// A 48-character friendly address or public key must decode to exactly 36 bytes. With
+// '=' padding the same length decodes to 35 or 34, and the CRC was then read from
+// bytes the decoder never wrote.
+TEST(Toslib, Base64DecodeExactRequiresTheFullBuffer) {
+  unsigned char buffer[36];
+  td::MutableSlice out{buffer, sizeof(buffer)};
+  ASSERT_TRUE(td::buff_base64_decode_exact(out, "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFX", true));
+  ASSERT_TRUE(!td::buff_base64_decode_exact(out, "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYF=", true));
+  ASSERT_TRUE(!td::buff_base64_decode_exact(out, "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfY==", true));
+  ASSERT_TRUE(!td::buff_base64_decode_exact(out, "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYF", true));
+  ASSERT_TRUE(!td::buff_base64_decode_exact(out, "Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYFXAAAA", true));
+}
+
+// The public contract for padded 48-character input. These stayed green before the
+// exact-length check too, because the bytes the decoder left unwritten happened not
+// to form a matching CRC; the test above is the one that can go red.
+TEST(Toslib, PaddedFriendlyFormsAreRejected) {
+  ASSERT_TRUE(block::StdAddress::parse("Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYF=").is_error());
+  ASSERT_TRUE(block::StdAddress::parse("Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfY==").is_error());
+  ASSERT_TRUE(block::PublicKey::parse("Pubjns2gp7DGCnEH7EOWeCnb6Lw1akm538YYaz6sdLVHfRB=").is_error());
 }
 
 static auto sync_send = [](auto &client, auto query) {

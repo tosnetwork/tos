@@ -5,3 +5,4 @@ test-json-rpc-account-capability
 test-json-rpc-parse
 test-tol
 test-celldb-actor-restart
+test-toslib-offline

@@ -164,6 +164,10 @@ std::size_t buff_base64_decode(td::MutableSlice buffer, td::Slice encoded, bool 
   return wptr - (unsigned char *)buffer.data();
 }
 
+bool buff_base64_decode_exact(td::MutableSlice buffer, td::Slice encoded, bool allow_base64_url) {
+  return buff_base64_decode(buffer, encoded, allow_base64_url) == buffer.size();
+}
+
 td::BufferSlice base64_decode_to_buffer_slice(td::Slice encoded, bool allow_base64_url) {
   auto s = decoded_base64_size(encoded, allow_base64_url);
   if (s <= 0) {
