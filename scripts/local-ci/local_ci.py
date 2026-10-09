@@ -190,10 +190,13 @@ class Evaluator:
         self.ctx = contexts
         self.status = status
         self.hash_files = hash_files
+        # Above zero while parsing an operand that && or || does not evaluate.
+        self.skipping = 0
 
     def evaluate(self, src: str) -> Any:
         self.toks = tokenize(src)
         self.i = 0
+        self.skipping = 0
         v = self.parse_or()
         if self.i != len(self.toks):
             raise ExprError(f"trailing tokens in {src!r}")
@@ -209,20 +212,34 @@ class Evaluator:
         self.i += 1
         return t
 
+    def parse_skipped(self, parse) -> Any:
+        self.skipping += 1
+        try:
+            return parse()
+        finally:
+            self.skipping -= 1
+
+    # && and || short-circuit as GitHub's do: the operand that does not decide
+    # the result is parsed but not evaluated, so fromJSON of an unset variable
+    # behind a false && never runs.
     def parse_or(self) -> Any:
         v = self.parse_and()
         while self.peek() == ("op", "||"):
             self.take()
-            rhs = self.parse_and()
-            v = v if truthy(v) else rhs
+            if truthy(v):
+                self.parse_skipped(self.parse_and)
+            else:
+                v = self.parse_and()
         return v
 
     def parse_and(self) -> Any:
         v = self.parse_cmp()
         while self.peek() == ("op", "&&"):
             self.take()
-            rhs = self.parse_cmp()
-            v = rhs if truthy(v) else v
+            if truthy(v):
+                v = self.parse_cmp()
+            else:
+                self.parse_skipped(self.parse_cmp)
         return v
 
     def parse_cmp(self) -> Any:
@@ -297,6 +314,8 @@ class Evaluator:
         raise ExprError(f"unexpected token {t!r}")
 
     def call(self, name: str, args: list[Any]) -> Any:
+        if self.skipping:
+            return None
         if name == "success":
             return not self.status.get("failed", False)
         if name == "failure":

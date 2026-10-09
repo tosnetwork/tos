@@ -110,7 +110,13 @@ jobs:
   # with warnings as errors. Windows runs are slow and rare; this one catches a change
   # that makes a client target need the node, or a node target leak into the client.
   client-only-build:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (vars.SELF_HOSTED_LINUX == 'true' && (
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.event.pull_request.user.login) &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.triggering_actor))))
+      && fromJSON('["self-hosted","linux","x64","tos-vm"]') || 'ubuntu-24.04' }}
     timeout-minutes: 120
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -200,12 +206,20 @@ jobs:
   #
   # It also enforces the workflow policy on every change, whatever it touches, so a
   # policy violation fails this required check: scripts/check-workflow-policy.py and
-  # its tests, the platform matrix's gate and reporter tests, and actionlint's
+  # its tests, the local replay's expression tests (it must short-circuit && and ||
+  # as GitHub does, or the routing expression breaks it), the platform matrix's gate
+  # and reporter tests, and actionlint's
   # structural checks (expressions, contexts, needs, reusable-workflow inputs and
   # permissions; shell inside steps is not linted).
   hygiene:
     timeout-minutes: 40
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (vars.SELF_HOSTED_LINUX == 'true' && (
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.event.pull_request.user.login) &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.triggering_actor))))
+      && fromJSON('["self-hosted","linux","x64","tos-vm"]') || 'ubuntu-24.04' }}
 
     steps:
     - name: Check out repository
@@ -222,6 +236,7 @@ jobs:
       run: |
         python3 scripts/check-workflow-policy.py
         python3 scripts/test_check_workflow_policy.py
+        python3 scripts/local-ci/test_local_ci_expressions.py
         cd scripts
         python3 test_platform_gate.py
         python3 test_nightly_report.py

@@ -14,6 +14,8 @@ on:
       - 'scripts/check-local-pq-resource-mutations.py'
       - '.github/workflows/local-pq-runtime-regression.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '37 7 * * 0'
 
 permissions:
   contents: read
@@ -24,7 +26,13 @@ concurrency:
 
 jobs:
   generator:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (vars.SELF_HOSTED_LINUX == 'true' && (
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.event.pull_request.user.login) &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.triggering_actor))))
+      && fromJSON('["self-hosted","linux","x64","tos-vm"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     env:
       RAYON_NUM_THREADS: 2

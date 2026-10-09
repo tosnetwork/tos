@@ -80,8 +80,10 @@ class PolicyTest(unittest.TestCase):
         self.assert_red("R3", "create-release.yml")
 
     def test_r4_moving_runner_label(self) -> None:
-        self.mutate("connect-trust.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest")
-        self.assert_red("R4", "connect-trust.yml")
+        self.mutate(
+            "elector-r3-native-tools.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest"
+        )
+        self.assert_red("R4", "elector-r3-native-tools.yml")
 
     def test_r5_dead_branch(self) -> None:
         self.mutate(
@@ -319,24 +321,62 @@ class PolicyTest(unittest.TestCase):
                     found.setdefault(path.name, []).append(job_id)
         return found
 
+    # The heaviest jobs, routed first.
+    ROUTED_FIRST = {
+        "branch-chain-python.yml": ["python-and-pq-chain"],
+        "build-tos-linux-x86-64-werror.yml": ["strict-build"],
+        "jsonrpc-asan.yml": ["unit", "corpus"],
+        "network-safety-asan.yml": ["network-safety"],
+    }
+    # Every other ubuntu-24.04 job that runs for a pull request or a push to
+    # main, in a workflow with no write grant and no secret. Hosted on purpose:
+    # the platform matrix's orchestration (a schedule there would start a
+    # whole hosted matrix), dispatch-only jobs, and push-only jobs on other
+    # branches, which the expression never routes.
+    ROUTED_SECOND = {
+        "auth-extension-validation.yml": ["authentication"],
+        "branch-chain-python.yml": ["rust-workspace-tests-compile"],
+        "bridge-validation.yml": ["bridge-validation"],
+        "build-tos-linux-x86-64-werror.yml": ["client-only-build", "hygiene"],
+        "ci-cache-validation.yml": ["cache-contract"],
+        "classical-key-inventory.yml": ["scan"],
+        "connect-trust.yml": ["connect-trust"],
+        "contract-sandboxes.yml": ["sandboxes", "executor_diagnostic"],
+        "dns-contract-parity.yml": ["parity"],
+        "js-sdk.yml": ["test"],
+        "local-pq-runtime-regression.yml": ["generator"],
+        "mldsa-auth-module.yml": ["determinism"],
+        "n6-microbench-smoke.yml": ["smoke"],
+        "node-health-monitor.yml": ["rust-contracts", "native"],
+        "pq-contracts.yml": ["contracts", "policy_diagnostic"],
+        "pq-mldsa44.yml": ["sanitizers", "vm-sanitizers", "rust-pqbytes", "determinism"],
+        "pq-v16-readiness.yml": ["readiness"],
+        "prediction-market-release-scale.yml": ["ten-thousand-fill-equivalence"],
+        "shielded-pool-ceremony.yml": ["attestations", "ceremony"],
+        "shielded-pool-crosscheck.yml": ["crosscheck"],
+        "source-guards.yml": ["source-guards", "local-testnet-python"],
+        "source-hygiene.yml": ["rust-format", "native-registry-reproducibility"],
+        "tosctl-service.yml": ["service", "secrets-vault", "local-test-vault-harness"],
+        "validator-auth-conformance.yml": ["conformance"],
+        "wallet-falcon.yml": ["parity"],
+    }
+
     def test_r12_the_routing_expression_matches_the_routed_jobs(self) -> None:
         # Without this, a constant that matched no job would leave every R12
         # rule below with nothing to check.
-        self.assertEqual(
-            self.routed_jobs(),
-            {
-                "branch-chain-python.yml": ["python-and-pq-chain"],
-                "build-tos-linux-x86-64-werror.yml": ["strict-build"],
-                "jsonrpc-asan.yml": ["unit", "corpus"],
-                "network-safety-asan.yml": ["network-safety"],
-            },
-        )
+        expected: dict[str, set[str]] = {}
+        for group in (self.ROUTED_FIRST, self.ROUTED_SECOND):
+            for workflow, jobs in group.items():
+                expected.setdefault(workflow, set()).update(jobs)
+        self.assertEqual({w: set(j) for w, j in self.routed_jobs().items()}, expected)
 
     def test_r12_literal_self_hosted_label(self) -> None:
         self.mutate(
-            "connect-trust.yml", "runs-on: ubuntu-24.04\n", "runs-on: [self-hosted, linux]\n"
+            "elector-r3-native-tools.yml",
+            "runs-on: ubuntu-24.04\n",
+            "runs-on: [self-hosted, linux]\n",
         )
-        self.assert_red("R12", "connect-trust.yml")
+        self.assert_red("R12", "elector-r3-native-tools.yml")
 
     def test_r12_routing_without_the_trusted_actor(self) -> None:
         self.mutate(self.ROUTED, self.TRUSTED_ACTOR, ")))")
