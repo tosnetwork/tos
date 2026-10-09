@@ -237,6 +237,7 @@ jobs:
         run: |
           set -e
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-empty-chain-restart$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-subtest-error-ends-wait$'
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor$'
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control$'
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-origin$'

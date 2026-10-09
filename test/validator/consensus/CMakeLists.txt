@@ -427,6 +427,21 @@ add_test(
             --net-ping 0.005:0.02 --net-gremlin-period 0.5:0.8
             --net-gremlin-downtime 0.1:0.2 --net-gremlin-times 4 --pq-finality-e2e-test
 )
+# A sub-test error ends the run at once, not at the deadline, even with the
+# finalized-height floor still unmet: the forced error comes after 1 s, the
+# deadline is 60 s, and the test times out after 15 s. It passes only on the
+# forced error's own report.
+add_test(
+    NAME test-consensus-simplex2-pq-subtest-error-ends-wait
+    COMMAND test-consensus --duration 60 --n-nodes 4 --target-rate-ms 100
+            --net-ping 0.005:0.02 --pq-finality-e2e-test --min-finalized-blocks 1000000
+)
+set_tests_properties(
+    test-consensus-simplex2-pq-subtest-error-ends-wait
+    PROPERTIES ENVIRONMENT "TOS_TEST_FORCE_SUBTEST_ERROR=pq-finality:1"
+               PASS_REGULAR_EXPRESSION "Test consensus error: .*forced pq-finality error"
+               TIMEOUT 15
+)
 
 # Two of the no-fallback invariants are properties of the source that no run can observe:
 # a legacy carrier built and thrown away, and a keyring signature produced and discarded.

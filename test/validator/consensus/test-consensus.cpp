@@ -166,6 +166,12 @@ std::atomic<size_t> EMPTY_CHAIN_ORIGIN_TRANSIENT_FAILURES = 0;
 std::atomic<size_t> EMPTY_CHAIN_ORIGIN_FAILURES = 0;
 bool EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE = false;
 size_t C05_GENESIS_FAULT_BUDGET = 0;
+// Test-only: TOS_TEST_FORCE_SUBTEST_ERROR=<sub-test>:<seconds> sets that sub-test's
+// error after the given time, where <sub-test> is one of empty-chain-restart,
+// vote-journal, catch-up or pq-finality. It shows that one sub-test's error ends
+// the run at once instead of at the deadline.
+std::string FORCED_SUBTEST_ERROR;
+double FORCED_SUBTEST_ERROR_AFTER = 0.0;
 std::array<std::atomic<size_t>, 4> C05_GENESIS_FAULTS{};
 std::array<std::atomic<double>, 4> C05_LAST_FAULT_TIME{};
 struct C05FaultObservation {
@@ -1030,6 +1036,9 @@ class TestConsensus : public td::actor::Actor {
     if (PERMANENT_FINALIZATION_TEST) {
       run_permanent_finalization_test().start().detach();
     }
+    if (!FORCED_SUBTEST_ERROR.empty()) {
+      run_forced_subtest_error().start().detach();
+    }
 
     if (!EMPTY_CHAIN_RESTART_TEST && !VOTE_JOURNAL_TEST && !PQ_FINALITY_E2E_TEST) {
       run_write_status().start().detach();
@@ -1038,47 +1047,56 @@ class TestConsensus : public td::actor::Actor {
     // The modes below end as soon as their sub-tests complete, and DURATION is only
     // their deadline. They also wait for the finalized-height floor, so the floor is
     // judged within the deadline rather than at whatever height the sub-tests ended.
+    // A sub-test error ends the wait at once: nothing after it can make the run pass.
     auto below_floor = [&] { return last_accepted_block_.seqno() < MIN_FINALIZED_BLOCKS; };
     if (EMPTY_CHAIN_RESTART_TEST) {
+      auto no_error = [&] {
+        return empty_chain_restart_error_.empty() && (!PQ_FINALITY_E2E_TEST || pq_finality_error_.empty());
+      };
       auto deadline = td::Timestamp::in(DURATION);
-      while (((!empty_chain_restart_completed_ && empty_chain_restart_error_.empty()) ||
-              (PQ_FINALITY_E2E_TEST && !pq_finality_completed_ && pq_finality_error_.empty()) || below_floor()) &&
+      while (no_error() &&
+             (!empty_chain_restart_completed_ || (PQ_FINALITY_E2E_TEST && !pq_finality_completed_) || below_floor()) &&
              !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
-      if (!empty_chain_restart_completed_ && empty_chain_restart_error_.empty()) {
+      // Only a wait that ran out is a timeout; an error that ended it is reported as itself.
+      bool timed_out = no_error();
+      if (timed_out && !empty_chain_restart_completed_) {
         empty_chain_restart_error_ = "timed out waiting for the empty-chain restart test";
       }
-      if (PQ_FINALITY_E2E_TEST && !pq_finality_completed_ && pq_finality_error_.empty()) {
+      if (timed_out && PQ_FINALITY_E2E_TEST && !pq_finality_completed_) {
         pq_finality_error_ = "timed out waiting for the post-quantum finality end-to-end test";
       }
     } else if (VOTE_JOURNAL_TEST) {
+      auto no_error = [&] { return vote_journal_error_.empty(); };
       auto deadline = td::Timestamp::in(DURATION);
-      while (((!vote_journal_completed_ && vote_journal_error_.empty()) || below_floor()) && !deadline.is_in_past()) {
+      while (no_error() && (!vote_journal_completed_ || below_floor()) && !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
-      if (!vote_journal_completed_ && vote_journal_error_.empty()) {
+      if (no_error() && !vote_journal_completed_) {
         vote_journal_error_ = "timed out waiting for the vote journal test";
       }
     } else if (CATCH_UP_DOWNTIME >= 0.0 && PQ_FINALITY_E2E_TEST) {
+      auto no_error = [&] { return catch_up_error_.empty() && pq_finality_error_.empty(); };
       auto deadline = td::Timestamp::in(DURATION);
-      while (((!catch_up_completed_ && catch_up_error_.empty()) ||
-              (!pq_finality_completed_ && pq_finality_error_.empty()) || below_floor()) &&
+      while (no_error() && (!catch_up_completed_ || !pq_finality_completed_ || below_floor()) &&
              !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
-      if (!catch_up_completed_ && catch_up_error_.empty()) {
+      bool timed_out = no_error();
+      if (timed_out && !catch_up_completed_) {
         catch_up_error_ = "timed out waiting for the state-resolver catch-up test";
       }
-      if (!pq_finality_completed_ && pq_finality_error_.empty()) {
+      if (timed_out && !pq_finality_completed_) {
         pq_finality_error_ = "timed out waiting for the post-quantum finality end-to-end test";
       }
     } else if (PQ_FINALITY_E2E_TEST) {
+      auto no_error = [&] { return pq_finality_error_.empty(); };
       auto deadline = td::Timestamp::in(DURATION);
-      while (((!pq_finality_completed_ && pq_finality_error_.empty()) || below_floor()) && !deadline.is_in_past()) {
+      while (no_error() && (!pq_finality_completed_ || below_floor()) && !deadline.is_in_past()) {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
       }
-      if (!pq_finality_completed_ && pq_finality_error_.empty()) {
+      if (no_error() && !pq_finality_completed_) {
         pq_finality_error_ = "timed out waiting for the post-quantum finality end-to-end test";
       }
     } else {
@@ -1086,6 +1104,27 @@ class TestConsensus : public td::actor::Actor {
     }
 
     co_return co_await finalize();
+  }
+
+  td::actor::Task<> run_forced_subtest_error() {
+    co_await td::actor::coro_sleep(td::Timestamp::in(FORCED_SUBTEST_ERROR_AFTER));
+    std::string* error = nullptr;
+    if (FORCED_SUBTEST_ERROR == "empty-chain-restart") {
+      error = &empty_chain_restart_error_;
+    } else if (FORCED_SUBTEST_ERROR == "vote-journal") {
+      error = &vote_journal_error_;
+    } else if (FORCED_SUBTEST_ERROR == "catch-up") {
+      error = &catch_up_error_;
+    } else if (FORCED_SUBTEST_ERROR == "pq-finality") {
+      error = &pq_finality_error_;
+    }
+    LOG_CHECK(error != nullptr) << "unknown sub-test in TOS_TEST_FORCE_SUBTEST_ERROR: " << FORCED_SUBTEST_ERROR;
+    if (error->empty()) {
+      *error = "forced " + FORCED_SUBTEST_ERROR + " error (TOS_TEST_FORCE_SUBTEST_ERROR)";
+    }
+    LOG(ERROR) << "FORCED_SUBTEST_ERROR " << FORCED_SUBTEST_ERROR << " set after " << FORCED_SUBTEST_ERROR_AFTER
+               << " s";
+    co_return td::Unit{};
   }
 
   td::actor::Task<> run_write_status() {
@@ -1909,6 +1948,7 @@ class TestConsensus : public td::actor::Actor {
                       "each persisted one signed notarize vote; first NotarCert after "
                    << (cert_time - candidate_time) * 1000.0 << " ms; first FinalCert and block accepted";
     }
+    LOG(WARNING) << "PQ finality end-to-end test completed at finalized height " << last_accepted_block_.seqno();
     pq_finality_completed_ = true;
     co_return td::Unit{};
   }
@@ -2679,6 +2719,15 @@ class TestConsensus : public td::actor::Actor {
         Instance& inst = nodes_[idx].instances[inst_idx];
         LOG(WARNING) << "Node #" << idx << " instance #" << inst_idx << " : synced up to block "
                      << inst.last_accepted_block;
+      }
+    }
+    // A sub-test's own error is the cause of the run's failure. It ends the wait
+    // early, so report it before the checks its early end leaves unmet, such as
+    // the finalized-height floor or another sub-test's completion.
+    for (const std::string* error : {&catch_up_error_, &empty_chain_restart_error_, &vote_journal_error_,
+                                     &pq_finality_error_, &permanent_finalization_error_}) {
+      if (!error->empty()) {
+        co_return td::Status::Error(*error);
       }
     }
     if (C04_HEALTH_TEST) {
@@ -3979,6 +4028,15 @@ int main(int argc, char* argv[]) {
   if (const char* value = std::getenv("TOS_TEST_ORIGIN_PERMANENTLY_UNAVAILABLE");
       value != nullptr && std::string_view(value) == "1") {
     EMPTY_CHAIN_ORIGIN_PERMANENTLY_UNAVAILABLE = true;
+  }
+  if (const char* value = std::getenv("TOS_TEST_FORCE_SUBTEST_ERROR"); value != nullptr) {
+    td::Slice spec(value);
+    auto colon = spec.find(':');
+    LOG_CHECK(colon != td::Slice::npos) << "TOS_TEST_FORCE_SUBTEST_ERROR must be <sub-test>:<seconds>";
+    auto after = td::to_double(spec.substr(colon + 1));
+    LOG_CHECK(after >= 0.0) << "TOS_TEST_FORCE_SUBTEST_ERROR delay must not be negative";
+    FORCED_SUBTEST_ERROR = spec.substr(0, colon).str();
+    FORCED_SUBTEST_ERROR_AFTER = after;
   }
   if (const char* value = std::getenv("TOS_TEST_C05_SIMULTANEOUS_FAULTS"); value != nullptr) {
     auto parsed = td::to_integer_safe<size_t>(td::Slice(value));
