@@ -423,13 +423,39 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
     }
 
+    // Tests in this binary run on parallel threads of one process, so a name
+    // made of the pid and the time is unique only if the clock moves between
+    // two calls. A random part makes every name distinct; 16 bytes keep the
+    // path well under the Unix socket path limit.
+    fn socket_path() -> std::path::PathBuf {
+        let token = tos_health_services::random_token().unwrap();
+        std::env::temp_dir().join(format!(
+            "nhm-control-{}-{}.sock",
+            std::process::id(),
+            tos_health_services::hex(&token[..16])
+        ))
+    }
+
     fn socket() -> (std::path::PathBuf, tokio::net::UnixListener) {
-        let nanos =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("nhm-control-{}-{nanos}.sock", std::process::id()));
+        let path = socket_path();
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
         (path, listener)
+    }
+
+    #[tokio::test]
+    async fn concurrent_control_socket_names_are_distinct_and_bindable() {
+        let threads: Vec<_> = (0..8)
+            .map(|_| std::thread::spawn(|| (0..32).map(|_| socket_path()).collect::<Vec<_>>()))
+            .collect();
+        let paths: Vec<_> = threads.into_iter().flat_map(|thread| thread.join().unwrap()).collect();
+        let distinct: std::collections::HashSet<_> = paths.iter().collect();
+        assert_eq!(distinct.len(), paths.len(), "two parallel tests would share a control socket");
+        for path in &paths {
+            assert!(path.as_os_str().len() < 108, "{path:?} exceeds the Unix socket path limit");
+            let listener = tokio::net::UnixListener::bind(path).unwrap();
+            drop(listener);
+            std::fs::remove_file(path).unwrap();
+        }
     }
     async fn wait_permits(limit: &tokio::sync::Semaphore, expected: usize, timeout: Duration) {
         tokio::time::timeout(timeout, async {
