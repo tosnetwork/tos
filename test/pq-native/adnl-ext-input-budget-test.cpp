@@ -1028,13 +1028,25 @@ std::string deliver(SendQueue& queue, int writer, int reader, size_t expected) {
   return got;
 }
 
+// Non-blocking for every call, as the real peers are, rather than only for the
+// calls that pass MSG_DONTWAIT: the queue's behaviour must not depend on a
+// platform honouring that flag on send.
+void make_nonblocking(int fd) {
+  const int flags = ::fcntl(fd, F_GETFL, 0);
+  require(flags >= 0, std::string("F_GETFL failed: ") + std::strerror(errno));
+  require(::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0, std::string("F_SETFL failed: ") + std::strerror(errno));
+}
+
 void send_queue_checks() {
   int fds[2];
   require(::socketpair(AF_UNIX, SOCK_STREAM, 0, fds) == 0, "socketpair failed");
+  make_nonblocking(fds[0]);
+  make_nonblocking(fds[1]);
   const std::string bytes(10000, 'q');
 
   // Transient ENOBUFS, three times: nothing is lost, the peer stays open, and
   // later flushes, interleaved with reading, deliver everything exactly.
+  publish_waiting_for("send-queue:transient");
   g_fake_refusals = 3;
   g_fake_errno = ENOBUFS;
   SendQueue transient(&refusing_send);
@@ -1048,8 +1060,11 @@ void send_queue_checks() {
 
   // Small socket buffers: a partial send followed by EAGAIN must happen, and
   // the queue still delivers everything exactly.
+  publish_waiting_for("send-queue:partial");
   int small_fds[2];
   require(::socketpair(AF_UNIX, SOCK_STREAM, 0, small_fds) == 0, "socketpair failed");
+  make_nonblocking(small_fds[0]);
+  make_nonblocking(small_fds[1]);
   const int small = 4096;
   for (int fd : small_fds) {
     require(::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &small, sizeof(small)) == 0 &&
@@ -1070,12 +1085,14 @@ void send_queue_checks() {
   ::close(small_fds[1]);
 
   // A send that moves nothing returns at once and keeps the bytes.
+  publish_waiting_for("send-queue:stalled");
   SendQueue stalled(&zero_send);
   stalled.append(bytes);
   require(stalled.flush(fds[0]) && stalled.pending() == bytes.size() && stalled.zero_sends() == 1,
           "a zero-byte send was not handled as no progress");
 
   // A hard error is final, and the report names it.
+  publish_waiting_for("send-queue:broken");
   g_fake_refusals = 1;
   g_fake_errno = EPIPE;
   SendQueue broken(&refusing_send);
@@ -1086,6 +1103,7 @@ void send_queue_checks() {
           "the failure report does not name the errno and offset: " + broken.describe());
 
   // The report from a real failure: our own fd closed mid-stream.
+  publish_waiting_for("send-queue:real");
   SendQueue real;
   real.append(bytes);
   ::close(fds[0]);
