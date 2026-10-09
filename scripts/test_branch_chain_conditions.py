@@ -58,11 +58,30 @@ class BranchConditionTests(unittest.TestCase):
             "  pull_request:\n    paths: ['test/**']\n  workflow_dispatch:\n",
             "no pull request": "on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n",
             "no dispatch": "on:\n  push:\n    branches: [main]\n  pull_request:\n",
+            "same-length push to another branch": "on:\n  push:\n    branches: [dev1]\n"
+            "  pull_request:\n  workflow_dispatch:\n",
         }
         self.assertIn(triggers, self.workflow)
         for name, replacement in mutants.items():
             with self.subTest(name), self.assertRaises(RuntimeError):
                 self.guard.validate_triggers(self.workflow.replace(triggers, replacement, 1))
+
+    def test_schedule_changes_are_refused(self):
+        schedule = "  schedule:\n    - cron: '17 3 * * 0'\n"
+        mutants = {
+            "no schedule": "",
+            "second cron": schedule + "    - cron: '17 3 * * 3'\n",
+            "daily": "  schedule:\n    - cron: '17 3 * * *'\n",
+            "every minute": "  schedule:\n    - cron: '* * * * *'\n",
+            "weekday range": "  schedule:\n    - cron: '17 3 * * 1-5'\n",
+            "monthly": "  schedule:\n    - cron: '17 3 1 * 0'\n",
+            "hour out of range": "  schedule:\n    - cron: '17 24 * * 0'\n",
+            "another trigger after it": schedule + "  merge_group:\n",
+        }
+        self.assertIn(schedule, self.workflow)
+        for name, replacement in mutants.items():
+            with self.subTest(name), self.assertRaises(RuntimeError):
+                self.guard.validate_triggers(self.workflow.replace(schedule, replacement, 1))
 
 
 if __name__ == "__main__":

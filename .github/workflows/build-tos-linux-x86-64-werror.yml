@@ -8,6 +8,8 @@ on:
     branches: [main]
   workflow_dispatch:
   workflow_call:
+  schedule:
+    - cron: '17 4 * * 0'
 
 concurrency:
   group: lint-${{ github.event.pull_request.number || github.ref }}
@@ -21,7 +23,13 @@ jobs:
   # means the change under test introduced it.
   strict-build:
     timeout-minutes: 150
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (vars.SELF_HOSTED_LINUX == 'true' && (
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.event.pull_request.user.login) &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.triggering_actor))))
+      && fromJSON('["self-hosted","linux","x64","tos-vm"]') || 'ubuntu-24.04' }}
     env:
       # A compile cache carried between runs. ccache stores only successful compilations and
       # keys them on the full command line, so -Werror and every warning flag stay in force: a

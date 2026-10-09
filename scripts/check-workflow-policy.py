@@ -26,6 +26,14 @@ R11 a workflow triggered by pull requests is push-triggered only for main, an
     falls in a different concurrency group and runs the same change a second time.
     An unfiltered push, branches-ignore, a pattern or a negation is refused, since
     each admits branches nobody listed.
+R12 a job reaches the self-hosted runner only through ROUTED_RUNS_ON: a trusted
+    push to main or a same-repository pull request opened and triggered by a
+    trusted login, while the repository variable switches routing on; any other
+    event runs hosted. No job names a self-hosted label any other way. A
+    workflow with a routed job grants no write permission and uses no secret
+    except GITHUB_TOKEN, has exactly one weekly schedule (a scheduled run is
+    hosted, so the fallback stays exercised), and each routed job's timeout,
+    plus a margin for setup, fits the host's per-job cap.
 """
 
 from __future__ import annotations
@@ -80,6 +88,142 @@ INTEGRATION_BRANCHES = {
     "there is the post-merge check of a reviewed isolation pull request",
 }
 PUSH_BRANCHES = {"main", *INTEGRATION_BRANCHES}
+
+# The only runs-on that may name the self-hosted runner, compared with all
+# whitespace collapsed. Its trusted-login list and switch are repository
+# variables, so routing can be turned off without a commit.
+ROUTED_RUNS_ON = " ".join(
+    """${{ (vars.SELF_HOSTED_LINUX == 'true' && (
+    (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+    (github.event_name == 'pull_request' &&
+     github.event.pull_request.head.repo.full_name == github.repository &&
+     contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.event.pull_request.user.login) &&
+     contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.triggering_actor))))
+    && fromJSON('["self-hosted","linux","x64","tos-vm"]') || 'ubuntu-24.04' }}""".split()
+)
+SELF_HOSTED_MARKERS = ("self-hosted", "tos-vm")
+# The host stops a job at this many minutes; a routed job's own timeout plus the
+# setup margin must fit inside it, so the job's timeout is what ends a hang.
+HOST_JOB_CAP_MINUTES = 165
+HOST_SETUP_MARGIN_MINUTES = 15
+WEEKLY_CRON = re.compile(r"(?:[0-9]|[1-5][0-9]) (?:[0-9]|1[0-9]|2[0-3]) \* \* [0-6]")
+# Expression context and property names are case-insensitive.
+SECRET_ACCESS = re.compile(r"\bsecrets\b(?!\s*\.\s*GITHUB_TOKEN\b)", re.I)
+
+
+def scan_expression(text: str, start: int, stop_at_braces: bool) -> tuple[str, int]:
+    """The expression from start with its string literals blanked, and where it ends.
+
+    A literal is single-quoted and may contain }}. Its escaped quote '' needs no
+    case of its own: read as two adjacent literals, it blanks the same span.
+    An expression that never closes runs to the end of the text."""
+    out: list[str] = []
+    i = start
+    while i < len(text):
+        if text[i] == "'":
+            close = text.find("'", i + 1)
+            i = len(text) if close == -1 else close + 1
+            out.append(" ")
+            continue
+        if stop_at_braces and text.startswith("}}", i):
+            return "".join(out), i + 2
+        out.append(text[i])
+        i += 1
+    return "".join(out), len(text)
+
+
+def expressions(node: object, key: object = None) -> list[str]:
+    """Every expression in a parsed workflow, string literals blanked.
+
+    Reads parsed values, so YAML quoting is already undone: each ${{ }} in any
+    string value, and each if: value whole, since an if: is an expression
+    with or without ${{ }}. Keys are not evaluated."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for child_key, value in node.items():
+            found.extend(expressions(value, child_key))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(expressions(item))
+    elif isinstance(node, str):
+        if key == "if":
+            found.append(scan_expression(node, 0, stop_at_braces=False)[0])
+        start = node.find("${{")
+        while start != -1:
+            body, end = scan_expression(node, start + 3, stop_at_braces=True)
+            found.append(body)
+            start = node.find("${{", end)
+    return found
+
+
+def grants_write(permissions: object) -> bool:
+    if permissions is None:
+        return False
+    if isinstance(permissions, str):
+        return permissions != "read-all"
+    if isinstance(permissions, dict):
+        return any(value not in ("read", "none") for value in permissions.values())
+    return True
+
+
+def check_routing(name: str, doc: dict, on: dict) -> list[str]:
+    problems: list[str] = []
+    jobs = doc.get("jobs") or {}
+    routed = []
+    for job_id, job in jobs.items():
+        labels = job.get("runs-on")
+        if isinstance(labels, str) and " ".join(labels.split()) == ROUTED_RUNS_ON:
+            routed.append((job_id, job))
+            continue
+        flat = json.dumps(labels)
+        if any(marker in flat for marker in SELF_HOSTED_MARKERS):
+            problems.append(
+                f"R12 {name}: job {job_id} names a self-hosted label outside the routing expression"
+            )
+    if not routed:
+        return problems
+    # A workflow without top-level permissions gets the repository default,
+    # which may grant writes; R2 also refuses it.
+    if grants_write(doc.get("permissions", "write-all")):
+        problems.append(f"R12 {name}: workflow with a routed job grants write permission")
+    for job_id, job in jobs.items():
+        if grants_write(job.get("permissions")):
+            problems.append(f"R12 {name}: job {job_id} grants write permission")
+    # The secrets context is read only inside expressions. Any reference to it
+    # outside a string literal, other than secrets.GITHUB_TOKEN, is refused:
+    # whole-context access (toJSON(secrets)) and indexing included.
+    for expression in expressions(doc):
+        for access in SECRET_ACCESS.finditer(expression):
+            problems.append(
+                f"R12 {name}: workflow with a routed job reads secrets beyond GITHUB_TOKEN: "
+                f"{' '.join(expression[access.start() :].split())[:60]}"
+            )
+    for job_id, job in jobs.items():
+        if "secrets" in job:
+            problems.append(f"R12 {name}: job {job_id} passes secrets to a called workflow")
+    schedule = on.get("schedule")
+    if not (
+        isinstance(schedule, list)
+        and len(schedule) == 1
+        and isinstance(schedule[0], dict)
+        and set(schedule[0]) == {"cron"}
+        and isinstance(schedule[0]["cron"], str)
+        and WEEKLY_CRON.fullmatch(schedule[0]["cron"])
+    ):
+        problems.append(f"R12 {name}: workflow with a routed job lacks exactly one weekly schedule")
+    for job_id, job in routed:
+        timeout = job.get("timeout-minutes")
+        if not (
+            isinstance(timeout, int)
+            and not isinstance(timeout, bool)
+            and timeout > 0
+            and timeout + HOST_SETUP_MARGIN_MINUTES <= HOST_JOB_CAP_MINUTES
+        ):
+            problems.append(
+                f"R12 {name}: routed job {job_id} timeout {timeout!r} plus "
+                f"{HOST_SETUP_MARGIN_MINUTES} does not fit the host cap {HOST_JOB_CAP_MINUTES}"
+            )
+    return problems
 
 
 def duplicate_push(on: dict) -> str | None:
@@ -156,6 +300,7 @@ def check(root: Path) -> list[str]:
             isinstance(concurrency, dict) and concurrency.get("cancel-in-progress") is False
         ):
             problems.append(f"R3 {name}: release workflow must not cancel a run in progress")
+        problems.extend(check_routing(name, doc, on))
         reason = duplicate_push(on)
         if reason:
             problems.append(f"R11 {name}: {reason}")

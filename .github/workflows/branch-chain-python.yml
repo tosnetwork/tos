@@ -16,6 +16,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 0'
 
 permissions:
   contents: read
@@ -32,7 +34,13 @@ env:
 jobs:
   python-and-pq-chain:
     timeout-minutes: 120
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (vars.SELF_HOSTED_LINUX == 'true' && (
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.event.pull_request.user.login) &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.triggering_actor))))
+      && fromJSON('["self-hosted","linux","x64","tos-vm"]') || 'ubuntu-24.04' }}
     container:
       image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
       credentials:
