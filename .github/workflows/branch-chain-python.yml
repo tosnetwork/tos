@@ -2,10 +2,18 @@ name: Branch PQ chain and Python tests
 
 # This job exists because compile/unit evidence cannot detect a chain fixture
 # that no longer forms a validator group. Keep one real PQ chain boot and the
-# complete Python suite on every branch push and pull request; do not move it
-# back behind main-only or workflow_dispatch-only triggers.
+# complete Python suite on every pull request, whatever its base, and on every
+# push to main; do not move it behind workflow_dispatch-only triggers.
+#
+# Pushes to other branches do not trigger it: with an open pull request they
+# would run it a second time on the same change, since the two events fall in
+# different concurrency groups. A pull request run tests the synthetic merge
+# with its base, a branch push tests the branch head, so those runs are not of
+# the same commit, and a branch has no automatic run before it has a pull
+# request. Dispatch the workflow on a branch to test its head deliberately.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -52,6 +60,7 @@ jobs:
         run: |
           python3 scripts/test-build-tool-pins.py
           python3 scripts/test-build-tool-pipelines.py
+          python3 scripts/test-linux-build-triggers.py
 
       - name: Configure the minimal native fixture build
         run: >-
@@ -77,7 +86,7 @@ jobs:
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
-            test-adnl-ext-input-budget test-adnl-ext-output-backpressure \
+            test-adnl-ext-input-budget test-adnl-ext-output-backpressure test-adnl-ext-refusal-close \
             test-rate-limiter test-security-boundaries test-full-node-shard-admission test-full-node-master-admission \
             test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap
           ccache --show-stats
@@ -121,7 +130,7 @@ jobs:
           expected = {
               "test-wallet-index", "test-wallet-index-apply", "test-candidate-data-cache",
               "test-shard-block-confirmations",
-              "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure",
+              "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure", "test-adnl-ext-refusal-close",
               "test-rate-limiter", "test-security-boundaries", "test-full-node-shard-admission", "test-full-node-master-admission",
               "full-node-master-startup",
               "test-rldp2-inbound-budget", "test-rldp2-inbound-transfer-bound", "test-rldp2-decoder-heap",
@@ -228,6 +237,7 @@ jobs:
         run: |
           set -e
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-empty-chain-restart$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-subtest-error-ends-wait$'
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor$'
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control$'
           ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-origin$'

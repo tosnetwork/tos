@@ -239,14 +239,11 @@ class IntegrityTests(unittest.TestCase):
                     text=True,
                 ).stdout.strip()
                 self.assertEqual(printed, pin["url"])
-        for script in [
-            "assembly/appimage/create-appimages.sh",
-            "assembly/android/build-android-toslib.sh",
-        ]:
+        for script in ["assembly/appimage/create-appimages.sh"]:
             with self.subTest(script=script):
                 text = (ROOT / script).read_text()
                 self.assertIn('verify-build-tool.py" --url', text)
-                self.assertNotRegex(text, r"https://\S*(appimagetool|android-ndk)")
+                self.assertNotRegex(text, r"https://\S*appimagetool")
 
 
 class WorkflowInstallTests(unittest.TestCase):

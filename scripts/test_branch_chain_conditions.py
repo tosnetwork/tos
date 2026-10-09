@@ -40,6 +40,30 @@ class BranchConditionTests(unittest.TestCase):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
                 self.guard.validate_unconditional_steps(workflow)
 
+    def test_triggers_are_every_pull_request_and_pushes_to_main(self):
+        self.guard.validate_triggers(self.workflow)
+
+    def test_trigger_changes_are_refused(self):
+        triggers = self.guard.TRIGGERS
+        mutants = {
+            "push to every branch": "on:\n  push:\n  pull_request:\n  workflow_dispatch:\n",
+            "push to another branch": "on:\n  push:\n    branches: [main, 'feat/**']\n"
+            "  pull_request:\n  workflow_dispatch:\n",
+            "push with branches-ignore": "on:\n  push:\n    branches-ignore: [wip]\n"
+            "  pull_request:\n  workflow_dispatch:\n",
+            "no push": "on:\n  pull_request:\n  workflow_dispatch:\n",
+            "pull requests into main only": "on:\n  push:\n    branches: [main]\n"
+            "  pull_request:\n    branches: [main]\n  workflow_dispatch:\n",
+            "pull request path filter": "on:\n  push:\n    branches: [main]\n"
+            "  pull_request:\n    paths: ['test/**']\n  workflow_dispatch:\n",
+            "no pull request": "on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n",
+            "no dispatch": "on:\n  push:\n    branches: [main]\n  pull_request:\n",
+        }
+        self.assertIn(triggers, self.workflow)
+        for name, replacement in mutants.items():
+            with self.subTest(name), self.assertRaises(RuntimeError):
+                self.guard.validate_triggers(self.workflow.replace(triggers, replacement, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

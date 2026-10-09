@@ -275,7 +275,7 @@ class CollectTest(unittest.TestCase):
 
 
 EXTRA_WORKFLOW = "build-extra.yml"
-EXTRA_ARTIFACTS = ("tos-extra-linux-x64", "tos-extra-macos-arm64")
+EXTRA_ARTIFACTS = ("tos-extra-linux-x64", "tos-extra-linux-arm64")
 EXTRA_CONFIG = {
     "build_workflows": [
         {"artifact": "tos-linux", "workflow": WORKFLOW},
@@ -403,8 +403,8 @@ class SecondWorkflowCollectTest(unittest.TestCase):
 
     def test_second_workflow_digest_mismatch_is_refused(self) -> None:
         api = extra_api()
-        api.served["tos-extra-macos-arm64"] = zip_bytes({"x": b"tampered"})
-        self.assert_refused(api, "artifact tos-extra-macos-arm64: downloaded sha256")
+        api.served["tos-extra-linux-arm64"] = zip_bytes({"x": b"tampered"})
+        self.assert_refused(api, "artifact tos-extra-linux-arm64: downloaded sha256")
 
     def test_second_workflow_run_of_another_commit_is_refused(self) -> None:
         api = extra_api(
@@ -962,6 +962,33 @@ class RepositoryConfigTest(unittest.TestCase):
         for release_set in config["release_sets"].values():
             for item in [*release_set["assets"], *release_set.get("bundles", [])]:
                 self.assertIn(item["artifact"], collected)
+
+    def test_releases_ship_linux_x86_64_and_arm64_only(self) -> None:
+        # The node is built, tested and released for Linux x86-64 and arm64
+        # only (BUILD.md). Every set publishes both architectures and nothing
+        # else, and tol ships its compiler for each.
+        linux = {"tos-x86_64-linux", "tos-arm64-linux"}
+        config = json.loads((HERE / "release-artifacts.json").read_text())
+        self.assertEqual({entry["artifact"] for entry in config["build_workflows"]}, linux)
+        self.assertEqual(len(config["build_workflows"]), len(linux))
+        for name, release_set in config["release_sets"].items():
+            items = [*release_set["assets"], *release_set.get("bundles", [])]
+            self.assertEqual({item["artifact"] for item in items}, linux, name)
+            for item in items:
+                self.assertRegex(
+                    item["name"], r"(^|-)linux-(x86_64|arm64)(\.|$)|^smartcont_lib\.zip$"
+                )
+        tol = {
+            (asset["artifact"], asset.get("path"), asset["name"])
+            for asset in config["release_sets"]["tol"]["assets"]
+        }
+        self.assertEqual(
+            tol,
+            {
+                ("tos-x86_64-linux", "tol", "tol-linux-x86_64"),
+                ("tos-arm64-linux", "tol", "tol-linux-arm64"),
+            },
+        )
 
     def test_release_workflows_check_tags_in_their_own_namespace(self) -> None:
         # Each release workflow passes --set for the namespace its tags live

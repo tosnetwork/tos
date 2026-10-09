@@ -25,13 +25,12 @@ class PipelineTests(unittest.TestCase):
         shutil.copy(ROOT / "scripts/verify-build-tool.py", root / "scripts/verify-build-tool.py")
         tools = root / "bin"
         tools.mkdir()
-        for name in ["wget", "make", "cmake", "ninja", "sed"]:
+        for name in ["wget", "sed"]:
             executable(tools / name, "#!/bin/sh\nexit 0\n")
         env = dict(
             os.environ,
             PATH=f"{tools}:{os.environ['PATH']}",
             MARKER=str(root / "executed"),
-            JAVA_HOME=str(root / "java"),
         )
         return tools, env
 
@@ -84,37 +83,6 @@ done
                     )
                     self.assertEqual(result.returncode == 0, not tampered, result.stderr.decode())
                     self.assertEqual((root / "executed").exists(), not tampered)
-
-    def test_android_cached_archive_is_verified_before_extraction(self):
-        for tampered in [False, True]:
-            with self.subTest(tampered=tampered), tempfile.TemporaryDirectory() as temp:
-                root = Path(temp)
-                tools, env = self.fixture(root)
-                approved = b"approved archive fixture"
-                (root / "android-ndk-r27d-linux.zip").write_bytes(
-                    approved + (b"tampered" if tampered else b"")
-                )
-                (root / "scripts/build-tool-pins.json").write_text(
-                    json.dumps(
-                        {"android-ndk-r27d": {"sha256": hashlib.sha256(approved).hexdigest()}}
-                    )
-                )
-                script = root / "build-android-toslib.sh"
-                shutil.copy(ROOT / "assembly/android/build-android-toslib.sh", script)
-                (root / "third-party/openssl").mkdir(parents=True)
-                # Like make, fail when the directory has no Makefile: a fresh
-                # checkout has no configured OpenSSL tree to clean.
-                executable(
-                    tools / "make", '#!/bin/sh\n[ -f Makefile ] || [ -f "$2/Makefile" ] || exit 2\n'
-                )
-                (root / "example/android").mkdir(parents=True)
-                (root / "example/android/build-all.sh").write_text("return 0\n")
-                executable(tools / "unzip", '#!/bin/sh\ntouch "$MARKER"\n')
-                result = subprocess.run(
-                    ["bash", str(script)], cwd=root, env=env, capture_output=True
-                )
-                self.assertEqual(result.returncode == 0, not tampered, result.stderr.decode())
-                self.assertEqual((root / "executed").exists(), not tampered)
 
 
 if __name__ == "__main__":

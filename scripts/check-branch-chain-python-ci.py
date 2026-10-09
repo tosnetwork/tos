@@ -84,21 +84,27 @@ def validate_unconditional_steps(text: str) -> None:
     require("if:" not in text, "workflow makes a job or step conditional")
 
 
+TRIGGERS = "on:\n  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:\n"
+
+
+def validate_triggers(text: str) -> None:
+    # Every pull request, with no base, path or type filter, and every push to
+    # main. Pushes to other branches would duplicate the pull request run.
+    head = text.split("\npermissions:", 1)[0]
+    match = re.search(r"(?ms)^on:\n.*", head)
+    require(match is not None, "workflow has no trigger map")
+    require(
+        match.group(0).rstrip("\n") + "\n" == TRIGGERS,
+        "triggers are not exactly: every pull request, pushes to main, and dispatch",
+    )
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     workflow = root / ".github/workflows/branch-chain-python.yml"
     text = workflow.read_text(encoding="utf-8")
-    require(re.search(r"(?m)^on:\s*$", text) is not None, "workflow has no trigger map")
-    require(re.search(r"(?m)^  push:\s*$", text) is not None, "workflow does not run on pushes")
-    require(
-        re.search(r"(?m)^  pull_request:\s*$", text) is not None,
-        "workflow does not run on pull requests",
-    )
-    require(
-        "branches:" not in text.split("permissions:", 1)[0],
-        "workflow restricts branch triggers",
-    )
-    # This workflow's only purpose is to run on every push and pull request.
+    validate_triggers(text)
+    # This workflow's purpose is to run on every pull request and push to main.
     # Refuse runtime conditions: a job- or step-level `if:` is
     # how the existing real-chain job became a green-looking skipped check.
     validate_unconditional_steps(text)
@@ -406,7 +412,7 @@ def main() -> int:
         f"native fixture targets are missing: {sorted(REQUIRED_NATIVE_TARGETS - observed_targets)}",
     )
     print(
-        "BRANCH_CHAIN_PYTHON_CI_OK: every push and pull request runs full pytest, "
+        "BRANCH_CHAIN_PYTHON_CI_OK: every pull request and push to main runs full pytest, "
         "boots the four-validator PQ chain, checks PQ key-block proof context, "
         "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
         "the anchored proof verifier, its CLI and the C09 Config34 path, "

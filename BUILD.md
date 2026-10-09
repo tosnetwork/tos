@@ -7,6 +7,17 @@ This repository has two build surfaces:
 
 The current build focuses on the native TVM execution surface for actor-based applications.
 
+## Supported Platforms
+
+The node and its tools are built, tested in CI and released for Linux only, on
+x86-64 and arm64. There are no macOS, Windows, Android or WebAssembly builds,
+build scripts or release artifacts.
+
+One exception is not a node platform: `.github/workflows/quantum-mobile-native.yml`
+also runs on macOS. It compiles and runs the post-quantum native C API in
+`sdk/native/quantum` and the fee-state library behind its C state API, which
+the iOS wallet vendors, with Apple's toolchain.
+
 ## Linux Prerequisites
 
 ```bash

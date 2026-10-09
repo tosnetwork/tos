@@ -51,8 +51,31 @@ class AdnlExtTransportWriter {
   virtual td::Result<std::size_t> writev(td::Span<td::IoSlice> slices) = 0;
 };
 
-// The connection's socket. Writes go to the socket unless a transport writer is
-// installed.
+// Where a connection's input comes from instead of the socket. Lets a test
+// script exactly what one read returns, for example complete frames followed
+// by a reset, which a real socket cannot be made to deliver deterministically.
+class AdnlExtTransportReader {
+ public:
+  virtual ~AdnlExtTransportReader() = default;
+  // Bytes placed at the front of `slice`; 0 means the read would block.
+  virtual td::Result<std::size_t> read(td::MutableSlice slice) = 0;
+};
+
+// Input the ordered close after a refusal read and dropped, summed over every
+// connection in the process. Lets a test confirm how many passes a close took
+// to consume what the peer sent after the refusal.
+struct AdnlExtClosingDiscardTotals {
+  // Closing passes that read at least one byte.
+  std::atomic<td::uint64> passes{0};
+  std::atomic<td::uint64> bytes{0};
+  // Bytes read by passes that began with the peer's end of stream already
+  // reported by the poll layer.
+  std::atomic<td::uint64> bytes_after_peer_close{0};
+};
+AdnlExtClosingDiscardTotals &adnl_ext_closing_discard_totals();
+
+// The connection's socket. Reads and writes go to the socket unless a
+// transport reader or writer is installed.
 class AdnlExtSocket : public td::SocketFd {
  public:
   AdnlExtSocket() = default;
@@ -60,6 +83,19 @@ class AdnlExtSocket : public td::SocketFd {
   }
   void set_writer(std::shared_ptr<AdnlExtTransportWriter> writer) {
     writer_ = std::move(writer);
+  }
+  void set_reader(std::shared_ptr<AdnlExtTransportReader> reader) {
+    reader_ = std::move(reader);
+  }
+  td::Result<std::size_t> read(td::MutableSlice slice) TD_WARN_UNUSED_RESULT {
+    if (!reader_) {
+      return td::SocketFd::read(slice);
+    }
+    TRY_RESULT(got, reader_->read(slice));
+    if (got == 0) {
+      get_poll_info().clear_flags(td::PollFlags::Read());
+    }
+    return got;
   }
   td::Result<std::size_t> writev(td::Span<td::IoSlice> slices) TD_WARN_UNUSED_RESULT {
     if (!writer_) {
@@ -76,6 +112,7 @@ class AdnlExtSocket : public td::SocketFd {
 
  private:
   std::shared_ptr<AdnlExtTransportWriter> writer_;
+  std::shared_ptr<AdnlExtTransportReader> reader_;
 };
 
 class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
@@ -114,6 +151,11 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   // Set once send() closed the connection because the peer left too much unread.
   bool output_overflowed() const {
     return output_overflowed_;
+  }
+  // Set once a refusal began the ordered close: nothing new is queued, and the
+  // closing sequence alone decides when the connection ends.
+  bool closing() const {
+    return closing_;
   }
   // Count this connection's unread output against a budget shared by all of
   // a server's connections.
@@ -172,6 +214,10 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   void set_transport_writer(std::shared_ptr<AdnlExtTransportWriter> writer) {
     buffered_fd_.set_writer(std::move(writer));
   }
+  // Take input from `reader` instead of the socket.
+  void set_transport_reader(std::shared_ptr<AdnlExtTransportReader> reader) {
+    buffered_fd_.set_reader(std::move(reader));
+  }
   // Bound this connection's unread output at `bytes` instead of the default.
   void set_pending_output_limit(std::size_t bytes) {
     pending_output_limit_ = bytes;
@@ -215,6 +261,19 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   bool inited_ = false;
   bool stop_read_ = false;
   bool output_overflowed_ = false;
+  // Closing after a refusal: no request is parsed and nothing new is queued,
+  // but answers already queued are written before the socket closes. The
+  // whole sequence is bounded by one deadline, also against a peer that never
+  // reads.
+  static constexpr double kClosingSeconds = 2.0;
+  static constexpr std::size_t kDiscardChunkBytes = 64 << 10;
+  static constexpr double kClosingRetrySeconds = 0.02;
+  bool closing_ = false;
+  bool read_eof_ = false;
+  bool write_shut_ = false;
+  td::Timestamp closing_deadline_;
+  void begin_closing(const td::Status &reason);
+  void closing_loop();
   std::size_t pending_output_limit_ = adnl_ext_max_pending_output_bytes;
   std::shared_ptr<AdnlExtOutputBudget> server_output_budget_;
   // Bytes of the server budget this connection holds: at least its unread
@@ -281,6 +340,16 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   void loop() override;
 
   void alarm() override {
+    if (closing_) {
+      if (closing_deadline_.is_in_past()) {
+        LOG(INFO) << "ADNL external connection did not finish closing within " << kClosingSeconds << " s";
+        stop();
+      } else {
+        alarm_timestamp() = closing_deadline_;
+        closing_loop();  // may bring the alarm forward for a write retry
+      }
+      return;
+    }
     alarm_timestamp() = fail_at_;
     alarm_timestamp().relax(partial_frame_deadline_);
     if (partial_frame_deadline_ && partial_frame_deadline_.is_in_past()) {

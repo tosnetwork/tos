@@ -479,6 +479,98 @@ void source_share() {
   std::printf("ADNL_EXT_INPUT_CASE source_share ok share=%zu\n", share);
 }
 
+// A refusal on the read path sheds load: the refused connection is closed at
+// once, not held open for the ordered close that drains answers to a refused
+// query. Its peer keeps its write side open and reads nothing, so an ordered
+// close would last until its deadline; the bound here is a fraction of it.
+constexpr double kPromptCloseSeconds = 0.5;
+
+double seconds_until_closed(Harness& h, const Probe& probe, const std::string& what) {
+  auto started = td::Time::now();
+  h.wait_until([&] { return probe.closed; }, 5.0, what + ": the refused connection was never closed");
+  return td::Time::now() - started;
+}
+
+// The server budget refuses a read: the connection asking for more is closed promptly.
+void budget_refusal_closes_promptly() {
+  const size_t limit = 100000;
+  Harness h(limit);
+  const size_t max_pending = 128 << 10;
+  auto holder = h.open(max_pending, kLongLifetime);
+  auto holder_frame = holder.peer->frame(100000);
+  holder.peer->write(td::Slice(holder_frame).substr(0, 80004));
+  h.wait_until([&] { return h.budget().used() == 80000; }, 5.0, "holder not charged");
+
+  auto refused = h.open(max_pending, kLongLifetime);
+  h.pump(0.05);
+  auto refused_frame = refused.peer->frame(100000);
+  refused.peer->write(td::Slice(refused_frame).substr(0, 30004));
+  auto closed_after = seconds_until_closed(h, *refused.probe, "budget refusal");
+  std::printf("ADNL_EXT_INPUT_MEASURE budget_refusal_close_s=%.3f\n", closed_after);
+  require(closed_after < kPromptCloseSeconds, "a connection refused by the server budget was not closed promptly");
+  h.wait_until([&] { return h.budget().used() == 80000; }, 5.0, "refused connection kept its reservation");
+  require(!holder.probe->closed, "refusing one connection closed the holder");
+  std::printf("ADNL_EXT_INPUT_CASE budget_refusal_closes_promptly ok\n");
+}
+
+// A source's share refuses a read: the connection asking for more is closed
+// promptly, though the server budget has room.
+void source_share_refusal_closes_promptly() {
+  const size_t limit = 100000;
+  const size_t share = adnl::default_source_share(limit);
+  Harness h(limit, share);
+  const size_t max_pending = 64 << 10;
+  const std::string hog = "v4:192.0.2.1";
+  auto hog1 = h.open(max_pending, kLongLifetime, hog);
+  auto hog1_frame = hog1.peer->frame(20000);
+  hog1.peer->write(td::Slice(hog1_frame).substr(0, 10004));
+  h.wait_until([&] { return h.shares().used(hog) == 10000; }, 5.0, "first hog connection not charged to its source");
+
+  auto hog2 = h.open(max_pending, kLongLifetime, hog);
+  h.pump(0.05);
+  auto hog2_frame = hog2.peer->frame(20000);
+  hog2.peer->write(td::Slice(hog2_frame).substr(0, 5004));
+  auto closed_after = seconds_until_closed(h, *hog2.probe, "source share refusal");
+  std::printf("ADNL_EXT_INPUT_MEASURE source_share_refusal_close_s=%.3f\n", closed_after);
+  require(h.budget().used() < limit / 2, "the source share was not what refused the read");
+  require(closed_after < kPromptCloseSeconds, "a connection refused by its source's share was not closed promptly");
+  h.wait_until([&] { return h.shares().used(hog) == 10000; }, 5.0, "refused connection kept its source charge");
+  require(!hog1.probe->closed, "refusing a source's connection closed the source's other connection");
+  std::printf("ADNL_EXT_INPUT_CASE source_share_refusal_closes_promptly ok\n");
+}
+
+// Complete frames and an over-budget remainder arrive together: the frames are
+// taken off the buffer and dispatched, and then the read that would hold the
+// remainder is refused, all in one pass. That the frames were processed does
+// not make the read refusal a refusal of the peer's queries: the connection is
+// still closed promptly.
+void frames_then_budget_refusal_closes_promptly() {
+  const size_t limit = 100000;
+  Harness h(limit);
+  const size_t max_pending = 128 << 10;
+  auto holder = h.open(max_pending, kLongLifetime);
+  auto holder_frame = holder.peer->frame(100000);
+  holder.peer->write(td::Slice(holder_frame).substr(0, 90004));
+  h.wait_until([&] { return h.budget().used() == 90000; }, 5.0, "holder not charged");
+
+  auto refused = h.open(max_pending, kLongLifetime);
+  h.pump(0.05);
+  // Two complete frames, then a frame larger than the 10000 bytes left in the budget.
+  auto batch = refused.peer->frame(1000) + refused.peer->frame(1000);
+  require(batch.size() < limit - 90000, "the complete frames do not fit in what the budget has left");
+  auto remainder = refused.peer->frame(30000);
+  batch += remainder.substr(0, 20004);
+  refused.peer->write(batch);
+  auto closed_after = seconds_until_closed(h, *refused.probe, "budget refusal after frames");
+  std::printf("ADNL_EXT_INPUT_MEASURE frames_then_budget_refusal_close_s=%.3f packets=%zu\n", closed_after,
+              refused.probe->packets);
+  require(refused.probe->packets == 2, "the complete frames before the refused read were not dispatched");
+  require(closed_after < kPromptCloseSeconds, "a budget refusal after dispatched frames was not closed promptly");
+  h.wait_until([&] { return h.budget().used() == 90000; }, 5.0, "refused connection kept its reservation");
+  require(!holder.probe->closed, "refusing one connection closed the holder");
+  std::printf("ADNL_EXT_INPUT_CASE frames_then_budget_refusal_closes_promptly ok\n");
+}
+
 // The real external server, accepting real TCP connections with its production
 // budgets: a source's connections are charged to the source. Two connections
 // from 127.0.0.1 hold most of the source's 32 MiB share with unfinished frames;
@@ -808,6 +900,9 @@ int main(int argc, char** argv) {
       {"lifetime", partial_frame_lifetime},
       {"error", release_on_error},
       {"source-share", source_share},
+      {"budget-refusal-prompt", budget_refusal_closes_promptly},
+      {"source-share-refusal-prompt", source_share_refusal_closes_promptly},
+      {"frames-then-refusal-prompt", frames_then_budget_refusal_closes_promptly},
       {"server-source-share", server_source_share},
   };
   bool ran = false;
