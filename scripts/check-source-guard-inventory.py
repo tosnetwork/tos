@@ -56,6 +56,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "release-artifacts-binding",
         "simplex-exact-ancestor-source-guard",
         "snapshot-import-offline",
+        "static-use-after-move-self-test",
         "test-quorum-static-grep",
         "tosctl-election-chain-reads-source",
         "tosctl-pq-stake-builder-source",
