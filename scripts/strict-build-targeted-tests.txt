@@ -3,3 +3,4 @@
 test-pq-signature-persistence
 test-json-rpc-account-capability
 test-json-rpc-parse
+test-tol

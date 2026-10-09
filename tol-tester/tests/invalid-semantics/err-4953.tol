@@ -1,0 +1,10 @@
+const FROM_MATCH = match (0) { 0 => { return 1; } else => 2 };
+
+fun main() {
+    return FROM_MATCH;
+}
+
+/**
+@compilation_should_fail
+@stderr `return` used outside a function
+ */
