@@ -116,9 +116,9 @@ cannot run here.
 - With `--jobs`, build parallelism differs from the workflow's `-j2`; test
   invocations are not changed.
 - `timeout-minutes` and `concurrency` are not enforced.
-- Not replayed, because they need GitHub itself: jobs on arm64, macOS or
-  Windows runners; reusable workflow calls; artifact downloads between
-  workflows, including jobs that compare results across architectures;
+- Not replayed, because they need GitHub itself: jobs on arm64 runners and
+  the macOS leg of the wallet C API workflow; reusable workflow calls;
+  artifact downloads between workflows, including jobs that compare results across architectures;
   steps that need real Docker; registry logins and image pushes; jobs gated on
   `workflow_dispatch` or `push` (they are reported as skipped by their `if:`).
 

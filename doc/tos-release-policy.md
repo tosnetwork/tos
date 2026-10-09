@@ -348,6 +348,14 @@ built from, and only by one workflow per tag namespace:
 Each publisher refuses a tag outside its namespace. Releases published before
 these namespaces were introduced keep their names.
 
+Both release sets ship Linux binaries only, for x86-64 (`tos-x86_64-linux`)
+and arm64 (`tos-arm64-linux`), built by the two AppImage workflows. There are
+no macOS, Windows, Android or WebAssembly release artifacts.
+`scripts/test_release_artifacts.py` fails if a set names any other build
+artifact. The macOS leg of `.github/workflows/quantum-mobile-native.yml` is not
+a release platform: it tests the wallet's post-quantum C API
+(`sdk/native/quantum`) with Apple's toolchain and publishes nothing.
+
 No other workflow writes a release. Build workflows only upload workflow
 artifacts with read-only tokens; the publisher collects them. `scripts/check-workflow-supply-chain.py`
 enforces this: `RELEASE_WRITER_NOT_DESIGNATED` fails any other workflow that
