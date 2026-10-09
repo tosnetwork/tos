@@ -66,17 +66,21 @@ never lowered.
 
 ## Self-hosted routing
 
-The heaviest Linux jobs can run on the project's own runner instead of a GitHub-hosted
-machine. Each runs in a fresh VM that is discarded after the job. The routed jobs are:
+Linux x64 jobs can run on the project's own runner instead of a GitHub-hosted machine.
+Each runs in a fresh VM that is discarded after the job. Every `ubuntu-24.04` job that runs
+for a pull request or a push to `main` is routed, provided its workflow grants no write
+permission and reads no secret beyond `GITHUB_TOKEN`. `ROUTED_FIRST` and `ROUTED_SECOND`
+in `scripts/test_check_workflow_policy.py` pin the exact list. The following stay hosted:
 
-| Workflow | Job | Timeout (min) |
-|---|---|---|
-| `branch-chain-python.yml` | `python-and-pq-chain` | 120 |
-| `network-safety-asan.yml` | `network-safety` | 100 |
-| `jsonrpc-asan.yml` | `unit`, `corpus` | 40, 120 |
-| `build-tos-linux-x86-64-werror.yml` | `strict-build` | 150 |
+- workflows that publish or write: releases, image pushes, cache clearing, and the
+  nightly report;
+- the platform matrix's orchestration jobs. A schedule there would start a whole hosted
+  matrix, and the nightly workflow already exercises it;
+- dispatch-only jobs, and push-only jobs on branches other than `main`, which the
+  expression never routes;
+- `ubuntu-22.04` jobs (the VM image is 24.04), and every arm, macOS and Windows job.
 
-Each of these jobs chooses its runner with one fixed `runs-on` expression. It selects the
+Each routed job chooses its runner with one fixed `runs-on` expression. It selects the
 `tos-vm` label only when all of the following hold:
 
 - the repository variable `SELF_HOSTED_LINUX` is `true`; and
@@ -86,9 +90,12 @@ Each of these jobs chooses its runner with one fixed `runs-on` expression. It se
 
 Every other event runs on `ubuntu-24.04`, as before. That covers fork pull requests,
 pull requests from anyone not listed, dispatches and schedules. Clearing the variable or
-setting it to anything but `true` sends every job back to hosted runners without a commit.
+setting it to anything but `true` changes every later routing decision without a commit.
+A job is routed when it is queued, and a rerun decides again. So jobs already queued for
+the self-hosted label need cancelling and rerunning, and running jobs finish under the
+runner's drain policy.
 
-Each of the four workflows carries one weekly schedule. A scheduled run is never routed,
+Each workflow with a routed job carries exactly one weekly schedule. A scheduled run is never routed,
 so the hosted path runs at least once a week whatever the variable says. The jobs keep
 their own package-install steps for the same reason: the VM image has those packages
 preinstalled, so on the VM the steps find nothing to do, but the hosted fallback needs

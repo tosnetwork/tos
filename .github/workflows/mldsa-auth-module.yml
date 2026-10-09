@@ -16,6 +16,8 @@ on:
       - 'doc/mldsa44-auth-module.md'
       - '.github/workflows/mldsa-auth-module.yml'
       - '.github/actions/native-cache/**'
+  schedule:
+    - cron: '57 7 * * 0'
 permissions:
   contents: read
 concurrency:
@@ -92,7 +94,13 @@ jobs:
   determinism:
     needs: native
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ${{ (vars.SELF_HOSTED_LINUX == 'true' && (
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.event.pull_request.user.login) &&
+       contains(fromJSON(vars.CI_TRUSTED_LOGINS), github.triggering_actor))))
+      && fromJSON('["self-hosted","linux","x64","tos-vm"]') || 'ubuntu-24.04' }}
     timeout-minutes: 5
     steps:
       - name: Require both native jobs
