@@ -1,0 +1,6 @@
+const padded = address("Ef9Tj6fMJP+OqhAdhKXxq36DL+HYSzCc3+9O6UNzqsgPfYF=")
+
+/**
+@compilation_should_fail
+@stderr invalid standard address
+ */

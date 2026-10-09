@@ -91,7 +91,7 @@ td::Result<PublicKey> PublicKey::parse(td::Slice key) {
     return td::Status::Error("Serialized Ed25519 public key must be exactly 48 characters long");
   }
   td::uint8 buf[36];
-  if (!buff_base64_decode(td::MutableSlice(buf, 36), key, true)) {
+  if (!buff_base64_decode_exact(td::MutableSlice(buf, 36), key, true)) {
     return td::Status::Error("Public key is not serialized in base64 encoding");
   }
 
@@ -157,7 +157,7 @@ bool unpack_std_smc_addr(const char packed[48], tos::WorkchainId& wc, tos::StdSm
                          bool& testnet) {
   unsigned char buffer[36];
   wc = tos::workchainInvalid;
-  if (!buff_base64_decode(td::MutableSlice{buffer, 36}, td::Slice{packed, 48}, true)) {
+  if (!buff_base64_decode_exact(td::MutableSlice{buffer, 36}, td::Slice{packed, 48}, true)) {
     return false;
   }
   unsigned crc = td::crc16(td::Slice{buffer, 34});

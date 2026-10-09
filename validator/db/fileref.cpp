@@ -34,7 +34,6 @@ namespace {
 
 td::Result<BlockId> get_block_id(std::stringstream& ss) {
   std::string token;
-  BlockId block_id;
   std::getline(ss, token, '_');
   TRY_RESULT(w, td::to_integer_safe<WorkchainId>(token));
   std::getline(ss, token, '_');

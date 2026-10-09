@@ -292,8 +292,11 @@ bool ShardTopBlockDescrQ::may_be_valid(BlockHandle last_masterchain_block_handle
     return false;
   }
   int res_flags = 0;
-  return prevalidate(last_masterchain_block_handle->id(), last_masterchain_block_state,
-                     std::move(last_masterchain_block_state), Mode::allow_next_vset, res_flags)
+  // Both parameters take the same state by value. Copying it into each keeps the call
+  // independent of the unspecified order in which they are initialised: a move into one
+  // could leave the other null.
+  return prevalidate(last_masterchain_block_handle->id(), last_masterchain_block_state, last_masterchain_block_state,
+                     Mode::allow_next_vset, res_flags)
       .is_ok();
 }
 

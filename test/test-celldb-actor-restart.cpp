@@ -466,6 +466,69 @@ void test_restart_preserves_unmarked_manifest_after_canonical_store() {
   td::rmrf(root).ignore();
 }
 
+// Records every log line while installed, and forwards errors to the default sink.
+class CapturingLog final : public td::LogInterface {
+ public:
+  CapturingLog() : previous_(td::log_interface) {
+    td::log_interface = this;
+  }
+  CapturingLog(const CapturingLog&) = delete;
+  CapturingLog& operator=(const CapturingLog&) = delete;
+  ~CapturingLog() override {
+    td::log_interface = previous_;
+  }
+  void append(td::CSlice message, int level) override {
+    if (level <= VERBOSITY_NAME(ERROR)) {
+      td::default_log_interface->append(message, level);
+    }
+    text_ += message.str();
+  }
+  const std::string& text() const {
+    return text_;
+  }
+
+ private:
+  td::LogInterface* previous_;
+  std::string text_;
+};
+
+// The in-memory branch builds its own options and must describe those. It printed the
+// V2 options instead, which are never set on that branch: an empty optional read as a
+// value, so the line carried whatever bytes were there.
+void test_in_memory_start_logs_in_memory_options() {
+  std::printf("=== test_in_memory_start_logs_in_memory_options ===\n");
+  std::string db_path;
+  std::string persistent_state_dir;
+  auto root = unique_tmp_root("in-memory-options");
+  prepare_temp_roots(root, db_path, persistent_state_dir);
+
+  auto opts = make_options();
+  opts.write().set_celldb_in_memory(true);
+  auto verbosity = GET_VERBOSITY_LEVEL();
+  SET_VERBOSITY_LEVEL(VERBOSITY_NAME(WARNING));
+  std::string log;
+  {
+    CapturingLog capture;
+    {
+      // A reply proves the actor ran its start-up on the empty DB. The in-memory database
+      // keeps no separate reader, so the reader itself is null.
+      CellDbActorSession session(db_path, opts);
+      auto reader = expect_result_ok(session.get_reader(), "get in-memory CellDb reader");
+      EXPECT_TRUE(reader == nullptr);
+      session.stop();
+    }
+    log = capture.text();
+  }
+  SET_VERBOSITY_LEVEL(verbosity);
+
+  auto line_start = log.find("Using InMemory DynamicBagOfCells");
+  if (line_start != std::string::npos) {
+    std::printf("captured: %s\n", log.substr(line_start, log.find('\n', line_start) - line_start).c_str());
+  }
+  EXPECT_TRUE(log.find("Using InMemory DynamicBagOfCells with options InMemory{extra_threads=") != std::string::npos);
+  td::rmrf(root).ignore();
+}
+
 }  // namespace
 
 int main() {
@@ -476,6 +539,7 @@ int main() {
   test_restart_unlinks_orphaned_adopted_marker();
   test_restart_unlinks_committed_manifest_without_rollback();
   test_restart_preserves_unmarked_manifest_after_canonical_store();
+  test_in_memory_start_logs_in_memory_options();
   std::printf("All CellDb actor/restart rollback tests passed.\n");
   return 0;
 }

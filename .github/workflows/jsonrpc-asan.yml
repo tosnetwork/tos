@@ -85,7 +85,8 @@ jobs:
           test-json-rpc-payload-waiter \
           test-json-rpc-signing-payload \
           test-json-rpc-source-ip \
-          test-json-rpc-listen-policy
+          test-json-rpc-listen-policy \
+          test-json-rpc-account-capability
 
     - name: Run under AddressSanitizer
       run: |
@@ -96,6 +97,7 @@ jobs:
         ./build-asan/test-json-rpc-signing-payload
         ./build-asan/test-json-rpc-source-ip
         ./build-asan/test-json-rpc-listen-policy
+        ./build-asan/test-json-rpc-account-capability
 
     - name: Check JSON-RPC route gating
       run: python3 scripts/check-jsonrpc-route-gating.py

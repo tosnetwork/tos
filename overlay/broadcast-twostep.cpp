@@ -527,7 +527,9 @@ td::Status BroadcastsTwostep::try_admit_fresh_for_test(OverlayImpl *overlay, Ove
   auto bcast = std::make_unique<BroadcastTwostep>();
   bcast->broadcast_id = broadcast_id;
   bcast->date = static_cast<td::uint32>(td::Clocks::system());
-  return admit_and_track(overlay, bcast->date, broadcast_id, std::move(bcast));
+  // Read the date before the call: the arguments are unordered, and bcast is moved by one.
+  auto date = bcast->date;
+  return admit_and_track(overlay, date, broadcast_id, std::move(bcast));
 }
 
 void BroadcastsTwostep::gc(OverlayImpl *overlay) {

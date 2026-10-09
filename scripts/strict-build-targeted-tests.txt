@@ -1,0 +1,10 @@
+# Regression tests the Lint / strict-build job runs after the build, one per line.
+# scripts/check-ctest-inventory.py refuses the step if any of them is not registered.
+test-pq-signature-persistence
+test-json-rpc-account-capability
+test-json-rpc-parse
+test-tol
+test-celldb-actor-restart
+test-toslib-offline
+test-tdactor
+test-inmemory-celldb-dec

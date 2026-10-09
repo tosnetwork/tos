@@ -47,7 +47,7 @@ static thread_local std::unordered_map<GlobalConstPtr, ConstValExpression> compu
 // (which is not included to avoid linking with tos_crypto)
 static bool parse_friendly_address(const char packed[48], tos::WorkchainId& workchain, tos::StdSmcAddress& addr) {
   unsigned char buffer[36];
-  if (!td::buff_base64_decode(td::MutableSlice{buffer, 36}, td::Slice{packed, 48}, true)) {
+  if (!td::buff_base64_decode_exact(td::MutableSlice{buffer, 36}, td::Slice{packed, 48}, true)) {
     return false;
   }
   td::uint16 crc = td::crc16(td::Slice{buffer, 34});

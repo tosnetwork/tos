@@ -1069,6 +1069,10 @@ target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
 # The real JSON-RPC server and listener, driven over loopback TCP.
 add_executable(test-json-rpc-transport test/test-td-main.cpp test/test-json-rpc-transport.cpp)
 target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc)
+# The restricted-wallet delegation views the account-capability handlers call,
+# against a fake liteserver.
+add_executable(test-json-rpc-account-capability test/test-td-main.cpp test/test-json-rpc-account-capability.cpp)
+target_link_libraries(test-json-rpc-account-capability PRIVATE validator-engine-json-rpc)
 
 # Drives real CONNECT tunnel actors, and runs the RLDP proxy binary to check
 # how it reads its limits.
@@ -1125,6 +1129,10 @@ target_link_libraries(test-pq-signature-persistence PRIVATE tos_validator valida
 add_executable(test-celldb-streaming-import test/test-celldb-streaming-import.cpp)
 target_link_libraries(test-celldb-streaming-import PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+# A decrement of a never-stored cell must stop the in-memory cell database; the abort
+# runs in a re-executed child of the test (see the file).
+add_executable(test-inmemory-celldb-dec test/test-inmemory-celldb-dec.cpp)
+target_link_libraries(test-inmemory-celldb-dec PRIVATE tos_db tddb tdutils)
 add_executable(test-celldb-actor-restart test/test-celldb-actor-restart.cpp)
 target_link_libraries(test-celldb-actor-restart PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
@@ -1787,6 +1795,23 @@ add_test(NAME tosctl-election-chain-reads-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-election-chain-reads.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(tosctl-election-chain-reads-source PROPERTIES LABELS "source-guard")
+# Use-after-move and moved-from-state defects that the shipped compiler happens to
+# evaluate correctly, so no behavioural test built with it can go red for them. The
+# guard runs clang-tidy over a pinned file list and proves each check reports through
+# a positive control first. Registered only where clang-tidy-21 exists; the Lint /
+# strict-build job requires it to be registered.
+find_program(TOS_CLANG_TIDY_21 clang-tidy-21)
+if (TOS_CLANG_TIDY_21)
+  add_test(NAME static-use-after-move
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-use-after-move.py
+            --source-dir ${CMAKE_CURRENT_SOURCE_DIR} --build-dir ${CMAKE_BINARY_DIR}
+            --clang-tidy ${TOS_CLANG_TIDY_21})
+  set_tests_properties(static-use-after-move PROPERTIES LABELS "static-analysis" TIMEOUT 1800)
+endif()
+# The guard's exit-status handling, against a stand-in tool; needs no clang-tidy.
+add_test(NAME static-use-after-move-self-test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_check_use_after_move.py)
+set_tests_properties(static-use-after-move-self-test PROPERTIES LABELS "source-guard")
 # Release and deployment supply chain: pinned actions, per-job permissions,
 # authenticated build inputs, digest-pinned images, release artifacts bound to
 # the tag commit, and authenticated snapshot import.
@@ -1974,6 +1999,7 @@ if (Python3_Interpreter_FOUND)
 endif()
 tos_test(test-http-server-limits)
 tos_test(test-json-rpc-transport)
+tos_test(test-json-rpc-account-capability)
 tos_test(test-rldp-http-tunnel)
 tos_test(test-http-listen-address)
 set_tests_properties(test-http-listen-address PROPERTIES SKIP_RETURN_CODE 77)
@@ -1981,6 +2007,7 @@ tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
+tos_test(test-inmemory-celldb-dec)
 tos_test(test-validator-options)
 tos_test(test-block-handle-flags)
 tos_test(test-keyring-temp-key)

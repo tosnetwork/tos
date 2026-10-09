@@ -12,6 +12,7 @@
 #include "td/utils/Random.h"
 #include "td/utils/filesystem.h"
 #include "test/pq-native/pq-block-signature-test-common.h"
+#include "validator/block-handle.hpp"
 #include "validator/db/rootdb.hpp"
 #include "validator/fabric.h"
 #include "validator/impl/accept-block.hpp"
@@ -786,6 +787,17 @@ void run_proof_consumers() {
       production_top->prevalidate(current_after_key_block, current_state, current_state,
                                   ShardTopBlockDescrQ::fail_new | ShardTopBlockDescrQ::fail_too_new, res_flags),
       "top block description governing state mismatch", "top_descr_current_state_is_not_governing");
+  // may_be_valid hands the same state to both by-value prevalidate parameters. A positive
+  // control for that path, not a red for argument order: clang initialises the parameters
+  // in an order that survives a copy-and-move, so only the static use-after-move guard can
+  // see the order hazard. A null state here makes the first check fail.
+  if (!production_top->may_be_valid(BlockHandleImpl::create_empty(shard_proof.governing_mc_block_id),
+                                    governing_state)) {
+    fail("PQ_TOP_BLOCK_DESCR_MAY_BE_VALID_AT_GOVERNING_STATE_REFUSED");
+  }
+  if (production_top->may_be_valid(BlockHandleImpl::create_empty(current_after_key_block), current_state)) {
+    fail("PQ_TOP_BLOCK_DESCR_MAY_BE_VALID_AFTER_KEY_BLOCK_ACCEPTED");
+  }
   auto top_envelope = require_ok(parse_top_block_descr_signature_envelope(top_loaded), "top-descr-envelope");
   if (top_envelope.block_id != shard_proof.block_id || top_envelope.signatures.is_null() ||
       top_envelope.signatures->get_catchain_seqno() != Fixture::catchain_seqno ||

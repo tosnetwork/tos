@@ -3011,7 +3011,9 @@ td::Status ToslibClient::guess_revisions(std::vector<Target> targets,
     void start_up() override {
       left_ += targets_.size();
       for (auto& p : targets_) {
-        send_query(int_api::GetAccountState{p.address, block_id_.copy(), std::move(p.public_key)},
+        // Built first: the continuation below moves p, and arguments are unordered.
+        auto query = int_api::GetAccountState{p.address, block_id_.copy(), std::move(p.public_key)};
+        send_query(std::move(query),
                    promise_send_closure(td::actor::actor_id(this), &GuessRevisions::on_account_state, std::move(p)));
       }
       on_account_state_finish();
@@ -4406,8 +4408,12 @@ class GenericCreateSendGrams : public ToslibQueryActor {
                 std::move(builder).with_a_key(&private_key_.value());
               }
               if (is_bob) {
+                // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+                // NOLINTNEXTLINE(bugprone-use-after-move)
                 std::move(builder).with_b_key(&private_key_.value());
               }
+              // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+              // NOLINTNEXTLINE(bugprone-use-after-move)
               raw.message_body = std::move(builder).finalize();
               return td::Status::OK();
             },
@@ -4422,8 +4428,12 @@ class GenericCreateSendGrams : public ToslibQueryActor {
                 std::move(builder).with_a_key(&private_key_.value());
               }
               if (is_bob) {
+                // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+                // NOLINTNEXTLINE(bugprone-use-after-move)
                 std::move(builder).with_b_key(&private_key_.value());
               }
+              // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+              // NOLINTNEXTLINE(bugprone-use-after-move)
               raw.message_body = std::move(builder).finalize();
               return td::Status::OK();
             },
@@ -4454,8 +4464,12 @@ class GenericCreateSendGrams : public ToslibQueryActor {
                 std::move(builder).with_a_key(&private_key_.value());
               }
               if (is_bob) {
+                // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+                // NOLINTNEXTLINE(bugprone-use-after-move)
                 std::move(builder).with_b_key(&private_key_.value());
               }
+              // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+              // NOLINTNEXTLINE(bugprone-use-after-move)
               raw.message_body = std::move(builder).finalize();
               return td::Status::OK();
             }));

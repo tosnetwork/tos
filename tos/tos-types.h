@@ -83,7 +83,8 @@ inline std::string shard_to_str(ShardId shard) {
 struct ShardIdFull {
   WorkchainId workchain;
   ShardId shard;
-  ShardIdFull() : workchain(workchainInvalid) {
+  // Every member initialised: a default ShardIdFull is invalid, never indeterminate.
+  constexpr ShardIdFull() : workchain(workchainInvalid), shard(0) {
   }
   explicit ShardIdFull(WorkchainId workchain) : workchain(workchain), shard(shardIdAll) {
   }
@@ -147,6 +148,9 @@ struct ShardIdFull {
     return shard;
   }
 };
+// Constant evaluation refuses an uninitialised member, so these fail the build if a
+// default member is left indeterminate or the invalid-workchain sentinel changes.
+static_assert(ShardIdFull().workchain == workchainInvalid && ShardIdFull().shard == 0);
 
 struct AccountIdPrefixFull {
   WorkchainId workchain;
@@ -189,7 +193,8 @@ struct BlockId {
   }
   BlockId(ShardIdFull shard, BlockSeqno seqno) : workchain(shard.workchain), seqno(seqno), shard(shard.shard) {
   }
-  BlockId() : workchain(workchainInvalid) {
+  // Every member initialised: a default BlockId is invalid, never indeterminate.
+  constexpr BlockId() : workchain(workchainInvalid), seqno(0), shard(0) {
   }
   explicit operator ShardIdFull() const {
     return ShardIdFull{workchain, shard};
@@ -243,6 +248,7 @@ struct BlockId {
                                                   static_cast<unsigned long long>(shard), seqno)};
   }
 };
+static_assert(BlockId().workchain == workchainInvalid && BlockId().shard == 0 && BlockId().seqno == 0);
 
 inline bool operator<(const ShardIdFull& x, const BlockId& y) {
   return x.workchain < y.workchain || (x.workchain == y.workchain && x.shard < y.shard);
