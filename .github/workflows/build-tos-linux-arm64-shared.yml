@@ -18,6 +18,14 @@ on:
       - '**/*.h'
       - '**/*.hpp'
       - '**/*.rs'
+      # Schemas, contracts and tables the build generates code from.
+      - '**/*.tl'
+      - '**/*.tlb'
+      - '**/*.fc'
+      - '**/*.fif'
+      - '**/*.boc'
+      - '**/*.gperf'
+      - 'tdutils/generate/mime_types.txt'
       # A manifest or lockfile decides what the Rust half compiles, and the
       # build script and toolchain pin decide how any of it is built, so a
       # change to one of them can break the build without touching a source.

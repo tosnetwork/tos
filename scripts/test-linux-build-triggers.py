@@ -10,37 +10,128 @@ Checked for each .github/workflows/build-tos-linux-*.yml:
 - a push or pull_request branch filter names only branches that exist here;
 - at least one automatic trigger can fire: a push to such a branch, a pull
   request, a version tag or a schedule (dispatch alone does not count);
-- the full shared builds' path filters include their own workflow file and
-  the Rust toolchain pin, so a change to the build itself runs it.
+- the full shared builds' path filters include their own workflow file, the
+  Rust toolchain pin and every kind of input the build generates code from,
+  so a change to any of them runs the build.
+
+Standard library only: this runs in the builder image before any Python
+dependency is installed. The `on:` block is read by a small parser that
+refuses every shape it does not know, so a gap in it fails here instead of
+passing quietly.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
-
-import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 BRANCHES = {"main"}
 SHARED_BUILDS = ("build-tos-linux-x86-64-shared.yml", "build-tos-linux-arm64-shared.yml")
+# install-rust-toolchain.sh installs what rust-toolchain.toml pins; the rest
+# are the schemas, contracts and tables the build generates code from.
+SHARED_BUILD_INPUTS = (
+    "rust-toolchain.toml",
+    "**/*.tl",
+    "**/*.tlb",
+    "**/*.fc",
+    "**/*.fif",
+    "**/*.boc",
+    "**/*.gperf",
+    "tdutils/generate/mime_types.txt",
+)
+EVENTS = {"push", "pull_request", "workflow_dispatch", "workflow_call", "schedule"}
+LIST_KEYS = {"branches", "branches-ignore", "tags", "paths", "paths-ignore", "types"}
 
 
-def triggers(doc: dict) -> dict:
-    # PyYAML reads the bare key `on` as the boolean True.
-    on = doc.get("on", doc.get(True))
-    if isinstance(on, str):
-        return {on: None}
-    if isinstance(on, list):
-        return {event: None for event in on}
-    return on or {}
+class UnsupportedTriggers(ValueError):
+    pass
 
 
-def problems(name: str, doc: dict) -> list[str]:
+def _scalar(text: str) -> str:
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1]
+    if not text or any(c in text for c in "{}[]&*!|>") or text[0] in "'\"":
+        raise UnsupportedTriggers(f"unsupported scalar {text!r}")
+    return text
+
+
+def _inline_list(text: str) -> list[str]:
+    text = text.strip()
+    if not (text.startswith("[") and text.endswith("]")):
+        raise UnsupportedTriggers(f"unsupported list {text!r}")
+    body = text[1:-1].strip()
+    return [_scalar(item) for item in body.split(",")] if body else []
+
+
+def parse_on(text: str) -> dict[str, dict[str, list[str]] | None]:
+    """The workflow's top-level `on:` block as {event: {key: [values]} or None}."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if re.fullmatch(r"on:\s*(#.*)?", line)), None)
+    if start is None:
+        if any(line.startswith(("on:", '"on":', "'on':", "true:")) for line in lines):
+            raise UnsupportedTriggers("only a block-style `on:` mapping is supported")
+        raise UnsupportedTriggers("no top-level `on:` block")
+    events: dict[str, dict[str, list[str]] | None] = {}
+    event = key = None
+    for raw in lines[start + 1 :]:
+        if "\t" in raw:
+            raise UnsupportedTriggers("tab in the `on:` block")
+        line = re.sub(r"\s+#.*$", "", raw).rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip(" "))
+        if indent == 0:
+            break
+        if indent == 2:
+            m = re.fullmatch(r"([A-Za-z_]+):\s*(.*)", stripped)
+            if not m or m.group(1) not in EVENTS:
+                raise UnsupportedTriggers(f"unsupported event line {stripped!r}")
+            if m.group(2):
+                raise UnsupportedTriggers(f"unsupported inline event value {stripped!r}")
+            event, key = m.group(1), None
+            if event in events:
+                raise UnsupportedTriggers(f"event {event} listed twice")
+            events[event] = None
+        elif indent == 4 and event is not None:
+            if event == "schedule":
+                if not re.fullmatch(r"- cron: .+", stripped):
+                    raise UnsupportedTriggers(f"unsupported schedule entry {stripped!r}")
+                continue
+            m = re.fullmatch(r"([A-Za-z_-]+):\s*(.*)", stripped)
+            if not m:
+                raise UnsupportedTriggers(f"unsupported filter line {stripped!r}")
+            spec = events[event] = events[event] or {}
+            key = m.group(1)
+            if event == "workflow_call":
+                continue
+            if key not in LIST_KEYS:
+                raise UnsupportedTriggers(f"unsupported filter {key!r} under {event}")
+            if key in spec:
+                raise UnsupportedTriggers(f"filter {key} listed twice under {event}")
+            spec[key] = _inline_list(m.group(2)) if m.group(2) else []
+        elif indent == 6 and event is not None and key is not None:
+            if event == "workflow_call":
+                continue
+            if not stripped.startswith("- "):
+                raise UnsupportedTriggers(f"unsupported list item {stripped!r}")
+            events[event][key].append(_scalar(stripped[2:]))
+        elif event == "workflow_call" and indent > 4:
+            continue
+        else:
+            raise UnsupportedTriggers(f"unexpected indentation in {raw!r}")
+    if not events:
+        raise UnsupportedTriggers("empty `on:` block")
+    return events
+
+
+def problems(name: str, on: dict) -> list[str]:
     found = []
-    on = triggers(doc)
     automatic = False
     for event in ("push", "pull_request"):
         if event not in on:
@@ -67,10 +158,9 @@ def problems(name: str, doc: dict) -> list[str]:
         paths = (on.get("push") or {}).get("paths") or []
         if f".github/workflows/{name}" not in paths:
             found.append(f"{name}: its push path filter does not include its own workflow file")
-        # install-rust-toolchain.sh installs what this file pins: a pin change
-        # alone must rebuild.
-        if "rust-toolchain.toml" not in paths:
-            found.append(f"{name}: its push path filter does not include rust-toolchain.toml")
+        for needed in SHARED_BUILD_INPUTS:
+            if needed not in paths:
+                found.append(f"{name}: its push path filter does not include {needed}")
     return found
 
 
@@ -80,7 +170,12 @@ def tree_problems(workflows: Path = WORKFLOWS) -> list[str]:
     if not files:
         return [f"no build-tos-linux-*.yml under {workflows}"]
     for path in files:
-        found += problems(path.name, yaml.safe_load(path.read_text()) or {})
+        try:
+            on = parse_on(path.read_text())
+        except UnsupportedTriggers as exc:
+            found.append(f"{path.name}: cannot read its triggers: {exc}")
+            continue
+        found += problems(path.name, on)
     for name in SHARED_BUILDS:
         if not (workflows / name).exists():
             found.append(f"{name} is missing")
@@ -91,34 +186,108 @@ class TreeTest(unittest.TestCase):
     def test_every_linux_build_can_run(self) -> None:
         self.assertEqual(tree_problems(), [])
 
+    def test_the_parser_reads_every_current_linux_build(self) -> None:
+        # What each workflow's triggers are, read back: a parser that dropped
+        # or invented a filter would change these.
+        expected = {
+            "build-tos-linux-arm64-appimage.yml": {"push": {"tags": ["v*"]}, "workflow_dispatch": None,
+                                                   "workflow_call": None},
+            "build-tos-linux-x86-64-appimage.yml": {"push": {"tags": ["v*"]}, "workflow_dispatch": None,
+                                                    "workflow_call": None},
+            "build-tos-linux-x86-64-werror.yml": {
+                "push": {"branches": ["main"]},
+                "pull_request": {"branches": ["main"], "types": ["opened", "reopened", "synchronize", "ready_for_review"]},
+                "workflow_dispatch": None,
+                "workflow_call": None,
+            },
+        }
+        files = sorted(WORKFLOWS.glob("build-tos-linux-*.yml"))
+        self.assertEqual({p.name for p in files},
+                         set(expected) | set(SHARED_BUILDS), "a Linux build workflow was added or removed")
+        for path in files:
+            on = parse_on(path.read_text())
+            if path.name in SHARED_BUILDS:
+                self.assertEqual(set(on), {"push", "workflow_dispatch"}, path.name)
+                self.assertEqual(on["push"]["branches"], ["main"], path.name)
+                text = path.read_text()
+                block = text[text.index("\non:\n") : text.index("\nconcurrency:")]
+                listed = re.findall(r"^      - '([^']+)'$", block, re.M)
+                self.assertEqual(on["push"]["paths"], listed, path.name)
+                self.assertGreater(len(listed), 20, path.name)
+            else:
+                self.assertEqual(on, expected[path.name], path.name)
+
+
+class ParserTest(unittest.TestCase):
+    def parse(self, block: str) -> dict:
+        return parse_on("name: x\n\non:\n" + block + "\njobs:\n  a:\n")
+
+    def test_block_and_inline_lists_and_comments(self) -> None:
+        on = self.parse("  # comment\n  push:\n    branches: [main]  # trailing\n    paths:\n      - 'a/**'\n"
+                        "      - b.txt\n  pull_request:\n  workflow_dispatch:\n  schedule:\n    - cron: '0 0 * * 0'\n"
+                        "  workflow_call:\n    inputs:\n      x:\n        type: string\n")
+        self.assertEqual(on, {"push": {"branches": ["main"], "paths": ["a/**", "b.txt"]}, "pull_request": None,
+                              "workflow_dispatch": None, "schedule": None, "workflow_call": {}})
+
+    def test_unsupported_forms_are_refused(self) -> None:
+        bad = {
+            "flow mapping": "  push: {branches: [main]}\n",
+            "unknown event": "  release:\n",
+            "unknown filter": "  push:\n    branch: [main]\n",
+            "tab": "  push:\n\tbranches: [main]\n",
+            "unterminated list": "  push:\n    branches: [main\n",
+            "anchor": "  push:\n    branches: &b [main]\n",
+            "duplicate event": "  push:\n  push:\n",
+            "duplicate filter": "  push:\n    branches: [main]\n    branches: [x]\n",
+            "bad indentation": "  push:\n     branches: [main]\n",
+            "bad list item": "  push:\n    paths:\n      a/**\n",
+            "empty block": "",
+        }
+        for label, block in bad.items():
+            with self.assertRaises(UnsupportedTriggers, msg=label):
+                self.parse(block)
+
+    def test_inline_on_and_missing_on_are_refused(self) -> None:
+        for text in ("on: [push]\njobs: {}\n", "on: push\n", "name: x\njobs: {}\n"):
+            with self.assertRaises(UnsupportedTriggers, msg=text):
+                parse_on(text)
+
+    def test_an_unreadable_workflow_is_a_problem(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            for name in SHARED_BUILDS:
+                (Path(d) / name).write_text("on: [push]\n")
+            found = tree_problems(Path(d))
+        self.assertTrue(all("cannot read its triggers" in p for p in found), found)
+        self.assertEqual(len(found), 2)
+
 
 class RuleTest(unittest.TestCase):
     def test_a_build_on_missing_branches_is_refused(self) -> None:
-        doc = {"on": {"pull_request": {"branches": ["master", "testnet"]}, "push": {"branches": ["master"]}}}
-        found = problems("build-tos-linux-arm64-appimage.yml", doc)
+        on = {"pull_request": {"branches": ["master", "testnet"]}, "push": {"branches": ["master"]}}
+        found = problems("build-tos-linux-arm64-appimage.yml", on)
         self.assertTrue(any("does not have" in p for p in found), found)
         self.assertTrue(any("no automatic trigger" in p for p in found), found)
 
     def test_dispatch_only_is_refused(self) -> None:
-        found = problems("build-tos-linux-x.yml", {"on": {"workflow_dispatch": None, "workflow_call": None}})
+        found = problems("build-tos-linux-x.yml", {"workflow_dispatch": None, "workflow_call": None})
         self.assertEqual(found, ["build-tos-linux-x.yml: no automatic trigger can fire here (dispatch or workflow_call only)"])
 
     def test_tags_schedule_and_main_count(self) -> None:
-        for on in ({"push": {"tags": ["v*"]}}, {"schedule": [{"cron": "0 0 * * 0"}]}, {"push": {"branches": ["main"]}},
+        for on in ({"push": {"tags": ["v*"]}}, {"schedule": None}, {"push": {"branches": ["main"]}},
                    {"pull_request": None}):
-            self.assertEqual(problems("build-tos-linux-x.yml", {"on": on}), [], on)
+            self.assertEqual(problems("build-tos-linux-x.yml", on), [], on)
 
-    def test_a_shared_build_must_watch_its_own_file(self) -> None:
+    def test_a_shared_build_must_watch_itself_and_every_build_input(self) -> None:
         name = "build-tos-linux-arm64-shared.yml"
-        doc = {"on": {"push": {"branches": ["main"], "paths": ["**/*.cpp", "rust-toolchain.toml"]}}}
-        self.assertEqual(problems(name, doc), [f"{name}: its push path filter does not include its own workflow file"])
-        doc["on"]["push"]["paths"].append(f".github/workflows/{name}")
-        self.assertEqual(problems(name, doc), [])
-
-    def test_a_shared_build_must_watch_the_rust_toolchain_pin(self) -> None:
-        name = "build-tos-linux-x86-64-shared.yml"
-        doc = {"on": {"push": {"branches": ["main"], "paths": [f".github/workflows/{name}"]}}}
-        self.assertEqual(problems(name, doc), [f"{name}: its push path filter does not include rust-toolchain.toml"])
+        complete = [f".github/workflows/{name}", *SHARED_BUILD_INPUTS]
+        self.assertEqual(problems(name, {"push": {"branches": ["main"], "paths": complete}}), [])
+        for missing in complete:
+            paths = [p for p in complete if p != missing]
+            found = problems(name, {"push": {"branches": ["main"], "paths": paths}})
+            self.assertEqual(len(found), 1, (missing, found))
+            self.assertIn("does not include", found[0])
 
 
 if __name__ == "__main__":
