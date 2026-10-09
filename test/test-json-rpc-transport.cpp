@@ -388,8 +388,26 @@ TEST(JsonRpcTransport, keyless_endpoints_close_even_when_keepalive_is_requested)
           client.send_all(std::string(route) + " HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"));
       std::string status, body;
       ASSERT_TRUE(client.read_response(3000, status, body));
+      if (std::string(route) == "OPTIONS /") {
+        ASSERT_EQ(status, std::string("HTTP/1.1 204 No Content"));
+        ASSERT_TRUE(body.empty());
+      } else {
+        ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+        if (std::string(route) == "GET /healthcheck") {
+          ASSERT_EQ(body, std::string("OK"));
+        } else {
+          auto parsed = td::json_decode(td::MutableSlice(body));
+          ASSERT_TRUE(parsed.is_ok());
+          auto metadata = parsed.move_as_ok();
+          ASSERT_TRUE(metadata.type() == td::JsonValue::Type::Object);
+          auto name = metadata.get_object().get_required_string_field("name");
+          ASSERT_TRUE(name.is_ok());
+          ASSERT_EQ(name.move_as_ok(), std::string("TOS JSON-RPC API"));
+        }
+      }
       size_t rest;
       ASSERT_TRUE(client.drains_to_close(3000, rest));
+      ASSERT_EQ(rest, 0u);
     });
   }
 }

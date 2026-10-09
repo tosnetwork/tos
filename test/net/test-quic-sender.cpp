@@ -15,7 +15,9 @@
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include <arpa/inet.h>
+#include <array>
 #include <atomic>
+#include <barrier>
 #include <chrono>
 #include <iostream>
 #include <mutex>
@@ -2727,6 +2729,95 @@ TEST(QuicSourceShare, MultipleFullSourcesAllowANewSourceAcrossServers) {
                         "remaining streams reclaimed");
     co_return td::Unit{};
   });
+}
+
+TEST(QuicSourceShare, ConcurrentReclaimsPreserveTheReturnedRetrySlot) {
+  constexpr int kRequesters = 8;
+  constexpr int kRounds = 1000;
+  std::barrier round_boundary(kRequesters + 1);
+  std::shared_ptr<tos::quic::QuicInboundStreamBudget> budget;
+  std::atomic<bool> released{false};
+  std::atomic<size_t> extra_reclaims{0};
+  std::vector<std::thread> requesters;
+  for (int i = 0; i < kRequesters; ++i) {
+    requesters.emplace_back([&, source = "late-" + std::to_string(i)] {
+      for (int round = 0; round < kRounds; ++round) {
+        round_boundary.arrive_and_wait();
+        while (!released.load()) {
+          if (budget->request_reclaim(source)) {
+            extra_reclaims.fetch_add(1);
+          }
+        }
+        round_boundary.arrive_and_wait();
+      }
+    });
+  }
+  for (int round = 0; round < kRounds; ++round) {
+    budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 100, 2, 100);
+    std::array<std::optional<tos::quic::QuicInboundStreamReservation>, 4> reservations;
+    std::array<tos::quic::QuicInboundStreamBudget::ReclaimToken, 4> tokens;
+    const std::array<std::string, 4> sources{"a", "a", "b", "b"};
+    for (size_t i = 0; i < sources.size(); ++i) {
+      reservations[i] = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, sources[i]);
+      ASSERT_TRUE(reservations[i].has_value());
+      tokens[i] = budget->track_stream(sources[i]);
+    }
+    ASSERT_TRUE(budget->request_reclaim("honest"));
+    ASSERT_TRUE(tokens[0]->load());
+    released.store(false);
+    round_boundary.arrive_and_wait();
+    // Match StreamState destruction: return its slot before destroying the
+    // reclaim token. Concurrent requesters must see either the still-pending
+    // reclaim or the returned slot, never displace a second stream and steal
+    // the first newcomer's reserved retry.
+    reservations[0].reset();
+    tokens[0].reset();
+    released.store(true);
+    round_boundary.arrive_and_wait();
+    ASSERT_EQ(extra_reclaims.load(), 0u);
+    ASSERT_EQ(budget->reclaim_generation(), 1u);
+    auto honest = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "honest");
+    ASSERT_TRUE(honest.has_value());
+  }
+  for (auto& requester : requesters) {
+    requester.join();
+  }
+  ASSERT_EQ(budget->streams(), 0u);
+  ASSERT_EQ(budget->tracked_sources(), 0u);
+}
+
+TEST(QuicSourceShare, AbandonedReclaimReservationExpires) {
+  auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 100, 2, 100);
+  std::array<std::optional<tos::quic::QuicInboundStreamReservation>, 4> reservations;
+  std::array<tos::quic::QuicInboundStreamBudget::ReclaimToken, 4> tokens;
+  const std::array<std::string, 4> sources{"a", "a", "b", "b"};
+  for (size_t i = 0; i < sources.size(); ++i) {
+    reservations[i] = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, sources[i]);
+    ASSERT_TRUE(reservations[i].has_value());
+    tokens[i] = budget->track_stream(sources[i]);
+  }
+  ASSERT_TRUE(budget->request_reclaim("honest"));
+  ASSERT_TRUE(!budget->request_reclaim("later"));
+  ASSERT_TRUE(tokens[0]->load());
+  reservations[0].reset();
+  tokens[0].reset();
+  ASSERT_EQ(budget->streams(), 3u);
+  ASSERT_TRUE(!tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "a").has_value());
+  ASSERT_TRUE(!budget->request_reclaim("later"));
+  jump_time_by(2.1);
+  reservations[0] = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "a");
+  ASSERT_TRUE(reservations[0].has_value());
+  tokens[0] = budget->track_stream("a");
+  ASSERT_EQ(budget->streams(), 4u);
+  ASSERT_TRUE(budget->request_reclaim("later"));
+  for (auto& reservation : reservations) {
+    reservation.reset();
+  }
+  for (auto& token : tokens) {
+    token.reset();
+  }
+  ASSERT_EQ(budget->streams(), 0u);
+  ASSERT_EQ(budget->tracked_sources(), 0u);
 }
 
 TEST(QuicOutboundQueryDeadline, PartialResponseDoesNotExtendDeadline) {

@@ -94,11 +94,14 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
   // At most one reclaim is pending process-wide, preventing a burst of new
   // identities from displacing the whole pool before any reset is processed.
   bool request_reclaim(const QuicBudgetSource &source) {
+    ReclaimToken token;
+    std::lock_guard lock(reclaim_mutex_);
+    // Recheck saturation while holding the same lock as the returned slot's
+    // handoff. A caller waiting for this lock must not overwrite a retry
+    // reservation whose victim has already returned its slot.
     if (streams() < max_streams_ || source_streams(source) >= max_streams_per_source()) {
       return false;
     }
-    ReclaimToken token;
-    std::lock_guard lock(reclaim_mutex_);
     if (pending_reclaim_) {
       return false;
     }

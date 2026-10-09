@@ -62,7 +62,10 @@ The new regressions run in the existing network safety suites. The ADNL
 output and refusal-close targets are also included in the AddressSanitizer
 workflow, retaining their existing security regression labels.
 
-Linux validation passed all 11 selected CTest groups: HTTP listener,
+## Initial implementation validation
+
+The implementation at `292faf30b5476aa1253a1fa2fdfa9b15bb75f27c`
+recorded Linux validation passing all 11 selected CTest groups: HTTP listener,
 production JSON-RPC transport, ADNL output/refusal close, CONNECT tunnels, and
 QUIC inbound/transport budgets, source shares, connection limits, inbound
 expiry and outbound deadlines. A separate Debug build with Clang 21 and
@@ -93,9 +96,9 @@ Representative removed-control receipts (bounded excerpts):
 | QUIC reset | `unacknowledged reset released connection and slot` times out. |
 | QUIC FIN | `input FIN did not remove the held slot lifetime` times out. |
 
-Full logs are retained outside Git in the isolated Linux PR test directory;
-the runner and named assertions above provide the reproducible evidence.
-Final-head GitHub CI and a fresh security scan have not been claimed.
+The runner and named assertions above provide the reproducible evidence.
+This initial receipt did not claim final-head GitHub CI or a fresh security
+scan.
 
 To reproduce sensitivity checks in an isolated checkout:
 
@@ -108,3 +111,156 @@ python3 scripts/test-network-availability-mutations.py \
 Do not run mutations concurrently with builds or tests using the same source
 tree. Each case restores its source even on failure, requires the named
 executed failure, and rebuilds/reruns the restored regression.
+
+## Review follow-up
+
+Reviewed input: `292faf30b5476aa1253a1fa2fdfa9b15bb75f27c`.
+
+The review found two remaining implementation defects, a test-registration
+gap, and a synchronization defect in an existing ADNL regression:
+
+- Completing an early-answered upload and then receiving input EOF could stop
+  the HTTP connection with a serialized response still queued. The native
+  regression reached EOF with 253,772 response bytes pending and failed at
+  `body.has_value()`. Both completion orders now close only after output
+  drains. HTTP also restores write readiness on each inbound EOF turn: the
+  poll layer otherwise suppresses writes after a peer half-close, including
+  later writable notifications. This covers responses still being serialized
+  through a small output window, retains the configured response deadline,
+  and adds no polling timer. The outbound constructor now identifies its
+  client role correctly so this behavior remains confined to inbound HTTP.
+- QUIC checked saturation before acquiring the reclamation lock. A requester
+  delayed at that lock could use an obsolete full-pool observation to reclaim
+  another stream and replace the previous newcomer's returned-slot
+  reservation. The check now runs under the same lock as the handoff. The
+  local reclaim token still outlives the lock guard, avoiding a token-deleter
+  lock reentry during cleanup.
+- The inbound-timeout CTest entry selected only
+  `AbandonedInboundStreamIsReaped`, omitting the three new lifetime, reset and
+  FIN cases. It now selects the entire `QuicInboundStreamTimeout` suite. The
+  ASAN registration check also requires all 15 network-safety groups; five
+  already registered QUIC groups were previously absent from its expected
+  inventory.
+- The real-socket ADNL refusal test sampled discard totals as soon as the
+  client saw EOF. The server shuts its write side first and can still have
+  input-discard passes pending. The first full ASAN run passed 14 of 15 groups:
+  this test received all 64 answers and clean EOF, then sampled only 458,752
+  of 524,288 surplus bytes. It now keeps driving the scheduler until the
+  input is discarded, bounded by the original absolute closing deadline.
+  All response, EOF, byte-count and deadline assertions remain in place;
+  this correction changes the test only.
+
+ADNL coverage now checks rollback when the source reservation succeeds but
+the global output reservation fails, and checks that complete output drain
+clears the old deadline before a later backlog receives its own full lifetime.
+JSON-RPC keyless checks now require the expected successful status and exact
+health payload, valid API-info data, or empty OPTIONS response, plus closure
+without surplus bytes. An arbitrary error followed by closure cannot pass.
+In total, the follow-up adds eight regressions and strengthens the existing
+JSON-RPC keyless and ADNL refusal-close cases.
+
+The mutation runner now rebuilds and tests the restored source in `finally`.
+A failed red build, timeout or wrong failure predicate triggers the same
+restore/build/test cleanup before its error is propagated. Successful cleanup
+leaves the executable matched to the restored source; a cleanup failure is
+reported as an error. Successful cases report both exit codes.
+
+| Changed boundary | Regression or execution check |
+| --- | --- |
+| Serialized HTTP response followed by upload EOF | `finishing_an_early_answered_upload_at_eof_drains_the_response` |
+| HTTP EOF before asynchronous serialization | `an_answer_serialized_after_request_eof_drains_the_response` |
+| HTTP EOF before a response larger than its output window | `an_answer_larger_than_the_window_after_request_eof_is_written_in_full` |
+| Empty HTTP half-close releases the connection | `eof_without_a_request_releases_the_connection` |
+| QUIC concurrent returned-slot handoff | `ConcurrentReclaimsPreserveTheReturnedRetrySlot` (eight requesters, 1,000 handoffs) |
+| Abandoned QUIC retry reservation expires | `AbandonedReclaimReservationExpires` |
+| ADNL rollback and complete-drain lifecycle | `source-rollback`; `drain-deadline` |
+| ADNL write half-close precedes complete input drain | `half-close-after-surplus` waits within the original closing deadline and still requires all 64 answers and 512 KiB of discarded input. |
+| JSON-RPC keyless response integrity | `keyless_endpoints_close_even_when_keepalive_is_requested` |
+| Timeout cases execute under CTest/ASAN | All 15 groups and the full `QuicInboundStreamTimeout` filter are required; the old single-case filter fails the inventory check. |
+
+### Follow-up validation
+
+The follow-up used Linux x86-64, Clang 21.1.8, CMake 4.4.4 and a Debug
+AddressSanitizer build with `-O0 -g1`. Leak detection was disabled, matching
+the network workflow; no leak-sanitizer result is claimed.
+
+All **23 removed-control cases** completed: each red run exited **1** for its
+named reason, and each restored run exited **0** with its regression executed.
+This includes all 12 initial controls and the eleven added controls below. The
+four new HTTP EOF regressions also passed together before the mutation run.
+The restored QUIC concurrency regression completed all 1,000 handoffs with
+eight requesters and no extra reclamation. The reverted check failed with
+one extra reclamation before completing those handoffs.
+
+After rebuilding all target executables from restored source, the final
+network-safety CTest run passed **15/15 groups** (exit **0**, 92.42 seconds).
+Verbose output confirms execution of all four `QuicInboundStreamTimeout`
+cases, all 41 HTTP server-limit cases, all 16 JSON-RPC transport cases, and
+the complete ADNL output and refusal-close suites. The real-socket ADNL
+surplus case delivered all 64 answers with clean EOF and discarded all
+524,288 bytes. No AddressSanitizer error was reported.
+
+The ASAN workflow's actual inventory script passed with all 15 registered
+groups (exit 0). Giving it the old single-case timeout filter failed with
+`network-safety gate must run the full QuicInboundStreamTimeout suite`
+(exit 1). Changed-line Clang 21 formatting, Ruff 0.15.2 lint and format checks,
+and the QUIC CTest isolation source guard also passed.
+
+All temporary production mutations were restored after the controls finished;
+the twelve final non-documentation files matched the last source manifest,
+with no extra source modifications remaining. Their
+alphabetically ordered `sha256sum` listing has SHA-256:
+
+```text
+f22fba38f795e5d33293ecb34295c2457291a1596cba5ac581f7deb4246e33b8
+```
+
+From the commit containing this receipt, reproduce that fingerprint with:
+
+```sh
+git diff --name-only -z 292faf30b5476aa1253a1fa2fdfa9b15bb75f27c HEAD -- . \
+  ':(exclude)doc/network-availability-remediation.md' |
+  LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum
+```
+
+Additional bounded failure receipts (all red exits 1; all restored exits 0):
+
+| Control | Executed failure |
+| --- | --- |
+| `http-eof-drain` | `Expectation failed: body.has_value()!` |
+| `http-eof-empty` | `Expectation failed: fetched.clean_eof!` |
+| `http-eof-write` | `Expectation failed: body.has_value()!` |
+| `http-eof-answer` | `Expectation failed: body.has_value()!` |
+| `http-eof-window` | `Expectation failed: body.has_value()!` |
+| `keyless-success` | Expected `HTTP/1.1 200 OK`, received `HTTP/1.1 401 Unauthorized`. |
+| `adnl-source-rollback` | `global refusal leaked the new source reservation` |
+| `adnl-drain-deadline` | `drained output retained its old deadline` |
+| `adnl-refusal-drain` | `the peer got 26 of the 64 answers queued before the refusal; the stream ended by reset after 34056 bytes of an unfinished frame` |
+| `quic-concurrent-reclaim` | `extra_reclaims.load() is not equal to 0u (1 != 0)` |
+| `quic-retry-expiry` | `Expectation failed: reservations[0].has_value()!` |
+
+Reproduction commands (Linux, Bash, Clang 21):
+
+```sh
+cmake -S . -B build-review -G Ninja \
+  -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS_DEBUG='-O0 -g1' -DCMAKE_CXX_FLAGS_DEBUG='-O0 -g1' \
+  -DTOS_USE_ASAN=ON -DTOS_USE_LLD=ON
+export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1
+export FUNC_BIN="$PWD/build-review/crypto/func"
+export FIFT_BIN="$PWD/build-review/crypto/fift"
+review_targets=(
+  test-quic-sender test-adnl-peer-pair-cap test-overlay-broadcast-capacity
+  test-http-server-limits test-json-rpc-transport
+  test-adnl-ext-output-backpressure test-adnl-ext-refusal-close
+  test-rldp-http-tunnel
+)
+cmake --build build-review --parallel 4 --target "${review_targets[@]}"
+python3 scripts/test-network-availability-mutations.py \
+  --build-dir "$PWD/build-review" \
+  --log-dir "$PWD/review-mutation-results" --jobs 4
+cmake --build build-review --parallel 4 --target "${review_targets[@]}"
+ctest --test-dir build-review -L network-safety \
+  --no-tests=error --output-on-failure --verbose
+```

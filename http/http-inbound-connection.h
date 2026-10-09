@@ -142,7 +142,10 @@ class HttpInboundConnection : public HttpConnection {
       }
     } else {
       if (read_next_request_) {
-        stop();
+        // A serialized response may still have bytes queued for the peer.
+        // Stop parsing requests and let the transport drain before closing.
+        read_next_request_ = false;
+        close_after_write_ = true;
         return td::Status::OK();
       }
       return td::Status::OK();
@@ -166,7 +169,10 @@ class HttpInboundConnection : public HttpConnection {
     if (!close_after_write_) {
       read_next_request_ = !reading_payload_;
       if (found_eof_) {
-        stop();
+        // EOF can precede the asynchronous answer. Its serialized tail still
+        // has to reach the peer before this connection is torn down.
+        read_next_request_ = false;
+        close_after_write_ = true;
         return;
       }
       if (read_next_request_) {

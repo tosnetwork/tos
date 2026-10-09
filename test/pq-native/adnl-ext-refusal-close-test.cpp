@@ -1164,11 +1164,22 @@ void half_close_after_surplus() {
   require(took <= kClosingSeconds + 0.25,
           "h: end of file came " + std::to_string(took) + " s after the refusal, past the closing deadline");
 
-  // The whole surplus reached the server after the refusal, so a close that
-  // ended in a clean end of file read all of it in its closing passes. How
-  // much of it was still queued once the half-close was known depends on the
-  // scheduling of the host, so it is reported, not required; case i covers
-  // that state deterministically.
+  // The peer sees EOF when the server shuts its write side. That half-close
+  // does not stop the connection actor: its remaining discard passes still
+  // need the scheduler until the read side reaches EOF. Keep driving them
+  // within the original closing deadline before sampling their totals.
+  const auto discard_deadline = refused_at + kClosingSeconds;
+  while (totals.bytes.load() - bytes_before < kSurplusBytes) {
+    auto remaining = discard_deadline - td::Time::now();
+    require(remaining > 0, "h: the closing connection did not finish discarding the surplus (" +
+                               std::to_string(totals.bytes.load() - bytes_before) + " of " +
+                               std::to_string(kSurplusBytes) + " bytes)");
+    server.run_for(std::min(0.01, remaining));
+  }
+
+  // How much input was still queued once the half-close was known depends
+  // on the scheduling of the host, so it is reported, not required; case i
+  // covers that state deterministically.
   auto passes = totals.passes.load() - passes_before;
   auto discarded = totals.bytes.load() - bytes_before;
   auto after_close = totals.bytes_after_peer_close.load() - after_close_before;

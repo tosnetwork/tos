@@ -58,6 +58,13 @@ void HttpConnection::loop() {
       if (buffered_fd_.left_unread() == 0 && read_eof) {
         TRY_STATUS(receive_eof());
       }
+      if (!is_client_ && found_eof_ && buffered_fd_.ready_for_flush_write() != 0) {
+        // A read-side EOF suppresses the poll layer's Write flag, including
+        // on later writable notifications. Retry the nonblocking write on
+        // each turn: EAGAIN clears the flag, and the next notification wakes
+        // the connection again without changing its response deadline.
+        buffered_fd_.get_poll_info().add_flags(td::PollFlags::Write());
+      }
       TRY_STATUS(buffered_fd_.flush_write());
       if (writing_payload_ && buffered_fd_.left_unwritten() < fd_high_watermark()) {
         written = continue_payload_write();
