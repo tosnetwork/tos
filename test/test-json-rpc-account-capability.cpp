@@ -29,6 +29,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include "auto/tl/lite_api.hpp"
 #include "td/utils/crypto.h"
@@ -74,6 +75,8 @@ tos::lite_api::object_ptr<tos::lite_api::tosNode_blockIdExt> block_id() {
 struct FakeLiteserver {
   int queries = 0;
   std::string unexpected;
+  // What the wallet's balance get-method returns.
+  td::RefInt256 balance = td::make_refint(kAvailableBalance);
 
   td::BufferSlice answer(td::BufferSlice query) {
     queries++;
@@ -102,7 +105,7 @@ struct FakeLiteserver {
     if (run.method_id_ == method_id("get_public_key")) {
       result = stack_boc(td::make_refint(0x1234567));
     } else if (run.method_id_ == method_id("balance")) {
-      result = stack_boc(td::make_refint(kAvailableBalance));
+      result = stack_boc(balance);
     } else {
       unexpected = "unexpected get-method";
       return {};
@@ -159,10 +162,11 @@ struct Outcome {
   int check_queries = 0;
 };
 
-Outcome run_both(DataRoot root, td::uint32 start_at) {
+Outcome run_both(DataRoot root, td::uint32 start_at, td::RefInt256 balance = td::make_refint(kAvailableBalance)) {
   Outcome outcome;
   {
     FakeLiteserver server;
+    server.balance = balance;
     tos::PermissionInspectionQuery query_opts;
     query_opts.include_inactive = true;
     tos::restricted_delegations_json(server.send_query(), restricted_context(root, start_at), query_opts,
@@ -175,6 +179,7 @@ Outcome run_both(DataRoot root, td::uint32 start_at) {
   }
   {
     FakeLiteserver server;
+    server.balance = balance;
     auto ctx = restricted_context(root, start_at);
     auto ref = ctx.addr_str + ":restricted-vesting:0";
     tos::check_restricted_delegation_ref(server.send_query(), std::move(ctx), std::move(ref),
@@ -247,4 +252,29 @@ TEST(JsonRpcAccountCapability, null_data_root_is_unavailable) {
 
 TEST(JsonRpcAccountCapability, exotic_data_root_is_unavailable) {
   expect_unreadable_root_refused(DataRoot::Library);
+}
+
+TEST(JsonRpcAccountCapability, reserve_subtraction_is_checked) {
+  ASSERT_EQ(3, tos::restricted_reserve(5, 2).move_as_ok());
+  // More available than held: nothing is reserved.
+  ASSERT_EQ(0, tos::restricted_reserve(2, 5).move_as_ok());
+  const auto min = std::numeric_limits<td::int64>::min();
+  const auto max = std::numeric_limits<td::int64>::max();
+  for (auto [full, available] : {std::pair<td::int64, td::int64>{min, 1}, {max, -1}}) {
+    auto r = tos::restricted_reserve(full, available);
+    ASSERT_TRUE(r.is_error());
+    ASSERT_TRUE(has_text(r.error().message(), "DELEGATION_UNAVAILABLE: reserve overflow"));
+  }
+}
+
+TEST(JsonRpcAccountCapability, balance_outside_int64_is_unavailable) {
+  // The conversion returns a sentinel for a value that does not fit; reading it
+  // as a balance would silently report nothing available.
+  auto wide = td::make_refint(1) << 70;
+  auto outcome = run_both(DataRoot::Wallet, 0, wide);
+  ASSERT_TRUE(outcome.delegations.is_error());
+  ASSERT_TRUE(has_text(outcome.delegations.error().message(), "DELEGATION_UNAVAILABLE"));
+  ASSERT_TRUE(has_text(outcome.delegations.error().message(), "outside int64"));
+  ASSERT_TRUE(outcome.check.is_error());
+  ASSERT_TRUE(has_text(outcome.check.error().message(), "outside int64"));
 }

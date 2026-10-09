@@ -47,6 +47,29 @@ struct RestrictedDelegationView {
   td::int64 full_balance{0};
 };
 
+// The part of a restricted wallet's balance still held by vesting. Balances are
+// money: the subtraction is checked here rather than trusted to the clamp that
+// fetch_restricted_delegation_view applies elsewhere. A negative difference
+// (more available than held) means nothing is reserved.
+inline td::Result<td::int64> restricted_reserve(td::int64 full_balance, td::int64 available_balance) {
+  td::int64 reserve = 0;
+  if (__builtin_sub_overflow(full_balance, available_balance, &reserve)) {
+    return td::Status::Error(PSTRING() << "DELEGATION_UNAVAILABLE: reserve overflow (full_balance=" << full_balance
+                                       << ", available_balance=" << available_balance << ")");
+  }
+  return reserve < 0 ? td::int64{0} : reserve;
+}
+
+// The integer a restricted wallet's balance getter returned, as int64. A value
+// that does not fit (or a NaN) is refused instead of being read as the
+// out-of-range sentinel that the conversion returns.
+inline td::Result<td::int64> restricted_balance_value(const td::RefInt256& value) {
+  if (value.is_null() || !value->is_valid() || !value->signed_fits_bits(64)) {
+    return td::Status::Error("DELEGATION_UNAVAILABLE: balance getter returned a value outside int64");
+  }
+  return static_cast<td::int64>(value->to_long());
+}
+
 enum class RequestedPermissionSourceTier { Default, Protocol, AccountStandard, Indexed, Deferred };
 
 struct PermissionInspectionQuery {
@@ -164,7 +187,12 @@ void fetch_restricted_delegation_view(SendQueryFn&& send_query, const AccountCap
                 promise.set_error(td::Status::Error("balance returned unexpected stack"));
                 return;
               }
-              td::int64 available_balance = bal_stack->at(0).as_int()->to_long();
+              auto r_available = restricted_balance_value(bal_stack->at(0).as_int());
+              if (r_available.is_error()) {
+                promise.set_error(r_available.move_as_error());
+                return;
+              }
+              td::int64 available_balance = r_available.move_as_ok();
               if (available_balance < 0) {
                 available_balance = 0;
               }
@@ -280,10 +308,12 @@ void restricted_delegations_json(SendQueryFn send_query, AccountCapabilityContex
               return;
             }
 
-            td::int64 reserve = view.full_balance - view.available_balance;
-            if (reserve < 0) {
-              reserve = 0;
+            auto r_reserve = restricted_reserve(view.full_balance, view.available_balance);
+            if (r_reserve.is_error()) {
+              promise.set_error(r_reserve.move_as_error());
+              return;
             }
+            td::int64 reserve = r_reserve.move_as_ok();
             // Canonical constraints: only frozen vocabulary fields
             std::string constraints_json =
                 PSTRING() << "{\"max_value\":\"" << view.available_balance << "\""
