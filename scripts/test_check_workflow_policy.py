@@ -420,6 +420,41 @@ class PolicyTest(unittest.TestCase):
                 )
                 self.assert_red("R12", self.ROUTED)
 
+    def test_r12_secrets_behind_braces_in_a_literal(self) -> None:
+        # A }} inside a string literal does not end the expression.
+        for env in (
+            "KEY: ${{ format('}}{0}', secrets.DEPLOY_KEY) }}",
+            "KEY: \"${{ format('}}{0}', secrets.DEPLOY_KEY) }}\"",
+            "KEY: '${{ format(''}}{0}'', secrets.DEPLOY_KEY) }}'",
+            "KEY: ${{ format('it''s }}', secrets.DEPLOY_KEY) }}",
+            "KEY: ${{ toJSON(secrets)",
+        ):
+            with self.subTest(env=env):
+                self.tearDown()
+                self.setUp()
+                self.mutate(
+                    self.ROUTED,
+                    "    timeout-minutes: 100\n",
+                    f"    timeout-minutes: 100\n    env:\n      {env}\n",
+                )
+                self.assert_red("R12", self.ROUTED)
+
+    def test_r12_secrets_inside_a_literal_is_text(self) -> None:
+        for env in (
+            "NAME: ${{ 'secrets-vault' }}",
+            "NAME: '${{ ''secrets'' }}'",
+            "NAME: ${{ format('{0} secrets', 'it''s') }}",
+        ):
+            with self.subTest(env=env):
+                self.tearDown()
+                self.setUp()
+                self.mutate(
+                    self.ROUTED,
+                    "    timeout-minutes: 100\n",
+                    f"    timeout-minutes: 100\n    env:\n      {env}\n",
+                )
+                self.assertEqual(self.violations("R12", self.ROUTED), [])
+
     def test_r12_secrets_in_a_bare_condition(self) -> None:
         self.mutate(
             self.ROUTED,

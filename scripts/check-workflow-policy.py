@@ -107,23 +107,52 @@ SELF_HOSTED_MARKERS = ("self-hosted", "tos-vm")
 HOST_JOB_CAP_MINUTES = 165
 HOST_SETUP_MARGIN_MINUTES = 15
 WEEKLY_CRON = re.compile(r"(?:[0-9]|[1-5][0-9]) (?:[0-9]|1[0-9]|2[0-3]) \* \* [0-6]")
-EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 # Expression context and property names are case-insensitive.
 SECRET_ACCESS = re.compile(r"\bsecrets\b(?!\s*\.\s*GITHUB_TOKEN\b)", re.I)
 
 
-def conditions(node: object) -> list[str]:
-    """Every if: value in a workflow document; an if: is an expression without ${{ }}."""
+def scan_expression(text: str, start: int, stop_at_braces: bool) -> tuple[str, int]:
+    """The expression from start with its string literals blanked, and where it ends.
+
+    A literal is single-quoted and may contain }}. Its escaped quote '' needs no
+    case of its own: read as two adjacent literals, it blanks the same span.
+    An expression that never closes runs to the end of the text."""
+    out: list[str] = []
+    i = start
+    while i < len(text):
+        if text[i] == "'":
+            close = text.find("'", i + 1)
+            i = len(text) if close == -1 else close + 1
+            out.append(" ")
+            continue
+        if stop_at_braces and text.startswith("}}", i):
+            return "".join(out), i + 2
+        out.append(text[i])
+        i += 1
+    return "".join(out), len(text)
+
+
+def expressions(node: object, key: object = None) -> list[str]:
+    """Every expression in a parsed workflow, string literals blanked.
+
+    Reads parsed values, so YAML quoting is already undone: each ${{ }} in any
+    string value, and each if: value whole, since an if: is an expression
+    with or without ${{ }}. Keys are not evaluated."""
     found: list[str] = []
     if isinstance(node, dict):
-        for key, value in node.items():
-            if key == "if" and isinstance(value, str):
-                found.append(value)
-            else:
-                found.extend(conditions(value))
+        for child_key, value in node.items():
+            found.extend(expressions(value, child_key))
     elif isinstance(node, list):
         for item in node:
-            found.extend(conditions(item))
+            found.extend(expressions(item))
+    elif isinstance(node, str):
+        if key == "if":
+            found.append(scan_expression(node, 0, stop_at_braces=False)[0])
+        start = node.find("${{")
+        while start != -1:
+            body, end = scan_expression(node, start + 3, stop_at_braces=True)
+            found.append(body)
+            start = node.find("${{", end)
     return found
 
 
@@ -137,7 +166,7 @@ def grants_write(permissions: object) -> bool:
     return True
 
 
-def check_routing(name: str, doc: dict, text: str, on: dict) -> list[str]:
+def check_routing(name: str, doc: dict, on: dict) -> list[str]:
     problems: list[str] = []
     jobs = doc.get("jobs") or {}
     routed = []
@@ -160,11 +189,10 @@ def check_routing(name: str, doc: dict, text: str, on: dict) -> list[str]:
     for job_id, job in jobs.items():
         if grants_write(job.get("permissions")):
             problems.append(f"R12 {name}: job {job_id} grants write permission")
-    # The secrets context is read only inside expressions: ${{ }} anywhere, and
-    # the bare expressions of if: keys. Any reference to it there other than
-    # secrets.GITHUB_TOKEN is refused, whole-context access (toJSON(secrets))
-    # and indexing included.
-    for expression in [*EXPRESSION.findall(text), *conditions(doc)]:
+    # The secrets context is read only inside expressions. Any reference to it
+    # outside a string literal, other than secrets.GITHUB_TOKEN, is refused:
+    # whole-context access (toJSON(secrets)) and indexing included.
+    for expression in expressions(doc):
         for access in SECRET_ACCESS.finditer(expression):
             problems.append(
                 f"R12 {name}: workflow with a routed job reads secrets beyond GITHUB_TOKEN: "
@@ -272,7 +300,7 @@ def check(root: Path) -> list[str]:
             isinstance(concurrency, dict) and concurrency.get("cancel-in-progress") is False
         ):
             problems.append(f"R3 {name}: release workflow must not cancel a run in progress")
-        problems.extend(check_routing(name, doc, texts[name], on))
+        problems.extend(check_routing(name, doc, on))
         reason = duplicate_push(on)
         if reason:
             problems.append(f"R11 {name}: {reason}")
