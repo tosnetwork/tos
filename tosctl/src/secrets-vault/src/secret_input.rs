@@ -402,6 +402,10 @@ mod tests {
         use std::os::unix::net::UnixStream;
         use std::time::{Duration, Instant};
 
+        // Spawns a child: held until the child has exited, so the fork cannot
+        // keep another test's Vault lock open.
+        let _guard = crate::process_test_guard();
+
         // The child's descriptors 1 and 2 are a connected socket that stays
         // open and silent, so any read of them blocks; the deadline turns
         // such a read into a failure instead of a hang.
