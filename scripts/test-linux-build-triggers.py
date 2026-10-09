@@ -10,8 +10,8 @@ Checked for each .github/workflows/build-tos-linux-*.yml:
 - a push or pull_request branch filter names only branches that exist here;
 - at least one automatic trigger can fire: a push to such a branch, a pull
   request, a version tag or a schedule (dispatch alone does not count);
-- the full shared builds' path filters include their own workflow file, so a
-  change to the build itself runs it.
+- the full shared builds' path filters include their own workflow file and
+  the Rust toolchain pin, so a change to the build itself runs it.
 """
 
 from __future__ import annotations
@@ -67,6 +67,10 @@ def problems(name: str, doc: dict) -> list[str]:
         paths = (on.get("push") or {}).get("paths") or []
         if f".github/workflows/{name}" not in paths:
             found.append(f"{name}: its push path filter does not include its own workflow file")
+        # install-rust-toolchain.sh installs what this file pins: a pin change
+        # alone must rebuild.
+        if "rust-toolchain.toml" not in paths:
+            found.append(f"{name}: its push path filter does not include rust-toolchain.toml")
     return found
 
 
@@ -106,10 +110,15 @@ class RuleTest(unittest.TestCase):
 
     def test_a_shared_build_must_watch_its_own_file(self) -> None:
         name = "build-tos-linux-arm64-shared.yml"
-        doc = {"on": {"push": {"branches": ["main"], "paths": ["**/*.cpp"]}}}
+        doc = {"on": {"push": {"branches": ["main"], "paths": ["**/*.cpp", "rust-toolchain.toml"]}}}
         self.assertEqual(problems(name, doc), [f"{name}: its push path filter does not include its own workflow file"])
         doc["on"]["push"]["paths"].append(f".github/workflows/{name}")
         self.assertEqual(problems(name, doc), [])
+
+    def test_a_shared_build_must_watch_the_rust_toolchain_pin(self) -> None:
+        name = "build-tos-linux-x86-64-shared.yml"
+        doc = {"on": {"push": {"branches": ["main"], "paths": [f".github/workflows/{name}"]}}}
+        self.assertEqual(problems(name, doc), [f"{name}: its push path filter does not include rust-toolchain.toml"])
 
 
 if __name__ == "__main__":

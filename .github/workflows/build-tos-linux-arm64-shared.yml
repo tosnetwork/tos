@@ -25,6 +25,7 @@ on:
       - '**/Cargo.lock'
       - 'assembly/native/**'
       - 'scripts/install-rust-toolchain.sh'
+      - 'rust-toolchain.toml'
       # The scripts and tests the job runs.
       - 'scripts/install-llvm-toolchain.sh'
       - 'test/toslib/integration/**'
