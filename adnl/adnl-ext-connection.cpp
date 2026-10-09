@@ -284,6 +284,10 @@ void AdnlExtConnection::loop() {
     closing_loop();
     return;
   }
+  // Set only when processing the peer's queries refused them. A refusal on the
+  // read path (input budget or source share exhausted) is load shedding and
+  // must close at once, not wait out the ordered close.
+  bool refused_by_query = false;
   auto status = [&] {
     auto &input = buffered_fd_.input_buffer();
     // Read a reserved chunk, take every complete frame off the buffer, and
@@ -295,7 +299,11 @@ void AdnlExtConnection::loop() {
       while (!exit_loop) {
         // Frames that arrived together with a read error (bytes, then a
         // reset) are still delivered; the error then closes the connection.
-        TRY_STATUS(receive(input, exit_loop));
+        auto received = receive(input, exit_loop);
+        if (received.is_error()) {
+          refused_by_query = received.code() == ErrorCode::notready;
+          return received;
+        }
       }
       account_input();
       TRY_RESULT(read, std::move(r_read));
@@ -312,15 +320,20 @@ void AdnlExtConnection::loop() {
     return td::Status::OK();
   }();
   if (status.is_error()) {
-    if (status.code() == ErrorCode::notready) {
-      // A refusal that ends in a close is an intended terminal state for the
-      // peer's queries, not a fault of this side. The answers already queued
-      // must reach the peer, so close in order rather than at once.
+    if (refused_by_query) {
+      // A refusal of the peer's queries is an intended terminal state, not a
+      // fault of this side. The answers already queued must reach the peer, so
+      // close in order rather than at once.
       begin_closing(status);
       return;
     }
+    // Every other error closes at once; answers already queued get one flush.
     buffered_fd_.flush_write().ignore();
-    LOG(ERROR) << "Client got error " << status;
+    if (status.code() == ErrorCode::notready) {
+      LOG(INFO) << "Closing external connection: " << status;
+    } else {
+      LOG(ERROR) << "Client got error " << status;
+    }
     stop();
   } else {
     send_ready();
