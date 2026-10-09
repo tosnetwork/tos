@@ -1787,6 +1787,19 @@ add_test(NAME tosctl-election-chain-reads-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-tosctl-election-chain-reads.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(tosctl-election-chain-reads-source PROPERTIES LABELS "source-guard")
+# Use-after-move and moved-from-state defects that the shipped compiler happens to
+# evaluate correctly, so no behavioural test built with it can go red for them. The
+# guard runs clang-tidy over a pinned file list and proves each check reports through
+# a positive control first. Registered only where clang-tidy-21 exists; the Lint /
+# strict-build job requires it to be registered.
+find_program(TOS_CLANG_TIDY_21 clang-tidy-21)
+if (TOS_CLANG_TIDY_21)
+  add_test(NAME static-use-after-move
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-use-after-move.py
+            --source-dir ${CMAKE_CURRENT_SOURCE_DIR} --build-dir ${CMAKE_BINARY_DIR}
+            --clang-tidy ${TOS_CLANG_TIDY_21})
+  set_tests_properties(static-use-after-move PROPERTIES LABELS "static-analysis" TIMEOUT 1800)
+endif()
 # Release and deployment supply chain: pinned actions, per-job permissions,
 # authenticated build inputs, digest-pinned images, release artifacts bound to
 # the tag commit, and authenticated snapshot import.

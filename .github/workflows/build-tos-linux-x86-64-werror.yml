@@ -84,6 +84,25 @@ jobs:
         ccache --zero-stats
         ninja -C build
 
+    # Use-after-move defects that clang evaluates correctly, so no clang-built test can
+    # see them. The guard is registered only where clang-tidy-21 exists, and this job
+    # installs it, so a missing registration here is a failure, not a skip.
+    - name: Static use-after-move guard
+      run: |
+        python3 scripts/check-ctest-inventory.py --build-dir build \
+          --label static-analysis --exact static-use-after-move
+        ctest --test-dir build -L static-analysis --no-tests=error --output-on-failure
+
+    # The regression tests of the fixes the guard covers, plus their neighbours. The
+    # inventory check refuses a selection that silently lost one of them.
+    - name: Targeted regression tests
+      env:
+        TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
+      run: |
+        regex="$(python3 scripts/check-ctest-inventory.py --build-dir build \
+          --expected-file scripts/strict-build-targeted-tests.txt --print-regex)"
+        ctest --test-dir build --output-on-failure --no-tests=error -R "$regex"
+
     # The hit rate is the evidence that the cache works; a run that hits nothing is a cold
     # build, not a broken one.
     - name: Compile cache statistics

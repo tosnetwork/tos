@@ -1,0 +1,9 @@
+# Pass A of scripts/check-use-after-move.py: bugprone-use-after-move.
+#
+# A .cpp line is a translation unit, analysed with its flags from compile_commands.json.
+# A .h line joins the pass's header filter and is analysed through the listed units that
+# include it; without that, a finding inside the header is silently dropped.
+# "suppressions=N" pins the reviewed number of NOLINTNEXTLINE(bugprone-use-after-move)
+# comments in the file (default 0); any other suppression of the check fails the guard.
+validator/impl/top-shard-descr.cpp
+overlay/broadcast-twostep.cpp
