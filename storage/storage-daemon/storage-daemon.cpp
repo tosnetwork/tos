@@ -720,6 +720,7 @@ class StorageDaemon : public td::actor::Actor {
       StorageProvider::get_provider_params(toslib_client_.get(), address, promise.wrap([](ProviderParams params) {
         return serialize_tl_object(params.tl(), true);
       }));
+      return;
     }
     if (provider_.empty()) {
       promise.set_error(td::Status::Error("No storage provider"));

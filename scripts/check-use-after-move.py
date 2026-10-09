@@ -63,6 +63,15 @@ PASSES = (
             ),
         ),
     ),
+    Pass(
+        name="B",
+        check="clang-analyzer-cplusplus.Move",
+        list_file="scripts/analyzer-move-guard-files.txt",
+        control=Control(
+            source=f"{CONTROL_DIR}/analyzer-move-control.cpp",
+            expected=((f"{CONTROL_DIR}/analyzer-move-control.cpp", 1),),
+        ),
+    ),
 )
 
 DIAGNOSTIC_RE = re.compile(
