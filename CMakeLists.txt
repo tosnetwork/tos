@@ -1808,6 +1808,10 @@ if (TOS_CLANG_TIDY_21)
             --clang-tidy ${TOS_CLANG_TIDY_21})
   set_tests_properties(static-use-after-move PROPERTIES LABELS "static-analysis" TIMEOUT 1800)
 endif()
+# The guard's exit-status handling, against a stand-in tool; needs no clang-tidy.
+add_test(NAME static-use-after-move-self-test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_check_use_after_move.py)
+set_tests_properties(static-use-after-move-self-test PROPERTIES LABELS "source-guard")
 # Release and deployment supply chain: pinned actions, per-job permissions,
 # authenticated build inputs, digest-pinned images, release artifacts bound to
 # the tag commit, and authenticated snapshot import.

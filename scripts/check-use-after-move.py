@@ -12,8 +12,9 @@ tool is silently broken therefore fails instead of reporting a clean tree.
 
 The guard fails closed on an empty list, a listed file missing from
 compile_commands.json, a missing tool, a translation unit that does not parse, a
-control with the wrong diagnostic count, a timeout, a non-zero exit with nothing
-parsed, and an unreviewed suppression comment.
+control with the wrong diagnostic count or any exit status but the expected one, a
+timeout, a production run with any exit status but 0 (whatever it printed), and an
+unreviewed suppression comment.
 """
 
 from __future__ import annotations
@@ -32,6 +33,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CONTROL_DIR = "test/static-analysis"
+# clang-tidy's exit status when --warnings-as-errors promotes a finding. A control must
+# end with exactly this status; a clean production run must end with 0.
+CONTROL_EXIT = 1
 CONTROL_HEADER_PATTERN = CONTROL_DIR + r"/[^/]+\.h"
 
 
@@ -224,17 +228,28 @@ def tidy_command(tidy: str, check: str, filter_regex: str) -> list[str]:
     ]
 
 
+def unanalysed(result: TidyResult, check: str) -> list[str]:
+    """Errors from anything but the pass's check: the unit was not (fully) analysed."""
+    return [
+        f"{result.target}: not analysed: {diagnostic.render()}"
+        for diagnostic in result.diagnostics
+        if diagnostic.check != check and diagnostic.severity == "error"
+    ]
+
+
 def judge(result: TidyResult, check: str) -> list[str]:
-    """Return the problems a run shows beyond its findings of the pass's check."""
-    problems = []
+    """Every problem a production run shows. Clean means exit 0 and no finding at all.
+
+    Any other exit status is a failure even when the run printed something that parses
+    as a diagnostic: an unrelated warning followed by a crash is not a clean unit.
+    """
+    problems = unanalysed(result, check)
     for diagnostic in result.diagnostics:
-        if diagnostic.check != check and diagnostic.severity == "error":
-            problems.append(f"{result.target}: not analysed: {diagnostic.render()}")
-    if result.returncode != 0 and not result.diagnostics:
+        if diagnostic.check == check:
+            problems.append(f"use after move: {diagnostic.render()}")
+    if result.returncode != 0:
         tail = "\n".join(result.output.strip().splitlines()[-5:])
-        problems.append(
-            f"{result.target}: clang-tidy exited {result.returncode} without a diagnostic:\n{tail}"
-        )
+        problems.append(f"{result.target}: clang-tidy exited {result.returncode}:\n{tail}")
     return problems
 
 
@@ -250,16 +265,16 @@ def run_control(
         f"-I{source_dir / CONTROL_DIR}",
     ]
     result = run_tidy(command, control.source, timeout, source_dir, source_dir)
-    problems = [p for p in judge(result, guard_pass.check) if "without a diagnostic" not in p]
+    problems = unanalysed(result, guard_pass.check)
     found: dict[str, int] = {}
     for diagnostic in result.diagnostics:
         if diagnostic.check == guard_pass.check:
             found[diagnostic.file] = found.get(diagnostic.file, 0) + 1
     expected = dict(control.expected)
-    if found != expected or result.returncode == 0:
+    if found != expected or result.returncode != CONTROL_EXIT:
         problems.append(
             f"pass {guard_pass.name} control {control.source}: expected {expected} "
-            f"{guard_pass.check} diagnostics and a failing exit, got {found} "
+            f"{guard_pass.check} diagnostics and exit {CONTROL_EXIT}, got {found} "
             f"(exit {result.returncode})"
         )
     else:
@@ -353,11 +368,9 @@ def run_pass(
             except GuardError as error:
                 problems.append(str(error))
                 continue
-            problems += judge(result, guard_pass.check)
-            findings = [d for d in result.diagnostics if d.check == guard_pass.check]
-            for diagnostic in findings:
-                problems.append(f"use after move: {diagnostic.render()}")
-            if not findings and result.returncode == 0:
+            unit_problems = judge(result, guard_pass.check)
+            problems += unit_problems
+            if not unit_problems:
                 print(f"pass {guard_pass.name}: {result.target}: clean")
     return problems
 
