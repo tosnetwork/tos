@@ -107,6 +107,24 @@ SELF_HOSTED_MARKERS = ("self-hosted", "tos-vm")
 HOST_JOB_CAP_MINUTES = 165
 HOST_SETUP_MARGIN_MINUTES = 15
 WEEKLY_CRON = re.compile(r"(?:[0-9]|[1-5][0-9]) (?:[0-9]|1[0-9]|2[0-3]) \* \* [0-6]")
+EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.S)
+# Expression context and property names are case-insensitive.
+SECRET_ACCESS = re.compile(r"\bsecrets\b(?!\s*\.\s*GITHUB_TOKEN\b)", re.I)
+
+
+def conditions(node: object) -> list[str]:
+    """Every if: value in a workflow document; an if: is an expression without ${{ }}."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "if" and isinstance(value, str):
+                found.append(value)
+            else:
+                found.extend(conditions(value))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(conditions(item))
+    return found
 
 
 def grants_write(permissions: object) -> bool:
@@ -142,11 +160,19 @@ def check_routing(name: str, doc: dict, text: str, on: dict) -> list[str]:
     for job_id, job in jobs.items():
         if grants_write(job.get("permissions")):
             problems.append(f"R12 {name}: job {job_id} grants write permission")
-    for secret in sorted(set(re.findall(r"secrets\.([A-Za-z0-9_]+)", text))):
-        if secret != "GITHUB_TOKEN":
-            problems.append(f"R12 {name}: workflow with a routed job uses secret {secret}")
-    if re.search(r"secrets\s*:\s*inherit|secrets\s*\[", text):
-        problems.append(f"R12 {name}: workflow with a routed job passes or indexes secrets")
+    # The secrets context is read only inside expressions: ${{ }} anywhere, and
+    # the bare expressions of if: keys. Any reference to it there other than
+    # secrets.GITHUB_TOKEN is refused, whole-context access (toJSON(secrets))
+    # and indexing included.
+    for expression in [*EXPRESSION.findall(text), *conditions(doc)]:
+        for access in SECRET_ACCESS.finditer(expression):
+            problems.append(
+                f"R12 {name}: workflow with a routed job reads secrets beyond GITHUB_TOKEN: "
+                f"{' '.join(expression[access.start() :].split())[:60]}"
+            )
+    for job_id, job in jobs.items():
+        if "secrets" in job:
+            problems.append(f"R12 {name}: job {job_id} passes secrets to a called workflow")
     schedule = on.get("schedule")
     if not (
         isinstance(schedule, list)

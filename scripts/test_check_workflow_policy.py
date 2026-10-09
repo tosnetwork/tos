@@ -402,6 +402,49 @@ class PolicyTest(unittest.TestCase):
         )
         self.assert_red("R12", self.ROUTED)
 
+    def test_r12_whole_secrets_context(self) -> None:
+        for env in (
+            "ALL: ${{ toJSON(secrets) }}",
+            "ALL: '${{ toJSON(secrets) }}'",
+            "ALL: ${{ join(secrets, ',') }}",
+            "ALL: ${{ toJSON(SECRETS) }}",
+            "KEY: ${{ Secrets.DEPLOY_KEY }}",
+        ):
+            with self.subTest(env=env):
+                self.tearDown()
+                self.setUp()
+                self.mutate(
+                    self.ROUTED,
+                    "    timeout-minutes: 100\n",
+                    f"    timeout-minutes: 100\n    env:\n      {env}\n",
+                )
+                self.assert_red("R12", self.ROUTED)
+
+    def test_r12_secrets_in_a_bare_condition(self) -> None:
+        self.mutate(
+            self.ROUTED,
+            "    timeout-minutes: 100\n",
+            "    timeout-minutes: 100\n    if: toJSON(secrets) != '{}'\n",
+        )
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_secrets_passed_to_a_called_workflow(self) -> None:
+        self.mutate(
+            self.ROUTED,
+            "\njobs:\n",
+            "\njobs:\n  call:\n    uses: ./.github/workflows/jsonrpc-asan.yml\n"
+            "    secrets: inherit\n",
+        )
+        self.assert_red("R12", self.ROUTED)
+
+    def test_r12_the_token_and_a_crate_name_are_not_secret_access(self) -> None:
+        # The tree's routed workflows log in with secrets.GITHUB_TOKEN and test
+        # the secrets-vault crate; neither reads another secret.
+        text = (self.root / ".github" / "workflows" / "branch-chain-python.yml").read_text()
+        self.assertIn("${{ secrets.GITHUB_TOKEN }}", text)
+        self.assertIn("-p secrets-vault", text)
+        self.assertEqual(self.violations("R12", "branch-chain-python.yml"), [])
+
     def test_r12_schedule(self) -> None:
         schedule = "  schedule:\n    - cron: '37 3 * * 0'\n"
         for after in (
