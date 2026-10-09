@@ -348,12 +348,58 @@ under the AddressSanitizer configuration of the network workflow, whose
 registration check also passed. Changed-line Clang 21 formatting and Ruff
 0.15.2 lint and format checks passed.
 
-`MultipleFullSourcesAllowANewSourceAcrossServers` intermittently times out at
+`MultipleFullSourcesAllowANewSourceAcrossServers` intermittently timed out at
 `remaining streams reclaimed` with one stream slot still held three seconds
-after the final time jump. It fails at comparable rates with and without
-this change (for example 8 of 40 and 16 of 40 runs under four-way parallel
-load, then 2 of 40 and 1 of 40 in a second sample, the original first), so it
-is recorded here as a pre-existing timing margin, not addressed by this change.
+after the final time jump. This was a pre-existing intermittent failure of the
+test, not of the product, with the same mechanism on both commits:
+
+- The held slot was the honest source's admitted stream: one byte and FIN,
+  which is not a protocol message and is never answered. On input FIN the
+  server moves the stream from its inactivity window onto its absolute
+  lifetime (120 s by default), as `InputFinCannotDiscardTheLifetimeOfAHeldSlot`
+  requires, so after the 35 s jump only the connection's 15 s idle close, or
+  the inactivity timer firing before the FIN was read, could free it.
+- `QuicServer::loop()` runs its timer pass and then reads datagrams. When the
+  test thread's clock jump landed between the two, while the FIN was in
+  flight, the timer pass ran on the old clock and the FIN was read on the
+  jumped one. That read restarted the connection's idle timer and moved the
+  stream onto its lifetime with 85 s left, so nothing could free the slot
+  within the test's three-second wait.
+- In a run that took this branch with the wait extended, the slot came back
+  exactly 15.000 s after the FIN was read, by the connection's idle close:
+  within the product's bounds, not a leak.
+
+The test now waits until the server has consumed the FIN before jumping, sets
+a 40 s stream lifetime and jumps 45 s, past inactivity, lifetime and idle
+timeout, so every remaining stream expires whatever traffic follows the jump,
+and then requires empty counters and ledgers within 5 s. The new
+`quic-slot-retention` control (closed connections keep their streams) fails at
+`remaining streams reclaimed`.
+
+Measured with Release strict-build binaries, four concurrent run loops (two
+per variant), `-f MultipleFullSourcesAllowANewSourceAcrossServers`:
+
+| Variant | Runs | Failed |
+| --- | --- | --- |
+| Previous test, `11b4d0fb8` | 200 | 25 |
+| Previous test, `db50f12d8` | 200 | 14 |
+| Revised test on `11b4d0fb8` | 200 | 0 |
+| Revised test, this commit | 200 | 0 |
+| Previous test, `db50f12d8`, window widened* | 50 | 15 |
+| Revised test on `11b4d0fb8`, window widened* | 50 | 0 |
+| Revised test, this commit, window widened* | 50 | 0 |
+
+\* A diagnostic-only build, not committed, that sleeps 50 ms between the
+timer pass and the datagram read of any `QuicServer::loop()` that already has
+a datagram waiting, so a concurrent clock jump lands in that window far more
+often. Every failure above is `remaining streams reclaimed`.
+
+The mutation runner's `quic-fairness`, `quic-reservation` and
+`quic-slot-retention` cases each failed for their named reason (`overrepresented
+source was displaced on another server`, `displaced source cannot take the
+reserved retry slot`, `remaining streams reclaimed`; exit 1) and passed after
+restoring the source (exit 0). The network-safety label passed 15/15 on the
+strict Release build and 15/15 under the AddressSanitizer configuration.
 
 Reproduction (in addition to the builds above):
 

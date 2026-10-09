@@ -2692,6 +2692,9 @@ TEST(QuicSourceShare, MultipleFullSourcesAllowANewSourceAcrossServers) {
     auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 1 << 20, 2, 1 << 20);
     auto options = quic_test_options();
     options.inbound_stream_timeout = 30;
+    // Short enough for the final jump to pass it within the runner's test
+    // timeout, which is measured on the jumped clock.
+    options.inbound_stream_lifetime = 40;
     options.inbound_stream_budget = budget;
     options.source_key_for_test = [](const td::IPAddress& peer) { return std::to_string(peer.get_port()); };
     auto occupied = co_await t.create_sender_node("fairness-occupied", next_port(), options);
@@ -2725,9 +2728,17 @@ TEST(QuicSourceShare, MultipleFullSourcesAllowANewSourceAcrossServers) {
     ASSERT_TRUE(!honest.state->has_closed_stream(admitted));
     ASSERT_EQ(budget->streams(), 4u);
     co_await t.finish_stream(honest, ch, admitted);
-    jump_time_by(35.0);
-    co_await poll_until([&] { return budget->streams() == 0 && budget->bytes() == 0; }, 3.0,
-                        "remaining streams reclaimed");
+    // The admitted input is complete, so its slot now lasts for the stream's
+    // lifetime rather than its inactivity window. Wait until the server has
+    // read the FIN: a clock jump landing between the server's timer pass and
+    // that read would restart the connection's idle timer at the jumped time.
+    co_await poll_until([&] { return budget->bytes() == 3; }, 2.0, "admitted input consumed");
+    // Past inactivity (30 s), lifetime (40 s) and connection idle (15 s): every
+    // remaining stream expires whatever traffic follows the jump.
+    jump_time_by(45.0);
+    co_await poll_until(
+        [&] { return budget->streams() == 0 && budget->bytes() == 0 && budget->tracked_sources() == 0; }, 5.0,
+        "remaining streams reclaimed");
     co_return td::Unit{};
   });
 }

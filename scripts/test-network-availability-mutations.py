@@ -185,6 +185,21 @@ CASES = {
         ],
         "displaced source cannot take the reserved retry slot",
     ),
+    "quic-slot-retention": (
+        "quic/quic-sender.cpp",
+        "    connections_.erase(it);\n  }\n\n  void rearm_inbound_timeout",
+        "    (void)it;\n  }\n\n  void rearm_inbound_timeout",
+        "test-quic-sender",
+        [
+            "-p",
+            "57000",
+            "-d",
+            "mutation-quic-slot-retention",
+            "-f",
+            "MultipleFullSourcesAllowANewSourceAcrossServers",
+        ],
+        "timed out waiting: remaining streams reclaimed",
+    ),
     "quic-reset": (
         "quic/quic-sender.cpp",
         "shutdown.connections.push_back(state->cid);",
