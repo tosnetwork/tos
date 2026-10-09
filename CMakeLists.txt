@@ -1129,6 +1129,10 @@ target_link_libraries(test-pq-signature-persistence PRIVATE tos_validator valida
 add_executable(test-celldb-streaming-import test/test-celldb-streaming-import.cpp)
 target_link_libraries(test-celldb-streaming-import PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+# A decrement of a never-stored cell must stop the in-memory cell database; the abort
+# runs in a re-executed child of the test (see the file).
+add_executable(test-inmemory-celldb-dec test/test-inmemory-celldb-dec.cpp)
+target_link_libraries(test-inmemory-celldb-dec PRIVATE tos_db tddb tdutils)
 add_executable(test-celldb-actor-restart test/test-celldb-actor-restart.cpp)
 target_link_libraries(test-celldb-actor-restart PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
@@ -1999,6 +2003,7 @@ tos_test(test-wallet-message-processor)
 tos_test(test-vm-exception-hardening)
 tos_test(test-celldb-streaming-import)
 tos_test(test-celldb-actor-restart)
+tos_test(test-inmemory-celldb-dec)
 tos_test(test-validator-options)
 tos_test(test-block-handle-flags)
 tos_test(test-keyring-temp-key)

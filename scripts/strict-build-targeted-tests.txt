@@ -7,3 +7,4 @@ test-tol
 test-celldb-actor-restart
 test-toslib-offline
 test-tdactor
+test-inmemory-celldb-dec
