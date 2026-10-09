@@ -58,11 +58,13 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-24.04
-            timeout_minutes: 150
+            timeout_minutes: 180
           - runner: ubuntu-24.04-arm
             timeout_minutes: 180
     runs-on: ${{ matrix.runner }}
-    # Leave ARM headroom for repeated H20 rebuilds and the final native ingress build.
+    # The serial control steps take about 150 minutes on a hosted runner of
+    # either architecture, so both get the same headroom for the repeated H20
+    # rebuilds and the final native ingress build.
     timeout-minutes: ${{ matrix.timeout_minutes }}
     env:
       TOS_ROOT: ${{ github.workspace }}
