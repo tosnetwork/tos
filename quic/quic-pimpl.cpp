@@ -782,6 +782,10 @@ void QuicConnectionPImpl::shutdown_stream(QuicStreamID sid) {
   ngtcp2_conn_shutdown_stream(conn(), 0, sid, 1);
 }
 
+void QuicConnectionPImpl::close_with_error(UdpMessageBuffer& close_out, int liberr) {
+  write_connection_close(close_out, liberr);
+}
+
 void QuicConnectionPImpl::set_stream_receive_credit_from_max_size(QuicStreamID sid, td::uint64 max_size) {
   td::uint64 target_credit =
       std::clamp<td::uint64>(max_size, options_.initial_max_stream_data_bidi_local, options_.max_stream_window);

@@ -62,7 +62,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       // never inserted here and keep that deadline.
       state.mark_inbound();
       state.absolute_deadline = td::Timestamp::in(inbound_stream_lifetime_);
-      state.reclaim = inbound_budget_->track_incomplete(state.source());
+      state.reclaim = inbound_budget_->track_stream(state.source());
       td::uint64 mtu = get_peer_mtu_(local_id, peer_id);
       apply_stream_options(state, StreamOptions{mtu});
     }
@@ -111,7 +111,15 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       return status;
     }
     auto complete_data = state.extract();
-    state.reclaim.reset();
+    if (state.is_inbound()) {
+      // FIN completes the input, not the bidirectional stream. Pending replies
+      // and malformed input still hold a slot until transport closure, and
+      // must not use FIN to discard lifetime or reclamation protection.
+      auto options = state.options();
+      options.timeout = state.absolute_deadline;
+      options.timeout_seconds = inbound_stream_lifetime_;
+      apply_stream_options(state, options);
+    }
     auto memory_token = state.take_memory_token();
     // The payload carries its charge with it, through the sender's mailbox
     // and on until it is consumed.
@@ -165,8 +173,12 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     while (!timeout_heap_.empty() && td::Timestamp::at(timeout_heap_.top_key()).is_in_past(now)) {
       auto *state = static_cast<StreamState *>(timeout_heap_.pop());
       if (!state->is_failed()) {
+        auto cid = state->cid;
+        auto sid = state->sid;
         fail_stream(*state, state->timeout_error());
-        shutdown.entries.push_back({state->cid, state->sid});
+        shutdown.entries.push_back({cid, sid});
+      } else {
+        shutdown.connections.push_back(state->cid);
       }
     }
   }
@@ -425,6 +437,11 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     }
     state.mark_failed();
     state.drop_buffer();
+    if (state.is_inbound()) {
+      // RESET_STREAM/STOP_SENDING completion can depend on peer traffic. A
+      // peer withholding it cannot keep the slot after its stream failed.
+      timeout_heap_.insert(td::Timestamp::in(2.0).at(), &state);
+    }
     td::actor::send_closure(sender_, &QuicSender::on_stream_complete, state.cid, state.sid, std::move(error),
                             td::MemoryTrackerToken{}, QuicInboundByteCharge{});
   }

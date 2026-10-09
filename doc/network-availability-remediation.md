@@ -39,12 +39,21 @@ partial writes and every teardown return both charges. The output backlog has
 a 30-second total deadline, independent of incoming keepalives and partial
 writes. A completely drained backlog may start a new deadline.
 
-QUIC incomplete streams have a 120-second absolute lifetime alongside the
-existing inactivity limit. Under global slot saturation, a source with less
-than its fair share can request the oldest incomplete stream of the largest
+QUIC peer streams have a 120-second absolute lifetime alongside the existing
+inactivity limit. Input FIN does not remove lifetime or reclamation protection:
+the stream still holds a slot until its reply and transport closure complete.
+Under global slot saturation, a source with less than its fair share can
+request the oldest pending peer stream of the largest
 holder to be reset. The budget coordinates at most one pending reset across
 all its servers. The triggering stream is refused: the newcomer retries after
-the owning callback returns the victim's slot. This is bounded recovery from
+the owning callback returns the victim's slot. That slot is reserved for the
+newcomer for two seconds after it is returned, so the displaced source cannot
+immediately refill it; an abandoned retry temporarily withholds at most one
+slot. If a reset remains unacknowledged for two seconds, the owner closes that
+connection locally without awaiting the peer, releasing its slots and transport
+state. This can interrupt sibling streams on that connection; their clients
+must reconnect/retry; closing transport does not cancel already dispatched
+application work. This is bounded recovery from
 overrepresented sources, not guaranteed admission on the first attempt or
 protection against an unlimited number of one-stream sources. Locally opened
 query response deadlines are not extended or replaced.
@@ -53,11 +62,40 @@ The new regressions run in the existing network safety suites. The ADNL
 output and refusal-close targets are also included in the AddressSanitizer
 workflow, retaining their existing security regression labels.
 
-Initial Linux validation passed all 11 selected CTest groups: HTTP listener,
+Linux validation passed all 11 selected CTest groups: HTTP listener,
 production JSON-RPC transport, ADNL output/refusal close, CONNECT tunnels, and
 QUIC inbound/transport budgets, source shares, connection limits, inbound
-expiry and outbound deadlines. Removed-control validation is in progress;
-final-head CI and a fresh security scan have not been claimed.
+expiry and outbound deadlines. A separate Debug build with Clang 21 and
+AddressSanitizer also passed those 11 groups (`detect_leaks=0`, matching the
+network workflow; this is not a leak-sanitizer claim).
+
+All 12 removed-control cases failed for their named reason and passed after
+restoration. The cases cover HTTP reuse, TCP source admission, keyless closure,
+request persistence, ADNL source accounting/ceiling, output expiry and
+non-renewal, QUIC total lifetime, source fairness, reserved retry capacity,
+unacknowledged reset reclamation and input FIN. The output expiry regression
+uses an independent watchdog so an expired actor alarm cannot spin until the
+ordinary idle timeout and falsely pass.
+
+Representative removed-control receipts (bounded excerpts):
+
+| Case | Executed failure |
+| --- | --- |
+| HTTP reuse | `early.request_ok(3000)` fails after the delayed final upload byte. |
+| HTTP source | `excess.drains_to_close(3000, received)` fails when source admission is disabled. |
+| Keyless / request close | `client.drains_to_close(3000, rest)` fails when the corresponding persistence policy is removed. |
+| ADNL source | `source overflow did not close` when source charging remains but its ceiling is disabled. |
+| ADNL expiry | `keepalives renewed the output deadline` from the independent watchdog. |
+| ADNL non-renewal | `partial writes moved the original output deadline`. |
+| QUIC lifetime | `absolute lifetime expired before the renewed inactivity window` times out. |
+| QUIC fairness | `overrepresented source was displaced on another server` times out. |
+| QUIC reservation | `displaced source cannot take the reserved retry slot` times out. |
+| QUIC reset | `unacknowledged reset released connection and slot` times out. |
+| QUIC FIN | `input FIN did not remove the held slot lifetime` times out. |
+
+Full logs are retained outside Git in the isolated Linux PR test directory;
+the runner and named assertions above provide the reproducible evidence.
+Final-head GitHub CI and a fresh security scan have not been claimed.
 
 To reproduce sensitivity checks in an isolated checkout:
 

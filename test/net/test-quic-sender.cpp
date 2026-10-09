@@ -2634,6 +2634,56 @@ TEST(QuicInboundStreamTimeout, TrickleDataCannotRenewTheTotalLifetime) {
   });
 }
 
+TEST(QuicInboundStreamTimeout, AResetWithoutPeerAcknowledgementReleasesTheConnection) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(8, 1 << 20, 8, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("no-reset-ack", next_port(), options);
+    auto drop = std::make_shared<std::atomic<bool>>(false);
+    auto client_options = quic_test_options();
+    client_options.drop_outgoing_datagram = [drop](td::Slice) { return drop->load(); };
+    auto client = co_await t.create_endpoint(client_options);
+    auto cid = co_await t.connect_raw_to(client, receiver.port + 1000);
+    co_await t.send_partial_stream(client, cid, 'x');
+    co_await poll_until([&] { return budget->streams() == 1 && budget->bytes() == 1; }, 3.0, "partial stream admitted");
+    drop->store(true);
+    jump_time_by(3.5);
+    co_await poll_until([&] { return budget->bytes() == 0; }, 0.5, "failed stream dropped its buffer");
+    ASSERT_EQ(budget->streams(), 1u);
+    // Still below the connection idle timeout: only the reset grace closes it.
+    jump_time_by(3.0);
+    co_await poll_until([&] { return budget->streams() == 0 && budget->tracked_sources() == 0; }, 0.5,
+                        "unacknowledged reset released connection and slot");
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicInboundStreamTimeout, InputFinCannotDiscardTheLifetimeOfAHeldSlot) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(8, 1 << 20, 8, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_lifetime = 5.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("fin-lifetime", next_port(), options);
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + 1000);
+    auto sid = co_await t.send_partial_stream(client, cid, 'x');
+    co_await poll_until([&] { return budget->bytes() == 1; }, 3.0, "partial stream admitted before FIN");
+    co_await t.finish_stream(client, cid, sid);
+    // One byte is not a protocol message: the input is consumed, but the
+    // transport has not received an answer/FIN and still holds the slot.
+    co_await poll_until([&] { return budget->bytes() == 0; }, 1.0, "completed input consumed");
+    ASSERT_EQ(budget->streams(), 1u);
+    jump_time_by(5.5);
+    co_await poll_until([&] { return client.state->has_closed_stream(sid) && budget->streams() == 0; }, 0.5,
+                        "input FIN did not remove the held slot lifetime");
+    co_return td::Unit{};
+  });
+}
+
 TEST(QuicSourceShare, MultipleFullSourcesAllowANewSourceAcrossServers) {
   run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
     auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 1 << 20, 2, 1 << 20);
@@ -2660,6 +2710,12 @@ TEST(QuicSourceShare, MultipleFullSourcesAllowANewSourceAcrossServers) {
                         2.0, "overrepresented source was displaced on another server");
     co_await poll_until([&] { return budget->streams() == 3 && budget->bytes() == 3; }, 2.0,
                         "victim released slot and byte");
+    auto& victim = a.state->has_closed_stream(oldest_a) ? a : b;
+    auto victim_cid = a.state->has_closed_stream(oldest_a) ? ca : cb;
+    auto refill = co_await t.send_partial_stream(victim, victim_cid, 'r');
+    co_await poll_until([&] { return victim.state->has_closed_stream(refill); }, 0.5,
+                        "displaced source cannot take the reserved retry slot");
+    ASSERT_EQ(budget->streams(), 3u);
     auto admitted = co_await t.send_partial_stream(honest, ch, 'h');
     co_await poll_until([&] { return budget->source_streams(std::to_string(honest.port)) == 1; }, 2.0,
                         "new source retry admitted");

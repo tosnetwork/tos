@@ -9,6 +9,7 @@
 #include <string>
 
 #include "adnl/adnl-source-share.h"
+#include "td/utils/Time.h"
 #include "td/utils/logging.h"
 
 namespace tos::quic {
@@ -71,17 +72,19 @@ inline constexpr std::size_t kQuicMaxInboundStreamBytes = std::size_t{512} << 20
 class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundStreamBudget> {
  public:
   using ReclaimToken = std::shared_ptr<std::atomic<bool>>;
-  // Only incomplete peer streams are reclaimable. The token's lifetime
+  // Peer streams waiting for closure are reclaimable. The token's lifetime
   // removes its registry entry, including on FIN, error and connection close.
-  ReclaimToken track_incomplete(const QuicBudgetSource &source) {
+  // Called only after this budget admitted the stream's slot.
+  ReclaimToken track_stream(const QuicBudgetSource &source) {
+    ReclaimToken token;
     std::lock_guard lock(reclaim_mutex_);
     auto id = ++next_reclaim_id_;
-    auto token =
+    token =
         ReclaimToken(new std::atomic<bool>(false), [budget = shared_from_this(), source, id](std::atomic<bool> *flag) {
-          budget->forget_incomplete(source, id);
+          budget->forget_stream(source, id);
           delete flag;
         });
-    incomplete_[source].emplace(id, token);
+    reclaimable_[source].emplace(id, token);
     return token;
   }
   // A full global slot pool cannot be kept permanently by a few sources with
@@ -99,16 +102,16 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
     if (pending_reclaim_) {
       return false;
     }
-    auto own = incomplete_.find(source);
-    auto own_count = own == incomplete_.end() ? 0 : own->second.size();
-    auto victim = incomplete_.end();
-    for (auto it = incomplete_.begin(); it != incomplete_.end(); ++it) {
+    auto own = reclaimable_.find(source);
+    auto own_count = own == reclaimable_.end() ? 0 : own->second.size();
+    auto victim = reclaimable_.end();
+    for (auto it = reclaimable_.begin(); it != reclaimable_.end(); ++it) {
       if (it->first != source && it->second.size() > own_count + 1 &&
-          (victim == incomplete_.end() || it->second.size() > victim->second.size())) {
+          (victim == reclaimable_.end() || it->second.size() > victim->second.size())) {
         victim = it;
       }
     }
-    if (victim == incomplete_.end()) {
+    if (victim == reclaimable_.end()) {
       return false;
     }
     auto first = victim->second.begin();
@@ -117,6 +120,8 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
       return false;
     }
     pending_reclaim_ = std::make_pair(victim->first, first->first);
+    reclaim_recipient_ = source;
+    reclaim_reservation_deadline_ = td::Timestamp::never();
     token->store(true);
     reclaim_generation_.fetch_add(1);
     return true;
@@ -146,12 +151,25 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
   // One stream slot for `source`; all or nothing across the source's share and
   // the global budget.
   bool try_acquire_stream(const QuicBudgetSource &source) {
+    std::lock_guard lock(reclaim_mutex_);
+    if (reclaim_recipient_ && reclaim_reservation_deadline_ && reclaim_reservation_deadline_.is_in_past()) {
+      reclaim_recipient_.reset();
+    }
+    auto slot_limit = max_streams_;
+    if (reclaim_recipient_ && source != *reclaim_recipient_) {
+      // The displaced source cannot race the newcomer to its returned slot.
+      // An abandoned retry reserves at most one slot, for at most two seconds.
+      slot_limit -= 1;
+    }
     if (!source.empty() && !source_streams_.try_reserve(source, 1)) {
       return false;
     }
-    if (!try_add(streams_, max_streams_, 1)) {
+    if (!try_add(streams_, slot_limit, 1)) {
       give_back(source_streams_, source, 1, "streams");
       return false;
+    }
+    if (reclaim_recipient_ && source == *reclaim_recipient_) {
+      reclaim_recipient_.reset();
     }
     return true;
   }
@@ -214,23 +232,26 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
   }
 
  private:
-  void forget_incomplete(const QuicBudgetSource &source, std::size_t id) {
+  void forget_stream(const QuicBudgetSource &source, std::size_t id) {
     std::lock_guard lock(reclaim_mutex_);
-    auto it = incomplete_.find(source);
-    if (it != incomplete_.end()) {
+    auto it = reclaimable_.find(source);
+    if (it != reclaimable_.end()) {
       it->second.erase(id);
       if (it->second.empty()) {
-        incomplete_.erase(it);
+        reclaimable_.erase(it);
       }
     }
     if (pending_reclaim_ && *pending_reclaim_ == std::make_pair(source, id)) {
       pending_reclaim_.reset();
+      reclaim_reservation_deadline_ = td::Timestamp::in(2.0);
     }
   }
   std::mutex reclaim_mutex_;
   std::size_t next_reclaim_id_ = 0;
-  std::map<QuicBudgetSource, std::map<std::size_t, std::weak_ptr<std::atomic<bool>>>> incomplete_;
+  std::map<QuicBudgetSource, std::map<std::size_t, std::weak_ptr<std::atomic<bool>>>> reclaimable_;
   std::optional<std::pair<QuicBudgetSource, std::size_t>> pending_reclaim_;
+  std::optional<QuicBudgetSource> reclaim_recipient_;
+  td::Timestamp reclaim_reservation_deadline_;
   std::atomic<std::size_t> reclaim_generation_{0};
   static bool try_add(std::atomic<std::size_t> &counter, std::size_t limit, std::size_t amount) {
     auto used = counter.load();

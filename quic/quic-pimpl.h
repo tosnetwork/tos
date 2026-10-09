@@ -228,6 +228,7 @@ struct QuicConnectionPImpl {
   [[nodiscard]] td::Result<InitialCidState> take_initial_cid_state();
 
   void shutdown_stream(QuicStreamID sid);
+  void close_with_error(UdpMessageBuffer& close_out, int liberr);
   void set_stream_receive_credit_from_max_size(QuicStreamID sid, td::uint64 max_size);
 
   [[nodiscard]] td::Result<QuicStreamID> open_stream();

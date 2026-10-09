@@ -11,6 +11,8 @@
 // a handful of kilobyte-sized replies.
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +20,7 @@
 #include <mutex>
 #include <string>
 #include <sys/socket.h>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -51,6 +54,35 @@ void require(bool condition, const std::string& message) {
     fail(message);
   }
 }
+
+// Independent of the actor scheduler: a removed expiry check can keep an
+// already-expired alarm spinning until the ordinary 60-second idle timeout.
+// Waiting on that same scheduler would mistake the later close for success.
+class OutputDeadlineWatchdog {
+ public:
+  OutputDeadlineWatchdog()
+      : thread_([this] {
+        std::unique_lock lock(mutex_);
+        if (!condition_.wait_for(lock, std::chrono::seconds(3), [&] { return finished_; })) {
+          fail("keepalives renewed the output deadline");
+        }
+      }) {
+  }
+  ~OutputDeadlineWatchdog() {
+    {
+      std::lock_guard lock(mutex_);
+      finished_ = true;
+    }
+    condition_.notify_one();
+    thread_.join();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  bool finished_ = false;
+  std::thread thread_;
+};
 
 // A peer that reads nothing: every write would block.
 class StalledTransport final : public adnl::AdnlExtTransportWriter {
@@ -537,6 +569,7 @@ void source_share_leaves_other_clients_capacity() {
 }
 
 void keepalives_do_not_renew_output_deadline() {
+  OutputDeadlineWatchdog watchdog;
   Harness harness;
   auto budget = std::make_shared<adnl::AdnlExtOutputBudget>(4 * kFrame);
   auto shares = std::make_shared<adnl::SourceShareLedger>(2 * kFrame);
@@ -551,6 +584,7 @@ void keepalives_do_not_renew_output_deadline() {
     harness.settle();
   }
   require(snapshot(observation).closed, "keepalives renewed the output deadline");
+  require(!deadline.is_in_past(), "keepalives renewed the output deadline");
   require(!snapshot(observation).overflowed && snapshot(observation).dispatched == 1,
           "the close came from output overflow or a keepalive dispatched a query");
   require(budget->used() == 0 && shares->sources() == 0, "deadline close left output charged");
