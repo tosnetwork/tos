@@ -2,10 +2,18 @@ name: Branch PQ chain and Python tests
 
 # This job exists because compile/unit evidence cannot detect a chain fixture
 # that no longer forms a validator group. Keep one real PQ chain boot and the
-# complete Python suite on every branch push and pull request; do not move it
-# back behind main-only or workflow_dispatch-only triggers.
+# complete Python suite on every pull request, whatever its base, and on every
+# push to main; do not move it behind workflow_dispatch-only triggers.
+#
+# Pushes to other branches do not trigger it: with an open pull request they
+# would run it a second time on the same change, since the two events fall in
+# different concurrency groups. A pull request run tests the synthetic merge
+# with its base, a branch push tests the branch head, so those runs are not of
+# the same commit, and a branch has no automatic run before it has a pull
+# request. Dispatch the workflow on a branch to test its head deliberately.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
