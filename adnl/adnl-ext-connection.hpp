@@ -61,6 +61,19 @@ class AdnlExtTransportReader {
   virtual td::Result<std::size_t> read(td::MutableSlice slice) = 0;
 };
 
+// Input the ordered close after a refusal read and dropped, summed over every
+// connection in the process. Lets a test confirm how many passes a close took
+// to consume what the peer sent after the refusal.
+struct AdnlExtClosingDiscardTotals {
+  // Closing passes that read at least one byte.
+  std::atomic<td::uint64> passes{0};
+  std::atomic<td::uint64> bytes{0};
+  // Bytes read by passes that began with the peer's end of stream already
+  // reported by the poll layer.
+  std::atomic<td::uint64> bytes_after_peer_close{0};
+};
+AdnlExtClosingDiscardTotals &adnl_ext_closing_discard_totals();
+
 // The connection's socket. Reads and writes go to the socket unless a
 // transport reader or writer is installed.
 class AdnlExtSocket : public td::SocketFd {

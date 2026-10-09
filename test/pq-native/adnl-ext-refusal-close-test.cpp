@@ -27,11 +27,13 @@
 //      still closes the connection;
 //   f. a query whose service result succeeds only after the refusal neither
 //      stops the closing connection nor spends the failure-reply allowance;
-//   g. the same for a service result that fails after the refusal.
+//   g. the same for a service result that fails after the refusal;
+//   h. a peer that sends far more than one discard chunk after the refusal
+//      and then half-closes still gets all answers, then a clean end of file.
 // Cases a, b, c and d run the real connection actor over a real socket pair
 // with small kernel buffers, so answers queue in the connection itself while
 // the peer is not reading. Case e scripts the input side, so "bytes, then an
-// error" in one read is deterministic. Cases f and g run a real external
+// error" in one read is deterministic. Cases f, g and h run a real external
 // server over loopback TCP with a raw client that speaks the wire protocol
 // itself, so it can stop reading and tell an end of file from a reset.
 #include <algorithm>
@@ -68,6 +70,7 @@
 #include "td/utils/port/SocketFd.h"
 #include "td/utils/port/detail/NativeFd.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/sleep.h"
 #include "tl-utils/tl-utils.hpp"
 
 namespace {
@@ -818,6 +821,17 @@ class RawClient {
       sent += static_cast<size_t>(n);
     }
   }
+  // One send that never blocks: the bytes taken, 0 if none fit, -1 on error.
+  ssize_t try_write(td::Slice bytes) {
+    auto n = ::send(fd_, bytes.data(), bytes.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      return 0;
+    }
+    return n;
+  }
+  void shutdown_write() {
+    require(::shutdown(fd_, SHUT_WR) == 0, "client shutdown failed");
+  }
   ReadEnd read_to_end(int timeout_ms) {
     auto deadline = td::Timestamp::in(timeout_ms / 1000.0);
     char buf[16384];
@@ -1005,6 +1019,127 @@ void late_completion_during_close(bool success) {
               success ? "success" : "error", kPromptQueries, kSourceInflight);
 }
 
+// h. The peer's queries are answered and left unread, its next query is
+// refused with a close, and it then sends far more than one discard chunk and
+// half-closes. The closing connection must consume all of it before closing:
+// input left unread at close makes the kernel reset the connection, which
+// drops the answers still queued for the peer.
+constexpr size_t kSurplusBytes = 512 << 10;
+// What one closing pass reads at most; the surplus spans several of them.
+constexpr size_t kDiscardChunkBytes = 64 << 10;
+// The connection's closing deadline, from the refusal.
+constexpr double kClosingSeconds = 2.0;
+// Answered queries before the refusal: they fill the 64-query rate window.
+constexpr size_t kSurplusCaseQueries = 64;
+
+void half_close_after_surplus() {
+  using Kind = adnl::ExtQueryFailureKind;
+  ServerHarness server("half-close-after-surplus");
+  RawClient client(server.port(), server.id());
+  std::string batch = client.init();
+  double started = 0;
+  for (size_t i = 0; i < kSurplusCaseQueries; i++) {
+    batch += client.query("prompt#" + std::to_string(i));
+    if ((i + 1) % 16 != 0) {
+      continue;
+    }
+    if (started == 0) {
+      started = td::Time::now();
+    }
+    client.write(std::exchange(batch, std::string{}));
+    server.wait_until([&] { return server.delivered() == i + 1; }, 2.0, "h: the service did not receive a batch");
+    server.run_for(0.05);
+  }
+  server.run_for(0.1);
+  require(td::Time::now() - started < 0.85, "h: the 64 accepted queries did not fit one rate window");
+  client.write(client.query("refused"));
+  server.wait_until([&] { return server.encoder().calls(Kind::PerConnectionRateLimit) == 1; }, 2.0,
+                    "h: the query past the rate window was not refused");
+  auto refused_at = td::Time::now();
+  auto& totals = adnl::adnl_ext_closing_discard_totals();
+  auto passes_before = totals.passes.load();
+  auto bytes_before = totals.bytes.load();
+  auto after_close_before = totals.bytes_after_peer_close.load();
+
+  // The surplus goes out while the server is not running, so as much of it
+  // as the kernels hold is queued together with the half-close. Whatever does
+  // not fit is sent while the server runs, never with a blocking send.
+  std::string surplus(kSurplusBytes, '\0');
+  td::Random::secure_bytes(td::MutableSlice(surplus));
+  size_t queued_unscheduled = 0;
+  size_t sent = 0;
+  bool pumped = false;
+  auto write_deadline = td::Timestamp::in(1.0);
+  while (sent < surplus.size()) {
+    auto n = client.try_write(td::Slice(surplus).substr(sent));
+    require(n >= 0, "h: the client's surplus write failed");
+    sent += static_cast<size_t>(n);
+    if (!pumped) {
+      queued_unscheduled = sent;
+    }
+    if (sent < surplus.size()) {
+      require(!write_deadline.is_in_past(), "h: the server did not take the surplus within 1 s (" +
+                                                std::to_string(sent) + " of " + std::to_string(surplus.size()) +
+                                                " bytes sent)");
+      server.run_for(0.01);
+      pumped = true;
+    }
+  }
+  client.shutdown_write();
+  // Let the kernel deliver the queued bytes and the half-close before the
+  // server's next pass.
+  td::usleep_for(50000);
+
+  std::atomic<bool> read_done{false};
+  ReadEnd end = ReadEnd::Timeout;
+  double ended_at = 0;
+  std::thread reader([&] {
+    end = client.read_to_end(3000);
+    ended_at = td::Time::now();
+    read_done.store(true, std::memory_order_release);
+  });
+  server.wait_until([&] { return read_done.load(std::memory_order_acquire); }, 4.0,
+                    "h: the client's read did not finish");
+  reader.join();
+  size_t unfinished = 0;
+  auto answers = client.answers(unfinished);
+  size_t prompt = 0;
+  for (auto& [request, answer] : answers) {
+    require(request != "refused", "h: the refused query was answered");
+    require(answer == prompt_answer(request), "h: answer bytes differ for " + request);
+    prompt++;
+  }
+  require(prompt == kSurplusCaseQueries,
+          "h: the peer got " + std::to_string(prompt) + " of the " + std::to_string(kSurplusCaseQueries) +
+              " answers queued before the refusal; the stream ended by " + read_end_name(end) + " after " +
+              std::to_string(unfinished) + " bytes of an unfinished frame");
+  require(end == ReadEnd::Eof, "h: the stream ended by " + std::string(read_end_name(end)) + ", not by end of file");
+  require(unfinished == 0, "h: the stream ended inside a frame");
+  auto took = ended_at - refused_at;
+  require(took <= kClosingSeconds + 0.25,
+          "h: end of file came " + std::to_string(took) + " s after the refusal, past the closing deadline");
+
+  // Evidence that the case exercised what it is about: the surplus was
+  // consumed over several passes, and more than one chunk of it was still
+  // queued when the peer's half-close was already known.
+  auto passes = totals.passes.load() - passes_before;
+  auto discarded = totals.bytes.load() - bytes_before;
+  auto after_close = totals.bytes_after_peer_close.load() - after_close_before;
+  require(discarded >= kSurplusBytes,
+          "h: the close discarded " + std::to_string(discarded) + " bytes, less than the surplus");
+  require(passes > 1, "h: the surplus was discarded in " + std::to_string(passes) + " pass(es)");
+  require(after_close > kDiscardChunkBytes, "h: only " + std::to_string(after_close) +
+                                                " bytes were left to discard once the half-close was known;"
+                                                " the case did not queue the surplus together with it");
+  client.close();
+  std::printf(
+      "REFUSAL_CLOSE_CASE half-close-after-surplus prompt_answers=%zu end=eof closed_after=%.2fs "
+      "surplus=%zu queued_before_server_ran=%zu discard_passes=%llu discarded=%llu "
+      "discarded_after_half_close=%llu\n",
+      prompt, took, kSurplusBytes, queued_unscheduled, static_cast<unsigned long long>(passes),
+      static_cast<unsigned long long>(discarded), static_cast<unsigned long long>(after_close));
+}
+
 void late_success_during_close() {
   late_completion_during_close(true);
 }
@@ -1022,7 +1157,7 @@ int main(int argc, char** argv) {
       {"paused", paused_peer_gets_every_answer},      {"silent", silent_peer_is_released_by_the_deadline},
       {"late", late_answer_is_not_written},           {"half-closed", half_closed_peer_gets_every_answer},
       {"reset", frames_before_a_reset_are_delivered}, {"late-success", late_success_during_close},
-      {"late-error", late_error_during_close},
+      {"late-error", late_error_during_close},        {"half-close-after-surplus", half_close_after_surplus},
   };
   bool ran = false;
   for (auto& [name, run] : cases) {

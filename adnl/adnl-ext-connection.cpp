@@ -43,6 +43,11 @@ void shutdown_write(const td::SocketFd &fd) {
 }
 }  // namespace
 
+AdnlExtClosingDiscardTotals &adnl_ext_closing_discard_totals() {
+  static AdnlExtClosingDiscardTotals totals;
+  return totals;
+}
+
 void AdnlExtConnection::send_uninit(td::BufferSlice data) {
   buffered_fd_.output_buffer().append(std::move(data));
   yield();
@@ -334,6 +339,7 @@ void AdnlExtConnection::begin_closing(const td::Status &reason) {
 void AdnlExtConnection::closing_loop() {
   // Input: never parsed again. Read only into what the input budget grants,
   // and drop it at once, until the peer has closed its side.
+  bool discard_pending = false;
   if (!read_eof_) {
     auto &input = buffered_fd_.input_buffer();
     input.advance(input.size());
@@ -345,6 +351,8 @@ void AdnlExtConnection::closing_loop() {
       }
       allowance = input_accounted_;
     }
+    bool peer_closed_before = td::can_close(buffered_fd_);
+    std::size_t read = 0;
     if (allowance > 0) {
       auto r_read = buffered_fd_.flush_read(allowance);
       input.advance(input.size());
@@ -354,9 +362,28 @@ void AdnlExtConnection::closing_loop() {
         stop();
         return;
       }
+      read = r_read.ok();
     }
-    if (td::can_close(buffered_fd_)) {
+    if (read > 0) {
+      auto &totals = adnl_ext_closing_discard_totals();
+      totals.passes.fetch_add(1, std::memory_order_relaxed);
+      totals.bytes.fetch_add(read, std::memory_order_relaxed);
+      if (peer_closed_before) {
+        totals.bytes_after_peer_close.fetch_add(read, std::memory_order_relaxed);
+      }
+    }
+    // The poll layer reports Close as soon as the peer's FIN is known, while
+    // bytes may still be queued ahead of it. Once the FIN is known a drained
+    // socket reads 0, never "would block", so only a pass that read less than
+    // its allowance has reached the end of the peer's stream. Closing with
+    // input still unread would make the kernel reset the connection and drop
+    // the answers queued for the peer.
+    if (read < allowance && td::can_close(buffered_fd_)) {
       read_eof_ = true;
+    } else if (read == allowance) {
+      // A full chunk, or no budget to read into: under edge-triggered polling
+      // the bytes left behind bring no new read edge, so come back for them.
+      discard_pending = true;
     }
   }
   // Output: what was queued before the refusal goes out in full.
@@ -384,9 +411,10 @@ void AdnlExtConnection::closing_loop() {
   }
   // The closing deadline is enforced in alarm(), whose timestamp never moves
   // past it.
-  if (read_eof_ && !write_shut_) {
-    // No writable edge will arrive after the peer's half-close (see above):
-    // retry shortly, never past the deadline.
+  if ((read_eof_ && !write_shut_) || discard_pending) {
+    // No writable edge will arrive after the peer's half-close (see above),
+    // and no read edge for input left after a discard pass: retry shortly,
+    // never past the deadline.
     alarm_timestamp() = td::Timestamp::in(kClosingRetrySeconds);
     alarm_timestamp().relax(closing_deadline_);
   }
