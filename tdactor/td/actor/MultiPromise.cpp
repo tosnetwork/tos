@@ -53,20 +53,23 @@ class MultiPromiseImpl {
   }
   void add_promise(Promise<> promise) {
     if (options_.ignore_errors) {
+      // Errors never complete the outputs early, so registration only appends, and
+      // only once; it takes the lock because registrations may race each other.
+      std::unique_lock<std::mutex> lock(mutex_);
       pending_.push_back(std::move(promise));
+      return;
     }
     Status status;
     {
       std::unique_lock<std::mutex> lock(mutex_);
-      if (pending_error_.is_error()) {
-        status = pending_error_.clone();
-      } else {
+      if (pending_error_.is_ok()) {
         pending_.push_back(std::move(promise));
+        return;
       }
+      status = pending_error_.clone();
     }
-    if (status.is_error()) {
-      promise.set_error(std::move(status));
-    }
+    // Completed outside the lock: the promise may call back into this object.
+    promise.set_error(std::move(status));
   }
 
  private:
