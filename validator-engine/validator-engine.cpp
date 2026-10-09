@@ -4621,12 +4621,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addListen
 
   std::vector<td::uint8> cats;
   for (auto cat : query.categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     cats.push_back(c);
   }
   std::vector<td::uint8> prio_cats;
   for (auto cat : query.priority_categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     prio_cats.push_back(c);
   }
   try_add_listening_port(query.ip_, query.port_, std::move(cats), std::move(prio_cats), std::move(P));
@@ -4654,12 +4654,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delListen
 
   std::vector<td::uint8> cats;
   for (auto cat : query.categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     cats.push_back(c);
   }
   std::vector<td::uint8> prio_cats;
   for (auto cat : query.priority_categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     prio_cats.push_back(c);
   }
   try_del_listening_port(query.ip_, query.port_, std::move(cats), std::move(prio_cats), std::move(P));
@@ -4693,12 +4693,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addProxy 
 
   std::vector<td::uint8> cats;
   for (auto cat : query.categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     cats.push_back(c);
   }
   std::vector<td::uint8> prio_cats;
   for (auto cat : query.priority_categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     prio_cats.push_back(c);
   }
   try_add_proxy(query.in_ip_, query.in_port_, query.out_ip_, query.out_port_, R.move_as_ok(), std::move(cats),
@@ -4727,12 +4727,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delProxy 
 
   std::vector<td::uint8> cats;
   for (auto cat : query.categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     cats.push_back(c);
   }
   std::vector<td::uint8> prio_cats;
   for (auto cat : query.priority_categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     prio_cats.push_back(c);
   }
 

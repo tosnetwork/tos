@@ -425,6 +425,95 @@ async fn real_engine_authorization_and_unknown_flags() -> Result<()> {
     Ok(())
 }
 
+/// A category outside 0..255 must be reported through the handler's reply
+/// promise. Reporting it on the promise the reply wrapper had already taken
+/// lost the error, and the reply became "Lost promise".
+#[tokio::test]
+#[ignore = "requires native engine and create-state; see module documentation"]
+async fn real_engine_control_query_reports_category_narrowing() -> Result<()> {
+    let build = required_path("TOS_ENGINE_BUILD")?;
+    // vep_default | vep_modify: the default bit for the readiness probe, the
+    // modify bit for the four handlers.
+    let mut node = Node::start(&build.join("validator-engine/validator-engine"), 3)?;
+    let mut client = node.client().await?;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        match client.get_config_proposals(&ConfigProposalsRequest::default()).await {
+            Ok(_) => break,
+            Err(error) => {
+                ensure!(
+                    Instant::now() < deadline,
+                    "node never became ready: {error:#}; {}",
+                    node.log()?
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+    let out_of_range = vec![256];
+    for (categories, priority_categories) in
+        [(out_of_range.clone(), vec![]), (vec![], out_of_range.clone())]
+    {
+        let cases = [
+            (
+                "failed to add listening port: ",
+                tos::rpc::engine::validator::AddListeningPort {
+                    ip: 0x7f000001,
+                    port: 3278,
+                    categories: categories.clone(),
+                    priority_categories: priority_categories.clone(),
+                }
+                .into_tl_object(),
+            ),
+            (
+                "failed to del listening port: ",
+                tos::rpc::engine::validator::DelListeningPort {
+                    ip: 0x7f000001,
+                    port: 3278,
+                    categories: categories.clone(),
+                    priority_categories: priority_categories.clone(),
+                }
+                .into_tl_object(),
+            ),
+            (
+                "failed to add listening proxy: ",
+                tos::rpc::engine::validator::AddProxy {
+                    in_ip: 0x7f000001,
+                    in_port: 3279,
+                    out_ip: 0x7f000001,
+                    out_port: 3280,
+                    proxy: tos::adnl::Proxy::Adnl_Proxy_None(tos::adnl::proxy::proxy::None {
+                        id: UInt256::default(),
+                    }),
+                    categories: categories.clone(),
+                    priority_categories: priority_categories.clone(),
+                }
+                .into_tl_object(),
+            ),
+            (
+                "failed to del listening proxy: ",
+                tos::rpc::engine::validator::DelProxy {
+                    out_ip: 0x7f000001,
+                    out_port: 3280,
+                    categories: categories.clone(),
+                    priority_categories: priority_categories.clone(),
+                }
+                .into_tl_object(),
+            ),
+        ];
+        for (prefix, query) in cases {
+            let error = node.raw_error(serialize_boxed(&query)?).await?;
+            // The prefix shows the handler body ran past the authorization and
+            // started gates and answered through its own reply promise.
+            assert!(error.contains(prefix), "{prefix}: {error}");
+            assert!(error.contains("Narrow cast failed"), "{prefix}: {error}");
+            assert!(!error.contains("Lost promise"), "{prefix}: {error}");
+        }
+    }
+    client.shutdown().await?;
+    Ok(())
+}
+
 #[tokio::test]
 #[ignore = "requires an engine built from main without these queries"]
 async fn old_engine_reports_named_upgrade_error_for_every_read() -> Result<()> {
