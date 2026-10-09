@@ -74,8 +74,9 @@ td::Status AdnlInboundConnection::process_packet(td::BufferSlice data) {
 }
 
 bool AdnlInboundConnection::send_failure_answer(td::Bits256 query_id, const ExtQueryFailure &failure) {
-  if (output_overflowed()) {
-    // Already closing; do not spend the shared failure-reply allowance.
+  if (output_overflowed() || closing()) {
+    // Already closing; nothing can be queued, so do not spend the
+    // failure-reply allowance on an answer that would never be sent.
     return false;
   }
   auto encoder = failure_policy_->encoder();
@@ -136,6 +137,7 @@ void AdnlInboundConnection::tear_down() {
       line += PSTRING() << " replied." << name << "=" << outcomes_.replied[index] << " closed." << name << "="
                         << outcomes_.closed[index];
     }
+    line += PSTRING() << " dropped_while_closing=" << outcomes_.dropped_while_closing;
     LOG(INFO) << line;
   }
   AdnlExtConnection::tear_down();
@@ -143,6 +145,16 @@ void AdnlInboundConnection::tear_down() {
 
 void AdnlInboundConnection::query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result) {
   query_limits_.release();
+  if (closing()) {
+    // A refusal is already closing this connection in order: the answers queued
+    // before it go out, then the socket closes. A result arriving now cannot be
+    // sent, and answering it with a failure, or stopping, would only spend the
+    // failure-reply allowance and drop those queued answers.
+    outcomes_.dropped_while_closing++;
+    LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex()
+               << " outcome=" << (result.is_error() ? "error" : "success") << " dropped_while_closing=true";
+    return;
+  }
   if (result.is_error()) {
     LOG(DEBUG) << "ADNL_EXT_QUERY server_completion id=" << query_id.to_hex() << " outcome=error"
                << " reason=" << result.error();

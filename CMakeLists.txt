@@ -987,7 +987,7 @@ target_link_libraries(test-adnl-ext-output-backpressure PRIVATE adnl tl_api tdut
 add_executable(test-adnl-ext-refusal-close test/pq-native/adnl-ext-refusal-close-test.cpp)
 target_include_directories(test-adnl-ext-refusal-close PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-target_link_libraries(test-adnl-ext-refusal-close PRIVATE adnl tl_api tdutils tdactor)
+target_link_libraries(test-adnl-ext-refusal-close PRIVATE adnl dht keyring keys tl_api tdutils tdactor)
 
 add_executable(test-adnl-ext-input-budget test/pq-native/adnl-ext-input-budget-test.cpp)
 target_include_directories(test-adnl-ext-input-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}

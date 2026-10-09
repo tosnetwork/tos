@@ -24,27 +24,42 @@
 //   c. an answer completing after the refusal is not written;
 //   d. a peer that half-closes after its batch still gets all answers;
 //   e. frames that arrive together with a reset are delivered, and the reset
-//      still closes the connection.
+//      still closes the connection;
+//   f. a query whose service result succeeds only after the refusal neither
+//      stops the closing connection nor spends the failure-reply allowance;
+//   g. the same for a service result that fails after the refusal.
 // Cases a, b, c and d run the real connection actor over a real socket pair
 // with small kernel buffers, so answers queue in the connection itself while
 // the peer is not reading. Case e scripts the input side, so "bytes, then an
-// error" in one read is deterministic.
+// error" in one read is deterministic. Cases f and g run a real external
+// server over loopback TCP with a raw client that speaks the wire protocol
+// itself, so it can stop reading and tell an end of file from a reset.
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <netinet/in.h>
 #include <poll.h>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include "adnl/adnl-ext-connection.hpp"
+#include "adnl/adnl-ext-query-failure.h"
+#include "adnl/adnl.h"
+#include "auto/tl/tos_api.h"
 #include "common/errorcode.h"
+#include "keyring/keyring.h"
+#include "keys/encryptor.h"
 #include "td/actor/actor.h"
 #include "td/utils/Random.h"
 #include "td/utils/Time.h"
@@ -52,6 +67,8 @@
 #include "td/utils/logging.h"
 #include "td/utils/port/SocketFd.h"
 #include "td/utils/port/detail/NativeFd.h"
+#include "td/utils/port/path.h"
+#include "tl-utils/tl-utils.hpp"
 
 namespace {
 
@@ -494,6 +511,508 @@ void frames_before_a_reset_are_delivered() {
   std::printf("REFUSAL_CLOSE_CASE reset dispatched=%zu\n", dispatched);
 }
 
+// Cases f and g: a real external server, a raw client.
+
+// Queries answered at once before the refusal; with the late query they fill
+// the connection's 64-query rate window, so the next query is refused.
+constexpr size_t kPromptQueries = 63;
+// Large enough that the prompt answers together (4 MiB) cannot all sit in
+// the kernel's socket buffers while the client is not reading: most of them
+// wait in the connection's own output buffer, which a stop() would drop.
+constexpr size_t kPromptAnswerBytes = 64 << 10;
+// The server's per-source in-flight query limit.
+constexpr size_t kSourceInflight = 256;
+constexpr size_t kConnectionInflight = 32;
+
+// Counts every failure answer the server encoded, per kind. The server encodes
+// only after both the per-connection and the shared failure-reply allowance
+// granted the answer, so these counts are exactly the allowance it spent.
+// Refuses to encode the rate-limit kind, which turns that refusal into the
+// ordered close the cases need while every other refusal stays answerable.
+class CountingEncoder final : public adnl::ExtQueryFailureEncoder {
+ public:
+  td::Result<td::BufferSlice> encode(const adnl::ExtQueryFailure& failure) const override {
+    calls_[static_cast<size_t>(failure.kind)].fetch_add(1, std::memory_order_acq_rel);
+    if (failure.kind == adnl::ExtQueryFailureKind::PerConnectionRateLimit) {
+      return td::Status::Error("rate-limit refusals close the connection in this test");
+    }
+    return td::BufferSlice{std::string("refused:") + adnl::ext_query_failure_kind_name(failure.kind)};
+  }
+  size_t calls(adnl::ExtQueryFailureKind kind) const {
+    return calls_[static_cast<size_t>(kind)].load(std::memory_order_acquire);
+  }
+
+ private:
+  mutable std::array<std::atomic<size_t>, static_cast<size_t>(adnl::ExtQueryFailureKind::ResponseTooLarge) + 1>
+      calls_{};
+};
+
+// Requests starting with "hold" or "late" are held until the test completes
+// them; every other request is answered at once with a kPromptAnswerBytes
+// payload that starts with the request.
+struct ServiceState {
+  std::mutex mutex;
+  size_t delivered = 0;
+  std::vector<std::pair<std::string, td::Promise<td::BufferSlice>>> held;
+};
+
+std::string prompt_answer(const std::string& request) {
+  std::string answer = "answer:" + request;
+  answer.resize(kPromptAnswerBytes, '.');
+  return answer;
+}
+
+class Service final : public adnl::Adnl::Callback {
+ public:
+  explicit Service(std::shared_ptr<ServiceState> state) : state_(std::move(state)) {
+  }
+  void receive_message(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, td::BufferSlice) override {
+  }
+  void receive_query(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort, td::BufferSlice data,
+                     td::Promise<td::BufferSlice> promise) override {
+    std::string request = data.as_slice().str();
+    {
+      std::lock_guard lock(state_->mutex);
+      state_->delivered++;
+      if (request.rfind("hold", 0) == 0 || request.rfind("late", 0) == 0) {
+        state_->held.emplace_back(std::move(request), std::move(promise));
+        return;
+      }
+    }
+    promise.set_value(td::BufferSlice{prompt_answer(request)});
+  }
+
+ private:
+  std::shared_ptr<ServiceState> state_;
+};
+
+td::uint16 free_tcp_port() {
+  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(fd >= 0, "cannot open a TCP socket");
+  sockaddr_in address{};
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  socklen_t size = sizeof(address);
+  bool ok = ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
+            ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &size) == 0;
+  ::close(fd);
+  require(ok, "cannot reserve a TCP port");
+  return ntohs(address.sin_port);
+}
+
+class ServerHarness {
+ public:
+  explicit ServerHarness(const std::string& name)
+      : scheduler_(std::vector<td::actor::Scheduler::NodeInfo>{2})
+      , state_(std::make_shared<ServiceState>())
+      , encoder_(std::make_shared<CountingEncoder>()) {
+    port_ = free_tcp_port();
+    db_root_ = "/tmp/tos-adnl-ext-refusal-close-" + std::to_string(::getpid()) + "-" + name;
+    td::rmrf(db_root_).ignore();
+    require(td::mkdir(db_root_).is_ok(), "cannot create the server's directory");
+    start();
+  }
+  ~ServerHarness() {
+    scheduler_.run_in_context([&] {
+      std::lock_guard lock(state_->mutex);
+      state_->held.clear();
+      server_.reset();
+      adnl_.reset();
+      keyring_.reset();
+    });
+    scheduler_.run(0.2);
+    scheduler_.stop();
+    td::rmrf(db_root_).ignore();
+  }
+  ServerHarness(const ServerHarness&) = delete;
+  ServerHarness& operator=(const ServerHarness&) = delete;
+
+  td::uint16 port() const {
+    return port_;
+  }
+  const adnl::AdnlNodeIdFull& id() const {
+    return server_id_;
+  }
+  const CountingEncoder& encoder() const {
+    return *encoder_;
+  }
+  size_t delivered() {
+    std::lock_guard lock(state_->mutex);
+    return state_->delivered;
+  }
+  // Held queries whose request starts with `prefix`.
+  size_t held(const std::string& prefix) {
+    std::lock_guard lock(state_->mutex);
+    return std::count_if(state_->held.begin(), state_->held.end(),
+                         [&](const auto& entry) { return entry.first.rfind(prefix, 0) == 0; });
+  }
+  // Completes every held query whose request starts with `prefix`: with an
+  // answer, or with a service error.
+  void complete_held(const std::string& prefix, bool success) {
+    std::vector<std::pair<std::string, td::Promise<td::BufferSlice>>> taken;
+    {
+      std::lock_guard lock(state_->mutex);
+      for (auto it = state_->held.begin(); it != state_->held.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+          taken.push_back(std::move(*it));
+          it = state_->held.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+    require(!taken.empty(), "no held query starts with " + prefix);
+    scheduler_.run_in_context([&] {
+      for (auto& [request, promise] : taken) {
+        if (success) {
+          promise.set_value(td::BufferSlice{"answer:" + request});
+        } else {
+          promise.set_error(td::Status::Error(ErrorCode::error, "service failed after the refusal"));
+        }
+      }
+    });
+  }
+  template <class F>
+  void wait_until(F&& done, double seconds, const std::string& what) {
+    auto deadline = td::Timestamp::in(seconds);
+    while (!done()) {
+      scheduler_.run(0.01);
+      if (deadline.is_in_past()) {
+        fail(what);
+      }
+    }
+  }
+  void run_for(double seconds) {
+    auto until = td::Timestamp::in(seconds);
+    while (!until.is_in_past()) {
+      scheduler_.run(0.01);
+    }
+  }
+
+ private:
+  void start() {
+    auto private_key = PrivateKey{privkeys::Ed25519::random()};
+    auto public_key = private_key.compute_public_key();
+    server_id_ = adnl::AdnlNodeIdFull{public_key};
+    adnl::AdnlNodeIdShort server_short{public_key.compute_short_id()};
+    std::atomic<bool> key_ready{false};
+    scheduler_.run_in_context([&] {
+      keyring_ = keyring::Keyring::create(db_root_);
+      adnl_ = adnl::Adnl::create(db_root_, keyring_.get());
+      td::actor::send_closure(keyring_, &keyring::Keyring::add_key, std::move(private_key), true,
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> result) {
+                                require(result.is_ok(), "key install failed");
+                                key_ready.store(true, std::memory_order_release);
+                              }));
+    });
+    wait_until([&] { return key_ready.load(std::memory_order_acquire); }, 10.0, "key install timed out");
+    std::atomic<bool> server_ready{false};
+    scheduler_.run_in_context([&] {
+      td::actor::send_closure(adnl_, &adnl::Adnl::add_id, server_id_, adnl::AdnlAddressList{},
+                              static_cast<td::uint8>(0));
+      td::actor::send_closure(adnl_, &adnl::Adnl::subscribe, server_short, std::string{},
+                              std::make_unique<Service>(state_));
+      td::actor::send_closure(
+          adnl_, &adnl::Adnl::create_ext_server, std::vector<adnl::AdnlNodeIdShort>{server_short},
+          std::vector<td::uint16>{port_},
+          td::PromiseCreator::lambda([&](td::Result<td::actor::ActorOwn<adnl::AdnlExtServer>> result) {
+            require(result.is_ok(), "ext server start failed");
+            server_ = result.move_as_ok();
+            server_ready.store(true, std::memory_order_release);
+          }));
+    });
+    wait_until([&] { return server_ready.load(std::memory_order_acquire); }, 10.0, "ext server start timed out");
+    std::atomic<bool> listening{false};
+    std::atomic<bool> listening_ok{false};
+    scheduler_.run_in_context([&] {
+      td::actor::send_closure(server_, &adnl::AdnlExtServer::set_query_failure_encoder,
+                              std::shared_ptr<const adnl::ExtQueryFailureEncoder>(encoder_));
+      td::actor::send_closure(server_, &adnl::AdnlExtServer::wait_listening,
+                              td::PromiseCreator::lambda([&](td::Result<td::Unit> result) {
+                                listening_ok.store(result.is_ok(), std::memory_order_release);
+                                listening.store(true, std::memory_order_release);
+                              }));
+    });
+    wait_until([&] { return listening.load(std::memory_order_acquire); }, 10.0, "ext server listen timed out");
+    require(listening_ok.load(std::memory_order_acquire), "ext server failed to listen");
+  }
+
+  td::actor::Scheduler scheduler_;
+  std::shared_ptr<ServiceState> state_;
+  std::shared_ptr<CountingEncoder> encoder_;
+  td::uint16 port_ = 0;
+  std::string db_root_;
+  adnl::AdnlNodeIdFull server_id_;
+  td::actor::ActorOwn<keyring::Keyring> keyring_;
+  td::actor::ActorOwn<adnl::Adnl> adnl_;
+  td::actor::ActorOwn<adnl::AdnlExtServer> server_;
+};
+
+enum class ReadEnd { Eof, Reset, Timeout };
+
+const char* read_end_name(ReadEnd end) {
+  switch (end) {
+    case ReadEnd::Eof:
+      return "end of file";
+    case ReadEnd::Reset:
+      return "reset";
+    case ReadEnd::Timeout:
+      return "timeout";
+  }
+  return "unknown";
+}
+
+// An external client written against the wire format, not the client actor:
+// it can leave answers unread, and it reports how the stream ended.
+class RawClient {
+ public:
+  RawClient(td::uint16 port, const adnl::AdnlNodeIdFull& server) {
+    fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    require(fd_ >= 0, "cannot open the client socket");
+    // A small receive window, fixed before the handshake, keeps the server's
+    // answers queued on the server side while this client is not reading.
+    int small = 4096;
+    require(::setsockopt(fd_, SOL_SOCKET, SO_RCVBUF, &small, sizeof(small)) == 0, "SO_RCVBUF failed");
+    sockaddr_in address{};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons(port);
+    require(::connect(fd_, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0, "client connect failed");
+
+    // The init packet: the server's short id, then 160 bytes of key material
+    // encrypted to the server's key.
+    std::string material(160, '\0');
+    td::Random::secure_bytes(td::MutableSlice(material));
+    auto encryptor = server.pubkey().create_encryptor();
+    require(encryptor.is_ok(), "cannot create an encryptor for the server key");
+    auto encrypted = encryptor.ok()->encrypt(td::Slice(material));
+    require(encrypted.is_ok() && encrypted.ok().size() == 224, "init packet encryption failed");
+    init_ = server.compute_short_id().as_slice().str() + encrypted.ok().as_slice().str();
+    td::Slice key(material);
+    to_server_.init(key.substr(32, 32), key.substr(80, 16));
+    from_server_.init(key.substr(0, 32), key.substr(64, 16));
+  }
+  ~RawClient() {
+    close();
+  }
+  RawClient(const RawClient&) = delete;
+  RawClient& operator=(const RawClient&) = delete;
+
+  // The init packet; included once, ahead of the first queries written.
+  std::string init() {
+    return std::exchange(init_, std::string{});
+  }
+  // A query frame for `request`; remembers its id.
+  std::string query(const std::string& request) {
+    td::Bits256 query_id;
+    td::Random::secure_bytes(query_id.as_slice());
+    requests_[query_id.as_slice().str()] = request;
+    auto message = create_tl_object<tos_api::adnl_message_query>(query_id, td::BufferSlice{request});
+    return frame(serialize_tl_object(message, true).as_slice().str());
+  }
+  void write(const std::string& bytes) {
+    size_t sent = 0;
+    while (sent < bytes.size()) {
+      auto n = ::send(fd_, bytes.data() + sent, bytes.size() - sent, MSG_NOSIGNAL);
+      require(n > 0, "client write failed");
+      sent += static_cast<size_t>(n);
+    }
+  }
+  ReadEnd read_to_end(int timeout_ms) {
+    auto deadline = td::Timestamp::in(timeout_ms / 1000.0);
+    char buf[16384];
+    while (!deadline.is_in_past()) {
+      pollfd pfd{fd_, POLLIN, 0};
+      if (::poll(&pfd, 1, 50) <= 0) {
+        continue;
+      }
+      auto n = ::recv(fd_, buf, sizeof(buf), MSG_DONTWAIT);
+      if (n == 0) {
+        return ReadEnd::Eof;
+      }
+      if (n < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+          continue;
+        }
+        return ReadEnd::Reset;
+      }
+      wire_.append(buf, static_cast<size_t>(n));
+    }
+    return ReadEnd::Timeout;
+  }
+  void close() {
+    if (fd_ >= 0) {
+      ::close(fd_);
+      fd_ = -1;
+    }
+  }
+  // Every complete answer received, as (request, answer bytes), in order.
+  // Empty keepalive frames are skipped. `unfinished` is set to the bytes of a
+  // frame the stream ended inside of, which a connection stopped mid-write
+  // leaves behind.
+  std::vector<std::pair<std::string, std::string>> answers(size_t& unfinished) {
+    std::string plain(wire_.size(), '\0');
+    from_server_.encrypt(td::Slice(wire_), td::MutableSlice(plain));
+    std::vector<std::pair<std::string, std::string>> result;
+    td::Slice rest(plain);
+    unfinished = 0;
+    while (!rest.empty()) {
+      td::uint32 len = 0;
+      if (rest.size() >= 4) {
+        std::memcpy(&len, rest.data(), 4);
+        require(len >= 64 && len <= adnl::adnl_ext_max_packet_bytes, "malformed frame length");
+      }
+      if (rest.size() < 4 || rest.size() - 4 < len) {
+        unfinished = rest.size();
+        break;
+      }
+      rest.remove_prefix(4);
+      auto packet = rest.substr(0, len);
+      rest.remove_prefix(len);
+      require(td::sha256(packet.substr(0, len - 32)) == packet.substr(len - 32).str(), "frame checksum mismatch");
+      auto body = packet.substr(32, len - 64);
+      if (body.empty()) {
+        continue;
+      }
+      auto answer = fetch_tl_object<tos_api::adnl_message_answer>(td::BufferSlice{body}, true);
+      require(answer.is_ok(), "a server frame is not an answer");
+      auto it = requests_.find(answer.ok()->query_id_.as_slice().str());
+      require(it != requests_.end(), "an answer for a query id this client never sent");
+      result.emplace_back(it->second, answer.ok()->answer_.as_slice().str());
+    }
+    return result;
+  }
+
+ private:
+  std::string frame(const std::string& payload) {
+    std::string body(32, '\0');
+    td::Random::secure_bytes(td::MutableSlice(body));
+    body += payload;
+    body += td::sha256(body);
+    td::uint32 len = static_cast<td::uint32>(body.size());
+    std::string plain(4, '\0');
+    std::memcpy(plain.data(), &len, 4);
+    plain += body;
+    std::string wire(plain.size(), '\0');
+    to_server_.encrypt(td::Slice(plain), td::MutableSlice(wire));
+    return wire;
+  }
+
+  int fd_ = -1;
+  std::string init_;
+  td::AesCtrState to_server_;
+  td::AesCtrState from_server_;
+  std::map<std::string, std::string> requests_;
+  std::string wire_;
+};
+
+// The peer sends a query the service completes late, then queries answered at
+// once, and leaves the answers unread; its next query is refused with a close.
+// The late query then completes, with a result or with an error, while the
+// connection is closing.
+void late_completion_during_close(bool success) {
+  const std::string tag = success ? "f" : "g";
+  using Kind = adnl::ExtQueryFailureKind;
+  ServerHarness server(success ? "late-success" : "late-error");
+  {
+    RawClient client(server.port(), server.id());
+    // Batches of 16 stay under the 32-query in-flight limit, so the only
+    // refusal is the rate window's, which needs all 65 queries in one second.
+    std::string batch = client.init() + client.query("late");
+    double started = 0;
+    for (size_t i = 0; i < kPromptQueries; i++) {
+      batch += client.query("prompt#" + std::to_string(i));
+      if ((i + 2) % 16 != 0 && i + 1 != kPromptQueries) {
+        continue;
+      }
+      if (started == 0) {
+        started = td::Time::now();
+      }
+      client.write(std::exchange(batch, std::string{}));
+      server.wait_until([&] { return server.delivered() == i + 2; }, 2.0,
+                        tag + ": the service did not receive a batch");
+      // Let this batch's answers reach the connection's output, freeing their
+      // in-flight slots, before the next batch.
+      server.run_for(0.05);
+    }
+    server.run_for(0.1);
+    require(td::Time::now() - started < 0.85, tag + ": the 64 accepted queries did not fit one rate window");
+    client.write(client.query("refused"));
+    server.wait_until([&] { return server.encoder().calls(Kind::PerConnectionRateLimit) == 1; }, 2.0,
+                      tag + ": the query past the rate window was not refused");
+    server.run_for(0.05);
+    server.complete_held("late", success);
+    server.run_for(0.2);
+
+    // The late completion spent no failure-reply allowance: no failure answer
+    // was encoded for it.
+    auto too_large = server.encoder().calls(Kind::ResponseTooLarge);
+    auto handler_error = server.encoder().calls(Kind::HandlerError);
+    require(too_large == 0 && handler_error == 0,
+            tag + ": the late completion spent the failure-reply allowance (response_too_large=" +
+                std::to_string(too_large) + " handler_error=" + std::to_string(handler_error) + ")");
+
+    std::atomic<bool> read_done{false};
+    ReadEnd end = ReadEnd::Timeout;
+    std::thread reader([&] {
+      end = client.read_to_end(3000);
+      read_done.store(true, std::memory_order_release);
+    });
+    server.wait_until([&] { return read_done.load(std::memory_order_acquire); }, 4.0,
+                      tag + ": the client's read did not finish");
+    reader.join();
+    size_t unfinished = 0;
+    auto answers = client.answers(unfinished);
+    size_t prompt = 0;
+    for (auto& [request, answer] : answers) {
+      require(request != "late", tag + ": the late result reached the peer");
+      require(request != "refused", tag + ": the refused query was answered");
+      require(answer == prompt_answer(request), tag + ": answer bytes differ for " + request);
+      prompt++;
+    }
+    require(prompt == kPromptQueries,
+            tag + ": the peer got " + std::to_string(prompt) + " of the " + std::to_string(kPromptQueries) +
+                " answers queued before the refusal; the stream ended by " + read_end_name(end) + " after " +
+                std::to_string(unfinished) + " bytes of an unfinished frame");
+    require(end == ReadEnd::Eof,
+            tag + ": the stream ended by " + std::string(read_end_name(end)) + ", not by end of file");
+    require(unfinished == 0, tag + ": the stream ended inside a frame");
+    client.close();
+  }
+
+  // The late query's server-wide in-flight slot was given back: one source can
+  // again hold the whole per-source limit, across fresh connections.
+  std::vector<std::unique_ptr<RawClient>> clients;
+  for (size_t c = 0; c < kSourceInflight / kConnectionInflight; c++) {
+    clients.push_back(std::make_unique<RawClient>(server.port(), server.id()));
+    std::string batch = clients.back()->init();
+    for (size_t i = 0; i < kConnectionInflight; i++) {
+      batch += clients.back()->query("hold#" + std::to_string(c) + "#" + std::to_string(i));
+    }
+    clients.back()->write(batch);
+  }
+  server.wait_until(
+      [&] { return server.held("hold") == kSourceInflight || server.encoder().calls(Kind::PerIpInflightLimit) > 0; },
+      5.0, tag + ": the service did not receive the in-flight queries");
+  require(server.held("hold") == kSourceInflight && server.encoder().calls(Kind::PerIpInflightLimit) == 0,
+          tag + ": the source could not hold its full in-flight limit after the late completion (held " +
+              std::to_string(server.held("hold")) + " of " + std::to_string(kSourceInflight) + ")");
+  require(server.encoder().calls(Kind::ServerInflightLimit) == 0,
+          tag + ": a query within the server limit was refused");
+  server.complete_held("hold", true);
+  server.run_for(0.1);
+  std::printf("REFUSAL_CLOSE_CASE late-%s prompt_answers=%zu end=eof allowance_spent=0 inflight_reusable=%zu\n",
+              success ? "success" : "error", kPromptQueries, kSourceInflight);
+}
+
+void late_success_during_close() {
+  late_completion_during_close(true);
+}
+
+void late_error_during_close() {
+  late_completion_during_close(false);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -502,7 +1021,8 @@ int main(int argc, char** argv) {
   const std::vector<std::pair<std::string, void (*)()>> cases = {
       {"paused", paused_peer_gets_every_answer},      {"silent", silent_peer_is_released_by_the_deadline},
       {"late", late_answer_is_not_written},           {"half-closed", half_closed_peer_gets_every_answer},
-      {"reset", frames_before_a_reset_are_delivered},
+      {"reset", frames_before_a_reset_are_delivered}, {"late-success", late_success_during_close},
+      {"late-error", late_error_during_close},
   };
   bool ran = false;
   for (auto& [name, run] : cases) {

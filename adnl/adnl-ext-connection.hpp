@@ -139,6 +139,11 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   bool output_overflowed() const {
     return output_overflowed_;
   }
+  // Set once a refusal began the ordered close: nothing new is queued, and the
+  // closing sequence alone decides when the connection ends.
+  bool closing() const {
+    return closing_;
+  }
   // Count this connection's unread output against a budget shared by all of
   // a server's connections.
   void set_shared_output_budget(std::shared_ptr<AdnlExtOutputBudget> budget) {

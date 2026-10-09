@@ -74,6 +74,8 @@ class AdnlInboundConnection : public AdnlExtConnection {
     td::uint64 accepted{0};
     td::uint64 replied[kKinds]{};
     td::uint64 closed[kKinds]{};
+    // Results that completed after the ordered close began, and were dropped.
+    td::uint64 dropped_while_closing{0};
   };
 
  protected:
