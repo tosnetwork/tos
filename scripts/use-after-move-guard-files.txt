@@ -11,3 +11,5 @@ validator-engine/json-rpc-server-account-capability.cpp
 validator-engine/json-rpc-server-account-capability-views.h
 validator-engine/validator-engine.cpp
 tdactor/td/actor/MultiPromise.cpp
+toslib/toslib/ToslibClient.cpp suppressions=6
+toslib/toslib/toslib-cli.cpp suppressions=1
