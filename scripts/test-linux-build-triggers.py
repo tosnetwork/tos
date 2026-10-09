@@ -10,9 +10,9 @@ Checked for each .github/workflows/build-tos-linux-*.yml:
 - a push or pull_request branch filter names only branches that exist here;
 - at least one automatic trigger can fire: a push to such a branch, a pull
   request, a version tag or a schedule (dispatch alone does not count);
-- the full shared builds' path filters include their own workflow file, the
-  Rust toolchain pin and every kind of input the build generates code from,
-  so a change to any of them runs the build.
+- the full shared builds run on every push to main, unfiltered by path:
+  every list of what the build reads missed something, so neither a paths
+  nor a paths-ignore filter is accepted.
 
 Standard library only: this runs in the builder image before any Python
 dependency is installed. The `on:` block is read by a small parser that
@@ -31,18 +31,6 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
 BRANCHES = {"main"}
 SHARED_BUILDS = ("build-tos-linux-x86-64-shared.yml", "build-tos-linux-arm64-shared.yml")
-# install-rust-toolchain.sh installs what rust-toolchain.toml pins; the rest
-# are the schemas, contracts and tables the build generates code from.
-SHARED_BUILD_INPUTS = (
-    "rust-toolchain.toml",
-    "**/*.tl",
-    "**/*.tlb",
-    "**/*.fc",
-    "**/*.fif",
-    "**/*.boc",
-    "**/*.gperf",
-    "tdutils/generate/mime_types.txt",
-)
 EVENTS = {"push", "pull_request", "workflow_dispatch", "workflow_call", "schedule"}
 LIST_KEYS = {"branches", "branches-ignore", "tags", "paths", "paths-ignore", "types"}
 
@@ -155,12 +143,12 @@ def problems(name: str, on: dict) -> list[str]:
     if not automatic:
         found.append(f"{name}: no automatic trigger can fire here (dispatch or workflow_call only)")
     if name in SHARED_BUILDS:
-        paths = (on.get("push") or {}).get("paths") or []
-        if f".github/workflows/{name}" not in paths:
-            found.append(f"{name}: its push path filter does not include its own workflow file")
-        for needed in SHARED_BUILD_INPUTS:
-            if needed not in paths:
-                found.append(f"{name}: its push path filter does not include {needed}")
+        push = on.get("push") or {}
+        if push.get("branches") != ["main"]:
+            found.append(f"{name}: does not run on every push to main")
+        for key in ("paths", "paths-ignore"):
+            if key in push:
+                found.append(f"{name}: its push trigger is filtered by {key}")
     return found
 
 
@@ -207,13 +195,7 @@ class TreeTest(unittest.TestCase):
         for path in files:
             on = parse_on(path.read_text())
             if path.name in SHARED_BUILDS:
-                self.assertEqual(set(on), {"push", "workflow_dispatch"}, path.name)
-                self.assertEqual(on["push"]["branches"], ["main"], path.name)
-                text = path.read_text()
-                block = text[text.index("\non:\n") : text.index("\nconcurrency:")]
-                listed = re.findall(r"^      - '([^']+)'$", block, re.M)
-                self.assertEqual(on["push"]["paths"], listed, path.name)
-                self.assertGreater(len(listed), 20, path.name)
+                self.assertEqual(on, {"push": {"branches": ["main"]}, "workflow_dispatch": None}, path.name)
             else:
                 self.assertEqual(on, expected[path.name], path.name)
 
@@ -279,16 +261,14 @@ class RuleTest(unittest.TestCase):
                    {"pull_request": None}):
             self.assertEqual(problems("build-tos-linux-x.yml", on), [], on)
 
-    def test_a_shared_build_must_watch_itself_and_every_build_input(self) -> None:
+    def test_a_shared_build_runs_on_every_push_to_main(self) -> None:
         name = "build-tos-linux-arm64-shared.yml"
-        complete = [f".github/workflows/{name}", *SHARED_BUILD_INPUTS]
-        self.assertEqual(problems(name, {"push": {"branches": ["main"], "paths": complete}}), [])
-        for missing in complete:
-            paths = [p for p in complete if p != missing]
-            found = problems(name, {"push": {"branches": ["main"], "paths": paths}})
-            self.assertEqual(len(found), 1, (missing, found))
-            self.assertIn("does not include", found[0])
-
+        self.assertEqual(problems(name, {"push": {"branches": ["main"]}, "workflow_dispatch": None}), [])
+        for key in ("paths", "paths-ignore"):
+            found = problems(name, {"push": {"branches": ["main"], key: ["doc/**"]}})
+            self.assertEqual(found, [f"{name}: its push trigger is filtered by {key}"], key)
+        found = problems(name, {"push": {"tags": ["v*"]}, "workflow_dispatch": None})
+        self.assertEqual(found, [f"{name}: does not run on every push to main"])
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)

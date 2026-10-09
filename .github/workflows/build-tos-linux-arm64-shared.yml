@@ -1,44 +1,12 @@
 name: Ubuntu TOS build (arm64)
 
 on:
-  # The full native build is expensive, so it does not run per pull request.
-  # It runs once on what actually lands, and only when the merge carries
-  # something a native build can fail on. A documentation-only merge changes
-  # nothing this job compiles and is filtered out by the paths below.
+  # The full native build runs on everything that lands on main, and on
+  # demand. It is not filtered by path: every list of what the build reads
+  # has missed something (templates, export lists, generated inputs, test
+  # vectors), and main receives few pushes.
   push:
     branches: [main]
-    paths:
-      - 'CMakeLists.txt'
-      - '**/CMakeLists.txt'
-      - 'CMake/**'
-      - '**/*.cmake'
-      - '**/*.c'
-      - '**/*.cc'
-      - '**/*.cpp'
-      - '**/*.h'
-      - '**/*.hpp'
-      - '**/*.rs'
-      # Schemas, contracts and tables the build generates code from.
-      - '**/*.tl'
-      - '**/*.tlb'
-      - '**/*.fc'
-      - '**/*.fif'
-      - '**/*.boc'
-      - '**/*.gperf'
-      - 'tdutils/generate/mime_types.txt'
-      # A manifest or lockfile decides what the Rust half compiles, and the
-      # build script and toolchain pin decide how any of it is built, so a
-      # change to one of them can break the build without touching a source.
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - 'assembly/native/**'
-      - 'scripts/install-rust-toolchain.sh'
-      - 'rust-toolchain.toml'
-      # The scripts and tests the job runs.
-      - 'scripts/install-llvm-toolchain.sh'
-      - 'test/toslib/integration/**'
-      - 'third-party/**'
-      - '.github/workflows/build-tos-linux-arm64-shared.yml'
   workflow_dispatch:
 
 concurrency:
