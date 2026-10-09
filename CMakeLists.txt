@@ -984,6 +984,11 @@ target_include_directories(test-adnl-ext-output-backpressure PRIVATE ${CMAKE_CUR
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-adnl-ext-output-backpressure PRIVATE adnl tl_api tdutils tdactor)
 
+add_executable(test-adnl-ext-refusal-close test/pq-native/adnl-ext-refusal-close-test.cpp)
+target_include_directories(test-adnl-ext-refusal-close PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-adnl-ext-refusal-close PRIVATE adnl tl_api tdutils tdactor)
+
 add_executable(test-adnl-ext-input-budget test/pq-native/adnl-ext-input-budget-test.cpp)
 target_include_directories(test-adnl-ext-input-budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1910,6 +1915,7 @@ add_dependencies(all-tests proof-verify-fs-shim)
 tos_test(test-adnl-ext-query-closure)
 tos_test(test-adnl-ext-query-refusal)
 tos_test(test-adnl-ext-output-backpressure)
+tos_test(test-adnl-ext-refusal-close)
 tos_test(test-adnl-ext-client-identity)
 tos_test(test-full-node-master-admission)
 tos_test(test-adnl-ext-input-budget)
@@ -2006,6 +2012,7 @@ set_tests_properties(
   test-shard-block-confirmations
   test-adnl-ext-input-budget
   test-adnl-ext-output-backpressure
+  test-adnl-ext-refusal-close
   test-rate-limiter
   test-full-node-shard-admission
   test-full-node-master-admission
