@@ -1069,6 +1069,10 @@ target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
 # The real JSON-RPC server and listener, driven over loopback TCP.
 add_executable(test-json-rpc-transport test/test-td-main.cpp test/test-json-rpc-transport.cpp)
 target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc)
+# The restricted-wallet delegation views the account-capability handlers call,
+# against a fake liteserver.
+add_executable(test-json-rpc-account-capability test/test-td-main.cpp test/test-json-rpc-account-capability.cpp)
+target_link_libraries(test-json-rpc-account-capability PRIVATE validator-engine-json-rpc)
 
 # Drives real CONNECT tunnel actors, and runs the RLDP proxy binary to check
 # how it reads its limits.
@@ -1987,6 +1991,7 @@ if (Python3_Interpreter_FOUND)
 endif()
 tos_test(test-http-server-limits)
 tos_test(test-json-rpc-transport)
+tos_test(test-json-rpc-account-capability)
 tos_test(test-rldp-http-tunnel)
 tos_test(test-http-listen-address)
 set_tests_properties(test-http-listen-address PROPERTIES SKIP_RETURN_CODE 77)

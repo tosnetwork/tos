@@ -7,3 +7,5 @@
 # comments in the file (default 0); any other suppression of the check fails the guard.
 validator/impl/top-shard-descr.cpp
 overlay/broadcast-twostep.cpp
+validator-engine/json-rpc-server-account-capability.cpp
+validator-engine/json-rpc-server-account-capability-views.h
