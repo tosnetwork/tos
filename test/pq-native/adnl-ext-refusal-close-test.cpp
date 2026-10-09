@@ -29,11 +29,15 @@
 //      stops the closing connection nor spends the failure-reply allowance;
 //   g. the same for a service result that fails after the refusal;
 //   h. a peer that sends far more than one discard chunk after the refusal
-//      and then half-closes still gets all answers, then a clean end of file.
-// Cases a, b, c and d run the real connection actor over a real socket pair
-// with small kernel buffers, so answers queue in the connection itself while
-// the peer is not reading. Case e scripts the input side, so "bytes, then an
-// error" in one read is deterministic. Cases f, g and h run a real external
+//      and then half-closes still gets all answers, then a clean end of file;
+//   i. a peer whose half-close is known while more than one discard chunk of
+//      its input is unread has all of it read, over several closing passes,
+//      before the connection shuts its write side and stops.
+// Cases a, b, c, d and i run the real connection actor over a real socket
+// pair with small kernel buffers, so answers queue in the connection itself
+// while the peer is not reading. Cases e and i script the input side, so
+// "bytes, then an error" in one read, and "half-close known, input still
+// queued", are deterministic. Cases f, g and h run a real external
 // server over loopback TCP with a raw client that speaks the wire protocol
 // itself, so it can stop reading and tell an end of file from a reset.
 #include <algorithm>
@@ -124,25 +128,51 @@ class PausableTransport final : public adnl::AdnlExtTransportWriter {
   std::string received_;
 };
 
-// Input scripted for one connection: everything in `bytes` at the first read,
-// then the error.
+// Input scripted for one connection: the bytes in `bytes`, each read taking
+// no more than the connection asks for, then `end`: a reset, or the end of the
+// stream, which a socket whose peer has half-closed reports as a read of 0.
 class ScriptedReader final : public adnl::AdnlExtTransportReader {
  public:
-  explicit ScriptedReader(std::string bytes) : bytes_(std::move(bytes)) {
+  enum class End { Reset, EndOfStream };
+  explicit ScriptedReader(std::string bytes, End end = End::Reset) : bytes_(std::move(bytes)), end_(end) {
   }
   td::Result<size_t> read(td::MutableSlice slice) override {
+    reads_.fetch_add(1, std::memory_order_acq_rel);
     if (offset_ < bytes_.size()) {
       auto n = std::min(slice.size(), bytes_.size() - offset_);
       std::memcpy(slice.data(), bytes_.data() + offset_, n);
       offset_ += n;
+      consumed_.store(offset_, std::memory_order_release);
       return n;
     }
-    return td::Status::PosixError(ECONNRESET, "scripted reset");
+    if (end_ == End::Reset) {
+      return td::Status::PosixError(ECONNRESET, "scripted reset");
+    }
+    end_reads_.fetch_add(1, std::memory_order_acq_rel);
+    return 0;
+  }
+  size_t size() const {
+    return bytes_.size();
+  }
+  // Bytes the connection has taken.
+  size_t consumed() const {
+    return consumed_.load(std::memory_order_acquire);
+  }
+  // Read calls, and those that found the end of the stream.
+  size_t reads() const {
+    return reads_.load(std::memory_order_acquire);
+  }
+  size_t end_reads() const {
+    return end_reads_.load(std::memory_order_acquire);
   }
 
  private:
   std::string bytes_;
+  End end_;
   size_t offset_ = 0;
+  std::atomic<size_t> consumed_{0};
+  std::atomic<size_t> reads_{0};
+  std::atomic<size_t> end_reads_{0};
 };
 
 struct Observation {
@@ -153,6 +183,9 @@ struct Observation {
   double refused_at = 0;
   double closed_at = 0;
   int late_sent = -1;
+  // When set, how much of it the connection had taken when it refused.
+  std::shared_ptr<ScriptedReader> input;
+  size_t consumed_at_refusal = 0;
 };
 
 // The real connection actor with a minimal protocol: the init packet is the
@@ -161,11 +194,19 @@ struct Observation {
 class RefusingConnection final : public adnl::AdnlExtConnection {
  public:
   RefusingConnection(td::SocketFd fd, std::shared_ptr<adnl::AdnlExtTransportWriter> writer,
-                     std::shared_ptr<adnl::AdnlExtTransportReader> reader, std::shared_ptr<Observation> observation)
+                     std::shared_ptr<adnl::AdnlExtTransportReader> reader, std::shared_ptr<Observation> observation,
+                     std::shared_ptr<adnl::AdnlExtByteBudget> input_budget)
       : AdnlExtConnection(std::move(fd), nullptr, false), observation_(std::move(observation)) {
-    set_transport_writer(std::move(writer));
+    if (writer) {
+      set_transport_writer(std::move(writer));
+    }
     if (reader) {
       set_transport_reader(std::move(reader));
+    }
+    if (input_budget) {
+      // Reads in bounded chunks, as a server connection does, so input behind
+      // the refused query is left for the closing sequence.
+      set_input_limits(std::move(input_budget));
     }
   }
 
@@ -185,6 +226,9 @@ class RefusingConnection final : public adnl::AdnlExtConnection {
       return td::Status::OK();
     }
     observation_->refused_at = td::Time::now();
+    if (observation_->input) {
+      observation_->consumed_at_refusal = observation_->input->consumed();
+    }
     return td::Status::Error(ErrorCode::notready, "refused: reply budget exhausted");
   }
 
@@ -342,12 +386,13 @@ class Harness {
   Harness& operator=(const Harness&) = delete;
 
   void open(Peer& peer, std::shared_ptr<adnl::AdnlExtTransportWriter> writer,
-            std::shared_ptr<adnl::AdnlExtTransportReader> reader, std::shared_ptr<Observation> observation) {
+            std::shared_ptr<adnl::AdnlExtTransportReader> reader, std::shared_ptr<Observation> observation,
+            std::shared_ptr<adnl::AdnlExtByteBudget> input_budget = nullptr) {
     auto fd = peer.take_server_end();
     scheduler_.run_in_context([&] {
       connection_ = td::actor::create_actor<RefusingConnection>(
           td::actor::ActorOptions().with_name("refusing").with_poll(), std::move(fd), std::move(writer),
-          std::move(reader), std::move(observation));
+          std::move(reader), std::move(observation), std::move(input_budget));
     });
   }
   void late_answer() {
@@ -1025,7 +1070,7 @@ void late_completion_during_close(bool success) {
 // input left unread at close makes the kernel reset the connection, which
 // drops the answers still queued for the peer.
 constexpr size_t kSurplusBytes = 512 << 10;
-// What one closing pass reads at most; the surplus spans several of them.
+// What one closing pass reads at most.
 constexpr size_t kDiscardChunkBytes = 64 << 10;
 // The connection's closing deadline, from the refusal.
 constexpr double kClosingSeconds = 2.0;
@@ -1119,18 +1164,16 @@ void half_close_after_surplus() {
   require(took <= kClosingSeconds + 0.25,
           "h: end of file came " + std::to_string(took) + " s after the refusal, past the closing deadline");
 
-  // Evidence that the case exercised what it is about: the surplus was
-  // consumed over several passes, and more than one chunk of it was still
-  // queued when the peer's half-close was already known.
+  // The whole surplus reached the server after the refusal, so a close that
+  // ended in a clean end of file read all of it in its closing passes. How
+  // much of it was still queued once the half-close was known depends on the
+  // scheduling of the host, so it is reported, not required; case i covers
+  // that state deterministically.
   auto passes = totals.passes.load() - passes_before;
   auto discarded = totals.bytes.load() - bytes_before;
   auto after_close = totals.bytes_after_peer_close.load() - after_close_before;
   require(discarded >= kSurplusBytes,
           "h: the close discarded " + std::to_string(discarded) + " bytes, less than the surplus");
-  require(passes > 1, "h: the surplus was discarded in " + std::to_string(passes) + " pass(es)");
-  require(after_close > kDiscardChunkBytes, "h: only " + std::to_string(after_close) +
-                                                " bytes were left to discard once the half-close was known;"
-                                                " the case did not queue the surplus together with it");
   client.close();
   std::printf(
       "REFUSAL_CLOSE_CASE half-close-after-surplus prompt_answers=%zu end=eof closed_after=%.2fs "
@@ -1138,6 +1181,72 @@ void half_close_after_surplus() {
       "discarded_after_half_close=%llu\n",
       prompt, took, kSurplusBytes, queued_unscheduled, static_cast<unsigned long long>(passes),
       static_cast<unsigned long long>(discarded), static_cast<unsigned long long>(after_close));
+}
+
+// i. The peer's half-close is known before the close begins, while more than
+// one discard chunk of its input is still unread. The closing connection must
+// keep reading over several passes, each bounded by its allowance, write every
+// queued answer, and only then shut its write side and stop.
+constexpr size_t kQueuedSurplusBytes = 5 * kDiscardChunkBytes + 1000;
+// The input budget of the connection; large enough never to limit a read.
+constexpr size_t kInputBudgetBytes = 1 << 20;
+
+void drain_after_half_close_is_known() {
+  Harness harness;
+  Peer peer;
+  auto observation = std::make_shared<Observation>();
+  // Every byte the peer sent comes from the script; the socket itself
+  // carries only the peer's half-close, so the poll layer reports the socket
+  // readable and closed before the connection's first pass, with nothing in
+  // the kernel's queue.
+  auto input = std::make_shared<ScriptedReader>(peer.script(kAnswers + 1) + std::string(kQueuedSurplusBytes, '\0'),
+                                                ScriptedReader::End::EndOfStream);
+  observation->input = input;
+  peer.shutdown_write();
+  auto& totals = adnl::adnl_ext_closing_discard_totals();
+  auto passes_before = totals.passes.load();
+  auto bytes_before = totals.bytes.load();
+  auto after_close_before = totals.bytes_after_peer_close.load();
+  harness.open(peer, nullptr, input, observation, std::make_shared<adnl::AdnlExtByteBudget>(kInputBudgetBytes));
+  harness.wait_until([&] { return refused(observation); }, 2.0, "i: the refusal never came");
+  auto unread_at_refusal = input->size() - locked(observation, [](Observation& s) { return s.consumed_at_refusal; });
+  require(unread_at_refusal > kDiscardChunkBytes, "i: only " + std::to_string(unread_at_refusal) +
+                                                      " bytes were unread at the refusal, not more than one chunk");
+
+  // The peer reads nothing yet, so the answers stay queued while the
+  // connection drains its input. The wait ends either way: the input is read
+  // to its end, or the connection stops, at the latest at its deadline.
+  harness.wait_until(
+      [&] { return (input->consumed() == input->size() && input->end_reads() > 0) || closed(observation); }, 4.0,
+      "i: the connection neither read its input to the end nor stopped");
+  require(input->consumed() == input->size(),
+          "i: the connection stopped with " + std::to_string(input->size() - input->consumed()) +
+              " bytes of the peer's input unread (" + std::to_string(input->consumed()) + " of " +
+              std::to_string(input->size()) + " taken)");
+  require(!closed(observation), "i: the connection stopped before its answers were read");
+  auto passes = totals.passes.load() - passes_before;
+  auto discarded = totals.bytes.load() - bytes_before;
+  auto after_close = totals.bytes_after_peer_close.load() - after_close_before;
+  require(discarded == unread_at_refusal, "i: the closing passes read " + std::to_string(discarded) + " bytes, but " +
+                                              std::to_string(unread_at_refusal) + " were unread at the refusal");
+  require(after_close == discarded, "i: a closing pass began before the half-close was known (" +
+                                        std::to_string(after_close) + " of " + std::to_string(discarded) + " bytes)");
+  require(passes > 1, "i: the input was drained in " + std::to_string(passes) + " pass(es)");
+
+  PeerReader reader(peer, 3000);
+  harness.wait_until([&] { return reader.done() && closed(observation); }, 4.0,
+                     "i: the answers were not drained and the connection closed");
+  require(reader.eof(), "i: the peer got no end of file after the answers");
+  auto frames = peer.count_frames(reader.received());
+  require(frames == kAnswers, "i: the peer got " + std::to_string(frames) + " answers, expected 16");
+  auto held = locked(observation, [](Observation& s) { return s.closed_at - s.refused_at; });
+  require(held < kClosingSeconds,
+          "i: the connection was stopped by its deadline, " + std::to_string(held) + " s after the refusal");
+  std::printf(
+      "REFUSAL_CLOSE_CASE drain-after-half-close frames=%zu unread_at_refusal=%zu discard_passes=%llu "
+      "discarded=%llu reads=%zu closed_after=%.2fs\n",
+      frames, unread_at_refusal, static_cast<unsigned long long>(passes), static_cast<unsigned long long>(discarded),
+      input->reads(), held);
 }
 
 void late_success_during_close() {
@@ -1154,10 +1263,15 @@ int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(WARNING));
   const std::string only = argc > 1 ? argv[1] : "all";
   const std::vector<std::pair<std::string, void (*)()>> cases = {
-      {"paused", paused_peer_gets_every_answer},      {"silent", silent_peer_is_released_by_the_deadline},
-      {"late", late_answer_is_not_written},           {"half-closed", half_closed_peer_gets_every_answer},
-      {"reset", frames_before_a_reset_are_delivered}, {"late-success", late_success_during_close},
-      {"late-error", late_error_during_close},        {"half-close-after-surplus", half_close_after_surplus},
+      {"paused", paused_peer_gets_every_answer},
+      {"silent", silent_peer_is_released_by_the_deadline},
+      {"late", late_answer_is_not_written},
+      {"half-closed", half_closed_peer_gets_every_answer},
+      {"reset", frames_before_a_reset_are_delivered},
+      {"late-success", late_success_during_close},
+      {"late-error", late_error_during_close},
+      {"half-close-after-surplus", half_close_after_surplus},
+      {"drain-after-half-close", drain_after_half_close_is_known},
   };
   bool ran = false;
   for (auto& [name, run] : cases) {
