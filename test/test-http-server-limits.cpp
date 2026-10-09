@@ -754,6 +754,26 @@ TEST(HttpServerLimits, without_the_option_an_early_answer_keeps_reading_the_body
   });
 }
 
+TEST(HttpServerLimits, completing_an_upload_after_the_early_answer_allows_reuse_and_idle_expiry) {
+  tos::http::HttpServer::Limits limits;
+  limits.max_connections = 2;
+  limits.request_header_timeout = 1;
+  limits.request_body_timeout = 10;
+  with_server(limits, [](int port) {
+    Client early(port);
+    ASSERT_TRUE(early.connect_with_retries());
+    ASSERT_TRUE(early.send_all("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhell"));
+    std::string response;
+    ASSERT_TRUE(early.read_chunked_response(3000, response));
+    ASSERT_TRUE(early.send_all("o"));
+    ASSERT_TRUE(early.request_ok(3000));
+    ASSERT_TRUE(early.wait_for_eof(3000));
+    Client next(port);
+    ASSERT_TRUE(next.connect_with_retries());
+    ASSERT_TRUE(next.request_ok(3000));
+  });
+}
+
 TEST(HttpServerLimits, a_handler_error_before_the_body_is_read_closes_after_the_response) {
   auto limits = tos::json_rpc::listener_limits(0, 30, 30, tos::json_rpc::kDefaultResponseTimeout).move_as_ok();
   with_server(

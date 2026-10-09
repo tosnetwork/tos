@@ -33,6 +33,8 @@ on:
       - 'test/net/test-quic-sender.cpp'
       - 'test/test-http-server-limits.cpp'
       - 'test/test-rldp-http-tunnel.cpp'
+      - 'test/pq-native/adnl-ext-output-backpressure-test.cpp'
+      - 'test/pq-native/adnl-ext-refusal-close-test.cpp'
       - 'tdutils/td/utils/tests.*'
       - 'CMakeLists.txt'
       - '.github/workflows/network-safety-asan.yml'
@@ -92,6 +94,8 @@ jobs:
           test-overlay-broadcast-capacity \
           test-http-server-limits \
           test-json-rpc-transport \
+          test-adnl-ext-output-backpressure \
+          test-adnl-ext-refusal-close \
           test-rldp-http-tunnel
 
     - name: Verify the expected network-safety tests are registered
@@ -109,6 +113,8 @@ jobs:
             "test-overlay-broadcast-capacity",
             "test-http-server-limits",
             "test-json-rpc-transport",
+            "test-adnl-ext-output-backpressure",
+            "test-adnl-ext-refusal-close",
             "test-rldp-http-tunnel",
         }
         got = {t["name"] for t in json.load(open("network-safety-tests.json"))["tests"]}

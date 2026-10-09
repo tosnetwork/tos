@@ -20,6 +20,7 @@
 #pragma once
 
 #include <atomic>
+#include <cmath>
 #include <map>
 #include <memory>
 #include <set>
@@ -162,6 +163,14 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   void set_shared_output_budget(std::shared_ptr<AdnlExtOutputBudget> budget) {
     server_output_budget_ = std::move(budget);
   }
+  void set_output_source_share(std::shared_ptr<SourceShareLedger> ledger, std::string source) {
+    output_source_shares_ = std::move(ledger);
+    output_source_ = std::move(source);
+  }
+  void set_output_lifetime(double seconds) {
+    CHECK(std::isfinite(seconds) && seconds > 0);
+    output_lifetime_ = seconds;
+  }
   // Bound what this connection holds of frames it has not finished receiving:
   // at most `max_pending_bytes`, every byte reserved from `budget` (shared by a
   // server's connections) before it is read, and no unfinished frame held
@@ -246,6 +255,10 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
       }
       output_accounted_ = 0;
     }
+    if (output_source_shares_) {
+      CHECK(output_source_shares_->release(output_source_, source_output_accounted_));
+      source_output_accounted_ = 0;
+    }
     if (callback_) {
       callback_->on_close(actor_id(this));
       callback_ = nullptr;
@@ -276,20 +289,34 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   void closing_loop();
   std::size_t pending_output_limit_ = adnl_ext_max_pending_output_bytes;
   std::shared_ptr<AdnlExtOutputBudget> server_output_budget_;
+  std::shared_ptr<SourceShareLedger> output_source_shares_;
+  std::string output_source_;
+  std::size_t source_output_accounted_ = 0;
+  double output_lifetime_ = adnl_ext_output_lifetime_seconds;
+  td::Timestamp output_deadline_;
   // Bytes of the server budget this connection holds: at least its unread
   // output. Grows only by reservation in send(); shrinks as output is written.
   std::size_t output_accounted_ = 0;
   // Give back the budget for output already written.
   void account_output() {
-    if (!server_output_budget_) {
-      return;
-    }
     auto pending = buffered_fd_.ready_for_flush_write();
-    if (pending < output_accounted_) {
+    if (server_output_budget_ && pending < output_accounted_) {
       if (!server_output_budget_->release(output_accounted_ - pending)) {
         LOG(ERROR) << "ADNL external output budget: released more than was reserved";
       }
       output_accounted_ = pending;
+    }
+    if (output_source_shares_ && pending < source_output_accounted_) {
+      CHECK(output_source_shares_->release(output_source_, source_output_accounted_ - pending));
+      source_output_accounted_ = pending;
+    }
+    if (pending == 0) {
+      output_deadline_ = {};
+    } else {
+      if (!output_deadline_) {
+        output_deadline_ = td::Timestamp::in(output_lifetime_);
+      }
+      alarm_timestamp().relax(output_deadline_);
     }
   }
   std::shared_ptr<AdnlExtByteBudget> input_budget_;
@@ -330,6 +357,7 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   void update_timer() {
     fail_at_ = td::Timestamp::in(timeout());
     alarm_timestamp() = fail_at_;
+    alarm_timestamp().relax(output_deadline_);
     if (is_client_) {
       ping_sent_ = false;
       send_ping_at_ = td::Timestamp::in(timeout() / 2);
@@ -340,6 +368,10 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
   void loop() override;
 
   void alarm() override {
+    if (output_deadline_ && output_deadline_.is_in_past()) {
+      stop();
+      return;
+    }
     if (closing_) {
       if (closing_deadline_.is_in_past()) {
         LOG(INFO) << "ADNL external connection did not finish closing within " << kClosingSeconds << " s";
@@ -351,6 +383,7 @@ class AdnlExtConnection : public td::actor::Actor, public td::ObserverBase {
       return;
     }
     alarm_timestamp() = fail_at_;
+    alarm_timestamp().relax(output_deadline_);
     alarm_timestamp().relax(partial_frame_deadline_);
     if (partial_frame_deadline_ && partial_frame_deadline_.is_in_past()) {
       LOG(INFO) << "ADNL external peer did not finish a frame within " << partial_frame_lifetime_

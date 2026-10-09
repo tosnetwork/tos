@@ -68,6 +68,28 @@ class StalledTransport final : public adnl::AdnlExtTransportWriter {
   std::atomic<size_t> attempts_{0};
 };
 
+class TrickleTransport final : public adnl::AdnlExtTransportWriter {
+ public:
+  td::Result<size_t> writev(td::Span<td::IoSlice> slices) override {
+    if (allowance_.exchange(0) == 0) {
+      return 0;
+    }
+    require(!slices.empty() && slices.front().iov_len > 0, "trickle asked to write nothing");
+    written_.fetch_add(1);
+    return 1;
+  }
+  void allow_byte() {
+    allowance_.store(1);
+  }
+  size_t written() const {
+    return written_.load();
+  }
+
+ private:
+  std::atomic<size_t> allowance_{0};
+  std::atomic<size_t> written_{0};
+};
+
 // A peer that keeps reading, at most kChunk bytes per write, and keeps what it read.
 class DrainingTransport final : public adnl::AdnlExtTransportWriter {
  public:
@@ -111,17 +133,24 @@ class ProbeConnection final : public adnl::AdnlExtConnection {
  public:
   ProbeConnection(td::SocketFd fd, std::shared_ptr<adnl::AdnlExtTransportWriter> transport,
                   std::shared_ptr<adnl::AdnlExtOutputBudget> budget, size_t pending_limit,
-                  std::shared_ptr<Observation> observation, std::shared_ptr<adnl::AdnlExtByteBudget> input_budget)
+                  std::shared_ptr<Observation> observation, std::shared_ptr<adnl::AdnlExtByteBudget> input_budget,
+                  std::shared_ptr<adnl::SourceShareLedger> source_shares, std::string source, double lifetime)
       : AdnlExtConnection(std::move(fd), nullptr, false), observation_(std::move(observation)) {
     // Reads go through the server's input budget, as a server connection's do.
     set_input_limits(std::move(input_budget));
     set_transport_writer(std::move(transport));
     set_pending_output_limit(pending_limit);
     set_shared_output_budget(std::move(budget));
+    set_output_source_share(std::move(source_shares), std::move(source));
+    set_output_lifetime(lifetime);
   }
 
   td::Status process_init_packet(td::BufferSlice data) override {
     return init_crypto(data.as_slice());
+  }
+  void writable() {
+    buffered_fd_.get_poll_info().add_flags(td::PollFlags::Write());
+    notify();
   }
   td::Status process_custom_packet(td::BufferSlice&, bool& processed) override {
     processed = false;
@@ -194,6 +223,18 @@ class Peer {
     }
     write_all(bytes);
   }
+  void send_keepalive() {
+    std::string body(32, '\0');
+    td::Random::secure_bytes(td::MutableSlice(body));
+    body += td::sha256(body);
+    td::uint32 len = static_cast<td::uint32>(body.size());
+    std::string plain(4, '\0');
+    std::memcpy(plain.data(), &len, 4);
+    plain += body;
+    std::string wire(plain.size(), '\0');
+    to_server_.encrypt(td::Slice(plain), td::MutableSlice(wire));
+    write_all(wire);
+  }
 
   // Decrypts the connection's output and counts well-formed kPayload frames.
   size_t count_reply_frames(const std::string& wire) {
@@ -263,18 +304,25 @@ class Harness {
 
   size_t open(Peer& peer, std::shared_ptr<adnl::AdnlExtTransportWriter> transport,
               std::shared_ptr<adnl::AdnlExtOutputBudget> budget, size_t pending_limit,
-              std::shared_ptr<Observation> observation) {
+              std::shared_ptr<Observation> observation,
+              std::shared_ptr<adnl::SourceShareLedger> source_shares = nullptr, std::string source = "",
+              double lifetime = adnl::adnl_ext_output_lifetime_seconds) {
     auto fd = peer.take_server_end();
     scheduler_.run_in_context([&] {
       connections_.push_back(td::actor::create_actor<ProbeConnection>(
           td::actor::ActorOptions().with_name("probe").with_poll(), std::move(fd), std::move(transport),
-          std::move(budget), pending_limit, std::move(observation), input_budget_));
+          std::move(budget), pending_limit, std::move(observation), input_budget_, std::move(source_shares),
+          std::move(source), lifetime));
     });
     return connections_.size() - 1;
   }
 
   void close(size_t index) {
     scheduler_.run_in_context([&] { connections_.at(index).reset(); });
+  }
+  void writable(size_t index) {
+    scheduler_.run_in_context(
+        [&] { td::actor::send_closure(connections_.at(index).get(), &ProbeConnection::writable); });
   }
 
   template <class F>
@@ -450,6 +498,95 @@ void progressing_peer_stays_connected() {
   std::printf("B02_CASE progressing replies=%zu bytes=%zu used=%zu\n", s.queued, wire.size(), budget->used());
 }
 
+void source_share_leaves_other_clients_capacity() {
+  Harness harness;
+  auto budget = std::make_shared<adnl::AdnlExtOutputBudget>(4 * kFrame);
+  auto shares = std::make_shared<adnl::SourceShareLedger>(2 * kFrame);
+  Peer a, b, excess, honest;
+  auto oa = std::make_shared<Observation>();
+  auto ob = std::make_shared<Observation>();
+  auto oe = std::make_shared<Observation>();
+  auto oh = std::make_shared<Observation>();
+  auto ai = harness.open(a, std::make_shared<StalledTransport>(), budget, 4 * kFrame, oa, shares, "hog");
+  auto bi = harness.open(b, std::make_shared<StalledTransport>(), budget, 4 * kFrame, ob, shares, "hog");
+  a.send_init();
+  b.send_init();
+  accumulate(harness, a, oa, 1, "share/a");
+  accumulate(harness, b, ob, 1, "share/b");
+  require(shares->used("hog") == 2 * kFrame, "source did not hold its whole share");
+  harness.open(excess, std::make_shared<StalledTransport>(), budget, 4 * kFrame, oe, shares, "hog");
+  excess.send_init();
+  excess.send_queries(1);
+  harness.wait_until([&] { return snapshot(oe).closed; }, "source overflow did not close");
+  require(snapshot(oe).refused == 1, "reply past the source share was queued");
+  require(budget->used() == 2 * kFrame && shares->used("hog") == 2 * kFrame,
+          "refusal changed another connection's charges");
+  auto writer = std::make_shared<DrainingTransport>();
+  auto hi = harness.open(honest, writer, budget, 4 * kFrame, oh, shares, "honest");
+  honest.send_init();
+  accumulate(harness, honest, oh, 1, "share/honest");
+  harness.wait_until([&] { return writer->received().size() == kFrame && shares->used("honest") == 0; },
+                     "honest source could not drain its answer");
+  require(honest.count_reply_frames(writer->received()) == 1 && !snapshot(oh).closed,
+          "honest reply was corrupted or the client closed");
+  harness.close(ai);
+  harness.close(bi);
+  harness.close(hi);
+  harness.wait_until([&] { return budget->used() == 0 && shares->sources() == 0; }, "close left source charges");
+  std::printf("B02_CASE source-share honest_frames=1 final_used=0 sources=0\n");
+}
+
+void keepalives_do_not_renew_output_deadline() {
+  Harness harness;
+  auto budget = std::make_shared<adnl::AdnlExtOutputBudget>(4 * kFrame);
+  auto shares = std::make_shared<adnl::SourceShareLedger>(2 * kFrame);
+  auto observation = std::make_shared<Observation>();
+  Peer peer;
+  harness.open(peer, std::make_shared<StalledTransport>(), budget, 4 * kFrame, observation, shares, "slow", 0.7);
+  peer.send_init();
+  accumulate(harness, peer, observation, 1, "deadline");
+  auto deadline = td::Timestamp::in(2.0);
+  while (!snapshot(observation).closed && !deadline.is_in_past()) {
+    peer.send_keepalive();
+    harness.settle();
+  }
+  require(snapshot(observation).closed, "keepalives renewed the output deadline");
+  require(!snapshot(observation).overflowed && snapshot(observation).dispatched == 1,
+          "the close came from output overflow or a keepalive dispatched a query");
+  require(budget->used() == 0 && shares->sources() == 0, "deadline close left output charged");
+  std::printf("B02_CASE output-deadline keepalives_did_not_renew=1 final_used=0 sources=0\n");
+}
+
+void trickle_writes_do_not_renew_output_deadline() {
+  Harness harness;
+  auto budget = std::make_shared<adnl::AdnlExtOutputBudget>(4 * kFrame);
+  auto shares = std::make_shared<adnl::SourceShareLedger>(2 * kFrame);
+  auto observation = std::make_shared<Observation>();
+  auto writer = std::make_shared<TrickleTransport>();
+  Peer peer;
+  auto index = harness.open(peer, writer, budget, 4 * kFrame, observation, shares, "slow", 0.7);
+  peer.send_init();
+  accumulate(harness, peer, observation, 1, "trickle");
+  auto started = td::Timestamp::now().at();
+  // Each notification writes exactly one byte, then blocks. Partial drain
+  // must release byte accounting without moving the backlog's deadline.
+  for (size_t i = 1; i <= 2; ++i) {
+    writer->allow_byte();
+    harness.writable(index);
+    harness.wait_until([&] { return writer->written() == i; }, "trickle write was not exercised");
+    require(budget->used() == kFrame - i && shares->used("slow") == kFrame - i,
+            "partial writes did not release both charges");
+    harness.settle();
+  }
+  writer->allow_byte();
+  harness.writable(index);
+  harness.wait_until([&] { return writer->written() == 3; }, "third trickle write was not exercised");
+  harness.wait_until([&] { return snapshot(observation).closed; }, "trickle renewed the output deadline");
+  require(td::Timestamp::now().at() - started < 0.95, "partial writes moved the original output deadline");
+  require(budget->used() == 0 && shares->sources() == 0, "trickle expiry left output charged");
+  std::printf("B02_CASE trickle-deadline written=%zu final_used=0 sources=0\n", writer->written());
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -459,6 +596,9 @@ int main(int argc, char** argv) {
       {"per-connection", per_connection_bound},
       {"shared", shared_budget_and_recovery},
       {"progressing", progressing_peer_stays_connected},
+      {"source-share", source_share_leaves_other_clients_capacity},
+      {"output-deadline", keepalives_do_not_renew_output_deadline},
+      {"trickle-deadline", trickle_writes_do_not_renew_output_deadline},
   };
   bool ran = false;
   for (auto& [name, run] : cases) {

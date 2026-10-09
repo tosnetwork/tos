@@ -48,7 +48,8 @@ class AdnlInboundConnection : public AdnlExtConnection {
                         std::shared_ptr<ExtQueryFailurePolicy> failure_policy, std::unique_ptr<Callback> callback,
                         std::shared_ptr<AdnlExtOutputBudget> server_output_budget,
                         std::shared_ptr<AdnlExtByteBudget> server_input_budget,
-                        std::shared_ptr<SourceShareLedger> input_source_shares, ExtSourceKey source)
+                        std::shared_ptr<SourceShareLedger> input_source_shares, ExtSourceKey source,
+                        std::shared_ptr<SourceShareLedger> output_source_shares)
       : AdnlExtConnection(std::move(fd), std::move(callback), false)
       , peer_table_(peer_table)
       , ext_server_(ext_server)
@@ -58,6 +59,7 @@ class AdnlInboundConnection : public AdnlExtConnection {
       , server_query_limits_(std::move(server_query_limits))
       , failure_policy_(std::move(failure_policy)) {
     set_shared_output_budget(std::move(server_output_budget));
+    set_output_source_share(std::move(output_source_shares), source_.str());
     set_input_limits(std::move(server_input_budget));
     set_input_source_share(std::move(input_source_shares), source_.str());
   }
@@ -156,6 +158,8 @@ class AdnlExtServerImpl : public AdnlExtServer {
   ExtServerConnectionLimits connection_limits_{1024, 64};
   // Unread output held by all of this server's connections.
   std::shared_ptr<AdnlExtOutputBudget> output_bytes_ = std::make_shared<AdnlExtOutputBudget>();
+  std::shared_ptr<SourceShareLedger> output_source_shares_ =
+      std::make_shared<SourceShareLedger>(adnl_ext_max_source_pending_output_bytes);
   // Received bytes of unfinished frames held by all of this server's connections.
   std::shared_ptr<AdnlExtByteBudget> input_bytes_ =
       std::make_shared<AdnlExtByteBudget>(adnl_ext_max_server_pending_input_bytes);

@@ -28,4 +28,45 @@ acceptance. No scan status is changed by this remediation.
 
 ## Status
 
-Planning revision: implementation and validation are pending.
+The four corrections are implemented. In addition to source connection
+admission, JSON-RPC health, API-info and OPTIONS responses close even when the
+request asks for persistence. Admission records that policy; it does not close
+the socket before the asynchronous response is queued. Authenticated RPC
+responses also honor `Connection: close`.
+
+ADNL output is charged to the source and server before frame allocation;
+partial writes and every teardown return both charges. The output backlog has
+a 30-second total deadline, independent of incoming keepalives and partial
+writes. A completely drained backlog may start a new deadline.
+
+QUIC incomplete streams have a 120-second absolute lifetime alongside the
+existing inactivity limit. Under global slot saturation, a source with less
+than its fair share can request the oldest incomplete stream of the largest
+holder to be reset. The budget coordinates at most one pending reset across
+all its servers. The triggering stream is refused: the newcomer retries after
+the owning callback returns the victim's slot. This is bounded recovery from
+overrepresented sources, not guaranteed admission on the first attempt or
+protection against an unlimited number of one-stream sources. Locally opened
+query response deadlines are not extended or replaced.
+
+The new regressions run in the existing network safety suites. The ADNL
+output and refusal-close targets are also included in the AddressSanitizer
+workflow, retaining their existing security regression labels.
+
+Initial Linux validation passed all 11 selected CTest groups: HTTP listener,
+production JSON-RPC transport, ADNL output/refusal close, CONNECT tunnels, and
+QUIC inbound/transport budgets, source shares, connection limits, inbound
+expiry and outbound deadlines. Removed-control validation is in progress;
+final-head CI and a fresh security scan have not been claimed.
+
+To reproduce sensitivity checks in an isolated checkout:
+
+```sh
+python3 scripts/test-network-availability-mutations.py \
+  --build-dir /absolute/path/to/build \
+  --log-dir /absolute/path/to/retained-results --jobs 4
+```
+
+Do not run mutations concurrently with builds or tests using the same source
+tree. Each case restores its source even on failure, requires the named
+executed failure, and rebuilds/reruns the restored regression.

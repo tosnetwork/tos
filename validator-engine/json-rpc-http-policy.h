@@ -110,6 +110,7 @@ inline td::Result<http::HttpServer::Limits> listener_limits(std::size_t max_conn
   limits.body_budget =
       body_budget ? std::move(body_budget) : std::make_shared<http::BodyBudget>(kListenerBodyBudgetBytes);
   limits.max_connections = max_connections;
+  limits.max_connections_per_source = max_connections == 0 ? 128 : adnl::default_source_share(max_connections);
   limits.request_header_timeout = request_header_timeout;
   limits.request_body_timeout = request_body_timeout;
   limits.response_timeout = response_timeout;

@@ -2,7 +2,9 @@
 
 #include <atomic>
 #include <cstddef>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -66,8 +68,62 @@ using QuicBudgetSource = std::string;
 inline constexpr std::size_t kQuicMaxInboundStreams = 65536;
 inline constexpr std::size_t kQuicMaxInboundStreamBytes = std::size_t{512} << 20;
 
-class QuicInboundStreamBudget {
+class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundStreamBudget> {
  public:
+  using ReclaimToken = std::shared_ptr<std::atomic<bool>>;
+  // Only incomplete peer streams are reclaimable. The token's lifetime
+  // removes its registry entry, including on FIN, error and connection close.
+  ReclaimToken track_incomplete(const QuicBudgetSource &source) {
+    std::lock_guard lock(reclaim_mutex_);
+    auto id = ++next_reclaim_id_;
+    auto token =
+        ReclaimToken(new std::atomic<bool>(false), [budget = shared_from_this(), source, id](std::atomic<bool> *flag) {
+          budget->forget_incomplete(source, id);
+          delete flag;
+        });
+    incomplete_[source].emplace(id, token);
+    return token;
+  }
+  // A full global slot pool cannot be kept permanently by a few sources with
+  // thousands of incomplete streams each. An underrepresented source may
+  // request one oldest stream from the largest holder to be reset. It retries
+  // after the owning callback has reset that stream and returned its slot.
+  // At most one reclaim is pending process-wide, preventing a burst of new
+  // identities from displacing the whole pool before any reset is processed.
+  bool request_reclaim(const QuicBudgetSource &source) {
+    if (streams() < max_streams_ || source_streams(source) >= max_streams_per_source()) {
+      return false;
+    }
+    ReclaimToken token;
+    std::lock_guard lock(reclaim_mutex_);
+    if (pending_reclaim_) {
+      return false;
+    }
+    auto own = incomplete_.find(source);
+    auto own_count = own == incomplete_.end() ? 0 : own->second.size();
+    auto victim = incomplete_.end();
+    for (auto it = incomplete_.begin(); it != incomplete_.end(); ++it) {
+      if (it->first != source && it->second.size() > own_count + 1 &&
+          (victim == incomplete_.end() || it->second.size() > victim->second.size())) {
+        victim = it;
+      }
+    }
+    if (victim == incomplete_.end()) {
+      return false;
+    }
+    auto first = victim->second.begin();
+    token = first->second.lock();
+    if (!token) {
+      return false;
+    }
+    pending_reclaim_ = std::make_pair(victim->first, first->first);
+    token->store(true);
+    reclaim_generation_.fetch_add(1);
+    return true;
+  }
+  std::size_t reclaim_generation() const {
+    return reclaim_generation_.load();
+  }
   // Each source's share defaults to one eighth of each global limit.
   QuicInboundStreamBudget(std::size_t max_streams, std::size_t max_bytes)
       : QuicInboundStreamBudget(max_streams, max_bytes, adnl::default_source_share(max_streams),
@@ -158,6 +214,24 @@ class QuicInboundStreamBudget {
   }
 
  private:
+  void forget_incomplete(const QuicBudgetSource &source, std::size_t id) {
+    std::lock_guard lock(reclaim_mutex_);
+    auto it = incomplete_.find(source);
+    if (it != incomplete_.end()) {
+      it->second.erase(id);
+      if (it->second.empty()) {
+        incomplete_.erase(it);
+      }
+    }
+    if (pending_reclaim_ && *pending_reclaim_ == std::make_pair(source, id)) {
+      pending_reclaim_.reset();
+    }
+  }
+  std::mutex reclaim_mutex_;
+  std::size_t next_reclaim_id_ = 0;
+  std::map<QuicBudgetSource, std::map<std::size_t, std::weak_ptr<std::atomic<bool>>>> incomplete_;
+  std::optional<std::pair<QuicBudgetSource, std::size_t>> pending_reclaim_;
+  std::atomic<std::size_t> reclaim_generation_{0};
   static bool try_add(std::atomic<std::size_t> &counter, std::size_t limit, std::size_t amount) {
     auto used = counter.load();
     do {

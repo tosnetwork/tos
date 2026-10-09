@@ -36,7 +36,8 @@ class HttpInboundConnection : public HttpConnection {
                         HttpServer::AllMetrics metrics, double request_header_timeout = 0,
                         double request_body_timeout = 0, bool reject_request_bodies = false, size_t io_buffer_bytes = 0,
                         double response_timeout = 0, bool close_after_early_answer = false,
-                        std::shared_ptr<BodyBudget> body_budget = nullptr)
+                        std::shared_ptr<BodyBudget> body_budget = nullptr,
+                        std::shared_ptr<HttpServer::ConnectionAdmission> connection_admission = nullptr)
       : HttpConnection(std::move(fd), nullptr, false, io_buffer_bytes)
       , http_callback_(std::move(http_callback))
       , metrics_(std::move(metrics))
@@ -45,7 +46,8 @@ class HttpInboundConnection : public HttpConnection {
       , reject_request_bodies_(reject_request_bodies)
       , response_timeout_(response_timeout)
       , close_after_early_answer_(close_after_early_answer)
-      , body_budget_(std::move(body_budget)) {
+      , body_budget_(std::move(body_budget))
+      , connection_admission_(std::move(connection_admission)) {
     metrics_.connections->add(1);
     metrics_.connections_total->add(1);
     // Capture the TCP peer IP exactly once, at accept time. This is the
@@ -160,19 +162,25 @@ class HttpInboundConnection : public HttpConnection {
 
   void payload_written() override {
     writing_payload_ = nullptr;
+    response_finished_ = true;
     if (!close_after_write_) {
-      read_next_request_ = true;
+      read_next_request_ = !reading_payload_;
       if (found_eof_) {
         stop();
         return;
       }
-      arm_request_header_deadline();
+      if (read_next_request_) {
+        arm_request_header_deadline();
+      }
     }
   }
   void payload_read() override {
     reading_payload_ = nullptr;
-    read_next_request_ = false;
+    read_next_request_ = response_finished_ && !close_after_write_;
     body_window_ = 0;
+    if (read_next_request_) {
+      arm_request_header_deadline();
+    }
   }
 
   td::Status receive(td::ChainBufferReader &input) override;
@@ -321,6 +329,9 @@ class HttpInboundConnection : public HttpConnection {
   }
 
   std::shared_ptr<BodyBudget> body_budget_;
+  std::shared_ptr<HttpServer::ConnectionAdmission> connection_admission_;
+  bool response_finished_ = false;
+  bool request_persistent_ = true;
   // True from the moment complete headers are handed to admit_request until
   // the admission answer arrives.
   bool admission_pending_ = false;

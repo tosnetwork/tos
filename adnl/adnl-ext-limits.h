@@ -26,6 +26,11 @@ inline constexpr std::size_t adnl_ext_max_pending_output_bytes = 2 * adnl_ext_ma
 // Unread output all of one server's external connections may hold together.
 // The per-connection bound times the connection limit would be tens of GiB.
 inline constexpr std::size_t adnl_ext_max_server_pending_output_bytes = std::size_t{256} << 20;
+inline constexpr std::size_t adnl_ext_max_source_pending_output_bytes =
+    default_source_share(adnl_ext_max_server_pending_output_bytes);
+// Total time for an output backlog to drain. Input traffic and partial writes
+// never renew it; a new backlog gets a new deadline only after the old one drains.
+inline constexpr double adnl_ext_output_lifetime_seconds = 30.0;
 
 // Received bytes one server connection may hold before they form a frame.
 // One maximal frame: a peer that has sent a frame's length may send the frame,

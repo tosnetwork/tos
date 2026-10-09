@@ -2605,6 +2605,74 @@ TEST(QuicInboundStreamTimeout, AbandonedInboundStreamIsReaped) {
   });
 }
 
+TEST(QuicInboundStreamTimeout, TrickleDataCannotRenewTheTotalLifetime) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(8, 1 << 20, 8, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_lifetime = 5.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("absolute-timeout", next_port(), options);
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + 1000);
+    auto sid = co_await t.send_partial_stream(client, cid, 'x');
+    co_await poll_until([&] { return budget->bytes() == 1; }, 3.0, "first byte admitted");
+    for (int i = 0; i < 2; ++i) {
+      jump_time_by(2.0);
+      co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, td::BufferSlice("x"),
+                              false);
+      co_await poll_until([&] { return budget->bytes() == static_cast<size_t>(i + 2); }, 1.0, "trickle byte admitted");
+    }
+    ASSERT_TRUE(!client.state->has_closed_stream(sid));
+    jump_time_by(1.5);
+    co_await poll_until([&] { return client.state->has_closed_stream(sid); }, 0.5,
+                        "absolute lifetime expired before the renewed inactivity window");
+    co_await poll_until(
+        [&] { return budget->streams() == 0 && budget->bytes() == 0 && budget->tracked_sources() == 0; }, 1.0,
+        "absolute expiry returned all reservations");
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSourceShare, MultipleFullSourcesAllowANewSourceAcrossServers) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 1 << 20, 2, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 30;
+    options.inbound_stream_budget = budget;
+    options.source_key_for_test = [](const td::IPAddress& peer) { return std::to_string(peer.get_port()); };
+    auto occupied = co_await t.create_sender_node("fairness-occupied", next_port(), options);
+    auto other_server = co_await t.create_sender_node("fairness-other", next_port(), options);
+    auto a = co_await t.create_endpoint(quic_test_options());
+    auto b = co_await t.create_endpoint(quic_test_options());
+    auto ca = co_await t.connect_raw_to(a, occupied.port + 1000);
+    auto cb = co_await t.connect_raw_to(b, occupied.port + 1000);
+    auto oldest_a = co_await t.send_partial_stream(a, ca, 'a');
+    co_await t.send_partial_stream(a, ca, 'a');
+    auto oldest_b = co_await t.send_partial_stream(b, cb, 'b');
+    co_await t.send_partial_stream(b, cb, 'b');
+    co_await poll_until([&] { return budget->streams() == 4 && budget->bytes() == 4; }, 3.0, "two sources filled pool");
+    auto honest = co_await t.create_endpoint(quic_test_options());
+    auto ch = co_await t.connect_raw_to(honest, other_server.port + 1000);
+    auto refused = co_await t.send_partial_stream(honest, ch, 'h');
+    co_await t.wait_for_stream_close(honest, refused);
+    co_await poll_until([&] { return a.state->has_closed_stream(oldest_a) || b.state->has_closed_stream(oldest_b); },
+                        2.0, "overrepresented source was displaced on another server");
+    co_await poll_until([&] { return budget->streams() == 3 && budget->bytes() == 3; }, 2.0,
+                        "victim released slot and byte");
+    auto admitted = co_await t.send_partial_stream(honest, ch, 'h');
+    co_await poll_until([&] { return budget->source_streams(std::to_string(honest.port)) == 1; }, 2.0,
+                        "new source retry admitted");
+    ASSERT_TRUE(!honest.state->has_closed_stream(admitted));
+    ASSERT_EQ(budget->streams(), 4u);
+    co_await t.finish_stream(honest, ch, admitted);
+    jump_time_by(35.0);
+    co_await poll_until([&] { return budget->streams() == 0 && budget->bytes() == 0; }, 3.0,
+                        "remaining streams reclaimed");
+    co_return td::Unit{};
+  });
+}
+
 TEST(QuicOutboundQueryDeadline, PartialResponseDoesNotExtendDeadline) {
   run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
     constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET

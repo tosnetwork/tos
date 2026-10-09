@@ -324,7 +324,9 @@ void JsonRpcServer::admit_request_head(AdmissionHead head, td::Promise<http::Htt
                  (head.method == "GET" &&
                   (path == "/healthcheck" || path == "/healthcheck/" || path == "/api-info" || path == "/api-info/"));
   if (keyless) {
-    promise.set_value(http::HttpServer::Admission::admit());
+    // Keyless probes cannot renew a connection slot indefinitely, including
+    // when many sources jointly reach the listener's global limit.
+    promise.set_value(http::HttpServer::Admission::admit(false));
     return;
   }
   if (!opts_.api_key.empty() && (head.api_key.empty() || !constant_time_compare(head.api_key, opts_.api_key))) {

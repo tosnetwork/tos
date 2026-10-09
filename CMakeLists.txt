@@ -2110,6 +2110,7 @@ set_tests_properties(
   test-json-rpc-transport
   test-rldp-http-tunnel
   PROPERTIES LABELS "network-safety")
+set_property(TEST test-adnl-ext-output-backpressure test-adnl-ext-refusal-close APPEND PROPERTY LABELS "network-safety")
 
 add_subdirectory(test)
 endif()

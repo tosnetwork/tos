@@ -25,7 +25,10 @@ namespace tos {
 namespace http {
 
 HttpServer::HttpServer(td::IPAddress address, std::shared_ptr<Callback> callback, Limits limits)
-    : address_(address), callback_(std::move(callback)), limits_(limits) {
+    : address_(address)
+    , callback_(std::move(callback))
+    , limits_(limits)
+    , connection_sources_(std::make_shared<adnl::SourceShareLedger>(limits.max_connections_per_source)) {
   add_collector("http_connections", collector_.get());
 }
 
@@ -54,6 +57,16 @@ void HttpServer::start_up() {
 }
 
 void HttpServer::accepted(td::SocketFd fd) {
+  std::shared_ptr<ConnectionAdmission> admission;
+  if (limits_.max_connections_per_source != 0) {
+    td::IPAddress peer;
+    peer.init_peer_address(fd).ignore();
+    auto source = adnl::network_source_key(peer);
+    if (!connection_sources_->try_reserve(source, 1)) {
+      return;
+    }
+    admission = std::make_shared<ConnectionAdmission>(connection_sources_, std::move(source));
+  }
   // The connection gauge counts live HttpInboundConnection actors; refusing
   // the socket here (it is closed when `fd` goes out of scope) keeps a
   // client that opens sockets and never speaks from exhausting descriptors
@@ -73,7 +86,8 @@ void HttpServer::accepted(td::SocketFd fd) {
   td::actor::create_actor<HttpInboundConnection>(
       td::actor::ActorOptions().with_name("inhttpconn").with_poll(), std::move(fd), callback_, metrics_,
       limits_.request_header_timeout, limits_.request_body_timeout, limits_.reject_request_bodies,
-      limits_.io_buffer_bytes, limits_.response_timeout, limits_.close_after_early_answer, limits_.body_budget)
+      limits_.io_buffer_bytes, limits_.response_timeout, limits_.close_after_early_answer, limits_.body_budget,
+      std::move(admission))
       .release();
 }
 

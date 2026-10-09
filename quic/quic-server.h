@@ -101,6 +101,9 @@ class QuicServer : public td::actor::Actor, public td::ObserverBase {
     // connection with no traffic at all dies on its own idle timer, so this
     // guard matters precisely for streams abandoned on a kept-alive connection.
     double inbound_stream_timeout = 60.0;
+    // Maximum total lifetime of an incomplete peer stream, independent of
+    // progress. It remains enabled when the inactivity timeout is disabled.
+    double inbound_stream_lifetime = 120.0;
     bool stateless_retry = true;
     // Peer-initiated streams and their buffered bytes, shared by every server
     // given the same budget, consumed by the sender's inbound stream callback.
