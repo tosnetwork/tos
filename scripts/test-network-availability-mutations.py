@@ -249,6 +249,36 @@ CASES = {
         ["-p", "64000", "-d", "mutation-quic-expiry", "-f", "AbandonedReclaimReservationExpires"],
         "reservations[0].has_value()",
     ),
+    "quic-reclaim-withdraw": (
+        "quic/quic-inbound-budget.h",
+        "      pending_reclaim_flag_->store(false);\n      clear_pending_reclaim();",
+        "      (void)0;",
+        "test-quic-sender",
+        [
+            "-p",
+            "64200",
+            "-d",
+            "mutation-quic-withdraw",
+            "-f",
+            "NaturalReleaseWithdrawsAPendingReclaim",
+        ],
+        "Expectation failed: !pool.tokens[0]->load()!",
+    ),
+    "quic-release-lock": (
+        "quic/quic-inbound-budget.h",
+        "    std::lock_guard lock(reclaim_mutex_);\n    bool returned = sub(streams_, 1);",
+        "    bool returned = sub(streams_, 1);",
+        "test-quic-sender",
+        [
+            "-p",
+            "64400",
+            "-d",
+            "mutation-quic-release-lock",
+            "-f",
+            "ReleaseInsideTheReclaimCheckCannotStrandAVictim",
+        ],
+        "Expectation failed: !pool.tokens[0]->load()!",
+    ),
 }
 
 

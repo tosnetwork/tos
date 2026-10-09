@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -93,6 +94,8 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
   // after the owning callback has reset that stream and returned its slot.
   // At most one reclaim is pending process-wide, preventing a burst of new
   // identities from displacing the whole pool before any reset is processed.
+  // A pending reclaim is withdrawn when any slot comes back first: that slot
+  // already serves the newcomer, so no stream is reset for it.
   bool request_reclaim(const QuicBudgetSource &source) {
     ReclaimToken token;
     std::lock_guard lock(reclaim_mutex_);
@@ -104,6 +107,9 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
     }
     if (pending_reclaim_) {
       return false;
+    }
+    if (reclaim_check_hook_for_test_) {
+      reclaim_check_hook_for_test_();
     }
     auto own = reclaimable_.find(source);
     auto own_count = own == reclaimable_.end() ? 0 : own->second.size();
@@ -123,6 +129,7 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
       return false;
     }
     pending_reclaim_ = std::make_pair(victim->first, first->first);
+    pending_reclaim_flag_ = token.get();
     reclaim_recipient_ = source;
     reclaim_reservation_deadline_ = td::Timestamp::never();
     token->store(true);
@@ -131,6 +138,14 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
   }
   std::size_t reclaim_generation() const {
     return reclaim_generation_.load();
+  }
+  // Runs inside request_reclaim, under the reclaim lock, after the saturation
+  // check and before a victim is chosen, so a test can place another thread's
+  // operation exactly there. The hook must not call into this budget on the
+  // calling thread.
+  void set_reclaim_check_hook_for_test(std::function<void()> hook) {
+    std::lock_guard lock(reclaim_mutex_);
+    reclaim_check_hook_for_test_ = std::move(hook);
   }
   // Each source's share defaults to one eighth of each global limit.
   QuicInboundStreamBudget(std::size_t max_streams, std::size_t max_bytes)
@@ -191,11 +206,23 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
   // False if more is given back than is held, which is an accounting error;
   // the counter is then left unchanged.
   bool release_stream(const QuicBudgetSource &source) {
-    bool ok = sub(streams_, 1);
+    // Returned under the reclaim lock, so a reclaim decision either sees this
+    // slot back or is pending when it returns and is withdrawn here.
+    std::lock_guard lock(reclaim_mutex_);
+    bool returned = sub(streams_, 1);
+    bool ledger_ok = true;
     if (!source.empty()) {
-      ok = source_streams_.release(source, 1) && ok;
+      ledger_ok = source_streams_.release(source, 1);
     }
-    return ok;
+    if (returned && pending_reclaim_) {
+      // Every source but the newcomer is held one slot below the limit, so
+      // the returned slot is the newcomer's: the marked stream need not be
+      // reset. It stays reclaimable, and the newcomer gets the same retry
+      // reservation as for a slot its victim returned.
+      pending_reclaim_flag_->store(false);
+      clear_pending_reclaim();
+    }
+    return returned && ledger_ok;
   }
   bool release_bytes(const QuicBudgetSource &source, std::size_t bytes) {
     bool ok = sub(bytes_, bytes);
@@ -245,17 +272,30 @@ class QuicInboundStreamBudget : public std::enable_shared_from_this<QuicInboundS
       }
     }
     if (pending_reclaim_ && *pending_reclaim_ == std::make_pair(source, id)) {
-      pending_reclaim_.reset();
-      reclaim_reservation_deadline_ = td::Timestamp::in(2.0);
+      clear_pending_reclaim();
     }
   }
+  // Called with reclaim_mutex_ held. Starts the newcomer's retry reservation.
+  void clear_pending_reclaim() {
+    pending_reclaim_.reset();
+    pending_reclaim_flag_ = nullptr;
+    reclaim_reservation_deadline_ = td::Timestamp::in(kReclaimRetrySeconds);
+  }
+  static constexpr double kReclaimRetrySeconds = 2.0;
   std::mutex reclaim_mutex_;
   std::size_t next_reclaim_id_ = 0;
   std::map<QuicBudgetSource, std::map<std::size_t, std::weak_ptr<std::atomic<bool>>>> reclaimable_;
   std::optional<std::pair<QuicBudgetSource, std::size_t>> pending_reclaim_;
+  // The pending victim's flag, not owned. Valid whenever pending_reclaim_ is
+  // set and reclaim_mutex_ is held: the token's deleter runs forget_stream,
+  // which clears both under this lock, before it frees the flag. Holding an
+  // owning copy here instead could make this lock's holder the token's last
+  // owner, running its deleter (and forget_stream) with the lock held.
+  std::atomic<bool> *pending_reclaim_flag_ = nullptr;
   std::optional<QuicBudgetSource> reclaim_recipient_;
   td::Timestamp reclaim_reservation_deadline_;
   std::atomic<std::size_t> reclaim_generation_{0};
+  std::function<void()> reclaim_check_hook_for_test_;
   static bool try_add(std::atomic<std::size_t> &counter, std::size_t limit, std::size_t amount) {
     auto used = counter.load();
     do {

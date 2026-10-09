@@ -264,3 +264,104 @@ cmake --build build-review --parallel 4 --target "${review_targets[@]}"
 ctest --test-dir build-review -L network-safety \
   --no-tests=error --output-on-failure --verbose
 ```
+
+## Second review follow-up: withdrawing a reclaim when capacity returns
+
+Reviewed input: `11b4d0fb892b2875f98164fb43b80398c11437d5`.
+
+`request_reclaim` checked pool saturation under the reclamation lock, but
+`release_stream` returned slots without it, and nothing ever withdrew a mark
+once it was set. Two orders therefore reset a stream for capacity that was no
+longer missing:
+
+- A slot returned on another thread between the saturation check and the
+  mark. This needs the budget to be used from more than one OS thread: every
+  QUIC server is a poll actor on its scheduler's single I/O worker, and the
+  validator engine runs one scheduler node, so the engine itself does not
+  interleave these calls today. The budget is process-wide and documented as
+  thread-safe, so the contract was still broken.
+- An unrelated stream finished after the mark and before the victim's server
+  acted on it (its reclaim check runs every 0.1 s). This needs no second
+  thread. Every source but the newcomer is held one slot below the limit, so
+  the newcomer took the returned slot, and the victim was still reset; if its
+  peer did not acknowledge the reset, its connection was closed after the
+  reset grace period.
+
+`release_stream` now returns the slot under the reclamation lock and, if a
+reclaim is pending, withdraws it: the victim's flag is cleared, the victim
+stays reclaimable, and the returned slot becomes the newcomer's two-second
+retry reservation, exactly as a slot returned by the victim itself does. The
+victim's own release takes the same path. The withdrawal is keyed on the
+global count actually dropping; the source-ledger release is still attempted
+for every non-empty source, and the return value combines both results as
+before. The pending victim's flag is kept as a non-owning pointer, valid while
+the lock is held because the token's deleter clears it under that lock before
+freeing it; an owning copy could become the last owner and run the deleter,
+which takes the same lock, while the lock is held.
+
+| Changed boundary | Regression or execution check |
+| --- | --- |
+| Natural release after the mark withdraws it | `NaturalReleaseWithdrawsAPendingReclaim` (single thread) |
+| Release between saturation check and mark | `ReleaseInsideTheReclaimCheckCannotStrandAVictim` (test hook inside the locked check) |
+| Concurrent requesters and natural release | `ReclaimRacingNaturalReleasesLeavesNoVictim` (eight requesters, 2,000 rounds, ThreadSanitizer target) |
+
+All three are in the `QuicSourceShare` suite, so the existing
+`quic-source-share` CTest entry and the network-safety ASAN gate run them.
+
+### Second follow-up validation
+
+Linux x86-64, Clang 21.1.8, CMake 3.22.1.
+
+On `11b4d0fb8` with only the tests and the behavior-neutral test hook added,
+each new regression exited **1** at its intended assertion:
+
+| Regression | Executed failure on the reviewed input |
+| --- | --- |
+| `NaturalReleaseWithdrawsAPendingReclaim` | `Expectation failed: !pool.tokens[0]->load()!` |
+| `ReleaseInsideTheReclaimCheckCannotStrandAVictim` | `Expectation failed: !pool.tokens[0]->load()!` |
+| `ReclaimRacingNaturalReleasesLeavesNoVictim` | `Expectation failed: !pool.tokens[i]->load()!` |
+
+Removed-control cases, run with the mutation runner on the strict Release
+build (each red exit **1**, each restored run exit **0**):
+
+| Control | Executed failure |
+| --- | --- |
+| `quic-reclaim-withdraw` (withdrawal removed) | `Expectation failed: !pool.tokens[0]->load()!` |
+| `quic-release-lock` (release lock removed) | `Expectation failed: !pool.tokens[0]->load()!` |
+| `quic-concurrent-reclaim` (existing) | `extra_reclaims.load() is not equal to 0u (1 != 0)` |
+| `quic-retry-expiry` (existing) | `Expectation failed: reservations[0].has_value()!` |
+
+With the release lock removed, the single-thread regression still passes and
+only the hook-driven one fails, so the latter is the check for the lock.
+Removing the withdrawal fails both.
+
+ThreadSanitizer (`-DTOS_USE_TSAN=ON`, RelWithDebInfo, `-f Reclaim`, all five
+reclaim regressions) exited **0** with no report; the stress regression had a
+reclaim granted before the natural release in 1,991 of 2,000 rounds. With the
+release lock removed it reported a data race on the pending reclaim between
+`release_stream` and `request_reclaim` (exit 66), and was clean again after
+restoring the source.
+
+The strict build (`TOS_WERROR_BUILD`, Release, jemalloc, LLD, x86-64-v2)
+passed. The network-safety label passed **15/15** on that build and **15/15**
+under the AddressSanitizer configuration of the network workflow, whose
+registration check also passed. Changed-line Clang 21 formatting and Ruff
+0.15.2 lint and format checks passed.
+
+`MultipleFullSourcesAllowANewSourceAcrossServers` intermittently times out at
+`remaining streams reclaimed` with one stream slot still held three seconds
+after the final time jump. It fails at comparable rates with and without
+this change (for example 8 of 40 and 16 of 40 runs under four-way parallel
+load, then 2 of 40 and 1 of 40 in a second sample, the original first), so it
+is recorded here as a pre-existing timing margin, not addressed by this change.
+
+Reproduction (in addition to the builds above):
+
+```sh
+./build/test-quic-sender -p 65000 -d tmp-reclaim -f Reclaim
+TSAN_OPTIONS=halt_on_error=1 ./build-tsan/test-quic-sender -p 65000 -d tmp-tsan -f Reclaim
+python3 scripts/test-network-availability-mutations.py --build-dir "$PWD/build" \
+  --log-dir "$PWD/review-mutation-results" --jobs 4 \
+  --case quic-reclaim-withdraw --case quic-release-lock \
+  --case quic-concurrent-reclaim --case quic-retry-expiry
+```

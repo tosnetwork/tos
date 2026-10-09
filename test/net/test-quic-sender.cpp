@@ -19,6 +19,7 @@
 #include <atomic>
 #include <barrier>
 #include <chrono>
+#include <future>
 #include <iostream>
 #include <mutex>
 #include <netinet/in.h>
@@ -2818,6 +2819,152 @@ TEST(QuicSourceShare, AbandonedReclaimReservationExpires) {
   }
   ASSERT_EQ(budget->streams(), 0u);
   ASSERT_EQ(budget->tracked_sources(), 0u);
+}
+
+namespace {
+
+// A full four-slot pool: two incomplete reclaimable streams from each of two
+// sources, so either source is a reclaim victim for a third one.
+struct FullReclaimPool {
+  std::shared_ptr<tos::quic::QuicInboundStreamBudget> budget =
+      std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 100, 2, 100);
+  std::array<std::optional<tos::quic::QuicInboundStreamReservation>, 4> reservations;
+  std::array<tos::quic::QuicInboundStreamBudget::ReclaimToken, 4> tokens;
+
+  FullReclaimPool() {
+    const std::array<std::string, 4> sources{"a", "a", "b", "b"};
+    for (size_t i = 0; i < sources.size(); ++i) {
+      reservations[i] = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, sources[i]);
+      ASSERT_TRUE(reservations[i].has_value());
+      tokens[i] = budget->track_stream(sources[i]);
+    }
+    ASSERT_EQ(budget->streams(), 4u);
+  }
+
+  // Release one stream the way StreamState destruction does: the slot first,
+  // then the reclaim token.
+  void close_stream(size_t i) {
+    reservations[i].reset();
+    tokens[i].reset();
+  }
+
+  void tear_down() {
+    for (size_t i = 0; i < reservations.size(); ++i) {
+      close_stream(i);
+    }
+    ASSERT_EQ(budget->streams(), 0u);
+    ASSERT_EQ(budget->tracked_sources(), 0u);
+  }
+};
+
+}  // namespace
+
+TEST(QuicSourceShare, NaturalReleaseWithdrawsAPendingReclaim) {
+  FullReclaimPool pool;
+  auto& budget = pool.budget;
+  ASSERT_TRUE(budget->request_reclaim("honest"));
+  ASSERT_TRUE(pool.tokens[0]->load());
+  // An unrelated stream finishes before the victim's server acts on the mark.
+  pool.close_stream(3);
+  // The returned slot already serves the newcomer; displacing the victim as
+  // well would reset a stream for capacity that is no longer missing.
+  ASSERT_TRUE(!pool.tokens[0]->load());
+  ASSERT_EQ(budget->streams(), 3u);
+  ASSERT_EQ(budget->source_streams("a"), 2u);
+  // The returned slot stays reserved for the newcomer's retry.
+  ASSERT_TRUE(!tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "c").has_value());
+  auto recipient = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "honest");
+  ASSERT_TRUE(recipient.has_value());
+  ASSERT_EQ(budget->streams(), 4u);
+  // The withdrawn reclaim is no longer pending: the next newcomer can ask.
+  ASSERT_TRUE(budget->request_reclaim("later"));
+  ASSERT_TRUE(pool.tokens[0]->load());
+  recipient.reset();
+  pool.tear_down();
+}
+
+TEST(QuicSourceShare, ReleaseInsideTheReclaimCheckCannotStrandAVictim) {
+  FullReclaimPool pool;
+  auto& budget = pool.budget;
+  std::promise<void> released_promise;
+  auto released = released_promise.get_future();
+  std::thread releaser;
+  budget->set_reclaim_check_hook_for_test([&] {
+    // Another thread returns a slot after the saturation check and before
+    // the victim is marked. If the release can complete inside this window,
+    // it does so before the wait below ends; if it must wait for the reclaim
+    // lock, it runs after the mark is published.
+    releaser = std::thread([&] {
+      pool.reservations[3].reset();
+      released_promise.set_value();
+      pool.tokens[3].reset();
+    });
+    released.wait_for(std::chrono::seconds(2));
+  });
+  ASSERT_TRUE(budget->request_reclaim("honest"));
+  budget->set_reclaim_check_hook_for_test(nullptr);
+  releaser.join();
+  ASSERT_TRUE(!pool.tokens[0]->load());
+  ASSERT_EQ(budget->streams(), 3u);
+  auto recipient = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "honest");
+  ASSERT_TRUE(recipient.has_value());
+  ASSERT_EQ(budget->streams(), 4u);
+  recipient.reset();
+  pool.tear_down();
+}
+
+TEST(QuicSourceShare, ReclaimRacingNaturalReleasesLeavesNoVictim) {
+  constexpr int kRequesters = 8;
+  constexpr int kRounds = 2000;
+  size_t granted_rounds = 0;
+  for (int round = 0; round < kRounds; ++round) {
+    FullReclaimPool pool;
+    auto& budget = pool.budget;
+    std::atomic<bool> go{false};
+    std::atomic<bool> stop{false};
+    std::atomic<size_t> grants{0};
+    auto delay = td::Random::fast(0, 200);
+    std::vector<std::thread> requesters;
+    for (int i = 0; i < kRequesters; ++i) {
+      requesters.emplace_back([&, source = "late-" + std::to_string(i)] {
+        while (!go.load()) {
+          std::this_thread::yield();
+        }
+        while (!stop.load()) {
+          if (budget->request_reclaim(source)) {
+            grants.fetch_add(1);
+          }
+        }
+      });
+    }
+    std::thread releaser([&] {
+      while (!go.load()) {
+        std::this_thread::yield();
+      }
+      for (int i = 0; i < delay; ++i) {
+        std::this_thread::yield();
+      }
+      pool.close_stream(3);
+    });
+    go.store(true);
+    releaser.join();
+    stop.store(true);
+    for (auto& requester : requesters) {
+      requester.join();
+    }
+    // At most one reclaim is pending at a time, and once the slot came back
+    // no stream that still holds one may stay marked for displacement.
+    ASSERT_TRUE(grants.load() <= 1);
+    granted_rounds += grants.load();
+    for (size_t i = 0; i < 3; ++i) {
+      ASSERT_TRUE(!pool.tokens[i]->load());
+    }
+    ASSERT_EQ(budget->streams(), 3u);
+    pool.tear_down();
+  }
+  // A run in which every release beat every request exercised nothing.
+  LOG(WARNING) << "reclaim granted before the natural release in " << granted_rounds << " of " << kRounds << " rounds";
+  ASSERT_TRUE(granted_rounds > 0);
 }
 
 TEST(QuicOutboundQueryDeadline, PartialResponseDoesNotExtendDeadline) {
