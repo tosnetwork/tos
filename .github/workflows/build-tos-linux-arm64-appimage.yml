@@ -1,11 +1,9 @@
 name: Ubuntu TOS build (AppImages, arm64)
 
 on:
-  pull_request:
-    branches: [master, testnet]
-    types: [opened, reopened, synchronize, ready_for_review]
+  # Release packaging: a version tag builds the archives the release workflow
+  # collects (scripts/release-artifacts.json); dispatch builds them on demand.
   push:
-    branches: [master, testnet]
     tags: ['v*']
   workflow_dispatch:
   workflow_call:

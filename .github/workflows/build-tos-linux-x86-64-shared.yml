@@ -25,6 +25,13 @@ on:
       - '**/Cargo.lock'
       - 'assembly/native/**'
       - 'scripts/install-rust-toolchain.sh'
+      # The scripts and tests the job runs.
+      - 'test/integration/**'
+      - 'test/pq-native/test_n6_startup_not_synced.py'
+      - 'test/pq-native/test_z01_final_capture.py'
+      - 'test/pq-native/test_z01_proof_controls.py'
+      - 'test/toslib/integration/**'
+      - 'test/tostester/**'
       - 'third-party/**'
       - '.github/workflows/build-tos-linux-x86-64-shared.yml'
   workflow_dispatch:
