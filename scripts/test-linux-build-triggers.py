@@ -131,7 +131,9 @@ def problems(name: str, on: dict) -> list[str]:
         if branches is not None:
             unknown = sorted(set(branches) - BRANCHES)
             if unknown:
-                found.append(f"{name}: {event} names branches this repository does not have: {unknown}")
+                found.append(
+                    f"{name}: {event} names branches this repository does not have: {unknown}"
+                )
             if set(branches) & BRANCHES:
                 automatic = True
         elif event == "pull_request" or "tags" not in spec:
@@ -178,24 +180,38 @@ class TreeTest(unittest.TestCase):
         # What each workflow's triggers are, read back: a parser that dropped
         # or invented a filter would change these.
         expected = {
-            "build-tos-linux-arm64-appimage.yml": {"push": {"tags": ["v*"]}, "workflow_dispatch": None,
-                                                   "workflow_call": None},
-            "build-tos-linux-x86-64-appimage.yml": {"push": {"tags": ["v*"]}, "workflow_dispatch": None,
-                                                    "workflow_call": None},
+            "build-tos-linux-arm64-appimage.yml": {
+                "push": {"tags": ["v*"]},
+                "workflow_dispatch": None,
+                "workflow_call": None,
+            },
+            "build-tos-linux-x86-64-appimage.yml": {
+                "push": {"tags": ["v*"]},
+                "workflow_dispatch": None,
+                "workflow_call": None,
+            },
             "build-tos-linux-x86-64-werror.yml": {
                 "push": {"branches": ["main"]},
-                "pull_request": {"branches": ["main"], "types": ["opened", "reopened", "synchronize", "ready_for_review"]},
+                "pull_request": {
+                    "branches": ["main"],
+                    "types": ["opened", "reopened", "synchronize", "ready_for_review"],
+                },
                 "workflow_dispatch": None,
                 "workflow_call": None,
             },
         }
         files = sorted(WORKFLOWS.glob("build-tos-linux-*.yml"))
-        self.assertEqual({p.name for p in files},
-                         set(expected) | set(SHARED_BUILDS), "a Linux build workflow was added or removed")
+        self.assertEqual(
+            {p.name for p in files},
+            set(expected) | set(SHARED_BUILDS),
+            "a Linux build workflow was added or removed",
+        )
         for path in files:
             on = parse_on(path.read_text())
             if path.name in SHARED_BUILDS:
-                self.assertEqual(on, {"push": {"branches": ["main"]}, "workflow_dispatch": None}, path.name)
+                self.assertEqual(
+                    on, {"push": {"branches": ["main"]}, "workflow_dispatch": None}, path.name
+                )
             else:
                 self.assertEqual(on, expected[path.name], path.name)
 
@@ -205,11 +221,21 @@ class ParserTest(unittest.TestCase):
         return parse_on("name: x\n\non:\n" + block + "\njobs:\n  a:\n")
 
     def test_block_and_inline_lists_and_comments(self) -> None:
-        on = self.parse("  # comment\n  push:\n    branches: [main]  # trailing\n    paths:\n      - 'a/**'\n"
-                        "      - b.txt\n  pull_request:\n  workflow_dispatch:\n  schedule:\n    - cron: '0 0 * * 0'\n"
-                        "  workflow_call:\n    inputs:\n      x:\n        type: string\n")
-        self.assertEqual(on, {"push": {"branches": ["main"], "paths": ["a/**", "b.txt"]}, "pull_request": None,
-                              "workflow_dispatch": None, "schedule": None, "workflow_call": {}})
+        on = self.parse(
+            "  # comment\n  push:\n    branches: [main]  # trailing\n    paths:\n      - 'a/**'\n"
+            "      - b.txt\n  pull_request:\n  workflow_dispatch:\n  schedule:\n    - cron: '0 0 * * 0'\n"
+            "  workflow_call:\n    inputs:\n      x:\n        type: string\n"
+        )
+        self.assertEqual(
+            on,
+            {
+                "push": {"branches": ["main"], "paths": ["a/**", "b.txt"]},
+                "pull_request": None,
+                "workflow_dispatch": None,
+                "schedule": None,
+                "workflow_call": {},
+            },
+        )
 
     def test_unsupported_forms_are_refused(self) -> None:
         bad = {
@@ -253,22 +279,36 @@ class RuleTest(unittest.TestCase):
         self.assertTrue(any("no automatic trigger" in p for p in found), found)
 
     def test_dispatch_only_is_refused(self) -> None:
-        found = problems("build-tos-linux-x.yml", {"workflow_dispatch": None, "workflow_call": None})
-        self.assertEqual(found, ["build-tos-linux-x.yml: no automatic trigger can fire here (dispatch or workflow_call only)"])
+        found = problems(
+            "build-tos-linux-x.yml", {"workflow_dispatch": None, "workflow_call": None}
+        )
+        self.assertEqual(
+            found,
+            [
+                "build-tos-linux-x.yml: no automatic trigger can fire here (dispatch or workflow_call only)"
+            ],
+        )
 
     def test_tags_schedule_and_main_count(self) -> None:
-        for on in ({"push": {"tags": ["v*"]}}, {"schedule": None}, {"push": {"branches": ["main"]}},
-                   {"pull_request": None}):
+        for on in (
+            {"push": {"tags": ["v*"]}},
+            {"schedule": None},
+            {"push": {"branches": ["main"]}},
+            {"pull_request": None},
+        ):
             self.assertEqual(problems("build-tos-linux-x.yml", on), [], on)
 
     def test_a_shared_build_runs_on_every_push_to_main(self) -> None:
         name = "build-tos-linux-arm64-shared.yml"
-        self.assertEqual(problems(name, {"push": {"branches": ["main"]}, "workflow_dispatch": None}), [])
+        self.assertEqual(
+            problems(name, {"push": {"branches": ["main"]}, "workflow_dispatch": None}), []
+        )
         for key in ("paths", "paths-ignore"):
             found = problems(name, {"push": {"branches": ["main"], key: ["doc/**"]}})
             self.assertEqual(found, [f"{name}: its push trigger is filtered by {key}"], key)
         found = problems(name, {"push": {"tags": ["v*"]}, "workflow_dispatch": None})
         self.assertEqual(found, [f"{name}: does not run on every push to main"])
+
 
 if __name__ == "__main__":
     sys.exit(0 if unittest.main(exit=False).result.wasSuccessful() else 1)
