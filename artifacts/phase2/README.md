@@ -1,8 +1,8 @@
 # Phase-2 ceremony — open participation
 
-**Status: five contributions are signed and verified, two of them registered
-as outside the operator; registration remains open until the announced close.
-Parameters are not finalised and must not be deployed.**
+**Status: contributions are closed. The announced beacon was applied on 2026-10-10; the resulting six-step chain passed local audit and real private-transfer acceptance. Production acceptance remains pending, including review of the missing deadline-time close publication and outside final verification. See [FINALISATION.md](FINALISATION.md).**
+
+The participation narrative below records the ceremony before finalisation. Its descriptions of registration being open are historical; no further contributions may be appended to this chain.
 
 `verify-attestations.py` refused this ceremony at its final gate for as long
 as every contribution came from the operator's own side. On 2026-09-23 that
@@ -65,7 +65,7 @@ metadata-only history rewrite and unchanged signed artifact payloads.
 
 ## If you are going to contribute
 
-**Registration is open and additional independent contributors are welcome.**
+**Registration for this ceremony is closed. The guide below is retained for reference.**
 
 **[`PARTICIPANT-GUIDE.md`](PARTICIPANT-GUIDE.md)** — every command, from an
 empty VPS to a published attestation. It assumes you have never seen this
@@ -154,7 +154,7 @@ acceptance conditions; neither needs to be arranged before the first contributio
 | Open and accept the first signed contribution | completed: tosman, not independent |
 | Register and accept additional participants | completed through contribution 5; registration remains open |
 | Accept a contribution from a party registered as independent of the operator | **completed: contribution 4 (BmswapProtocol) and contribution 5 (onemailweb3-design) are registered with independent declarations; the current final independence gate passes** |
-| Close, apply the announced beacon, verify and accept | pending; only after the announced close and all final gates pass |
+| Close, apply the announced beacon, verify and accept | Beacon applied and local checks passed on 2026-10-10; procedural and outside acceptance pending; see FINALISATION.md |
 
 The confirmed heights remain **970141** (close) and **970285** (beacon).
 The initial register is not a closed list. Never rewrite accepted identities,

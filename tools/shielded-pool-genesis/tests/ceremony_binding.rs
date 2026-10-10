@@ -6,19 +6,14 @@
  */
 //! A ceremony key is the key a real, audited, finished ceremony produced.
 //!
-//! Nothing here is a hand-built fixture. The ceremony is the one this
-//! repository commits under `artifacts/phase2/ceremony` -- five real
-//! participant contributions, never closed -- audited by the ceremony crate's
-//! own audit against a starting key rebuilt from the committed phase-1 slice.
-//! For the finished case a copy of it is closed with a stand-in beacon through
-//! the same function `phase2-finalise` calls, and audited again.
+//! The finished case audits the committed ceremony against a starting key
+//! rebuilt from the committed phase-1 slice. Its production acceptance is a
+//! separate operational decision; these tests establish generator binding.
 //!
-//! # This key must never hold money
-//!
-//! The stand-in beacon is written in this file, and the ceremony it closes was
-//! withdrawn. What the test establishes is that the generator accepts exactly
-//! the key an audited finished ceremony produced and nothing else, not that
-//! this key is safe.
+//! The unfinished case creates a fresh one-participant ceremony in scratch
+//! storage. It has no beacon and must never be deployed. Keeping this fixture
+//! separate means closing the published ceremony does not remove the test
+//! that production rejects unfinished parameters.
 //!
 //! Slow: the starting key is rebuilt once per run (about a minute on sixteen
 //! threads in release) and shared by every test below.
@@ -28,7 +23,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use shielded_pool_ceremony::audit::close;
+use shielded_pool_ceremony::contribution::{contribute, Transcript};
+use shielded_pool_ceremony::entropy::OperatingSystem;
+use shielded_pool_ceremony::record::{digest_of, digest_of_transcript, Entry, Step};
 use shielded_pool_genesis::manifest::{parse, render, require_production};
 use shielded_pool_genesis::{
     audit, development_parameters, plan, Audited, CeremonyDirectory, KeyClass, Plan, Request,
@@ -41,7 +38,6 @@ fn root() -> PathBuf {
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const BLOB: &str = "89abcdef0123456789abcdef0123456789abcdef";
-const BEACON: &[u8] = b"a stand-in beacon output for the genesis binding test, never a real one";
 
 struct Fixture {
     start: StartingKey,
@@ -75,15 +71,32 @@ fn fixture() -> &'static Fixture {
     FIXTURE.get_or_init(|| {
         let committed = root().join("artifacts/phase2/ceremony");
         let start = StartingKey::rebuild().expect("the starting key rebuilds");
-        let unfinished = audit(&CeremonyDirectory::at(&committed), &start)
-            .expect("the committed ceremony audits");
-        assert!(!unfinished.is_finished(), "the committed ceremony was expected to be open");
-
         let finished_directory = copy_ceremony(&committed, "finished");
-        let directory = CeremonyDirectory::at(&finished_directory);
-        close(&directory, &start, BEACON).expect("the copy closes");
-        let finished = audit(&directory, &start).expect("the closed copy audits");
-        assert!(finished.is_finished());
+        let finished = audit(&CeremonyDirectory::at(&finished_directory), &start)
+            .expect("the committed finished ceremony audits");
+        assert!(finished.is_finished(), "the committed ceremony must include its beacon");
+
+        let unfinished_directory = scratch("unfinished");
+        let directory = CeremonyDirectory::at(&unfinished_directory);
+        let mut key = start.key().clone();
+        let transcript = Transcript::begin(&key).expect("a starting transcript");
+        let contribution = contribute(&mut key, &transcript, &mut OperatingSystem)
+            .expect("the scratch contribution succeeds");
+        let transcript_after = digest_of_transcript(&transcript.extend(&contribution));
+        let mut record = finished.record().clone();
+        record.entries = vec![Entry {
+            index: 1,
+            step: Step::Participant,
+            sha256: digest_of(&contribution.to_bytes()),
+            transcript_after: transcript_after.clone(),
+        }];
+        record.key_sha256 = directory.write_key(&key).expect("the scratch key writes");
+        record.transcript = transcript_after;
+        directory.write_contributions(&[contribution]).expect("the scratch contribution writes");
+        directory.write_record(&record).expect("the scratch record writes");
+        let unfinished = audit(&directory, &start).expect("the scratch unfinished ceremony audits");
+        assert!(!unfinished.is_finished(), "the scratch ceremony must remain open");
+
         Fixture { start, finished, finished_directory, unfinished }
     })
 }
@@ -169,7 +182,7 @@ fn a_development_genesis_takes_no_ceremony() {
     refused(request, "takes no verifying key or ceremony");
 }
 
-/// Real output too: the committed ceremony audits, and is open.
+/// A real audited scratch contribution still has no finalising beacon.
 #[test]
 fn an_unfinished_ceremony_is_refused() {
     let unfinished = &fixture().unfinished;

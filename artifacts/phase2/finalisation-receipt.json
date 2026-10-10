@@ -1,0 +1,186 @@
+{
+  "checked_at": "2026-10-10T01:39:44.278893+00:00",
+  "source_revision": "c94ff1ceb819c6cafeba06dbb0b9de0ce652ad65",
+  "announcement_build_revision": "49ef58c0ab98f62b76ae3c61a510980dae131235",
+  "privacy_mapped_build_revision": "f7f141589a788c8aa06bee32d7799c25cbfab356",
+  "contribution_close_height": 970141,
+  "beacon_height": 970285,
+  "beacon_encoding": "64 lowercase ASCII hex characters, no newline",
+  "beacon_sha256": "ff995f8c4b2cc55086694f72207dc6e2e20838434163e30eb251404f491b4bea",
+  "pre_beacon_transcript": "3a9cb40dfabfd61eaa6ea350e06e9ef63061e1482a1f0e9d794225c6e3e4da27",
+  "pre_beacon_key_sha256": "b0bc8de88dd92e0ae9efeec2c2ca72cb734004324df903e20507ab736a67189b",
+  "ordered_participant_contribution_digests": [
+    "65cbe4db248743a1cca1b49414f4d98a0b882529a7da3b4593df2951b8312198",
+    "035ea5be0dd986d6cd4b3688e9e88edac22a1bd07937953d553a0ecfc0f7966c",
+    "5619a6e1aab154546061a8c65b35f98a973fc69f365b8665d702e0e82e96e468",
+    "246b9d7406a6b349ba51a092aa69c111a429e8eab528142008b1d7f096f6413e",
+    "ed4b9b45c179b3a5c7e1102dc47505ee81f726bcb077699564e18f022b26c5a4"
+  ],
+  "publication": {
+    "url": "https://github.com/tosnetwork/tos/releases/tag/shielded-pool-phase2-contribution-5",
+    "published_at": "2026-09-23T07:07:35Z",
+    "assets": [
+      {
+        "name": "tos-phase2-contribution-5-onemailweb3-design.tar.gz",
+        "digest": "sha256:ef1c096b4395632d0f21f63bcaa6cc831df70d99e24924c380312424c1e4944d",
+        "url": "https://github.com/tosnetwork/tos/releases/download/shielded-pool-phase2-contribution-5/tos-phase2-contribution-5-onemailweb3-design.tar.gz"
+      },
+      {
+        "name": "tos-phase2-contribution-5-onemailweb3-design.tar.gz.sha256",
+        "digest": "sha256:767e8e4483ef7c421e6e653c947053242b759a72f49edb7569dc8c5143b78f3a",
+        "url": "https://github.com/tosnetwork/tos/releases/download/shielded-pool-phase2-contribution-5/tos-phase2-contribution-5-onemailweb3-design.tar.gz.sha256"
+      },
+      {
+        "name": "tos-phase2-contribution-5-onemailweb3-design.tar.gz.sha256.sig",
+        "digest": "sha256:937c0b6fe73db817a25f55f119f1462d072892a83643bb4932979e0b3f89d667",
+        "url": "https://github.com/tosnetwork/tos/releases/download/shielded-pool-phase2-contribution-5/tos-phase2-contribution-5-onemailweb3-design.tar.gz.sha256.sig"
+      }
+    ]
+  },
+  "public_bundle_match": "ceremony.json, key.bin and contributions.bin matched the public release bundle byte for byte",
+  "timing_limit": "No dedicated deadline-time close receipt was located. Existing five-contribution chain was public before the beacon. Finalisation occurs retrospectively on 2026-10-10; procedural acceptance remains pending.",
+  "witnesses": {
+    "https://blockstream.info/api": {
+      "height": 970705,
+      "beacon_hash": "00000000000000000001a32ed5a7127e9a1d4f27430cf3ba1bfb695f6487b0c6",
+      "block": {
+        "id": "00000000000000000001a32ed5a7127e9a1d4f27430cf3ba1bfb695f6487b0c6",
+        "height": 970285,
+        "version": 547930112,
+        "timestamp": 1791346161,
+        "tx_count": 3421,
+        "size": 1514609,
+        "weight": 3993431,
+        "merkle_root": "4b86b630b63a1a3fce9733d525f58ec5194b3cb24fcc95486d5b51052cc53a1e",
+        "previousblockhash": "0000000000000000000042ea9a5ff497653ecff855cabbb6b9570fdf13279c2a",
+        "mediantime": 1791342783,
+        "nonce": 2582265889,
+        "bits": 386014960,
+        "difficulty": 132716002350731.27
+      }
+    },
+    "https://mempool.space/api": {
+      "height": 970705,
+      "beacon_hash": "00000000000000000001a32ed5a7127e9a1d4f27430cf3ba1bfb695f6487b0c6",
+      "block": {
+        "id": "00000000000000000001a32ed5a7127e9a1d4f27430cf3ba1bfb695f6487b0c6",
+        "height": 970285,
+        "version": 547930112,
+        "timestamp": 1791346161,
+        "tx_count": 3421,
+        "size": 1514609,
+        "weight": 3993431,
+        "merkle_root": "4b86b630b63a1a3fce9733d525f58ec5194b3cb24fcc95486d5b51052cc53a1e",
+        "previousblockhash": "0000000000000000000042ea9a5ff497653ecff855cabbb6b9570fdf13279c2a",
+        "mediantime": 1791342783,
+        "nonce": 2582265889,
+        "bits": 386014960,
+        "difficulty": 132716002350731.27
+      }
+    },
+    "checked_at": "2026-10-10T01:39:44.278893+00:00",
+    "beacon_encoding": "64 lowercase ASCII hex characters, no newline"
+  },
+  "completed_at": "2026-10-10T01:43:52.606447+00:00",
+  "checks": {
+    "verify": {
+      "exit_code": 0,
+      "expected": 0
+    },
+    "double-finalise-refused": {
+      "exit_code": 1,
+      "expected": 1
+    },
+    "attestations": {
+      "exit_code": 0,
+      "expected": 0
+    },
+    "ceremony-gate": {
+      "exit_code": 0,
+      "expected": 0
+    },
+    "wrong-key-negative": {
+      "exit_code": 0,
+      "note": "Existing ceremony_acceptance test passed; wrong-key proof rejected with exit 262"
+    }
+  },
+  "final_record": {
+    "protocol": "tos-shielded-pool-v1-phase2",
+    "phase1_transcript": "zcash",
+    "phase1_slice_sha256": "1bfd7acdb3ecbfaaa695ab159a7a643a2eb58203a4d93361040c6bd4c2aa3d6e",
+    "constraints": 18107,
+    "instance_variables": 19,
+    "starting_key_sha256": "018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04",
+    "entries": [
+      {
+        "index": 1,
+        "kind": "participant",
+        "sha256": "65cbe4db248743a1cca1b49414f4d98a0b882529a7da3b4593df2951b8312198",
+        "transcript_after": "551ba6e7b91b32169f1f44c42aea1fbd7216da783e4543628ccb3cb3fcb9dbeb"
+      },
+      {
+        "index": 2,
+        "kind": "participant",
+        "sha256": "035ea5be0dd986d6cd4b3688e9e88edac22a1bd07937953d553a0ecfc0f7966c",
+        "transcript_after": "f4e542800d0484cabdf226bdaa7bbbe1239aea894e90ed59a9ed65b8ec06d54c"
+      },
+      {
+        "index": 3,
+        "kind": "participant",
+        "sha256": "5619a6e1aab154546061a8c65b35f98a973fc69f365b8665d702e0e82e96e468",
+        "transcript_after": "d05541b101c7c94a85bdcb3491a66d3448ec7e955b2e080825e75cdfbdfdf21f"
+      },
+      {
+        "index": 4,
+        "kind": "participant",
+        "sha256": "246b9d7406a6b349ba51a092aa69c111a429e8eab528142008b1d7f096f6413e",
+        "transcript_after": "46166e20210e3a2fb753158d480cb556cf7a3fb95376ca65b92bf661a92f3b5a"
+      },
+      {
+        "index": 5,
+        "kind": "participant",
+        "sha256": "ed4b9b45c179b3a5c7e1102dc47505ee81f726bcb077699564e18f022b26c5a4",
+        "transcript_after": "3a9cb40dfabfd61eaa6ea350e06e9ef63061e1482a1f0e9d794225c6e3e4da27"
+      },
+      {
+        "index": 6,
+        "kind": "beacon",
+        "beacon_sha256": "ff995f8c4b2cc55086694f72207dc6e2e20838434163e30eb251404f491b4bea",
+        "sha256": "a88c4633f552615b8461127886139a55509b27412c68b18bf0a9e266b1f4122e",
+        "transcript_after": "e1d308592ebc6d8720682a0255c857a648ab8c39ded2b013314ae403f2f8e5f2"
+      }
+    ],
+    "key_sha256": "e4b45b4285d3f138639811b05c3832e68f6805c63db7c4616b08fca754b3a1f5",
+    "transcript": "e1d308592ebc6d8720682a0255c857a648ab8c39ded2b013314ae403f2f8e5f2"
+  },
+  "vk_sha256": "3675550c26b589d295a079adfbb48ecf38b094262a2eec2e40edc41fc8867b31",
+  "vk_bytes": 1248,
+  "finalise_exit_code": 0,
+  "evidence_path": "artifacts/phase2/evidence/finalisation-20261010",
+  "original_participant_records_preserved": true,
+  "file_hashes": {
+    "evidence/finalisation-20261010/attestations.log": "fb328a46d7018dbedd05ef5acd027d078d9e6ca14dc8209d11a4ce2d258ce18b",
+    "evidence/finalisation-20261010/ceremony-gate.log": "980f564c60b20c722979ef059f3033682084820007493534b76bed9dbd3ca5a7",
+    "evidence/finalisation-20261010/double-finalise-refused.log": "c10097efc239d2208fe252b07cbaa547dbea40c4f7e6a6083aded4936de1bcd7",
+    "evidence/finalisation-20261010/finalise.log": "29ad531dd1c0c06f6d423e240939fd63d7db944af1193463ed031c6e410c41d4",
+    "evidence/finalisation-20261010/gate-negative.log": "3c1da258b7d614f03a300312b63db228dbe304e6b67bfec6897c4639b5a1a1f6",
+    "evidence/finalisation-20261010/verify.log": "d23f0a2d21a3a2c8f596b4a5299ceac1ec2cec209561b8ecf864e0cffd6bc1c0",
+    "ceremony/contributions.bin": "dbeab171b9b61cbd921486278c3a3fad4bd1bc6249c5f30f9686d1c0a61be4bf",
+    "ceremony/key.bin": "e4b45b4285d3f138639811b05c3832e68f6805c63db7c4616b08fca754b3a1f5",
+    "ceremony/ceremony.json": "3fb8ccd7ab844eab576abf119732c1d4c8a98c58eb6e4481443b1191910662a0",
+    "ceremony/vk.bin": "3675550c26b589d295a079adfbb48ecf38b094262a2eec2e40edc41fc8867b31",
+    "ceremony/beacon.bin": "ff995f8c4b2cc55086694f72207dc6e2e20838434163e30eb251404f491b4bea",
+    "evidence/finalisation-20261010/genesis-binding.txt": "b3eb91420a894aaff99c588d26d887f650a6fd446e03e7009568de0eaafa6b71",
+    "evidence/finalisation-20261010/public-bundle-match.md": "9887cb8ce2544dc8ca14746c9509277cea836b5fda84859e79e02af0e3017598"
+  },
+  "public_bundle_comparison": {
+    "procedure": "evidence/finalisation-20261010/public-bundle-match.md",
+    "source_revision": "c94ff1ceb819c6cafeba06dbb0b9de0ce652ad65",
+    "exit_code": 0,
+    "compared_files": [
+      "ceremony.json",
+      "key.bin",
+      "contributions.bin"
+    ]
+  }
+}
