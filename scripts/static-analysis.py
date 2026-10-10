@@ -118,7 +118,7 @@ EXPECTED_CHECKERS = {
 BLOCKING = CLANG_TIDY_BLOCKING | CLANGSA_BLOCKING
 
 SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
-HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"})
+HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".inc", ".tcc", ".def"})
 EXCLUDED_PREFIXES = ("third-party/",)
 CONTROL_DIR = "test/static-analysis/gate"
 # Controls are not built and are analysed by their own invocation, never as a change.
@@ -165,6 +165,7 @@ class Change:
     base_paths: set[str] = field(default_factory=set)  # modified/deleted/renamed-from
     all_paths: set[str] = field(default_factory=set)  # every changed path, any language
     changed_lines: dict[str, set[int]] = field(default_factory=dict)  # HEAD path -> lines
+    untracked: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -517,15 +518,27 @@ def collect_change(root: Path, merge_base: str) -> Change:
         if path:
             change.all_paths.add(path)
             change.head_paths.add(path)
-            if is_cpp(path):
-                change.changed_lines[path] = all_lines(root / path)
+            change.untracked.add(path)
+    add_changed_lines(root, merge_base, change, {p for p in change.head_paths if is_cpp(p)})
+    return change
+
+
+def add_changed_lines(root: Path, merge_base: str, change: Change, paths: set[str]) -> None:
+    """Record the changed lines of `paths` (HEAD side) that are not recorded yet.
+
+    The gate calls this for C/C++ files up front and again for files of any
+    suffix that a compilation turns out to read.
+    """
     # Paths come from the NUL-delimited name-status output, not from display
     # headers that Git may quote or prefix differently. Diff one literal path
     # at a time, without textconv or binary filtering, so user preferences and
     # attributes cannot hide a changed suppression. Treat a rename destination
     # as an addition: its suppressions must be audited at the new path too.
-    for path in sorted(change.head_paths):
-        if not is_cpp(path) or path in change.changed_lines:
+    for path in sorted(paths):
+        if path in change.changed_lines:
+            continue
+        if path in change.untracked:
+            change.changed_lines[path] = all_lines(root / path)
             continue
         changed = change.changed_lines.setdefault(path, set())
         diff = git(
@@ -555,7 +568,6 @@ def collect_change(root: Path, merge_base: str) -> Change:
                 changed.update({max(start, 1), start + 1})
             else:
                 changed.update(range(start, start + count))
-    return change
 
 
 def all_lines(path: Path) -> set[int]:
@@ -1019,11 +1031,15 @@ def find_suppressions(
     return found, problems, file_problems
 
 
-def audit_suppressions(root: Path, change: Change) -> list[Suppression]:
+def audit_suppressions(
+    root: Path, change: Change, read: set[str] = frozenset()
+) -> list[Suppression]:
+    """Audit suppressions in changed C/C++ files and in any other changed file a
+    compilation reads (`read`, checkout-relative), whatever its suffix."""
     accepted: list[Suppression] = []
     problems: list[str] = []
     for path, changed in sorted(change.changed_lines.items()):
-        if not is_cpp(path) or is_excluded(path) or not (root / path).is_file():
+        if not (is_cpp(path) or path in read) or is_excluded(path) or not (root / path).is_file():
             continue
         lines = (root / path).read_text(errors="replace").splitlines()
         found, issues, file_issues = find_suppressions(path, lines)
@@ -1208,13 +1224,24 @@ def side_generated(deps: dict[Entry, set[str]], root: Path, build: Path) -> set[
     return set(in_build) | {os.path.normpath(str(root / p)) for p in ignored}
 
 
+def read_by_compilations(side: Side, changed: set[str]) -> set[str]:
+    """The changed checkout-relative paths that some compilation of the side reads.
+
+    Selection by membership, not by suffix: a fragment such as a `.tbl` file
+    included by a source is C/C++ input whatever it is called.
+    """
+    read = set().union(*side.deps.values()) if side.deps else set()
+    return {path for path in changed if os.path.normpath(str(side.root / path)) in read}
+
+
 def select_side(
     side: Side, changed: set[str], uncovered: set[str], generated: set[str] = frozenset()
 ) -> tuple[set[Entry], set[str]]:
     """The side's compilations a change reaches, refusing what it cannot reach.
 
-    Changed generated files (absolute paths) select every compilation that reads
-    them, which for a generated source includes its own compilation.
+    `generated` (absolute paths) are changed generated files and changed files of
+    any suffix that compilations read; each selects every compilation that reads
+    it, which for a source includes its own compilation.
     """
     sources = {p for p in changed if Path(p).suffix in SOURCE_SUFFIXES}
     headers = {p for p in changed if Path(p).suffix in HEADER_SUFFIXES}
@@ -1293,7 +1320,6 @@ def gate(root: Path, args: argparse.Namespace) -> int:
     try:
         controls = run_controls(root, tools, work, args.jobs, args.timeout)
         print(f"static-analysis: positive controls reported all {controls} marked findings")
-        suppressions = audit_suppressions(root, change)
         cpp_head = {p for p in change.head_paths if is_cpp(p) and not is_excluded(p)}
         cpp_base = {p for p in change.base_paths if is_cpp(p) and not is_excluded(p)}
 
@@ -1307,12 +1333,26 @@ def gate(root: Path, args: argparse.Namespace) -> int:
         generated_head, generated_base = generated_changes(head, base)
         for path in sorted(generated_head | generated_base):
             print(f"static-analysis: generated file differs between the sides: {path}")
+        # Changed files of any other suffix that a compilation reads are C/C++ input.
+        other_head = read_by_compilations(
+            head, {p for p in change.head_paths if not is_excluded(p)} - cpp_head
+        )
+        other_base = read_by_compilations(
+            base, {p for p in change.base_paths if not is_excluded(p)} - cpp_base
+        )
+        for path in sorted(other_head | other_base):
+            print(f"static-analysis: changed file read by compilations: {path}")
+        add_changed_lines(root, merge_base, change, other_head)
+        suppressions = audit_suppressions(root, change, other_head)
 
         head_run, base_run, orphans = choose(
             head,
             base,
             (cpp_head, cpp_base),
-            (generated_head, generated_base),
+            (
+                generated_head | {os.path.normpath(str(root / p)) for p in other_head},
+                generated_base | {os.path.normpath(str(base_root / p)) for p in other_base},
+            ),
             load_uncovered(root),
             args.full,
         )

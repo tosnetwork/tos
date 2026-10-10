@@ -507,6 +507,25 @@ class Suppressions(Workdir):
         [accepted] = sa.audit_suppressions(self.tmp, sa.Change(changed_lines={"a.cpp": {2}}))
         self.assertEqual(accepted.line, 1)
 
+    def test_a_read_fragment_of_any_suffix_is_audited(self) -> None:
+        fragment = self.tmp / "opcodes.tbl"
+        change = sa.Change(changed_lines={"opcodes.tbl": {1}})
+        fragment.write_text("X(drop, f());  // NOLINT(bugprone-unused-return-value)\n")
+        # Not read by any compilation: not C/C++ input, not audited.
+        self.assertEqual(sa.audit_suppressions(self.tmp, change), [])
+        with self.assertRaisesRegex(sa.Refusal, "without a reason"):
+            sa.audit_suppressions(self.tmp, change, {"opcodes.tbl"})
+        fragment.write_text(
+            "X(drop, f());  // NOLINT(bugprone-unused-return-value): table rows ignore it\n"
+        )
+        [accepted] = sa.audit_suppressions(self.tmp, change, {"opcodes.tbl"})
+        self.assertEqual(accepted.path, "opcodes.tbl")
+
+    def test_a_reasonless_suppression_in_an_inc_fragment_is_refused(self) -> None:
+        (self.tmp / "bindings.inc").write_text("f();  // NOLINT(bugprone-unused-return-value)\n")
+        with self.assertRaisesRegex(sa.Refusal, "without a reason"):
+            sa.audit_suppressions(self.tmp, sa.Change(changed_lines={"bindings.inc": {1}}))
+
     def test_every_nolint_on_a_line_is_audited(self) -> None:
         for suffix in ("NOLINT", "NOLINT(*)", "NOLINT(bugprone-use-after-move)"):
             with self.subTest(suffix=suffix):
@@ -590,6 +609,19 @@ class Repository(Workdir):
         self.git("commit", "-q", "-am", "next")
         with self.assertRaisesRegex(sa.Refusal, "not at the merge base"):
             sa.check_clean_at(self.repo, self.base)
+
+    def test_changed_lines_of_a_read_fragment_are_collected_on_demand(self) -> None:
+        (self.repo / "rows.tbl").write_text("a\nb\nc\n")
+        self.git("add", "rows.tbl")
+        self.git("commit", "-q", "-m", "fragment")
+        base = self.git("rev-parse", "HEAD").strip()
+        (self.repo / "rows.tbl").write_text("a\nB\nc\n")
+        (self.repo / "new.tbl").write_text("x\ny\n")
+        change = sa.collect_change(self.repo, base)
+        self.assertNotIn("rows.tbl", change.changed_lines)  # not C/C++ by suffix
+        sa.add_changed_lines(self.repo, base, change, {"rows.tbl", "new.tbl"})
+        self.assertEqual(change.changed_lines["rows.tbl"], {2})
+        self.assertTrue({1, 2} <= change.changed_lines["new.tbl"])
 
     def test_change_set_covers_every_kind(self) -> None:
         (self.repo / "a.cpp").write_text("one\nTWO\nthree\nfour\n")
@@ -830,6 +862,33 @@ class Database(Workdir):
         self.assertEqual(chosen, {a})
         with self.assertRaisesRegex(sa.Refusal, "BASE: changed sources missing"):
             sa.select_side(side, {"gone.cpp"}, set())
+
+    def fragment_side(self, fragment: str) -> tuple[object, object, object]:
+        """One compilation reading a fragment, one reading nothing else."""
+        reader = sa.Entry("/b", str(self.tmp / "a.cpp"), ("c++", "-o", "a.o"))
+        bystander = sa.Entry("/b", str(self.tmp / "b.cpp"), ("c++", "-o", "b.o"))
+        deps = {
+            reader: {str(self.tmp / "a.cpp"), str(self.tmp / fragment)},
+            bystander: {str(self.tmp / "b.cpp")},
+        }
+        return self.side("HEAD", [reader, bystander], deps), reader, bystander
+
+    def test_a_changed_inc_fragment_selects_its_readers(self) -> None:
+        side, reader, _ = self.fragment_side("metrics/bindings.inc")
+        chosen, orphans = sa.select_side(side, {"metrics/bindings.inc"}, set())
+        self.assertEqual((chosen, orphans), ({reader}, set()))
+
+    def test_a_read_fragment_of_any_suffix_selects_its_readers(self) -> None:
+        side, reader, _ = self.fragment_side("tables/opcodes.tbl")
+        read = sa.read_by_compilations(side, {"tables/opcodes.tbl", "docs/notes.txt"})
+        self.assertEqual(read, {"tables/opcodes.tbl"})
+        chosen, _ = sa.select_side(side, set(), set(), {str(self.tmp / p) for p in read})
+        self.assertEqual(chosen, {reader})
+
+    def test_an_unread_file_of_unknown_suffix_selects_nothing(self) -> None:
+        side, _, _ = self.fragment_side("tables/opcodes.tbl")
+        self.assertEqual(sa.read_by_compilations(side, {"docs/notes.txt"}), set())
+        self.assertEqual(sa.select_side(side, set(), set(), set()), (set(), set()))
 
     def test_a_base_header_no_compilation_includes_refuses_unless_listed(self) -> None:
         a = sa.Entry("/b", str(self.tmp / "a.cpp"), ("c++", "-o", "a.o"))
