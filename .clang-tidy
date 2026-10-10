@@ -1,0 +1,16 @@
+# The clang-tidy part of the static-analysis rule set, for clangd while editing.
+# The authority is the tier tables in scripts/static-analysis.py; that script
+# refuses to run if the checks or options here disagree with them.
+Checks: >
+  -*,
+  bugprone-dangling-handle,
+  bugprone-infinite-loop,
+  bugprone-move-forwarding-reference,
+  bugprone-undefined-memory-manipulation,
+  bugprone-unhandled-self-assignment,
+  bugprone-unused-return-value,
+  bugprone-use-after-move
+WarningsAsErrors: ''
+CheckOptions:
+  bugprone-unused-return-value.CheckedReturnTypes: '^::td::Status$;^::td::Result$'
+  bugprone-unused-return-value.AllowCastToVoid: true
