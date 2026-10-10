@@ -1812,6 +1812,11 @@ endif()
 add_test(NAME static-use-after-move-self-test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_check_use_after_move.py)
 set_tests_properties(static-use-after-move-self-test PROPERTIES LABELS "source-guard")
+# The pre-PR static analysis gate's fail-closed paths and comparison, against
+# stand-in tools; needs neither CodeChecker nor a build.
+add_test(NAME static-analysis-gate-self-test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_static_analysis.py)
+set_tests_properties(static-analysis-gate-self-test PROPERTIES LABELS "source-guard")
 # Release and deployment supply chain: pinned actions, per-job permissions,
 # authenticated build inputs, digest-pinned images, release artifacts bound to
 # the tag commit, and authenticated snapshot import.

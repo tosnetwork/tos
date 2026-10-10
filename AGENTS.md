@@ -79,6 +79,55 @@ against source, not against memory.
 - Do not reference external project names or issue trackers in comments or
   commit messages. Comments explain intent, not history.
 
+## Static analysis gates new C++, not old debt
+
+The tree carries hundreds of inherited analyzer findings. Fixing them is
+tracked work; it is not a reason to let a change add more. Before opening or
+updating a PR that touches C/C++, run the gate. It needs two builds: one of the
+checkout under review, and one of a separate, clean checkout of the merge base,
+for example a worktree of `main` that you keep built:
+
+```
+uv tool install codechecker==6.29.1    # once; LLVM 21 comes from install-llvm-toolchain.sh
+git worktree add --detach ../tos-main origin/main   # once; then configure and build it
+scripts/static-analysis.py --build-dir build --base-build-dir ../tos-main/build
+```
+
+The gate has ninja build the generated files each side reads, then compares
+the two sides' generated files, so a change to a schema or a contract is
+analysed through the code generated from it.
+
+Exit 0 means no new blocking finding, 1 lists the new blocking findings, and 2
+means the gate could not establish a result. A new finding in a blocking check
+fails the change.
+
+- The tier tables in the script are the rule set. `.clang-tidy` at the
+  repository root is what clangd reads while you edit, and the script refuses
+  to run if its checks or options disagree with the tables. Change the rule set
+  in its own reviewed commit, with the measurement that justifies the change.
+- A check blocks only when its findings on this tree are mostly real.
+  Advisory checks are printed and do not fail. Checks whose findings here were
+  all false are not run at all. Promote a check with evidence, not by default.
+- "New" means new against a fresh analysis of the merge base, run in the same
+  invocation with the same tools and options. There is no stored baseline to
+  go stale, and no allowance to spend: a defect fixed on main and brought back
+  is new again.
+- A false positive is suppressed in the source, naming the exact check and the
+  reason. A suppression without a reason, or one that silences a whole file or
+  every check, is refused. The reviewer sees every suppression the change adds.
+- `td::Status` and `td::Result` returned from a call are handled. An intentional
+  discard, including `(void)` or `static_cast<void>`, needs an exact
+  `NOLINT(bugprone-unused-return-value): reason` on that line, or a reasoned
+  `NOLINTNEXTLINE(bugprone-unused-return-value)` immediately above it. A cast
+  or an ordinary comment alone does not suppress this check. A dropped status
+  is how a failed database write or a failed validation goes unnoticed.
+- The script must prove it ran: it reports how many compilations it analysed
+  and fails if any failed to parse, if the enabled checks differ from the rule
+  set, if a positive control in `test/static-analysis/gate/` stops reporting
+  its marked line, or if a changed file is missing from the compilation
+  database. "No new findings" from an analysis that did not run is not a
+  result. A new blocking check comes with a control the check must flag.
+
 ## Keep evidence reviewable without filling Git with run output
 
 Commit the smallest durable set that lets another person check a claim and
