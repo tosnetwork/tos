@@ -1,13 +1,13 @@
 //! Read-only, bounded M observation projection for the query process.
-//! Only the exact archived process envelope is implemented. Unsupported
-//! source classes are not silently recast as a complete query component.
+//! Archived process, host and native consensus envelopes are projected.
+//! Unsupported source classes are not silently recast as a complete query component.
 use crate::durable::{DurableEvidence, EvidenceRow};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, os::unix::fs::MetadataExt, path::Path};
 use tos_health_core::{
     consensus_v2::{Action, Consensus, IncompleteReason, Lifecycle},
-    edge_snapshot::{ProcessEnvelope, ProcessPayload},
+    edge_snapshot::{validate_host_source, CgroupEnvelope, ProcessEnvelope, ProcessPayload},
     evidence::Evidence,
     native::{canonical_hash, parse_native, BlockAnchor, ChainAnchors, NativeRecord, PqSnapshot},
     query::utc_ms,
@@ -91,13 +91,57 @@ pub fn read_projection_head(path: &Path, network: &str) -> Result<ProjectionHead
     })
 }
 
-/// SQL eligibility shared by every M scan: archived edge process rows and
+/// SQL eligibility shared by every M scan: archived edge process/host rows and
 /// archived native consensus rows. Collector fact frames also use the
 /// `native_core` source id but carry no `component`, so they are never read.
-const ELIGIBLE_SOURCE: &str = "(o.source='process' OR (o.source='native_core' \
-     AND json_extract(o.body,'$.record.payload.component')='consensus'))";
+const ELIGIBLE_SOURCE: &str =
+    "(o.source='process' OR o.source='host_cgroup' OR (o.source='native_core' \
+     AND json_extract(o.body,'$.record.payload.component')='consensus' \
+     AND NOT m_valid_native_absence(o.store_seq,o.content_hash,o.body)))";
 
-/// Project one archived M row into the query cache. Process and native
+/// Exclude only an intact, validated incomplete native source with no consensus view.
+/// A malformed parent must remain eligible so the paged reader refuses it.
+fn register_projection_functions(conn: &Connection) -> Result<(), String> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "m_valid_native_absence",
+        3,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let (Ok(sequence), Ok(id), Ok(body)) =
+                (context.get::<i64>(0), context.get::<String>(1), context.get::<String>(2))
+            else {
+                return Ok(false);
+            };
+            let Ok(sequence) = u64::try_from(sequence) else { return Ok(false) };
+            if body.len() > 32_768 {
+                return Ok(false);
+            }
+            let Ok(evidence) = serde_json::from_str::<DurableEvidence>(&body) else {
+                return Ok(false);
+            };
+            if evidence.record.source_id != "native_core"
+                || evidence.record.payload["component"] != "consensus"
+            {
+                return Ok(false);
+            }
+            let source = &evidence.record.payload["source"];
+            if !matches!(
+                source["source_version"].as_str(),
+                Some("native-core-v2" | "native-core-v3")
+            ) || source["payload"].get("consensus") != Some(&serde_json::Value::Null)
+                || source["quality"]["instrumentation_complete"] != false
+            {
+                return Ok(false);
+            }
+            let row = EvidenceRow { store_seq: U64(sequence), evidence_id: id, evidence };
+            Ok(matches!(project_origin(&row), Ok(None)))
+        },
+    )
+    .map_err(failure)
+}
+
+/// Project one archived M row into the query cache. Process, host and native
 /// consensus rows are supported; any other row yields `Ok(None)`.
 pub fn project_origin(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
     if row.store_seq.0 == 0 || !tos_health_core::wire::hash(&row.evidence_id) {
@@ -112,6 +156,7 @@ pub fn project_origin(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
     let record = &row.evidence.record;
     match record.payload.get("component").and_then(serde_json::Value::as_str) {
         Some("process") if record.source_id == "process" => project_process(row),
+        Some("host") if record.source_id == "host_cgroup" => project_host(row),
         Some("consensus") if record.source_id == "native_core" => project_native(row),
         _ => Ok(None),
     }
@@ -220,22 +265,7 @@ fn consensus_dto(
 fn storage_dto(consensus: &Consensus) -> Result<PayloadDto, String> {
     let capability = |name: &str| consensus.capabilities.get(name);
     let ack = capability("storage_commit_ack").ok_or("native sample lacks storage capability")?;
-    let mut sums = [0u64; 3];
-    for action in &consensus.actions {
-        let live = match action {
-            Action::Proposal { live, .. }
-            | Action::NotarizeVote { live, .. }
-            | Action::FinalizeVote { live, .. }
-            | Action::SkipVote { live, .. } => live,
-        };
-        for (index, key) in
-            ["intent_storage", "signed_storage", "journal_unusable"].iter().enumerate()
-        {
-            if let Some(count) = live.failures.get(*key) {
-                sums[index] = sums[index].checked_add(count.0).ok_or("storage failure overflow")?;
-            }
-        }
-    }
+    let sums = consensus.storage_failure_totals()?;
     Ok(PayloadDto::StorageState {
         storage_commit_ack: StorageCapabilityDto {
             supported: ack.supported,
@@ -396,7 +426,7 @@ fn project_native(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
                 None,
                 Some(serde_json::to_value(storage_dto(consensus)?).map_err(failure)?),
             ),
-            None => return Err("native v2 sample without consensus is not projectable".into()),
+            None => return Ok(None),
         },
         NativeRecord::V3(v) => match &v.payload.consensus {
             Some(consensus) => (
@@ -419,7 +449,7 @@ fn project_native(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
                     .map_err(failure)?,
                 Some(serde_json::to_value(storage_dto(consensus)?).map_err(failure)?),
             ),
-            None => return Err("native v3 sample without consensus is not projectable".into()),
+            None => return Ok(None),
         },
     };
     let query_payload = serde_json::json!({
@@ -514,6 +544,68 @@ pub fn project_process(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
     let payload: ProcessPayload = source.payload;
     let query_payload = serde_json::json!({
         "component":"process",
+        "source_version":VERSION,
+        "origin_source_version":source.source_version,
+        "origin_store_seq":U64(row.store_seq.0),
+        "evidence_kind":"derived",
+        "parent_evidence_ids":[row.evidence_id],
+        "derivation_version":VERSION,
+        "contract_quality":source.quality,
+        "contract_coverage":source.coverage,
+        "contract_payload":payload,
+    });
+    let mut projected = record.clone();
+    projected.source_record_id = format!("m-{}", row.evidence_id);
+    projected.payload = query_payload;
+    Ok(Some(projected))
+}
+
+fn project_host(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
+    if row.store_seq.0 == 0 || !tos_health_core::wire::hash(&row.evidence_id) {
+        return Err("invalid M evidence identity".into());
+    }
+    let mut original = row.evidence.clone();
+    original.record.received_at_ms = 0;
+    let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&original).map_err(failure)?));
+    if digest != row.evidence_id {
+        return Err("M evidence hash mismatch".into());
+    }
+    let record = &row.evidence.record;
+    match record.payload.get("component").and_then(serde_json::Value::as_str) {
+        Some("host") if record.source_id == "host_cgroup" => {}
+        _ => return Ok(None),
+    }
+    let source: CgroupEnvelope = serde_json::from_value(
+        record.payload.get("source").ok_or("missing archived host source")?.clone(),
+    )
+    .map_err(failure)?;
+    validate_host_source(&source)?;
+    let observed = utc_ms(source.observed_at.as_deref().ok_or("missing source observed_at")?)
+        .map_err(str::to_owned)?;
+    let success = utc_ms(source.last_success_at.as_deref().ok_or("missing source success_at")?)
+        .map_err(str::to_owned)?;
+    if source.node_id != record.node_id
+        || source.scope_id != record.scope_id
+        || source.process_epoch != record.process_epoch
+        || source.source_epoch != row.evidence.source_epoch
+        || record.source_id != source.source_id
+        || record.source_record_id != format!("{}:{}", source.source_epoch, source.generation.0)
+        || record.observed_at_ms != observed
+        || record.quality.observed_at_ms != Some(observed)
+        || record.quality.last_success_at_ms != Some(success)
+        || record.quality.process_epoch != source.process_epoch
+        || record.quality.source_sequence != source.generation.0.to_string()
+        || record.quality.availability != Availability::Available
+        || record.quality.coverage != Coverage::Partial
+        || !record.quality.clock_valid
+        || !record.redacted
+        || source.received_at.is_some()
+    {
+        return Err("archived host source mismatch".into());
+    }
+    let payload = source.payload;
+    let query_payload = serde_json::json!({
+        "component":"host",
         "source_version":VERSION,
         "origin_source_version":source.source_version,
         "origin_store_seq":U64(row.store_seq.0),
@@ -718,6 +810,7 @@ pub fn read_process_projection_page(
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(failure)?;
+    register_projection_functions(&conn)?;
     conn.busy_timeout(std::time::Duration::from_millis(100)).map_err(failure)?;
     conn.execute_batch("PRAGMA query_only=ON; BEGIN TRANSACTION").map_err(failure)?;
     let bound: String = conn
@@ -776,7 +869,7 @@ pub fn read_process_projection_page(
              EXISTS(SELECT 1 FROM quarantined q
              WHERE q.node=o.node AND q.scope=o.scope AND q.process_epoch=o.process_epoch
              AND q.source_epoch=o.source_epoch AND q.source=o.source)
-             FROM observations o WHERE o.store_seq=?1 AND o.source IN ('process','native_core')",
+             FROM observations o WHERE o.store_seq=?1 AND o.source IN ('process','host_cgroup','native_core')",
         )
         .map_err(failure)?;
     for origin in retained {
@@ -991,6 +1084,7 @@ pub fn read_process_projection_state(path: &Path, network: &str) -> Result<Proje
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(failure)?;
+    register_projection_functions(&conn)?;
     conn.busy_timeout(std::time::Duration::from_millis(100)).map_err(failure)?;
     conn.execute_batch("PRAGMA query_only=ON; BEGIN TRANSACTION").map_err(failure)?;
     let bound: String = conn
@@ -1057,7 +1151,7 @@ pub fn read_process_projection_state(path: &Path, network: &str) -> Result<Proje
             "SELECT o.content_hash FROM observations o JOIN quarantined q
          ON q.node=o.node AND q.scope=o.scope AND q.process_epoch=o.process_epoch
          AND q.source_epoch=o.source_epoch AND q.source=o.source
-             WHERE o.store_seq<=?1 AND o.source IN ('process','native_core')
+             WHERE o.store_seq<=?1 AND o.source IN ('process','host_cgroup','native_core')
              ORDER BY o.store_seq LIMIT ?2",
         )
         .map_err(failure)?;

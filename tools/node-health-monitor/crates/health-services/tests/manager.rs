@@ -661,3 +661,127 @@ async fn partial_archive_failure_has_no_receipt_and_replay_preserves_committed_r
         connection.query_row("SELECT count(*) FROM observations", [], |r| r.get(0)).unwrap();
     assert_eq!(count, 2);
 }
+
+fn snapshot_with_host() -> Value {
+    let mut snapshot = synthetic_bound_snapshot();
+    let mut host: Value =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/host-cgroup.json"))
+            .unwrap();
+    host["process_epoch"] = snapshot["sources"][1]["process_epoch"].clone();
+    snapshot["sources"].as_array_mut().unwrap().push(host);
+    snapshot
+}
+
+#[tokio::test]
+async fn host_admission_prevents_poisoning_projection_cursor() {
+    use tos_health_core::native::canonical_hash;
+    use tos_health_services::{durable::EvidenceDb, manager_query_source::read_process_projection};
+    let fixture = Fixture::new();
+    let config = fixture.config();
+    let manager = Manager::start(&config).unwrap();
+    let good = snapshot_with_host();
+    for (pointer, value) in [
+        ("/payload/cpu_period_usec", json!("0")),
+        ("/source_version", json!("unsupported")),
+        ("/coverage/sampling_policy", json!("wrong")),
+        ("/coverage/status", json!("complete")),
+        ("/coverage/gaps", json!(["gap"])),
+        ("/coverage/missing_fields", json!(vec!["field"; 65])),
+        ("/coverage/missing_fields", json!(["x".repeat(97)])),
+        ("/quality/instrumentation_complete", json!(false)),
+        ("/generation", json!("0")),
+        ("/clock_quality", json!("unknown")),
+        ("/observed_at", Value::Null),
+        ("/last_success_at", json!("invalid")),
+        ("/availability", json!("unknown")),
+        ("/payload/kind", json!("wrong")),
+        ("/schema_version", json!(2)),
+        ("/scope_id", json!("other")),
+        ("/source_epoch", json!("")),
+        ("/process_epoch", json!("")),
+        ("/source_age_ms", json!(30001)),
+    ] {
+        let mut bad = good.clone();
+        *bad["sources"][2].pointer_mut(pointer).unwrap() = value;
+        bad["sources"][2]["content_hash"] =
+            json!(canonical_hash(&bad["sources"][2]["payload"]).unwrap());
+        assert!(
+            manager.archive_snapshot(&serde_json::to_vec(&bad).unwrap()).await.is_err(),
+            "admitted poisoned host {pointer}"
+        );
+        assert_eq!(
+            EvidenceDb::open(&config.evidence_db, 1_048_576).unwrap().watermark().unwrap(),
+            0,
+            "invalid snapshot wrote rows: {pointer}"
+        );
+    }
+    let mut bad_hash = good.clone();
+    bad_hash["sources"][2]["content_hash"] = json!("0".repeat(64));
+    assert!(manager.archive_snapshot(&serde_json::to_vec(&bad_hash).unwrap()).await.is_err());
+    manager.archive_snapshot(&serde_json::to_vec(&good).unwrap()).await.unwrap();
+    let (cursor, rows) =
+        read_process_projection(&config.evidence_db, &config.inventory.network_id).unwrap();
+    assert_eq!(cursor, 3);
+    assert_eq!(rows.len(), 3);
+    assert!(rows.iter().any(|(_, projected)| projected.payload["component"] == "host"));
+}
+
+fn snapshot_with_native_v3() -> Value {
+    let mut snapshot = synthetic_bound_snapshot();
+    let mut native: Value =
+        serde_json::from_str(include_str!("fixtures/native_core_v3_validator1.json")).unwrap();
+    native["node_id"] = json!("v1");
+    native["source_age_ms"] = json!(0);
+    snapshot["native_process_binding"]["native_epoch"] = native["process_epoch"].clone();
+    snapshot["sources"][0] = native;
+    snapshot
+}
+
+#[tokio::test]
+async fn native_absence_and_overflow_cannot_poison_projection() {
+    use tos_health_core::native::canonical_hash;
+    use tos_health_services::{durable::EvidenceDb, manager_query_source::read_process_projection};
+    let fixture = Fixture::new();
+    let mut config = fixture.config();
+    let good = snapshot_with_native_v3();
+    config.inventory.network_id =
+        good["sources"][0]["payload"]["network_id"].as_str().unwrap().into();
+    let manager = Manager::start(&config).unwrap();
+    let mut contradictory = good.clone();
+    contradictory["sources"][0]["payload"]["consensus"] = Value::Null;
+    contradictory["sources"][0]["quality"]["instrumentation_complete"] = json!(true);
+    contradictory["sources"][0]["content_hash"] =
+        json!(canonical_hash(&contradictory["sources"][0]["payload"]).unwrap());
+    let error =
+        manager.archive_snapshot(&serde_json::to_vec(&contradictory).unwrap()).await.unwrap_err();
+    assert!(error.contains("invalid native v3 snapshot contract"), "{error}");
+    let mut overflow = good.clone();
+    for action in [1, 2] {
+        overflow["sources"][0]["payload"]["consensus"]["actions"][action]["live"]["failures"]
+            ["intent_storage"] = json!(u64::MAX.to_string());
+    }
+    overflow["sources"][0]["content_hash"] =
+        json!(canonical_hash(&overflow["sources"][0]["payload"]).unwrap());
+    let error =
+        manager.archive_snapshot(&serde_json::to_vec(&overflow).unwrap()).await.unwrap_err();
+    assert!(error.contains("storage failure overflow"), "{error}");
+    assert_eq!(EvidenceDb::open(&config.evidence_db, 1_048_576).unwrap().watermark().unwrap(), 0);
+    let mut incomplete = contradictory;
+    incomplete["sources"][0]["quality"]["instrumentation_complete"] = json!(false);
+    manager.archive_snapshot(&serde_json::to_vec(&incomplete).unwrap()).await.unwrap();
+    let (cursor, rows) =
+        read_process_projection(&config.evidence_db, &config.inventory.network_id).unwrap();
+    assert_eq!(cursor, 2);
+    assert_eq!(rows.len(), 1, "absent consensus is not fabricated");
+    let mut later = good;
+    later["sources"][0]["generation"] = json!("999999");
+    later["sources"][0]["payload"]["generation"] = json!("999999");
+    later["sources"][0]["content_hash"] =
+        json!(canonical_hash(&later["sources"][0]["payload"]).unwrap());
+    manager.archive_snapshot(&serde_json::to_vec(&later).unwrap()).await.unwrap();
+    let (cursor, rows) =
+        read_process_projection(&config.evidence_db, &config.inventory.network_id).unwrap();
+    assert_eq!(cursor, 3);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|(_, projected)| projected.payload["component"] == "consensus"));
+}

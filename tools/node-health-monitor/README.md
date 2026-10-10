@@ -133,3 +133,31 @@ development inventory example. Missing or incomplete PQ instrumentation is not
 zero failures and cannot recover an incident. Collector configs may set
 `network_id` to consume the typed edge form; without it only the legacy
 `collector` source is accepted. These examples are not production approval.
+
+### Snapshot components
+
+`tos_get_node_snapshot` accepts process, host, consensus, chain and storage.
+Host is the archived `host_cgroup` sample; chain and storage are views of the
+same native consensus sample. Network, index, GPU, telemetry and deployment
+have no snapshot producer and are rejected as `INVALID_ARGUMENT`.
+`CACHE_MISS` means a supported component has no usable evidence at the requested
+time and age. Fixed packages use schema version 3 and the
+`development_native_process_host_v3` profile, include host and process separately,
+and identify each component dropped to meet the package byte budget. Package
+readers refuse versions 1 and 2 as `BROKER_PACKAGE_SUPERSEDED`; malformed current
+bodies, unsupported versions and integrity failures remain distinct refusals.
+Grant restoration does not load packages and is unchanged.
+
+### Manager delivery diagnostics
+
+Probe, native poll and witness compare report failed manager deliveries to stderr.
+The first failure is immediate; later summaries and recovery messages share a
+sender-wide budget of one message per 60 seconds of monotonic time. Success does
+not reset that budget. A lane is a node/source pair: only its own successful
+send clears its failure, so another successful source or witness node cannot
+claim recovery. Summaries include the failure count, most recent fixed error category,
+most recent HTTP status when present, and unresolved lane count; credentials, endpoint URLs
+and response bodies are not logged. At most 256 failed lanes are retained;
+exceeding that bound marks recovery unknown for that sender's lifetime.
+Native delivery retains its one bounded retry on HTTP 429. No new retry queue
+is introduced. These diagnostics report delivery outcomes, not consensus health.

@@ -12,6 +12,7 @@ pub mod observability;
 pub mod provider;
 pub mod query_ledger;
 pub mod retention;
+pub mod sender_diagnostics;
 pub mod transit;
 mod wal;
 pub mod witness;

@@ -52,6 +52,7 @@ pub async fn run(config: ProbeConfig) -> Result<(), String> {
     if edge == manager {
         return Err("probe credentials must differ".into());
     }
+    let mut diagnostics = crate::sender_diagnostics::SenderDiagnostics::new();
     let epoch = crate::hex(&crate::random_token()?);
     let mut generation = 0u64;
     let mut timer = tokio::time::interval(Duration::from_secs(15));
@@ -92,10 +93,16 @@ pub async fn run(config: ProbeConfig) -> Result<(), String> {
             complete,
             facts: vec![Fact { id: FactId::Reachable, value: U64(value) }],
         };
-        let sent = client.post(&config.manager_url).bearer_auth(&manager).json(&frame).send().await;
-        if let Ok(response) = sent {
-            let _ = crate::bounded_body(response, 4096).await;
-        }
+        crate::sender_diagnostics::send_reported(
+            &client,
+            &config.manager_url,
+            &manager,
+            &frame,
+            false,
+            &mut diagnostics,
+            "probe",
+        )
+        .await;
     }
 }
 
@@ -351,35 +358,6 @@ pub fn stagger_ms(node_id: &str) -> u64 {
     hash % 12_000
 }
 
-async fn post_frame(client: &reqwest::Client, url: &str, token: &str, frame: &FactFrame) {
-    // One bounded retry after admission shedding; anything else is reported
-    // and dropped, never queued.
-    for attempt in 0..2u8 {
-        match client.post(url).bearer_auth(token).json(frame).send().await {
-            Ok(response) => {
-                let status = response.status();
-                let body = crate::bounded_body(response, 4096).await.unwrap_or_default();
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt == 0 {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    continue;
-                }
-                if !status.is_success() {
-                    eprintln!(
-                        "native poll: manager refused {} facts: {status} {}",
-                        frame.source_id,
-                        String::from_utf8_lossy(&body)
-                    );
-                }
-                return;
-            }
-            Err(e) => {
-                eprintln!("native poll: manager request failed: {e}");
-                return;
-            }
-        }
-    }
-}
-
 /// Scheduled native facts use the edge cache; a missing source never becomes a zero counter.
 pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
     if !tos_health_core::wire::hash(&config.network_id)
@@ -406,6 +384,7 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut state = tos_health_core::native_facts::NativeFactState::default();
     let run = derivation_run_id();
+    let mut diagnostics = crate::sender_diagnostics::SenderDiagnostics::new();
     let mut first = true;
     // The edge serves at most three non-heartbeat requests per burst. If this
     // poller's two requests land in the same second as the collector's and the
@@ -470,15 +449,42 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
                 continue;
             }
         };
-        post_frame(&manager_client, &config.manager_url, &manager, &frame).await;
+        crate::sender_diagnostics::send_reported(
+            &manager_client,
+            &config.manager_url,
+            &manager,
+            &frame,
+            true,
+            &mut diagnostics,
+            "native poll",
+        )
+        .await;
         // Secondary sources from the same sample: only when the node supports them.
         if let Some(gap) = tos_health_core::native_facts::chain_gap(&record) {
             let chain = secondary_frame(&frame, "native_chain", FactId::AppliedServedGap, gap);
-            post_frame(&manager_client, &config.manager_url, &manager, &chain).await;
+            crate::sender_diagnostics::send_reported(
+                &manager_client,
+                &config.manager_url,
+                &manager,
+                &chain,
+                true,
+                &mut diagnostics,
+                "native poll",
+            )
+            .await;
         }
         if let Some(age) = tos_health_core::native_facts::key_block_age_ms(&record) {
             let key = secondary_frame(&frame, "native_key_block", FactId::KeyBlockAgeMs, age);
-            post_frame(&manager_client, &config.manager_url, &manager, &key).await;
+            crate::sender_diagnostics::send_reported(
+                &manager_client,
+                &config.manager_url,
+                &manager,
+                &key,
+                true,
+                &mut diagnostics,
+                "native poll",
+            )
+            .await;
         }
         // Node state: duties, the manager's real queues and the storage
         // position, each its own source; absent sections post nothing.
@@ -489,12 +495,30 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
         ] {
             if let Some(facts) = facts {
                 let f = facts_frame(&frame, source, facts);
-                post_frame(&manager_client, &config.manager_url, &manager, &f).await;
+                crate::sender_diagnostics::send_reported(
+                    &manager_client,
+                    &config.manager_url,
+                    &manager,
+                    &f,
+                    true,
+                    &mut diagnostics,
+                    "native poll",
+                )
+                .await;
             }
         }
         let drops = tos_health_core::native_facts::diagnostic_drops(&record);
         let diagnostic = secondary_frame(&frame, "diagnostic", FactId::DiagnosticDrops, drops);
-        post_frame(&manager_client, &config.manager_url, &manager, &diagnostic).await;
+        crate::sender_diagnostics::send_reported(
+            &manager_client,
+            &config.manager_url,
+            &manager,
+            &diagnostic,
+            true,
+            &mut diagnostics,
+            "native poll",
+        )
+        .await;
         // The edge serves the same completed generation's OpenMetrics from
         // its cache; two fixed gauge lines become the QUIC backlog fact.
         // A skipped gauges frame is named, never silent: the rule goes unknown
@@ -518,8 +542,16 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
                                 facts,
                                 ..frame.clone()
                             };
-                            post_frame(&manager_client, &config.manager_url, &manager, &gauges)
-                                .await;
+                            crate::sender_diagnostics::send_reported(
+                                &manager_client,
+                                &config.manager_url,
+                                &manager,
+                                &gauges,
+                                true,
+                                &mut diagnostics,
+                                "native poll",
+                            )
+                            .await;
                         }
                     },
                     Err(e) => eprintln!("native poll: gauges skipped: edge metrics body: {e}"),
@@ -534,7 +566,16 @@ pub async fn run_native(config: ProbeConfig) -> Result<(), String> {
         if let Some(process) = snapshot.process() {
             match process_frame(process, &config.network_id, elapsed, &mut state, &run) {
                 Ok(memory) => {
-                    post_frame(&manager_client, &config.manager_url, &manager, &memory).await
+                    crate::sender_diagnostics::send_reported(
+                        &manager_client,
+                        &config.manager_url,
+                        &manager,
+                        &memory,
+                        true,
+                        &mut diagnostics,
+                        "native poll",
+                    )
+                    .await
                 }
                 Err(e) => eprintln!("native poll: process frame skipped: {e}"),
             }

@@ -12,6 +12,8 @@ pub const TOOLS: [&str; 6] = [
     "tos_get_change_history",
     "tos_get_block_evidence",
 ];
+pub const SNAPSHOT_COMPONENTS: &[&str] = &["process", "host", "chain", "consensus", "storage"];
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotRequest {
@@ -554,23 +556,7 @@ impl QueryService<'_> {
                 let q: SnapshotRequest = parse(&input)?;
                 nodes(grant, std::slice::from_ref(&q.node_id))?;
                 if !(1..=180).contains(&q.max_age_seconds)
-                    || !list(
-                        &q.components,
-                        1,
-                        10,
-                        Some(&[
-                            "process",
-                            "host",
-                            "chain",
-                            "consensus",
-                            "network",
-                            "storage",
-                            "index",
-                            "gpu",
-                            "telemetry",
-                            "deployment",
-                        ]),
-                    )
+                    || !list(&q.components, 1, 10, Some(SNAPSHOT_COMPONENTS))
                 {
                     return Err("INVALID_ARGUMENT");
                 }

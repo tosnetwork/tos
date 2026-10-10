@@ -229,7 +229,29 @@ impl Consensus {
     pub fn legacy_scope_reason(&self) -> bool {
         self.incomplete_reasons.contains(&IncompleteReason::ScopeUnapproved)
     }
+    /// Query storage totals must remain representable before the source is archived.
+    pub fn storage_failure_totals(&self) -> Result<[u64; 3], String> {
+        let mut sums = [0u64; 3];
+        for action in &self.actions {
+            let live = match action {
+                Action::Proposal { live, .. }
+                | Action::NotarizeVote { live, .. }
+                | Action::FinalizeVote { live, .. }
+                | Action::SkipVote { live, .. } => live,
+            };
+            for (index, key) in
+                ["intent_storage", "signed_storage", "journal_unusable"].iter().enumerate()
+            {
+                if let Some(count) = live.failures.get(*key) {
+                    sums[index] =
+                        sums[index].checked_add(count.0).ok_or("storage failure overflow")?;
+                }
+            }
+        }
+        Ok(sums)
+    }
     pub fn validate(&self, network: &str) -> Result<(), String> {
+        self.storage_failure_totals()?;
         if self.actions.len() != 4
             || self.capabilities.len() != 11
             || self.contexts.len() > 8

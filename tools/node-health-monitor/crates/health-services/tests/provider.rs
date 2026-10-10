@@ -101,7 +101,7 @@ fn completion(content: &str, finish: &str) -> Value {
         "message":{"role":"assistant","content":content,"refusal":null}}]})
 }
 
-const PACKAGE: &[u8] = br#"{"schema_version":2,"status":"partial"}"#;
+const PACKAGE: &[u8] = br#"{"schema_version":3,"status":"partial"}"#;
 const PROMPT: &str = "Use only authorized cached evidence.";
 
 #[tokio::test]

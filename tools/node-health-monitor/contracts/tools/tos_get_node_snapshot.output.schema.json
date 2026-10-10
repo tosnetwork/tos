@@ -400,12 +400,7 @@
             "host",
             "chain",
             "consensus",
-            "network",
-            "storage",
-            "index",
-            "gpu",
-            "telemetry",
-            "deployment"
+            "storage"
           ]
         },
         "sources": {

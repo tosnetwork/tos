@@ -57,6 +57,12 @@ pub struct IngressConfig {
     pub rate_per_second: u32,
     #[serde(default = "default_burst")]
     pub burst: u32,
+    /// Regular request lifetimes; one additional connection is reserved for heartbeats.
+    #[serde(default = "default_regular_request_limit")]
+    pub regular_request_limit: usize,
+}
+fn default_regular_request_limit() -> usize {
+    7
 }
 fn default_rate_per_second() -> u32 {
     1
@@ -281,7 +287,41 @@ async fn proxy(
     }
     Ok(out)
 }
+// Only the private capacity-test entry point supplies longer deadlines; the
+// public server always uses the production values.
+#[derive(Clone, Copy)]
+struct Deadlines {
+    tls: Duration,
+    headers: Duration,
+    upstream: Duration,
+    connection: Duration,
+}
+impl Deadlines {
+    fn production() -> Self {
+        Self {
+            tls: Duration::from_secs(3),
+            headers: Duration::from_secs(3),
+            upstream: Duration::from_secs(3),
+            connection: Duration::from_secs(8),
+        }
+    }
+}
 pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> Result<(), String> {
+    serve_with_deadlines(
+        config,
+        listener,
+        Deadlines::production(),
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+async fn serve_with_deadlines(
+    config: IngressConfig,
+    listener: tokio::net::TcpListener,
+    deadlines: Deadlines,
+    #[cfg(test)] instrumentation: Option<capacity_tests::Instrumentation>,
+) -> Result<(), String> {
     if !config.upstream.ip().is_loopback()
         || config.upstream.port() == 0
         || config.peers.is_empty()
@@ -294,6 +334,7 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
         || !(1..=64).contains(&config.rate_per_second)
         || !(1..=256).contains(&config.burst)
         || config.burst < config.rate_per_second
+        || !(1..=64).contains(&config.regular_request_limit)
         || config.witness_endpoints.windows(2).any(|pair| pair[0] >= pair[1])
     {
         return Err("invalid ingress configuration".into());
@@ -348,7 +389,7 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(3))
+        .timeout(deadlines.upstream)
         .pool_max_idle_per_host(1)
         .build()
         .map_err(|e| e.to_string())?;
@@ -358,10 +399,12 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
     }));
     let config = Arc::new(config);
     let peers = Arc::new(peers);
-    let slots = Arc::new(tokio::sync::Semaphore::new(8));
-    // One of the eight classified request lifetimes is reserved for either
-    // approved heartbeat path. TLS handshakes remain under the total-eight cap.
-    let regular_connections = Arc::new(tokio::sync::Semaphore::new(7));
+    let total_connections =
+        config.regular_request_limit.checked_add(1).ok_or("ingress connection limit overflow")?;
+    // Keep one connection available for either approved heartbeat path when
+    // every regular request is still draining. TLS handshakes share this cap.
+    let slots = Arc::new(tokio::sync::Semaphore::new(total_connections));
+    let regular_connections = Arc::new(tokio::sync::Semaphore::new(config.regular_request_limit));
     loop {
         let (stream, _) = listener.accept().await.map_err(|e| e.to_string())?;
         let Ok(permit) = slots.clone().try_acquire_owned() else {
@@ -376,13 +419,16 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
             limits.clone(),
             regular_connections.clone(),
         );
+        #[cfg(test)]
+        let instrumentation = instrumentation.clone();
         tokio::spawn(async move {
+            #[cfg(test)]
+            let completion = capacity_tests::Completion::default();
             let _permit = permit;
-            let tls =
-                match tokio::time::timeout(Duration::from_secs(3), acceptor.accept(stream)).await {
-                    Ok(Ok(tls)) => tls,
-                    _ => return,
-                };
+            let tls = match tokio::time::timeout(deadlines.tls, acceptor.accept(stream)).await {
+                Ok(Ok(tls)) => tls,
+                _ => return,
+            };
             let Some(cert) = tls.get_ref().1.peer_certificates().and_then(|chain| chain.first())
             else {
                 return;
@@ -394,8 +440,16 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
             // keep_alive is disabled, so this connection-owned slot retains a
             // classified ordinary-request permit through TLS response drain.
             let connection_regular = Arc::new(Mutex::new(None));
+            #[cfg(test)]
+            let completed_gate = completion.gate.clone();
             let service = service_fn(move |request| {
-                proxy(
+                #[cfg(test)]
+                let hook = instrumentation.as_ref().and_then(|hooks| hooks.for_request(&request));
+                #[cfg(test)]
+                if let Some((gate, _)) = &hook {
+                    *completed_gate.lock().unwrap() = Some(gate.clone());
+                }
+                let answer = proxy(
                     request,
                     peer.clone(),
                     config.clone(),
@@ -403,18 +457,30 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
                     limits.clone(),
                     regular_connections.clone(),
                     connection_regular.clone(),
-                )
+                );
+                async move {
+                    let answer = answer.await;
+                    #[cfg(test)]
+                    if let Some((gate, true)) = hook {
+                        return capacity_tests::gate_response(answer, gate).await;
+                    }
+                    answer
+                }
             });
             let mut http = hyper::server::conn::http1::Builder::new();
             http.keep_alive(false)
                 .max_buf_size(32768)
                 .timer(hyper_util::rt::TokioTimer::new())
-                .header_read_timeout(Duration::from_secs(3));
+                .header_read_timeout(deadlines.headers);
             let _ = tokio::time::timeout(
-                Duration::from_secs(8),
+                deadlines.connection,
                 http.serve_connection(hyper_util::rt::TokioIo::new(tls), service),
             )
             .await;
         });
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/ingress_capacity.rs"]
+mod capacity_tests;
