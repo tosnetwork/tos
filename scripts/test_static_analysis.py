@@ -738,6 +738,117 @@ class Database(Workdir):
         self.assertEqual(orphans, {"lonely.h"})
 
 
+class Choosing(Workdir):
+    """choose(), prepare_side() and report keys across two real-looking sides."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        self.path = os.environ["PATH"]
+        os.environ["PATH"] = f"{self.bin}{os.pathsep}{self.path}"
+        write_tool(self.bin / "ninja", "import sys\nsys.exit(0)\n")
+        self.scan = write_tool(
+            self.tmp / "scan",
+            """
+            import json, shlex, sys
+            rows = json.load(open(sys.argv[sys.argv.index("-compilation-database") + 1]))
+            for row in rows:
+                args = shlex.split(row["command"])
+                print(args[args.index("-o") + 1] + ": " + row["file"])
+            """,
+        )
+        self.tools = sa.Tools(
+            "clang", "clang++", "clang-tidy", str(self.scan), "cc", sys.executable
+        )
+
+    def tearDown(self) -> None:
+        os.environ["PATH"] = self.path
+        super().tearDown()
+
+    def side(self, name: str, files: dict[str, str], flags: dict[str, str]) -> object:
+        """A git checkout with an in-checkout build; files are relative to the checkout."""
+        root = self.tmp / name
+        build = root / f"build-{name}"
+        build.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={root}\n")
+        rows = []
+        for rel, text in files.items():
+            path = root / rel.replace("<build>", build.name)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+            extra = flags.get(rel, "")
+            rows.append(
+                {
+                    "directory": str(build),
+                    "file": str(path),
+                    "command": f"c++ {extra} -c {path} -o {path.name}.o".replace("  ", " "),
+                }
+            )
+        (build / "compile_commands.json").write_text(json.dumps(rows))
+        return sa.prepare_side(name.upper(), root, build, self.tools, self.tmp)
+
+    def test_a_generated_source_in_the_build_is_analysed_when_it_differs(self) -> None:
+        head = self.side("head", {"a.cpp": "x", "<build>/auto/code.cpp": "new"}, {})
+        base = self.side("base", {"a.cpp": "x", "<build>/auto/code.cpp": "old"}, {})
+        self.assertEqual(len(head.entries), 2)
+        generated = sa.generated_changes(head, base)
+        self.assertEqual(generated[0], {str(head.build / "auto" / "code.cpp")})
+        head_run, base_run, _ = sa.choose(head, base, (set(), set()), generated, set(), False)
+        self.assertEqual([e.file for e in head_run], [str(head.build / "auto" / "code.cpp")])
+        self.assertEqual([e.file for e in base_run], [str(base.build / "auto" / "code.cpp")])
+
+    def test_third_party_build_products_are_not_analysed(self) -> None:
+        head = self.side("head", {"a.cpp": "x", "<build>/third-party/lib.cpp": "x"}, {})
+        self.assertEqual([Path(e.file).name for e in head.entries], ["a.cpp"])
+
+    def test_a_changed_compile_definition_alone_selects_the_compilation(self) -> None:
+        head = self.side("head", {"a.cpp": "x", "b.cpp": "y"}, {"a.cpp": "-DNEW=1"})
+        base = self.side("base", {"a.cpp": "x", "b.cpp": "y"}, {})
+        head_run, base_run, _ = sa.choose(head, base, (set(), set()), (set(), set()), set(), False)
+        self.assertEqual([Path(e.file).name for e in head_run], ["a.cpp"])
+        self.assertEqual([Path(e.file).name for e in base_run], ["a.cpp"])
+
+    def test_identical_configurations_select_nothing(self) -> None:
+        head = self.side("head", {"a.cpp": "x"}, {})
+        base = self.side("base", {"a.cpp": "x"}, {})
+        self.assertEqual(
+            sa.choose(head, base, (set(), set()), (set(), set()), set(), False), ([], [], set())
+        )
+
+    def test_full_mode_still_refuses_a_missing_source_or_an_orphan(self) -> None:
+        head = self.side("head", {"a.cpp": "x"}, {})
+        base = self.side("base", {"a.cpp": "x"}, {})
+        with self.assertRaisesRegex(sa.Refusal, "changed sources missing"):
+            sa.choose(head, base, ({"new.cpp"}, set()), (set(), set()), set(), True)
+        with self.assertRaisesRegex(sa.Refusal, "changed headers no compilation includes"):
+            sa.choose(head, base, ({"lonely.h"}, set()), (set(), set()), set(), True)
+        head_run, base_run, _ = sa.choose(head, base, (set(), set()), (set(), set()), set(), True)
+        self.assertEqual((len(head_run), len(base_run)), (1, 1))
+
+    def test_reports_in_differently_named_in_checkout_builds_share_a_key(self) -> None:
+        def row(root: Path, build: str) -> dict[str, object]:
+            return {
+                "checker_name": "bugprone-use-after-move",
+                "analyzer_name": "clang-tidy",
+                "file": {"original_path": str(root / build / "gen" / "api.h")},
+                "line": 3,
+                "column": 1,
+                "report_hash": "abc",
+            }
+
+        head_root, base_root = self.tmp / "h", self.tmp / "b"
+        head = sa.read_report(
+            row(head_root, "build-head"), head_root, head_root / "build-head", "H"
+        )
+        base = sa.read_report(
+            row(base_root, "build-base"), base_root, base_root / "build-base", "B"
+        )
+        self.assertEqual(head.key, base.key)
+        self.assertEqual(sa.judge([head], [base], []), 0)
+
+
 class StandInTools(Workdir):
     """clang-scan-deps, ninja and clang-tidy stand-ins."""
 

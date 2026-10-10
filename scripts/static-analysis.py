@@ -463,11 +463,16 @@ def is_excluded(rel: str) -> bool:
 
 
 def analysable(entries: list[Entry], root: Path, build_dir: Path) -> list[Entry]:
-    """Project compilations: under the checkout, not generated, not third-party."""
+    """Project compilations: sources in the checkout or generated into the build.
+
+    Third-party sources, and third-party build products, are not the project's.
+    The build directory is checked first because it may sit inside the checkout.
+    """
     keep = []
     for entry in entries:
-        rel = relative(entry.file, root)
-        if rel is None or is_excluded(rel) or relative(entry.file, build_dir) is not None:
+        in_build = relative(entry.file, build_dir)
+        rel = in_build if in_build is not None else relative(entry.file, root)
+        if rel is None or is_excluded(rel):
             continue
         keep.append(entry)
     return keep
@@ -873,10 +878,14 @@ def read_report(row: object, side_root: Path, build_dir: Path, label: str) -> Re
     message = row.get("message", "")
     if not isinstance(message, str):
         raise bad("message is not a string")
-    path = relative(os.path.normpath(original), side_root)
-    if path is None:
-        build_rel = relative(os.path.normpath(original), build_dir)
-        path = f"<build>/{build_rel}" if build_rel is not None else original
+    # The build directory first: it may sit inside the checkout under a name that
+    # differs between the sides.
+    normal = os.path.normpath(original)
+    build_rel = relative(normal, build_dir)
+    if build_rel is not None:
+        path = f"<build>/{build_rel}"
+    else:
+        path = relative(normal, side_root) or original
     return Report(checker, analyzer, path, line, column, digest, message)
 
 
@@ -1203,6 +1212,43 @@ def select_side(
     return chosen, orphans
 
 
+def choose(
+    head: Side,
+    base: Side,
+    changed: tuple[set[str], set[str]],
+    generated: tuple[set[str], set[str]],
+    uncovered: set[str],
+    full: bool,
+) -> tuple[list[Entry], list[Entry], set[str]]:
+    """(HEAD compilations, BASE compilations, uncovered headers) to analyse.
+
+    Coverage is validated on both sides in every mode, so --full cannot hide a
+    changed source missing from a database or a header nothing includes. A
+    compilation whose identity exists on one side only (added, removed, or built
+    with different arguments) is selected on the side that has it, whether or
+    not any file changed.
+    """
+    head_selected, head_orphans = select_side(head, changed[0], uncovered, generated[0])
+    base_selected, base_orphans = select_side(base, changed[1], uncovered, generated[1])
+    if full:
+        head_selected, base_selected = set(head.entries), set(base.entries)
+    head_ids = representatives(head.entries, head.root, head.build)
+    base_ids = representatives(base.entries, base.root, base.build)
+    configurations = (head_ids.keys() - base_ids.keys()) | (base_ids.keys() - head_ids.keys())
+    if configurations:
+        print(f"static-analysis: {len(configurations)} compilations differ between the sides")
+        if 2 * len(configurations) > max(len(head_ids), len(base_ids)):
+            print("static-analysis: the two builds look differently configured")
+    wanted = (
+        {identity(e, head.root, head.build) for e in head_selected}
+        | {identity(e, base.root, base.build) for e in base_selected}
+        | configurations
+    )
+    head_run = sorted((head_ids[i] for i in wanted if i in head_ids), key=lambda e: e.output)
+    base_run = sorted((base_ids[i] for i in wanted if i in base_ids), key=lambda e: e.output)
+    return head_run, base_run, head_orphans | base_orphans
+
+
 def gate(root: Path, args: argparse.Namespace) -> int:
     build_dir = (args.build_dir or root / "build").resolve()
     base_build = args.base_build_dir.resolve()
@@ -1236,21 +1282,14 @@ def gate(root: Path, args: argparse.Namespace) -> int:
         for path in sorted(generated_head | generated_base):
             print(f"static-analysis: generated file differs between the sides: {path}")
 
-        uncovered = load_uncovered(root)
-        if args.full:
-            head_selected, base_selected = set(head.entries), set(base.entries)
-            orphans: set[str] = set()
-        else:
-            head_selected, head_orphans = select_side(head, cpp_head, uncovered, generated_head)
-            base_selected, base_orphans = select_side(base, cpp_base, uncovered, generated_base)
-            orphans = head_orphans | base_orphans
-        head_ids = representatives(head.entries, root, build_dir)
-        base_ids = representatives(base.entries, base_root, base_build)
-        wanted = {identity(e, root, build_dir) for e in head_selected} | {
-            identity(e, base_root, base_build) for e in base_selected
-        }
-        head_run = sorted((head_ids[i] for i in wanted if i in head_ids), key=lambda e: e.output)
-        base_run = sorted((base_ids[i] for i in wanted if i in base_ids), key=lambda e: e.output)
+        head_run, base_run, orphans = choose(
+            head,
+            base,
+            (cpp_head, cpp_base),
+            (generated_head, generated_base),
+            load_uncovered(root),
+            args.full,
+        )
         print(
             f"static-analysis: HEAD {len(head_run)} compilations, BASE {len(base_run)} "
             f"(merge base {merge_base[:12]} in {base_root})"
