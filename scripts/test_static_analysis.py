@@ -806,6 +806,42 @@ class StandInTools(Workdir):
         sa.bring_up_to_date(build, {str(build / "config.h")}, "HEAD")
         self.assertEqual(json.loads(log.read_text())[-1][-1], "build.ninja")
 
+    def test_a_build_that_changes_the_generated_set_refuses(self) -> None:
+        # The second scan, after the build, reaches a generated header the first did not.
+        root = self.tmp / "root"
+        build = self.tmp / "build"
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        self.ninja("gen/a.h: CUSTOM_COMMAND\ngen/b.h: CUSTOM_COMMAND\n")
+        (build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={root}\n")
+        source = root / "a.cpp"
+        source.write_text("")
+        (build / "compile_commands.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(build),
+                        "file": str(source),
+                        "command": f"c++ -c {source} -o a.o",
+                    }
+                ]
+            )
+        )
+        counter = self.tmp / "scans"
+        scan = write_tool(
+            self.tmp / "scan",
+            f"""
+            import os, sys
+            n = int(open({str(counter)!r}).read()) + 1 if os.path.exists({str(counter)!r}) else 1
+            open({str(counter)!r}, "w").write(str(n))
+            extra = " {build}/gen/b.h" if n > 1 else ""
+            sys.stdout.write("a.o: {source} {build}/gen/a.h" + extra + "\\n")
+            """,
+        )
+        tools = sa.Tools("clang", "clang++", "clang-tidy", str(scan), "cc", sys.executable)
+        with self.assertRaisesRegex(sa.Refusal, "changed which generated files are read"):
+            sa.prepare_side("HEAD", root, build, tools, self.tmp)
+
     def compiler(self, stderr: str, status: int = 0) -> object:
         tool = write_tool(
             self.tmp / "clang++",
