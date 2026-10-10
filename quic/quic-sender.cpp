@@ -1,3 +1,4 @@
+#include <cmath>
 #include <utility>
 
 #include "auto/tl/tos_api.hpp"
@@ -25,11 +26,13 @@ static td::Result<adnl::AdnlNodeIdShort> parse_peer_id(td::Slice peer_public_key
 
 class QuicSender::ServerCallback final : public QuicServer::Callback {
  public:
-  ServerCallback(td::actor::ActorId<QuicSender> sender, double inbound_stream_timeout,
+  ServerCallback(td::actor::ActorId<QuicSender> sender, double inbound_stream_timeout, double inbound_stream_lifetime,
                  std::shared_ptr<QuicInboundStreamBudget> inbound_budget)
       : sender_(sender)
       , inbound_stream_timeout_(inbound_stream_timeout)
+      , inbound_stream_lifetime_(inbound_stream_lifetime)
       , inbound_budget_(inbound_budget ? std::move(inbound_budget) : QuicInboundStreamBudget::process_default()) {
+    CHECK(std::isfinite(inbound_stream_lifetime_) && inbound_stream_lifetime_ > 0);
   }
 
   td::Status on_connected(QuicConnectionId cid, td::SecureString local_public_key, td::SecureString peer_public_key,
@@ -58,6 +61,8 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       // set_stream_options (with the caller's absolute deadline), so they are
       // never inserted here and keep that deadline.
       state.mark_inbound();
+      state.absolute_deadline = td::Timestamp::in(inbound_stream_lifetime_);
+      state.reclaim = inbound_budget_->track_stream(state.source());
       td::uint64 mtu = get_peer_mtu_(local_id, peer_id);
       apply_stream_options(state, StreamOptions{mtu});
     }
@@ -106,6 +111,15 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
       return status;
     }
     auto complete_data = state.extract();
+    if (state.is_inbound()) {
+      // FIN completes the input, not the bidirectional stream. Pending replies
+      // and malformed input still hold a slot until transport closure, and
+      // must not use FIN to discard lifetime or reclamation protection.
+      auto options = state.options();
+      options.timeout = state.absolute_deadline;
+      options.timeout_seconds = inbound_stream_lifetime_;
+      apply_stream_options(state, options);
+    }
     auto memory_token = state.take_memory_token();
     // The payload carries its charge with it, through the sender's mailbox
     // and on until it is consumed.
@@ -143,20 +157,38 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
   }
 
   void loop(td::Timestamp now, StreamShutdownList &shutdown) override {
+    next_reclaim_check_ = td::Timestamp::in(0.1);
+    auto generation = inbound_budget_->reclaim_generation();
+    if (generation != reclaim_generation_) {
+      reclaim_generation_ = generation;
+      for (auto &[cid, connection] : connections_) {
+        for (auto &[sid, state] : connection.streams) {
+          if (!state.is_failed() && state.reclaim && state.reclaim->load()) {
+            fail_stream(state, td::Status::Error("incomplete stream displaced for source fairness"));
+            shutdown.entries.push_back({cid, sid});
+          }
+        }
+      }
+    }
     while (!timeout_heap_.empty() && td::Timestamp::at(timeout_heap_.top_key()).is_in_past(now)) {
       auto *state = static_cast<StreamState *>(timeout_heap_.pop());
       if (!state->is_failed()) {
+        auto cid = state->cid;
+        auto sid = state->sid;
         fail_stream(*state, state->timeout_error());
-        shutdown.entries.push_back({state->cid, state->sid});
+        shutdown.entries.push_back({cid, sid});
+      } else {
+        shutdown.connections.push_back(state->cid);
       }
     }
   }
 
   td::Timestamp next_alarm() const override {
-    if (timeout_heap_.empty()) {
-      return td::Timestamp::never();
+    auto next = timeout_heap_.empty() ? td::Timestamp::never() : td::Timestamp::at(timeout_heap_.top_key());
+    if (!connections_.empty()) {
+      next.relax(next_reclaim_check_);
     }
-    return td::Timestamp::at(timeout_heap_.top_key());
+    return next;
   }
 
   void set_peer_mtu_callback(std::function<td::uint64(adnl::AdnlNodeIdShort, adnl::AdnlNodeIdShort)> f) override {
@@ -178,6 +210,8 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
   struct StreamState : public td::HeapNode {
     QuicConnectionId cid;
     QuicStreamID sid;
+    td::Timestamp absolute_deadline;
+    QuicInboundStreamBudget::ReclaimToken reclaim;
 
     StreamState(QuicConnectionId cid, QuicStreamID sid) : cid(cid), sid(sid) {
     }
@@ -295,6 +329,9 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
 
   td::actor::ActorId<QuicSender> sender_;
   double inbound_stream_timeout_ = 0.0;
+  double inbound_stream_lifetime_ = 120.0;
+  td::Timestamp next_reclaim_check_ = td::Timestamp::in(0.1);
+  std::size_t reclaim_generation_ = 0;
   std::shared_ptr<QuicInboundStreamBudget> inbound_budget_;
 
   struct Connection {
@@ -331,6 +368,7 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     }
     auto reservation = QuicInboundStreamReservation::acquire_stream(inbound_budget_, it->second.source);
     if (!reservation) {
+      inbound_budget_->request_reclaim(it->second.source);
       return td::Status::Error(PSLICE() << "inbound stream budget exhausted: " << inbound_budget_->streams()
                                         << " streams open; source " << it->second.source << " holds "
                                         << inbound_budget_->source_streams(it->second.source) << " of its "
@@ -371,12 +409,12 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
   }
 
   void rearm_inbound_timeout(StreamState &state) {
-    if (inbound_stream_timeout_ <= 0.0) {
-      return;
-    }
     StreamOptions options = state.options();
-    options.timeout = td::Timestamp::in(inbound_stream_timeout_);
-    options.timeout_seconds = inbound_stream_timeout_;
+    options.timeout = state.absolute_deadline;
+    options.timeout_seconds = inbound_stream_lifetime_;
+    if (inbound_stream_timeout_ > 0.0) {
+      options.timeout.relax(td::Timestamp::in(inbound_stream_timeout_));
+    }
     apply_stream_options(state, options);
   }
 
@@ -399,6 +437,11 @@ class QuicSender::ServerCallback final : public QuicServer::Callback {
     }
     state.mark_failed();
     state.drop_buffer();
+    if (state.is_inbound()) {
+      // RESET_STREAM/STOP_SENDING completion can depend on peer traffic. A
+      // peer withholding it cannot keep the slot after its stream failed.
+      timeout_heap_.insert(td::Timestamp::in(2.0).at(), &state);
+    }
     td::actor::send_closure(sender_, &QuicSender::on_stream_complete, state.cid, state.sid, std::move(error),
                             td::MemoryTrackerToken{}, QuicInboundByteCharge{});
   }
@@ -707,11 +750,12 @@ td::actor::Task<> QuicSender::add_local_id_coro(adnl::AdnlNodeIdShort local_id) 
   } else {
     auto identity = ServerIdentity{.local_id = local_id,
                                    .key = td::Ed25519::PrivateKey(local_keys_.at(local_id).as_octet_string())};
-    auto owned = co_await QuicServer::create(
-        port,
-        std::make_unique<ServerCallback>(actor_id(this), server_options_.inbound_stream_timeout,
-                                         server_options_.inbound_stream_budget),
-        get_local_id_mtu(local_id), std::move(identity), "tos", "0.0.0.0", server_options_);
+    auto owned =
+        co_await QuicServer::create(port,
+                                    std::make_unique<ServerCallback>(
+                                        actor_id(this), server_options_.inbound_stream_timeout,
+                                        server_options_.inbound_stream_lifetime, server_options_.inbound_stream_budget),
+                                    get_local_id_mtu(local_id), std::move(identity), "tos", "0.0.0.0", server_options_);
     server = owned.get();
     servers_by_port_[port] = std::move(owned);
     for (const auto &[peer_id, mtu] : get_local_id_peers_mtu(local_id)) {

@@ -468,6 +468,20 @@ void QuicServer::shutdown_stream(QuicConnectionId cid, QuicStreamID sid) {
   on_connection_updated(*state);
 }
 
+void QuicServer::close_connection(QuicConnectionId cid) {
+  auto state = find_connection(cid);
+  if (!state) {
+    return;
+  }
+  std::array<char, NGTCP2_MAX_UDP_PAYLOAD_SIZE> buffer;
+  UdpMessageBuffer message;
+  message.storage = td::MutableSlice(buffer.data(), buffer.size());
+  state->impl().close_with_error(message, NGTCP2_ERR_STREAM_LIMIT);
+  send_connection_close(*state, message);
+  // Local reclamation never waits for a peer to acknowledge a reset or close.
+  on_connection_closed(cid);
+}
+
 void QuicServer::collect_stats(td::Promise<Stats> P) {
   collect_stats_mode(true, std::move(P));
 }
@@ -520,6 +534,9 @@ void QuicServer::handle_timeouts() {
   callback_->loop(td::Timestamp::now(), shutdown);
   for (auto &e : shutdown.entries) {
     shutdown_stream(e.cid, e.sid);
+  }
+  for (auto &cid : shutdown.connections) {
+    close_connection(cid);
   }
 
   {

@@ -19,6 +19,7 @@
 */
 #pragma once
 
+#include "adnl/adnl-source-share.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
 #include "td/net/TcpListener.h"
@@ -33,16 +34,30 @@ class HttpInboundConnection;
 
 class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWrapper {
  public:
+  struct ConnectionAdmission {
+    ConnectionAdmission(std::shared_ptr<adnl::SourceShareLedger> ledger, std::string source)
+        : ledger(std::move(ledger)), source(std::move(source)) {
+    }
+    ConnectionAdmission(const ConnectionAdmission &) = delete;
+    ConnectionAdmission &operator=(const ConnectionAdmission &) = delete;
+    ~ConnectionAdmission() {
+      CHECK(ledger->release(source, 1));
+    }
+    std::shared_ptr<adnl::SourceShareLedger> ledger;
+    std::string source;
+  };
   // The outcome of header admission: either the request may go on, or it is
   // refused with the given answer and its body is never read.
   struct Admission {
     bool admitted = false;
+    bool allow_persistence = true;
     std::unique_ptr<HttpResponse> response;
     std::shared_ptr<HttpPayload> payload;
 
-    static Admission admit() {
+    static Admission admit(bool allow_persistence = true) {
       Admission a;
       a.admitted = true;
+      a.allow_persistence = allow_persistence;
       return a;
     }
     static Admission refuse(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload) {
@@ -83,6 +98,9 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
     // connection needs raise it; 0 still means unlimited for a caller that
     // deliberately opts out.
     size_t max_connections = 1024;
+    // Live connections per TCP source (IPv4 address or IPv6 /64). Clients
+    // behind a proxy or NAT share this allowance. 0 deliberately disables it.
+    size_t max_connections_per_source = 128;
     // Seconds a connection may spend waiting for a complete request line
     // and headers (from accept, and again after each response) before it
     // is closed. 0 disables the deadline.
@@ -168,6 +186,7 @@ class HttpServer : public td::actor::Actor, public virtual metrics::CollectorWra
   td::IPAddress address_;
   std::shared_ptr<Callback> callback_;
   Limits limits_;
+  std::shared_ptr<adnl::SourceShareLedger> connection_sources_;
 
   // Throttle the "connection limit reached" warning: a client hammering an
   // at-capacity listener must not turn each refusal into its own log line, or

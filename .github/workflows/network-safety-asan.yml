@@ -33,6 +33,8 @@ on:
       - 'test/net/test-quic-sender.cpp'
       - 'test/test-http-server-limits.cpp'
       - 'test/test-rldp-http-tunnel.cpp'
+      - 'test/pq-native/adnl-ext-output-backpressure-test.cpp'
+      - 'test/pq-native/adnl-ext-refusal-close-test.cpp'
       - 'tdutils/td/utils/tests.*'
       - 'CMakeLists.txt'
       - '.github/workflows/network-safety-asan.yml'
@@ -92,6 +94,8 @@ jobs:
           test-overlay-broadcast-capacity \
           test-http-server-limits \
           test-json-rpc-transport \
+          test-adnl-ext-output-backpressure \
+          test-adnl-ext-refusal-close \
           test-rldp-http-tunnel
 
     - name: Verify the expected network-safety tests are registered
@@ -105,16 +109,26 @@ jobs:
             "quic-inbound-stream-timeout",
             "quic-outbound-query-deadline",
             "quic-connection-count-cap",
+            "quic-admission-global-limit",
+            "quic-admission-full-table",
+            "quic-inbound-budget",
+            "quic-transport-budget",
+            "quic-source-share",
             "test-adnl-peer-pair-cap",
             "test-overlay-broadcast-capacity",
             "test-http-server-limits",
             "test-json-rpc-transport",
+            "test-adnl-ext-output-backpressure",
+            "test-adnl-ext-refusal-close",
             "test-rldp-http-tunnel",
         }
-        got = {t["name"] for t in json.load(open("network-safety-tests.json"))["tests"]}
-        missing = expected - got
+        tests = {t["name"]: t for t in json.load(open("network-safety-tests.json"))["tests"]}
+        missing = expected - tests.keys()
         if missing:
             raise SystemExit(f"network-safety gate is missing expected tests: {sorted(missing)}")
+        timeout_command = tests["quic-inbound-stream-timeout"].get("command", [])
+        if "-f" not in timeout_command or timeout_command[timeout_command.index("-f") + 1:] != ["QuicInboundStreamTimeout"]:
+            raise SystemExit("network-safety gate must run the full QuicInboundStreamTimeout suite")
         print(f"all {len(expected)} expected network-safety tests are registered")
         PY
 

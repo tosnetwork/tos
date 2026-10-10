@@ -754,6 +754,26 @@ TEST(HttpServerLimits, without_the_option_an_early_answer_keeps_reading_the_body
   });
 }
 
+TEST(HttpServerLimits, completing_an_upload_after_the_early_answer_allows_reuse_and_idle_expiry) {
+  tos::http::HttpServer::Limits limits;
+  limits.max_connections = 2;
+  limits.request_header_timeout = 1;
+  limits.request_body_timeout = 10;
+  with_server(limits, [](int port) {
+    Client early(port);
+    ASSERT_TRUE(early.connect_with_retries());
+    ASSERT_TRUE(early.send_all("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhell"));
+    std::string response;
+    ASSERT_TRUE(early.read_chunked_response(3000, response));
+    ASSERT_TRUE(early.send_all("o"));
+    ASSERT_TRUE(early.request_ok(3000));
+    ASSERT_TRUE(early.wait_for_eof(3000));
+    Client next(port);
+    ASSERT_TRUE(next.connect_with_retries());
+    ASSERT_TRUE(next.request_ok(3000));
+  });
+}
+
 TEST(HttpServerLimits, a_handler_error_before_the_body_is_read_closes_after_the_response) {
   auto limits = tos::json_rpc::listener_limits(0, 30, 30, tos::json_rpc::kDefaultResponseTimeout).move_as_ok();
   with_server(
@@ -850,38 +870,83 @@ TEST(JsonRpcHttpPolicy, the_response_deadline_is_mandatory_and_bounded) {
 namespace {
 struct PipelineObservation {
   std::atomic<int> calls{0};
+  std::atomic<int> responses_serialized{0};
   std::atomic<bool> closed{false};
   std::atomic<size_t> output_peak{0};
   std::atomic<double> closed_at{0};
+  std::atomic<bool> eof_processed{false};
+  std::atomic<int> responses_at_eof{-1};
+  std::atomic<bool> payloads_complete_at_eof{false};
+  std::atomic<size_t> output_at_eof{0};
+  std::atomic<size_t> output_after_serialization{0};
+  std::atomic<size_t> output_before_serialization_after_eof{0};
 };
 
 class SmallReplyCallback final : public tos::http::HttpServer::Callback {
  public:
-  explicit SmallReplyCallback(PipelineObservation *observation) : observation_(observation) {
+  using ResponsePromise =
+      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>>;
+
+  explicit SmallReplyCallback(PipelineObservation *observation, size_t response_bytes, bool answer_after_eof)
+      : observation_(observation), response_bytes_(response_bytes), answer_after_eof_(answer_after_eof) {
   }
-  void receive_request(
-      std::unique_ptr<tos::http::HttpRequest>, std::shared_ptr<tos::http::HttpPayload>,
-      td::Promise<std::pair<std::unique_ptr<tos::http::HttpResponse>, std::shared_ptr<tos::http::HttpPayload>>> promise)
-      override {
+  void receive_request(std::unique_ptr<tos::http::HttpRequest>, std::shared_ptr<tos::http::HttpPayload>,
+                       ResponsePromise promise) override {
     ++observation_->calls;
+    if (answer_after_eof_) {
+      td::actor::create_actor<DeferredAnswer>("answer-after-eof", observation_, std::move(promise), response_bytes_)
+          .release();
+      return;
+    }
+    answer(std::move(promise), response_bytes_);
+  }
+
+ private:
+  static void answer(ResponsePromise promise, size_t response_bytes) {
     auto response = tos::http::HttpResponse::create("HTTP/1.1", 200, "OK", false, true).move_as_ok();
     response->add_header({"Transfer-Encoding", "Chunked"});
     response->complete_parse_header();
     auto payload = response->create_empty_payload().move_as_ok();
-    payload->add_chunk(td::BufferSlice(std::string(16 << 10, 'x')));
+    payload->add_chunk(td::BufferSlice(std::string(response_bytes, 'x')));
     payload->complete_parse();
     promise.set_value({std::move(response), std::move(payload)});
   }
 
- private:
+  class DeferredAnswer final : public td::actor::Actor {
+   public:
+    DeferredAnswer(PipelineObservation *observation, ResponsePromise promise, size_t response_bytes)
+        : observation_(observation), promise_(std::move(promise)), response_bytes_(response_bytes) {
+    }
+    void start_up() override {
+      alarm_timestamp() = td::Timestamp::in(0.005);
+    }
+    void alarm() override {
+      if (observation_->eof_processed.load()) {
+        answer(std::move(promise_), response_bytes_);
+        stop();
+      } else {
+        alarm_timestamp() = td::Timestamp::in(0.005);
+      }
+    }
+
+   private:
+    PipelineObservation *observation_;
+    ResponsePromise promise_;
+    size_t response_bytes_;
+  };
+
   PipelineObservation *observation_;
+  size_t response_bytes_;
+  bool answer_after_eof_;
 };
 
 class PipelinedInbound final : public tos::http::HttpInboundConnection {
  public:
-  PipelinedInbound(td::SocketFd fd, PipelineObservation *observation, double response_timeout)
-      : HttpInboundConnection(std::move(fd), std::make_shared<SmallReplyCallback>(observation),
-                              tos::http::HttpServer::AllMetrics{}, 30, 30, false, 0, response_timeout)
+  PipelinedInbound(td::SocketFd fd, PipelineObservation *observation, double response_timeout, size_t response_bytes,
+                   bool answer_after_eof, size_t io_buffer_bytes)
+      : HttpInboundConnection(std::move(fd),
+                              std::make_shared<SmallReplyCallback>(observation, response_bytes, answer_after_eof),
+                              tos::http::HttpServer::AllMetrics{}, 30, 30, false, io_buffer_bytes, response_timeout)
       , observation_(observation) {
   }
   ~PipelinedInbound() override {
@@ -891,15 +956,40 @@ class PipelinedInbound final : public tos::http::HttpInboundConnection {
   void payload_written() override {
     observation_->output_peak.store(std::max(observation_->output_peak.load(), buffered_fd_.ready_for_flush_write()));
     HttpInboundConnection::payload_written();
+    ++responses_serialized_;
+  }
+
+ protected:
+  void loop() override {
+    HttpInboundConnection::loop();
+    if (in_loop_) {
+      return;
+    }
+    if (found_eof_ && !observation_->eof_processed.load()) {
+      observation_->responses_at_eof = responses_serialized_;
+      observation_->payloads_complete_at_eof = !reading_payload_ && !writing_payload_;
+      observation_->output_at_eof = buffered_fd_.ready_for_flush_write();
+      observation_->eof_processed = true;
+    }
+    if (observation_->responses_serialized.load() != responses_serialized_) {
+      observation_->output_after_serialization = buffered_fd_.ready_for_flush_write();
+      observation_->responses_serialized = responses_serialized_;
+    }
+    if (found_eof_ && writing_payload_ && buffered_fd_.ready_for_flush_write() > 0) {
+      observation_->output_before_serialization_after_eof = buffered_fd_.ready_for_flush_write();
+    }
   }
 
  private:
   PipelineObservation *observation_;
+  int responses_serialized_ = 0;
 };
 
 // Connects a client with small socket buffers on both ends to a
 // PipelinedInbound and runs `scenario` with the client's descriptor.
-void with_pipelined_inbound(double response_timeout, std::function<void(int, PipelineObservation &)> scenario) {
+void with_pipelined_inbound(double response_timeout, std::function<void(int, PipelineObservation &)> scenario,
+                            size_t response_bytes = 16 << 10, bool answer_after_eof = false,
+                            size_t io_buffer_bytes = 0) {
   int listener = ::socket(AF_INET, SOCK_STREAM, 0);
   CHECK(listener >= 0);
   sockaddr_in address{};
@@ -928,7 +1018,8 @@ void with_pipelined_inbound(double response_timeout, std::function<void(int, Pip
   scheduler.run_in_context([&] {
     auto fd = td::SocketFd::from_native_fd(td::NativeFd(accepted)).move_as_ok();
     td::actor::create_actor<PipelinedInbound>(td::actor::ActorOptions().with_name("pipelined-inbound").with_poll(),
-                                              std::move(fd), &observation, response_timeout)
+                                              std::move(fd), &observation, response_timeout, response_bytes,
+                                              answer_after_eof, io_buffer_bytes)
         .release();
   });
   std::atomic<bool> done{false};
@@ -2023,4 +2114,96 @@ TEST(HttpServerLimits, a_closing_reply_survives_a_slow_reader) {
 
 TEST(HttpServerLimits, a_delayed_closing_reply_survives_a_slow_reader) {
   expect_whole_reply_to_slow_reader(true);
+}
+
+TEST(HttpServerLimits, finishing_an_early_answered_upload_at_eof_drains_the_response) {
+  constexpr size_t response_bytes = 256 << 10;
+  with_pipelined_inbound(
+      10,
+      [](int fd, PipelineObservation &observation) {
+        const std::string request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhell";
+        ASSERT_EQ(::send(fd, request.data(), request.size(), MSG_NOSIGNAL), static_cast<ssize_t>(request.size()));
+        ASSERT_TRUE(wait_for([&] { return observation.responses_serialized == 1; }, 3000));
+
+        // Finish the upload and half-close while the fully serialized early
+        // response still exceeds the pinned kernel buffers. Wait for the EOF
+        // turn to finish before draining, so a premature stop cannot race a
+        // reader that would otherwise make the remaining output writable.
+        ASSERT_EQ(::send(fd, "o", 1, MSG_NOSIGNAL), static_cast<ssize_t>(1));
+        ASSERT_EQ(::shutdown(fd, SHUT_WR), 0);
+        ASSERT_TRUE(wait_for([&] { return observation.eof_processed.load(); }, 3000));
+        ASSERT_TRUE(observation.payloads_complete_at_eof.load());
+        ASSERT_TRUE(observation.output_at_eof.load() > 0);
+
+        auto fetched = read_to_eof(fd);
+        auto body = decode_chunked(fetched.raw);
+        ASSERT_TRUE(body.has_value());
+        ASSERT_TRUE(*body == std::string(response_bytes, 'x'));
+        ASSERT_TRUE(fetched.clean_eof);
+        ASSERT_TRUE(wait_for([&] { return observation.closed.load(); }, 3000));
+      },
+      response_bytes);
+}
+
+TEST(HttpServerLimits, eof_without_a_request_releases_the_connection) {
+  with_pipelined_inbound(10, [](int fd, PipelineObservation &observation) {
+    ASSERT_EQ(::shutdown(fd, SHUT_WR), 0);
+    auto fetched = read_to_eof(fd);
+    ASSERT_TRUE(fetched.raw.empty());
+    ASSERT_TRUE(fetched.clean_eof);
+    ASSERT_TRUE(wait_for([&] { return observation.closed.load(); }, 3000));
+    ASSERT_EQ(observation.calls.load(), 0);
+  });
+}
+
+TEST(HttpServerLimits, an_answer_serialized_after_request_eof_drains_the_response) {
+  constexpr size_t response_bytes = 256 << 10;
+  with_pipelined_inbound(
+      10,
+      [](int fd, PipelineObservation &observation) {
+        const std::string request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello";
+        ASSERT_EQ(::send(fd, request.data(), request.size(), MSG_NOSIGNAL), static_cast<ssize_t>(request.size()));
+        ASSERT_EQ(::shutdown(fd, SHUT_WR), 0);
+        ASSERT_TRUE(wait_for([&] { return observation.eof_processed.load(); }, 3000));
+        ASSERT_EQ(observation.responses_at_eof.load(), 0);
+
+        // The callback cannot answer until the EOF turn has completed. Start
+        // reading only after the later serialization turn also finishes, with
+        // output still queued behind the small socket buffers.
+        ASSERT_TRUE(wait_for([&] { return observation.responses_serialized == 1; }, 3000));
+        ASSERT_TRUE(observation.output_after_serialization.load() > 0);
+        auto fetched = read_to_eof(fd);
+        auto body = decode_chunked(fetched.raw);
+        ASSERT_TRUE(body.has_value());
+        ASSERT_TRUE(*body == std::string(response_bytes, 'x'));
+        ASSERT_TRUE(fetched.clean_eof);
+        ASSERT_TRUE(wait_for([&] { return observation.closed.load(); }, 3000));
+      },
+      response_bytes, true);
+}
+
+TEST(HttpServerLimits, an_answer_larger_than_the_window_after_request_eof_is_written_in_full) {
+  constexpr size_t response_bytes = 256 << 10;
+  with_pipelined_inbound(
+      10,
+      [](int fd, PipelineObservation &observation) {
+        const std::string request = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello";
+        ASSERT_EQ(::send(fd, request.data(), request.size(), MSG_NOSIGNAL), static_cast<ssize_t>(request.size()));
+        ASSERT_EQ(::shutdown(fd, SHUT_WR), 0);
+        ASSERT_TRUE(wait_for([&] { return observation.eof_processed.load(); }, 3000));
+        ASSERT_EQ(observation.responses_at_eof.load(), 0);
+        // The response cannot finish serializing until output drains: the
+        // 4 KiB transport window and pinned kernel buffers are much smaller
+        // than its body. EOF must permit writes before close_after_write_ is
+        // armed by payload_written().
+        ASSERT_TRUE(wait_for([&] { return observation.output_before_serialization_after_eof > 0; }, 3000));
+        ASSERT_EQ(observation.responses_serialized.load(), 0);
+        auto fetched = read_to_eof(fd);
+        auto body = decode_chunked(fetched.raw);
+        ASSERT_TRUE(body.has_value());
+        ASSERT_TRUE(*body == std::string(response_bytes, 'x'));
+        ASSERT_TRUE(fetched.clean_eof);
+        ASSERT_TRUE(wait_for([&] { return observation.closed.load(); }, 3000));
+      },
+      response_bytes, true, 4096);
 }

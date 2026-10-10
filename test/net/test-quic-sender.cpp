@@ -15,8 +15,11 @@
     along with TOS Blockchain.  If not, see <http://www.gnu.org/licenses/>.
 */
 #include <arpa/inet.h>
+#include <array>
 #include <atomic>
+#include <barrier>
 #include <chrono>
+#include <future>
 #include <iostream>
 #include <mutex>
 #include <netinet/in.h>
@@ -2603,6 +2606,376 @@ TEST(QuicInboundStreamTimeout, AbandonedInboundStreamIsReaped) {
     }
     co_return td::Unit{};
   });
+}
+
+TEST(QuicInboundStreamTimeout, TrickleDataCannotRenewTheTotalLifetime) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(8, 1 << 20, 8, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_lifetime = 5.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("absolute-timeout", next_port(), options);
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + 1000);
+    auto sid = co_await t.send_partial_stream(client, cid, 'x');
+    co_await poll_until([&] { return budget->bytes() == 1; }, 3.0, "first byte admitted");
+    for (int i = 0; i < 2; ++i) {
+      jump_time_by(2.0);
+      co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, td::BufferSlice("x"),
+                              false);
+      co_await poll_until([&] { return budget->bytes() == static_cast<size_t>(i + 2); }, 1.0, "trickle byte admitted");
+    }
+    ASSERT_TRUE(!client.state->has_closed_stream(sid));
+    jump_time_by(1.5);
+    co_await poll_until([&] { return client.state->has_closed_stream(sid); }, 0.5,
+                        "absolute lifetime expired before the renewed inactivity window");
+    co_await poll_until(
+        [&] { return budget->streams() == 0 && budget->bytes() == 0 && budget->tracked_sources() == 0; }, 1.0,
+        "absolute expiry returned all reservations");
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicInboundStreamTimeout, AResetWithoutPeerAcknowledgementReleasesTheConnection) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(8, 1 << 20, 8, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("no-reset-ack", next_port(), options);
+    auto drop = std::make_shared<std::atomic<bool>>(false);
+    auto client_options = quic_test_options();
+    client_options.drop_outgoing_datagram = [drop](td::Slice) { return drop->load(); };
+    auto client = co_await t.create_endpoint(client_options);
+    auto cid = co_await t.connect_raw_to(client, receiver.port + 1000);
+    co_await t.send_partial_stream(client, cid, 'x');
+    co_await poll_until([&] { return budget->streams() == 1 && budget->bytes() == 1; }, 3.0, "partial stream admitted");
+    drop->store(true);
+    jump_time_by(3.5);
+    co_await poll_until([&] { return budget->bytes() == 0; }, 0.5, "failed stream dropped its buffer");
+    ASSERT_EQ(budget->streams(), 1u);
+    // Still below the connection idle timeout: only the reset grace closes it.
+    jump_time_by(3.0);
+    co_await poll_until([&] { return budget->streams() == 0 && budget->tracked_sources() == 0; }, 0.5,
+                        "unacknowledged reset released connection and slot");
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicInboundStreamTimeout, InputFinCannotDiscardTheLifetimeOfAHeldSlot) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(8, 1 << 20, 8, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 3.0;
+    options.inbound_stream_lifetime = 5.0;
+    options.inbound_stream_budget = budget;
+    auto receiver = co_await t.create_sender_node("fin-lifetime", next_port(), options);
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + 1000);
+    auto sid = co_await t.send_partial_stream(client, cid, 'x');
+    co_await poll_until([&] { return budget->bytes() == 1; }, 3.0, "partial stream admitted before FIN");
+    co_await t.finish_stream(client, cid, sid);
+    // One byte is not a protocol message: the input is consumed, but the
+    // transport has not received an answer/FIN and still holds the slot.
+    co_await poll_until([&] { return budget->bytes() == 0; }, 1.0, "completed input consumed");
+    ASSERT_EQ(budget->streams(), 1u);
+    jump_time_by(5.5);
+    co_await poll_until([&] { return client.state->has_closed_stream(sid) && budget->streams() == 0; }, 0.5,
+                        "input FIN did not remove the held slot lifetime");
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSourceShare, MultipleFullSourcesAllowANewSourceAcrossServers) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 1 << 20, 2, 1 << 20);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 30;
+    // Short enough for the final jump to pass it within the runner's test
+    // timeout, which is measured on the jumped clock.
+    options.inbound_stream_lifetime = 40;
+    options.inbound_stream_budget = budget;
+    options.source_key_for_test = [](const td::IPAddress& peer) { return std::to_string(peer.get_port()); };
+    auto occupied = co_await t.create_sender_node("fairness-occupied", next_port(), options);
+    auto other_server = co_await t.create_sender_node("fairness-other", next_port(), options);
+    auto a = co_await t.create_endpoint(quic_test_options());
+    auto b = co_await t.create_endpoint(quic_test_options());
+    auto ca = co_await t.connect_raw_to(a, occupied.port + 1000);
+    auto cb = co_await t.connect_raw_to(b, occupied.port + 1000);
+    auto oldest_a = co_await t.send_partial_stream(a, ca, 'a');
+    co_await t.send_partial_stream(a, ca, 'a');
+    auto oldest_b = co_await t.send_partial_stream(b, cb, 'b');
+    co_await t.send_partial_stream(b, cb, 'b');
+    co_await poll_until([&] { return budget->streams() == 4 && budget->bytes() == 4; }, 3.0, "two sources filled pool");
+    auto honest = co_await t.create_endpoint(quic_test_options());
+    auto ch = co_await t.connect_raw_to(honest, other_server.port + 1000);
+    auto refused = co_await t.send_partial_stream(honest, ch, 'h');
+    co_await t.wait_for_stream_close(honest, refused);
+    co_await poll_until([&] { return a.state->has_closed_stream(oldest_a) || b.state->has_closed_stream(oldest_b); },
+                        2.0, "overrepresented source was displaced on another server");
+    co_await poll_until([&] { return budget->streams() == 3 && budget->bytes() == 3; }, 2.0,
+                        "victim released slot and byte");
+    auto& victim = a.state->has_closed_stream(oldest_a) ? a : b;
+    auto victim_cid = a.state->has_closed_stream(oldest_a) ? ca : cb;
+    auto refill = co_await t.send_partial_stream(victim, victim_cid, 'r');
+    co_await poll_until([&] { return victim.state->has_closed_stream(refill); }, 0.5,
+                        "displaced source cannot take the reserved retry slot");
+    ASSERT_EQ(budget->streams(), 3u);
+    auto admitted = co_await t.send_partial_stream(honest, ch, 'h');
+    co_await poll_until([&] { return budget->source_streams(std::to_string(honest.port)) == 1; }, 2.0,
+                        "new source retry admitted");
+    ASSERT_TRUE(!honest.state->has_closed_stream(admitted));
+    ASSERT_EQ(budget->streams(), 4u);
+    co_await t.finish_stream(honest, ch, admitted);
+    // The admitted input is complete, so its slot now lasts for the stream's
+    // lifetime rather than its inactivity window. Wait until the server has
+    // read the FIN: a clock jump landing between the server's timer pass and
+    // that read would restart the connection's idle timer at the jumped time.
+    co_await poll_until([&] { return budget->bytes() == 3; }, 2.0, "admitted input consumed");
+    // Past inactivity (30 s), lifetime (40 s) and connection idle (15 s): every
+    // remaining stream expires whatever traffic follows the jump.
+    jump_time_by(45.0);
+    co_await poll_until(
+        [&] { return budget->streams() == 0 && budget->bytes() == 0 && budget->tracked_sources() == 0; }, 5.0,
+        "remaining streams reclaimed");
+    co_return td::Unit{};
+  });
+}
+
+TEST(QuicSourceShare, ConcurrentReclaimsPreserveTheReturnedRetrySlot) {
+  constexpr int kRequesters = 8;
+  constexpr int kRounds = 1000;
+  std::barrier round_boundary(kRequesters + 1);
+  std::shared_ptr<tos::quic::QuicInboundStreamBudget> budget;
+  std::atomic<bool> released{false};
+  std::atomic<size_t> extra_reclaims{0};
+  std::vector<std::thread> requesters;
+  for (int i = 0; i < kRequesters; ++i) {
+    requesters.emplace_back([&, source = "late-" + std::to_string(i)] {
+      for (int round = 0; round < kRounds; ++round) {
+        round_boundary.arrive_and_wait();
+        while (!released.load()) {
+          if (budget->request_reclaim(source)) {
+            extra_reclaims.fetch_add(1);
+          }
+        }
+        round_boundary.arrive_and_wait();
+      }
+    });
+  }
+  for (int round = 0; round < kRounds; ++round) {
+    budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 100, 2, 100);
+    std::array<std::optional<tos::quic::QuicInboundStreamReservation>, 4> reservations;
+    std::array<tos::quic::QuicInboundStreamBudget::ReclaimToken, 4> tokens;
+    const std::array<std::string, 4> sources{"a", "a", "b", "b"};
+    for (size_t i = 0; i < sources.size(); ++i) {
+      reservations[i] = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, sources[i]);
+      ASSERT_TRUE(reservations[i].has_value());
+      tokens[i] = budget->track_stream(sources[i]);
+    }
+    ASSERT_TRUE(budget->request_reclaim("honest"));
+    ASSERT_TRUE(tokens[0]->load());
+    released.store(false);
+    round_boundary.arrive_and_wait();
+    // Match StreamState destruction: return its slot before destroying the
+    // reclaim token. Concurrent requesters must see either the still-pending
+    // reclaim or the returned slot, never displace a second stream and steal
+    // the first newcomer's reserved retry.
+    reservations[0].reset();
+    tokens[0].reset();
+    released.store(true);
+    round_boundary.arrive_and_wait();
+    ASSERT_EQ(extra_reclaims.load(), 0u);
+    ASSERT_EQ(budget->reclaim_generation(), 1u);
+    auto honest = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "honest");
+    ASSERT_TRUE(honest.has_value());
+  }
+  for (auto& requester : requesters) {
+    requester.join();
+  }
+  ASSERT_EQ(budget->streams(), 0u);
+  ASSERT_EQ(budget->tracked_sources(), 0u);
+}
+
+TEST(QuicSourceShare, AbandonedReclaimReservationExpires) {
+  auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 100, 2, 100);
+  std::array<std::optional<tos::quic::QuicInboundStreamReservation>, 4> reservations;
+  std::array<tos::quic::QuicInboundStreamBudget::ReclaimToken, 4> tokens;
+  const std::array<std::string, 4> sources{"a", "a", "b", "b"};
+  for (size_t i = 0; i < sources.size(); ++i) {
+    reservations[i] = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, sources[i]);
+    ASSERT_TRUE(reservations[i].has_value());
+    tokens[i] = budget->track_stream(sources[i]);
+  }
+  ASSERT_TRUE(budget->request_reclaim("honest"));
+  ASSERT_TRUE(!budget->request_reclaim("later"));
+  ASSERT_TRUE(tokens[0]->load());
+  reservations[0].reset();
+  tokens[0].reset();
+  ASSERT_EQ(budget->streams(), 3u);
+  ASSERT_TRUE(!tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "a").has_value());
+  ASSERT_TRUE(!budget->request_reclaim("later"));
+  jump_time_by(2.1);
+  reservations[0] = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "a");
+  ASSERT_TRUE(reservations[0].has_value());
+  tokens[0] = budget->track_stream("a");
+  ASSERT_EQ(budget->streams(), 4u);
+  ASSERT_TRUE(budget->request_reclaim("later"));
+  for (auto& reservation : reservations) {
+    reservation.reset();
+  }
+  for (auto& token : tokens) {
+    token.reset();
+  }
+  ASSERT_EQ(budget->streams(), 0u);
+  ASSERT_EQ(budget->tracked_sources(), 0u);
+}
+
+namespace {
+
+// A full four-slot pool: two incomplete reclaimable streams from each of two
+// sources, so either source is a reclaim victim for a third one.
+struct FullReclaimPool {
+  std::shared_ptr<tos::quic::QuicInboundStreamBudget> budget =
+      std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 100, 2, 100);
+  std::array<std::optional<tos::quic::QuicInboundStreamReservation>, 4> reservations;
+  std::array<tos::quic::QuicInboundStreamBudget::ReclaimToken, 4> tokens;
+
+  FullReclaimPool() {
+    const std::array<std::string, 4> sources{"a", "a", "b", "b"};
+    for (size_t i = 0; i < sources.size(); ++i) {
+      reservations[i] = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, sources[i]);
+      ASSERT_TRUE(reservations[i].has_value());
+      tokens[i] = budget->track_stream(sources[i]);
+    }
+    ASSERT_EQ(budget->streams(), 4u);
+  }
+
+  // Release one stream the way StreamState destruction does: the slot first,
+  // then the reclaim token.
+  void close_stream(size_t i) {
+    reservations[i].reset();
+    tokens[i].reset();
+  }
+
+  void tear_down() {
+    for (size_t i = 0; i < reservations.size(); ++i) {
+      close_stream(i);
+    }
+    ASSERT_EQ(budget->streams(), 0u);
+    ASSERT_EQ(budget->tracked_sources(), 0u);
+  }
+};
+
+}  // namespace
+
+TEST(QuicSourceShare, NaturalReleaseWithdrawsAPendingReclaim) {
+  FullReclaimPool pool;
+  auto& budget = pool.budget;
+  ASSERT_TRUE(budget->request_reclaim("honest"));
+  ASSERT_TRUE(pool.tokens[0]->load());
+  // An unrelated stream finishes before the victim's server acts on the mark.
+  pool.close_stream(3);
+  // The returned slot already serves the newcomer; displacing the victim as
+  // well would reset a stream for capacity that is no longer missing.
+  ASSERT_TRUE(!pool.tokens[0]->load());
+  ASSERT_EQ(budget->streams(), 3u);
+  ASSERT_EQ(budget->source_streams("a"), 2u);
+  // The returned slot stays reserved for the newcomer's retry.
+  ASSERT_TRUE(!tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "c").has_value());
+  auto recipient = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "honest");
+  ASSERT_TRUE(recipient.has_value());
+  ASSERT_EQ(budget->streams(), 4u);
+  // The withdrawn reclaim is no longer pending: the next newcomer can ask.
+  ASSERT_TRUE(budget->request_reclaim("later"));
+  ASSERT_TRUE(pool.tokens[0]->load());
+  recipient.reset();
+  pool.tear_down();
+}
+
+TEST(QuicSourceShare, ReleaseInsideTheReclaimCheckCannotStrandAVictim) {
+  FullReclaimPool pool;
+  auto& budget = pool.budget;
+  std::promise<void> released_promise;
+  auto released = released_promise.get_future();
+  std::thread releaser;
+  budget->set_reclaim_check_hook_for_test([&] {
+    // Another thread returns a slot after the saturation check and before
+    // the victim is marked. If the release can complete inside this window,
+    // it does so before the wait below ends; if it must wait for the reclaim
+    // lock, it runs after the mark is published.
+    releaser = std::thread([&] {
+      pool.reservations[3].reset();
+      released_promise.set_value();
+      pool.tokens[3].reset();
+    });
+    released.wait_for(std::chrono::seconds(2));
+  });
+  ASSERT_TRUE(budget->request_reclaim("honest"));
+  budget->set_reclaim_check_hook_for_test(nullptr);
+  releaser.join();
+  ASSERT_TRUE(!pool.tokens[0]->load());
+  ASSERT_EQ(budget->streams(), 3u);
+  auto recipient = tos::quic::QuicInboundStreamReservation::acquire_stream(budget, "honest");
+  ASSERT_TRUE(recipient.has_value());
+  ASSERT_EQ(budget->streams(), 4u);
+  recipient.reset();
+  pool.tear_down();
+}
+
+TEST(QuicSourceShare, ReclaimRacingNaturalReleasesLeavesNoVictim) {
+  constexpr int kRequesters = 8;
+  constexpr int kRounds = 2000;
+  size_t granted_rounds = 0;
+  for (int round = 0; round < kRounds; ++round) {
+    FullReclaimPool pool;
+    auto& budget = pool.budget;
+    std::atomic<bool> go{false};
+    std::atomic<bool> stop{false};
+    std::atomic<size_t> grants{0};
+    auto delay = td::Random::fast(0, 200);
+    std::vector<std::thread> requesters;
+    for (int i = 0; i < kRequesters; ++i) {
+      requesters.emplace_back([&, source = "late-" + std::to_string(i)] {
+        while (!go.load()) {
+          std::this_thread::yield();
+        }
+        while (!stop.load()) {
+          if (budget->request_reclaim(source)) {
+            grants.fetch_add(1);
+          }
+        }
+      });
+    }
+    std::thread releaser([&] {
+      while (!go.load()) {
+        std::this_thread::yield();
+      }
+      for (int i = 0; i < delay; ++i) {
+        std::this_thread::yield();
+      }
+      pool.close_stream(3);
+    });
+    go.store(true);
+    releaser.join();
+    stop.store(true);
+    for (auto& requester : requesters) {
+      requester.join();
+    }
+    // At most one reclaim is pending at a time, and once the slot came back
+    // no stream that still holds one may stay marked for displacement.
+    ASSERT_TRUE(grants.load() <= 1);
+    granted_rounds += grants.load();
+    for (size_t i = 0; i < 3; ++i) {
+      ASSERT_TRUE(!pool.tokens[i]->load());
+    }
+    ASSERT_EQ(budget->streams(), 3u);
+    pool.tear_down();
+  }
+  // A run in which every release beat every request exercised nothing.
+  LOG(WARNING) << "reclaim granted before the natural release in " << granted_rounds << " of " << kRounds << " rounds";
+  ASSERT_TRUE(granted_rounds > 0);
 }
 
 TEST(QuicOutboundQueryDeadline, PartialResponseDoesNotExtendDeadline) {

@@ -79,7 +79,8 @@ size_t open_fd_count() {
 
 class Client {
  public:
-  Client(int port, int receive_window) : port_(port), receive_window_(receive_window) {
+  Client(int port, int receive_window, uint32_t source = INADDR_LOOPBACK)
+      : port_(port), receive_window_(receive_window), source_(source) {
   }
   ~Client() {
     close();
@@ -94,6 +95,10 @@ class Client {
       if (receive_window_ > 0) {
         CHECK(::setsockopt(fd_, SOL_SOCKET, SO_RCVBUF, &receive_window_, sizeof(receive_window_)) == 0);
       }
+      sockaddr_in local{};
+      local.sin_family = AF_INET;
+      local.sin_addr.s_addr = htonl(source_);
+      CHECK(::bind(fd_, reinterpret_cast<sockaddr *>(&local), sizeof(local)) == 0);
       sockaddr_in addr{};
       addr.sin_family = AF_INET;
       addr.sin_port = htons(static_cast<uint16_t>(port_));
@@ -250,6 +255,7 @@ class Client {
 
   int port_;
   int receive_window_;
+  uint32_t source_;
   int fd_ = -1;
   std::string pending_;
 };
@@ -333,6 +339,93 @@ const std::string kLongestNumberId = "1" + std::string(255, '0');
 const std::string kNumberIdOverBound = "1" + std::string(256, '0');
 
 }  // namespace
+
+TEST(JsonRpcTransport, connections_of_one_source_leave_other_sources_capacity) {
+  for (bool with_key : {false, true}) {
+    auto options = options_for(with_key);
+    options.max_connections = 8;  // The production policy gives each source one slot.
+    with_json_rpc(options, [with_key](int port) {
+      Client hog(port, 0);
+      ASSERT_TRUE(hog.connect());
+      // Occupy the source allowance with a silent TCP connection. Neither a
+      // key nor request headers are needed to reach connection admission.
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      Client excess(port, 0);
+      ASSERT_TRUE(excess.connect());
+      size_t received;
+      ASSERT_TRUE(excess.drains_to_close(3000, received));
+      ASSERT_EQ(received, 0u);
+
+      Client honest(port, 0, 0x7f000002);
+      ASSERT_TRUE(honest.connect());
+      ASSERT_TRUE(honest.send_all(post(request_object("7"), with_key)));
+      std::string status, body;
+      ASSERT_TRUE(honest.read_response(3000, status, body));
+      ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+      ASSERT_TRUE(body.find(id_field("7")) != std::string::npos);
+
+      hog.close();
+      bool recovered = false;
+      for (int attempt = 0; attempt < 30 && !recovered; ++attempt) {
+        Client retry(port, 0);
+        ASSERT_TRUE(retry.connect());
+        if (retry.send_all("GET /healthcheck HTTP/1.1\r\nHost: localhost\r\n\r\n")) {
+          recovered = retry.read_response(100, status, body) && body == "OK";
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      }
+      ASSERT_TRUE(recovered);
+    });
+  }
+}
+
+TEST(JsonRpcTransport, keyless_endpoints_close_even_when_keepalive_is_requested) {
+  for (const auto &route : {"GET /healthcheck", "GET /api-info", "OPTIONS /"}) {
+    with_json_rpc(options_for(true), [route](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      ASSERT_TRUE(
+          client.send_all(std::string(route) + " HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"));
+      std::string status, body;
+      ASSERT_TRUE(client.read_response(3000, status, body));
+      if (std::string(route) == "OPTIONS /") {
+        ASSERT_EQ(status, std::string("HTTP/1.1 204 No Content"));
+        ASSERT_TRUE(body.empty());
+      } else {
+        ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+        if (std::string(route) == "GET /healthcheck") {
+          ASSERT_EQ(body, std::string("OK"));
+        } else {
+          auto parsed = td::json_decode(td::MutableSlice(body));
+          ASSERT_TRUE(parsed.is_ok());
+          auto metadata = parsed.move_as_ok();
+          ASSERT_TRUE(metadata.type() == td::JsonValue::Type::Object);
+          auto name = metadata.get_object().get_required_string_field("name");
+          ASSERT_TRUE(name.is_ok());
+          ASSERT_EQ(name.move_as_ok(), std::string("TOS JSON-RPC API"));
+        }
+      }
+      size_t rest;
+      ASSERT_TRUE(client.drains_to_close(3000, rest));
+      ASSERT_EQ(rest, 0u);
+    });
+  }
+}
+
+TEST(JsonRpcTransport, rpc_response_honors_connection_close) {
+  with_json_rpc(options_for(true), [](int port) {
+    Client client(port, 0);
+    ASSERT_TRUE(client.connect());
+    auto request = post(request_object("7"), true);
+    request.insert(request.find("\r\n") + 2, "Connection: close\r\n");
+    ASSERT_TRUE(client.send_all(request));
+    std::string status, body;
+    ASSERT_TRUE(client.read_response(3000, status, body));
+    ASSERT_TRUE(body.find(id_field("7")) != std::string::npos);
+    size_t rest;
+    ASSERT_TRUE(client.drains_to_close(3000, rest));
+  });
+}
 
 TEST(JsonRpcTransport, ids_up_to_the_bound_are_echoed_and_longer_ones_are_refused_with_a_null_id) {
   for (bool with_key : {false, true}) {

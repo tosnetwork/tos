@@ -2107,7 +2107,7 @@ add_dependencies(all-tests test-quic-sender)
 # delete another's fixtures or bind its sockets. The ranges also leave room for
 # QuicSender::NODE_PORT_OFFSET and every next_port() allocation in each case.
 add_test(NAME quic-inbound-stream-timeout COMMAND test-quic-sender
-  -p 21000 -d tmp-dir-test-quic-inbound -f AbandonedInboundStreamIsReaped)
+  -p 21000 -d tmp-dir-test-quic-inbound -f QuicInboundStreamTimeout)
 add_test(NAME quic-outbound-query-deadline COMMAND test-quic-sender
   -p 31000 -d tmp-dir-test-quic-outbound -f PartialResponseDoesNotExtendDeadline)
 add_test(NAME quic-connection-count-cap COMMAND test-quic-sender
@@ -2137,6 +2137,7 @@ set_tests_properties(
   test-json-rpc-transport
   test-rldp-http-tunnel
   PROPERTIES LABELS "network-safety")
+set_property(TEST test-adnl-ext-output-backpressure test-adnl-ext-refusal-close APPEND PROPERTY LABELS "network-safety")
 
 add_subdirectory(test)
 endif()

@@ -129,6 +129,9 @@ td::Status HttpInboundConnection::receive(td::ChainBufferReader &input) {
   }
 
   metrics_.requests_total->add(1);
+  response_finished_ = false;
+  // Persistence belongs to this request as well as to its response.
+  request_persistent_ = cur_request_->keep_alive();
 
   if (reject_request_bodies_ && cur_request_->announces_body()) {
     cur_request_ = nullptr;
@@ -165,6 +168,9 @@ void HttpInboundConnection::on_admission(td::Result<HttpServer::Admission> resul
     return;
   }
   auto admission = result.move_as_ok();
+  if (!admission.allow_persistence) {
+    request_persistent_ = false;
+  }
   if (!admission.admitted) {
     // Refused from the headers: the body, if any, is never read. A request
     // that announced one closes after the answer, since the rest of its body
@@ -269,7 +275,7 @@ void HttpInboundConnection::send_answer(std::unique_ptr<HttpResponse> response, 
   // Armed before the response is appended, so it can tell output left over
   // from an earlier response from this one's.
   arm_response_deadline();
-  if (!response->keep_alive()) {
+  if (!response->keep_alive() || !request_persistent_) {
     close_after_write_ = true;
   }
   response->set_keep_alive(!close_after_write_);
