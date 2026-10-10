@@ -49,6 +49,7 @@ async fn fixed_development_witness_routes_keep_peer_and_header_bounds() {
     let config = IngressConfig {
         listen: m_addr,
         witness_endpoints: vec!["cache_1".into()],
+        regular_request_limit: 7,
         rate_per_second: 1,
         burst: 4,
         server_name: "localhost".into(),
@@ -209,6 +210,7 @@ async fn actual_collector_observer_tls_ingress_manager_current_chain_is_dev_only
         ca_file: t.0.join("ca.pem"),
         peers: vec![Peer { alias: "collector".into(), certificate_sha256: peer.clone(), role }],
         witness_endpoints: vec!["cache_1".into()],
+        regular_request_limit: 7,
         rate_per_second: 1,
         burst: 4,
     };
@@ -441,6 +443,7 @@ async fn split_collector_identities_archive_validated_process_without_probe_rela
         key_file: t.0.join("server.key"),
         ca_file: t.0.join("ca.pem"),
         witness_endpoints: vec![],
+        regular_request_limit: 7,
         rate_per_second: 1,
         burst: 4,
         peers: vec![Peer {
@@ -741,6 +744,7 @@ async fn mtls_acl_rejects_missing_expired_and_unapproved_before_upstream() {
     let config = IngressConfig {
         listen: address,
         witness_endpoints: vec![],
+        regular_request_limit: 7,
         rate_per_second: 1,
         burst: 4,
         server_name: "localhost".into(),
@@ -812,6 +816,15 @@ async fn mtls_acl_rejects_missing_expired_and_unapproved_before_upstream() {
 
 #[tokio::test]
 async fn eight_idle_authenticated_readers_are_bounded_then_release() {
+    idle_capacity(7).await;
+}
+
+#[tokio::test]
+async fn configured_idle_connections_obey_total_cap() {
+    idle_capacity(2).await;
+}
+
+async fn idle_capacity(regular_limit: usize) {
     let t = fixture();
     let app = Router::new().route("/v1/edge/heartbeat", get(|| async { "ok" }));
     let up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -822,6 +835,7 @@ async fn eight_idle_authenticated_readers_are_bounded_then_release() {
     let config = IngressConfig {
         listen: address,
         witness_endpoints: vec![],
+        regular_request_limit: regular_limit,
         rate_per_second: 1,
         burst: 4,
         server_name: "localhost".into(),
@@ -837,16 +851,19 @@ async fn eight_idle_authenticated_readers_are_bounded_then_release() {
     };
     let server = tokio::spawn(tos_health_services::ingress::serve(config, listener));
     let mut idle = Vec::new();
-    for _ in 0..8 {
+    for _ in 0..regular_limit + 1 {
         idle.push(idle_tls(&t.0, address, "client").await);
     }
     let base = format!("https://localhost:{}/v1/edge/heartbeat", address.port());
     let started = std::time::Instant::now();
     assert!(client(&t.0, Some("client")).get(&base).send().await.is_err());
-    assert!(started.elapsed() < Duration::from_secs(3), "ninth connection was not rejected");
+    assert!(
+        started.elapsed() < Duration::from_secs(3),
+        "connection beyond configured total was not rejected"
+    );
 
     // TLS handshakes and HTTP header reads each have their own three-second bound.
-    // These sockets completed TLS, so the header bound releases all eight slots.
+    // These sockets completed TLS, so the header bound releases all slots.
     tokio::time::sleep(Duration::from_millis(3_200)).await;
     assert_eq!(client(&t.0, Some("client")).get(&base).send().await.unwrap().status(), 200);
     drop(idle);
@@ -856,36 +873,67 @@ async fn eight_idle_authenticated_readers_are_bounded_then_release() {
 
 #[tokio::test]
 async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
-    use axum::middleware;
-    use tokio::io::AsyncWriteExt;
+    regular_capacity(None, false).await;
+}
+
+#[tokio::test]
+async fn configured_regular_requests_reserve_heartbeat_and_release_permits() {
+    regular_capacity(Some(9), false).await;
+}
+
+#[tokio::test]
+async fn configured_regular_permits_release_on_client_disconnect() {
+    regular_capacity(Some(2), true).await;
+}
+
+async fn regular_capacity(configured_limit: Option<usize>, disconnect_first: bool) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let t = fixture();
+    let limit = configured_limit.unwrap_or(7);
     let slow_calls = Arc::new(AtomicUsize::new(0));
     let count = slow_calls.clone();
-    let edge_state = tos_health_services::edge::EdgeState::new("v1".into(), vec![b'e'; 32]);
     let large = format!("{}# EOF\n", "x".repeat(2_097_146));
     assert_eq!(large.len(), 2_097_152);
-    edge_state.native.lock().unwrap().publish("process", 1, large, 0, 0).unwrap();
-    let edge = tos_health_services::edge::router(edge_state).layer(middleware::from_fn(
-        move |request: axum::extract::Request, next: middleware::Next| {
-            let count = count.clone();
-            async move {
-                if request.uri().path() == "/metrics" {
+    let edge = Router::new()
+        .route(
+            "/metrics",
+            get(move || {
+                let count = count.clone();
+                let large = large.clone();
+                async move {
                     count.fetch_add(1, Ordering::SeqCst);
+                    large
                 }
-                next.run(request).await
-            }
-        },
-    ));
+            }),
+        )
+        .route("/v1/edge/heartbeat", get(|| async { "ok" }));
     let up = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let upstream = up.local_addr().unwrap();
     let upstream_task = tokio::spawn(async move { axum::serve(up, edge).await.unwrap() });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    // Accepted sockets inherit this bound, so the full response cannot fit in
+    // the kernel send queue while the client deliberately stops reading.
+    use std::os::fd::AsRawFd;
+    let send_buffer: libc::c_int = 16_384;
+    assert_eq!(
+        unsafe {
+            libc::setsockopt(
+                listener.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_SNDBUF,
+                (&send_buffer as *const libc::c_int).cast(),
+                std::mem::size_of_val(&send_buffer).try_into().unwrap(),
+            )
+        },
+        0
+    );
     let address = listener.local_addr().unwrap();
     let config = IngressConfig {
         listen: address,
         witness_endpoints: vec![],
-        rate_per_second: 1,
-        burst: 4,
+        regular_request_limit: configured_limit.unwrap_or(7),
+        rate_per_second: 64,
+        burst: 256,
         server_name: "localhost".into(),
         upstream,
         cert_file: t.0.join("server.pem"),
@@ -904,9 +952,16 @@ async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
             },
         ],
     };
+    // Exercise serde's omitted-field default, not just a hand-written literal.
+    let mut json = serde_json::to_value(&config).unwrap();
+    if configured_limit.is_none() {
+        json.as_object_mut().unwrap().remove("regular_request_limit");
+    }
+    let config: IngressConfig = serde_json::from_value(json).unwrap();
+    assert_eq!(config.regular_request_limit, limit, "default/configured regular limit");
     let server = tokio::spawn(tos_health_services::ingress::serve(config, listener));
     let mut pending = Vec::new();
-    for index in 0..7 {
+    for _ in 0..limit {
         let mut stream = idle_tls(&t.0, address, "client").await;
         stream
             .write_all(
@@ -918,19 +973,17 @@ async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
             )
             .await
             .unwrap();
+        // Once the response starts writing, only the stalled client drain
+        // keeps the permit held: the upstream has finished its work.
+        let mut first = [0];
+        tokio::time::timeout(Duration::from_secs(1), stream.read_exact(&mut first))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first, [b'H']);
         pending.push(stream);
-        if index != 6 {
-            tokio::time::sleep(Duration::from_millis(1_100)).await;
-        }
     }
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while slow_calls.load(Ordering::SeqCst) != 7 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    assert_eq!(pending.len(), 7);
+    assert_eq!(slow_calls.load(Ordering::SeqCst), limit);
 
     let heartbeat = format!("https://localhost:{}/v1/edge/heartbeat", address.port());
     let metrics = format!("https://localhost:{}/metrics", address.port());
@@ -944,9 +997,9 @@ async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
             .unwrap()
             .status(),
         429,
-        "eighth ordinary request bypassed the classified reserve"
+        "limit+1 ordinary request bypassed the classified reserve"
     );
-    assert_eq!(slow_calls.load(Ordering::SeqCst), 7);
+    assert_eq!(slow_calls.load(Ordering::SeqCst), limit);
     assert_eq!(
         reader
             .get(&heartbeat)
@@ -958,6 +1011,30 @@ async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
         200,
         "classified EdgeReader heartbeat"
     );
+
+    // Keep every other client stalled while releasing one response lifetime.
+    let mut released = pending.pop().unwrap();
+    if disconnect_first {
+        drop(released);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    } else {
+        let mut bytes = Vec::new();
+        tokio::time::timeout(Duration::from_secs(3), released.read_to_end(&mut bytes))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(bytes.starts_with(b"TTP/1.1 200"));
+        assert!(bytes.ends_with(b"# EOF\n"));
+    }
+    let after_drain = reader
+        .get(&metrics)
+        .header("authorization", format!("Bearer {}", "e".repeat(32)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(after_drain.status(), 200, "first released connection did not release permits");
+    assert_eq!(after_drain.bytes().await.unwrap().len(), 2_097_152);
+    assert_eq!(slow_calls.load(Ordering::SeqCst), limit + 1);
 
     // Releasing one draining connection makes an ordinary request reach the
     // upstream immediately, proving the prior 429 was not the rate bucket.
@@ -971,7 +1048,7 @@ async fn seven_slow_regular_requests_leave_classified_heartbeat_capacity() {
         .unwrap();
     assert_eq!(control.status(), 200);
     assert_eq!(control.bytes().await.unwrap().len(), 2_097_152);
-    assert_eq!(slow_calls.load(Ordering::SeqCst), 8);
+    assert_eq!(slow_calls.load(Ordering::SeqCst), limit + 2);
     assert_eq!(
         client(&t.0, Some("watchdog"))
             .get(&heartbeat)
@@ -1016,6 +1093,7 @@ async fn scheduled_probe_uses_mtls_and_never_claims_consensus_health() {
     let config = IngressConfig {
         listen: edge_addr,
         witness_endpoints: vec![],
+        regular_request_limit: 7,
         rate_per_second: 1,
         burst: 4,
         server_name: "localhost".into(),
@@ -1145,6 +1223,7 @@ async fn scheduled_native_poll_checks_inventory_over_mtls() {
     let config = IngressConfig {
         listen: edge_addr,
         witness_endpoints: vec![],
+        regular_request_limit: 7,
         rate_per_second: 1,
         burst: 4,
         server_name: "localhost".into(),
@@ -1216,4 +1295,35 @@ async fn scheduled_native_poll_checks_inventory_over_mtls() {
     edge_task.abort();
     manager_task.abort();
     app_task.abort();
+}
+
+#[tokio::test]
+async fn invalid_regular_request_limits_are_refused_before_serving() {
+    let t = fixture();
+    for limit in [0, 65] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let config = IngressConfig {
+            listen: listener.local_addr().unwrap(),
+            upstream: "127.0.0.1:12345".parse().unwrap(),
+            server_name: "localhost".into(),
+            cert_file: t.0.join("server.pem"),
+            key_file: t.0.join("server.key"),
+            ca_file: t.0.join("ca.pem"),
+            peers: vec![Peer {
+                alias: "reader".into(),
+                certificate_sha256: fingerprint(&t.0, "client"),
+                role: Role::EdgeReader,
+            }],
+            witness_endpoints: vec![],
+            rate_per_second: 1,
+            burst: 4,
+            regular_request_limit: limit,
+        };
+        let result = tokio::time::timeout(
+            Duration::from_millis(300),
+            tos_health_services::ingress::serve(config, listener),
+        )
+        .await;
+        assert_eq!(result.unwrap(), Err("invalid ingress configuration".into()), "limit {limit}");
+    }
 }

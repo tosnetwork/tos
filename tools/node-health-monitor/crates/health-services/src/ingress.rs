@@ -57,6 +57,12 @@ pub struct IngressConfig {
     pub rate_per_second: u32,
     #[serde(default = "default_burst")]
     pub burst: u32,
+    /// Regular request lifetimes; one additional connection is reserved for heartbeats.
+    #[serde(default = "default_regular_request_limit")]
+    pub regular_request_limit: usize,
+}
+fn default_regular_request_limit() -> usize {
+    7
 }
 fn default_rate_per_second() -> u32 {
     1
@@ -294,6 +300,7 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
         || !(1..=64).contains(&config.rate_per_second)
         || !(1..=256).contains(&config.burst)
         || config.burst < config.rate_per_second
+        || !(1..=64).contains(&config.regular_request_limit)
         || config.witness_endpoints.windows(2).any(|pair| pair[0] >= pair[1])
     {
         return Err("invalid ingress configuration".into());
@@ -358,10 +365,12 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
     }));
     let config = Arc::new(config);
     let peers = Arc::new(peers);
-    let slots = Arc::new(tokio::sync::Semaphore::new(8));
-    // One of the eight classified request lifetimes is reserved for either
-    // approved heartbeat path. TLS handshakes remain under the total-eight cap.
-    let regular_connections = Arc::new(tokio::sync::Semaphore::new(7));
+    let total_connections =
+        config.regular_request_limit.checked_add(1).ok_or("ingress connection limit overflow")?;
+    // Keep one connection available for either approved heartbeat path when
+    // every regular request is still draining. TLS handshakes share this cap.
+    let slots = Arc::new(tokio::sync::Semaphore::new(total_connections));
+    let regular_connections = Arc::new(tokio::sync::Semaphore::new(config.regular_request_limit));
     loop {
         let (stream, _) = listener.accept().await.map_err(|e| e.to_string())?;
         let Ok(permit) = slots.clone().try_acquire_owned() else {

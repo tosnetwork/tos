@@ -143,6 +143,15 @@ inventory revision; it never rewrites an archived generation.
 
 The manager ingress that aggregates many lanes sets `rate_per_second` /
 `burst` in its ingress config (defaults 1 / 4 are the node-entry contract).
+`regular_request_limit` defaults to 7 and must be in 1..=64 at startup.
+It bounds regular request lifetimes, including response draining. The total
+connection cap is the checked sum `regular_request_limit + 1`, reserving one
+connection for approved heartbeat requests while regular slots are full.
+Connections above the total cap are closed before TLS; classified regular
+requests above the regular cap receive 429. HTTP keep-alive remains disabled.
+A drained response or client disconnect releases its permits. Node ingress
+retains the default 7 regular / 8 total contract; manager ingress may configure
+more regular slots independently of its rate budget.
 
 `scripts/judge-validator-health.py` reads M's rule state and the latest
 archived native snapshot per node and prints one verdict record (healthy,
