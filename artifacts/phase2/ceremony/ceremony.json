@@ -35,8 +35,15 @@
       "kind": "participant",
       "sha256": "ed4b9b45c179b3a5c7e1102dc47505ee81f726bcb077699564e18f022b26c5a4",
       "transcript_after": "3a9cb40dfabfd61eaa6ea350e06e9ef63061e1482a1f0e9d794225c6e3e4da27"
+    },
+    {
+      "index": 6,
+      "kind": "beacon",
+      "beacon_sha256": "ff995f8c4b2cc55086694f72207dc6e2e20838434163e30eb251404f491b4bea",
+      "sha256": "a88c4633f552615b8461127886139a55509b27412c68b18bf0a9e266b1f4122e",
+      "transcript_after": "e1d308592ebc6d8720682a0255c857a648ab8c39ded2b013314ae403f2f8e5f2"
     }
   ],
-  "key_sha256": "b0bc8de88dd92e0ae9efeec2c2ca72cb734004324df903e20507ab736a67189b",
-  "transcript": "3a9cb40dfabfd61eaa6ea350e06e9ef63061e1482a1f0e9d794225c6e3e4da27"
+  "key_sha256": "e4b45b4285d3f138639811b05c3832e68f6805c63db7c4616b08fca754b3a1f5",
+  "transcript": "e1d308592ebc6d8720682a0255c857a648ab8c39ded2b013314ae403f2f8e5f2"
 }
