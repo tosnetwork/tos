@@ -1733,8 +1733,8 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
     let package = freeze_process_package(&state, run).unwrap();
     let package_json: serde_json::Value = serde_json::from_slice(&package.bytes).unwrap();
     assert_eq!(package_json["status"], "partial");
-    assert_eq!(package_json["source_profile"], "development_native_process_v2");
-    assert_eq!(package_json["schema_version"], 2);
+    assert_eq!(package_json["source_profile"], "development_native_process_host_v3");
+    assert_eq!(package_json["schema_version"], 3);
     assert_eq!(package_json["missing_native"][0]["node_id"], "v1");
     assert_eq!(package_json["missing_health"][0]["node_id"], "v1");
     assert!(package_json["truncated"].as_array().unwrap().is_empty());

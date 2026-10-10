@@ -141,8 +141,12 @@ Host is the archived `host_cgroup` sample; chain and storage are views of the
 same native consensus sample. Network, index, GPU, telemetry and deployment
 have no snapshot producer and are rejected as `INVALID_ARGUMENT`.
 `CACHE_MISS` means a supported component has no usable evidence at the requested
-time and age. Fixed packages include host and process separately and identify
-each component dropped to meet the package byte budget.
+time and age. Fixed packages use schema version 3 and the
+`development_native_process_host_v3` profile, include host and process separately,
+and identify each component dropped to meet the package byte budget. Package
+readers refuse versions 1 and 2 as `BROKER_PACKAGE_SUPERSEDED`; malformed current
+bodies, unsupported versions and integrity failures remain distinct refusals.
+Grant restoration does not load packages and is unchanged.
 
 ### Manager delivery diagnostics
 

@@ -692,7 +692,7 @@ async fn fresh_native_sample_and_verdict_share_one_snapshot() {
 /// each drop is listed, verdict copies survive, and the frozen bytes are a
 /// pure function of the fixed watermark.
 #[tokio::test]
-async fn package_v2_fixes_native_and_verdicts_and_truncates_deterministically() {
+async fn package_v3_fixes_native_and_verdicts_and_truncates_deterministically() {
     use tos_health_core::diagnosis::Diagnosis;
     use tos_health_services::fixed_package::{
         freeze_process_package, package_evidence_ids, truncated_components, PACKAGE_MAX_BYTES,
@@ -761,8 +761,8 @@ async fn package_v2_fixes_native_and_verdicts_and_truncates_deterministically() 
     let frozen = freeze_process_package(&state, &run).unwrap();
     assert!(frozen.bytes.len() <= PACKAGE_MAX_BYTES, "{}", frozen.bytes.len());
     let package: Value = serde_json::from_slice(&frozen.bytes).unwrap();
-    assert_eq!(package["schema_version"], 2);
-    assert_eq!(package["source_profile"], "development_native_process_v2");
+    assert_eq!(package["schema_version"], 3);
+    assert_eq!(package["source_profile"], "development_native_process_host_v3");
     assert_eq!(package["health"].as_array().unwrap().len(), 4, "verdict copies are never dropped");
     let first_health = &package["health"][0];
     assert_eq!(first_health["node_id"], "validator1");

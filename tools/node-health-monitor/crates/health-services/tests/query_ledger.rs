@@ -255,16 +255,88 @@ fn legacy_mcp_binding_cannot_reset_unknown_spent_budget() {
 }
 
 #[test]
+fn superseded_package_load_is_named_and_does_not_change_grants() {
+    use tos_health_services::fixed_package::BROKER_PACKAGE_SUPERSEDED;
+
+    let (file, directory) = temporary();
+    let mut g = grant(&[0x63; 32]);
+    g.manager_watermark = Some(3);
+    let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    ledger.create(&g, 100).unwrap();
+    drop(ledger);
+    // Install already-durable bytes without going through the current writer.
+    // The complete fixture intentionally lacks a host partition.
+    let body = include_bytes!("fixtures/broker-package-v2.json");
+    let digest = format!("{:x}", Sha256::digest(body));
+    let db = rusqlite::Connection::open(&file).unwrap();
+    assert_eq!(
+        db.execute(
+            "INSERT INTO query_packages(run_id,boot_id,package_sha256,body,fixed_at_ms)
+             SELECT run_id,boot_id,?2,?3,101 FROM query_grants WHERE run_id=?1",
+            rusqlite::params![g.run_id, digest, body.as_slice()],
+        )
+        .unwrap(),
+        1
+    );
+    drop(db);
+    let ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert_eq!(ledger.load_active_package(&g.run_id, 103).unwrap_err(), BROKER_PACKAGE_SUPERSEDED);
+    let active = ledger.load_active_all(103).unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].run_id, g.run_id);
+    drop(ledger);
+
+    let mut malformed: serde_json::Value = serde_json::from_slice(body).unwrap();
+    malformed["schema_version"] = serde_json::json!(3);
+    malformed["source_profile"] = serde_json::json!("development_native_process_host_v3");
+    let mut future = malformed.clone();
+    future["schema_version"] = serde_json::json!(4);
+    for (bytes, expected) in [
+        (serde_json::to_vec(&malformed).unwrap(), "invalid broker package"),
+        (serde_json::to_vec(&future).unwrap(), "unsupported broker package version"),
+    ] {
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let db = rusqlite::Connection::open(&file).unwrap();
+        db.execute(
+            "UPDATE query_packages SET body=?1,package_sha256=?2 WHERE run_id=?3",
+            rusqlite::params![bytes, digest, g.run_id],
+        )
+        .unwrap();
+        drop(db);
+        let ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+        assert_eq!(ledger.load_active_package(&g.run_id, 103).unwrap_err(), expected);
+        assert!(ledger.load_active(&g.run_id, 103).unwrap().is_some());
+    }
+    let db = rusqlite::Connection::open(&file).unwrap();
+    db.execute(
+        "UPDATE query_packages SET body=?1 WHERE run_id=?2",
+        rusqlite::params![body.as_slice(), g.run_id],
+    )
+    .unwrap();
+    drop(db);
+    let ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
+    assert_eq!(
+        ledger.load_active_package(&g.run_id, 103).unwrap_err(),
+        "broker package integrity mismatch"
+    );
+    drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn fixed_broker_package_is_single_write_and_integrity_checked_after_restart() {
     let (file, directory) = temporary();
     let mut g = grant(&[0x63; 32]);
     g.manager_watermark = Some(3);
     let mut ledger = QueryLedger::open_for_boot(&file, BOOT_A).unwrap();
     ledger.create(&g, 100).unwrap();
-    let body = serde_json::json!({"schema_version":1,"source_profile":"development_process_only",
+    let body = serde_json::json!({"schema_version":3,"source_profile":"development_native_process_host_v3",
         "status":"partial","run_id":g.run_id,"network_id":g.network_id,
         "query_watermark":g.watermark.to_string(),"manager_watermark":"3",
-        "process":[],"missing_process":[{"node_id":"v1","scope_id":"node"}]})
+        "process":[],"missing_process":[{"node_id":"v1","scope_id":"node"}],
+        "host":[],"missing_host":[{"node_id":"v1","scope_id":"node"}],
+        "native":[],"missing_native":[{"node_id":"v1","scope_id":"node"}],
+        "health":[],"missing_health":[{"node_id":"v1","scope_id":"node"}],"truncated":[]})
     .to_string()
     .into_bytes();
     let mut missing: serde_json::Value = serde_json::from_slice(&body).unwrap();

@@ -1,5 +1,5 @@
 //! Development-only, cache-only C07 package fixed at the grant's query watermark.
-//! Version 2 carries, per node, the newest native consensus sample with its
+//! Version 3 carries, per node, the newest native consensus sample with its
 //! fixed chain and storage views, the read-only health verdict copy and the
 //! newest process and host samples per scope. Everything is read from the durable query
 //! cache; nothing here opens M, a model or a V/O endpoint. When the 16 KiB
@@ -20,23 +20,10 @@ use tos_health_core::{
 };
 
 pub const PACKAGE_MAX_BYTES: usize = 16_384;
-pub const PROFILE_V1: &str = "development_process_only";
-pub const PROFILE_V2: &str = "development_native_process_v2";
+pub const PACKAGE_SCHEMA_VERSION: u32 = 3;
+pub const PROFILE_V3: &str = "development_native_process_host_v3";
+pub const BROKER_PACKAGE_SUPERSEDED: &str = "BROKER_PACKAGE_SUPERSEDED";
 const TRUNCATION_REASON: &str = "package_budget_16kib";
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct PackageV1 {
-    schema_version: u32,
-    source_profile: String,
-    status: String,
-    run_id: String,
-    network_id: String,
-    query_watermark: U64,
-    manager_watermark: U64,
-    process: Vec<ProcessItem>,
-    missing_process: Vec<NodeScope>,
-}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -175,51 +162,37 @@ fn validate_host_item(item: &HostItem, grant: &Grant, fixed_m: u64) -> bool {
         && valid_time(&item.observed_at_ms, grant, true)
 }
 
-fn validate_v1(body: &[u8], grant: &Grant) -> Result<(), String> {
-    let package: PackageV1 = serde_json::from_slice(body).map_err(|_| "invalid broker package")?;
-    let fixed_m = grant.manager_watermark.ok_or("broker package M watermark unavailable")?;
-    if package.schema_version != 1
-        || package.source_profile != PROFILE_V1
-        || package.status != "partial"
-        || package.run_id != grant.run_id
-        || package.network_id != grant.network_id
-        || package.query_watermark.0 != grant.watermark
-        || package.manager_watermark.0 != fixed_m
-    {
-        return Err("broker package grant binding mismatch".into());
-    }
-    let mut covered = BTreeSet::new();
-    let mut evidence_ids = BTreeSet::new();
-    for item in &package.process {
-        if !validate_process_item(item, grant, fixed_m)
-            || !covered.insert((&item.node_id, &item.scope_id))
-            || !evidence_ids.insert(&item.evidence_id)
-        {
-            return Err("broker package process item invalid".into());
-        }
-    }
-    for missing in &package.missing_process {
-        if !grant.nodes.contains(&missing.node_id)
-            || !grant.scopes.contains(&missing.scope_id)
-            || !covered.insert((&missing.node_id, &missing.scope_id))
-        {
-            return Err("broker package missing-process item invalid".into());
-        }
-    }
-    if covered.len() != grant.nodes.len().saturating_mul(grant.scopes.len()) {
-        return Err("broker package source partition incomplete".into());
-    }
-    Ok(())
-}
-
-fn validate_v2(body: &[u8], grant: &Grant) -> Result<(), String> {
+// Read only the discriminator for superseded formats. Current bodies still
+// require every field and the complete grant-bound source partition.
+fn check_discriminator(body: &[u8]) -> Result<(), String> {
     if body.len() > PACKAGE_MAX_BYTES {
         return Err("broker package exceeds 16 KiB".into());
     }
-    let package: Package = serde_json::from_slice(body).map_err(|_| "invalid broker package")?;
+    #[derive(Deserialize)]
+    struct Discriminator {
+        schema_version: u32,
+        source_profile: String,
+    }
+    let discriminator: Discriminator =
+        serde_json::from_slice(body).map_err(|_| "invalid broker package")?;
+    match discriminator.schema_version {
+        1 | 2 => Err(BROKER_PACKAGE_SUPERSEDED.into()),
+        PACKAGE_SCHEMA_VERSION if discriminator.source_profile == PROFILE_V3 => Ok(()),
+        PACKAGE_SCHEMA_VERSION => Err("broker package profile mismatch".into()),
+        _ => Err("unsupported broker package version".into()),
+    }
+}
+
+fn parse_package(body: &[u8]) -> Result<Package, String> {
+    check_discriminator(body)?;
+    serde_json::from_slice(body).map_err(|_| "invalid broker package".into())
+}
+
+fn validate_current(body: &[u8], grant: &Grant) -> Result<(), String> {
+    let package = parse_package(body)?;
     let fixed_m = grant.manager_watermark.ok_or("broker package M watermark unavailable")?;
-    if package.schema_version != 2
-        || package.source_profile != PROFILE_V2
+    if package.schema_version != PACKAGE_SCHEMA_VERSION
+        || package.source_profile != PROFILE_V3
         || package.status != "partial"
         || package.run_id != grant.run_id
         || package.network_id != grant.network_id
@@ -384,22 +357,13 @@ fn validate_v2(body: &[u8], grant: &Grant) -> Result<(), String> {
 /// presented to a model. The database digest alone does not certify that a
 /// recomputed/tampered body still represents the frozen grant and source set.
 pub(crate) fn validate_package_binding(body: &[u8], grant: &Grant) -> Result<(), String> {
-    let peek: serde_json::Value =
-        serde_json::from_slice(body).map_err(|_| "invalid broker package")?;
-    match peek.get("schema_version").and_then(serde_json::Value::as_u64) {
-        Some(1) => validate_v1(body, grant),
-        Some(2) => validate_v2(body, grant),
-        _ => Err("unsupported broker package version".into()),
-    }
+    validate_current(body, grant)
 }
 
 /// Every query-cache evidence id the package presents to a model. This is the
 /// delivered set for a summary-only run without tool calls.
 pub fn package_evidence_ids(body: &[u8]) -> Result<BTreeSet<String>, String> {
-    let package: Package = serde_json::from_slice(body).map_err(|_| "invalid broker package")?;
-    if package.schema_version != 2 {
-        return Err("unsupported broker package version".into());
-    }
+    let package = parse_package(body)?;
     Ok(package
         .process
         .iter()
@@ -696,8 +660,8 @@ pub fn freeze_process_package(
         }
     }
     let mut package = Package {
-        schema_version: 2,
-        source_profile: PROFILE_V2.into(),
+        schema_version: PACKAGE_SCHEMA_VERSION,
+        source_profile: PROFILE_V3.into(),
         status: "partial".into(),
         run_id: grant.run_id.clone(),
         network_id: grant.network_id.clone(),
@@ -759,13 +723,62 @@ pub fn freeze_process_package(
 
 /// Which components were dropped for budget, for reporting to the operator.
 pub fn truncated_components(body: &[u8]) -> Result<Vec<(String, String)>, String> {
-    let package: Package = serde_json::from_slice(body).map_err(|_| "invalid broker package")?;
+    let package = parse_package(body)?;
     Ok(package.truncated.into_iter().map(|cut| (cut.node_id, cut.component)).collect())
 }
 
 #[cfg(test)]
 mod host_tests {
     use super::*;
+
+    #[test]
+    fn package_readers_share_the_format_discriminator() {
+        let mut grant = Grant::new(
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into(),
+            "reader".into(),
+            "a".repeat(64),
+            &[7; 32],
+            BTreeSet::from(["v1".into()]),
+            BTreeSet::from(["node".into()]),
+            1000,
+            2000,
+            100,
+            17,
+        )
+        .unwrap();
+        grant.manager_watermark = Some(3);
+        let cases = [
+            (
+                include_bytes!("../tests/fixtures/broker-package-v2.json").to_vec(),
+                BROKER_PACKAGE_SUPERSEDED,
+            ),
+            (
+                br#"{"schema_version":1,"source_profile":"development_process_only"}"#.to_vec(),
+                BROKER_PACKAGE_SUPERSEDED,
+            ),
+            (
+                br#"{"schema_version":3,"source_profile":"development_native_process_host_v3"}"#
+                    .to_vec(),
+                "invalid broker package",
+            ),
+            (
+                br#"{"schema_version":4,"source_profile":"unknown"}"#.to_vec(),
+                "unsupported broker package version",
+            ),
+            (
+                br#"{"schema_version":3,"source_profile":"development_native_process_v2"}"#
+                    .to_vec(),
+                "broker package profile mismatch",
+            ),
+            (b"not JSON".to_vec(), "invalid broker package"),
+            (vec![b'x'; PACKAGE_MAX_BYTES + 1], "broker package exceeds 16 KiB"),
+        ];
+        for (body, expected) in cases {
+            assert_eq!(validate_package_binding(&body, &grant).unwrap_err(), expected);
+            assert_eq!(package_evidence_ids(&body).unwrap_err(), expected);
+            assert_eq!(truncated_components(&body).unwrap_err(), expected);
+        }
+    }
 
     #[test]
     fn host_truncation_preserves_the_complete_source_partition() {
@@ -804,8 +817,8 @@ mod host_tests {
             },
         };
         let mut package = Package {
-            schema_version: 2,
-            source_profile: PROFILE_V2.into(),
+            schema_version: PACKAGE_SCHEMA_VERSION,
+            source_profile: PROFILE_V3.into(),
             status: "partial".into(),
             run_id: grant.run_id.clone(),
             network_id: grant.network_id.clone(),
@@ -821,14 +834,24 @@ mod host_tests {
             missing_health: vec![node],
             truncated: vec![],
         };
-        validate_v2(&serde_json::to_vec(&package).unwrap(), &grant).unwrap();
+        let bytes = serde_json::to_vec(&package).unwrap();
+        validate_package_binding(&bytes, &grant).unwrap();
+        let restored = parse_package(&bytes).unwrap();
+        assert_eq!(restored.schema_version, 3);
+        assert_eq!(restored.source_profile, "development_native_process_host_v3");
+        assert_eq!(restored.host.len(), 1);
+        assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+        assert_eq!(package_evidence_ids(&bytes).unwrap(), BTreeSet::from(["b".repeat(64)]));
+        assert!(truncated_components(&bytes).unwrap().is_empty());
         assert!(truncate_one(&mut package));
         assert!(package.host.is_empty());
         assert_eq!(package.truncated[0].component, "host");
-        validate_v2(&serde_json::to_vec(&package).unwrap(), &grant).unwrap();
+        let bytes = serde_json::to_vec(&package).unwrap();
+        validate_package_binding(&bytes, &grant).unwrap();
+        assert_eq!(truncated_components(&bytes).unwrap(), vec![("v1".into(), "host".into())]);
         package.truncated.clear();
         assert_eq!(
-            validate_v2(&serde_json::to_vec(&package).unwrap(), &grant).unwrap_err(),
+            validate_current(&serde_json::to_vec(&package).unwrap(), &grant).unwrap_err(),
             "broker package source partition incomplete"
         );
     }
