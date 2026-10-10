@@ -544,17 +544,14 @@ class Suppressions(Workdir):
 
     def test_a_later_codechecker_suppression_is_audited(self) -> None:
         _, problems = self.find(
-            "// codechecker_suppress [cplusplus.Move] reassigned "
-            "codechecker_suppress [all] hidden"
+            "// codechecker_suppress [cplusplus.Move] reassigned codechecker_suppress [all] hidden"
         )
         self.assertTrue(any("not exact enabled checks" in p for p in problems))
 
     def test_mixed_directives_cannot_supply_each_others_reason(self) -> None:
         for text in (
-            "// NOLINT(bugprone-use-after-move) "
-            "codechecker_suppress [cplusplus.Move] reassigned",
-            "// codechecker_suppress [cplusplus.Move] "
-            "NOLINT(bugprone-use-after-move): reassigned",
+            "// NOLINT(bugprone-use-after-move) codechecker_suppress [cplusplus.Move] reassigned",
+            "// codechecker_suppress [cplusplus.Move] NOLINT(bugprone-use-after-move): reassigned",
         ):
             with self.subTest(text=text):
                 _, problems = self.find(text)
