@@ -600,26 +600,33 @@ def ninja_outputs(build_dir: Path) -> dict[str, str]:
     return outputs
 
 
-def check_fresh(build_dir: Path, generated: set[str], label: str) -> None:
-    """ninja itself must consider every generated file the compilations read up to date.
+def bring_up_to_date(build_dir: Path, generated: set[str], label: str) -> None:
+    """Have ninja build every generated file the compilations read.
 
-    This is ninja's judgement over its whole graph, so generator headers, linked
-    libraries, restat rules and a stale build.ninja all count. A file the graph
-    does not produce is written by CMake at configure time, which a stale
-    build.ninja (a CMake re-run pending) also makes ninja report.
+    ninja's own graph decides, so generator headers, linked libraries, restat
+    rules and a pending CMake re-run all count. A dry run cannot answer this here:
+    CMake's glob verification step is always dirty in a dry run, so ninja -n never
+    reports a clean tree. A file the graph does not produce is written by CMake
+    at configure time and is refreshed by that re-run. If the build reconfigures
+    itself, the compilation database already read is stale and the gate stops.
     """
     outputs = ninja_outputs(build_dir)
-    targets = sorted(outputs[path] for path in generated if path in outputs)
-    command = ["ninja", "-C", str(build_dir), "-n", *targets]
-    if not targets:
-        command = ["ninja", "-C", str(build_dir), "-n", "build.ninja"]
-    result = run(command, timeout=600)
+    targets = sorted(outputs[path] for path in generated if path in outputs) or ["build.ninja"]
+    database = build_dir / "compile_commands.json"
+    try:
+        before = database.read_bytes()
+    except OSError:
+        raise Refusal(f"{label}: {database} is missing") from None
+    result = run(["ninja", "-C", str(build_dir), *targets], timeout=7200)
     if result.returncode != 0:
-        raise Refusal(f"{label}: ninja -n failed: {(result.stdout + result.stderr).strip()[:300]}")
-    if "no work to do" not in result.stdout:
-        raise Refusal(
-            f"{label}: files the analysis reads are out of date; build first (ninja -C {build_dir})"
-        )
+        tail = "\n".join((result.stdout + result.stderr).strip().splitlines()[-6:])
+        raise Refusal(f"{label}: building the generated files failed in {build_dir}\n{tail}")
+    try:
+        after = database.read_bytes()
+    except OSError:
+        raise Refusal(f"{label}: {database} disappeared during the build") from None
+    if after != before:
+        raise Refusal(f"{label}: {build_dir} reconfigured itself; run the gate again")
 
 
 def system_directories(tools: Tools) -> list[str]:
@@ -1114,10 +1121,18 @@ class Side:
 
 def prepare_side(label: str, root: Path, build: Path, tools: Tools, work: Path) -> Side:
     entries = analysable(load_database(build, root), root, build)
+    generated = side_generated(scan_dependencies(entries, tools, work, label), root, build)
+    bring_up_to_date(build, generated, label)
+    # Regenerated files may include different headers; scan what is there now.
     deps = scan_dependencies(entries, tools, work, label)
-    in_build, ignored = generated_files(deps, root, build)
-    check_fresh(build, set(in_build) | {os.path.normpath(str(root / p)) for p in ignored}, label)
+    if side_generated(deps, root, build) != generated:
+        raise Refusal(f"{label}: the build changed which generated files are read; run again")
     return Side(label, root, build, entries, deps)
+
+
+def side_generated(deps: dict[Entry, set[str]], root: Path, build: Path) -> set[str]:
+    in_build, ignored = generated_files(deps, root, build)
+    return set(in_build) | {os.path.normpath(str(root / p)) for p in ignored}
 
 
 def select_side(side: Side, changed: set[str], uncovered: set[str]) -> tuple[set[Entry], set[str]]:

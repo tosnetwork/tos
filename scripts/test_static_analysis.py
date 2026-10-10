@@ -751,58 +751,60 @@ class StandInTools(Workdir):
                         self.entries(), self.scan(output, status), self.tmp, "HEAD"
                     )
 
-    def ninja(self, targets: str, dry_run: str, dry_status: int = 0) -> Path:
-        """A stand-in ninja: '-t targets all' lists outputs, '-n' reports a dry run."""
+    def ninja(self, targets: str, status: int = 0, reconfigure: bool = False) -> Path:
+        """A stand-in ninja: '-t targets all' lists outputs, anything else is a build."""
         log = self.tmp / "ninja-calls.json"
+        database = self.tmp / "build" / "compile_commands.json"
+        database.parent.mkdir(parents=True, exist_ok=True)
+        database.write_text("[]")
         write_tool(
             self.bin / "ninja",
             f"""
-            import json, sys
-            calls = json.load(open({str(log)!r})) if __import__("os").path.exists({str(log)!r}) else []
+            import json, os, sys
+            calls = json.load(open({str(log)!r})) if os.path.exists({str(log)!r}) else []
             calls.append(sys.argv[1:])
             json.dump(calls, open({str(log)!r}, "w"))
             if "-t" in sys.argv:
                 sys.stdout.write({targets!r})
                 sys.exit(0)
-            sys.stdout.write({dry_run!r})
-            sys.exit({dry_status})
+            if {reconfigure!r}:
+                open({str(database)!r}, "w").write('[{{"changed": true}}]')
+            sys.exit({status})
             """,
         )
         return log
 
-    def test_fresh_build_passes_and_checks_only_known_outputs(self) -> None:
+    def test_builds_exactly_the_generated_outputs_it_knows(self) -> None:
         build = self.tmp / "build"
-        log = self.ninja(
-            f"gen/api.h: CUSTOM_COMMAND\n{self.tmp}/root/auto.cpp: CUSTOM_COMMAND\n",
-            "ninja: no work to do.\n",
-        )
-        sa.check_fresh(
+        log = self.ninja(f"gen/api.h: CUSTOM_COMMAND\n{self.tmp}/root/auto.cpp: CUSTOM_COMMAND\n")
+        sa.bring_up_to_date(
             build,
             {str(build / "gen" / "api.h"), f"{self.tmp}/root/auto.cpp", str(build / "config.h")},
             "HEAD",
         )
-        calls = json.loads(log.read_text())
-        self.assertEqual(calls[-1][-3:], ["-n", f"{self.tmp}/root/auto.cpp", "gen/api.h"])
+        self.assertEqual(
+            json.loads(log.read_text())[-1],
+            ["-C", str(build), f"{self.tmp}/root/auto.cpp", "gen/api.h"],
+        )
 
-    def test_stale_build_refuses(self) -> None:
+    def test_a_failed_build_refuses(self) -> None:
         build = self.tmp / "build"
-        self.ninja("gen/api.h: CUSTOM_COMMAND\n", "[1/2] Generating api.h\n")
-        with self.assertRaisesRegex(sa.Refusal, "out of date"):
-            sa.check_fresh(build, {str(build / "gen" / "api.h")}, "HEAD")
+        self.ninja("gen/api.h: CUSTOM_COMMAND\n", status=1)
+        with self.assertRaisesRegex(sa.Refusal, "building the generated files failed"):
+            sa.bring_up_to_date(build, {str(build / "gen" / "api.h")}, "HEAD")
 
-    def test_dry_run_failure_refuses(self) -> None:
+    def test_a_build_that_reconfigures_refuses(self) -> None:
         build = self.tmp / "build"
-        self.ninja("gen/api.h: CUSTOM_COMMAND\n", "ninja: error: loading build.ninja\n", 1)
-        with self.assertRaisesRegex(sa.Refusal, "ninja -n failed"):
-            sa.check_fresh(build, {str(build / "gen" / "api.h")}, "HEAD")
+        self.ninja("gen/api.h: CUSTOM_COMMAND\n", reconfigure=True)
+        with self.assertRaisesRegex(sa.Refusal, "reconfigured itself"):
+            sa.bring_up_to_date(build, {str(build / "gen" / "api.h")}, "HEAD")
 
-    def test_without_generated_files_the_manifest_is_still_checked(self) -> None:
-        # Configure-time files are not outputs; a pending CMake re-run still shows.
+    def test_without_generated_outputs_the_manifest_is_still_brought_up_to_date(self) -> None:
+        # Configure-time files are not outputs; building build.ninja refreshes them.
         build = self.tmp / "build"
-        log = self.ninja("gen/api.h: CUSTOM_COMMAND\n", "[1/1] Re-running CMake...\n")
-        with self.assertRaisesRegex(sa.Refusal, "out of date"):
-            sa.check_fresh(build, {str(build / "config.h")}, "HEAD")
-        self.assertEqual(json.loads(log.read_text())[-1][-2:], ["-n", "build.ninja"])
+        log = self.ninja("gen/api.h: CUSTOM_COMMAND\n")
+        sa.bring_up_to_date(build, {str(build / "config.h")}, "HEAD")
+        self.assertEqual(json.loads(log.read_text())[-1][-1], "build.ninja")
 
     def compiler(self, stderr: str, status: int = 0) -> object:
         tool = write_tool(
