@@ -287,7 +287,33 @@ async fn proxy(
     }
     Ok(out)
 }
+// Only the private capacity-test entry point supplies longer deadlines; the
+// public server always uses the production values.
+#[derive(Clone, Copy)]
+struct Deadlines {
+    tls: Duration,
+    headers: Duration,
+    upstream: Duration,
+    connection: Duration,
+}
+impl Deadlines {
+    fn production() -> Self {
+        Self {
+            tls: Duration::from_secs(3),
+            headers: Duration::from_secs(3),
+            upstream: Duration::from_secs(3),
+            connection: Duration::from_secs(8),
+        }
+    }
+}
 pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> Result<(), String> {
+    serve_with_deadlines(config, listener, Deadlines::production()).await
+}
+async fn serve_with_deadlines(
+    config: IngressConfig,
+    listener: tokio::net::TcpListener,
+    deadlines: Deadlines,
+) -> Result<(), String> {
     if !config.upstream.ip().is_loopback()
         || config.upstream.port() == 0
         || config.peers.is_empty()
@@ -355,7 +381,7 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(3))
+        .timeout(deadlines.upstream)
         .pool_max_idle_per_host(1)
         .build()
         .map_err(|e| e.to_string())?;
@@ -387,11 +413,10 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
         );
         tokio::spawn(async move {
             let _permit = permit;
-            let tls =
-                match tokio::time::timeout(Duration::from_secs(3), acceptor.accept(stream)).await {
-                    Ok(Ok(tls)) => tls,
-                    _ => return,
-                };
+            let tls = match tokio::time::timeout(deadlines.tls, acceptor.accept(stream)).await {
+                Ok(Ok(tls)) => tls,
+                _ => return,
+            };
             let Some(cert) = tls.get_ref().1.peer_certificates().and_then(|chain| chain.first())
             else {
                 return;
@@ -418,12 +443,16 @@ pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> 
             http.keep_alive(false)
                 .max_buf_size(32768)
                 .timer(hyper_util::rt::TokioTimer::new())
-                .header_read_timeout(Duration::from_secs(3));
+                .header_read_timeout(deadlines.headers);
             let _ = tokio::time::timeout(
-                Duration::from_secs(8),
+                deadlines.connection,
                 http.serve_connection(hyper_util::rt::TokioIo::new(tls), service),
             )
             .await;
         });
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/ingress_capacity.rs"]
+mod capacity_tests;
