@@ -108,7 +108,7 @@ CLANGSA_ADVISORY = frozenset(
 )
 CLANG_TIDY_OPTIONS = {
     "bugprone-unused-return-value.CheckedReturnTypes": r"^::td::Status$;^::td::Result$",
-    "bugprone-unused-return-value.AllowCastToVoid": "true",
+    "bugprone-unused-return-value.AllowCastToVoid": "false",
 }
 ANALYZERS = ("clangsa", "clang-tidy")
 EXPECTED_CHECKERS = {
@@ -519,24 +519,42 @@ def collect_change(root: Path, merge_base: str) -> Change:
             change.head_paths.add(path)
             if is_cpp(path):
                 change.changed_lines[path] = all_lines(root / path)
-    diff = git(root, "diff", "--merge-base", merge_base, "-U0", "-M", "--no-color", "--no-ext-diff")
-    current = None
-    for line in diff.splitlines():
-        if line.startswith("+++ "):
-            target = line[4:]
-            current = target[2:] if target.startswith("b/") else None
-            if current is not None:
-                change.changed_lines.setdefault(current, set())
-        elif line.startswith("@@") and current is not None:
+    # Paths come from the NUL-delimited name-status output, not from display
+    # headers that Git may quote or prefix differently. Diff one literal path
+    # at a time, without textconv or binary filtering, so user preferences and
+    # attributes cannot hide a changed suppression. Treat a rename destination
+    # as an addition: its suppressions must be audited at the new path too.
+    for path in sorted(change.head_paths):
+        if not is_cpp(path) or path in change.changed_lines:
+            continue
+        changed = change.changed_lines.setdefault(path, set())
+        diff = git(
+            root,
+            "--literal-pathspecs",
+            "diff",
+            "--merge-base",
+            merge_base,
+            "-U0",
+            "--no-renames",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--text",
+            "--",
+            path,
+        )
+        for line in diff.splitlines():
+            if not line.startswith("@@"):
+                continue
             match = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", line)
             if not match:
                 raise Refusal(f"cannot parse diff hunk header {line!r}")
             start, count = int(match.group(1)), int(match.group(2) or "1")
             if count == 0:
                 # A pure deletion: the lines around the cut are what the change touched.
-                change.changed_lines[current].update({max(start, 1), start + 1})
+                changed.update({max(start, 1), start + 1})
             else:
-                change.changed_lines[current].update(range(start, start + count))
+                changed.update(range(start, start + count))
     return change
 
 
@@ -939,9 +957,17 @@ def run_controls(root: Path, tools: Tools, work: Path, jobs: int, timeout: int) 
 
 # --- suppressions -----------------------------------------------------------
 
-NOLINT_RE = re.compile(r"NOLINT(?P<kind>NEXTLINE|BEGIN|END)?(?P<checks>\([^)]*\))?(?P<rest>.*)")
+# A later directive is a separate suppression, never part of the preceding
+# reason. clang-tidy recognises multiple NOLINTs in one comment; consuming the
+# whole line would let a valid first directive conceal a bare NOLINT or range.
+SUPPRESSION_START = r"NOLINT|codechecker_(?:suppress|false_positive|intentional|confirmed)"
+SUPPRESSION_REST = rf"(?P<rest>.*?)(?={SUPPRESSION_START}|$)"
+NOLINT_RE = re.compile(
+    r"NOLINT(?P<kind>NEXTLINE|BEGIN|END)?(?P<checks>\([^)]*\))?" + SUPPRESSION_REST
+)
 CODECHECKER_RE = re.compile(
-    r"codechecker_(?P<kind>suppress|false_positive|intentional|confirmed)\s*(?P<checks>\[[^\]]*\])?(?P<rest>.*)"
+    r"codechecker_(?P<kind>suppress|false_positive|intentional|confirmed)"
+    r"\s*(?P<checks>\[[^\]]*\])?" + SUPPRESSION_REST
 )
 
 
@@ -1007,7 +1033,7 @@ def audit_suppressions(root: Path, change: Change) -> list[Suppression]:
                 accepted.append(suppression)
         relevant = {s.line for s in found if s.line in changed or s.covers & changed}
         for issue in issues:
-            line = int(issue.split(":", 2)[1])
+            line = int(issue[len(path) + 1 :].split(":", 1)[0])
             if line in changed or line in relevant:
                 problems.append(issue)
     if problems:

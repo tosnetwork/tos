@@ -115,9 +115,12 @@ fails the change.
 - A false positive is suppressed in the source, naming the exact check and the
   reason. A suppression without a reason, or one that silences a whole file or
   every check, is refused. The reviewer sees every suppression the change adds.
-- `td::Status` and `td::Result` returned from a call are handled or discarded
-  explicitly with `(void)` and a comment. A dropped status is how a failed
-  database write or a failed validation goes unnoticed.
+- `td::Status` and `td::Result` returned from a call are handled. An intentional
+  discard, including `(void)` or `static_cast<void>`, needs an exact
+  `NOLINT(bugprone-unused-return-value): reason` on that line, or a reasoned
+  `NOLINTNEXTLINE(bugprone-unused-return-value)` immediately above it. A cast
+  or an ordinary comment alone does not suppress this check. A dropped status
+  is how a failed database write or a failed validation goes unnoticed.
 - The script must prove it ran: it reports how many compilations it analysed
   and fails if any failed to parse, if the enabled checks differ from the rule
   set, if a positive control in `test/static-analysis/gate/` stops reporting

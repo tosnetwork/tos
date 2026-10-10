@@ -13,6 +13,7 @@ import collections
 import importlib.util
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -506,6 +507,59 @@ class Suppressions(Workdir):
         [accepted] = sa.audit_suppressions(self.tmp, sa.Change(changed_lines={"a.cpp": {2}}))
         self.assertEqual(accepted.line, 1)
 
+    def test_every_nolint_on_a_line_is_audited(self) -> None:
+        for suffix in ("NOLINT", "NOLINT(*)", "NOLINT(bugprone-use-after-move)"):
+            with self.subTest(suffix=suffix):
+                _, problems = self.find(
+                    "f(); // NOLINT(bugprone-unused-return-value): already logged " + suffix
+                )
+                self.assertTrue(problems, "a later suppression was swallowed as the reason")
+
+    def test_two_reasoned_suppressions_are_both_reported(self) -> None:
+        found, problems = self.find(
+            "f(); // NOLINT(bugprone-unused-return-value): already logged "
+            "NOLINT(bugprone-use-after-move): reassigned first"
+        )
+        self.assertEqual(problems, [])
+        self.assertEqual(len(found), 2)
+
+    def test_later_directive_is_not_a_reason_for_the_first(self) -> None:
+        _, problems = self.find(
+            "f(); // NOLINT(bugprone-unused-return-value) "
+            "NOLINT(bugprone-use-after-move): reassigned first"
+        )
+        self.assertTrue(any("without a reason" in p for p in problems))
+
+    def test_a_range_cannot_hide_after_a_line_suppression(self) -> None:
+        source = self.tmp / "a.cpp"
+        source.write_text(
+            "// NOLINT(bugprone-use-after-move): reviewed "
+            "NOLINTBEGIN(bugprone-unused-return-value)\n"
+            "void f();\nvoid g();\n"
+            "// NOLINT(bugprone-use-after-move): reviewed "
+            "NOLINTEND(bugprone-unused-return-value)\n"
+        )
+        with self.assertRaisesRegex(sa.Refusal, "ranges are not allowed"):
+            sa.audit_suppressions(self.tmp, sa.Change(changed_lines={"a.cpp": {3}}))
+
+    def test_a_later_codechecker_suppression_is_audited(self) -> None:
+        _, problems = self.find(
+            "// codechecker_suppress [cplusplus.Move] reassigned "
+            "codechecker_suppress [all] hidden"
+        )
+        self.assertTrue(any("not exact enabled checks" in p for p in problems))
+
+    def test_mixed_directives_cannot_supply_each_others_reason(self) -> None:
+        for text in (
+            "// NOLINT(bugprone-use-after-move) "
+            "codechecker_suppress [cplusplus.Move] reassigned",
+            "// codechecker_suppress [cplusplus.Move] "
+            "NOLINT(bugprone-use-after-move): reassigned",
+        ):
+            with self.subTest(text=text):
+                _, problems = self.find(text)
+                self.assertTrue(any("without a reason" in p for p in problems))
+
 
 class Repository(Workdir):
     def git(self, *args: str) -> str:
@@ -552,6 +606,66 @@ class Repository(Workdir):
         self.assertEqual(change.changed_lines["a.cpp"], {2})
         self.assertTrue({1, 2} <= change.changed_lines["keep.cpp"])
         self.assertIn(1, change.changed_lines["untracked.cpp"])
+
+    def assert_bare_suppression_refused(self, path: str, line: int = 2) -> None:
+        change = sa.collect_change(self.repo, self.base)
+        self.assertIn(line, change.changed_lines.get(path, set()))
+        with self.assertRaisesRegex(sa.Refusal, "without an exact check name"):
+            sa.audit_suppressions(self.repo, change)
+
+    def test_diff_prefix_preferences_cannot_skip_the_audit(self) -> None:
+        (self.repo / "a.cpp").write_text("one\nf(); // NOLINT\nthree\nfour\n")
+        self.git("config", "diff.noprefix", "true")
+        self.assert_bare_suppression_refused("a.cpp")
+        self.git("config", "diff.noprefix", "false")
+        self.git("config", "diff.mnemonicprefix", "true")
+        self.assert_bare_suppression_refused("a.cpp")
+
+    def test_quoted_and_literal_paths_cannot_skip_the_audit(self) -> None:
+        names = (
+            "unicode-東京.cpp",
+            'quote"name.cpp',
+            "back\\slash.cpp",
+            "colon:name.cpp",
+            "tab\tname.cpp",
+            "line\nname.cpp",
+            "glob[1].cpp",
+            "-option.cpp",
+        )
+        for name in names:
+            (self.repo / name).write_text("one\ntwo\n")
+        self.git("add", ".")
+        self.git("commit", "-q", "-m", "paths")
+        self.base = self.git("rev-parse", "HEAD").strip()
+        for name in names:
+            with self.subTest(name=name):
+                (self.repo / name).write_text("one\nf(); // NOLINT\n")
+                self.assert_bare_suppression_refused(name)
+                (self.repo / name).write_text("one\ntwo\n")
+
+    def test_binary_diff_attributes_cannot_skip_the_audit(self) -> None:
+        (self.repo / ".gitattributes").write_text("*.cpp -diff\n")
+        (self.repo / "a.cpp").write_text("one\nf(); // NOLINT\nthree\nfour\n")
+        self.assert_bare_suppression_refused("a.cpp")
+
+    def test_textconv_cannot_hide_suppressions_or_run_code(self) -> None:
+        marker = self.tmp / "textconv-ran"
+        converter = write_tool(
+            self.tmp / "textconv",
+            f"from pathlib import Path\nPath({str(marker)!r}).touch()\nprint('constant')\n",
+        )
+        (self.repo / ".gitattributes").write_text("*.cpp diff=hidden\n")
+        self.git("config", "diff.hidden.textconv", str(converter))
+        (self.repo / "a.cpp").write_text("one\nf(); // NOLINT\nthree\nfour\n")
+        self.assert_bare_suppression_refused("a.cpp")
+        self.assertFalse(marker.exists())
+
+    def test_pure_renames_audit_the_destination(self) -> None:
+        (self.repo / "a.cpp").write_text("one\nf(); // NOLINT\nthree\nfour\n")
+        self.git("commit", "-q", "-am", "inherited suppression")
+        self.base = self.git("rev-parse", "HEAD").strip()
+        self.git("mv", "a.cpp", "renamed.cpp")
+        self.assert_bare_suppression_refused("renamed.cpp")
 
 
 class Database(Workdir):
@@ -1090,6 +1204,30 @@ class StandInTools(Workdir):
                     continue
                 with self.assertRaisesRegex(sa.Refusal, f"CodeChecker {failing} exited 1"):
                     sa.resolve_tools(llvm, str(codechecker))
+
+
+class DiscardPolicy(unittest.TestCase):
+    def test_explicit_discard_requires_auditable_suppression(self) -> None:
+        key = "bugprone-unused-return-value.AllowCastToVoid"
+        self.assertEqual(sa.CLANG_TIDY_OPTIONS[key], "false")
+        self.assertIn(
+            "clang-tidy:bugprone-unused-return-value:AllowCastToVoid=false",
+            sa.analyzer_arguments(),
+        )
+        self.assertIn(key + ": false", (HERE.parent / ".clang-tidy").read_text())
+
+    def test_controls_cover_c_style_and_static_cast_discards(self) -> None:
+        source = (HERE.parent / sa.CONTROL_DIR / "unused-status.cpp").read_text()
+        for statement in (
+            "(void)write_record(4);",
+            "(void)read_record(5);",
+            "static_cast<void>(write_record(6));",
+            "static_cast<void>(read_record(7));",
+        ):
+            with self.subTest(statement=statement):
+                self.assertRegex(
+                    source, re.escape(statement) + r"[ \t]+// expect: bugprone-unused-return-value"
+                )
 
 
 if __name__ == "__main__":

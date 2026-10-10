@@ -8,3 +8,9 @@ gate refuses to report a clean result.
 
 These files are deliberately defective. They are not built by CMake and are
 never part of a gate comparison.
+
+`unused-status.cpp` covers dropped `td::Status` and `td::Result` values both
+without a cast and with C-style or `static_cast<void>` discards. All must report.
+The kept value and the exact, reasoned suppression must remain silent. This
+makes the explicit-discard policy observable through the real analyzer, not
+just through the Python rule table.

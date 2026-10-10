@@ -13,4 +13,4 @@ Checks: >
 WarningsAsErrors: ''
 CheckOptions:
   bugprone-unused-return-value.CheckedReturnTypes: '^::td::Status$;^::td::Result$'
-  bugprone-unused-return-value.AllowCastToVoid: true
+  bugprone-unused-return-value.AllowCastToVoid: false
