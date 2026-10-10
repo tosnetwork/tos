@@ -952,3 +952,146 @@ fn incomplete_native_absence_still_requires_retained_integrity() {
     assert_eq!(rows.len(), 1);
     let _ = std::fs::remove_dir_all(directory);
 }
+
+#[tokio::test]
+async fn paged_import_skips_only_validated_incomplete_native_absence() {
+    use tos_health_services::observability::import_manager;
+    for version in [2, 3] {
+        let directory = temp("paged-absence");
+        let path = directory.join("manager.sqlite");
+        let mut db = EvidenceDb::open(&path, 16 * 1024 * 1024).unwrap();
+        db.bind_network(NETWORK).unwrap();
+        let state =
+            ObservabilityState::new(inventory(), vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+                .unwrap()
+                .with_query_ledger(&directory.join("query.sqlite"))
+                .unwrap()
+                .with_manager_evidence(path.clone())
+                .unwrap();
+        db.insert(native_row(1, ms(T0), |_| {})).unwrap();
+        assert_eq!(import_manager(&state).unwrap(), (1, 1));
+        let (run, _) = grant(&state, ms(T0), ms(T0) + 60_000).await;
+        db.insert(native_row(2, ms(T0), |source| {
+            if version == 3 {
+                to_v3(source, ms(T0), 153142, 153140);
+            }
+            source["payload"]["consensus"] = Value::Null;
+            source["quality"]["instrumentation_complete"] = json!(false);
+        }))
+        .unwrap();
+        let later = db.insert(native_row(3, ms(T0), |_| {})).unwrap();
+        assert_eq!(import_manager(&state).unwrap(), (3, 1));
+        assert!(!state.data.lock().unwrap().manager_conflicted);
+        let ledger = state.query_ledger.as_ref().unwrap().lock().unwrap();
+        assert_eq!(ledger.manager_cursor().unwrap().unwrap().watermark, later.store_seq.0);
+        assert_eq!(ledger.retained_origin_rows().unwrap().len(), 2);
+        assert!(
+            ledger
+                .load_active(&run, tos_health_services::query_ledger::boot_millis().unwrap())
+                .unwrap()
+                .is_some(),
+            "grant revoked by absence"
+        );
+        drop(ledger);
+        assert_eq!(import_manager(&state).unwrap(), (3, 0));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+}
+
+#[test]
+fn paged_import_keeps_native_v1_eligible() {
+    use tos_health_services::observability::import_manager;
+    let directory = temp("paged-v1");
+    let path = directory.join("manager.sqlite");
+    let mut db = EvidenceDb::open(&path, 16 * 1024 * 1024).unwrap();
+    let mut source: Value =
+        serde_json::from_str(include_str!("../../health-core/tests/fixtures/native-core.json"))
+            .unwrap();
+    let network = source["payload"]["network_id"].as_str().unwrap().to_owned();
+    db.bind_network(&network).unwrap();
+    source["node_id"] = json!(NODE);
+    source["source_age_ms"] = Value::Null;
+    source["received_at"] = Value::Null;
+    let mut original = native_row(1, ms(T0), |_| {});
+    original.record.payload["source"] = source.clone();
+    original.source_epoch = source["source_epoch"].as_str().unwrap().into();
+    original.record.process_epoch = source["process_epoch"].as_str().unwrap().into();
+    original.record.source_record_id =
+        format!("{}:{}", original.source_epoch, source["generation"].as_str().unwrap());
+    original.record.observed_at_ms = ms(source["observed_at"].as_str().unwrap());
+    original.record.quality.observed_at_ms = Some(original.record.observed_at_ms);
+    original.record.quality.last_success_at_ms =
+        Some(ms(source["last_success_at"].as_str().unwrap()));
+    original.record.quality.process_epoch = original.record.process_epoch.clone();
+    original.record.quality.source_sequence = source["generation"].as_str().unwrap().into();
+    let mut inv = inventory();
+    inv.network_id = network;
+    let state = ObservabilityState::new(inv, vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+        .unwrap()
+        .with_query_ledger(&directory.join("query.sqlite"))
+        .unwrap()
+        .with_manager_evidence(path)
+        .unwrap();
+    db.insert(original).unwrap();
+    assert_eq!(import_manager(&state).unwrap(), (1, 1));
+    assert_eq!(
+        state.query_ledger.as_ref().unwrap().lock().unwrap().retained_origin_rows().unwrap().len(),
+        1
+    );
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[test]
+fn paged_import_refuses_malformed_native_absence() {
+    use tos_health_services::observability::import_manager;
+    for change in 0..9 {
+        let directory = temp("paged-invalid-absence");
+        let path = directory.join("manager.sqlite");
+        let mut db = EvidenceDb::open(&path, 16 * 1024 * 1024).unwrap();
+        db.bind_network(NETWORK).unwrap();
+        let state =
+            ObservabilityState::new(inventory(), vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+                .unwrap()
+                .with_query_ledger(&directory.join("query.sqlite"))
+                .unwrap()
+                .with_manager_evidence(path)
+                .unwrap();
+        let before = state.query_ledger.as_ref().unwrap().lock().unwrap().manager_cursor().unwrap();
+        let mut malformed = native_row(1, ms(T0), |source| {
+            to_v3(source, ms(T0), 153142, 153140);
+            source["payload"]["consensus"] = Value::Null;
+            source["quality"]["instrumentation_complete"] = json!(false);
+            match change {
+                0 => source["quality"]["instrumentation_complete"] = json!(true),
+                1 => source["clock_quality"] = json!("unknown"),
+                2 => source["source_version"] = json!("unsupported"),
+                3 => source["payload"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("consensus")
+                    .map(|_| ())
+                    .unwrap(),
+                4 => source["received_at"] = json!(T0),
+                5 => source["generation"] = json!("0"),
+                _ => {}
+            }
+        });
+        match change {
+            6 => malformed.record.quality.source_sequence = "2".into(),
+            7 => {
+                malformed.record.observed_at_ms += 1;
+                malformed.record.quality.observed_at_ms = Some(malformed.record.observed_at_ms);
+            }
+            8 => malformed.record.payload["source"]["content_hash"] = json!("0".repeat(64)),
+            _ => {}
+        }
+        db.insert(malformed).unwrap();
+        assert!(import_manager(&state).is_err(), "malformed absence disappeared: {change}");
+        assert!(state.data.lock().unwrap().manager_conflicted);
+        assert_eq!(
+            state.query_ledger.as_ref().unwrap().lock().unwrap().manager_cursor().unwrap(),
+            before
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+}

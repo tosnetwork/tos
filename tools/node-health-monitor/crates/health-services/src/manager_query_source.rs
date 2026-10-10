@@ -96,7 +96,50 @@ pub fn read_projection_head(path: &Path, network: &str) -> Result<ProjectionHead
 /// `native_core` source id but carry no `component`, so they are never read.
 const ELIGIBLE_SOURCE: &str =
     "(o.source='process' OR o.source='host_cgroup' OR (o.source='native_core' \
-     AND json_extract(o.body,'$.record.payload.component')='consensus'))";
+     AND json_extract(o.body,'$.record.payload.component')='consensus' \
+     AND NOT m_valid_native_absence(o.store_seq,o.content_hash,o.body)))";
+
+/// Exclude only an intact, validated incomplete native source with no consensus view.
+/// A malformed parent must remain eligible so the paged reader refuses it.
+fn register_projection_functions(conn: &Connection) -> Result<(), String> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "m_valid_native_absence",
+        3,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |context| {
+            let (Ok(sequence), Ok(id), Ok(body)) =
+                (context.get::<i64>(0), context.get::<String>(1), context.get::<String>(2))
+            else {
+                return Ok(false);
+            };
+            let Ok(sequence) = u64::try_from(sequence) else { return Ok(false) };
+            if body.len() > 32_768 {
+                return Ok(false);
+            }
+            let Ok(evidence) = serde_json::from_str::<DurableEvidence>(&body) else {
+                return Ok(false);
+            };
+            if evidence.record.source_id != "native_core"
+                || evidence.record.payload["component"] != "consensus"
+            {
+                return Ok(false);
+            }
+            let source = &evidence.record.payload["source"];
+            if !matches!(
+                source["source_version"].as_str(),
+                Some("native-core-v2" | "native-core-v3")
+            ) || source["payload"].get("consensus") != Some(&serde_json::Value::Null)
+                || source["quality"]["instrumentation_complete"] != false
+            {
+                return Ok(false);
+            }
+            let row = EvidenceRow { store_seq: U64(sequence), evidence_id: id, evidence };
+            Ok(matches!(project_origin(&row), Ok(None)))
+        },
+    )
+    .map_err(failure)
+}
 
 /// Project one archived M row into the query cache. Process, host and native
 /// consensus rows are supported; any other row yields `Ok(None)`.
@@ -767,6 +810,7 @@ pub fn read_process_projection_page(
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(failure)?;
+    register_projection_functions(&conn)?;
     conn.busy_timeout(std::time::Duration::from_millis(100)).map_err(failure)?;
     conn.execute_batch("PRAGMA query_only=ON; BEGIN TRANSACTION").map_err(failure)?;
     let bound: String = conn
@@ -1040,6 +1084,7 @@ pub fn read_process_projection_state(path: &Path, network: &str) -> Result<Proje
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(failure)?;
+    register_projection_functions(&conn)?;
     conn.busy_timeout(std::time::Duration::from_millis(100)).map_err(failure)?;
     conn.execute_batch("PRAGMA query_only=ON; BEGIN TRANSACTION").map_err(failure)?;
     let bound: String = conn
