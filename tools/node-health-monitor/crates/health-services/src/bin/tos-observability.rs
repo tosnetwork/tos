@@ -423,13 +423,77 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
     }
 
+    // The longest pathname a Unix socket address holds on Linux, with its NUL.
+    const SUN_PATH_LIMIT: usize = 108;
+
+    // Tests in this binary run on parallel threads of one process, so a name
+    // made of the time alone is unique only if the clock moves between two
+    // calls. Six random bytes make names distinct even at one instant, and the
+    // name stays as short as the old one so the temp directory keeps its budget.
+    fn socket_path_at(now_nanos: u128) -> std::path::PathBuf {
+        let token = tos_health_services::random_token().unwrap();
+        let name = format!(
+            "nhm-control-{:016x}-{}.sock",
+            now_nanos as u64,
+            tos_health_services::hex(&token[..6])
+        );
+        socket_path_in(&std::env::temp_dir(), &name)
+    }
+
+    // A temp directory too long for the socket address falls back to /tmp.
+    fn socket_path_in(directory: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let path = directory.join(name);
+        if path.as_os_str().len() < SUN_PATH_LIMIT {
+            path
+        } else {
+            std::path::Path::new("/tmp").join(name)
+        }
+    }
+
+    fn socket_path() -> std::path::PathBuf {
+        socket_path_at(
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        )
+    }
+
     fn socket() -> (std::path::PathBuf, tokio::net::UnixListener) {
-        let nanos =
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("nhm-control-{}-{nanos}.sock", std::process::id()));
+        let path = socket_path();
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
         (path, listener)
+    }
+
+    #[tokio::test]
+    async fn concurrent_control_socket_names_are_distinct_and_bindable() {
+        // One instant for every call: distinctness can only come from the
+        // random part, so a name made of the time alone fails here every run.
+        const NOW: u128 = 1_789_000_000_000_000_000;
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| (0..32).map(|_| socket_path_at(NOW)).collect::<Vec<_>>())
+            })
+            .collect();
+        let paths: Vec<_> = threads.into_iter().flat_map(|thread| thread.join().unwrap()).collect();
+        let distinct: std::collections::HashSet<_> = paths.iter().collect();
+        assert_eq!(distinct.len(), paths.len(), "two parallel tests would share a control socket");
+        for path in &paths {
+            assert!(
+                path.as_os_str().len() < SUN_PATH_LIMIT,
+                "{path:?} exceeds the Unix socket path limit"
+            );
+            let listener = tokio::net::UnixListener::bind(path).unwrap();
+            drop(listener);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_temp_directory_too_long_for_a_socket_address_falls_back_to_tmp() {
+        let name = "nhm-control-0000000000000000-000000000000.sock";
+        let long = std::path::PathBuf::from(format!("/{}", "d".repeat(69)));
+        assert_eq!(socket_path_in(&long, name), std::path::Path::new("/tmp").join(name));
+        assert!(socket_path_in(&long, name).as_os_str().len() < SUN_PATH_LIMIT);
+        let short = std::path::Path::new("/run/user");
+        assert_eq!(socket_path_in(short, name), short.join(name));
     }
     async fn wait_permits(limit: &tokio::sync::Semaphore, expected: usize, timeout: Duration) {
         tokio::time::timeout(timeout, async {
