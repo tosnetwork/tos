@@ -609,53 +609,111 @@ def ninja_query(build_dir: Path, target: str) -> tuple[str | None, list[str], li
     return rule, explicit, implicit
 
 
-def trace_generated(
-    build_dir: Path, root: Path, generated: set[str], changed: set[str]
-) -> list[str]:
-    """Problems that stop generated files from being shared with the BASE side.
+class GeneratorGraph:
+    """The source files each generated file is made from, read from the ninja graph.
 
-    Custom-command outputs are traced back to source files. A generator executable
-    is treated as opaque except for the sources of its own objects; a change to a
-    library it links is assumed not to change what it generates.
+    Custom-command outputs are traced back through their explicit and implicit
+    inputs to source files. A generator executable counts only through the
+    sources of its own objects: a library it links is assumed not to change what
+    it generates. Order-only inputs are not inputs. A file ninja does not know is
+    a plain source, or, inside the build directory, something CMake writes at
+    configure time; changes to the CMake configuration are refused separately.
+    Freshness and sharing use these same inputs, so they cannot disagree.
     """
+
+    def __init__(self, build_dir: Path) -> None:
+        self.build_dir = build_dir
+        self.memo: dict[str, frozenset[str]] = {}
+        self.logged: dict[str, int] | None = None
+
+    def built_at(self, target: str) -> int:
+        """When ninja last brought a file up to date, in nanoseconds.
+
+        A restat rule that regenerates identical content leaves the file's own
+        mtime alone and records the newer time in .ninja_log instead, so the later
+        of the two is what ninja itself compares.
+        """
+        if self.logged is None:
+            self.logged = {}
+            log = self.build_dir / ".ninja_log"
+            try:
+                lines = log.read_text(errors="replace").splitlines()
+            except OSError:
+                raise Refusal(f"{log} is missing; build the tree first") from None
+            if not lines or lines[0].strip() != "# ninja log v5":
+                raise Refusal(f"{log} is not a ninja v5 log")
+            for line in lines[1:]:
+                fields = line.split("\t")
+                if len(fields) != 5 or not fields[2].isdigit():
+                    raise Refusal(f"malformed line in {log}: {line[:120]!r}")
+                self.logged[self.absolute(fields[3])] = int(fields[2])
+        path = self.absolute(target)
+        try:
+            own = os.stat(path).st_mtime_ns
+        except OSError as error:
+            raise Refusal(f"cannot check {target}: {error}") from None
+        return max(own, self.logged.get(path, 0))
+
+    def absolute(self, target: str) -> str:
+        return target if os.path.isabs(target) else os.path.normpath(str(self.build_dir / target))
+
+    def sources(self, target: str, active: frozenset[str] = frozenset()) -> frozenset[str]:
+        if target in self.memo:
+            return self.memo[target]
+        if target in active:
+            raise Refusal(f"the build graph has a cycle through {target}")
+        path = self.absolute(target)
+        queried = ninja_query(self.build_dir, target)
+        if queried is None or queried[0] is None:
+            found = frozenset() if relative(path, self.build_dir) is not None else frozenset({path})
+        elif "_LINKER" in queried[0]:
+            objects = set()
+            for obj in queried[1]:
+                compiled = ninja_query(self.build_dir, obj)
+                if compiled is None or compiled[0] is None or "_COMPILER" not in compiled[0]:
+                    raise Refusal(f"cannot trace object {obj} of generator {target}")
+                objects.update(self.absolute(source) for source in compiled[1])
+            found = frozenset(objects)
+        else:
+            inputs: set[str] = set()
+            for item in queried[1] + queried[2]:
+                inputs |= self.sources(item, active | {target})
+            found = frozenset(inputs)
+        self.memo[target] = found
+        return found
+
+
+def trace_generated(
+    graph: GeneratorGraph, root: Path, generated: set[str], changed: set[str]
+) -> list[str]:
+    """Problems that stop generated files from being shared with the BASE side."""
+    changed_abs = {os.path.normpath(str(root / path)) for path in changed}
     problems = []
-    changed_abs = {str((root / path).resolve()) for path in changed}
-    seen: set[str] = set()
-    queue = sorted(generated)
-    while queue:
-        target = queue.pop()
-        if target in seen:
-            continue
-        seen.add(target)
-        absolute = target if os.path.isabs(target) else os.path.normpath(str(build_dir / target))
-        if absolute in changed_abs:
-            problems.append(f"generator input {relative(absolute, root)} is changed")
-            continue
-        queried = ninja_query(build_dir, target)
-        if queried is None:
-            # A plain source file, or a file CMake writes at configure time; the
-            # latter is covered by refusing any change to the CMake configuration.
-            continue
-        rule, explicit, implicit = queried
-        if rule is None:
-            continue
-        if "_LINKER" in rule:
-            for obj in explicit:
-                compiled = ninja_query(build_dir, obj)
-                if compiled is None or compiled[0] is None:
-                    problems.append(f"cannot trace object {obj} of {target}")
-                    continue
-                for source in compiled[1]:
-                    src = (
-                        source
-                        if os.path.isabs(source)
-                        else os.path.normpath(str(build_dir / source))
-                    )
-                    if src in changed_abs:
-                        problems.append(f"generator source {relative(src, root)} is changed")
-            continue
-        queue.extend(explicit + implicit)
+    for target in sorted(generated):
+        for source in sorted(graph.sources(target) & changed_abs):
+            problems.append(f"{relative(source, root)} (an input of {target}) is changed")
     return problems
+
+
+def check_generated_fresh(graph: GeneratorGraph, generated: set[str]) -> None:
+    """Every generated file must be newer than every source it is made from."""
+    stale = []
+    for target in sorted(generated):
+        sources = graph.sources(target)
+        if not sources:
+            continue
+        built = graph.built_at(target)
+        try:
+            newest = max(os.stat(source).st_mtime_ns for source in sources)
+        except OSError as error:
+            raise Refusal(f"cannot check the sources of {target}: {error}") from None
+        if built < newest:
+            stale.append(target)
+    if stale:
+        raise Refusal(
+            f"generated files are older than their sources, e.g. {stale[0]}; "
+            f"build the tree first (ninja -C {graph.build_dir})"
+        )
 
 
 def generated_files(
@@ -678,19 +736,6 @@ def generated_files(
             raise Refusal(f"git check-ignore failed: {result.stderr.strip()[:200]}")
         ignored = {line for line in result.stdout.splitlines() if line}
     return in_build, ignored
-
-
-def check_generated_fresh(build_dir: Path, targets: set[str]) -> None:
-    if not targets:
-        return
-    result = run(["ninja", "-C", str(build_dir), "-n", *sorted(targets)], timeout=600)
-    if result.returncode != 0:
-        raise Refusal(f"ninja -n failed: {(result.stdout + result.stderr).strip()[:300]}")
-    if "no work to do" not in result.stdout:
-        raise Refusal(
-            "generated files are older than their inputs; build the tree first "
-            f"(ninja -C {build_dir})"
-        )
 
 
 def check_contained(deps: dict[Entry, set[str]], head_root: Path, build_dir: Path) -> None:
@@ -1041,6 +1086,22 @@ def identity(entry: Entry, side_root: Path, side_build: Path) -> tuple[str, str]
     return (neutral(entry.file), shlex.join(neutral(arg) for arg in arguments[1:]))
 
 
+def representatives(
+    entries: list[Entry], side_root: Path, side_build: Path
+) -> dict[tuple[str, str], Entry]:
+    """One compilation per identity.
+
+    A source built with identical arguments for several targets (a shared test
+    main, say) differs only in its output; CodeChecker cannot tell such runs
+    apart and they analyse identically, so the one with the first output stands
+    for all of them.
+    """
+    chosen: dict[tuple[str, str], Entry] = {}
+    for entry in sorted(entries, key=lambda e: e.output):
+        chosen.setdefault(identity(entry, side_root, side_build), entry)
+    return chosen
+
+
 # --- main -------------------------------------------------------------------
 
 
@@ -1104,9 +1165,8 @@ def gate(root: Path, args: argparse.Namespace) -> int:
         head_deps = scan_dependencies(head_entries, tools, work, "HEAD")
         in_build, ignored = generated_files(head_deps, root, build_dir)
         generated = set(in_build) | {str(root / p) for p in ignored}
-        check_generated_fresh(
-            build_dir, {p for p in generated if ninja_query(build_dir, p) is not None}
-        )
+        head_graph = GeneratorGraph(build_dir)
+        check_generated_fresh(head_graph, generated)
 
         if args.full:
             head_selected, orphans = set(head_entries), set()
@@ -1135,10 +1195,7 @@ def gate(root: Path, args: argparse.Namespace) -> int:
             base_deps = scan_dependencies(base_entries, tools, work, "BASE")
             base_in_build, base_ignored = generated_files(base_deps, base_root, base_build)
             base_generated = set(base_in_build) | {str(base_root / p) for p in base_ignored}
-            check_generated_fresh(
-                base_build,
-                {p for p in base_generated if ninja_query(base_build, p) is not None},
-            )
+            check_generated_fresh(GeneratorGraph(base_build), base_generated)
         else:
             base_build = build_dir
             if any(CONFIGURE_INPUT_RE.search(p) for p in change.all_paths):
@@ -1148,7 +1205,7 @@ def gate(root: Path, args: argparse.Namespace) -> int:
                 )
             git(root, "worktree", "add", "--detach", "--quiet", str(base_root), merge_base)
             worktree_added = True
-            problems = trace_generated(build_dir, root, generated, change.all_paths)
+            problems = trace_generated(head_graph, root, generated, change.all_paths)
             if problems:
                 raise Refusal(
                     "generated files cannot be shared with the merge base: "
@@ -1177,10 +1234,8 @@ def gate(root: Path, args: argparse.Namespace) -> int:
                 {p for p in cpp_base if Path(p).suffix in SOURCE_SUFFIXES},
                 {p for p in cpp_base if Path(p).suffix in HEADER_SUFFIXES},
             )
-        head_ids = {identity(e, root, build_dir): e for e in head_entries}
-        base_ids = {identity(e, base_root, base_build): e for e in base_entries}
-        if len(head_ids) != len(head_entries) or len(base_ids) != len(base_entries):
-            raise Refusal("two compilations differ only in their output path")
+        head_ids = representatives(head_entries, root, build_dir)
+        base_ids = representatives(base_entries, base_root, base_build)
         wanted = {identity(e, root, build_dir) for e in head_selected} | {
             identity(e, base_root, base_build) for e in base_selected
         }

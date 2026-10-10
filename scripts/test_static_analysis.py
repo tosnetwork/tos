@@ -547,6 +547,13 @@ class Database(Workdir):
             sa.identity(one, Path("/h"), Path("/h/b")), sa.identity(two, Path("/s"), Path("/o/b"))
         )
 
+    def test_identical_compilations_collapse_to_one(self) -> None:
+        one = sa.Entry("/h/b", "/h/m.cpp", ("c++", "-c", "/h/m.cpp", "-o", "t2/m.o"))
+        two = sa.Entry("/h/b", "/h/m.cpp", ("c++", "-c", "/h/m.cpp", "-o", "t1/m.o"))
+        other = sa.Entry("/h/b", "/h/m.cpp", ("c++", "-DX", "-c", "/h/m.cpp", "-o", "t3/m.o"))
+        chosen = sa.representatives([one, two, other], Path("/h"), Path("/h/b"))
+        self.assertEqual(sorted(e.output for e in chosen.values()), ["/h/b/t1/m.o", "/h/b/t3/m.o"])
+
     def test_base_reading_a_head_source_refuses(self) -> None:
         head = self.tmp / "head"
         entry = sa.Entry("/b", "/base/a.cpp", ("c++",))
@@ -611,18 +618,13 @@ class StandInTools(Workdir):
                         self.entries(), self.scan(output, status), self.tmp, "HEAD"
                     )
 
-    def ninja(
-        self, graph: dict[str, tuple[str, list[str]]], dry_run: str = "ninja: no work to do.\n"
-    ) -> None:
+    def ninja(self, graph: dict[str, tuple[str, list[str]]]) -> None:
         write_tool(
             self.bin / "ninja",
             f"""
             import sys
             graph = {graph!r}
             args = sys.argv[1:]
-            if "-n" in args:
-                sys.stdout.write({dry_run!r})
-                sys.exit(0)
             target = args[-1]
             if target not in graph:
                 sys.stderr.write(f"ninja: error: unknown target '{{target}}'\\n")
@@ -636,38 +638,103 @@ class StandInTools(Workdir):
             """,
         )
 
-    def test_trace_finds_changed_generator_inputs(self) -> None:
+    def generator(self) -> tuple[Path, Path, str]:
+        """A schema compiled by a generator tool that also links a library."""
         root = self.tmp / "root"
         build = self.tmp / "build"
+        for path in (
+            root / "gen" / "api.h",
+            root / "schema.tl",
+            root / "tool.cpp",
+            root / "lib.cpp",
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x\n")
         graph = {
             str(root / "gen" / "api.h"): (
                 "CUSTOM_COMMAND",
-                ["tool", str(root / "schema.tlo"), "|| lib.a"],
+                ["tool", str(root / "schema.tlo"), "|| order-only.stamp"],
             ),
             str(root / "schema.tlo"): ("CUSTOM_COMMAND", [str(root / "schema.tl")]),
             "tool": ("CXX_EXECUTABLE_LINKER__tool", ["tool.o", "| lib.a"]),
             "tool.o": ("CXX_COMPILER__tool", [str(root / "tool.cpp")]),
+            "lib.a": ("CXX_STATIC_LIBRARY_LINKER__lib", ["lib.o"]),
+            "lib.o": ("CXX_COMPILER__lib", [str(root / "lib.cpp")]),
+            "order-only.stamp": ("CUSTOM_COMMAND", [str(root / "lib.cpp")]),
         }
         self.ninja(graph)
-        generated = {str(root / "gen" / "api.h")}
-        self.assertEqual(sa.trace_generated(build, root, generated, {"other.cpp"}), [])
-        self.assertIn(
-            "generator input schema.tl is changed",
-            sa.trace_generated(build, root, generated, {"schema.tl"}),
-        )
-        self.assertIn(
-            "generator source tool.cpp is changed",
-            sa.trace_generated(build, root, generated, {"tool.cpp"}),
-        )
+        return root, build, str(root / "gen" / "api.h")
+
+    def test_generator_sources_are_the_schema_and_the_tool_sources(self) -> None:
+        root, build, header = self.generator()
+        sources = sa.GeneratorGraph(build).sources(header)
+        self.assertEqual(sources, {str(root / "schema.tl"), str(root / "tool.cpp")})
+
+    def test_trace_finds_changed_generator_inputs(self) -> None:
+        root, build, header = self.generator()
+        graph = sa.GeneratorGraph(build)
+        self.assertEqual(sa.trace_generated(graph, root, {header}, {"other.cpp"}), [])
+        self.assertTrue(sa.trace_generated(graph, root, {header}, {"schema.tl"}))
+        self.assertTrue(sa.trace_generated(graph, root, {header}, {"tool.cpp"}))
         # A library the generator links is opaque, and order-only inputs are ignored.
-        self.assertEqual(sa.trace_generated(build, root, generated, {"lib.cpp"}), [])
+        self.assertEqual(sa.trace_generated(graph, root, {header}, {"lib.cpp"}), [])
+
+    def ninja_log(self, build: Path, *rows: tuple[int, str]) -> None:
+        build.mkdir(parents=True, exist_ok=True)
+        lines = ["# ninja log v5"] + [f"0\t1\t{mtime}\t{path}\tabc" for mtime, path in rows]
+        (build / ".ninja_log").write_text("\n".join(lines) + "\n")
 
     def test_stale_generated_files_refuse(self) -> None:
-        self.ninja({}, dry_run="[1/1] generate api.h\n")
+        root, build, header = self.generator()
+        self.ninja_log(build)
+        old, new = 1_000_000_000, 2_000_000_000
+        for path in (root / "schema.tl", root / "tool.cpp", root / "lib.cpp"):
+            os.utime(path, ns=(old, old))
+        os.utime(header, ns=(new, new))
+        sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
+        # Newer linked library: still fresh, the generator is opaque.
+        os.utime(root / "lib.cpp", ns=(new + 1, new + 1))
+        sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
+        os.utime(root / "schema.tl", ns=(new + 1, new + 1))
         with self.assertRaisesRegex(sa.Refusal, "build the tree first"):
-            sa.check_generated_fresh(self.tmp, {"gen.h"})
-        self.ninja({})
-        sa.check_generated_fresh(self.tmp, {"gen.h"})
+            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
+
+    def test_restat_time_in_the_ninja_log_counts(self) -> None:
+        # A regeneration that produced identical content keeps the old file mtime;
+        # ninja records the newer time in its log and considers the file fresh.
+        root, build, header = self.generator()
+        old, new = 1_000_000_000, 2_000_000_000
+        for path in (root / "tool.cpp", root / "lib.cpp", header):
+            os.utime(path, ns=(old, old))
+        os.utime(root / "schema.tl", ns=(new, new))
+        self.ninja_log(build, (new + 5, header))
+        sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
+        self.ninja_log(build, (old, header))
+        with self.assertRaisesRegex(sa.Refusal, "build the tree first"):
+            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
+
+    def test_missing_or_malformed_ninja_log_refuses(self) -> None:
+        root, build, header = self.generator()
+        build.mkdir(parents=True, exist_ok=True)
+        with self.assertRaisesRegex(sa.Refusal, "missing"):
+            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
+        (build / ".ninja_log").write_text("# ninja log v5\nnot a row\n")
+        with self.assertRaisesRegex(sa.Refusal, "malformed"):
+            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
+        (build / ".ninja_log").write_text("# ninja log v7\n")
+        with self.assertRaisesRegex(sa.Refusal, "not a ninja v5 log"):
+            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
+
+    def test_untraceable_generator_object_refuses(self) -> None:
+        root = self.tmp / "root"
+        self.ninja(
+            {
+                str(root / "gen.h"): ("CUSTOM_COMMAND", ["tool"]),
+                "tool": ("CXX_EXECUTABLE_LINKER__tool", ["tool.o"]),
+            }
+        )
+        with self.assertRaisesRegex(sa.Refusal, "cannot trace object"):
+            sa.GeneratorGraph(self.tmp / "build").sources(str(root / "gen.h"))
 
     def tidy(self, checks: list[str], options: dict[str, str]) -> object:
         option_lines = "".join(f"  {key}: '{value}'\\n" for key, value in options.items())
