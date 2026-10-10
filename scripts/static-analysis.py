@@ -1117,6 +1117,17 @@ class Side:
     build: Path
     entries: list[Entry]
     deps: dict[Entry, set[str]]
+    generated: set[str]
+
+    def generated_by_key(self) -> dict[str, str]:
+        """Generated files keyed by their place in the checkout or the build."""
+        keyed = {}
+        for path in self.generated:
+            in_build = relative(path, self.build)
+            keyed[
+                f"<build>/{in_build}" if in_build is not None else str(relative(path, self.root))
+            ] = path
+        return keyed
 
 
 def prepare_side(label: str, root: Path, build: Path, tools: Tools, work: Path) -> Side:
@@ -1127,7 +1138,34 @@ def prepare_side(label: str, root: Path, build: Path, tools: Tools, work: Path) 
     deps = scan_dependencies(entries, tools, work, label)
     if side_generated(deps, root, build) != generated:
         raise Refusal(f"{label}: the build changed which generated files are read; run again")
-    return Side(label, root, build, entries, deps)
+    return Side(label, root, build, entries, deps, generated)
+
+
+def generated_changes(head: Side, base: Side) -> tuple[set[str], set[str]]:
+    """Generated files whose content differs between the sides, as each side's paths.
+
+    A change to a generator input (a schema, a contract, the CMake configuration)
+    reaches the analysis only through what is generated from it, so the
+    generated files themselves are compared; one missing on a side differs too.
+    """
+    head_files, base_files = head.generated_by_key(), base.generated_by_key()
+    changed_head, changed_base = set(), set()
+    for key in sorted(set(head_files) | set(base_files)):
+        one, two = head_files.get(key), base_files.get(key)
+        try:
+            same = (
+                one is not None
+                and two is not None
+                and Path(one).read_bytes() == Path(two).read_bytes()
+            )
+        except OSError as error:
+            raise Refusal(f"cannot compare generated file {key}: {error}") from None
+        if not same:
+            if one is not None:
+                changed_head.add(one)
+            if two is not None:
+                changed_base.add(two)
+    return changed_head, changed_base
 
 
 def side_generated(deps: dict[Entry, set[str]], root: Path, build: Path) -> set[str]:
@@ -1135,8 +1173,14 @@ def side_generated(deps: dict[Entry, set[str]], root: Path, build: Path) -> set[
     return set(in_build) | {os.path.normpath(str(root / p)) for p in ignored}
 
 
-def select_side(side: Side, changed: set[str], uncovered: set[str]) -> tuple[set[Entry], set[str]]:
-    """The side's compilations a change reaches, refusing what it cannot reach."""
+def select_side(
+    side: Side, changed: set[str], uncovered: set[str], generated: set[str] = frozenset()
+) -> tuple[set[Entry], set[str]]:
+    """The side's compilations a change reaches, refusing what it cannot reach.
+
+    Changed generated files (absolute paths) select every compilation that reads
+    them, which for a generated source includes its own compilation.
+    """
     sources = {p for p in changed if Path(p).suffix in SOURCE_SUFFIXES}
     headers = {p for p in changed if Path(p).suffix in HEADER_SUFFIXES}
     known = {relative(entry.file, side.root) for entry in side.entries}
@@ -1147,6 +1191,9 @@ def select_side(side: Side, changed: set[str], uncovered: set[str]) -> tuple[set
             f"{missing}; reconfigure that build"
         )
     chosen, orphans = select(side.entries, side.deps, side.root, sources, headers)
+    for path in generated:
+        # A compilation's dependencies include its own source file.
+        chosen |= {entry for entry, paths in side.deps.items() if path in paths}
     refused = sorted(orphans - uncovered)
     if refused:
         raise Refusal(
@@ -1177,23 +1224,25 @@ def gate(root: Path, args: argparse.Namespace) -> int:
         suppressions = audit_suppressions(root, change)
         cpp_head = {p for p in change.head_paths if is_cpp(p) and not is_excluded(p)}
         cpp_base = {p for p in change.base_paths if is_cpp(p) and not is_excluded(p)}
-        if not args.full and not cpp_head and not cpp_base:
-            print("static-analysis: no C/C++ change; 0 compilations analysed")
-            return EXIT_CLEAN
 
+        # Both sides are always prepared: a change with no C/C++ file can still
+        # change generated C/C++, which only comparing the built sides reveals.
         system = system_directories(tools)
         head = prepare_side("HEAD", root, build_dir, tools, work)
         base = prepare_side("BASE", base_root, base_build, tools, work)
         check_contained(head.deps, (root, build_dir), (base_root, base_build), system, "HEAD")
         check_contained(base.deps, (base_root, base_build), (root, build_dir), system, "BASE")
+        generated_head, generated_base = generated_changes(head, base)
+        for path in sorted(generated_head | generated_base):
+            print(f"static-analysis: generated file differs between the sides: {path}")
 
         uncovered = load_uncovered(root)
         if args.full:
             head_selected, base_selected = set(head.entries), set(base.entries)
             orphans: set[str] = set()
         else:
-            head_selected, head_orphans = select_side(head, cpp_head, uncovered)
-            base_selected, base_orphans = select_side(base, cpp_base, uncovered)
+            head_selected, head_orphans = select_side(head, cpp_head, uncovered, generated_head)
+            base_selected, base_orphans = select_side(base, cpp_base, uncovered, generated_base)
             orphans = head_orphans | base_orphans
         head_ids = representatives(head.entries, root, build_dir)
         base_ids = representatives(base.entries, base_root, base_build)

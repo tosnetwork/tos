@@ -678,7 +678,39 @@ class Database(Workdir):
             sa.check_contained({entry: set()}, (head, head_build), (base, head_build), [], "HEAD")
 
     def side(self, label: str, entries: list[object], deps: dict) -> object:
-        return sa.Side(label, self.tmp, self.tmp / "build", entries, deps)
+        return sa.Side(label, self.tmp, self.tmp / "build", entries, deps, set())
+
+    def test_generated_files_that_differ_between_the_sides_are_changes(self) -> None:
+        sides = []
+        for name, schema, header in (("head", "new", "same"), ("base", "old", "same")):
+            root, build = self.tmp / name, self.tmp / f"{name}-build"
+            (root / "gen").mkdir(parents=True)
+            (build / "inc").mkdir(parents=True)
+            (root / "gen" / "api.cpp").write_text(schema)
+            (build / "inc" / "config.h").write_text(header)
+            generated = {str(root / "gen" / "api.cpp"), str(build / "inc" / "config.h")}
+            if name == "head":
+                (build / "inc" / "only-head.h").write_text("x")
+                generated.add(str(build / "inc" / "only-head.h"))
+            sides.append(sa.Side(name, root, build, [], {}, generated))
+        head, base = sides
+        changed_head, changed_base = sa.generated_changes(head, base)
+        self.assertEqual(
+            changed_head,
+            {str(head.root / "gen" / "api.cpp"), str(head.build / "inc" / "only-head.h")},
+        )
+        self.assertEqual(changed_base, {str(base.root / "gen" / "api.cpp")})
+
+    def test_a_changed_generated_file_selects_its_compilations_and_readers(self) -> None:
+        generated_source = str(self.tmp / "gen" / "api.cpp")
+        generated_header = str(self.tmp / "build" / "config.h")
+        own = sa.Entry("/b", generated_source, ("c++", "-o", "api.o"))
+        reader = sa.Entry("/b", str(self.tmp / "r.cpp"), ("c++", "-o", "r.o"))
+        bystander = sa.Entry("/b", str(self.tmp / "z.cpp"), ("c++", "-o", "z.o"))
+        deps = {own: {generated_source}, reader: {generated_header}, bystander: set()}
+        side = self.side("HEAD", [own, reader, bystander], deps)
+        chosen, _ = sa.select_side(side, set(), set(), {generated_source, generated_header})
+        self.assertEqual(chosen, {own, reader})
 
     def test_a_deleted_source_must_be_in_the_base_database(self) -> None:
         a = sa.Entry("/b", str(self.tmp / "a.cpp"), ("c++", "-o", "a.o"))
