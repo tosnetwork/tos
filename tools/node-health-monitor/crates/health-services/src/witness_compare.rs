@@ -210,6 +210,7 @@ pub async fn run(config: WitnessConfig) -> Result<(), String> {
     let client = crate::client(&config.ca_file, &config.identity_file)?;
     let token =
         String::from_utf8(crate::secret(&config.manager_token_file)?).map_err(|e| e.to_string())?;
+    let mut diagnostics = crate::sender_diagnostics::SenderDiagnostics::new();
     let mut generation = 0u64;
     let run = crate::manager_poll::derivation_run_id();
     let mut timer = tokio::time::interval(Duration::from_secs(15));
@@ -247,13 +248,16 @@ pub async fn run(config: WitnessConfig) -> Result<(), String> {
                 );
             }
             let f = frame(&config, node, &epoch, generation, now_ms, result.value, &run);
-            match client.post(&config.manager_url).bearer_auth(&token).json(&f).send().await {
-                Ok(response) if response.status().is_success() => {}
-                Ok(response) => {
-                    eprintln!("witness compare: manager refused {node}: {}", response.status())
-                }
-                Err(e) => eprintln!("witness compare: manager request failed: {e}"),
-            }
+            crate::sender_diagnostics::send_reported(
+                &client,
+                &config.manager_url,
+                &token,
+                &f,
+                false,
+                &mut diagnostics,
+                "witness compare",
+            )
+            .await;
         }
     }
 }
