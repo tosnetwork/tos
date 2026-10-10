@@ -678,3 +678,28 @@ fn resident_charge_covers_the_real_allocation_of_decoded_payloads() {
     let map = json!({"k": 1});
     assert!(value_footprint(&map) >= 11 * value_bytes);
 }
+
+#[test]
+fn unsupported_snapshot_components_are_invalid_not_cache_misses() {
+    let store = EvidenceStore::new(8000);
+    let metrics = BTreeSet::new();
+    let query = QueryService { store: &store, metrics: &metrics };
+    for component in ["network", "index", "gpu", "telemetry", "deployment"] {
+        let mut g = grant(&store);
+        let input = json!({"run_id":g.run_id,"node_id":"v1","as_of":"1970-01-01T00:00:03Z","max_age_seconds":10,"components":[component]});
+        assert_eq!(
+            code(&query.call(&mut g, "aura", &[7; 32], 1, TOOLS[1], input)),
+            "INVALID_ARGUMENT",
+            "{component}"
+        );
+    }
+    for component in SNAPSHOT_COMPONENTS {
+        let mut g = grant(&store);
+        let input = json!({"run_id":g.run_id,"node_id":"v1","as_of":"1970-01-01T00:00:03Z","max_age_seconds":10,"components":[component]});
+        assert_eq!(
+            code(&query.call(&mut g, "aura", &[7; 32], 1, TOOLS[1], input)),
+            "CACHE_MISS",
+            "{component}"
+        );
+    }
+}

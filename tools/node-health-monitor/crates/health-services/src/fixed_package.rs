@@ -1,7 +1,7 @@
 //! Development-only, cache-only C07 package fixed at the grant's query watermark.
 //! Version 2 carries, per node, the newest native consensus sample with its
 //! fixed chain and storage views, the read-only health verdict copy and the
-//! newest process sample per scope. Everything is read from the durable query
+//! newest process and host samples per scope. Everything is read from the durable query
 //! cache; nothing here opens M, a model or a V/O endpoint. When the 16 KiB
 //! budget is exceeded, items are dropped in a fixed priority order and each
 //! drop is listed explicitly so the model cannot mistake absence for health.
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use tos_health_core::query::Grant;
 use tos_health_core::{
-    edge_snapshot::ProcessPayload,
+    edge_snapshot::{CgroupPayload, ProcessPayload},
     evidence::StoredEvidence,
     query_output::{HealthVerdictDto, PayloadDto},
     wire::U64,
@@ -50,6 +50,8 @@ struct Package {
     manager_watermark: U64,
     process: Vec<ProcessItem>,
     missing_process: Vec<NodeScope>,
+    host: Vec<HostItem>,
+    missing_host: Vec<NodeScope>,
     native: Vec<NativeItem>,
     missing_native: Vec<NodeScope>,
     health: Vec<VerdictItem>,
@@ -76,6 +78,20 @@ struct ProcessItem {
     observed_at_ms: String,
     process_epoch: String,
     value: ProcessPayload,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct HostItem {
+    node_id: String,
+    scope_id: String,
+    evidence_id: String,
+    parent_evidence_id: String,
+    query_sequence: U64,
+    manager_sequence: U64,
+    observed_at_ms: String,
+    process_epoch: String,
+    value: CgroupPayload,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -140,6 +156,22 @@ fn validate_process_item(item: &ProcessItem, grant: &Grant, fixed_m: u64) -> boo
         && item.process_epoch.len() <= 128
         && item.value.kind == "process"
         && item.value.pid != 0
+        && valid_time(&item.observed_at_ms, grant, true)
+}
+
+fn validate_host_item(item: &HostItem, grant: &Grant, fixed_m: u64) -> bool {
+    grant.nodes.contains(&item.node_id)
+        && grant.scopes.contains(&item.scope_id)
+        && tos_health_core::wire::hash(&item.evidence_id)
+        && tos_health_core::wire::hash(&item.parent_evidence_id)
+        && item.query_sequence.0 != 0
+        && item.query_sequence.0 <= grant.watermark
+        && item.manager_sequence.0 != 0
+        && item.manager_sequence.0 <= fixed_m
+        && !item.process_epoch.is_empty()
+        && item.process_epoch.len() <= 128
+        && item.value.kind == "host_cgroup"
+        && item.value.cpu_period_usec.0 != 0
         && valid_time(&item.observed_at_ms, grant, true)
 }
 
@@ -212,6 +244,23 @@ fn validate_v2(body: &[u8], grant: &Grant) -> Result<(), String> {
             || !process_cover.insert((missing.node_id.clone(), missing.scope_id.clone()))
         {
             return Err("broker package missing-process item invalid".into());
+        }
+    }
+    let mut host_cover = BTreeSet::new();
+    for item in &package.host {
+        if !validate_host_item(item, grant, fixed_m)
+            || !host_cover.insert((item.node_id.clone(), item.scope_id.clone()))
+            || !evidence_ids.insert(item.evidence_id.clone())
+        {
+            return Err("broker package host item invalid".into());
+        }
+    }
+    for missing in &package.missing_host {
+        if !grant.nodes.contains(&missing.node_id)
+            || !grant.scopes.contains(&missing.scope_id)
+            || !host_cover.insert((missing.node_id.clone(), missing.scope_id.clone()))
+        {
+            return Err("broker package missing-host item invalid".into());
         }
     }
     let mut native_cover = BTreeSet::new();
@@ -298,6 +347,10 @@ fn validate_v2(body: &[u8], grant: &Grant) -> Result<(), String> {
                 grant.scopes.contains(&cut.scope_id)
                     && process_cover.insert((cut.node_id.clone(), cut.scope_id.clone()))
             }
+            "host" => {
+                grant.scopes.contains(&cut.scope_id)
+                    && host_cover.insert((cut.node_id.clone(), cut.scope_id.clone()))
+            }
             "consensus" => true,
             "chain" => {
                 cut.scope_id == "node"
@@ -318,6 +371,7 @@ fn validate_v2(body: &[u8], grant: &Grant) -> Result<(), String> {
         }
     }
     if process_cover.len() != grant.nodes.len().saturating_mul(grant.scopes.len())
+        || host_cover.len() != grant.nodes.len().saturating_mul(grant.scopes.len())
         || native_cover.len() != grant.nodes.len()
         || health_cover.len() != grant.nodes.len()
     {
@@ -350,6 +404,7 @@ pub fn package_evidence_ids(body: &[u8]) -> Result<BTreeSet<String>, String> {
         .process
         .iter()
         .map(|item| item.evidence_id.clone())
+        .chain(package.host.iter().map(|item| item.evidence_id.clone()))
         .chain(package.native.iter().map(|item| item.evidence_id.clone()))
         .chain(package.health.iter().map(|item| item.evidence_id.clone()))
         .collect())
@@ -403,6 +458,35 @@ fn process_item(entry: &StoredEvidence, manager_watermark: u64) -> Result<Proces
         return Err("invalid process payload identity".into());
     }
     Ok(ProcessItem {
+        node_id: record.node_id.clone(),
+        scope_id: record.scope_id.clone(),
+        evidence_id: entry.evidence_id.clone(),
+        parent_evidence_id: parent,
+        query_sequence: U64(entry.watermark),
+        manager_sequence: origin_seq,
+        observed_at_ms: record.observed_at_ms.to_string(),
+        process_epoch: record.process_epoch.clone(),
+        value: process,
+    })
+}
+
+fn host_item(entry: &StoredEvidence, manager_watermark: u64) -> Result<HostItem, String> {
+    let record = &entry.record;
+    let payload = &record.payload;
+    if record.source_id != "host_cgroup"
+        || payload.get("component").and_then(serde_json::Value::as_str) != Some("host")
+    {
+        return Err("unsupported package host projection".into());
+    }
+    let (parent, origin_seq) = derived_parent(entry, manager_watermark)?;
+    let process: CgroupPayload = serde_json::from_value(
+        payload.get("contract_payload").ok_or("missing host payload")?.clone(),
+    )
+    .map_err(|_| "invalid host payload")?;
+    if process.kind != "host_cgroup" || process.cpu_period_usec.0 == 0 {
+        return Err("invalid host payload identity".into());
+    }
+    Ok(HostItem {
         node_id: record.node_id.clone(),
         scope_id: record.scope_id.clone(),
         evidence_id: entry.evidence_id.clone(),
@@ -473,7 +557,7 @@ fn verdict_item(entry: &StoredEvidence) -> Result<VerdictItem, String> {
     })
 }
 
-/// Drop exactly one item in fixed priority order: process samples first,
+/// Drop exactly one item in fixed priority order: process then host samples first,
 /// then storage and chain views, then whole consensus samples, always from
 /// the last node backwards. Verdict copies are never dropped.
 fn truncate_one(package: &mut Package) -> bool {
@@ -482,6 +566,15 @@ fn truncate_one(package: &mut Package) -> bool {
             node_id: item.node_id,
             scope_id: item.scope_id,
             component: "process".into(),
+            reason: TRUNCATION_REASON.into(),
+        });
+        return true;
+    }
+    if let Some(item) = package.host.pop() {
+        package.truncated.push(Truncated {
+            node_id: item.node_id,
+            scope_id: item.scope_id,
+            component: "host".into(),
             reason: TRUNCATION_REASON.into(),
         });
         return true;
@@ -547,6 +640,7 @@ pub fn freeze_process_package(
     }
     let now_ms = chrono::Utc::now().timestamp_millis();
     let mut newest_process: BTreeMap<(String, String), (i64, u64, ProcessItem)> = BTreeMap::new();
+    let mut newest_host: BTreeMap<(String, String), (i64, u64, HostItem)> = BTreeMap::new();
     let mut newest_native: BTreeMap<String, (i64, u64, NativeItem)> = BTreeMap::new();
     let mut newest_verdict: BTreeMap<String, (i64, u64, VerdictItem)> = BTreeMap::new();
     for entry in store.entries() {
@@ -584,6 +678,13 @@ pub fn freeze_process_package(
                     newest_process.insert(key, (order.0, order.1, item));
                 }
             }
+            Some("host") => {
+                let item = host_item(entry, manager_watermark)?;
+                let key = (record.node_id.clone(), record.scope_id.clone());
+                if newest_host.get(&key).is_none_or(|(at, seq, _)| order > (*at, *seq)) {
+                    newest_host.insert(key, (order.0, order.1, item));
+                }
+            }
             Some("consensus") if record.source_id == "native_core" => {
                 let item = native_item(entry, manager_watermark)?;
                 if newest_native.get(&record.node_id).is_none_or(|(at, seq, _)| order > (*at, *seq))
@@ -604,6 +705,8 @@ pub fn freeze_process_package(
         manager_watermark: U64(manager_watermark),
         process: Vec::new(),
         missing_process: Vec::new(),
+        host: Vec::new(),
+        missing_host: Vec::new(),
         native: Vec::new(),
         missing_native: Vec::new(),
         health: Vec::new(),
@@ -616,6 +719,12 @@ pub fn freeze_process_package(
                 Some((_, _, item)) => package.process.push(item),
                 None => package
                     .missing_process
+                    .push(NodeScope { node_id: node_id.clone(), scope_id: scope_id.clone() }),
+            }
+            match newest_host.remove(&(node_id.clone(), scope_id.clone())) {
+                Some((_, _, item)) => package.host.push(item),
+                None => package
+                    .missing_host
                     .push(NodeScope { node_id: node_id.clone(), scope_id: scope_id.clone() }),
             }
         }
@@ -652,4 +761,75 @@ pub fn freeze_process_package(
 pub fn truncated_components(body: &[u8]) -> Result<Vec<(String, String)>, String> {
     let package: Package = serde_json::from_slice(body).map_err(|_| "invalid broker package")?;
     Ok(package.truncated.into_iter().map(|cut| (cut.node_id, cut.component)).collect())
+}
+
+#[cfg(test)]
+mod host_tests {
+    use super::*;
+
+    #[test]
+    fn host_truncation_preserves_the_complete_source_partition() {
+        let mut grant = Grant::new(
+            "00000000-0000-4000-8000-000000000001".into(),
+            "reader".into(),
+            "a".repeat(64),
+            &[7; 32],
+            BTreeSet::from(["v1".into()]),
+            BTreeSet::from(["node".into()]),
+            0,
+            60000,
+            0,
+            1,
+        )
+        .unwrap();
+        grant.manager_watermark = Some(1);
+        let node = NodeScope { node_id: "v1".into(), scope_id: "node".into() };
+        let host = HostItem {
+            node_id: "v1".into(),
+            scope_id: "node".into(),
+            evidence_id: "b".repeat(64),
+            parent_evidence_id: "c".repeat(64),
+            query_sequence: U64(1),
+            manager_sequence: U64(1),
+            observed_at_ms: "1000".into(),
+            process_epoch: "epoch".into(),
+            value: CgroupPayload {
+                kind: "host_cgroup".into(),
+                memory_current_bytes: U64(1),
+                memory_max_bytes: U64(2),
+                cpu_usage_usec: U64(3),
+                cpu_quota_usec: U64(4),
+                cpu_period_usec: U64(5),
+                oom_events: U64(0),
+            },
+        };
+        let mut package = Package {
+            schema_version: 2,
+            source_profile: PROFILE_V2.into(),
+            status: "partial".into(),
+            run_id: grant.run_id.clone(),
+            network_id: grant.network_id.clone(),
+            query_watermark: U64(1),
+            manager_watermark: U64(1),
+            process: vec![],
+            missing_process: vec![node.clone()],
+            host: vec![host],
+            missing_host: vec![],
+            native: vec![],
+            missing_native: vec![node.clone()],
+            health: vec![],
+            missing_health: vec![node],
+            truncated: vec![],
+        };
+        validate_v2(&serde_json::to_vec(&package).unwrap(), &grant).unwrap();
+        assert!(truncate_one(&mut package));
+        assert!(package.host.is_empty());
+        assert_eq!(package.truncated[0].component, "host");
+        validate_v2(&serde_json::to_vec(&package).unwrap(), &grant).unwrap();
+        package.truncated.clear();
+        assert_eq!(
+            validate_v2(&serde_json::to_vec(&package).unwrap(), &grant).unwrap_err(),
+            "broker package source partition incomplete"
+        );
+    }
 }

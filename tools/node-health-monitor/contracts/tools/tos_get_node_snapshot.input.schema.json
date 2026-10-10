@@ -31,12 +31,7 @@
           "host",
           "chain",
           "consensus",
-          "network",
-          "storage",
-          "index",
-          "gpu",
-          "telemetry",
-          "deployment"
+          "storage"
         ]
       },
       "minItems": 1,

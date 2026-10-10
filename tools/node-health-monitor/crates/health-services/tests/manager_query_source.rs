@@ -1701,8 +1701,8 @@ async fn broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot() {
     let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
     manager.bind_network(&network).unwrap();
     let mut unsupported = row("edge-epoch-0");
-    unsupported.record.source_id = "host_cgroup".into();
-    unsupported.record.payload["component"] = serde_json::json!("host");
+    unsupported.record.source_id = "unsupported".into();
+    unsupported.record.payload["component"] = serde_json::json!("unsupported");
     manager.insert(unsupported).unwrap();
     let origin = manager.insert(row("edge-epoch-1")).unwrap();
     assert_eq!(origin.store_seq.0, 2);
@@ -2409,5 +2409,166 @@ fn an_active_grant_pinning_the_oldest_rows_pauses_the_import_instead_of_evicting
     assert!(ledger_count(&ledger_path, "SELECT COUNT(*) FROM query_origins") <= 4096);
     assert!(store.entries().count() < 4096 + 256);
     drop(ledger);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn host_projection_requires_exact_retained_parent_on_insert_and_reopen() {
+    let directory = std::env::temp_dir().join(format!(
+        "nhm-m-query-parent-{}-{}",
+        std::process::id(),
+        tos_health_services::hex(&random_token().unwrap())
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&"a".repeat(64)).unwrap();
+    manager.insert(host_row("edge-epoch-1")).unwrap();
+    let (_, records) = read_process_projection(&manager_path, &"a".repeat(64)).unwrap();
+    let (origin, projection) = &records[0];
+    let mut ledger = QueryLedger::open(&ledger_path).unwrap();
+    let mut store = EvidenceStore::new(80_000);
+    assert!(ledger.insert_evidence(&mut store, projection.clone()).unwrap_err().contains("parent"));
+    let mut altered = projection.clone();
+    altered.payload["contract_payload"]["memory_current_bytes"] = serde_json::json!("8192");
+    assert!(ledger.insert_projection(&mut store, origin, altered).unwrap_err().contains("differs"));
+    let projected_id = ledger.insert_projection(&mut store, origin, projection.clone()).unwrap();
+    assert_eq!(
+        ledger.insert_projection(&mut store, origin, projection.clone()).unwrap(),
+        projected_id
+    );
+    manager.insert(host_row("host-2")).unwrap();
+    let (_, records) = read_process_projection(&manager_path, &"a".repeat(64)).unwrap();
+    ledger.insert_projection_page(&mut store, &records).unwrap();
+    drop(ledger);
+    let ledger = QueryLedger::open(&ledger_path).unwrap();
+    assert_eq!(ledger.load_evidence(80_000).unwrap().watermark(), 2);
+    drop(ledger);
+    let mut tampered = records[0].0.clone();
+    tampered.evidence.record.payload["source"]["payload"]["memory_current_bytes"] = "999".into();
+    rusqlite::Connection::open(&ledger_path)
+        .unwrap()
+        .execute(
+            "UPDATE query_origins SET body=?1 WHERE origin_id=?2",
+            rusqlite::params![serde_json::to_vec(&tampered).unwrap(), tampered.evidence_id],
+        )
+        .unwrap();
+    let ledger = QueryLedger::open(&ledger_path).unwrap();
+    assert_eq!(ledger.load_evidence(80_000).unwrap_err(), "M evidence hash mismatch");
+    drop(ledger);
+    drop(manager);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+fn host_row(epoch: &str) -> DurableEvidence {
+    let mut value = row(epoch);
+    value.record.source_id = "host_cgroup".into();
+    value.record.payload["component"] = "host".into();
+    let source = &mut value.record.payload["source"];
+    source["source_id"] = "host_cgroup".into();
+    source["source_version"] = "cgroup-v2-effective-v1".into();
+    source["coverage"]["sampling_policy"] = "fixed_cgroup_v2_15s".into();
+    source["quality"]["instrumentation_complete"] = true.into();
+    source["payload"] = serde_json::json!({"kind":"host_cgroup", "memory_current_bytes":"4096", "memory_max_bytes":"8192", "cpu_usage_usec":"100", "cpu_quota_usec":"20000", "cpu_period_usec":"100000", "oom_events":"0"});
+    source["content_hash"] = canonical_hash(&source["payload"]).unwrap().into();
+    value
+}
+
+fn host_origin(value: DurableEvidence) -> tos_health_services::durable::EvidenceRow {
+    let mut original = value.clone();
+    original.record.received_at_ms = 0;
+    tos_health_services::durable::EvidenceRow {
+        store_seq: U64(1),
+        evidence_id: format!("{:x}", Sha256::digest(serde_json::to_vec(&original).unwrap())),
+        evidence: value,
+    }
+}
+
+#[test]
+fn host_projection_refuses_corrupt_hash_clock_availability_and_times() {
+    use tos_health_services::manager_query_source::project_origin;
+    let original = host_origin(host_row("host-1"));
+    assert_eq!(project_origin(&original).unwrap().unwrap().payload["component"], "host");
+    let mut bad = original.clone();
+    bad.evidence.record.payload["source"]["payload"]["oom_events"] = "7".into();
+    assert_eq!(project_origin(&bad).unwrap_err(), "M evidence hash mismatch");
+    for (path, value) in [
+        (vec!["source", "content_hash"], serde_json::json!("a".repeat(64))),
+        (vec!["source", "availability"], serde_json::json!("unavailable")),
+        (vec!["source", "clock_quality"], serde_json::json!("unknown")),
+        (vec!["source", "observed_at"], serde_json::json!("2026-09-29T00:00:02Z")),
+        (vec!["source", "last_success_at"], serde_json::Value::Null),
+        (vec!["source", "source_id"], serde_json::json!("process")),
+    ] {
+        let mut bad = host_row("host-1");
+        let mut field = &mut bad.record.payload;
+        for key in path {
+            field = &mut field[key];
+        }
+        *field = value;
+        assert!(project_origin(&host_origin(bad)).is_err());
+    }
+}
+
+#[tokio::test]
+async fn archived_host_import_serves_query_and_fixed_package_after_reopen() {
+    let directory = std::env::temp_dir()
+        .join(format!("nhm-host-{}", tos_health_services::hex(&random_token().unwrap())));
+    std::fs::create_dir(&directory).unwrap();
+    let manager_path = directory.join("manager.sqlite");
+    let ledger_path = directory.join("query.sqlite");
+    let mut manager = EvidenceDb::open(&manager_path, 4 * 1024 * 1024).unwrap();
+    manager.bind_network(&"a".repeat(64)).unwrap();
+    let parent = manager.insert(host_row("host-1")).unwrap();
+    let inventory = Inventory {
+        network_id: "a".repeat(64),
+        nodes: BTreeSet::from(["v1".into()]),
+        scopes: BTreeSet::from(["node".into()]),
+    };
+    let make_state = || {
+        ObservabilityState::new(inventory.clone(), vec![b'o'; 32], vec![b'i'; 32], vec![b'a'; 32])
+            .unwrap()
+            .with_query_ledger(&ledger_path)
+            .unwrap()
+            .with_manager_evidence(manager_path.clone())
+            .unwrap()
+    };
+    let state = make_state();
+    let response = control_router(state.clone()).oneshot(Request::builder().method("POST").uri("/v1/control/grants").header("authorization",format!("Bearer {}","o".repeat(32))).header("content-type","application/json").body(Body::from(serde_json::json!({"node_ids":["v1"],"scope_ids":["node"],"start":"2026-09-29T00:00:00Z","end":"2026-09-29T00:03:00Z"}).to_string())).unwrap()).await.unwrap();
+    let status = response.status();
+    let granted = body(response).await;
+    assert_eq!(status, StatusCode::OK, "{granted}");
+    let run = granted["run_id"].as_str().unwrap();
+    let token = granted["run_token"].as_str().unwrap();
+    let request = |at: &str| {
+        Request::builder().method("POST").uri("/v1/query/node-snapshot").header("authorization",format!("Bearer {}","a".repeat(32))).header("x-tos-run-token",token).header("content-type","application/json").body(Body::from(serde_json::json!({"run_id":run,"node_id":"v1","as_of":at,"max_age_seconds":30,"components":["host"]}).to_string())).unwrap()
+    };
+    let answer =
+        body(query_router(state.clone()).oneshot(request("2026-09-29T00:00:02Z")).await.unwrap())
+            .await;
+    assert_eq!(answer["status"], "partial");
+    assert_eq!(answer["data"]["components"][0]["value"]["memory_current_bytes"], "4096");
+    assert_eq!(answer["evidence"][0]["parent_evidence_ids"][0], parent.evidence_id);
+    let package = freeze_process_package(&state, run).unwrap();
+    let frozen: serde_json::Value = serde_json::from_slice(&package.bytes).unwrap();
+    assert_eq!(frozen["host"][0]["value"]["memory_current_bytes"], "4096");
+    assert!(frozen["missing_host"].as_array().unwrap().is_empty());
+    assert_eq!(frozen["missing_process"][0]["node_id"], "v1");
+    drop(state);
+    let restored = make_state();
+    let answer = body(
+        query_router(restored.clone()).oneshot(request("2026-09-29T00:00:02Z")).await.unwrap(),
+    )
+    .await;
+    assert_eq!(answer["status"], "partial");
+    assert_eq!(freeze_process_package(&restored, run).unwrap().bytes, package.bytes);
+    let stale = body(
+        query_router(restored.clone()).oneshot(request("2026-09-29T00:02:00Z")).await.unwrap(),
+    )
+    .await;
+    assert_eq!(stale["error"]["code"], "CACHE_MISS");
+    drop(restored);
+    drop(manager);
     std::fs::remove_dir_all(directory).unwrap();
 }

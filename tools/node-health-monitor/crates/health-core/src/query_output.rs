@@ -35,6 +35,14 @@ pub enum PayloadDto {
         cpu_user_ticks: Option<U64>,
         cpu_system_ticks: Option<U64>,
     },
+    HostCgroup {
+        memory_current_bytes: U64,
+        memory_max_bytes: U64,
+        cpu_usage_usec: U64,
+        cpu_quota_usec: U64,
+        cpu_period_usec: U64,
+        oom_events: U64,
+    },
     Native {
         generation: U64,
         openmetrics_hash: String,
@@ -609,6 +617,7 @@ fn payload(record: &StoredEvidence) -> Result<PayloadDto, &'static str> {
     let payload: PayloadDto = serde_json::from_value(value).map_err(|_| "SCHEMA_MISMATCH")?;
     let valid = match &payload {
         PayloadDto::Process { pid, .. } => *pid > 0,
+        PayloadDto::HostCgroup { cpu_period_usec, .. } => cpu_period_usec.0 > 0,
         PayloadDto::Native { openmetrics_hash, bytes, .. } => {
             crate::wire::hash(openmetrics_hash) && *bytes <= 2_097_152
         }

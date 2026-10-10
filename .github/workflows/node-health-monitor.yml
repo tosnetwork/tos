@@ -43,6 +43,7 @@ jobs:
           python3 tools/node-health-monitor/tests/generate_schemas.py
           python3 tools/node-health-monitor/scripts/generate-contracts.py
           python3 tools/node-health-monitor/scripts/check-contracts.py
+          python3 tools/node-health-monitor/tests/test_snapshot_components.py
           git diff --exit-code -- tools/node-health-monitor/contracts
       - name: Compile and exercise HTTP and state contracts
         run: |

@@ -133,3 +133,13 @@ development inventory example. Missing or incomplete PQ instrumentation is not
 zero failures and cannot recover an incident. Collector configs may set
 `network_id` to consume the typed edge form; without it only the legacy
 `collector` source is accepted. These examples are not production approval.
+
+### Snapshot components
+
+`tos_get_node_snapshot` accepts process, host, consensus, chain and storage.
+Host is the archived `host_cgroup` sample; chain and storage are views of the
+same native consensus sample. Network, index, GPU, telemetry and deployment
+have no snapshot producer and are rejected as `INVALID_ARGUMENT`.
+`CACHE_MISS` means a supported component has no usable evidence at the requested
+time and age. Fixed packages include host and process separately and identify
+each component dropped to meet the package byte budget.
