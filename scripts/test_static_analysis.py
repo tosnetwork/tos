@@ -13,11 +13,13 @@ import collections
 import importlib.util
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -47,6 +49,43 @@ class Workdir(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+
+
+class Termination(Workdir):
+    def test_sigterm_kills_the_analyzer_process_group(self) -> None:
+        pid_file = self.tmp / "child.pid"
+        sleeper = write_tool(
+            self.tmp / "slow-analyzer",
+            f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\ntime.sleep(120)\n",
+        )
+        driver = (
+            "import importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('sa', {str(HERE / 'static-analysis.py')!r})\n"
+            "sa = importlib.util.module_from_spec(spec); sys.modules['sa'] = sa\n"
+            "spec.loader.exec_module(sa)\n"
+            "sa.install_signal_handlers()\n"
+            f"sa.run([{str(sleeper)!r}])\n"
+        )
+        gate = subprocess.Popen([sys.executable, "-c", driver])
+        try:
+            for _ in range(200):
+                if pid_file.exists() and pid_file.read_text():
+                    break
+                time.sleep(0.05)
+            child = int(pid_file.read_text())
+            gate.send_signal(signal.SIGTERM)
+            self.assertEqual(gate.wait(timeout=30), 128 + signal.SIGTERM)
+        finally:
+            if gate.poll() is None:
+                gate.kill()
+        for _ in range(100):
+            try:
+                os.kill(child, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        os.kill(child, signal.SIGKILL)
+        self.fail("the analyzer survived the gate's termination")
 
 
 class Comparison(unittest.TestCase):
@@ -255,7 +294,7 @@ class StandInCodeChecker(Workdir):
         row = self.row()
         del row["report_hash"]
         self.configure(parse_output=json.dumps({"version": 1, "reports": [row]}))
-        with self.assertRaisesRegex(sa.Refusal, "malformed report"):
+        with self.assertRaisesRegex(sa.Refusal, "report_hash is not a hex string"):
             self.parse()
 
     def test_status_and_content_must_agree(self) -> None:
@@ -267,6 +306,29 @@ class StandInCodeChecker(Workdir):
         self.configure(parse_output=json.dumps({"version": 1, "reports": []}), parse_status=2)
         with self.assertRaisesRegex(sa.Refusal, "list is empty"):
             self.parse()
+
+    def test_unsupported_schema_version_refuses(self) -> None:
+        self.configure(parse_output=json.dumps({"version": 2, "reports": [self.row()]}))
+        with self.assertRaisesRegex(sa.Refusal, "version 2 is not supported"):
+            self.parse()
+
+    def test_report_fields_are_validated(self) -> None:
+        cases = {
+            "unknown analyzer": {"analyzer_name": "cppcheck"},
+            "is not enabled for clang-tidy": {"checker_name": "misc-unused-using-decls"},
+            "is not enabled for clangsa": {"analyzer_name": "clangsa"},
+            "not a positive integer": {"line": 0},
+            "not a hex string": {"report_hash": "not-hex"},
+            "not an absolute path": {"file": {"original_path": "a.cpp"}},
+            "message is not a string": {"message": 3},
+        }
+        for why, overrides in cases.items():
+            with self.subTest(why=why):
+                self.configure(
+                    parse_output=json.dumps({"version": 1, "reports": [self.row(**overrides)]})
+                )
+                with self.assertRaisesRegex(sa.Refusal, why):
+                    self.parse()
 
     def analyze_spec(self, entry: object, status: int) -> None:
         names = sa.action_names([entry], self.tools)
@@ -323,6 +385,7 @@ class StandInCodeChecker(Workdir):
         marks = [
             self.row(
                 checker_name=check,
+                analyzer_name="clangsa" if check in sa.CLANGSA_BLOCKING else "clang-tidy",
                 file={"original_path": str(control / "c.cpp")},
                 line=number,
             )
@@ -376,9 +439,10 @@ class StandInCodeChecker(Workdir):
             sa.run_controls(root, self.tools, self.tmp, 1, 10)
 
 
-class Suppressions(unittest.TestCase):
+class Suppressions(Workdir):
     def find(self, *lines: str) -> tuple[list[object], list[str]]:
-        return sa.find_suppressions("a.cpp", list(lines))
+        found, problems, file_problems = sa.find_suppressions("a.cpp", list(lines))
+        return found, problems + file_problems
 
     def test_exact_check_with_reason_is_accepted(self) -> None:
         found, problems = self.find(
@@ -413,19 +477,34 @@ class Suppressions(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertEqual(found[0].covers, frozenset({2}))
 
-    def test_begin_end_range(self) -> None:
-        found, problems = self.find(
+    def test_a_reasoned_exact_range_is_still_refused(self) -> None:
+        _, problems = self.find(
             "// NOLINTBEGIN(bugprone-use-after-move): generated parser keeps moved tokens",
             "a();",
-            "b();",
             "// NOLINTEND(bugprone-use-after-move)",
         )
-        self.assertEqual(problems, [])
-        self.assertEqual(found[0].covers, frozenset({1, 2, 3, 4}))
+        self.assertTrue(problems)
+        self.assertTrue(all("ranges are not allowed" in p for p in problems))
 
-    def test_unterminated_range_refuses(self) -> None:
-        _, problems = self.find("// NOLINTBEGIN(bugprone-use-after-move): reason", "a();")
-        self.assertTrue(any("without NOLINTEND" in p for p in problems))
+    def test_a_whole_file_range_refuses_even_away_from_the_changed_lines(self) -> None:
+        source = self.tmp / "a.cpp"
+        source.write_text(
+            "// NOLINTBEGIN(bugprone-use-after-move): the whole file, with a reason\n"
+            "void f();\nvoid g();\nvoid h();\n"
+            "// NOLINTEND(bugprone-use-after-move)\n"
+        )
+        change = sa.Change(changed_lines={"a.cpp": {3}})
+        with self.assertRaisesRegex(sa.Refusal, "ranges are not allowed"):
+            sa.audit_suppressions(self.tmp, change)
+
+    def test_a_suppression_above_a_changed_line_is_audited(self) -> None:
+        source = self.tmp / "a.cpp"
+        source.write_text("// NOLINTNEXTLINE(bugprone-use-after-move)\nuse(x);\n")
+        with self.assertRaisesRegex(sa.Refusal, "without a reason"):
+            sa.audit_suppressions(self.tmp, sa.Change(changed_lines={"a.cpp": {2}}))
+        source.write_text("// NOLINTNEXTLINE(bugprone-use-after-move): reassigned first\nuse(x);\n")
+        [accepted] = sa.audit_suppressions(self.tmp, sa.Change(changed_lines={"a.cpp": {2}}))
+        self.assertEqual(accepted.line, 1)
 
 
 class Repository(Workdir):
@@ -514,28 +593,6 @@ class Database(Workdir):
         with self.assertRaisesRegex(sa.Refusal, "no -o output"):
             sa.load_database(self.build([bad]), self.tmp)
 
-    def test_rewrite_moves_sources_and_keeps_the_build_directory(self) -> None:
-        head = self.tmp / "head"
-        build = head / "build"
-        entry = sa.Entry(
-            str(build),
-            str(head / "src" / "a.cpp"),
-            (
-                "c++",
-                f"-I{head}/include",
-                f"-I{build}/gen",
-                "-c",
-                str(head / "src" / "a.cpp"),
-                "-o",
-                "a.o",
-            ),
-        )
-        moved = sa.rewrite_entry(entry, head, self.tmp / "base", build)
-        self.assertEqual(moved.file, str(self.tmp / "base" / "src" / "a.cpp"))
-        self.assertIn(f"-I{self.tmp / 'base'}/include", moved.arguments)
-        self.assertIn(f"-I{build}/gen", moved.arguments)
-        self.assertEqual(moved.directory, str(build))
-
     def test_identity_ignores_checkout_build_and_output(self) -> None:
         one = sa.Entry(
             "/h/b", "/h/a.cpp", ("c++", "-I/h/x", "-I/h/b/g", "-c", "/h/a.cpp", "-o", "1.o")
@@ -554,14 +611,90 @@ class Database(Workdir):
         chosen = sa.representatives([one, two, other], Path("/h"), Path("/h/b"))
         self.assertEqual(sorted(e.output for e in chosen.values()), ["/h/b/t1/m.o", "/h/b/t3/m.o"])
 
-    def test_base_reading_a_head_source_refuses(self) -> None:
-        head = self.tmp / "head"
-        entry = sa.Entry("/b", "/base/a.cpp", ("c++",))
-        sa.check_contained(
-            {entry: {"/base/a.h", str(head / "build" / "gen.h")}}, head, head / "build"
+    def test_identity_keeps_the_working_directory(self) -> None:
+        # The same relative -Iinc names different trees from different directories.
+        for name, text in (("one/inc/x.h", "int a;"), ("two/inc/x.h", "int b;")):
+            (self.tmp / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.tmp / name).write_text(text)
+        args = ("c++", "-Iinc", "-c", f"{self.tmp}/a.cpp")
+        one = sa.Entry(str(self.tmp / "one"), f"{self.tmp}/a.cpp", (*args, "-o", "1.o"))
+        two = sa.Entry(str(self.tmp / "two"), f"{self.tmp}/a.cpp", (*args, "-o", "2.o"))
+        self.assertNotEqual(
+            sa.identity(one, self.tmp, self.tmp / "build"),
+            sa.identity(two, self.tmp, self.tmp / "build"),
         )
-        with self.assertRaisesRegex(sa.Refusal, "reads HEAD file"):
-            sa.check_contained({entry: {str(head / "src" / "a.h")}}, head, head / "build")
+        self.assertEqual(len(sa.representatives([one, two], self.tmp, self.tmp / "build")), 2)
+
+    def layout(self) -> tuple[Path, Path, Path, Path]:
+        """BASE is a main checkout; HEAD is a worktree nested inside it."""
+        base = self.tmp / "main"
+        head = base / ".claude" / "worktrees" / "w"
+        base_build = self.tmp / "base-build"
+        head_build = self.tmp / "head-build"
+        for directory in (head / "src", base / "src", base_build, head_build):
+            directory.mkdir(parents=True, exist_ok=True)
+        for path in (head / "src" / "a.h", base / "src" / "a.h"):
+            path.write_text("")
+        return head, head_build, base, base_build
+
+    def contained(self, side: str, paths: set[str]) -> None:
+        head, head_build, base, base_build = self.layout()
+        entry = sa.Entry("/b", "/x.cpp", ("c++",))
+        own, other = ((head, head_build), (base, base_build))
+        if side == "BASE":
+            own, other = other, own
+        sa.check_contained({entry: paths}, own, other, ["/usr/include"], side)
+
+    def test_each_side_reads_its_own_tree_build_and_system_dirs(self) -> None:
+        head, head_build, base, base_build = self.layout()
+        self.contained(
+            "HEAD", {str(head / "src" / "a.h"), str(head_build / "g.h"), "/usr/include/stdio.h"}
+        )
+        self.contained("BASE", {str(base / "src" / "a.h"), str(base_build / "g.h")})
+
+    def test_base_reading_the_nested_head_worktree_refuses(self) -> None:
+        head, _, _, _ = self.layout()
+        with self.assertRaisesRegex(sa.Refusal, "outside its checkout"):
+            self.contained("BASE", {str(head / "src" / "a.h")})
+
+    def test_a_symlink_into_the_other_side_refuses(self) -> None:
+        head, _, base, _ = self.layout()
+        link = base / "src" / "link.h"
+        link.symlink_to(head / "src" / "a.h")
+        with self.assertRaisesRegex(sa.Refusal, "outside its checkout"):
+            self.contained("BASE", {str(link)})
+
+    def test_a_dependency_outside_every_allowed_directory_refuses(self) -> None:
+        stray = self.tmp / "elsewhere" / "x.h"
+        stray.parent.mkdir()
+        stray.write_text("")
+        with self.assertRaisesRegex(sa.Refusal, "outside its checkout"):
+            self.contained("HEAD", {str(stray)})
+
+    def test_sides_sharing_a_build_refuse(self) -> None:
+        head, head_build, base, _ = self.layout()
+        entry = sa.Entry("/b", "/x.cpp", ("c++",))
+        with self.assertRaisesRegex(sa.Refusal, "share"):
+            sa.check_contained({entry: set()}, (head, head_build), (base, head_build), [], "HEAD")
+
+    def side(self, label: str, entries: list[object], deps: dict) -> object:
+        return sa.Side(label, self.tmp, self.tmp / "build", entries, deps)
+
+    def test_a_deleted_source_must_be_in_the_base_database(self) -> None:
+        a = sa.Entry("/b", str(self.tmp / "a.cpp"), ("c++", "-o", "a.o"))
+        side = self.side("BASE", [a], {a: {str(self.tmp / "a.cpp")}})
+        chosen, _ = sa.select_side(side, {"a.cpp"}, set())
+        self.assertEqual(chosen, {a})
+        with self.assertRaisesRegex(sa.Refusal, "BASE: changed sources missing"):
+            sa.select_side(side, {"gone.cpp"}, set())
+
+    def test_a_base_header_no_compilation_includes_refuses_unless_listed(self) -> None:
+        a = sa.Entry("/b", str(self.tmp / "a.cpp"), ("c++", "-o", "a.o"))
+        side = self.side("BASE", [a], {a: {str(self.tmp / "a.cpp")}})
+        with self.assertRaisesRegex(sa.Refusal, "BASE: changed headers no compilation includes"):
+            sa.select_side(side, {"old.h"}, set())
+        _, orphans = sa.select_side(side, {"old.h"}, {"old.h"})
+        self.assertEqual(orphans, {"old.h"})
 
     def test_select_finds_includers_and_orphans(self) -> None:
         root = self.tmp
@@ -618,123 +751,80 @@ class StandInTools(Workdir):
                         self.entries(), self.scan(output, status), self.tmp, "HEAD"
                     )
 
-    def ninja(self, graph: dict[str, tuple[str, list[str]]]) -> None:
+    def ninja(self, targets: str, dry_run: str, dry_status: int = 0) -> Path:
+        """A stand-in ninja: '-t targets all' lists outputs, '-n' reports a dry run."""
+        log = self.tmp / "ninja-calls.json"
         write_tool(
             self.bin / "ninja",
             f"""
-            import sys
-            graph = {graph!r}
-            args = sys.argv[1:]
-            target = args[-1]
-            if target not in graph:
-                sys.stderr.write(f"ninja: error: unknown target '{{target}}'\\n")
-                sys.exit(1)
-            rule, inputs = graph[target]
-            print(target + ":")
-            print("  input: " + rule)
-            for item in inputs:
-                print("    " + item)
-            print("  outputs:")
+            import json, sys
+            calls = json.load(open({str(log)!r})) if __import__("os").path.exists({str(log)!r}) else []
+            calls.append(sys.argv[1:])
+            json.dump(calls, open({str(log)!r}, "w"))
+            if "-t" in sys.argv:
+                sys.stdout.write({targets!r})
+                sys.exit(0)
+            sys.stdout.write({dry_run!r})
+            sys.exit({dry_status})
             """,
         )
+        return log
 
-    def generator(self) -> tuple[Path, Path, str]:
-        """A schema compiled by a generator tool that also links a library."""
-        root = self.tmp / "root"
+    def test_fresh_build_passes_and_checks_only_known_outputs(self) -> None:
         build = self.tmp / "build"
-        for path in (
-            root / "gen" / "api.h",
-            root / "schema.tl",
-            root / "tool.cpp",
-            root / "lib.cpp",
-        ):
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("x\n")
-        graph = {
-            str(root / "gen" / "api.h"): (
-                "CUSTOM_COMMAND",
-                ["tool", str(root / "schema.tlo"), "|| order-only.stamp"],
-            ),
-            str(root / "schema.tlo"): ("CUSTOM_COMMAND", [str(root / "schema.tl")]),
-            "tool": ("CXX_EXECUTABLE_LINKER__tool", ["tool.o", "| lib.a"]),
-            "tool.o": ("CXX_COMPILER__tool", [str(root / "tool.cpp")]),
-            "lib.a": ("CXX_STATIC_LIBRARY_LINKER__lib", ["lib.o"]),
-            "lib.o": ("CXX_COMPILER__lib", [str(root / "lib.cpp")]),
-            "order-only.stamp": ("CUSTOM_COMMAND", [str(root / "lib.cpp")]),
-        }
-        self.ninja(graph)
-        return root, build, str(root / "gen" / "api.h")
-
-    def test_generator_sources_are_the_schema_and_the_tool_sources(self) -> None:
-        root, build, header = self.generator()
-        sources = sa.GeneratorGraph(build).sources(header)
-        self.assertEqual(sources, {str(root / "schema.tl"), str(root / "tool.cpp")})
-
-    def test_trace_finds_changed_generator_inputs(self) -> None:
-        root, build, header = self.generator()
-        graph = sa.GeneratorGraph(build)
-        self.assertEqual(sa.trace_generated(graph, root, {header}, {"other.cpp"}), [])
-        self.assertTrue(sa.trace_generated(graph, root, {header}, {"schema.tl"}))
-        self.assertTrue(sa.trace_generated(graph, root, {header}, {"tool.cpp"}))
-        # A library the generator links is opaque, and order-only inputs are ignored.
-        self.assertEqual(sa.trace_generated(graph, root, {header}, {"lib.cpp"}), [])
-
-    def ninja_log(self, build: Path, *rows: tuple[int, str]) -> None:
-        build.mkdir(parents=True, exist_ok=True)
-        lines = ["# ninja log v5"] + [f"0\t1\t{mtime}\t{path}\tabc" for mtime, path in rows]
-        (build / ".ninja_log").write_text("\n".join(lines) + "\n")
-
-    def test_stale_generated_files_refuse(self) -> None:
-        root, build, header = self.generator()
-        self.ninja_log(build)
-        old, new = 1_000_000_000, 2_000_000_000
-        for path in (root / "schema.tl", root / "tool.cpp", root / "lib.cpp"):
-            os.utime(path, ns=(old, old))
-        os.utime(header, ns=(new, new))
-        sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
-        # Newer linked library: still fresh, the generator is opaque.
-        os.utime(root / "lib.cpp", ns=(new + 1, new + 1))
-        sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
-        os.utime(root / "schema.tl", ns=(new + 1, new + 1))
-        with self.assertRaisesRegex(sa.Refusal, "build the tree first"):
-            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
-
-    def test_restat_time_in_the_ninja_log_counts(self) -> None:
-        # A regeneration that produced identical content keeps the old file mtime;
-        # ninja records the newer time in its log and considers the file fresh.
-        root, build, header = self.generator()
-        old, new = 1_000_000_000, 2_000_000_000
-        for path in (root / "tool.cpp", root / "lib.cpp", header):
-            os.utime(path, ns=(old, old))
-        os.utime(root / "schema.tl", ns=(new, new))
-        self.ninja_log(build, (new + 5, header))
-        sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
-        self.ninja_log(build, (old, header))
-        with self.assertRaisesRegex(sa.Refusal, "build the tree first"):
-            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
-
-    def test_missing_or_malformed_ninja_log_refuses(self) -> None:
-        root, build, header = self.generator()
-        build.mkdir(parents=True, exist_ok=True)
-        with self.assertRaisesRegex(sa.Refusal, "missing"):
-            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
-        (build / ".ninja_log").write_text("# ninja log v5\nnot a row\n")
-        with self.assertRaisesRegex(sa.Refusal, "malformed"):
-            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
-        (build / ".ninja_log").write_text("# ninja log v7\n")
-        with self.assertRaisesRegex(sa.Refusal, "not a ninja v5 log"):
-            sa.check_generated_fresh(sa.GeneratorGraph(build), {header})
-
-    def test_untraceable_generator_object_refuses(self) -> None:
-        root = self.tmp / "root"
-        self.ninja(
-            {
-                str(root / "gen.h"): ("CUSTOM_COMMAND", ["tool"]),
-                "tool": ("CXX_EXECUTABLE_LINKER__tool", ["tool.o"]),
-            }
+        log = self.ninja(
+            f"gen/api.h: CUSTOM_COMMAND\n{self.tmp}/root/auto.cpp: CUSTOM_COMMAND\n",
+            "ninja: no work to do.\n",
         )
-        with self.assertRaisesRegex(sa.Refusal, "cannot trace object"):
-            sa.GeneratorGraph(self.tmp / "build").sources(str(root / "gen.h"))
+        sa.check_fresh(
+            build,
+            {str(build / "gen" / "api.h"), f"{self.tmp}/root/auto.cpp", str(build / "config.h")},
+            "HEAD",
+        )
+        calls = json.loads(log.read_text())
+        self.assertEqual(calls[-1][-3:], ["-n", f"{self.tmp}/root/auto.cpp", "gen/api.h"])
+
+    def test_stale_build_refuses(self) -> None:
+        build = self.tmp / "build"
+        self.ninja("gen/api.h: CUSTOM_COMMAND\n", "[1/2] Generating api.h\n")
+        with self.assertRaisesRegex(sa.Refusal, "out of date"):
+            sa.check_fresh(build, {str(build / "gen" / "api.h")}, "HEAD")
+
+    def test_dry_run_failure_refuses(self) -> None:
+        build = self.tmp / "build"
+        self.ninja("gen/api.h: CUSTOM_COMMAND\n", "ninja: error: loading build.ninja\n", 1)
+        with self.assertRaisesRegex(sa.Refusal, "ninja -n failed"):
+            sa.check_fresh(build, {str(build / "gen" / "api.h")}, "HEAD")
+
+    def test_without_generated_files_the_manifest_is_still_checked(self) -> None:
+        # Configure-time files are not outputs; a pending CMake re-run still shows.
+        build = self.tmp / "build"
+        log = self.ninja("gen/api.h: CUSTOM_COMMAND\n", "[1/1] Re-running CMake...\n")
+        with self.assertRaisesRegex(sa.Refusal, "out of date"):
+            sa.check_fresh(build, {str(build / "config.h")}, "HEAD")
+        self.assertEqual(json.loads(log.read_text())[-1][-2:], ["-n", "build.ninja"])
+
+    def compiler(self, stderr: str, status: int = 0) -> object:
+        tool = write_tool(
+            self.tmp / "clang++",
+            f"import sys\nsys.stderr.write({stderr!r})\nsys.exit({status})\n",
+        )
+        return sa.Tools("clang", str(tool), "clang-tidy", "scan", "cc", sys.executable)
+
+    def test_system_directories_are_read_from_the_compiler(self) -> None:
+        listing = (
+            'clang version x\n#include "..." search starts here:\n'
+            "#include <...> search starts here:\n /usr/include/c++/15\n /usr/include\n"
+            "End of search list.\n"
+        )
+        self.assertEqual(
+            sa.system_directories(self.compiler(listing)),
+            [os.path.realpath("/usr/include/c++/15"), "/usr/include"],
+        )
+        with self.assertRaisesRegex(sa.Refusal, "unexpected output"):
+            sa.system_directories(self.compiler("no listing here\n"))
+        with self.assertRaisesRegex(sa.Refusal, "cannot list"):
+            sa.system_directories(self.compiler("", 1))
 
     def tidy(self, checks: list[str], options: dict[str, str]) -> object:
         option_lines = "".join(f"  {key}: '{value}'\\n" for key, value in options.items())
@@ -793,6 +883,32 @@ class StandInTools(Workdir):
         )
         with self.assertRaisesRegex(sa.Refusal, "uses /usr/bin/other-clang"):
             sa.resolve_tools(llvm, str(codechecker))
+
+    def test_discovery_commands_must_succeed_before_their_json_is_read(self) -> None:
+        llvm = self.tmp / "llvm"
+        llvm.mkdir()
+        for name in ("clang", "clang++", "clang-tidy", "clang-scan-deps"):
+            write_tool(llvm / name, f"print('clang version {sa.LLVM_VERSION}')\n")
+        version = {"analyzer": {"base_package_version": sa.CODECHECKER_VERSION}}
+        rows = [
+            {"name": "clangsa", "path": str(llvm / "clang"), "version": sa.LLVM_VERSION},
+            {"name": "clang-tidy", "path": str(llvm / "clang-tidy"), "version": sa.LLVM_VERSION},
+        ]
+        for failing in ("", "version", "analyzers"):
+            with self.subTest(failing=failing):
+                codechecker = write_tool(
+                    self.tmp / "CodeChecker",
+                    f"""
+                    import json, sys
+                    print(json.dumps({version!r} if sys.argv[1] == "version" else {rows!r}))
+                    sys.exit(1 if sys.argv[1] == {failing!r} else 0)
+                    """,
+                )
+                if not failing:
+                    sa.resolve_tools(llvm, str(codechecker))
+                    continue
+                with self.assertRaisesRegex(sa.Refusal, f"CodeChecker {failing} exited 1"):
+                    sa.resolve_tools(llvm, str(codechecker))
 
 
 if __name__ == "__main__":

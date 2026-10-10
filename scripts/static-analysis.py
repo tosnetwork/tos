@@ -3,10 +3,13 @@
 
 Runs the Clang Static Analyzer and clang-tidy, through CodeChecker, over every
 translation unit a change reaches, once on the working tree (HEAD) and once on
-the merge base (BASE), with identical tools and options. A blocking finding whose
-key occurs more often at HEAD than at BASE fails the change. Findings already on
-the merge base are not the change's, so the gate does not depend on fixing the
-tree's inherited debt first, and there is no stored baseline to go stale.
+the merge base (BASE), with identical tools and options. BASE is a separate
+checkout that sits cleanly at the merge base and has its own build, so each
+side's generated files, compile commands and dependencies are its own. A
+blocking finding whose key occurs more often at HEAD than at BASE fails the
+change. Findings already on the merge base are not the change's, so the gate
+does not depend on fixing the tree's inherited debt first, and there is no
+stored baseline to go stale.
 
 The key is (checker, path relative to its checkout, CodeChecker report hash),
 counted as a multiset after collapsing the same report reached through several
@@ -17,9 +20,11 @@ whose key occurs more often at HEAD than at BASE fails the change.
 
 The gate fails closed. Before trusting a result it proves the instrument works:
 pinned tool versions and executables, a rule set that agrees with .clang-tidy,
-positive controls that must report exactly their marked lines, one result record
-per analysed compilation and analyzer, and a BASE side that cannot read HEAD
-sources. Anything it cannot establish is exit 2, never "no new findings".
+positive controls that must report exactly their marked lines, builds that ninja
+considers up to date, compilations that read nothing outside their own checkout,
+build directory and the compiler's system directories, and one result record per
+analysed compilation and analyzer. Anything it cannot establish is exit 2, never
+"no new findings".
 
 Exit status: 0 no new blocking finding, 1 new blocking finding, 2 refused.
 """
@@ -119,11 +124,9 @@ CONTROL_DIR = "test/static-analysis/gate"
 # Controls are not built and are analysed by their own invocation, never as a change.
 EXCLUDED_PREFIXES += ("test/static-analysis/",)
 UNCOVERED_HEADERS = "scripts/static-analysis-uncovered-headers.txt"
-# Changing any of these can change what CMake generates at configure time, which
-# ninja cannot trace; the merge base then needs a build of its own.
-CONFIGURE_INPUT_RE = re.compile(r"(^|/)CMakeLists\.txt$|\.cmake$|\.in$")
 REFUSED_ARGUMENTS = ("-include", "-imacros", "-include-pch")
 ACCEPTED_PARSE_STATUS = (0, 2)
+PARSE_SCHEMA_VERSION = 1
 EXPECT_RE = re.compile(r"//\s*expect:\s*(?P<checks>[\w.\-, ]+?)\s*$")
 
 
@@ -216,6 +219,22 @@ def run(
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
+def install_signal_handlers() -> None:
+    """Turn SIGTERM and SIGHUP into an exception.
+
+    By default they end the interpreter without unwinding, which would leave every
+    analyzer process group the gate started running on its own. As an exception
+    they unwind through run(), which kills the group, and through the work
+    directory cleanup. SIGKILL cannot be caught.
+    """
+
+    def terminate(signum: int, _frame: object) -> None:
+        raise SystemExit(128 + signum)
+
+    for number in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(number, terminate)
+
+
 def kill_group(process: subprocess.Popen[str]) -> None:
     try:
         os.killpg(process.pid, signal.SIGKILL)
@@ -286,6 +305,8 @@ def resolve_tools(llvm_bin: Path, codechecker: str | None) -> Tools:
         str(clang), str(clangxx), str(clang_tidy), str(scan_deps), found, shebang[2:].strip()
     )
     version = run([found, "version", "-o", "json"], env=tools.env())
+    if version.returncode != 0:
+        raise Refusal(f"CodeChecker version exited {version.returncode}")
     try:
         reported = json_output(version.stdout, "the CodeChecker version")["analyzer"][
             "base_package_version"
@@ -295,6 +316,8 @@ def resolve_tools(llvm_bin: Path, codechecker: str | None) -> Tools:
     if reported != CODECHECKER_VERSION:
         raise Refusal(f"CodeChecker {reported} found, {CODECHECKER_VERSION} required")
     analyzers = run([found, "analyzers", "-o", "json"], env=tools.env())
+    if analyzers.returncode != 0:
+        raise Refusal(f"CodeChecker analyzers exited {analyzers.returncode}")
     try:
         listed = {
             row["name"]: row for row in json_output(analyzers.stdout, "CodeChecker analyzers")
@@ -450,25 +473,6 @@ def analysable(entries: list[Entry], root: Path, build_dir: Path) -> list[Entry]
     return keep
 
 
-def rewrite_entry(entry: Entry, head_root: Path, base_root: Path, build_dir: Path) -> Entry:
-    """Point every source path at the BASE worktree; leave build-directory paths alone."""
-    head = str(head_root.resolve())
-    build = str(build_dir.resolve())
-
-    def move(text: str) -> str:
-        def replace(match: re.Match[str]) -> str:
-            path = match.group(0)
-            if path == build or path.startswith(build + "/"):
-                return path
-            return str(base_root) + path[len(head) :]
-
-        return re.sub(re.escape(head) + r"(?=/|$)[^\s:=,]*", replace, text)
-
-    return Entry(
-        move(entry.directory), move(entry.file), tuple(move(arg) for arg in entry.arguments)
-    )
-
-
 # --- change set -------------------------------------------------------------
 
 
@@ -581,139 +585,96 @@ def scan_dependencies(
 # --- generated files --------------------------------------------------------
 
 
-def ninja_query(build_dir: Path, target: str) -> tuple[str | None, list[str], list[str]] | None:
-    """(rule, explicit inputs, implicit inputs) of a ninja output, or None for a plain file."""
-    result = run(["ninja", "-C", str(build_dir), "-t", "query", target])
+def ninja_outputs(build_dir: Path) -> dict[str, str]:
+    """Every output the build graph knows, as {absolute path: name ninja uses}."""
+    result = run(["ninja", "-C", str(build_dir), "-t", "targets", "all"], timeout=600)
     if result.returncode != 0:
-        if "unknown target" in result.stderr:
-            return None
-        raise Refusal(f"ninja -t query {target} failed: {result.stderr.strip()[:200]}")
-    rule = None
-    explicit: list[str] = []
-    implicit: list[str] = []
-    section = None
+        raise Refusal(f"ninja -t targets failed in {build_dir}: {result.stderr.strip()[:200]}")
+    outputs = {}
     for line in result.stdout.splitlines():
-        stripped = line.strip()
-        if line.startswith("  input:"):
-            rule = stripped.split(":", 1)[1].strip()
-            section = "input"
-        elif line.startswith("  outputs:"):
-            section = "outputs"
-        elif section == "input" and line.startswith("    "):
-            if stripped.startswith("|| "):
-                continue
-            if stripped.startswith("| "):
-                implicit.append(stripped[2:])
-            else:
-                explicit.append(stripped)
-    return rule, explicit, implicit
+        name, sep, _ = line.rpartition(": ")
+        if not sep or not name:
+            raise Refusal(f"cannot parse ninja target line {line[:120]!r}")
+        absolute = name if os.path.isabs(name) else os.path.join(str(build_dir), name)
+        outputs[os.path.normpath(absolute)] = name
+    return outputs
 
 
-class GeneratorGraph:
-    """The source files each generated file is made from, read from the ninja graph.
+def check_fresh(build_dir: Path, generated: set[str], label: str) -> None:
+    """ninja itself must consider every generated file the compilations read up to date.
 
-    Custom-command outputs are traced back through their explicit and implicit
-    inputs to source files. A generator executable counts only through the
-    sources of its own objects: a library it links is assumed not to change what
-    it generates. Order-only inputs are not inputs. A file ninja does not know is
-    a plain source, or, inside the build directory, something CMake writes at
-    configure time; changes to the CMake configuration are refused separately.
-    Freshness and sharing use these same inputs, so they cannot disagree.
+    This is ninja's judgement over its whole graph, so generator headers, linked
+    libraries, restat rules and a stale build.ninja all count. A file the graph
+    does not produce is written by CMake at configure time, which a stale
+    build.ninja (a CMake re-run pending) also makes ninja report.
     """
-
-    def __init__(self, build_dir: Path) -> None:
-        self.build_dir = build_dir
-        self.memo: dict[str, frozenset[str]] = {}
-        self.logged: dict[str, int] | None = None
-
-    def built_at(self, target: str) -> int:
-        """When ninja last brought a file up to date, in nanoseconds.
-
-        A restat rule that regenerates identical content leaves the file's own
-        mtime alone and records the newer time in .ninja_log instead, so the later
-        of the two is what ninja itself compares.
-        """
-        if self.logged is None:
-            self.logged = {}
-            log = self.build_dir / ".ninja_log"
-            try:
-                lines = log.read_text(errors="replace").splitlines()
-            except OSError:
-                raise Refusal(f"{log} is missing; build the tree first") from None
-            if not lines or lines[0].strip() != "# ninja log v5":
-                raise Refusal(f"{log} is not a ninja v5 log")
-            for line in lines[1:]:
-                fields = line.split("\t")
-                if len(fields) != 5 or not fields[2].isdigit():
-                    raise Refusal(f"malformed line in {log}: {line[:120]!r}")
-                self.logged[self.absolute(fields[3])] = int(fields[2])
-        path = self.absolute(target)
-        try:
-            own = os.stat(path).st_mtime_ns
-        except OSError as error:
-            raise Refusal(f"cannot check {target}: {error}") from None
-        return max(own, self.logged.get(path, 0))
-
-    def absolute(self, target: str) -> str:
-        return target if os.path.isabs(target) else os.path.normpath(str(self.build_dir / target))
-
-    def sources(self, target: str, active: frozenset[str] = frozenset()) -> frozenset[str]:
-        if target in self.memo:
-            return self.memo[target]
-        if target in active:
-            raise Refusal(f"the build graph has a cycle through {target}")
-        path = self.absolute(target)
-        queried = ninja_query(self.build_dir, target)
-        if queried is None or queried[0] is None:
-            found = frozenset() if relative(path, self.build_dir) is not None else frozenset({path})
-        elif "_LINKER" in queried[0]:
-            objects = set()
-            for obj in queried[1]:
-                compiled = ninja_query(self.build_dir, obj)
-                if compiled is None or compiled[0] is None or "_COMPILER" not in compiled[0]:
-                    raise Refusal(f"cannot trace object {obj} of generator {target}")
-                objects.update(self.absolute(source) for source in compiled[1])
-            found = frozenset(objects)
-        else:
-            inputs: set[str] = set()
-            for item in queried[1] + queried[2]:
-                inputs |= self.sources(item, active | {target})
-            found = frozenset(inputs)
-        self.memo[target] = found
-        return found
-
-
-def trace_generated(
-    graph: GeneratorGraph, root: Path, generated: set[str], changed: set[str]
-) -> list[str]:
-    """Problems that stop generated files from being shared with the BASE side."""
-    changed_abs = {os.path.normpath(str(root / path)) for path in changed}
-    problems = []
-    for target in sorted(generated):
-        for source in sorted(graph.sources(target) & changed_abs):
-            problems.append(f"{relative(source, root)} (an input of {target}) is changed")
-    return problems
-
-
-def check_generated_fresh(graph: GeneratorGraph, generated: set[str]) -> None:
-    """Every generated file must be newer than every source it is made from."""
-    stale = []
-    for target in sorted(generated):
-        sources = graph.sources(target)
-        if not sources:
-            continue
-        built = graph.built_at(target)
-        try:
-            newest = max(os.stat(source).st_mtime_ns for source in sources)
-        except OSError as error:
-            raise Refusal(f"cannot check the sources of {target}: {error}") from None
-        if built < newest:
-            stale.append(target)
-    if stale:
+    outputs = ninja_outputs(build_dir)
+    targets = sorted(outputs[path] for path in generated if path in outputs)
+    command = ["ninja", "-C", str(build_dir), "-n", *targets]
+    if not targets:
+        command = ["ninja", "-C", str(build_dir), "-n", "build.ninja"]
+    result = run(command, timeout=600)
+    if result.returncode != 0:
+        raise Refusal(f"{label}: ninja -n failed: {(result.stdout + result.stderr).strip()[:300]}")
+    if "no work to do" not in result.stdout:
         raise Refusal(
-            f"generated files are older than their sources, e.g. {stale[0]}; "
-            f"build the tree first (ninja -C {graph.build_dir})"
+            f"{label}: files the analysis reads are out of date; build first (ninja -C {build_dir})"
         )
+
+
+def system_directories(tools: Tools) -> list[str]:
+    """The compiler's own include search directories, resolved."""
+    result = run([tools.clangxx, "-E", "-x", "c++", "-v", "/dev/null"])
+    if result.returncode != 0:
+        raise Refusal(f"cannot list the compiler's include directories: {result.stderr[:200]}")
+    lines = result.stderr.splitlines()
+    try:
+        start = lines.index("#include <...> search starts here:") + 1
+        end = lines.index("End of search list.", start)
+    except ValueError:
+        raise Refusal("unexpected output from the compiler's -v include listing") from None
+    directories = [os.path.realpath(line.strip()) for line in lines[start:end] if line.strip()]
+    if not directories:
+        raise Refusal("the compiler reports no system include directories")
+    return directories
+
+
+def check_contained(
+    deps: dict[Entry, set[str]],
+    side: tuple[Path, Path],
+    other: tuple[Path, Path],
+    system: list[str],
+    label: str,
+) -> None:
+    """Every file a compilation reads resolves into its own checkout, build or system dirs.
+
+    The most specific matching directory decides, so the other side's checkout or
+    build is refused even where it nests inside this side's, as a worktree inside
+    the main checkout does, and this side's own files are allowed where it nests
+    inside the other's.
+    """
+    own = [os.path.realpath(str(side[0])), os.path.realpath(str(side[1]))]
+    theirs = [os.path.realpath(str(other[0])), os.path.realpath(str(other[1]))]
+    if set(own) & set(theirs):
+        raise Refusal(f"{label}: the two sides share a checkout or build directory")
+    bases = [(base, True) for base in own + system] + [(base, False) for base in theirs]
+
+    def permitted(real: str) -> bool:
+        matches = [
+            (len(base), ok) for base, ok in bases if real == base or real.startswith(base + "/")
+        ]
+        return bool(matches) and max(matches)[1]
+
+    resolved: dict[str, bool] = {}
+    for entry, paths in deps.items():
+        for path in paths:
+            if path not in resolved:
+                resolved[path] = permitted(os.path.realpath(path))
+            if not resolved[path]:
+                raise Refusal(
+                    f"{label}: compilation of {entry.file} reads {path} "
+                    f"({os.path.realpath(path)}), outside its checkout, build and system directories"
+                )
 
 
 def generated_files(
@@ -736,14 +697,6 @@ def generated_files(
             raise Refusal(f"git check-ignore failed: {result.stderr.strip()[:200]}")
         ignored = {line for line in result.stdout.splitlines() if line}
     return in_build, ignored
-
-
-def check_contained(deps: dict[Entry, set[str]], head_root: Path, build_dir: Path) -> None:
-    """No BASE compilation may read a HEAD source; the build directory is shared."""
-    for entry, paths in deps.items():
-        for path in paths:
-            if relative(path, head_root) is not None and relative(path, build_dir) is None:
-                raise Refusal(f"BASE compilation of {entry.file} reads HEAD file {path}")
 
 
 # --- CodeChecker ------------------------------------------------------------
@@ -877,32 +830,47 @@ def parse_reports(
             raise TypeError
     except (OSError, ValueError, KeyError, TypeError):
         raise Refusal(f"{label}: parse output is missing or malformed") from None
-    reports = []
-    for row in rows:
-        try:
-            original = row["file"]["original_path"]
-            rel = relative(original, side_root)
-            if rel is None:
-                build_rel = relative(original, build_dir)
-                rel = f"<build>/{build_rel}" if build_rel is not None else original
-            reports.append(
-                Report(
-                    checker=str(row["checker_name"]),
-                    analyzer=str(row["analyzer_name"]),
-                    path=rel,
-                    line=int(row["line"]),
-                    column=int(row["column"]),
-                    report_hash=str(row["report_hash"]),
-                    message=str(row.get("message", "")),
-                )
-            )
-        except (KeyError, TypeError, ValueError):
-            raise Refusal(f"{label}: malformed report {str(row)[:200]}") from None
+    if document.get("version") != PARSE_SCHEMA_VERSION:
+        raise Refusal(f"{label}: parse output version {document.get('version')!r} is not supported")
+    reports = [read_report(row, side_root, build_dir, label) for row in rows]
     if result.returncode == 0 and reports:
         raise Refusal(f"{label}: parse exited 0 but printed {len(reports)} reports")
     if result.returncode == 2 and not reports:
         raise Refusal(f"{label}: parse exited 2 but the report list is empty")
     return reports
+
+
+def read_report(row: object, side_root: Path, build_dir: Path, label: str) -> Report:
+    """One parsed report, every field checked; an unknown checker is not "advisory"."""
+
+    def bad(why: str) -> Refusal:
+        return Refusal(f"{label}: {why} in report {str(row)[:200]}")
+
+    if not isinstance(row, dict):
+        raise bad("not an object")
+    analyzer, checker = row.get("analyzer_name"), row.get("checker_name")
+    if analyzer not in ANALYZERS:
+        raise bad(f"unknown analyzer {analyzer!r}")
+    if checker not in EXPECTED_CHECKERS[analyzer]:
+        raise bad(f"checker {checker!r} is not enabled for {analyzer}")
+    line, column = row.get("line"), row.get("column")
+    if type(line) is not int or type(column) is not int or line < 1 or column < 1:
+        raise bad("line or column is not a positive integer")
+    digest = row.get("report_hash")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]+", digest):
+        raise bad("report_hash is not a hex string")
+    location = row.get("file")
+    original = location.get("original_path") if isinstance(location, dict) else None
+    if not isinstance(original, str) or not os.path.isabs(original):
+        raise bad("file.original_path is not an absolute path")
+    message = row.get("message", "")
+    if not isinstance(message, str):
+        raise bad("message is not a string")
+    path = relative(os.path.normpath(original), side_root)
+    if path is None:
+        build_rel = relative(os.path.normpath(original), build_dir)
+        path = f"<build>/{build_rel}" if build_rel is not None else original
+    return Report(checker, analyzer, path, line, column, digest, message)
 
 
 def count(reports: list[Report]) -> collections.Counter[tuple[str, str, str]]:
@@ -969,38 +937,34 @@ class Suppression:
     covers: frozenset[int]
 
 
-def find_suppressions(path: str, lines: list[str]) -> tuple[list[Suppression], list[str]]:
+def find_suppressions(
+    path: str, lines: list[str]
+) -> tuple[list[Suppression], list[str], list[str]]:
+    """(line suppressions, their problems, problems that hold for the whole file).
+
+    Only three forms exist: same-line NOLINT(check): reason, NOLINTNEXTLINE(check):
+    reason, and a codechecker_<kind> [check] reason comment on the line above. A
+    NOLINTBEGIN/NOLINTEND range can cover lines far from where it is written, so
+    any range in a changed file is refused, whatever its checks and reason.
+    """
     found: list[Suppression] = []
     problems: list[str] = []
-    open_ranges: list[int] = []
+    file_problems: list[str] = []
     known = EXPECTED_CHECKERS["clang-tidy"] | EXPECTED_CHECKERS["clangsa"]
     for number, line in enumerate(lines, start=1):
         for regex in (NOLINT_RE, CODECHECKER_RE):
             for match in regex.finditer(line):
                 kind = match.group("kind") or ""
                 where = f"{path}:{number}"
-                if regex is NOLINT_RE:
-                    if kind == "END":
-                        if open_ranges:
-                            start = open_ranges.pop()
-                            found.append(
-                                Suppression(
-                                    path,
-                                    start,
-                                    lines[start - 1].strip(),
-                                    frozenset(range(start, number + 1)),
-                                )
-                            )
-                        continue
-                    checks_text = (match.group("checks") or "")[1:-1]
-                    covers = {"": {number}, "NEXTLINE": {number + 1}, "BEGIN": set()}[kind]
-                else:
-                    checks_text = (match.group("checks") or "")[1:-1]
-                    covers = {number + 1}
-                checks = {c.strip() for c in checks_text.split(",") if c.strip()}
-                rest = match.group("rest").strip().lstrip(":").strip().removesuffix("*/").strip()
+                if regex is NOLINT_RE and kind in ("BEGIN", "END"):
+                    file_problems.append(f"{where}: NOLINT{kind} ranges are not allowed")
+                    continue
                 if regex is CODECHECKER_RE and kind == "confirmed":
                     continue
+                covers = {number} if regex is NOLINT_RE and kind == "" else {number + 1}
+                checks_text = (match.group("checks") or "")[1:-1]
+                checks = {c.strip() for c in checks_text.split(",") if c.strip()}
+                rest = match.group("rest").strip().lstrip(":").strip().removesuffix("*/").strip()
                 if not checks:
                     problems.append(f"{where}: suppression without an exact check name")
                 elif checks - known or any("*" in c or c == "all" for c in checks):
@@ -1009,13 +973,8 @@ def find_suppressions(path: str, lines: list[str]) -> tuple[list[Suppression], l
                     )
                 elif not rest:
                     problems.append(f"{where}: suppression without a reason")
-                if kind == "BEGIN":
-                    open_ranges.append(number)
-                else:
-                    found.append(Suppression(path, number, line.strip(), frozenset(covers)))
-    for start in open_ranges:
-        problems.append(f"{path}:{start}: NOLINTBEGIN without NOLINTEND")
-    return found, problems
+                found.append(Suppression(path, number, line.strip(), frozenset(covers)))
+    return found, problems, file_problems
 
 
 def audit_suppressions(root: Path, change: Change) -> list[Suppression]:
@@ -1025,7 +984,8 @@ def audit_suppressions(root: Path, change: Change) -> list[Suppression]:
         if not is_cpp(path) or is_excluded(path) or not (root / path).is_file():
             continue
         lines = (root / path).read_text(errors="replace").splitlines()
-        found, issues = find_suppressions(path, lines)
+        found, issues, file_issues = find_suppressions(path, lines)
+        problems.extend(file_issues)
         for suppression in found:
             if suppression.line in changed or suppression.covers & changed:
                 accepted.append(suppression)
@@ -1070,8 +1030,12 @@ def select(
     return chosen, orphans
 
 
-def identity(entry: Entry, side_root: Path, side_build: Path) -> tuple[str, str]:
-    """A compilation's identity with its checkout, build directory and output factored out."""
+def identity(entry: Entry, side_root: Path, side_build: Path) -> tuple[str, str, str]:
+    """A compilation's identity with its checkout, build directory and output factored out.
+
+    The working directory is part of it: the same relative -I in two directories
+    names two different include trees.
+    """
 
     def neutral(text: str) -> str:
         # The build directory may sit inside the checkout, so replace it first.
@@ -1083,7 +1047,11 @@ def identity(entry: Entry, side_root: Path, side_build: Path) -> tuple[str, str]
             arguments[index + 1] = "<output>"
         elif arg.startswith("-o") and len(arg) > 2:
             arguments[index] = "-o<output>"
-    return (neutral(entry.file), shlex.join(neutral(arg) for arg in arguments[1:]))
+    return (
+        neutral(entry.file),
+        neutral(os.path.normpath(entry.directory)),
+        shlex.join(neutral(arg) for arg in arguments[1:]),
+    )
 
 
 def representatives(
@@ -1109,7 +1077,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--base", default="origin/main", help="branch the change merges into")
     parser.add_argument("--build-dir", type=Path, help="build of this checkout (default: build)")
-    parser.add_argument("--base-build-dir", type=Path, help="separate build of the merge base")
+    parser.add_argument(
+        "--base-build-dir",
+        type=Path,
+        required=True,
+        help="build of a separate checkout that sits cleanly at the merge base",
+    )
     parser.add_argument("--llvm-bin", type=Path, default=Path(DEFAULT_LLVM_BIN))
     parser.add_argument("--codechecker", help="CodeChecker executable (default: from PATH)")
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
@@ -1120,6 +1093,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keep-temp", action="store_true", help="keep the work directory")
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parent.parent
+    install_signal_handlers()
     try:
         return gate(root, args)
     except Refusal as error:
@@ -1127,8 +1101,49 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_REFUSED
 
 
+@dataclass
+class Side:
+    """One checkout and its own build, as the analysis sees them."""
+
+    label: str
+    root: Path
+    build: Path
+    entries: list[Entry]
+    deps: dict[Entry, set[str]]
+
+
+def prepare_side(label: str, root: Path, build: Path, tools: Tools, work: Path) -> Side:
+    entries = analysable(load_database(build, root), root, build)
+    deps = scan_dependencies(entries, tools, work, label)
+    in_build, ignored = generated_files(deps, root, build)
+    check_fresh(build, set(in_build) | {os.path.normpath(str(root / p)) for p in ignored}, label)
+    return Side(label, root, build, entries, deps)
+
+
+def select_side(side: Side, changed: set[str], uncovered: set[str]) -> tuple[set[Entry], set[str]]:
+    """The side's compilations a change reaches, refusing what it cannot reach."""
+    sources = {p for p in changed if Path(p).suffix in SOURCE_SUFFIXES}
+    headers = {p for p in changed if Path(p).suffix in HEADER_SUFFIXES}
+    known = {relative(entry.file, side.root) for entry in side.entries}
+    missing = sorted(p for p in sources if p not in known)
+    if missing:
+        raise Refusal(
+            f"{side.label}: changed sources missing from {side.build}/compile_commands.json: "
+            f"{missing}; reconfigure that build"
+        )
+    chosen, orphans = select(side.entries, side.deps, side.root, sources, headers)
+    refused = sorted(orphans - uncovered)
+    if refused:
+        raise Refusal(
+            f"{side.label}: changed headers no compilation includes: {refused}; "
+            f"list them in {UNCOVERED_HEADERS}"
+        )
+    return chosen, orphans
+
+
 def gate(root: Path, args: argparse.Namespace) -> int:
     build_dir = (args.build_dir or root / "build").resolve()
+    base_build = args.base_build_dir.resolve()
     if args.jobs < 1 or args.timeout < 1:
         raise Refusal("--jobs and --timeout must be positive")
     tools = resolve_tools(args.llvm_bin, args.codechecker)
@@ -1137,129 +1152,58 @@ def gate(root: Path, args: argparse.Namespace) -> int:
         f"static-analysis: rule set {fingerprint()}, CodeChecker {CODECHECKER_VERSION}, LLVM {LLVM_VERSION}"
     )
     merge_base = git(root, "merge-base", args.base, "HEAD").strip()
+    base_root = configured_checkout(base_build)
+    check_clean_at(base_root, merge_base)
     change = collect_change(root, merge_base)
     work = Path(tempfile.mkdtemp(prefix="tos-static-analysis-")).resolve()
-    base_root = work / "base"
-    worktree_added = False
     try:
         controls = run_controls(root, tools, work, args.jobs, args.timeout)
         print(f"static-analysis: positive controls reported all {controls} marked findings")
         suppressions = audit_suppressions(root, change)
-
-        head_all = load_database(build_dir, root)
-        head_entries = analysable(head_all, root, build_dir)
         cpp_head = {p for p in change.head_paths if is_cpp(p) and not is_excluded(p)}
         cpp_base = {p for p in change.base_paths if is_cpp(p) and not is_excluded(p)}
         if not args.full and not cpp_head and not cpp_base:
             print("static-analysis: no C/C++ change; 0 compilations analysed")
             return EXIT_CLEAN
 
-        head_sources = {p for p in cpp_head if Path(p).suffix in SOURCE_SUFFIXES}
-        known = {relative(entry.file, root) for entry in head_entries}
-        unknown = sorted(p for p in head_sources if p not in known)
-        if unknown:
-            raise Refusal(
-                f"changed sources missing from compile_commands.json: {unknown}; reconfigure"
-            )
+        system = system_directories(tools)
+        head = prepare_side("HEAD", root, build_dir, tools, work)
+        base = prepare_side("BASE", base_root, base_build, tools, work)
+        check_contained(head.deps, (root, build_dir), (base_root, base_build), system, "HEAD")
+        check_contained(base.deps, (base_root, base_build), (root, build_dir), system, "BASE")
 
-        head_deps = scan_dependencies(head_entries, tools, work, "HEAD")
-        in_build, ignored = generated_files(head_deps, root, build_dir)
-        generated = set(in_build) | {str(root / p) for p in ignored}
-        head_graph = GeneratorGraph(build_dir)
-        check_generated_fresh(head_graph, generated)
-
-        if args.full:
-            head_selected, orphans = set(head_entries), set()
-        else:
-            head_selected, orphans = select(
-                head_entries,
-                head_deps,
-                root,
-                head_sources,
-                {p for p in cpp_head if Path(p).suffix in HEADER_SUFFIXES},
-            )
         uncovered = load_uncovered(root)
-        refused = sorted(orphans - uncovered)
-        if refused:
-            raise Refusal(
-                f"changed headers no compilation includes: {refused}; list them in {UNCOVERED_HEADERS}"
-            )
-
-        if args.base_build_dir:
-            # A build of another checkout, which must sit cleanly at the merge base.
-            base_build = args.base_build_dir.resolve()
-            base_root = configured_checkout(base_build)
-            check_clean_at(base_root, merge_base)
-            base_all = load_database(base_build, base_root)
-            base_entries = analysable(base_all, base_root, base_build)
-            base_deps = scan_dependencies(base_entries, tools, work, "BASE")
-            base_in_build, base_ignored = generated_files(base_deps, base_root, base_build)
-            base_generated = set(base_in_build) | {str(base_root / p) for p in base_ignored}
-            check_generated_fresh(GeneratorGraph(base_build), base_generated)
-        else:
-            base_build = build_dir
-            if any(CONFIGURE_INPUT_RE.search(p) for p in change.all_paths):
-                raise Refusal(
-                    "the change touches CMake configuration; pass --base-build-dir with a "
-                    f"build of a clean checkout at {merge_base[:12]}"
-                )
-            git(root, "worktree", "add", "--detach", "--quiet", str(base_root), merge_base)
-            worktree_added = True
-            problems = trace_generated(head_graph, root, generated, change.all_paths)
-            if problems:
-                raise Refusal(
-                    "generated files cannot be shared with the merge base: "
-                    + "; ".join(sorted(set(problems))[:5])
-                    + "; pass --base-build-dir"
-                )
-            for rel in sorted(ignored):
-                destination = base_root / rel
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(root / rel, destination)
-            base_entries = [
-                rewrite_entry(entry, root, base_root, build_dir)
-                for entry in head_entries
-                if (base_root / relative(entry.file, root)).is_file()
-            ]
-            base_deps = scan_dependencies(base_entries, tools, work, "BASE")
-        check_contained(base_deps, root, base_build)
-
         if args.full:
-            base_selected = set(base_entries)
+            head_selected, base_selected = set(head.entries), set(base.entries)
+            orphans: set[str] = set()
         else:
-            base_selected, _ = select(
-                base_entries,
-                base_deps,
-                base_root,
-                {p for p in cpp_base if Path(p).suffix in SOURCE_SUFFIXES},
-                {p for p in cpp_base if Path(p).suffix in HEADER_SUFFIXES},
-            )
-        head_ids = representatives(head_entries, root, build_dir)
-        base_ids = representatives(base_entries, base_root, base_build)
+            head_selected, head_orphans = select_side(head, cpp_head, uncovered)
+            base_selected, base_orphans = select_side(base, cpp_base, uncovered)
+            orphans = head_orphans | base_orphans
+        head_ids = representatives(head.entries, root, build_dir)
+        base_ids = representatives(base.entries, base_root, base_build)
         wanted = {identity(e, root, build_dir) for e in head_selected} | {
             identity(e, base_root, base_build) for e in base_selected
         }
         head_run = sorted((head_ids[i] for i in wanted if i in head_ids), key=lambda e: e.output)
         base_run = sorted((base_ids[i] for i in wanted if i in base_ids), key=lambda e: e.output)
         print(
-            f"static-analysis: HEAD {len(head_run)} compilations, BASE {len(base_run)} (merge base {merge_base[:12]})"
+            f"static-analysis: HEAD {len(head_run)} compilations, BASE {len(base_run)} "
+            f"(merge base {merge_base[:12]} in {base_root})"
         )
-        for header in sorted(orphans & uncovered):
+        for header in sorted(orphans):
             print(f"static-analysis: UNCOVERED {header} (no compilation includes it)")
 
-        head_reports = base_reports = []
+        head_reports: list[Report] = []
+        base_reports: list[Report] = []
         if head_run:
             analyze(head_run, tools, work / "head", args.jobs, args.timeout, "HEAD")
             head_reports = parse_reports(work / "head", tools, root, build_dir, "HEAD")
         if base_run:
-            analyze(base_run, tools, work / "base-reports", args.jobs, args.timeout, "BASE")
-            base_reports = parse_reports(
-                work / "base-reports", tools, base_root, base_build, "BASE"
-            )
+            analyze(base_run, tools, work / "base", args.jobs, args.timeout, "BASE")
+            base_reports = parse_reports(work / "base", tools, base_root, base_build, "BASE")
         return judge(head_reports, base_reports, suppressions)
     finally:
-        if worktree_added:
-            run(["git", "-C", str(root), "worktree", "remove", "--force", str(base_root)])
         if args.keep_temp:
             print(f"static-analysis: work directory kept at {work}")
         else:

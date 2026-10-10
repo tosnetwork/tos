@@ -83,13 +83,18 @@ against source, not against memory.
 
 The tree carries hundreds of inherited analyzer findings. Fixing them is
 tracked work; it is not a reason to let a change add more. Before opening or
-updating a PR that touches C/C++, run the gate from the checkout that owns the
-build:
+updating a PR that touches C/C++, run the gate. It needs two builds: one of the
+checkout under review, and one of a separate, clean checkout of the merge base,
+for example a worktree of `main` that you keep built:
 
 ```
 uv tool install codechecker==6.29.1    # once; LLVM 21 comes from install-llvm-toolchain.sh
-scripts/static-analysis.py --build-dir build
+git worktree add --detach ../tos-main origin/main   # once; then configure and build it
+scripts/static-analysis.py --build-dir build --base-build-dir ../tos-main/build
 ```
+
+Both builds must be up to date, as ninja judges it, for the files the analysis
+reads; the gate says which one to rebuild when they are not.
 
 Exit 0 means no new blocking finding, 1 lists the new blocking findings, and 2
 means the gate could not establish a result. A new finding in a blocking check
