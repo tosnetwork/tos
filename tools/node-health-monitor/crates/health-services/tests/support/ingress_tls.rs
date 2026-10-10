@@ -180,7 +180,6 @@ pub(crate) async fn idle_tls(
         .unwrap();
     let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
     let socket = tokio::net::TcpSocket::new_v4().unwrap();
-    socket.set_recv_buffer_size(1024).unwrap();
     let stream = socket.connect(address).await.unwrap();
     connector.connect(ServerName::try_from("localhost".to_owned()).unwrap(), stream).await.unwrap()
 }

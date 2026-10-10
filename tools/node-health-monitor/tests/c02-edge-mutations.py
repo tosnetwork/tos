@@ -22,7 +22,7 @@ CASES = [
      "tos-health-services", "http", "edge_router_reserves_burst_token_for_approved_heartbeat"),
     ("classified-connection-lifetime", "crates/health-services/src/ingress.rs",
      "*slot = Some(permit);", "drop(permit);",
-     "tos-health-services", "lib", "ingress::capacity_tests::seven_slow_regular_requests_leave_classified_heartbeat_capacity"),
+     "tos-health-services", "lib", "ingress::capacity_tests::regular_capacity_is_event_driven"),
     ("missed-tick-skip", "crates/health-services/src/native_cache.rs",
      "completed + NATIVE_INTERVAL", "next_due",
      "tos-health-services", "native_typed", "scheduler_skips_a_tick_missed_by_a_slow_source"),

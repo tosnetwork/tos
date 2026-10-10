@@ -307,12 +307,20 @@ impl Deadlines {
     }
 }
 pub async fn serve(config: IngressConfig, listener: tokio::net::TcpListener) -> Result<(), String> {
-    serve_with_deadlines(config, listener, Deadlines::production()).await
+    serve_with_deadlines(
+        config,
+        listener,
+        Deadlines::production(),
+        #[cfg(test)]
+        None,
+    )
+    .await
 }
 async fn serve_with_deadlines(
     config: IngressConfig,
     listener: tokio::net::TcpListener,
     deadlines: Deadlines,
+    #[cfg(test)] instrumentation: Option<capacity_tests::Instrumentation>,
 ) -> Result<(), String> {
     if !config.upstream.ip().is_loopback()
         || config.upstream.port() == 0
@@ -411,7 +419,11 @@ async fn serve_with_deadlines(
             limits.clone(),
             regular_connections.clone(),
         );
+        #[cfg(test)]
+        let instrumentation = instrumentation.clone();
         tokio::spawn(async move {
+            #[cfg(test)]
+            let completion = capacity_tests::Completion::default();
             let _permit = permit;
             let tls = match tokio::time::timeout(deadlines.tls, acceptor.accept(stream)).await {
                 Ok(Ok(tls)) => tls,
@@ -428,8 +440,16 @@ async fn serve_with_deadlines(
             // keep_alive is disabled, so this connection-owned slot retains a
             // classified ordinary-request permit through TLS response drain.
             let connection_regular = Arc::new(Mutex::new(None));
+            #[cfg(test)]
+            let completed_gate = completion.gate.clone();
             let service = service_fn(move |request| {
-                proxy(
+                #[cfg(test)]
+                let hook = instrumentation.as_ref().and_then(|hooks| hooks.for_request(&request));
+                #[cfg(test)]
+                if let Some((gate, _)) = &hook {
+                    *completed_gate.lock().unwrap() = Some(gate.clone());
+                }
+                let answer = proxy(
                     request,
                     peer.clone(),
                     config.clone(),
@@ -437,7 +457,15 @@ async fn serve_with_deadlines(
                     limits.clone(),
                     regular_connections.clone(),
                     connection_regular.clone(),
-                )
+                );
+                async move {
+                    let answer = answer.await;
+                    #[cfg(test)]
+                    if let Some((gate, true)) = hook {
+                        return capacity_tests::gate_response(answer, gate).await;
+                    }
+                    answer
+                }
             });
             let mut http = hyper::server::conn::http1::Builder::new();
             http.keep_alive(false)
