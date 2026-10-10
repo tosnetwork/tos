@@ -36,6 +36,8 @@ Evidence: [evidence/finalisation-20261010](evidence/finalisation-20261010). Work
 
 ## Reproduce the read-only checks
 
+First reproduce the pre-beacon input comparison using the download, in-memory extraction and Git byte-comparison command in [public-bundle-match.md](evidence/finalisation-20261010/public-bundle-match.md). The archive digest, all three file digests and successful exit status are recorded there.
+
 ```sh
 cargo build --release --locked --manifest-path tools/shielded-pool-ceremony/Cargo.toml --bin phase2-verify
 RAYON_NUM_THREADS=8 tools/shielded-pool-ceremony/target/release/phase2-verify artifacts/phase2/ceremony

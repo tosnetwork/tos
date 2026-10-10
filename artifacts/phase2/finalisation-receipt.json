@@ -170,6 +170,17 @@
     "ceremony/ceremony.json": "3fb8ccd7ab844eab576abf119732c1d4c8a98c58eb6e4481443b1191910662a0",
     "ceremony/vk.bin": "3675550c26b589d295a079adfbb48ecf38b094262a2eec2e40edc41fc8867b31",
     "ceremony/beacon.bin": "ff995f8c4b2cc55086694f72207dc6e2e20838434163e30eb251404f491b4bea",
-    "evidence/finalisation-20261010/genesis-binding.txt": "b3eb91420a894aaff99c588d26d887f650a6fd446e03e7009568de0eaafa6b71"
+    "evidence/finalisation-20261010/genesis-binding.txt": "b3eb91420a894aaff99c588d26d887f650a6fd446e03e7009568de0eaafa6b71",
+    "evidence/finalisation-20261010/public-bundle-match.md": "9887cb8ce2544dc8ca14746c9509277cea836b5fda84859e79e02af0e3017598"
+  },
+  "public_bundle_comparison": {
+    "procedure": "evidence/finalisation-20261010/public-bundle-match.md",
+    "source_revision": "c94ff1ceb819c6cafeba06dbb0b9de0ce652ad65",
+    "exit_code": 0,
+    "compared_files": [
+      "ceremony.json",
+      "key.bin",
+      "contributions.bin"
+    ]
   }
 }
