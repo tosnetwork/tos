@@ -1,6 +1,6 @@
 
 warning: `shielded-pool-circuit-crosscheck` (lib) generated 5 warnings (run `cargo fix --lib -p shielded-pool-circuit-crosscheck` to apply 1 suggestion)
-   Compiling shielded-pool-circuit-crosscheck v0.1.0 (/home/tomi/tos/tools/shielded-pool-circuit/crosscheck)
+   Compiling shielded-pool-circuit-crosscheck v0.1.0 (tools/shielded-pool-circuit/crosscheck)
     Finished `release` profile [optimized] target(s) in 1.71s
      Running tests/ceremony_acceptance.rs (tools/shielded-pool-circuit/crosscheck/target/release/deps/ceremony_acceptance-2658c2c52cc0d9b6)
 

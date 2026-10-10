@@ -32,7 +32,7 @@ The block timestamp is 2026-10-07T04:09:21Z. ceremony/beacon.bin holds exactly t
 - Real ceremony-key transfer: accepted by the local contract sandbox, exit 0. This is a local test, not a deployed production pool.
 - Wrong-key control: the existing `the_gate_refuses_a_proof_made_under_a_different_key` test passed; the contract rejected its proof with exit 262.
 
-Evidence: [evidence/finalisation-20261010](evidence/finalisation-20261010). Local temporary directory names in the short tool logs are normalised to the repository ceremony path. The wrong-key log retains only the bounded result excerpt; build warnings are omitted. File hashes are in the receipt.
+Evidence: [evidence/finalisation-20261010](evidence/finalisation-20261010). Workstation checkout paths are normalised to repository-relative paths; temporary artifact paths are normalised to the repository ceremony path. The wrong-key log retains only the bounded result excerpt; build warnings are omitted. File hashes are in the receipt.
 
 ## Reproduce the read-only checks
 
@@ -45,3 +45,7 @@ TOS_ROOT="$PWD" cargo test --release --locked --manifest-path tools/shielded-poo
 ```
 
 Do not finalise this directory again. Future contributions require a new ceremony and announcement, not extending this finished record.
+
+## Genesis binding fixture validation
+
+The finished artifact exposed an old fixture assumption that the committed ceremony was still open. The fixture now audits the finished artifact directly and builds a separate unfinished ceremony for refusal checks. The circuit, wallet and genesis suites all passed locally under the same commands as the CI supplementary step. Removing the unfinished-ceremony guard made its targeted refusal test fail; restoring the guard made it pass. Commands, source revision and bounded results are recorded in [genesis-binding.txt](evidence/finalisation-20261010/genesis-binding.txt).

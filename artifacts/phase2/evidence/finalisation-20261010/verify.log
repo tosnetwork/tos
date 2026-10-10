@@ -13,7 +13,7 @@ verifying key
   length     1248 bytes
   IC points  19
   sha256     3675550c26b589d295a079adfbb48ecf38b094262a2eec2e40edc41fc8867b31
-  written to /home/tomi/ceremony-finalise-20261010/vk.bin
+  written to artifacts/phase2/ceremony/vk.bin
 
 This ceremony is finished: 6 step(s), ending in its beacon.
 

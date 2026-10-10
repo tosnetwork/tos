@@ -163,12 +163,13 @@
     "evidence/finalisation-20261010/ceremony-gate.log": "980f564c60b20c722979ef059f3033682084820007493534b76bed9dbd3ca5a7",
     "evidence/finalisation-20261010/double-finalise-refused.log": "c10097efc239d2208fe252b07cbaa547dbea40c4f7e6a6083aded4936de1bcd7",
     "evidence/finalisation-20261010/finalise.log": "29ad531dd1c0c06f6d423e240939fd63d7db944af1193463ed031c6e410c41d4",
-    "evidence/finalisation-20261010/gate-negative.log": "c6587c78d5df77d70d84a5d3082d4b92f91c5b769650ffc5cdd73e35ad3ba4f0",
-    "evidence/finalisation-20261010/verify.log": "d421a9c41acfa06494faffdd0ee0a9bb582e1e9619a1ba665929261258187236",
+    "evidence/finalisation-20261010/gate-negative.log": "3c1da258b7d614f03a300312b63db228dbe304e6b67bfec6897c4639b5a1a1f6",
+    "evidence/finalisation-20261010/verify.log": "d23f0a2d21a3a2c8f596b4a5299ceac1ec2cec209561b8ecf864e0cffd6bc1c0",
     "ceremony/contributions.bin": "dbeab171b9b61cbd921486278c3a3fad4bd1bc6249c5f30f9686d1c0a61be4bf",
     "ceremony/key.bin": "e4b45b4285d3f138639811b05c3832e68f6805c63db7c4616b08fca754b3a1f5",
     "ceremony/ceremony.json": "3fb8ccd7ab844eab576abf119732c1d4c8a98c58eb6e4481443b1191910662a0",
     "ceremony/vk.bin": "3675550c26b589d295a079adfbb48ecf38b094262a2eec2e40edc41fc8867b31",
-    "ceremony/beacon.bin": "ff995f8c4b2cc55086694f72207dc6e2e20838434163e30eb251404f491b4bea"
+    "ceremony/beacon.bin": "ff995f8c4b2cc55086694f72207dc6e2e20838434163e30eb251404f491b4bea",
+    "evidence/finalisation-20261010/genesis-binding.txt": "b3eb91420a894aaff99c588d26d887f650a6fd446e03e7009568de0eaafa6b71"
   }
 }
