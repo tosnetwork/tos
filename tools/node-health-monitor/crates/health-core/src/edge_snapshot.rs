@@ -186,6 +186,41 @@ impl EdgeCapabilities {
         Ok(())
     }
 }
+/// Validate immutable host facts both before archival and when projecting retained evidence.
+pub fn validate_host_source(value: &CgroupEnvelope) -> Result<(), String> {
+    if value.schema_version != 1
+        || value.source_id != "host_cgroup"
+        || value.scope_id != "node"
+        || value.source_version != "cgroup-v2-effective-v1"
+        || value.payload.kind != "host_cgroup"
+        || value.payload.cpu_period_usec.0 == 0
+        || value.process_epoch.is_empty()
+        || value.process_epoch.len() > 128
+        || value.source_epoch.is_empty()
+        || value.source_epoch.len() > 128
+        || value.generation.0 == 0
+        || value.availability != "available"
+        || value.clock_quality != "valid"
+        || value.coverage.status != "partial"
+        || value.coverage.sampling_policy != "fixed_cgroup_v2_15s"
+        || value.coverage.missing_fields.len() > 64
+        || value.coverage.missing_fields.iter().any(|v| v.len() > 96)
+        || !value.coverage.gaps.is_empty()
+        || !value.quality.instrumentation_complete
+        || canonical_hash(&value.payload)? != value.content_hash
+    {
+        return Err("invalid cgroup snapshot".into());
+    }
+    for time in [&value.observed_at, &value.last_success_at] {
+        let time = time.as_ref().ok_or("missing cgroup timestamp")?;
+        if !time.ends_with('Z') {
+            return Err("UTC timestamp required".into());
+        }
+        crate::query::utc_ms(time).map_err(str::to_owned)?;
+    }
+    Ok(())
+}
+
 impl EdgeSnapshot {
     pub fn native(&self) -> Option<&NativeEnvelope> {
         self.sources.iter().find_map(|source| match source {
@@ -299,36 +334,9 @@ impl EdgeSnapshot {
                     (value.source_id.as_str(), Some(value.process_epoch.as_str()))
                 }
                 EdgeSource::Cgroup(value) => {
-                    if value.schema_version != 1
-                        || value.source_id != "host_cgroup"
-                        || value.node_id != node
-                        || value.scope_id != "node"
-                        || value.source_version != "cgroup-v2-effective-v1"
-                        || value.payload.kind != "host_cgroup"
-                        || value.process_epoch.is_empty()
-                        || value.process_epoch.len() > 128
-                        || value.source_epoch.is_empty()
-                        || value.source_epoch.len() > 128
-                        || value.generation.0 == 0
-                        || value.availability != "available"
-                        || value.clock_quality != "valid"
-                        || value.source_age_ms.is_none_or(|age| age > 30_000)
-                        || value.coverage.status != "partial"
-                        || value.coverage.sampling_policy != "fixed_cgroup_v2_15s"
-                        || value.coverage.missing_fields.len() > 64
-                        || value.coverage.missing_fields.iter().any(|v| v.len() > 96)
-                        || !value.coverage.gaps.is_empty()
-                        || !value.quality.instrumentation_complete
-                        || canonical_hash(&value.payload)? != value.content_hash
-                    {
-                        return Err("invalid cgroup snapshot".into());
-                    }
-                    for time in [&value.observed_at, &value.last_success_at] {
-                        let time = time.as_ref().ok_or("missing cgroup timestamp")?;
-                        if !time.ends_with('Z') {
-                            return Err("UTC timestamp required".into());
-                        }
-                        crate::query::utc_ms(time).map_err(str::to_owned)?;
+                    validate_host_source(value)?;
+                    if value.node_id != node || value.source_age_ms.is_none_or(|age| age > 30_000) {
+                        return Err("invalid cgroup snapshot binding or age".into());
                     }
                     (value.source_id.as_str(), Some(value.process_epoch.as_str()))
                 }

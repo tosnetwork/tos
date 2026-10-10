@@ -916,3 +916,39 @@ fn complete_native_coverage_projects_and_a_disagreeing_coverage_is_refused() {
     drop(manager);
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+#[test]
+fn incomplete_native_absence_still_requires_retained_integrity() {
+    let directory = temp("absence");
+    let path = directory.join("manager.sqlite");
+    let mut db = EvidenceDb::open(&path, 16 * 1024 * 1024).unwrap();
+    db.bind_network(NETWORK).unwrap();
+    let missing = native_row(1, ms(T0), |source| {
+        source["payload"]["consensus"] = Value::Null;
+        source["quality"]["instrumentation_complete"] = json!(false);
+    });
+    let row = db.insert(missing.clone()).unwrap();
+    assert!(project_origin(&row).unwrap().is_none());
+    for change in 0..4 {
+        let mut bad = missing.clone();
+        match change {
+            0 => bad.record.quality.clock_valid = false,
+            1 => bad.record.observed_at_ms += 1,
+            2 => bad.record.redacted = false,
+            _ => bad.record.payload["source"]["received_at"] = json!(T0),
+        }
+        let mut retained = row.clone();
+        retained.evidence = bad;
+        let mut original = retained.evidence.clone();
+        original.record.received_at_ms = 0;
+        use sha2::{Digest, Sha256};
+        retained.evidence_id =
+            format!("{:x}", Sha256::digest(serde_json::to_vec(&original).unwrap()));
+        assert!(project_origin(&retained).is_err(), "absence skipped integrity guard {change}");
+    }
+    let later = db.insert(native_row(2, ms(T0), |_| {})).unwrap();
+    let (cursor, rows) = read_process_projection(&path, NETWORK).unwrap();
+    assert_eq!(cursor, later.store_seq.0);
+    assert_eq!(rows.len(), 1);
+    let _ = std::fs::remove_dir_all(directory);
+}

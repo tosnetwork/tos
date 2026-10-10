@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, os::unix::fs::MetadataExt, path::Path};
 use tos_health_core::{
     consensus_v2::{Action, Consensus, IncompleteReason, Lifecycle},
-    edge_snapshot::{CgroupEnvelope, ProcessEnvelope, ProcessPayload},
+    edge_snapshot::{validate_host_source, CgroupEnvelope, ProcessEnvelope, ProcessPayload},
     evidence::Evidence,
     native::{canonical_hash, parse_native, BlockAnchor, ChainAnchors, NativeRecord, PqSnapshot},
     query::utc_ms,
@@ -222,22 +222,7 @@ fn consensus_dto(
 fn storage_dto(consensus: &Consensus) -> Result<PayloadDto, String> {
     let capability = |name: &str| consensus.capabilities.get(name);
     let ack = capability("storage_commit_ack").ok_or("native sample lacks storage capability")?;
-    let mut sums = [0u64; 3];
-    for action in &consensus.actions {
-        let live = match action {
-            Action::Proposal { live, .. }
-            | Action::NotarizeVote { live, .. }
-            | Action::FinalizeVote { live, .. }
-            | Action::SkipVote { live, .. } => live,
-        };
-        for (index, key) in
-            ["intent_storage", "signed_storage", "journal_unusable"].iter().enumerate()
-        {
-            if let Some(count) = live.failures.get(*key) {
-                sums[index] = sums[index].checked_add(count.0).ok_or("storage failure overflow")?;
-            }
-        }
-    }
+    let sums = consensus.storage_failure_totals()?;
     Ok(PayloadDto::StorageState {
         storage_commit_ack: StorageCapabilityDto {
             supported: ack.supported,
@@ -398,7 +383,7 @@ fn project_native(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
                 None,
                 Some(serde_json::to_value(storage_dto(consensus)?).map_err(failure)?),
             ),
-            None => return Err("native v2 sample without consensus is not projectable".into()),
+            None => return Ok(None),
         },
         NativeRecord::V3(v) => match &v.payload.consensus {
             Some(consensus) => (
@@ -421,7 +406,7 @@ fn project_native(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
                     .map_err(failure)?,
                 Some(serde_json::to_value(storage_dto(consensus)?).map_err(failure)?),
             ),
-            None => return Err("native v3 sample without consensus is not projectable".into()),
+            None => return Ok(None),
         },
     };
     let query_payload = serde_json::json!({
@@ -551,34 +536,12 @@ fn project_host(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
         record.payload.get("source").ok_or("missing archived host source")?.clone(),
     )
     .map_err(failure)?;
-    if source.availability != "available"
-        || source.clock_quality != "valid"
-        || source.observed_at.is_none()
-        || source.last_success_at.is_none()
-        || !record.quality.clock_valid
-        || record.quality.observed_at_ms.is_none()
-    {
-        return Err("M host source unavailable: source clock, time or availability unknown".into());
-    }
+    validate_host_source(&source)?;
     let observed = utc_ms(source.observed_at.as_deref().ok_or("missing source observed_at")?)
         .map_err(str::to_owned)?;
     let success = utc_ms(source.last_success_at.as_deref().ok_or("missing source success_at")?)
         .map_err(str::to_owned)?;
-    if source.schema_version != 1
-        || source.source_id != "host_cgroup"
-        || source.source_version != "cgroup-v2-effective-v1"
-        || source.payload.kind != "host_cgroup"
-        || !source.quality.instrumentation_complete
-        || source.payload.cpu_period_usec.0 == 0
-        || source.generation.0 == 0
-        || source.availability != "available"
-        || source.clock_quality != "valid"
-        || source.coverage.status != "partial"
-        || source.coverage.sampling_policy != "fixed_cgroup_v2_15s"
-        || !source.coverage.gaps.is_empty()
-        || source.coverage.missing_fields.len() > 64
-        || source.coverage.missing_fields.iter().any(|field| field.len() > 96)
-        || source.node_id != record.node_id
+    if source.node_id != record.node_id
         || source.scope_id != record.scope_id
         || source.process_epoch != record.process_epoch
         || source.source_epoch != row.evidence.source_epoch
@@ -594,7 +557,6 @@ fn project_host(row: &EvidenceRow) -> Result<Option<Evidence>, String> {
         || !record.quality.clock_valid
         || !record.redacted
         || source.received_at.is_some()
-        || canonical_hash(&source.payload)? != source.content_hash
     {
         return Err("archived host source mismatch".into());
     }
