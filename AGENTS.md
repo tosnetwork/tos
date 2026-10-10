@@ -93,8 +93,9 @@ git worktree add --detach ../tos-main origin/main   # once; then configure and b
 scripts/static-analysis.py --build-dir build --base-build-dir ../tos-main/build
 ```
 
-Both builds must be up to date, as ninja judges it, for the files the analysis
-reads; the gate says which one to rebuild when they are not.
+The gate has ninja build the generated files each side reads, then compares
+the two sides' generated files, so a change to a schema or a contract is
+analysed through the code generated from it.
 
 Exit 0 means no new blocking finding, 1 lists the new blocking findings, and 2
 means the gate could not establish a result. A new finding in a blocking check
