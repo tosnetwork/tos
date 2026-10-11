@@ -102,10 +102,41 @@ fn wal_budget(conn: &Connection, path: &Path, quota: u64) -> Result<()> {
     }
     Ok(())
 }
-/// A write refused for space, not for content: page quota, WAL budget or a
-/// full filesystem. Only these justify an out-of-schedule retention pass.
+/// Ingest stops at seven eighths of the page quota. Retention deletes rows and,
+/// in the same transaction, writes tombstones and seals; deleting small inline
+/// rows frees no whole page, so if ingest could take every page, a pass that
+/// needed one new page would fail and the database would stay full for good.
+const INGEST_HEADROOM_ERROR: &str = "evidence quota headroom reserved for retention";
+
+/// Refuse a write that would leave retention less than an eighth of the
+/// quota. `incoming` is the new row bytes the write adds; it is doubled for
+/// index entries and page overhead. The quota is read back from the
+/// connection's own page limit, so every caller applies the same bound.
+pub(crate) fn ingest_headroom(conn: &Connection, incoming: usize) -> Result<()> {
+    let pragma = |name: &str| -> Result<u64> {
+        conn.pragma_query_value(None, name, |r| r.get(0)).map_err(err)
+    };
+    let page = pragma("page_size")?;
+    let quota = pragma("max_page_count")?.checked_mul(page).ok_or("database quota overflow")?;
+    let used = pragma("page_count")?
+        .checked_sub(pragma("freelist_count")?)
+        .and_then(|pages| pages.checked_mul(page))
+        .ok_or("database page accounting overflow")?;
+    let growth =
+        u64::try_from(incoming).map_err(err)?.checked_mul(2).ok_or("incoming size overflow")?;
+    let limit = quota.checked_sub(quota / 8).ok_or("database quota underflow")?;
+    if used.checked_add(growth).ok_or("database page accounting overflow")? > limit {
+        return Err(INGEST_HEADROOM_ERROR.into());
+    }
+    Ok(())
+}
+
+/// A write refused for space, not for content: ingest headroom, page quota,
+/// WAL budget or a full filesystem. Only these justify an out-of-schedule
+/// retention pass.
 pub fn is_capacity_error(error: &str) -> bool {
-    error == "WAL quota exceeded"
+    error == INGEST_HEADROOM_ERROR
+        || error == "WAL quota exceeded"
         || error.contains("database or disk is full")
         || error.contains("disk I/O error")
 }
@@ -989,6 +1020,8 @@ impl EvidenceDb {
         )? {
             return Err("EVIDENCE_EXPIRED".into());
         }
+        // Only a new row needs space; a duplicate returned its original reply above.
+        ingest_headroom(&tx, body.len())?;
         tx.execute("INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![e.node_id,e.scope_id,e.process_epoch,value.source_epoch,e.source_id,e.source_record_id,digest,body]).map_err(err)?;
         let seq = tx.last_insert_rowid();
         tx.commit().map_err(err)?;
@@ -1096,6 +1129,7 @@ impl EvidenceDb {
         if count >= 4096 {
             return Err("witness archive capacity".into());
         }
+        ingest_headroom(&tx, body_text.len())?;
         tx.execute("INSERT INTO witness_observations(observer_epoch,endpoint,source_epoch,generation,source_hash,metadata_hash,evidence_id,body)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
             params![receipt.observer_epoch, endpoint, receipt.source_epoch, receipt.generation.0.to_string(),
