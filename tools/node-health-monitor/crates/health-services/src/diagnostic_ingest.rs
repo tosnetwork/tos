@@ -168,6 +168,17 @@ pub(crate) fn insert(conn: &mut Connection, batch: &DiagnosticBatch) -> Result<A
             insert_flags.push(true);
         }
     }
+    // Only the rows this batch adds need space; an exact retry of a stored
+    // batch is acknowledged without them.
+    let added = rows
+        .iter()
+        .zip(&insert_flags)
+        .filter(|(_, insert)| **insert)
+        .try_fold(0usize, |total, ((_, _, body), _)| total.checked_add(body.len()))
+        .ok_or("diagnostic batch size overflow")?;
+    if added > 0 {
+        crate::durable::ingest_headroom(&tx, added)?;
+    }
     for ((value, digest, body), insert) in rows.iter().zip(insert_flags) {
         if insert {
             tx.execute("INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body) VALUES(?1,'node',?2,?2,?3,?4,?5,?6)",
@@ -495,15 +506,14 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
         let path = directory.join("evidence.db");
         let mut bounded = crate::durable::EvidenceDb::open(&path, 262144).unwrap();
-        // Ingest stops at seven eighths of the quota, so a batch must be larger
-        // than that headroom to be admitted and still exhaust the page quota
-        // inside its own transaction; the assertion below requires exactly that.
+        // Admission refuses a batch that would leave retention less than an
+        // eighth of the quota; a refused batch commits nothing and gets no ACK.
         let mut accepted = 0u64;
-        for number in 0..8 {
-            let sequences = (number * 64..number * 64 + 64).collect::<Vec<_>>();
+        for number in 0..32 {
+            let sequences = (number * 16..number * 16 + 16).collect::<Vec<_>>();
             match bounded.insert_diagnostic(&batch(&sequences)) {
                 Ok(_) => {
-                    accepted += 64;
+                    accepted += 16;
                     Connection::open(&path)
                         .unwrap()
                         .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -511,7 +521,7 @@ mod tests {
                 }
                 Err(error) => {
                     assert!(
-                        error.contains("database or disk is full"),
+                        crate::durable::is_capacity_error(&error),
                         "wrong quota failure: {error}"
                     );
                     break;

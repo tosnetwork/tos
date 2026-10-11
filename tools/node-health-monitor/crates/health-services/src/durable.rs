@@ -108,16 +108,24 @@ fn wal_budget(conn: &Connection, path: &Path, quota: u64) -> Result<()> {
 /// needed one new page would fail and the database would stay full for good.
 const INGEST_HEADROOM_ERROR: &str = "evidence quota headroom reserved for retention";
 
-fn ingest_headroom(conn: &Connection, quota: u64) -> Result<()> {
+/// Refuse a write that would leave retention less than an eighth of the
+/// quota. `incoming` is the new row bytes the write adds; it is doubled for
+/// index entries and page overhead. The quota is read back from the
+/// connection's own page limit, so every caller applies the same bound.
+pub(crate) fn ingest_headroom(conn: &Connection, incoming: usize) -> Result<()> {
     let pragma = |name: &str| -> Result<u64> {
         conn.pragma_query_value(None, name, |r| r.get(0)).map_err(err)
     };
+    let page = pragma("page_size")?;
+    let quota = pragma("max_page_count")?.checked_mul(page).ok_or("database quota overflow")?;
     let used = pragma("page_count")?
         .checked_sub(pragma("freelist_count")?)
-        .and_then(|pages| pages.checked_mul(pragma("page_size").ok()?))
+        .and_then(|pages| pages.checked_mul(page))
         .ok_or("database page accounting overflow")?;
+    let growth =
+        u64::try_from(incoming).map_err(err)?.checked_mul(2).ok_or("incoming size overflow")?;
     let limit = quota.checked_sub(quota / 8).ok_or("database quota underflow")?;
-    if used > limit {
+    if used.checked_add(growth).ok_or("database page accounting overflow")? > limit {
         return Err(INGEST_HEADROOM_ERROR.into());
     }
     Ok(())
@@ -960,7 +968,6 @@ impl EvidenceDb {
     }
     pub fn insert(&mut self, value: DurableEvidence) -> Result<EvidenceRow> {
         wal_budget(&self.conn, &self.path, self.quota)?;
-        ingest_headroom(&self.conn, self.quota)?;
         if value.source_epoch.is_empty() || value.source_epoch.len() > 128 {
             return Err("invalid source epoch".into());
         }
@@ -1013,6 +1020,8 @@ impl EvidenceDb {
         )? {
             return Err("EVIDENCE_EXPIRED".into());
         }
+        // Only a new row needs space; a duplicate returned its original reply above.
+        ingest_headroom(&tx, body.len())?;
         tx.execute("INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",params![e.node_id,e.scope_id,e.process_epoch,value.source_epoch,e.source_id,e.source_record_id,digest,body]).map_err(err)?;
         let seq = tx.last_insert_rowid();
         tx.commit().map_err(err)?;
@@ -1027,7 +1036,6 @@ impl EvidenceDb {
         batch: &tos_health_core::contracts::DiagnosticBatch,
     ) -> Result<crate::diagnostic_ingest::Ack> {
         wal_budget(&self.conn, &self.path, self.quota)?;
-        ingest_headroom(&self.conn, self.quota)?;
         crate::diagnostic_ingest::insert(&mut self.conn, batch)
     }
     pub fn insert_witness(
@@ -1036,7 +1044,6 @@ impl EvidenceDb {
         plan: &Plan,
     ) -> Result<WitnessArchiveRow> {
         wal_budget(&self.conn, &self.path, self.quota)?;
-        ingest_headroom(&self.conn, self.quota)?;
         let body = serde_json::to_vec(&response).map_err(err)?;
         let endpoint = &response.receipt.endpoint_id;
         let _source = CacheResponse::decode(&body, plan, endpoint).map_err(str::to_owned)?;
@@ -1122,6 +1129,7 @@ impl EvidenceDb {
         if count >= 4096 {
             return Err("witness archive capacity".into());
         }
+        ingest_headroom(&tx, body_text.len())?;
         tx.execute("INSERT INTO witness_observations(observer_epoch,endpoint,source_epoch,generation,source_hash,metadata_hash,evidence_id,body)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
             params![receipt.observer_epoch, endpoint, receipt.source_epoch, receipt.generation.0.to_string(),

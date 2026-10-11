@@ -855,7 +855,19 @@ impl Manager {
                             // Current qualification must use this incoming validated
                             // body, which is bound to the transit digest.
                             let incoming = (*value).clone();
-                            let archived = evidence_db.insert_witness(*value, &plan);
+                            let archived = match evidence_db.insert_witness(incoming.clone(), &plan)
+                            {
+                                Err(error)
+                                    if schedule.recover(
+                                        &mut evidence_db,
+                                        &retention_writer,
+                                        &error,
+                                    ) =>
+                                {
+                                    evidence_db.insert_witness(*value, &plan)
+                                }
+                                other => other,
+                            };
                             if archived.is_ok() {
                                 // A current refusal cannot erase a valid historical commit.
                                 if _current_slot.is_none() {

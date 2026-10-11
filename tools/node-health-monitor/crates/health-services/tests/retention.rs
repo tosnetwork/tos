@@ -346,17 +346,29 @@ fn retention_frees_a_quota_full_of_small_inline_rows() {
     let now = now_ms();
     let mut refused = None;
     let mut generation = 0u64;
+    let mut last = None;
     for _ in 0..10_000 {
         generation += 1;
         let mut row = record("native_core", generation, now - 3 * DAY);
         row.record.payload["excerpt"] = "a".repeat(1_500).into();
-        if let Err(error) = db.insert(row) {
-            refused = Some(error);
-            break;
+        match db.insert(row.clone()) {
+            Ok(stored) => last = Some((row, stored)),
+            Err(error) => {
+                refused = Some(error);
+                break;
+            }
         }
     }
     let refused = refused.expect("quota was never reached");
     assert!(is_capacity_error(&refused), "{refused}");
+    // An exact retry of a stored row needs no space and gets its original reply.
+    let (row, stored) = last.expect("some rows were admitted");
+    let retried = db.insert(row).expect("a retry past the limit is acknowledged");
+    assert_eq!(
+        (retried.store_seq, retried.evidence_id),
+        (stored.store_seq, stored.evidence_id),
+        "a retry must return the original row"
+    );
     // Ingest stops once past seven eighths; the last admitted row may overshoot
     // by its own size, so at least a sixteenth is always left for retention.
     let used = used_bytes(&path);
