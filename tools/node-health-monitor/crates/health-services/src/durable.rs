@@ -102,10 +102,33 @@ fn wal_budget(conn: &Connection, path: &Path, quota: u64) -> Result<()> {
     }
     Ok(())
 }
-/// A write refused for space, not for content: page quota, WAL budget or a
-/// full filesystem. Only these justify an out-of-schedule retention pass.
+/// Ingest stops at seven eighths of the page quota. Retention deletes rows and,
+/// in the same transaction, writes tombstones and seals; deleting small inline
+/// rows frees no whole page, so if ingest could take every page, a pass that
+/// needed one new page would fail and the database would stay full for good.
+const INGEST_HEADROOM_ERROR: &str = "evidence quota headroom reserved for retention";
+
+fn ingest_headroom(conn: &Connection, quota: u64) -> Result<()> {
+    let pragma = |name: &str| -> Result<u64> {
+        conn.pragma_query_value(None, name, |r| r.get(0)).map_err(err)
+    };
+    let used = pragma("page_count")?
+        .checked_sub(pragma("freelist_count")?)
+        .and_then(|pages| pages.checked_mul(pragma("page_size").ok()?))
+        .ok_or("database page accounting overflow")?;
+    let limit = quota.checked_sub(quota / 8).ok_or("database quota underflow")?;
+    if used > limit {
+        return Err(INGEST_HEADROOM_ERROR.into());
+    }
+    Ok(())
+}
+
+/// A write refused for space, not for content: ingest headroom, page quota,
+/// WAL budget or a full filesystem. Only these justify an out-of-schedule
+/// retention pass.
 pub fn is_capacity_error(error: &str) -> bool {
-    error == "WAL quota exceeded"
+    error == INGEST_HEADROOM_ERROR
+        || error == "WAL quota exceeded"
         || error.contains("database or disk is full")
         || error.contains("disk I/O error")
 }
@@ -937,6 +960,7 @@ impl EvidenceDb {
     }
     pub fn insert(&mut self, value: DurableEvidence) -> Result<EvidenceRow> {
         wal_budget(&self.conn, &self.path, self.quota)?;
+        ingest_headroom(&self.conn, self.quota)?;
         if value.source_epoch.is_empty() || value.source_epoch.len() > 128 {
             return Err("invalid source epoch".into());
         }
@@ -1003,6 +1027,7 @@ impl EvidenceDb {
         batch: &tos_health_core::contracts::DiagnosticBatch,
     ) -> Result<crate::diagnostic_ingest::Ack> {
         wal_budget(&self.conn, &self.path, self.quota)?;
+        ingest_headroom(&self.conn, self.quota)?;
         crate::diagnostic_ingest::insert(&mut self.conn, batch)
     }
     pub fn insert_witness(
@@ -1011,6 +1036,7 @@ impl EvidenceDb {
         plan: &Plan,
     ) -> Result<WitnessArchiveRow> {
         wal_budget(&self.conn, &self.path, self.quota)?;
+        ingest_headroom(&self.conn, self.quota)?;
         let body = serde_json::to_vec(&response).map_err(err)?;
         let endpoint = &response.receipt.endpoint_id;
         let _source = CacheResponse::decode(&body, plan, endpoint).map_err(str::to_owned)?;

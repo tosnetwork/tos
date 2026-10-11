@@ -334,6 +334,51 @@ fn a_pass_while_the_quota_is_full_frees_space_for_the_next_insert() {
 }
 
 #[test]
+fn retention_frees_a_quota_full_of_small_inline_rows() {
+    // Live rows are about 1.7 KB and stay inline in table pages, so deleting
+    // one frees no whole page. If ingest could fill every page, a retention
+    // pass whose first tombstone needs a new page would fail and the database
+    // would stay full. Ingest must stop with headroom left for retention.
+    let t = Temp::new();
+    let path = t.0.join("evidence.db");
+    let quota = 1_048_576u64;
+    let mut db = EvidenceDb::open(&path, quota).unwrap();
+    let now = now_ms();
+    let mut refused = None;
+    let mut generation = 0u64;
+    for _ in 0..10_000 {
+        generation += 1;
+        let mut row = record("native_core", generation, now - 3 * DAY);
+        row.record.payload["excerpt"] = "a".repeat(1_500).into();
+        if let Err(error) = db.insert(row) {
+            refused = Some(error);
+            break;
+        }
+    }
+    let refused = refused.expect("quota was never reached");
+    assert!(is_capacity_error(&refused), "{refused}");
+    // Ingest stops once past seven eighths; the last admitted row may overshoot
+    // by its own size, so at least a sixteenth is always left for retention.
+    let used = used_bytes(&path);
+    assert!(
+        used <= quota - quota / 16,
+        "ingest used {used} of {quota} bytes and left retention no headroom"
+    );
+    let pass = db.retain(&policy(DAY as u64), now).expect("retention runs at the ingest limit");
+    assert!(pass.observations_deleted > 0);
+    let mut fresh = record("native_core", generation + 1, now);
+    fresh.record.payload["excerpt"] = "b".repeat(1_500).into();
+    db.insert(fresh).expect("ingest resumes after retention");
+}
+
+/// Bytes of the database's pages that hold data (page count minus free pages).
+fn used_bytes(path: &std::path::Path) -> u64 {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    let pragma = |name: &str| -> u64 { conn.pragma_query_value(None, name, |r| r.get(0)).unwrap() };
+    (pragma("page_count") - pragma("freelist_count")) * pragma("page_size")
+}
+
+#[test]
 fn a_parent_the_query_service_retained_within_the_floor_is_never_deleted() {
     let t = Temp::new();
     let path = t.0.join("evidence.db");

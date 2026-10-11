@@ -495,12 +495,15 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
         let path = directory.join("evidence.db");
         let mut bounded = crate::durable::EvidenceDb::open(&path, 262144).unwrap();
+        // Ingest stops at seven eighths of the quota, so a batch must be larger
+        // than that headroom to be admitted and still exhaust the page quota
+        // inside its own transaction; the assertion below requires exactly that.
         let mut accepted = 0u64;
-        for number in 0..32 {
-            let sequences = (number * 16..number * 16 + 16).collect::<Vec<_>>();
+        for number in 0..8 {
+            let sequences = (number * 64..number * 64 + 64).collect::<Vec<_>>();
             match bounded.insert_diagnostic(&batch(&sequences)) {
                 Ok(_) => {
-                    accepted += 16;
+                    accepted += 64;
                     Connection::open(&path)
                         .unwrap()
                         .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -515,7 +518,10 @@ mod tests {
                 }
             }
         }
-        assert!(accepted > 0 && accepted < 512, "finite SQLite page quota must trip");
+        assert!(
+            accepted > 0 && accepted < 512,
+            "finite SQLite page quota must trip (accepted {accepted})"
+        );
         let count = Connection::open(&path)
             .unwrap()
             .query_row("SELECT count(*) FROM observations", [], |r| r.get::<_, u64>(0))
