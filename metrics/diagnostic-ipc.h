@@ -18,6 +18,12 @@ class DiagnosticIpc {
       : path_(std::move(path)), peer_(peer), producer_(diagnostic_stats, epoch, sampling), epoch_(epoch) {
   }
   bool start() {
+#if !defined(__linux__)
+    // The handshake authenticates the peer with SO_PASSCRED/SCM_CREDENTIALS,
+    // which only Linux provides. Without it the peer cannot be verified, so
+    // the diagnostic stream stays disabled rather than sending unauthenticated.
+    return false;
+#else
     if (diagnostic_producer.load() != nullptr || peer_ <= 0 || !private_path())
       return false;
     producer_.enable();
@@ -30,6 +36,7 @@ class DiagnosticIpc {
       return false;
     }
     return true;
+#endif
   }
   void stop() noexcept {
     producer_.disable();
@@ -54,6 +61,7 @@ class DiagnosticIpc {
       return errno == ENOENT;
     return S_ISSOCK(st.st_mode) && st.st_uid == getuid() && (st.st_mode & 0077) == 0;
   }
+#if defined(__linux__)
   bool connect_peer() noexcept {
     if (!private_path())
       return false;
@@ -168,6 +176,7 @@ class DiagnosticIpc {
       diagnostic_stats.drop(DiagnosticProducer::Drop::Shutdown);
     disconnect();
   }
+#endif
   std::string path_;
   pid_t peer_;
   DiagnosticProducer producer_;

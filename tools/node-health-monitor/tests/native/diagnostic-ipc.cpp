@@ -3,6 +3,23 @@
 
 #include "metrics/diagnostic-ipc.h"
 
+#if !defined(__linux__)
+// Without kernel peer credentials the handshake cannot authenticate the edge
+// process, so startup must refuse even when every other precondition holds.
+int main() {
+  using namespace tos::health;
+  char directory[] = "/tmp/nhm-c06-ipc-XXXXXX";
+  assert(mkdtemp(directory) != nullptr);
+  const auto path = std::string(directory) + "/diagnostic.sock";
+  std::array<std::uint8_t, 16> epoch{};
+  epoch.fill(0x23);
+  diagnostic_ipc = std::make_unique<DiagnosticIpc>(path, getpid(), epoch, 1);
+  assert(!diagnostic_ipc->start());
+  assert(diagnostic_producer.load() == nullptr);
+  diagnostic_ipc.reset();
+  assert(rmdir(directory) == 0);
+}
+#else
 int main(int argc, char **) {
   using namespace tos::health;
   char directory[] = "/tmp/nhm-c06-ipc-XXXXXX";
@@ -96,3 +113,4 @@ int main(int argc, char **) {
   }
   assert(rmdir(directory) == 0);
 }
+#endif
