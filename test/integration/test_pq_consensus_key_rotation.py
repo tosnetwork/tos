@@ -616,8 +616,25 @@ async def hard_deadline(install: Install, directory: Path, base_port: int, timeo
             raise Failure(f"candidates were signed at or after the deadline: {late[:3]}")
         if not re.search(r"BlockProducer\]\s+Published event [^\n]*CandidateGenerated", log):
             raise Failure("no candidate was ever logged; the deadline check measured nothing")
-        if "(the consensus key has expired)" not in log:
-            raise Failure("the expired key's refused signatures were not logged as such")
+        # The engine stops in one of two correct ways, decided by timing: the running group
+        # tries to sign and is refused for the expired key, or the manager first applies a
+        # masterchain update after the deadline, finds no unexpired key for the set and
+        # retires the group, which then never signs again. A slow host makes the second
+        # likely. Either must be visible; a node that simply went quiet is neither.
+        refused_as_expired = "(the consensus key has expired)" in log
+        retired = [
+            stamp
+            for stamp in re.findall(
+                r"\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.\d+\]\[[^\]]*\]\[[^\]]*\]\s+Retiring active ",
+                log,
+            )
+            if calendar.timegm(time.strptime(stamp, "%Y-%m-%d %H:%M:%S")) >= expire_at
+        ]
+        if not refused_as_expired and not retired:
+            raise Failure(
+                "the expired key stopped signing, but neither a refusal for the expired key "
+                "nor a group retired at the deadline was logged"
+            )
         await refused(stake(node, 1, k["a_id"]), "expired", "a stake named with expired A")
         # B is never signed with for the set listing A, and the schedule does not hand A's
         # elections to B either.
