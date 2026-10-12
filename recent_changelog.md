@@ -1,16 +1,15 @@
-## 2026.04 Recent Changes
+## 2026.10 Update
 
-0. Project positioning update:
-Updated the root README and roadmap to position TOS as an actor-model blockchain for independent AI agents, asynchronous coordination, verifiable workflows, and native on-chain payments. The roadmap now focuses on agent accounts, task contracts, capability registries, service actors, and verifiable AI workflow primitives.
+The first TOS release built for a public network. It is published as `v2026.10-1`; the tag `v2026.10` names an earlier commit and has no release.
 
-1. Wallet security hardening:
-Added `global_id` anti-replay protection to wallet signing and verification, so wallet messages signed for one network are rejected on another. This applies across wallet contracts, Fift scripts, C++ signing code, zerostate generation, and `toslib` wallet wiring.
-
-2. Wallet contract refresh:
-Unified wallet bytecode loading on auto-generated contract code, removed legacy hardcoded wallet revisions, added `Wallet V4` and `Wallet V5` contract sources, and aligned test coverage with the new wallet signing format and revision model.
-
-3. Build and compatibility cleanup:
-Adjusted build and compatibility details needed by the wallet changes, including compiler compatibility fixes and test expectation updates.
-
-4. Slice 1 actor-layer envelope discipline (on the `actor-layer` branch):
-Documented the Slice 1 actor-layer envelope discipline in [`tos-message-policy.md`](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md). Slice 1 ships zero wire-format changes — TL-B schema, opcode assignments, and the v12 bounce body are all unchanged — and introduces an opt-in Tol-stdlib `Envelope` / `Error` / `OP_ERROR` discipline plus three reference migrations (`jetton-minter`, `jetton-wallet`, `wallet-v5`), each within the §10.1 ≤ 15% bytecode budget. No FunC contract needs to be redeployed; the migration is opt-in per contract.
+1. Post-quantum validator consensus: validators sign blocks and certificates with ML-DSA-44 under Simplex v2 over QUIC. Genesis commits four PQ validators from a public-key manifest (`validator-pq.pub`); later sets are elected through controller contracts admitted by ConfigParam 47. A validator can hold several consensus keys for zero-downtime key rotation.
+2. Launch cap of 21 active validators, enforced as a rejection rather than a clamp (`config/pq-launch-limits.json`).
+3. Global version 16, the version the canonical genesis activates: TVM verifies ML-DSA-44 signatures and computes Poseidon2. On it run the ML-DSA-44 authentication modules for Wallet V5 and Agent Account, the post-quantum high-volume wallet and the M-of-N ML-DSA-44 quorum library. Not activated by this release: the Quantum wallet with its SLH-DSA rescue key is a draft candidate for a version-18 profile, and the Falcon-512 wallet path is gated at version 19 for development only.
+4. Shielded pool V1 code: private transfers of native TOS on workchain 0, Poseidon2 in both VMs, and a Groth16 verifier. It is **not approved for activation** on mainnet or testnet until the acceptance gates of `artifacts/shielded-pool/PROFILE.md` section 19 pass. The only committed verifying key is a development key whose setup randomness is known, and the production phase-2 ceremony has not taken place. Do not deploy the pool with the development key on any network that holds value.
+5. Validator economics: issuance goes to validators only, about 10 million TOS over the first two years from block-creation fees. The genesis bootstrap wallet funds the first elections and its remainder is burned.
+6. Elector: pooled staking through single-nominator pools, corrected principal accounting and relay refund recovery, and cancellation of a closed election that cannot be conducted.
+7. Operator tooling: release archives ship the PQ consensus-key, controller, vote and offline root-key tools; `tos-pq-consensus-key bind-node`; `tosctl` checks and plans operating authorization, deploys controllers and creates configuration proposals; retired consensus databases are cleaned up by default.
+8. Hardening before launch: five security rounds over consensus, JSON-RPC and networking; bounded growth paths in ADNL, overlay, QUIC, RLDP2, HTTP and storage; RLDP v1 and the catchain session removed; signed overlay receive policy and Plumtree broadcasts; capacity-starvation fixes; and the upstream 2026.07 and 2026.08 fixes absorbed.
+9. Contracts: `.tos` DNS, cross-chain bridge contract planes (the off-chain relayer is not part of this release), Agent Account with Task Escrow, a capability registry, the V1 prediction market, config-priced jetton fees, high-volume wallets and multisig.
+10. Node health monitor for validators and observers.
+11. Platforms: the node and its tools are built, tested and released for Linux on x86-64 and arm64 only, on Ubuntu 24.04. Release binaries need glibc 2.39 or newer and do not run on Ubuntu 22.04. The node container image is published for both architectures.
