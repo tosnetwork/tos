@@ -17,6 +17,8 @@
 #include "rldp2/rldp.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "test/consensus-checkpoint-chain.h"
+#include "validator/consensus/db-path.h"
 #include "td/utils/tests.h"
 #include "test/plumtree/scheduler.h"
 #include "test/plumtree/transport.h"
@@ -426,6 +428,56 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   void closed(td::Promise<std::set<ValidatorSessionId>> promise) {
     promise.set_value(std::set<ValidatorSessionId>(closed_.begin(), closed_.end()));
   }
+  // Production stops the process here (exit status 2); the fixture records the
+  // call and returns, and production code returns right after the hook.
+  void fail_stop_consensus_checkpoint(td::Status status) override {
+    fail_stops_.push_back(status.message().str());
+  }
+  void fail_stops(td::Promise<std::vector<std::string>> promise) {
+    promise.set_value(std::vector<std::string>(fail_stops_));
+  }
+  // The rest of start-up after the init handoff talks to the network.
+  void continue_start_up() override {
+  }
+  // Stores a real block's handle and state, as the node would have.
+  void seed_block(BlockIdExt id, td::Ref<MasterchainStateQ> state, td::Promise<> promise) {
+    auto handle = create_empty_block_handle(id);
+    handle->set_logical_time(state->get_logical_time());
+    handle->set_unix_time(state->get_unix_time());
+    handle->set_split(false);
+    handle->set_merge(false);
+    handle->set_is_key_block(false);
+    handle->set_applied();
+    handle->set_applied_stored();
+    handle->set_processed();
+    auto db = db_.get();
+    td::actor::send_closure(
+        db, &Db::store_block_state, handle, td::Ref<ShardState>{state}, vm::StoreCellHint{},
+        [db, handle, promise = std::move(promise)](td::Result<td::Ref<ShardState>> R) mutable {
+          if (R.is_error()) {
+            return promise.set_error(R.move_as_error());
+          }
+          td::actor::send_closure(db, &Db::store_block_handle, handle, std::move(promise));
+        });
+  }
+  // Persists a checkpoint and installs it, as an acknowledged write does.
+  void persist_and_install_checkpoint(BlockIdExt id, td::Promise<> promise) {
+    if (!consensus_checkpoint_loaded_) {
+      install_loaded_consensus_cleanup_checkpoint({}, {});
+    }
+    persist_then_install(id, std::move(promise)).start().detach_silent();
+  }
+  // The production loader reads the checkpoint from this root's database, and
+  // its result goes through the production init handoff (started) with a head
+  // given by the test.
+  void start_from_disk(Snapshot snapshot, BlockIdExt head_id, std::set<BlockIdExt> ancestors,
+                       td::Promise<bool> promise) {
+    load_and_start(std::move(snapshot), head_id, std::move(ancestors), std::move(promise)).start().detach_silent();
+  }
+  void cleanup_tick(td::Promise<> promise) {
+    validator_cleanup_timer();
+    promise.set_value(td::Unit());
+  }
   void consensus_db_closed(ValidatorSessionId session_id, td::uint64 generation, std::string dir_name) override {
     closed_.insert(session_id);
     ValidatorManagerImpl::consensus_db_closed(session_id, generation, std::move(dir_name));
@@ -453,6 +505,47 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   }
 
  private:
+  td::actor::Task<> persist_then_install(BlockIdExt id, td::Promise<> promise) {
+    auto r = co_await persist_then_install_inner(id).wrap();
+    promise.set_result(std::move(r));
+    co_return td::Unit{};
+  }
+  td::actor::Task<> persist_then_install_inner(BlockIdExt id) {
+    co_await td::actor::ask(db_.get(), &Db::update_consensus_cleanup_checkpoint, id);
+    auto handle = co_await td::actor::ask(actor_id(this), &ValidatorManager::get_block_handle, id, false);
+    auto state = td::Ref<MasterchainState>{
+        co_await td::actor::ask(actor_id(this), &ValidatorManager::get_shard_state_from_db, ConstBlockHandle{handle})};
+    install_consensus_cleanup_checkpoint(std::move(handle), std::move(state));
+    co_return td::Unit{};
+  }
+  td::actor::Task<> load_and_start(Snapshot snapshot, BlockIdExt head_id, std::set<BlockIdExt> ancestors,
+                                   td::Promise<bool> promise) {
+    auto loaded = co_await load_consensus_cleanup_checkpoint_for_startup(db_.get(), actor_id(this)).wrap();
+    if (loaded.is_error()) {
+      promise.set_error(loaded.move_as_error());
+      co_return td::Unit{};
+    }
+    auto checkpoint = loaded.move_as_ok();
+    auto head = create_empty_block_handle(head_id);
+    head->set_is_key_block(false);
+    head->set_unix_time(static_cast<UnixTime>(td::Clocks::system()));
+    head->set_applied();
+    head->flushed_upto(head->version());
+    auto head_state = td::Ref<MasterchainState>{td::make_ref<State>(head_id, std::move(snapshot), std::move(ancestors))};
+    ValidatorManagerInitResult R;
+    R.handle = head;
+    R.state = head_state;
+    R.gc_handle = head;
+    R.gc_state = head_state;
+    R.last_key_block_handle_ = last_key_block_handle_;
+    R.consensus_cleanup_checkpoint_handle = std::move(checkpoint.handle);
+    R.consensus_cleanup_checkpoint_state = std::move(checkpoint.state);
+    started(std::move(R));
+    new_masterchain_block();
+    promise.set_value(bool{consensus_checkpoint_reached_});
+    co_return td::Unit{};
+  }
+  std::vector<std::string> fail_stops_;
   std::set<ValidatorSessionId> closed_;
   std::vector<td::Promise<td::Ref<ShardState>>> held_state_requests_;
   std::vector<td::Promise<td::Ref<BlockData>>> held_data_requests_;
@@ -652,6 +745,64 @@ class Fixture {
              td::actor::send_closure(manager_, &TwostepManagerProbe::closed, std::move(promise));
            })
         .move_as_ok();
+  }
+  std::vector<std::string> fail_stops() {
+    return query<std::vector<std::string>>([&](auto promise) {
+             td::actor::send_closure(manager_, &TwostepManagerProbe::fail_stops, std::move(promise));
+           })
+        .move_as_ok();
+  }
+  void seed_block(BlockIdExt id, td::Ref<MasterchainStateQ> state) {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::seed_block, id, state, std::move(promise));
+    }).ensure();
+  }
+  td::Status persist_and_install_checkpoint(BlockIdExt id) {
+    auto r = query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::persist_and_install_checkpoint, id, std::move(promise));
+    });
+    pump();
+    return r.is_ok() ? td::Status::OK() : r.move_as_error();
+  }
+  td::Result<bool> start_from_disk(Snapshot snapshot, BlockIdExt head, std::set<BlockIdExt> ancestors) {
+    auto r = query<bool>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::start_from_disk, std::move(snapshot), head,
+                              std::move(ancestors), std::move(promise));
+    });
+    pump();
+    return r;
+  }
+  void cleanup_tick() {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::cleanup_tick, std::move(promise));
+    }).ensure();
+  }
+  bool consensus_dir_exists(ValidatorSessionId session, CatchainSeqno cc) {
+    return td::stat(consensus::consensus_db_root(td::Slice{root_}) +
+                    consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc, session, ""))
+        .is_ok();
+  }
+  // A process restart of the manager on the same database root: the groups are
+  // destroyed, the manager and its database actors stop, and a fresh manager
+  // opens the same root with nothing in memory.
+  void restart_manager() {
+    scheduler_.run_in_context([&] { td::actor::send_closure(manager_, &TwostepManagerProbe::finish); });
+    pump();
+    release_buses();
+    scheduler_.run_in_context([&] {
+      std::lock_guard lock(observation_mutex);
+      overlays.clear();
+      observed_overlays_.clear();
+    });
+    scheduler_.run_in_context([&] { manager_.reset(); });
+    // Let the old groups' and database actors finish closing their databases.
+    for (int i = 0; i < 300; ++i)
+      pump();
+    scheduler_.run_in_context([&] {
+      manager_ = td::actor::create_actor<TwostepManagerProbe>("relay manager", root_, keys_.get(), adnl_.get(),
+                                                              sender_.get(), rldp_.get(), overlays_.get());
+    });
+    pump();
   }
   // Drops the fixture's own references to every bus, so a retired group's bus
   // can finish stopping (a bus stops only once its last reference is gone).
@@ -1246,30 +1397,104 @@ TEST(TwostepWiring, CheckpointRefusesAConflictingHeadBeforeInstallation) {
 }
 
 // A conflict found only after the head was installed (here: a checkpoint is
-// installed that the running head does not descend from) stops every existing
-// validator group, tentative ones included: each one's bus is stopped and its
-// database closed, and none is selected again.
-TEST(TwostepWiring, CheckpointConflictFoundAfterInstallationStopsEveryGroup) {
+// installed that the running head does not descend from) calls the fail-stop
+// hook at once, inside the installation; production exits there (the DB-level
+// test checks the real exit). Nothing waits for retirement first.
+TEST(TwostepWiring, CheckpointConflictFoundAfterInstallationFailStops) {
   Fixture f;
   f.hold(f.current, 0);
   f.hold(f.old, 0);
   f.hold(f.next, 0);
   ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(3), Fixture::main_ancestors(3)).is_ok());
-  auto [active, tentative] = f.validators();
-  ASSERT_TRUE(!active.empty());
-  ASSERT_TRUE(!tentative.empty());
-  std::set<ValidatorSessionId> running(active.begin(), active.end());
-  running.insert(tentative.begin(), tentative.end());
+  auto before = f.validators();
+  ASSERT_TRUE(!before.first.empty());
+  ASSERT_TRUE(f.fail_stops().empty());
   f.install_checkpoint(Fixture::fork_block(2), /*at_runtime=*/true);
+  auto stops = f.fail_stops();
+  ASSERT_EQ(stops.size(), 1u);
+  ASSERT_TRUE(stops[0].find("excludes the consensus cleanup checkpoint") != std::string::npos);
   ASSERT_TRUE(!std::get<1>(f.checkpoint()));
-  auto after = f.validators();
-  ASSERT_TRUE(after.first.empty());
-  ASSERT_TRUE(after.second.empty());
+}
+
+// The restart property through the production loader and the production init
+// handoff. Phase A: a validator session S runs, is retired by a set change, and
+// its consensus database is deleted by the production cleanup pass anchored to a
+// persisted checkpoint (a real masterchain state, B6). The manager restarts on
+// the same root without the destroyed-session fence (as after it was pruned), the
+// production loader reads the checkpoint from disk, and its result goes through
+// started(). Replaying from an older head where S is again the current set never
+// reopens S.
+TEST(TwostepWiring, CheckpointRestartDoesNotReopenADeletedSession) {
+  const char* genesis = std::getenv("TOS_TEST_GENESIS_BOC");
+  ASSERT_TRUE(genesis != nullptr);
+  auto r_chain = checkpoint_chain::build_chain(genesis);
+  ASSERT_TRUE(r_chain.is_ok());
+  auto chain = r_chain.move_as_ok();
+  auto real = [&](BlockSeqno h) { return chain[PSTRING() << "B" << h].id; };
+  auto real_ancestors = [&](BlockSeqno h) {
+    std::set<BlockIdExt> result;
+    for (BlockSeqno i = 1; i < h && i <= 6; ++i)
+      result.insert(real(i));
+    return result;
+  };
+  BlockIdExt h7{masterchainId, shardIdAll, 7, hash("restart-root-7"), hash("restart-file-7")};
+
+  Fixture f;
+  // Only the current epoch's member is held: no observer group, whose database
+  // a restart in one process could not reopen while the old one is closing.
+  f.hold(f.current, 0);
+  auto with_s = f.initial();
+  auto without_s = f.initial();
+  without_s.committee = f.next.set(2, 2);
+  without_s.future = {};
+  // After the restart a different committee follows S's: the observer group the
+  // held key gets then is a new session, not the one still closing in this process.
+  auto without_s_after_restart = f.initial();
+  without_s_after_restart.committee = f.old.set(1, 2);
+  without_s_after_restart.future = {};
+  // Phase A.
+  for (BlockSeqno h : {3u, 4u})
+    ASSERT_TRUE(f.apply_head(with_s, real(h), real_ancestors(h)).is_ok());
+  auto running = f.validators().first;
+  ASSERT_EQ(running.size(), 1u);
+  const auto s = running[0];
+  const CatchainSeqno s_cc = f.current.set(1, 2)->get_catchain_seqno();
+  ASSERT_TRUE(f.consensus_dir_exists(s, s_cc));
+  ASSERT_TRUE(f.apply_head(without_s, real(5), real_ancestors(5)).is_ok());
+  ASSERT_TRUE(f.validators().first.empty());
+  ASSERT_TRUE(f.apply_head(without_s, real(6), real_ancestors(6)).is_ok());
+  for (BlockSeqno h = 1; h <= 6; ++h)
+    f.seed_block(real(h), chain[PSTRING() << "B" << h].state);
+  ASSERT_TRUE(f.persist_and_install_checkpoint(real(6)).is_ok());
   f.release_buses();
-  ASSERT_TRUE(f.eventually([&] {
-    auto closed = f.closed();
-    return std::includes(closed.begin(), closed.end(), running.begin(), running.end());
-  }));
+  ASSERT_TRUE(f.eventually([&] { return f.closed().contains(s); }));
+  f.cleanup_tick();
+  ASSERT_TRUE(f.eventually([&] { return !f.consensus_dir_exists(s, s_cc); }));
+
+  // Restart.
+  f.restart_manager();
+  f.hold(f.current, 0);
+  auto ready = f.start_from_disk(with_s, real(3), real_ancestors(3));
+  ASSERT_TRUE(ready.is_ok());
+  ASSERT_TRUE(!ready.ok());
+  ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{real(6)});
+  auto s_absent = [&] {
+    auto [active, tentative] = f.validators();
+    return std::find(active.begin(), active.end(), s) == active.end() &&
+           std::find(tentative.begin(), tentative.end(), s) == tentative.end() && !f.consensus_dir_exists(s, s_cc);
+  };
+  ASSERT_TRUE(s_absent());
+  ASSERT_TRUE(f.apply_head(with_s, real(4), real_ancestors(4)).is_ok());
+  ASSERT_TRUE(s_absent());
+  for (BlockSeqno h : {5u, 6u}) {
+    ASSERT_TRUE(f.apply_head(without_s_after_restart, real(h), real_ancestors(h)).is_ok());
+    ASSERT_TRUE(s_absent());
+  }
+  auto ancestors7 = real_ancestors(7);
+  ancestors7.insert(real(6));
+  ASSERT_TRUE(f.apply_head(without_s_after_restart, h7, ancestors7).is_ok());
+  ASSERT_TRUE(s_absent());
+  ASSERT_TRUE(std::get<1>(f.checkpoint()));
 }
 
 // The checkpoint advances through the production shard-client entry point only

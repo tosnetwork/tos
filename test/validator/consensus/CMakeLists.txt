@@ -17,6 +17,10 @@ if(USE_QUIC)
   target_link_libraries(test-twostep-wiring PRIVATE validator validator-common validator-db full-node quic tos_validator tos_block tos_crypto
       tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl adnltest overlay dht tl_api tdactor tdutils)
   add_test(NAME test-twostep-wiring COMMAND test-twostep-wiring)
+  # The consensus cleanup checkpoint restart case derives real masterchain states
+  # from this genesis state.
+  set_tests_properties(test-twostep-wiring PROPERTIES
+      ENVIRONMENT "TOS_TEST_GENESIS_BOC=${CMAKE_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc")
 endif()
 target_link_libraries(test-consensus PRIVATE
     adnl

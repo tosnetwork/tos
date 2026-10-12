@@ -96,6 +96,9 @@ struct Facts {
 
 using Tracker = ConsensusCleanupCheckpointTracker<std::pair<BlockIdExt, Facts>>;
 using Outcome = Tracker::Outcome;
+constexpr auto Synced = Tracker::WriteResult::Synced;
+constexpr auto NotAttempted = Tracker::WriteResult::NotAttempted;
+constexpr auto Uncertain = Tracker::WriteResult::Uncertain;
 
 struct Env {
   Chain chain;
@@ -331,7 +334,7 @@ TEST(ConsensusCleanupCheckpoint, the_applied_head_must_cover_every_advancement) 
   ASSERT_TRUE(t.has_pending());
   env.head = block(45);
   ASSERT_TRUE(t.try_issue(0, env.make()).outcome == Outcome::Issued);
-  t.complete(block(40), true);
+  t.complete(block(40), Synced);
   // A later advancement needs the head too, not only the first one.
   env.head = block(140);
   offer(t, block(150));
@@ -355,26 +358,26 @@ TEST(ConsensusCleanupCheckpoint, one_write_in_flight_coalesces_and_ignores_stale
   offer(t, block(80));  // older than what is pending: ignored
   ASSERT_TRUE(t.try_issue(500, env.make()).outcome == Outcome::Idle);
   // A completion for a block that is not in flight changes nothing.
-  ASSERT_TRUE(!t.complete(block(90), true));
+  ASSERT_TRUE(!t.complete(block(90), Synced));
   ASSERT_TRUE(!t.installed());
   ASSERT_TRUE(t.in_flight().value() == block(10));
-  auto installed = t.complete(block(10), true);
+  auto installed = t.complete(block(10), Synced);
   ASSERT_TRUE(installed.has_value());
   ASSERT_TRUE(t.installed().value() == block(10));
   // A duplicate completion of the same write is stale now.
-  ASSERT_TRUE(!t.complete(block(10), true));
+  ASSERT_TRUE(!t.complete(block(10), Synced));
   auto a = t.try_issue(500, env.make());
   ASSERT_TRUE(a.outcome == Outcome::Issued);
   ASSERT_TRUE(a.id == block(90));
 }
 
-TEST(ConsensusCleanupCheckpoint, failed_write_keeps_the_checkpoint_and_counts_as_an_attempt) {
+TEST(ConsensusCleanupCheckpoint, refused_write_keeps_the_checkpoint_and_counts_as_an_attempt) {
   Env env;
   Tracker t;
   t.set_installed(block(10));
   offer(t, block(20));
   ASSERT_TRUE(t.try_issue(100, env.make()).outcome == Outcome::Issued);
-  ASSERT_TRUE(!t.complete(block(20), false));
+  ASSERT_TRUE(!t.complete(block(20), NotAttempted));
   ASSERT_TRUE(t.installed().value() == block(10));
   ASSERT_TRUE(!t.in_flight());
   // The failed attempt is rate-limited like a successful one.
@@ -390,7 +393,7 @@ TEST(ConsensusCleanupCheckpoint, attempts_are_rate_limited_by_blocks_or_time) {
   t.set_installed(block(100));
   offer(t, block(101));
   ASSERT_TRUE(t.try_issue(1000, env.make()).outcome == Outcome::Issued);
-  t.complete(block(101), true);
+  t.complete(block(101), Synced);
   // 63 blocks later and 30 s later: wait.
   offer(t, block(164));
   ASSERT_TRUE(t.try_issue(1030, env.make()).outcome == Outcome::Waiting);
@@ -398,7 +401,7 @@ TEST(ConsensusCleanupCheckpoint, attempts_are_rate_limited_by_blocks_or_time) {
   offer(t, block(165));
   ASSERT_TRUE(t.try_issue(1000.5, env.make()).outcome == Outcome::Waiting);
   ASSERT_TRUE(t.try_issue(1001, env.make()).outcome == Outcome::Issued);
-  t.complete(block(165), true);
+  t.complete(block(165), Synced);
   // Few blocks, but 60 s since the last attempt.
   offer(t, block(166));
   ASSERT_TRUE(t.try_issue(1060.9, env.make()).outcome == Outcome::Waiting);
@@ -412,7 +415,7 @@ TEST(ConsensusCleanupCheckpoint, block_threshold_does_not_overflow_near_the_seqn
   t.set_installed(block(0x7fffffc0));  // the threshold is past this one only by 63 blocks
   offer(t, block(0x7fffffff));
   ASSERT_TRUE(t.try_issue(0, env.make()).outcome == Outcome::Issued);
-  t.complete(block(0x7fffffff), true);
+  t.complete(block(0x7fffffff), Synced);
   ASSERT_TRUE(t.installed().value() == block(0x7fffffff));
   // GC next-seqno arithmetic at the top of the range.
   ASSERT_TRUE(t.gc_may_start_advance(0x7ffffffe));
@@ -453,7 +456,7 @@ TEST(ConsensusCleanupCheckpoint, checkpoint_in_flight_blocks_gc_until_installed)
   ASSERT_TRUE(!t.gc_may_start_advance(7));
   ASSERT_TRUE(!t.gc_may_persist(8));
   ASSERT_TRUE(!t.gc_may_persist(7));
-  t.complete(block(7), true);
+  t.complete(block(7), Synced);
   // GC equals the checkpoint: it may not move.
   ASSERT_TRUE(!t.gc_may_start_advance(7));
   ASSERT_TRUE(t.gc_may_persist(7));
@@ -509,4 +512,166 @@ TEST(ConsensusCleanupCheckpoint, archive_ttl_pruning_keeps_the_checkpoint_packag
   // Sensitivity: once GC is far past the checkpoint, the same pruning does take
   // the checkpoint's package. The instrument can see a deletion.
   ASSERT_EQ(pruned_checkpoint_package(150, 900, 50.0), 1u);
+}
+
+// ---- uncertain writes ----------------------------------------------------------
+
+// A failed write may or may not become durable. GC stays excluded, nothing new is
+// written, and the same id is rewritten (rate-limited) until a synced write
+// succeeds; only then is it installed and GC released. Repeated failures keep it so.
+TEST(ConsensusCleanupCheckpoint, uncertain_write_keeps_gc_excluded_until_a_synced_rewrite) {
+  Env env;
+  Tracker t;
+  t.set_installed(block(10));
+  offer(t, block(80));
+  ASSERT_TRUE(t.try_issue(100, env.make()).outcome == Outcome::Issued);
+  ASSERT_TRUE(!t.complete(block(80), Uncertain));
+  ASSERT_TRUE(t.uncertain());
+  ASSERT_TRUE(t.in_flight().value() == block(80));
+  ASSERT_TRUE(t.installed().value() == block(10));
+  ASSERT_TRUE(!t.gc_may_start_advance(5));
+  ASSERT_TRUE(!t.gc_may_persist(6));
+  // Nothing else is issued meanwhile.
+  offer(t, block(200));
+  ASSERT_TRUE(t.try_issue(500, env.make()).outcome == Outcome::Idle);
+  // Rewrites are rate-limited, and one at a time.
+  ASSERT_TRUE(!t.try_retry(100.5));
+  ASSERT_TRUE(t.try_retry(101).value() == block(80));
+  ASSERT_TRUE(!t.try_retry(105));
+  // Repeated failures keep the exclusion.
+  for (double now : {110.0, 120.0, 130.0}) {
+    ASSERT_TRUE(!t.complete(block(80), Uncertain));
+    ASSERT_TRUE(!t.gc_may_persist(6));
+    ASSERT_TRUE(t.try_retry(now).value() == block(80));
+  }
+  auto installed = t.complete(block(80), Synced);
+  ASSERT_TRUE(installed.has_value());
+  ASSERT_TRUE(t.installed().value() == block(80));
+  ASSERT_TRUE(!t.in_flight());
+  ASSERT_TRUE(!t.uncertain());
+  ASSERT_TRUE(t.gc_may_start_advance(5));
+  ASSERT_TRUE(!t.try_retry(500));
+  // The coalesced candidate is issued next.
+  ASSERT_TRUE(t.try_issue(500, env.make()).outcome == Outcome::Issued);
+}
+
+// "Not attempted" (nothing was written) releases a write only when no earlier
+// attempt of it was uncertain.
+TEST(ConsensusCleanupCheckpoint, not_attempted_releases_only_without_an_earlier_uncertain_attempt) {
+  Env env;
+  {
+    Tracker t;
+    t.set_installed(block(10));
+    offer(t, block(80));
+    ASSERT_TRUE(t.try_issue(100, env.make()).outcome == Outcome::Issued);
+    ASSERT_TRUE(!t.complete(block(80), NotAttempted));
+    ASSERT_TRUE(!t.in_flight());
+    ASSERT_TRUE(t.gc_may_persist(10));
+  }
+  {
+    Tracker t;
+    t.set_installed(block(10));
+    offer(t, block(80));
+    ASSERT_TRUE(t.try_issue(100, env.make()).outcome == Outcome::Issued);
+    ASSERT_TRUE(!t.complete(block(80), Uncertain));
+    ASSERT_TRUE(t.try_retry(101).value() == block(80));
+    ASSERT_TRUE(!t.complete(block(80), NotAttempted));
+    ASSERT_TRUE(t.in_flight().value() == block(80));
+    ASSERT_TRUE(t.uncertain());
+    ASSERT_TRUE(!t.gc_may_persist(10));
+    ASSERT_TRUE(t.try_retry(102).value() == block(80));
+    ASSERT_TRUE(t.complete(block(80), Synced).has_value());
+  }
+}
+
+namespace {
+// A KeyValue over a real RocksDb whose writes can be made to fail, before or
+// after the underlying synced write batch.
+class FaultyKeyValue final : public td::KeyValue {
+ public:
+  explicit FaultyKeyValue(td::KeyValue& inner) : inner_(inner) {
+  }
+  bool fail_set = false;
+  bool fail_after_batch = false;
+  int synced_batches = 0;
+
+  td::Result<GetStatus> get(td::Slice key, std::string& value) override {
+    return inner_.get(key, value);
+  }
+  td::Result<std::vector<GetStatus>> get_multi(td::Span<td::Slice> keys, std::vector<std::string>* values) override {
+    return inner_.get_multi(keys, values);
+  }
+  td::Result<size_t> count(td::Slice prefix) override {
+    return inner_.count(prefix);
+  }
+  td::Status set(td::Slice key, td::Slice value) override {
+    if (fail_set) {
+      return td::Status::Error("injected set failure");
+    }
+    return inner_.set(key, value);
+  }
+  td::Status erase(td::Slice key) override {
+    return inner_.erase(key);
+  }
+  td::Status begin_write_batch() override {
+    return inner_.begin_write_batch();
+  }
+  td::Status commit_write_batch() override {
+    auto status = inner_.commit_write_batch();
+    if (status.is_ok()) {
+      synced_batches++;
+      if (fail_after_batch) {
+        return td::Status::Error("injected failure after the write batch");
+      }
+    }
+    return status;
+  }
+  td::Status abort_write_batch() override {
+    return inner_.abort_write_batch();
+  }
+  td::Status begin_transaction() override {
+    return inner_.begin_transaction();
+  }
+  td::Status commit_transaction() override {
+    return inner_.commit_transaction();
+  }
+  td::Status abort_transaction() override {
+    return inner_.abort_transaction();
+  }
+  std::unique_ptr<td::KeyValueReader> snapshot() override {
+    return inner_.snapshot();
+  }
+
+ private:
+  td::KeyValue& inner_;
+};
+}  // namespace
+
+// The store helper reports every failure, and a store of the value already
+// present is a real synced write, so a rewrite after an uncertain outcome is a
+// durability confirmation and not a no-op.
+TEST(ConsensusCleanupCheckpoint, store_failures_are_reported_and_a_same_id_store_writes) {
+  auto path = temp_db_path();
+  {
+    auto inner = td::RocksDb::open(path).move_as_ok();
+    FaultyKeyValue kv(inner);
+    ASSERT_TRUE(store_consensus_cleanup_checkpoint(kv, block(10)).is_ok());
+    ASSERT_EQ(kv.synced_batches, 1);
+    // A failed set: an error, and the old value stays.
+    kv.fail_set = true;
+    ASSERT_TRUE(store_consensus_cleanup_checkpoint(kv, block(20)).is_error());
+    ASSERT_TRUE(load_consensus_cleanup_checkpoint(kv).ok().value() == block(10));
+    kv.fail_set = false;
+    // The new value is visible, but the store reports a failure: the caller must
+    // not take visibility as durability.
+    kv.fail_after_batch = true;
+    ASSERT_TRUE(store_consensus_cleanup_checkpoint(kv, block(20)).is_error());
+    ASSERT_TRUE(load_consensus_cleanup_checkpoint(kv).ok().value() == block(20));
+    kv.fail_after_batch = false;
+    // Rewriting the same id performs another synced write.
+    int before = kv.synced_batches;
+    ASSERT_TRUE(store_consensus_cleanup_checkpoint(kv, block(20)).is_ok());
+    ASSERT_EQ(kv.synced_batches, before + 1);
+  }
+  td::rmrf(path).ignore();
 }
