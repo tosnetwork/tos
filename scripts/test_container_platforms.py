@@ -18,6 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 UBUNTU = "24.04"
+# The node container image is released for exactly these architectures.
+RELEASE_ARCHES = ["amd64", "arm64"]
 # Architecture names the container build passes in TARGETARCH -> uv release names.
 UV_ARCH = {"amd64": "x86_64", "arm64": "aarch64"}
 
@@ -39,11 +41,17 @@ class ContainerPlatformTests(unittest.TestCase):
         self.dockerfile = (ROOT / "Dockerfile").read_text()
         self.builder_dockerfile = (ROOT / "Dockerfile.builder").read_text()
 
-    def test_builder_covers_every_node_image_architecture(self):
-        builder = set(matrix_arches(self.builder_wf))
-        node = set(matrix_arches(self.node_wf))
-        self.assertTrue(node, "docker-ubuntu-image.yml builds no architecture")
-        self.assertEqual(node - builder, set(), "node image architectures missing from the builder")
+    def test_builder_and_node_image_build_exactly_the_release_architectures(self):
+        # Equality, not a subset: the node image's index job reads one digest per release
+        # architecture, so a matrix that drops one only fails when a release tag is built.
+        self.assertEqual(sorted(matrix_arches(self.node_wf)), RELEASE_ARCHES)
+        self.assertEqual(sorted(matrix_arches(self.builder_wf)), RELEASE_ARCHES)
+
+    def test_node_image_index_joins_every_release_architecture(self):
+        text = self.node_wf.read_text()
+        for arch in RELEASE_ARCHES:
+            with self.subTest(arch=arch):
+                self.assertIn(f"cat digests/{arch}", text)
 
     def test_each_architecture_builds_on_a_native_runner(self):
         for workflow in (self.builder_wf, self.node_wf):
