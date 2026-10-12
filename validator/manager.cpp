@@ -3152,8 +3152,10 @@ void ValidatorManagerImpl::decide_startup_catchup() {
     LOG(ERROR) << "startup catch-up refused: groups exist before the startup group update";
   }
   if (startup_catchup_.decide(refusal)) {
-    LOG(WARNING) << "startup catch-up: entering for a stale validator; last masterchain block "
-                 << last_masterchain_block_id_.to_str() << " is " << static_cast<td::int64>(in.age_seconds)
+    // The startup replay of stored blocks has not run yet: this is where it starts,
+    // not the tip discovery and import will start from.
+    LOG(WARNING) << "startup catch-up: entering for a stale validator; the startup replay starts at "
+                 << last_masterchain_block_id_.to_str() << ", " << static_cast<td::int64>(in.age_seconds)
                  << "s old. Validator and observer groups are fenced until it ends";
   } else {
     LOG(INFO) << "startup catch-up not entered: " << startup_catchup::entry_refusal_name(refusal)
@@ -3171,6 +3173,9 @@ td::actor::Task<> ValidatorManagerImpl::run_startup_catchup_mode() {
     end_startup_catchup(startup_catchup::ExitReason::NotStale);
     co_return td::Unit{};
   }
+  LOG(WARNING) << "startup catch-up: local tip after the startup replay is " << last_masterchain_block_id_.to_str()
+               << ", " << static_cast<td::int64>(age) << "s old; shard client at " << shard_client_handle_->id().seqno()
+               << ". Discovery and import start from it";
   auto reason = co_await startup_catchup::run_startup_catchup(this).wrap();
   if (reason.is_error()) {
     LOG(ERROR) << "startup catch-up stopped: " << reason.error();
