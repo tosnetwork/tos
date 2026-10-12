@@ -54,11 +54,37 @@ class ContainerPlatformTests(unittest.TestCase):
                 self.assertIn(f"cat digests/{arch}", text)
 
     def test_each_architecture_builds_on_a_native_runner(self):
+        # Iterate the required architectures, not the entries that happened to parse: an
+        # entry that lost its runner line would otherwise drop out of the check unnoticed.
         for workflow in (self.builder_wf, self.node_wf):
-            for arch, runner in matrix_runners(workflow).items():
+            runners = matrix_runners(workflow)
+            for arch in RELEASE_ARCHES:
                 with self.subTest(workflow=workflow.name, arch=arch):
                     expected = f"ubuntu-{UBUNTU}-arm" if arch == "arm64" else f"ubuntu-{UBUNTU}"
-                    self.assertEqual(runner, expected)
+                    self.assertEqual(runners.get(arch), expected)
+            with self.subTest(workflow=workflow.name, check="runs-on"):
+                self.assertRegex(
+                    workflow.read_text(), r"(?m)^    runs-on: \$\{\{ matrix\.runner \}\}$"
+                )
+
+    def test_builder_pull_requests_build_but_never_publish(self):
+        text = self.builder_wf.read_text()
+        triggers = re.search(
+            r"(?ms)^  push:\n    branches: \[main\]\n    paths:\n(.*?)^  pull_request:\n    paths:\n(.*?)^\S",
+            text,
+        )
+        self.assertIsNotNone(triggers, "builder workflow has no pull_request trigger after push")
+        push_paths = re.findall(r"(?m)^      - (\S+)$", triggers.group(1))
+        pr_paths = re.findall(r"(?m)^      - (\S+)$", triggers.group(2))
+        self.assertTrue(push_paths)
+        self.assertEqual(push_paths, pr_paths)
+        self.assertIn("push: ${{ github.event_name != 'pull_request' }}", text)
+        self.assertNotRegex(text, r"(?m)^\s+push: true$")
+        # Login, digest hand-off and the index job are all skipped on a pull request.
+        self.assertEqual(text.count("if: github.event_name != 'pull_request'"), 4)
+        self.assertRegex(
+            text, r"(?m)^  index:\n    needs: build\n    if: github\.event_name != 'pull_request'$"
+        )
 
     def test_node_image_builds_from_the_published_multi_arch_tag(self):
         published = re.search(
