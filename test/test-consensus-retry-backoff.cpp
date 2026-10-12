@@ -223,11 +223,21 @@ TEST(ConsensusRetryBackoff, StoppedBeforeTheFirstWait) {
     auto cancellation = std::make_shared<Cancellation>();
     cancellation->cancel();
     Waits waits;
+    size_t constructed = 0;
     auto result = co_await resolve_initial_state<int>(
-                      cancellation, [&]() { return waits.start(); }, [](const td::Status &, td::uint32) {})
+                      cancellation,
+                      [&]() {
+                        constructed++;
+                        return waits.start();
+                      },
+                      [](const td::Status &, td::uint32) {})
                       .wrap();
     ASSERT_TRUE(result.is_error());
     ASSERT_EQ(ErrorCode::cancelled, result.error().code());
+    co_await scheduler.wait_sync_work();
+    // A cancelled resolution neither builds nor starts a wait.
+    ASSERT_EQ(0u, constructed);
+    ASSERT_EQ(0u, waits.started_at.size());
     co_return td::Unit{};
   });
 }

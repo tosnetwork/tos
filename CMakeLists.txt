@@ -1127,6 +1127,15 @@ target_include_directories(test-consensus-retry-backoff PRIVATE ${CMAKE_CURRENT_
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-consensus-retry-backoff PRIVATE tdactor tdutils)
 
+# A production consensus group retired while the manager withholds its initial
+# chain state is destroyed at once, and a late answer starts nothing.
+add_executable(test-bridge-retirement test/validator/consensus/test-bridge-retirement.cpp)
+target_include_directories(test-bridge-retirement PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-bridge-retirement PRIVATE validator validator-common validator-db full-node tos_validator
+                      tos_block tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl adnltest overlay
+                      rldp2 dht tl_api tdactor tdutils)
+
 add_executable(test-pq-network-parser-resource test/pq-native/pq-network-parser-resource-test.cpp)
 target_link_libraries(test-pq-network-parser-resource PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht
                       tl_lite_api tl-lite-utils tos_mldsa44 tos_pq_consensus)
@@ -1970,6 +1979,7 @@ tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-download-refusal-answers)
 tos_test(test-consensus-retry-backoff)
+tos_test(test-bridge-retirement)
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-manager)
 tos_test(test-ext-message-ingress)

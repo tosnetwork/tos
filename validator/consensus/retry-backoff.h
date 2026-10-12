@@ -193,6 +193,9 @@ td::actor::Task<T> cancellable(std::shared_ptr<Cancellation> cancellation, td::a
 // Sleeps until `at`, or fails with `cancelled` as soon as `cancellation`
 // fires; the timer does not outlive a cancellation.
 inline td::actor::Task<td::Unit> cancellable_sleep(std::shared_ptr<Cancellation> cancellation, td::Timestamp at) {
+  if (cancellation->is_cancelled()) {
+    co_return cancelled_error();
+  }
   class Timer : public td::actor::Actor {
    public:
     Timer(td::actor::StartedTask<td::Unit>::ExternalPromise promise, td::Timestamp at)
@@ -249,14 +252,25 @@ td::actor::Task<T> retry_with_backoff(Attempt attempt, Transient transient, Back
   }
 }
 
-// The initial chain-state resolution of a consensus group. `wait` starts one
-// wait bounded by INITIAL_STATE_WAIT_TIMEOUT; a timed-out wait is retried with
-// INITIAL_STATE_BACKOFF for as long as it takes, any other result ends it. A
-// cancellation ends the wait or the delay between waits at once.
+// One wait of the initial resolution, never started once cancelled.
+template <class T, class Wait>
+td::actor::Task<T> initial_state_attempt(std::shared_ptr<Cancellation> cancellation, Wait wait) {
+  if (cancellation->is_cancelled()) {
+    co_return cancelled_error();
+  }
+  co_return co_await cancellable(cancellation, wait());
+}
+
+// The initial chain-state resolution of a consensus group. `wait` returns one
+// wait bounded by INITIAL_STATE_WAIT_TIMEOUT, not yet started; it must own
+// copies of what it uses, since a cancelled wait runs on alone. A timed-out
+// wait is retried with INITIAL_STATE_BACKOFF for as long as it takes, any
+// other result ends it. A cancellation ends the wait or the delay between
+// waits at once, and no wait or delay starts after it.
 template <class T, class Wait, class OnRetry>
 td::actor::Task<T> resolve_initial_state(std::shared_ptr<Cancellation> cancellation, Wait wait, OnRetry on_retry) {
   co_return co_await retry_with_backoff<T>(
-      [&]() { return cancellable(cancellation, wait()); }, is_transient_initial_state_error,
+      [cancellation, wait]() { return initial_state_attempt<T>(cancellation, wait); }, is_transient_initial_state_error,
       Backoff{INITIAL_STATE_BACKOFF},
       [&](td::uint32 delay) { return cancellable_sleep(cancellation, td::Timestamp::in(delay)); }, std::move(on_retry));
 }

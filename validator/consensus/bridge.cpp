@@ -44,6 +44,26 @@ void observe_bridge_bus_for_test(std::function<void(BusHandle)> observer) {
   bridge_bus_observer = std::move(observer);
 }
 
+namespace {
+std::mutex bridge_destroyed_observer_mutex;
+std::function<void(std::string)> bridge_destroyed_observer;
+
+void notify_bridge_destroyed(const std::string& name) {
+  std::function<void(std::string)> observer;
+  {
+    std::lock_guard lock(bridge_destroyed_observer_mutex);
+    observer = bridge_destroyed_observer;
+  }
+  if (observer) {
+    observer(name);
+  }
+}
+}  // namespace
+void observe_bridge_destroyed_for_test(std::function<void(std::string)> observer) {
+  std::lock_guard lock(bridge_destroyed_observer_mutex);
+  bridge_destroyed_observer = std::move(observer);
+}
+
 std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
     const std::vector<adnl::AdnlNodeIdShort>& members, std::optional<std::set<adnl::AdnlNodeIdShort>> current) {
   if (!current) {
@@ -128,6 +148,18 @@ td::actor::Task<> await_bus_stop_with_diagnostics(td::actor::StartedTask<> waite
 }  // namespace
 
 namespace {
+
+// One wait for a group's initial chain state. It leaves the calling actor
+// before it asks the manager anything, and owns copies of everything it uses,
+// so a wait abandoned by a stopped group holds nothing of that group: the
+// group can be destroyed while the manager still owes the answer.
+td::actor::Task<td::Ref<ChainState>> wait_initial_chain_state(td::actor::ActorId<ManagerFacade> manager,
+                                                              ShardIdFull shard, std::vector<BlockIdExt> blocks,
+                                                              BlockIdExt min_mc_block_id, double timeout) {
+  co_await td::actor::detach_from_actor();
+  co_return co_await ChainState::from_manager(manager, shard, std::move(blocks), min_mc_block_id, std::nullopt,
+                                              timeout);
+}
 
 class ManagerFacadeImpl : public ManagerFacade {
  public:
@@ -461,6 +493,10 @@ class BridgeImpl final : public IValidatorGroup {
     close_for_retirement_inner(generation).start().detach();
   }
 
+  ~BridgeImpl() override {
+    notify_bridge_destroyed(params_.name);
+  }
+
   void tear_down() override {
     start_cancellation_->cancel();
   }
@@ -751,9 +787,8 @@ class BridgeImpl final : public IValidatorGroup {
     RetryLogLimiter retry_log(INITIAL_STATE_RETRY_LOG_INTERVAL);
     auto resolution = resolve_initial_state<td::Ref<ChainState>>(
         cancellation,
-        [&]() {
-          return ChainState::from_manager(manager, shard, blocks, min_mc_block_id, std::nullopt,
-                                          INITIAL_STATE_WAIT_TIMEOUT);
+        [manager, shard, blocks, min_mc_block_id]() {
+          return wait_initial_chain_state(manager, shard, blocks, min_mc_block_id, INITIAL_STATE_WAIT_TIMEOUT);
         },
         [&](const td::Status& error, td::uint32 delay) {
           td::uint64 held_back = 0;
