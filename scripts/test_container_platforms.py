@@ -37,6 +37,7 @@ def matrix_runners(workflow: Path) -> dict[str, str]:
 class ContainerPlatformTests(unittest.TestCase):
     def setUp(self):
         self.builder_wf = WORKFLOWS / "build-builder-image.yml"
+        self.check_wf = WORKFLOWS / "check-builder-image.yml"
         self.node_wf = WORKFLOWS / "docker-ubuntu-image.yml"
         self.dockerfile = (ROOT / "Dockerfile").read_text()
         self.builder_dockerfile = (ROOT / "Dockerfile.builder").read_text()
@@ -46,6 +47,7 @@ class ContainerPlatformTests(unittest.TestCase):
         # architecture, so a matrix that drops one only fails when a release tag is built.
         self.assertEqual(sorted(matrix_arches(self.node_wf)), RELEASE_ARCHES)
         self.assertEqual(sorted(matrix_arches(self.builder_wf)), RELEASE_ARCHES)
+        self.assertEqual(sorted(matrix_arches(self.check_wf)), RELEASE_ARCHES)
 
     def test_node_image_index_joins_every_release_architecture(self):
         text = self.node_wf.read_text()
@@ -56,7 +58,7 @@ class ContainerPlatformTests(unittest.TestCase):
     def test_each_architecture_builds_on_a_native_runner(self):
         # Iterate the required architectures, not the entries that happened to parse: an
         # entry that lost its runner line would otherwise drop out of the check unnoticed.
-        for workflow in (self.builder_wf, self.node_wf):
+        for workflow in (self.builder_wf, self.check_wf, self.node_wf):
             runners = matrix_runners(workflow)
             for arch in RELEASE_ARCHES:
                 with self.subTest(workflow=workflow.name, arch=arch):
@@ -68,23 +70,32 @@ class ContainerPlatformTests(unittest.TestCase):
                 )
 
     def test_builder_pull_requests_build_but_never_publish(self):
-        text = self.builder_wf.read_text()
-        triggers = re.search(
-            r"(?ms)^  push:\n    branches: \[main\]\n    paths:\n(.*?)^  pull_request:\n    paths:\n(.*?)^\S",
-            text,
-        )
-        self.assertIsNotNone(triggers, "builder workflow has no pull_request trigger after push")
-        push_paths = re.findall(r"(?m)^      - (\S+)$", triggers.group(1))
-        pr_paths = re.findall(r"(?m)^      - (\S+)$", triggers.group(2))
+        # A pull_request workflow may hold no write permission, so the pull request build
+        # lives in its own read-only workflow and the publishing workflow never runs on one.
+        publish = self.builder_wf.read_text()
+        check = self.check_wf.read_text()
+        self.assertNotIn("pull_request", publish)
+        push = re.search(r"(?ms)^  push:\n    branches: \[main\]\n    paths:\n(.*?)^\S", publish)
+        pr = re.search(r"(?ms)^on:\n  pull_request:\n    paths:\n(.*?)^\S", check)
+        self.assertIsNotNone(push, "builder workflow has no path-filtered push trigger")
+        self.assertIsNotNone(pr, "check workflow has no path-filtered pull_request trigger")
+        push_paths = re.findall(r"(?m)^      - (\S+)$", push.group(1))
+        pr_paths = re.findall(r"(?m)^      - (\S+)$", pr.group(1))
         self.assertTrue(push_paths)
-        self.assertEqual(push_paths, pr_paths)
-        self.assertIn("push: ${{ github.event_name != 'pull_request' }}", text)
-        self.assertNotRegex(text, r"(?m)^\s+push: true$")
-        # Login, digest hand-off and the index job are all skipped on a pull request.
-        self.assertEqual(text.count("if: github.event_name != 'pull_request'"), 4)
-        self.assertRegex(
-            text, r"(?m)^  index:\n    needs: build\n    if: github\.event_name != 'pull_request'$"
-        )
+        self.assertEqual(pr_paths, push_paths + [".github/workflows/check-builder-image.yml"])
+        self.assertRegex(check, r"(?m)^permissions:\n  contents: read\n\n")
+        self.assertNotRegex(check, r":\s*write\b|write-all|login-action|secrets\.")
+        self.assertRegex(check, r"(?m)^          push: false$")
+        self.assertNotRegex(check, r"cache-to:")
+        # Build the same image the publishing workflow builds.
+        for line in (
+            "file: Dockerfile.builder",
+            "target: builder-24",
+            "platforms: linux/${{ matrix.arch }}",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(line, publish)
+                self.assertIn(line, check)
 
     def test_node_image_builds_from_the_published_multi_arch_tag(self):
         published = re.search(
