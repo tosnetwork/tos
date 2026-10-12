@@ -57,6 +57,7 @@ Status FileLog::init(string path, int64 rotate_threshold, bool redirect_stderr, 
   rotate_threshold_ = rotate_threshold;
   set_keep_rotated(keep_rotated);
   redirect_stderr_ = redirect_stderr;
+  prune_rotated();
   return Status::OK();
 }
 
@@ -92,12 +93,27 @@ int32 FileLog::get_keep_rotated() const {
   return keep_rotated_;
 }
 
+// Removes rotated files beyond the kept number (<path>.old.<keep_rotated_> and
+// up), left behind by a run that kept more. Generations are contiguous, so the
+// first missing one ends the scan.
+void FileLog::prune_rotated() {
+  if (path_.empty()) {
+    return;
+  }
+  for (int32 k = keep_rotated_; k < kMaxKeepRotated; k++) {
+    if (unlink(PSLICE() << path_ << ".old." << k).is_error()) {
+      break;
+    }
+  }
+}
+
 // Makes room for a new <path>.old: <path>.old.<k-1> becomes <path>.old.<k>
 // for the kept files, oldest first, and <path>.old becomes <path>.old.1. A
 // file that does not exist yet (the first rotations) is skipped, and the
 // oldest kept file is overwritten by the rename, so at most keep_rotated_
 // rotated files remain.
 void FileLog::shift_rotated() {
+  prune_rotated();
   for (int32 k = keep_rotated_ - 1; k >= 2; k--) {
     rename(PSLICE() << path_ << ".old." << (k - 1), PSLICE() << path_ << ".old." << k).ignore();
   }

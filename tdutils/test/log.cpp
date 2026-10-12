@@ -233,4 +233,38 @@ TEST(Log, FileLogKeepsTheConfiguredNumberOfRotatedFiles) {
   ASSERT_TRUE(td::stat(base + ".old.1").is_error());
   cleanup();
 }
+
+TEST(Log, FileLogRemovesGenerationsBeyondAReducedLimit) {
+  // A restart with a smaller kept number must not leave the older generations
+  // on disk forever, or the disk budget the number sets is not kept.
+  const std::string base = "tmplog_prune_test";
+  auto cleanup = [&] {
+    for (auto suffix : {"", ".old", ".old.1", ".old.2", ".old.3", ".old.4"}) {
+      td::unlink(base + suffix).ignore();
+    }
+  };
+  auto stage = [&] {
+    for (auto suffix : {".old", ".old.1", ".old.2", ".old.3", ".old.4"}) {
+      td::write_file(base + suffix, "x").ensure();
+    }
+  };
+  cleanup();
+  stage();
+  {
+    td::FileLog log;
+    log.init(base, 1 << 20, false, 3).ensure();
+  }
+  ASSERT_TRUE(td::stat(base + ".old.1").is_ok());
+  ASSERT_TRUE(td::stat(base + ".old.2").is_ok());
+  ASSERT_TRUE(td::stat(base + ".old.3").is_error());
+  ASSERT_TRUE(td::stat(base + ".old.4").is_error());
+  {
+    td::FileLog log;
+    log.init(base, 1 << 20, false, 1).ensure();
+  }
+  ASSERT_TRUE(td::stat(base + ".old").is_ok());
+  ASSERT_TRUE(td::stat(base + ".old.1").is_error());
+  ASSERT_TRUE(td::stat(base + ".old.2").is_error());
+  cleanup();
+}
 #endif

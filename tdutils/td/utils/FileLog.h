@@ -66,8 +66,12 @@ class FileLog : public LogInterface {
   bool redirect_stderr_ = false;
   std::atomic<bool> want_rotate_{};
 
+  // Above any kept number an engine accepts; bounds the stale-generation scan.
+  static constexpr int32 kMaxKeepRotated = 1000;
+
   void do_rotate();
   void shift_rotated();
+  void prune_rotated();
 };
 
 }  // namespace td

@@ -87,6 +87,11 @@ def main() -> None:
         fail("config-wallet verified pool order no longer precedes the fee-bearing wallet message")
     if not (0 <= roles_read < roles_check < verified_order):
         fail("config-wallet live pool roles are not checked before the verified pool order")
+    # The order carries the controller's next relay sequence; built before an
+    # interactive confirmation it can go stale while the prompt is open.
+    confirmation = wallet.find('confirm("Confirm stake?")')
+    if not (0 <= confirmation < verified_order):
+        fail("config-wallet builds the pool order before the operator confirms the stake")
     if (
         wallet.count("let artifact_path = configured_birth_artifact_path(binding, binding_name)?;")
         != 1

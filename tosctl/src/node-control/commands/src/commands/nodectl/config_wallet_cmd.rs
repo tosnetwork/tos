@@ -595,27 +595,7 @@ impl WalletStakeCmd {
             );
         }
 
-        // The public birth artifact is separate from the node authorization:
-        // the node signs with its custodied key, while live Param47 admits the
-        // controller's deploy code. Refuse before constructing a wallet send.
-        let live_policy = provider.live_controller_policy().await?;
-        let payload = manual_pool_stake_payload(
-            &live_pool,
-            binding,
-            &self.binding,
-            pool_cfg,
-            &authorization,
-            &live_policy,
-            stake_nanotos,
-            election_id as u32,
-            max_factor_raw,
-            &adnl_addr,
-        )
-        .await?;
-
-        // Build wallet message to nominator pool (wallet sends only gas, pool has the stake)
-        let wallet =
-            make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, &binding.wallet).await?;
+        // The wallet sends only gas; the pool holds the stake.
         let fee = ELECTOR_STAKE_FEE + NPOOL_COMPUTE_FEE;
         if wallet_info_res.balance < fee + WALLET_COMPUTE_FEE {
             anyhow::bail!(
@@ -624,8 +604,6 @@ impl WalletStakeCmd {
                 display_tos(wallet_info_res.balance)
             );
         }
-        let msg = wallet.message(pool_address.clone(), fee, payload).await?;
-        let msg_boc = write_boc(&msg)?;
 
         // Confirmation
         println!(
@@ -646,6 +624,31 @@ impl WalletStakeCmd {
             println!("{}", "Stake cancelled".yellow());
             return Ok(());
         }
+
+        // Build the order only now, after the operator confirmed: the
+        // controller's relay sequence (and the wallet's seqno) may have moved
+        // while the prompt was open, and a stale one bounces the stake.
+        // The public birth artifact is separate from the node authorization:
+        // the node signs with its custodied key, while live Param47 admits the
+        // controller's deploy code. Refuse before constructing a wallet send.
+        let live_policy = provider.live_controller_policy().await?;
+        let payload = manual_pool_stake_payload(
+            &live_pool,
+            binding,
+            &self.binding,
+            pool_cfg,
+            &authorization,
+            &live_policy,
+            stake_nanotos,
+            election_id as u32,
+            max_factor_raw,
+            &adnl_addr,
+        )
+        .await?;
+        let wallet =
+            make_wallet(rpc_client.clone(), wallet_cfg, wallet_secret, &binding.wallet).await?;
+        let msg = wallet.message(pool_address.clone(), fee, payload).await?;
+        let msg_boc = write_boc(&msg)?;
 
         println!("{} Sending message to wallet...", "DOING".blue().bold());
         // Broadcast through chain RPC; validator control is only for node authorization.
