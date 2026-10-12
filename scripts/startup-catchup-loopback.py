@@ -69,6 +69,8 @@ import signal
 import statistics
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -144,15 +146,93 @@ def parse_actor_stats(text: str, names: tuple[str, ...] = ACTORS) -> dict[str, i
     return alive
 
 
-def actors_from_console(returncode: int, stdout: str) -> dict[str, int] | None:
+def actors_from_console(returncode: int, stdout: bytes | str) -> dict[str, int] | None:
     if returncode != 0:
         return None
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8", errors="replace")
     return parse_actor_stats(stdout)
 
 
-def text_after(texts: dict[str, str], offsets: dict[str, int]) -> str:
-    """What each log file gained after the offsets recorded at a restart."""
-    return "".join(text[offsets.get(path, 0) :] for path, text in texts.items())
+# Only lines the runner reads are kept: the engine logs about 10 MB a minute.
+KEPT_LINE = re.compile(
+    r"STATUS: |startup catch-up|Importing archive for masterchain seqno|Check `.*` failed"
+    r"|persistent state",
+    re.IGNORECASE,
+)
+
+
+class LogFollower:
+    """Follows a node's per-thread logs across rotation, in order, without losing lines.
+
+    The engine writes one log per thread (node.log.threadN.log) and rotates each by
+    renaming it to <name>.old and starting a new file. Each poll reads every log from
+    where it stopped; a log whose inode changed is first finished from its .old copy,
+    then read from the start. Every line read gets the next sequence number, so a
+    mark taken at a restart separates what was written before it from what came
+    after, whatever was rotated in between.
+    """
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = Path(directory)
+        self.streams: dict[str, dict] = {}
+        self.seq = 0
+        self.lines: list[tuple[int, str]] = []
+
+    def _read(self, path: Path, stream: dict) -> None:
+        try:
+            with open(path, "rb") as f:
+                f.seek(stream["pos"])
+                data = f.read()
+        except OSError:
+            return
+        stream["pos"] += len(data)
+        text = stream["partial"] + data.decode("utf-8", errors="replace")
+        parts = text.split("\n")
+        stream["partial"] = parts.pop()
+        for line in parts:
+            self.seq += 1
+            if KEPT_LINE.search(line):
+                self.lines.append((self.seq, line))
+
+    def poll(self) -> None:
+        if not self.directory.is_dir():
+            return
+        for path in sorted(self.directory.glob("node.log*")):
+            if path.name.endswith(".old"):
+                continue
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            stream = self.streams.get(str(path))
+            if stream is None:
+                stream = {"ino": st.st_ino, "pos": 0, "partial": ""}
+                self.streams[str(path)] = stream
+            elif stream["ino"] != st.st_ino:
+                old = path.with_name(path.name + ".old")
+                try:
+                    if old.stat().st_ino == stream["ino"]:
+                        self._read(old, stream)
+                except OSError:
+                    pass
+                if stream["partial"]:
+                    # The rotated file's last line is complete: it does not continue
+                    # into the new file.
+                    stream["partial"] += "\n"
+                    self._read(Path(os.devnull), stream)
+                stream.update(ino=st.st_ino, pos=0, partial="")
+            elif st.st_size < stream["pos"]:
+                stream["pos"] = 0
+            self._read(path, stream)
+
+    def mark(self) -> int:
+        self.poll()
+        return self.seq
+
+    def text_since(self, mark: int | None) -> str:
+        self.poll()
+        return "\n".join(line for seq, line in self.lines if mark is None or seq > mark)
 
 
 def criterion(status: str, detail) -> dict:
@@ -290,15 +370,55 @@ def self_test() -> int:
     assert actors_from_console(1, stats) is None
     # Control: a section header without any class is no evidence.
     assert actors_from_console(0, "All actors:\n\n") is None
-    # Control: a STATUS written before the restart is stale.
-    old = "STATUS: last_masterchain_block_ago=1.0s last_known_key_block_ago=1.0s shard_client_ago=2.0s\n"
-    texts = {"node.log": old}
-    assert last_status(text_after(texts, {"node.log": len(old)})) is None
-    new = "STATUS: last_masterchain_block_ago=5.0s last_known_key_block_ago=5.0s shard_client_ago=30.0s\n"
-    assert (
-        last_status(text_after({"node.log": old + new}, {"node.log": len(old)}))["shard_client_ago"]
-        == 30.0
-    )
+    # Control: console output that is not UTF-8 is read, not a crash.
+    assert actors_from_console(0, stats.encode() + b"\xff\xfe\n") == {
+        "WaitBlockState": 57564,
+        "BridgeImpl": 130,
+    }
+    assert actors_from_console(0, b"\xff\xfe\xfd") is None
+
+    def status_line(ago: float) -> str:
+        return (
+            f"STATUS: last_masterchain_block_ago={ago}s last_known_key_block_ago=1.0s "
+            f"shard_client_ago={ago}s\n"
+        )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "node.log.thread1.log"
+
+        def append(text: str) -> None:
+            with open(log, "a") as f:
+                f.write(text)
+
+        def rotate() -> None:
+            os.replace(log, log.with_name(log.name + ".old"))
+
+        follower = LogFollower(Path(tmp))
+        # Control: a STATUS written before the restart is stale, even after a rotation.
+        append(status_line(2.0))
+        restart = follower.mark()
+        assert last_status(follower.text_since(restart)) is None
+        rotate()
+        append("startup catch-up: entering\n")
+        assert last_status(follower.text_since(restart)) is None
+        # Control: a rotation between two reads loses no line and keeps the order.
+        append(status_line(30.0))
+        follower.poll()
+        append(status_line(31.0))
+        append("startup catch-up attempt 1: one\n")
+        rotate()  # unread lines are left in the .old file
+        append(status_line(32.0))
+        append("startup catch-up ended: Fresh\n")
+        seen = follower.text_since(restart).splitlines()
+        assert seen == [
+            "startup catch-up: entering",
+            status_line(30.0).strip(),
+            status_line(31.0).strip(),
+            "startup catch-up attempt 1: one",
+            status_line(32.0).strip(),
+            "startup catch-up ended: Fresh",
+        ], seen
+        assert last_status("\n".join(seen))["shard_client_ago"] == 32.0
 
     node, peers = 3, [1, 2, 4]
     good_actors = {"WaitBlockState": 10, "BridgeImpl": 4}
@@ -367,6 +487,12 @@ def self_test() -> int:
 
     red(nothing, "engines alive throughout", FAIL)
     assert overall({}) == INCONCLUSIVE
+
+    # Sustained production: one new block, or a node left behind, is not enough.
+    assert sustained({1: 120, 2: 121, 3: 125, 4: 120}, 100)
+    assert not sustained({1: 101, 2: 101, 3: 101, 4: 101}, 100)
+    assert not sustained({1: 130, 2: 130, 3: 100, 4: 130}, 100)
+    assert not sustained({1: 130, 2: 130, 3: None, 4: 130}, 100)
     print("startup-catchup-loopback self-test: OK")
     return 0
 
@@ -378,6 +504,18 @@ class Network:
         self.net = self.work / "net"
         self.base = args.base_port
         self.process: subprocess.Popen | None = None
+        # The logs rotate about once a minute: they are followed continuously, so no
+        # rotation happens twice between two reads of the same log.
+        self.followers = {n: LogFollower(self.net / f"log{n}") for n in NODES}
+        self.follow_lock = threading.Lock()
+        self.follow_stop = threading.Event()
+        self.follow_thread = threading.Thread(target=self._follow, daemon=True)
+
+    def _follow(self) -> None:
+        while not self.follow_stop.wait(1.0):
+            with self.follow_lock:
+                for follower in self.followers.values():
+                    follower.poll()
 
     def port(self, node: int, slot: int) -> int:
         return self.base + 10 * node + slot
@@ -399,6 +537,7 @@ class Network:
             stdout=log,
             stderr=subprocess.STDOUT,
         )
+        self.follow_thread.start()
         deadline = time.time() + 1200
         while time.time() < deadline:
             text = (self.work / "rehearsal.log").read_text(errors="replace")
@@ -412,6 +551,7 @@ class Network:
         raise RuntimeError("the loopback rehearsal did not reach its hold within 20 minutes")
 
     def close(self) -> None:
+        self.follow_stop.set()
         if self.process is not None and self.process.poll() is None:
             self.process.send_signal(signal.SIGTERM)
             try:
@@ -463,16 +603,10 @@ class Network:
             time.sleep(1)
         raise RuntimeError(f"node {node} did not stop")
 
-    def log_texts(self, node: int) -> dict[str, str]:
-        files = sorted((self.net / f"log{node}").glob("node.log*"), key=lambda p: p.stat().st_mtime)
-        return {str(p): p.read_text(errors="replace") for p in files}
-
     def mark(self, node: int) -> dict:
-        return {
-            "t": time.time(),
-            "pid": self.pid(node),
-            "offsets": {path: len(text) for path, text in self.log_texts(node).items()},
-        }
+        with self.follow_lock:
+            seq = self.followers[node].mark()
+        return {"t": time.time(), "pid": self.pid(node), "seq": seq}
 
     def restart(self, node: int) -> dict:
         before = self.mark(node)
@@ -495,10 +629,9 @@ class Network:
         return before
 
     def text_since(self, node: int, mark: dict | None) -> str:
-        texts = self.log_texts(node)
-        if mark is None:
-            return "".join(texts.values())
-        return text_after(texts, mark["offsets"])
+        """The kept log lines written after `mark` (all of them without one), in order."""
+        with self.follow_lock:
+            return self.followers[node].text_since(None if mark is None else mark["seq"])
 
     def fresh_status(self, node: int, mark: dict) -> dict | None:
         """The last STATUS the process started at `mark` wrote, while it is alive."""
@@ -561,11 +694,12 @@ class Network:
                     "quit",
                 ],
                 capture_output=True,
-                text=True,
                 timeout=60,
             )
         except (OSError, subprocess.TimeoutExpired):
             return None
+        # Raw bytes, decoded with replacement: output that is not UTF-8 is an invalid
+        # or partial sample at worst, never a crash.
         return actors_from_console(out.returncode, out.stdout)
 
     def consensus_dirs(self, node: int) -> set[str]:
@@ -689,6 +823,44 @@ def production_beyond(net: Network, seqno: int, deadline: float) -> dict | None:
     return None
 
 
+SUSTAINED_BLOCKS = 20
+SUSTAINED_SECONDS = 900
+
+
+def sustained(heads: dict[int, int | None], top: int, blocks: int = SUSTAINED_BLOCKS) -> bool:
+    """Every node's head is at least `blocks` masterchain blocks beyond `top`."""
+    return all(h is not None and h >= top + blocks for h in heads.values())
+
+
+def sustained_production(net: Network, top: int, deadline: float) -> dict:
+    heads: dict[int, int | None] = {n: None for n in NODES}
+    while time.time() < deadline:
+        for n in NODES:
+            h = net.head(n)
+            if h is not None:
+                heads[n] = max(heads[n] or 0, int(h["seqno"]))
+        if sustained(heads, top):
+            break
+        time.sleep(10)
+    return heads
+
+
+def check_resumed(net: Network, report: Report, top: int, last_start: float) -> None:
+    produced = production_beyond(net, top, last_start + 300)
+    report.check(
+        "a masterchain block beyond the stopped tip within 5 min of the last start",
+        produced is not None,
+        {"stopped_tip": top, "first_beyond": produced},
+    )
+    heads = sustained_production(net, top, last_start + SUSTAINED_SECONDS)
+    report.check(
+        f"sustained production: every node at least {SUSTAINED_BLOCKS} blocks beyond the "
+        f"stopped tip within {SUSTAINED_SECONDS} s of the last start",
+        sustained(heads, top),
+        {"stopped_tip": top, "heads": heads},
+    )
+
+
 def scenario_l2(net: Network, report: Report) -> None:
     time.sleep(300)
     tips = net.freeze_and_read_tips(list(NODES))
@@ -707,12 +879,7 @@ def scenario_l2(net: Network, report: Report) -> None:
     time.sleep(600)
     marks = {n: net.restart(n) for n in NODES}
     last_start = max(m["t"] for m in marks.values())
-    produced = production_beyond(net, top, last_start + 300)
-    report.check(
-        "a masterchain block beyond the stopped tip within 5 min of the last start",
-        produced is not None,
-        {"stopped_tip": top, "first_beyond": produced},
-    )
+    check_resumed(net, report, top, last_start)
     for n in NODES:
         mode = net.mode(n, marks[n])
         report.check(
@@ -747,12 +914,7 @@ def scenario_l3(net: Network, report: Report) -> None:
     time.sleep(600)
     marks = {n: net.restart(n) for n in NODES}
     last_start = max(m["t"] for m in marks.values())
-    produced = production_beyond(net, top, last_start + 300)
-    report.check(
-        "a masterchain block beyond the stopped tips within 5 min of the last start",
-        produced is not None,
-        {"stopped_tip": top, "first_beyond": produced},
-    )
+    check_resumed(net, report, top, last_start)
     mode = net.mode(1, marks[1])
     report.check(
         "the lagging node ends Fresh or NoVerifiedSuccessor, never Abandoned",
