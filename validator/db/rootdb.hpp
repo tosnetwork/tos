@@ -120,6 +120,9 @@ class RootDb : public Db {
   void update_shard_client_state(BlockIdExt masterchain_block_id, td::Promise<td::Unit> promise) override;
   void get_shard_client_state(td::Promise<BlockIdExt> promise) override;
 
+  void update_consensus_cleanup_checkpoint(BlockIdExt block, td::Promise<td::Unit> promise) override;
+  void get_consensus_cleanup_checkpoint(td::Promise<std::optional<BlockIdExt>> promise) override;
+
   void update_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions,
                                            td::Promise<td::Unit> promise) override;
   void get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorSessionId>> promise) override;
@@ -177,6 +180,10 @@ class RootDb : public Db {
   void iterate_temp_block_handles(std::function<void(const BlockHandleInterface &)> f) override;
 
  private:
+  void truncate_checked(BlockSeqno seqno, ConstBlockHandle handle, std::optional<BlockIdExt> checkpoint,
+                        td::Promise<td::Unit> promise);
+  void truncate_unchecked(BlockSeqno seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise);
+
   td::actor::ActorId<ValidatorManager> validator_manager_;
   std::string root_path_;
   td::Ref<ValidatorManagerOptions> opts_;

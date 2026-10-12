@@ -42,6 +42,8 @@ class ValidatorManagerMasterchainReiniter : public td::actor::Actor {
     block_id_ = opts_->init_block_id();
   }
   void start_up() override;
+  td::actor::Task<> load_checkpoint();
+  void write_hardforks();
   void written_hardforks();
   void got_masterchain_handle(BlockHandle handle);
   void download_proof_link(bool try_local = true);
@@ -56,6 +58,7 @@ class ValidatorManagerMasterchainReiniter : public td::actor::Actor {
   void download_masterchain_state();
   void downloaded_masterchain_state(td::Ref<ShardState> state);
 
+  void check_checkpoint_boundary();
   void downloaded_all_shards();
   void finish();
 
@@ -79,6 +82,7 @@ class ValidatorManagerMasterchainReiniter : public td::actor::Actor {
 
   td::uint32 pending_ = 0;
   td::actor::ActorOwn<ShardClient> client_;
+  LoadedConsensusCleanupCheckpoint checkpoint_;
 
   ProcessStatus status_;
 };
@@ -102,6 +106,7 @@ class ValidatorManagerMasterchainStarter : public td::actor::Actor {
 
   BlockHandle handle_;
   td::Ref<MasterchainState> state_;
+  LoadedConsensusCleanupCheckpoint checkpoint_;
 
   td::actor::ActorId<ValidatorManager> manager_;
   td::actor::ActorId<Db> db_;

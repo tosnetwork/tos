@@ -24,6 +24,7 @@
 
 #include "statedb.hpp"
 
+#include "validator/consensus/consensus-cleanup-checkpoint.h"
 #include "validator/consensus/validator-cleanup-store.h"
 
 namespace tos {
@@ -118,6 +119,15 @@ void StateDb::get_shard_client_state(td::Promise<BlockIdExt> promise) {
   F.ensure();
   auto obj = F.move_as_ok();
   promise.set_value(create_block_id(obj->block_));
+}
+
+void StateDb::update_consensus_cleanup_checkpoint(BlockIdExt block, td::Promise<td::Unit> promise) {
+  TRY_STATUS_PROMISE(promise, consensus::store_consensus_cleanup_checkpoint(*kv_, block));
+  promise.set_value(td::Unit());
+}
+
+void StateDb::get_consensus_cleanup_checkpoint(td::Promise<std::optional<BlockIdExt>> promise) {
+  promise.set_result(consensus::load_consensus_cleanup_checkpoint(*kv_));
 }
 
 void StateDb::update_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions,
@@ -478,6 +488,30 @@ void StateDb::get_persistent_state_descriptions(td::Promise<std::vector<td::Ref<
 }
 
 void StateDb::truncate(BlockSeqno masterchain_seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise) {
+  // Defence in depth behind RootDb::truncate, which checks the full target
+  // (ancestry included) before dispatching any mutation: never lower the
+  // metadata below the consensus cleanup checkpoint, and never touch the
+  // checkpoint itself. Nothing below is written when this refuses.
+  {
+    auto r_checkpoint = consensus::load_consensus_cleanup_checkpoint(*kv_);
+    if (r_checkpoint.is_error()) {
+      promise.set_error(consensus::consensus_checkpoint_refusal(
+          PSLICE() << "refusing to truncate: " << r_checkpoint.move_as_error().message()));
+      return;
+    }
+    auto checkpoint = r_checkpoint.move_as_ok();
+    if (checkpoint) {
+      bool below = masterchain_seqno < checkpoint->seqno();
+      bool sideways =
+          masterchain_seqno == checkpoint->seqno() && (!handle || !(handle->id() == *checkpoint));
+      if (below || sideways) {
+        promise.set_error(consensus::consensus_checkpoint_refusal(
+            PSLICE() << "refusing to truncate to masterchain seqno " << masterchain_seqno
+                     << ": the consensus cleanup checkpoint is " << checkpoint->to_str()));
+        return;
+      }
+    }
+  }
   {
     auto key = create_hash_tl_object<tos_api::db_state_key_asyncSerializer>();
 

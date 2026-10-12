@@ -825,6 +825,11 @@ target_include_directories(test-validator-cleanup PRIVATE ${CMAKE_CURRENT_SOURCE
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-validator-cleanup PRIVATE tos_crypto_core tdutils)
 
+add_executable(test-consensus-cleanup-checkpoint test/test-td-main.cpp test/test-consensus-cleanup-checkpoint.cpp)
+target_include_directories(test-consensus-cleanup-checkpoint PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-consensus-cleanup-checkpoint PRIVATE tos_crypto_core tddb tdutils)
+
 add_executable(test-validator-cleanup-statedb test/test-td-main.cpp test/test-validator-cleanup-statedb.cpp)
 target_include_directories(test-validator-cleanup-statedb PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1968,6 +1973,7 @@ tos_test(test-json-rpc-signing-payload)
 tos_test(test-consensus-db-path)
 tos_test(test-validator-cleanup)
 tos_test(test-validator-cleanup-statedb)
+tos_test(test-consensus-cleanup-checkpoint)
 tos_test(test-validator-cleanup-worker)
 tos_test(test-validator-cleanup-integration)
 tos_test(test-node-consensus-membership)

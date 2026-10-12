@@ -22,6 +22,7 @@
 #include "td/db/RocksDb.h"
 #include "td/utils/overloaded.h"
 #include "tos/tos-tl.hpp"
+#include "validator/consensus/consensus-cleanup-checkpoint.h"
 #include "validator/fabric.h"
 #include "validator/stats-merger.h"
 
@@ -500,6 +501,14 @@ void RootDb::get_shard_client_state(td::Promise<BlockIdExt> promise) {
   td::actor::send_closure(state_db_, &StateDb::get_shard_client_state, std::move(promise));
 }
 
+void RootDb::update_consensus_cleanup_checkpoint(BlockIdExt block, td::Promise<td::Unit> promise) {
+  td::actor::send_closure(state_db_, &StateDb::update_consensus_cleanup_checkpoint, block, std::move(promise));
+}
+
+void RootDb::get_consensus_cleanup_checkpoint(td::Promise<std::optional<BlockIdExt>> promise) {
+  td::actor::send_closure(state_db_, &StateDb::get_consensus_cleanup_checkpoint, std::move(promise));
+}
+
 void RootDb::update_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions,
                                                  td::Promise<td::Unit> promise) {
   td::actor::send_closure(state_db_, &StateDb::update_destroyed_validator_sessions, std::move(sessions),
@@ -608,6 +617,74 @@ void RootDb::prepare_stats(td::Promise<std::vector<std::pair<std::string, std::s
 }
 
 void RootDb::truncate(BlockSeqno seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise) {
+  // The archive and StateDb truncations below run concurrently, so the
+  // consensus cleanup checkpoint is checked here, before either is dispatched:
+  // a refusal must leave both untouched. StateDb repeats a weaker check as
+  // defence in depth.
+  td::actor::send_closure(
+      state_db_, &StateDb::get_consensus_cleanup_checkpoint,
+      [SelfId = actor_id(this), seqno, handle,
+       promise = std::move(promise)](td::Result<std::optional<BlockIdExt>> R) mutable {
+        if (R.is_error()) {
+          promise.set_error(consensus::consensus_checkpoint_refusal(
+              PSLICE() << "refusing to truncate: " << R.move_as_error().message()));
+          return;
+        }
+        td::actor::send_closure(SelfId, &RootDb::truncate_checked, seqno, std::move(handle), R.move_as_ok(),
+                                std::move(promise));
+      });
+}
+
+void RootDb::truncate_checked(BlockSeqno seqno, ConstBlockHandle handle, std::optional<BlockIdExt> checkpoint,
+                              td::Promise<td::Unit> promise) {
+  if (!checkpoint) {
+    truncate_unchecked(seqno, std::move(handle), std::move(promise));
+    return;
+  }
+  if (!handle || handle->id().seqno() != seqno || !handle->id().is_masterchain_ext()) {
+    promise.set_error(consensus::consensus_checkpoint_refusal(
+        PSLICE() << "refusing to truncate to masterchain seqno " << seqno
+                 << " without its block handle: the consensus cleanup checkpoint " << checkpoint->to_str()
+                 << " requires the full target to be checked"));
+    return;
+  }
+  auto target = handle->id();
+  if (target.seqno() <= checkpoint->seqno()) {
+    // Below, at, or sideways of the checkpoint: decided without the target's state.
+    auto status = consensus::check_consensus_checkpoint_rollback(checkpoint, target, {});
+    if (status.is_error()) {
+      promise.set_error(std::move(status));
+      return;
+    }
+    truncate_unchecked(seqno, std::move(handle), std::move(promise));
+    return;
+  }
+  // Above the checkpoint: the target's own state must prove the checkpoint is
+  // one of its ancestors.
+  get_block_state(handle, [SelfId = actor_id(this), seqno, handle, checkpoint,
+                           promise = std::move(promise)](td::Result<td::Ref<ShardState>> R) mutable {
+    if (R.is_error()) {
+      promise.set_error(consensus::consensus_checkpoint_refusal(
+          PSLICE() << "refusing to truncate to " << handle->id().to_str()
+                   << ": its state is needed to check it against the consensus cleanup checkpoint "
+                   << checkpoint->to_str() << " and cannot be loaded: " << R.move_as_error().message()));
+      return;
+    }
+    auto state = R.move_as_ok();
+    const auto *mc_state = dynamic_cast<const MasterchainState *>(state.get());
+    auto status = consensus::check_consensus_checkpoint_rollback(
+        checkpoint, handle->id(), [mc_state](const BlockIdExt &id) {
+          return mc_state != nullptr && mc_state->check_old_mc_block_id(id, /*strict=*/true);
+        });
+    if (status.is_error()) {
+      promise.set_error(std::move(status));
+      return;
+    }
+    td::actor::send_closure(SelfId, &RootDb::truncate_unchecked, seqno, std::move(handle), std::move(promise));
+  });
+}
+
+void RootDb::truncate_unchecked(BlockSeqno seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise) {
   td::MultiPromise mp;
   auto ig = mp.init_guard();
   ig.add_promise(std::move(promise));

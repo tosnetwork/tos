@@ -129,6 +129,13 @@ class Db : public td::actor::Actor {
   virtual void update_shard_client_state(BlockIdExt masterchain_block_id, td::Promise<td::Unit> promise) = 0;
   virtual void get_shard_client_state(td::Promise<BlockIdExt> promise) = 0;
 
+  // The consensus-cleanup checkpoint (consensus/consensus-cleanup-checkpoint.h).
+  // The update is a synced write that refuses to move the checkpoint back or to a
+  // different block at its height. The getter returns nullopt only when the key is
+  // absent; a read error or a damaged record is an error.
+  virtual void update_consensus_cleanup_checkpoint(BlockIdExt block, td::Promise<td::Unit> promise) = 0;
+  virtual void get_consensus_cleanup_checkpoint(td::Promise<std::optional<BlockIdExt>> promise) = 0;
+
   virtual void update_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions,
                                                    td::Promise<td::Unit> promise) = 0;
   virtual void get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorSessionId>> promise) = 0;

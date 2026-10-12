@@ -24,6 +24,7 @@
 #include "td/actor/MultiPromise.h"
 #include "td/utils/filesystem.h"
 #include "tos/tos-io.hpp"
+#include "validator/consensus/consensus-cleanup-checkpoint.h"
 #include "validator/downloaders/download-state.hpp"
 
 #include "fabric.h"
@@ -33,6 +34,101 @@ namespace tos {
 
 namespace validator {
 
+namespace {
+td::actor::Task<LoadedConsensusCleanupCheckpoint> load_consensus_cleanup_checkpoint_inner(
+    td::actor::ActorId<Db> db, td::actor::ActorId<ValidatorManager> manager) {
+  auto r_id = co_await td::actor::ask(db, &Db::get_consensus_cleanup_checkpoint).wrap();
+  if (r_id.is_error()) {
+    co_return r_id.move_as_error();
+  }
+  auto id = r_id.move_as_ok();
+  if (!id) {
+    co_return LoadedConsensusCleanupCheckpoint{};
+  }
+  auto key = consensus::consensus_cleanup_checkpoint_key();
+  auto r_handle = co_await td::actor::ask(manager, &ValidatorManager::get_block_handle, *id, false).wrap();
+  if (r_handle.is_error()) {
+    co_return r_handle.move_as_error_prefix(PSLICE() << key << " = " << id->to_str() << ": its block handle: ");
+  }
+  auto handle = r_handle.move_as_ok();
+  if (!handle || !(handle->id() == *id) || !handle->is_applied() || !handle->received_state() ||
+      handle->deleted_state_boc()) {
+    co_return td::Status::Error(PSLICE() << key << " = " << id->to_str()
+                                         << ": its block handle is not an applied block with a stored state");
+  }
+  auto r_state = co_await td::actor::ask(manager, &ValidatorManager::get_shard_state_from_db, handle).wrap();
+  if (r_state.is_error()) {
+    co_return r_state.move_as_error_prefix(PSLICE() << key << " = " << id->to_str() << ": its state: ");
+  }
+  auto shard_state = r_state.move_as_ok();
+  const auto *mc_state = dynamic_cast<const MasterchainState *>(shard_state.get());
+  if (mc_state == nullptr || !(mc_state->get_block_id() == *id)) {
+    co_return td::Status::Error(PSLICE() << key << " = " << id->to_str()
+                                         << ": its loaded state does not describe the checkpoint");
+  }
+  co_return LoadedConsensusCleanupCheckpoint{std::move(handle), td::Ref<MasterchainState>{std::move(shard_state)}};
+}
+}  // namespace
+
+td::actor::Task<LoadedConsensusCleanupCheckpoint> load_consensus_cleanup_checkpoint_for_startup(
+    td::actor::ActorId<Db> db, td::actor::ActorId<ValidatorManager> manager) {
+  auto R = co_await load_consensus_cleanup_checkpoint_inner(db, manager).wrap();
+  if (R.is_error()) {
+    co_return consensus::consensus_checkpoint_refusal(
+        PSLICE() << "cannot load the consensus cleanup checkpoint; refusing to start (once written it is never "
+                    "treated as absent): "
+                 << R.move_as_error().message());
+  }
+  auto loaded = R.move_as_ok();
+  if (loaded.handle) {
+    LOG(WARNING) << "consensus cleanup checkpoint is " << loaded.handle->id().to_str();
+  } else {
+    LOG(INFO) << "no consensus cleanup checkpoint; consensus cleanup is bound to the GC block";
+  }
+  co_return loaded;
+}
+
+td::Status check_consensus_cleanup_checkpoint_boundary(const LoadedConsensusCleanupCheckpoint &checkpoint,
+                                                      const BlockIdExt &head,
+                                                      const td::Ref<MasterchainState> &head_state,
+                                                      bool allow_behind, td::Slice what) {
+  if (!checkpoint.handle) {
+    return td::Status::OK();
+  }
+  auto cp = checkpoint.handle->id();
+  if (head_state.is_null() || !(head_state->get_block_id() == head)) {
+    return consensus::consensus_checkpoint_refusal(PSLICE() << "refusing to start from " << what << " "
+                                                            << head.to_str() << ": its state is not loaded");
+  }
+  auto relation = consensus::relate_to_consensus_cleanup_checkpoint(
+      cp, head, [&](const BlockIdExt &id) { return head_state->check_old_mc_block_id(id, /*strict=*/true); });
+  switch (relation) {
+    case consensus::CheckpointRelation::Reached:
+      return td::Status::OK();
+    case consensus::CheckpointRelation::Behind:
+      if (allow_behind) {
+        return td::Status::OK();
+      }
+      return consensus::consensus_checkpoint_refusal(
+          PSLICE() << "refusing to start from " << what << " " << head.to_str()
+                   << ": it is below the consensus cleanup checkpoint " << cp.to_str()
+                   << ". Consensus databases of sessions retired before the checkpoint may already be deleted, so "
+                      "starting below it with the same validator signing identity could make this node vote twice; "
+                      "this is prohibited. Recovery under a different signing identity needs a separately reviewed "
+                      "procedure.");
+    case consensus::CheckpointRelation::Conflict:
+      return consensus::consensus_checkpoint_refusal(
+          PSLICE() << "refusing to start from " << what << " " << head.to_str()
+                   << ": it is on a branch that excludes the consensus cleanup checkpoint " << cp.to_str());
+  }
+  return consensus::consensus_checkpoint_refusal("unknown consensus cleanup checkpoint relation");
+}
+
+void refuse_startup_for_consensus_cleanup_checkpoint(const td::Status &status) {
+  LOG(ERROR) << status;
+  std::_Exit(2);
+}
+
 void ValidatorManagerMasterchainReiniter::start_up() {
   status_ = ProcessStatus(manager_, "process.initial_sync");
   status_.set_status(PSTRING() << "starting, init block seqno " << block_id_.seqno());
@@ -41,6 +137,23 @@ void ValidatorManagerMasterchainReiniter::start_up() {
   CHECK(block_id_.id.shard == shardIdAll);
   CHECK(block_id_.seqno() >= opts_->get_last_fork_masterchain_seqno());
 
+  // The checkpoint is loaded before this path writes anything: a database whose
+  // init-block record is gone may still carry a checkpoint, and reinitializing
+  // below it would rebuild sessions whose own votes may already be deleted.
+  load_checkpoint().start().detach_ensure("reiniter checkpoint load");
+}
+
+td::actor::Task<> ValidatorManagerMasterchainReiniter::load_checkpoint() {
+  auto R = co_await load_consensus_cleanup_checkpoint_for_startup(db_, manager_).wrap();
+  if (R.is_error()) {
+    refuse_startup_for_consensus_cleanup_checkpoint(R.move_as_error());
+  }
+  checkpoint_ = R.move_as_ok();
+  write_hardforks();
+  co_return td::Unit{};
+}
+
+void ValidatorManagerMasterchainReiniter::write_hardforks() {
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
     R.ensure();
     td::actor::send_closure(SelfId, &ValidatorManagerMasterchainReiniter::written_hardforks);
@@ -292,6 +405,10 @@ void ValidatorManagerMasterchainReiniter::downloaded_masterchain_state(td::Ref<S
   CHECK(handle_->received_state());
   CHECK(handle_->is_applied());
   LOG(INFO) << "downloaded masterchain state";
+  // Checked before the shard client exists: in init mode it writes the
+  // shard-client metadata, and finishing writes the GC block. Neither may be
+  // written for a block below the checkpoint or off its branch.
+  check_checkpoint_boundary();
   td::actor::send_closure(manager_, &ValidatorManager::init_last_masterchain_state, state_);
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
     R.ensure();
@@ -301,8 +418,17 @@ void ValidatorManagerMasterchainReiniter::downloaded_masterchain_state(td::Ref<S
   status_.set_status(PSTRING() << "downloading all shard states, mc seqno " << block_id_.seqno());
 }
 
+void ValidatorManagerMasterchainReiniter::check_checkpoint_boundary() {
+  auto status = check_consensus_cleanup_checkpoint_boundary(checkpoint_, handle_->id(), state_,
+                                                            /*allow_behind=*/false, "the reinitialization block");
+  if (status.is_error()) {
+    refuse_startup_for_consensus_cleanup_checkpoint(status);
+  }
+}
+
 void ValidatorManagerMasterchainReiniter::downloaded_all_shards() {
   LOG(INFO) << "downloaded all shards";
+  check_checkpoint_boundary();
   td::actor::send_closure(manager_, &ValidatorManager::update_gc_block_handle, handle_,
                           [SelfId = actor_id(this)](td::Result<td::Unit> R) {
                             R.ensure();
@@ -312,7 +438,8 @@ void ValidatorManagerMasterchainReiniter::downloaded_all_shards() {
 
 void ValidatorManagerMasterchainReiniter::finish() {
   CHECK(handle_->id().id.seqno == 0 || handle_->is_key_block());
-  promise_.set_value(ValidatorManagerInitResult{handle_, state_, std::move(client_), handle_, state_, handle_});
+  promise_.set_value(ValidatorManagerInitResult{handle_, state_, std::move(client_), handle_, state_, handle_,
+                                                checkpoint_.handle, checkpoint_.state});
   LOG(INFO) << "persistent state download finished";
   stop();
 }
@@ -323,6 +450,9 @@ void ValidatorManagerMasterchainStarter::start_up() {
 
 td::actor::Task<> ValidatorManagerMasterchainStarter::run() {
   auto R = co_await run_inner().wrap();
+  if (R.is_error() && consensus::is_consensus_checkpoint_refusal(R.error())) {
+    refuse_startup_for_consensus_cleanup_checkpoint(R.move_as_error());
+  }
   R.ensure();
   promise_.set_value(R.move_as_ok());
   stop();
@@ -390,6 +520,26 @@ td::actor::Task<ValidatorManagerInitResult> ValidatorManagerMasterchainStarter::
   auto gc_state = td::Ref<MasterchainState>{
       co_await td::actor::ask(manager_, &ValidatorManager::get_shard_state_from_db, gc_handle)};
 
+  // Loaded before anything below can mutate the database or build a validator
+  // group. A refusal stops the process with exit status 2 (see run()).
+  checkpoint_ = co_await load_consensus_cleanup_checkpoint_for_startup(db_, manager_);
+  if (checkpoint_.handle) {
+    if (gc_handle->id().seqno() > checkpoint_.handle->id().seqno()) {
+      co_return consensus::consensus_checkpoint_refusal(
+          PSLICE() << "refusing to start: the GC block " << gc_handle->id().to_str()
+                   << " is above the consensus cleanup checkpoint " << checkpoint_.handle->id().to_str()
+                   << ", which GC never passes");
+    }
+    // The init block may be older than the checkpoint (startup replays toward
+    // it, and validator groups wait until the applied head reaches it), but it
+    // is never on a branch that excludes it.
+    auto status = check_consensus_cleanup_checkpoint_boundary(checkpoint_, handle_->id(), state_,
+                                                              /*allow_behind=*/true, "the init block");
+    if (status.is_error()) {
+      co_return std::move(status);
+    }
+  }
+
   co_await td::actor::ask(manager_, &ValidatorManager::get_shard_client_state, true);
   auto stored_hardforks = co_await td::actor::ask(db_, &Db::get_hardforks);
 
@@ -446,8 +596,8 @@ td::actor::Task<ValidatorManagerInitResult> ValidatorManagerMasterchainStarter::
         co_await td::actor::ask(manager_, &ValidatorManager::get_block_handle, last_key_block_id, true);
   }
   LOG(INFO) << "Last key block is " << last_key_block_handle->id().to_str();
-  co_return ValidatorManagerInitResult{handle_,   state_,   std::move(shard_client),
-                                       gc_handle, gc_state, last_key_block_handle};
+  co_return ValidatorManagerInitResult{handle_,  state_,   std::move(shard_client), gc_handle, gc_state,
+                                       last_key_block_handle, checkpoint_.handle,     checkpoint_.state};
 }
 
 td::actor::Task<> ValidatorManagerMasterchainStarter::get_latest_applied_block() {
@@ -474,9 +624,24 @@ td::actor::Task<> ValidatorManagerMasterchainStarter::truncate(BlockSeqno trunca
     LOG(WARNING) << "Truncating to seqno " << truncate_seqno;
     BlockIdExt block_id;
     CHECK(state_->get_old_mc_block_id(truncate_seqno, block_id));
-    handle_ = co_await td::actor::ask(manager_, &ValidatorManager::get_block_handle, block_id, false);
-    state_ = td::Ref<MasterchainState>{co_await td::actor::ask(db_, &Db::get_block_state, handle_)};
+    auto target_handle = co_await td::actor::ask(manager_, &ValidatorManager::get_block_handle, block_id, false);
+    auto target_state = td::Ref<MasterchainState>{co_await td::actor::ask(db_, &Db::get_block_state, target_handle)};
+    // Before any mutation: the target must be the consensus cleanup checkpoint
+    // or a verified descendant of it. RootDb::truncate checks again.
+    auto status = check_consensus_cleanup_checkpoint_boundary(checkpoint_, block_id, target_state,
+                                                              /*allow_behind=*/false, "the truncation target");
+    if (status.is_error()) {
+      co_return std::move(status);
+    }
+    handle_ = std::move(target_handle);
+    state_ = std::move(target_state);
     co_await td::actor::ask(manager_, &ValidatorManager::truncate, block_id.seqno(), handle_);
+  } else {
+    auto status = check_consensus_cleanup_checkpoint_boundary(checkpoint_, handle_->id(), state_,
+                                                              /*allow_behind=*/false, "the truncation target");
+    if (status.is_error()) {
+      co_return std::move(status);
+    }
   }
   LOG(WARNING) << "Clearing 'next' for mc seqno " << state_->get_block_id().to_str();
   auto s = state_->get_shards();

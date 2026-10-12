@@ -42,6 +42,9 @@ class StateDb : public td::actor::Actor {
   void update_shard_client_state(BlockIdExt masterchain_block_id, td::Promise<td::Unit> promise);
   void get_shard_client_state(td::Promise<BlockIdExt> promise);
 
+  void update_consensus_cleanup_checkpoint(BlockIdExt block, td::Promise<td::Unit> promise);
+  void get_consensus_cleanup_checkpoint(td::Promise<std::optional<BlockIdExt>> promise);
+
   void update_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions, td::Promise<td::Unit> promise);
   void get_destroyed_validator_sessions(td::Promise<std::vector<ValidatorSessionId>> promise);
 

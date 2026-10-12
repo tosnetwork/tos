@@ -31,6 +31,7 @@
 #include "consensus/session-compat.h"
 #include "consensus/validator-cleanup-manager.h"
 #include "consensus/validator-cleanup-worker.h"
+#include "consensus/consensus-cleanup-checkpoint.h"
 #include "consensus/validator-cleanup.h"
 #include "db/db-event-publisher.hpp"
 #include "impl/ext-message-pool.hpp"
@@ -343,6 +344,36 @@ class ValidatorManagerImpl : public ValidatorManager {
   BlockHandle gc_masterchain_handle_;
   td::Ref<MasterchainState> gc_masterchain_state_;
   bool gc_advancing_ = false;
+
+  // Consensus cleanup checkpoint (consensus/consensus-cleanup-checkpoint.h).
+  // The installed handle/state are the durable checkpoint once its synced write
+  // was acknowledged; both are null while the key is absent.
+  struct ConsensusCheckpointCandidate {
+    BlockHandle handle;
+    td::Ref<MasterchainState> state;
+  };
+  consensus::ConsensusCleanupCheckpointTracker<ConsensusCheckpointCandidate> consensus_checkpoint_;
+  bool consensus_checkpoint_loaded_ = false;
+  BlockHandle consensus_checkpoint_handle_;
+  td::Ref<MasterchainState> consensus_checkpoint_state_;
+  // Validator groups are selected, built and activated only while this holds:
+  // there is no checkpoint, or the applied head is it or a verified descendant.
+  // Recomputed on every checkpoint installation and applied-head update.
+  bool consensus_checkpoint_reached_ = true;
+  // The applied head is on a branch that excludes the checkpoint. Existing
+  // validator groups, tentative ones included, are retired.
+  bool consensus_checkpoint_conflict_ = false;
+  td::Timestamp consensus_checkpoint_gap_warning_at_;
+  td::Timestamp consensus_checkpoint_write_warning_at_;
+
+  // Installs what the init path loaded (a null handle: the key is absent) and
+  // enables advancement and cleanup authority.
+  void install_loaded_consensus_cleanup_checkpoint(BlockHandle handle, td::Ref<MasterchainState> state);
+  void install_consensus_cleanup_checkpoint(BlockHandle handle, td::Ref<MasterchainState> state);
+  void recompute_consensus_checkpoint_readiness();
+  td::Status admit_consensus_checkpoint_head(const BlockIdExt &head, const td::Ref<MasterchainState> &state) const;
+  void try_advance_consensus_cleanup_checkpoint();
+  void consensus_cleanup_checkpoint_written(BlockIdExt id, td::Result<td::Unit> R);
 
   BlockIdExt last_rotate_block_id_;
 

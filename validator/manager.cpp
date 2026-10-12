@@ -430,6 +430,14 @@ td::actor::Task<> ValidatorManagerImpl::generate_shard_block_description(BlockId
 void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
   started_ = true;
 
+  // Session activation is gated like group construction: no validator session is
+  // opened while the applied head is below the consensus cleanup checkpoint or
+  // conflicts with it. Groups built later start their sessions themselves.
+  if (!consensus_checkpoint_reached_) {
+    LOG(WARNING) << "completed sync; not activating validator sessions: the applied masterchain block "
+                 << last_masterchain_block_id_.to_str() << " has not reached the consensus cleanup checkpoint";
+    return;
+  }
   VLOG(VALIDATOR_WARNING) << "completed sync. Validating " << validator_groups_.size() << " groups";
   for (auto &v : validator_groups_) {
     if (!v.second.actor.empty()) {
@@ -2233,6 +2241,12 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
         promise.set_error(std::move(auth_status));
         return;
       }
+      auto checkpoint_status = admit_consensus_checkpoint_head(handle->id(), td::Ref<MasterchainState>{state});
+      if (checkpoint_status.is_error()) {
+        LOG(ERROR) << checkpoint_status;
+        promise.set_error(std::move(checkpoint_status));
+        return;
+      }
       last_masterchain_seqno_ = handle->id().id.seqno;
       last_masterchain_state_ = td::Ref<MasterchainState>{state};
       last_masterchain_block_id_ = handle->id();
@@ -2251,6 +2265,12 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
         if (it != pending_masterchain_states_.end()) {
           CHECK(it == pending_masterchain_states_.begin());
           auto auth_status = admit_auth_policy_state(*std::get<1>(it->second), last_masterchain_state_);
+          if (auth_status.is_ok()) {
+            auth_status = admit_consensus_checkpoint_head(std::get<0>(it->second)->id(), std::get<1>(it->second));
+            if (auth_status.is_error()) {
+              LOG(ERROR) << auth_status;
+            }
+          }
           if (auth_status.is_error()) {
             for (auto &pending : std::get<2>(it->second)) {
               pending.set_error(auth_status.clone());
@@ -2799,6 +2819,11 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   gc_masterchain_handle_ = std::move(R.gc_handle);
   gc_masterchain_state_ = std::move(R.gc_state);
 
+  // The init path loaded and verified the checkpoint (or found the key absent)
+  // before any validator group can be built: finish_start_up runs after this.
+  install_loaded_consensus_cleanup_checkpoint(std::move(R.consensus_cleanup_checkpoint_handle),
+                                              std::move(R.consensus_cleanup_checkpoint_state));
+
   shard_client_ = std::move(R.clients);
 
   auto Q = td::PromiseCreator::lambda(
@@ -2943,22 +2968,40 @@ void ValidatorManagerImpl::validator_cleanup_timer() {
 }
 
 std::optional<consensus::ValidatorCleanupOracles> ValidatorManagerImpl::validator_cleanup_oracles() {
-  if (!gc_masterchain_handle_ || gc_masterchain_state_.is_null()) {
+  if (!consensus_checkpoint_loaded_) {
     return std::nullopt;
   }
-  auto gc_id = gc_masterchain_handle_->id();
-  auto gc_state = gc_masterchain_state_;
-  if (!(gc_state->get_block_id() == gc_id)) {
-    return std::nullopt;  // the handle and state must describe the SAME durable GC block; else fail closed
+  // The anchor is the durable consensus cleanup checkpoint when one exists. The
+  // GC block is the fallback only while the checkpoint key is absent; a present
+  // checkpoint with an unusable state gives no authority at all.
+  BlockHandle anchor_handle;
+  td::Ref<MasterchainState> anchor_state;
+  if (consensus_checkpoint_.installed()) {
+    anchor_handle = consensus_checkpoint_handle_;
+    anchor_state = consensus_checkpoint_state_;
+    if (!anchor_handle || !(anchor_handle->id() == *consensus_checkpoint_.installed())) {
+      return std::nullopt;
+    }
+  } else {
+    anchor_handle = gc_masterchain_handle_;
+    anchor_state = gc_masterchain_state_;
+  }
+  if (!anchor_handle || anchor_state.is_null()) {
+    return std::nullopt;
+  }
+  auto anchor_id = anchor_handle->id();
+  if (!(anchor_state->get_block_id() == anchor_id)) {
+    return std::nullopt;  // the handle and state must describe the SAME durable block; else fail closed
   }
   consensus::ValidatorCleanupOracles oracles;
-  oracles.gc = gc_id;
-  // Both oracles are bound to this one durable GC snapshot.
-  oracles.ancestor_or_equal_of_gc = [gc_state](const BlockIdExt &retirement) {
-    return gc_state->check_old_mc_block_id(retirement, /*strict=*/true);
+  oracles.gc = anchor_id;
+  // Both oracles are bound to this one durable snapshot. Equality with the
+  // anchor is checked explicitly by the predicate; this answers strict ancestry.
+  oracles.ancestor_or_equal_of_gc = [anchor_id, anchor_state](const BlockIdExt &retirement) {
+    return retirement == anchor_id || anchor_state->check_old_mc_block_id(retirement, /*strict=*/true);
   };
-  oracles.gc_shard_catchain_seqno = [gc_state](ShardIdFull shard) -> std::optional<CatchainSeqno> {
-    auto cc = gc_state->get_shard_cc_seqno(shard);
+  oracles.gc_shard_catchain_seqno = [anchor_state](ShardIdFull shard) -> std::optional<CatchainSeqno> {
+    auto cc = anchor_state->get_shard_cc_seqno(shard);
     if (cc == std::numeric_limits<CatchainSeqno>::max()) {
       return std::nullopt;  // unknown sentinel / unsupported topology -> veto deletion
     }
@@ -3006,7 +3049,9 @@ bool ValidatorManagerImpl::validator_cleanup_reserved(const consensus::ReservedV
   auto gc_seqno = gc_masterchain_handle_ ? gc_masterchain_handle_->id().seqno() : 0;
   LOG(INFO) << "VALCLEANUP reserve session=" << item.record.session_id.to_hex() << " generation=" << item.generation
             << " attempt=" << item.attempt_id << " dir=" << item.record.dir_name << " gc_seqno=" << gc_seqno
-            << " retirement_seqno=" << item.record.retirement_checkpoint.seqno();
+            << " retirement_seqno=" << item.record.retirement_checkpoint.seqno() << " checkpoint_seqno="
+            << (consensus_checkpoint_.installed() ? static_cast<long long>(consensus_checkpoint_.installed()->seqno())
+                                                  : -1LL);
   return true;
 }
 
@@ -3022,7 +3067,9 @@ void ValidatorManagerImpl::validator_cleanup_pass_finished(consensus::ValidatorC
     auto gc_seqno = gc_masterchain_handle_ ? gc_masterchain_handle_->id().seqno() : 0;
     LOG(INFO) << "VALCLEANUP pass gc_seqno=" << gc_seqno << " examined=" << summary.examined
               << " reserved=" << summary.reserved << " wrapped=" << (summary.wrapped ? 1 : 0)
-              << " in_flight=" << validator_cleanup_manager_.in_flight_count();
+              << " in_flight=" << validator_cleanup_manager_.in_flight_count() << " checkpoint_seqno="
+              << (consensus_checkpoint_.installed() ? static_cast<long long>(consensus_checkpoint_.installed()->seqno())
+                                                    : -1LL);
   }
 }
 
@@ -3261,6 +3308,7 @@ void ValidatorManagerImpl::new_masterchain_block() {
     }
   }
 
+  recompute_consensus_checkpoint_readiness();
   update_shard_overlays();
   update_shards();
   update_shard_blocks();
@@ -3434,6 +3482,11 @@ void ValidatorManagerImpl::update_shards() {
                                     const NewConsensusConfig &simplex_config) {
     CHECK(!validator_groups_.contains(id) && !new_validator_groups.contains(id));
     CHECK(!destroyed_validator_sessions_.contains(id));
+    // Construction opens the consensus database, so it is gated on the
+    // consensus cleanup checkpoint like selection (the callers) and activation.
+    if (!consensus_checkpoint_reached_) {
+      return next_validator_groups_.end();
+    }
     if (auto it = next_validator_groups_.find(id); it != next_validator_groups_.end()) {
       return it;
     }
@@ -3475,7 +3528,13 @@ void ValidatorManagerImpl::update_shards() {
 
   active_validator_groups_master_ = active_validator_groups_shard_ = 0;
   adnl::AdnlNodeIdShort mc_validator_adnl_id = adnl::AdnlNodeIdShort::zero();
-  if (allow_validate_) {
+  // Validator groups, current and tentative, are selected only once the applied
+  // head has reached the consensus cleanup checkpoint (or there is none). While it
+  // has not, current groups are not selected (so any existing one is retired
+  // below) and none is built or started. Observer groups carry no votes and are
+  // not gated.
+  const bool validate_now = allow_validate_ && consensus_checkpoint_reached_;
+  if (validate_now) {
     for (auto &desc : new_shards) {
       auto shard = desc.first;
       if (force_recover && !desc.first.is_masterchain()) {
@@ -3567,7 +3626,7 @@ void ValidatorManagerImpl::update_shards() {
       }
     }
   }
-  if (allow_validate_) {
+  if (validate_now) {
     for (auto &shard : future_shards) {
       auto val_set = last_masterchain_state_->get_next_validator_set(shard);
       if (val_set.is_null()) {
@@ -3760,6 +3819,21 @@ void ValidatorManagerImpl::update_shards() {
     }
   }
 
+  if (consensus_checkpoint_conflict_) {
+    // The applied head excludes the consensus cleanup checkpoint: no validator
+    // group may keep signing, tentative ones included.
+    for (auto &[id, tentative_group] : next_validator_groups_) {
+      bool listed = std::any_of(ids_to_remove.begin(), ids_to_remove.end(),
+                                [&](const CleanupEntry &entry) { return entry.id == id; });
+      if (!listed) {
+        ids_to_remove.push_back({
+            .id = id,
+            .reason = "head conflicting with the consensus cleanup checkpoint",
+        });
+      }
+    }
+  }
+
   for (auto [id, reason] : ids_to_remove) {
     auto &tentative = next_validator_groups_[id];
     LOG(INFO) << "Retiring tentative " << tentative.name() << ":" << id << " because of an active " << reason
@@ -3893,6 +3967,13 @@ void ValidatorManagerImpl::updated_init_block(BlockIdExt last_rotate_block_id,
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_group(
     ValidatorSessionId session_id, ShardIdFull shard, td::Ref<block::ValidatorSet> validator_set, BlockSeqno key_seqno,
     NewConsensusConfig config, consensus::ValidatorSessionOptions opts, bool init_session) {
+  if (!consensus_checkpoint_reached_) {
+    // Final defence: the callers are gated too. A group would open its consensus
+    // database before its session starts.
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+               << ": the applied masterchain block has not reached the consensus cleanup checkpoint";
+    return {};
+  }
   td::actor::send_closure(ext_message_pool_, &ExtMessagePool::cleanup_external_messages, shard);
 
   auto validator_id = get_validator_id(shard, validator_set);
@@ -4150,7 +4231,11 @@ void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &b
 }
 
 void ValidatorManagerImpl::try_advance_gc_masterchain_block() {
+  // GC neither starts while a consensus cleanup checkpoint write is between issue
+  // and installation, nor moves past the installed checkpoint: the checkpoint's
+  // handle and state must stay loadable.
   if (gc_masterchain_handle_ && last_masterchain_seqno_ > 0 && !gc_advancing_ &&
+      consensus_checkpoint_.gc_may_start_advance(gc_masterchain_handle_->id().id.seqno) &&
       gc_masterchain_handle_->inited_next_left() &&
       gc_masterchain_handle_->id().id.seqno < last_rotate_block_id_.id.seqno &&
       gc_masterchain_handle_->id().id.seqno < last_masterchain_state_->min_ref_masterchain_seqno() &&
@@ -4217,6 +4302,16 @@ void ValidatorManagerImpl::got_next_gc_masterchain_handle(BlockHandle handle) {
 }
 
 void ValidatorManagerImpl::got_next_gc_masterchain_state(BlockHandle handle, td::Ref<MasterchainState> state) {
+  // The retention boundary is enforced at the write itself, not only when the
+  // advance started: the persisted GC block never passes the consensus cleanup
+  // checkpoint, and is never written while a checkpoint write is in flight.
+  if (!consensus_checkpoint_.gc_may_persist(handle->id().id.seqno)) {
+    LOG(WARNING) << "not advancing the GC block to " << handle->id().to_str()
+                 << ": it would pass the consensus cleanup checkpoint or race its write";
+    gc_advancing_ = false;
+    try_advance_consensus_cleanup_checkpoint();
+    return;
+  }
   auto P = td::PromiseCreator::lambda([handle, state, SelfId = actor_id(this)](td::Result<td::Unit> R) {
     R.ensure();
     td::actor::send_closure(SelfId, &ValidatorManagerImpl::advance_gc, handle, state);
@@ -4233,8 +4328,165 @@ void ValidatorManagerImpl::advance_gc(BlockHandle handle, td::Ref<MasterchainSta
   gc_advancing_ = false;
   gc_masterchain_handle_ = std::move(handle);
   gc_masterchain_state_ = std::move(state);
+  // A checkpoint candidate deferred while GC was advancing is revalidated against
+  // the new durable GC snapshot, before GC may take its next step (otherwise a GC
+  // catching up block by block could keep deferring the checkpoint).
+  try_advance_consensus_cleanup_checkpoint();
   // The durable GC floor moved forward: more retired sessions may now be provably
   // obsolete; the next cleanup tick sees the new floor.
+  try_advance_gc_masterchain_block();
+}
+
+void ValidatorManagerImpl::install_loaded_consensus_cleanup_checkpoint(BlockHandle handle,
+                                                                       td::Ref<MasterchainState> state) {
+  if (handle) {
+    install_consensus_cleanup_checkpoint(std::move(handle), std::move(state));
+  } else {
+    recompute_consensus_checkpoint_readiness();
+  }
+  consensus_checkpoint_loaded_ = true;
+}
+
+void ValidatorManagerImpl::install_consensus_cleanup_checkpoint(BlockHandle handle, td::Ref<MasterchainState> state) {
+  consensus_checkpoint_.set_installed(handle->id());
+  consensus_checkpoint_handle_ = std::move(handle);
+  consensus_checkpoint_state_ = std::move(state);
+  recompute_consensus_checkpoint_readiness();
+  if (consensus_checkpoint_conflict_ && consensus_checkpoint_loaded_ && last_masterchain_state_.not_null()) {
+    // Detected only now, after the head was installed: retire every validator
+    // group at once rather than at the next masterchain block, so none keeps
+    // signing on a branch that excludes the checkpoint.
+    update_shards();
+  }
+}
+
+void ValidatorManagerImpl::recompute_consensus_checkpoint_readiness() {
+  const auto &checkpoint = consensus_checkpoint_.installed();
+  if (!checkpoint) {
+    consensus_checkpoint_reached_ = true;
+    consensus_checkpoint_conflict_ = false;
+    return;
+  }
+  if (!last_masterchain_block_handle_ || last_masterchain_state_.is_null()) {
+    consensus_checkpoint_reached_ = false;
+    return;
+  }
+  auto head = last_masterchain_block_id_;
+  auto head_state = last_masterchain_state_;
+  auto relation = consensus::relate_to_consensus_cleanup_checkpoint(
+      *checkpoint, head, [&](const BlockIdExt &id) { return head_state->check_old_mc_block_id(id, /*strict=*/true); });
+  switch (relation) {
+    case consensus::CheckpointRelation::Reached:
+      if (!consensus_checkpoint_reached_) {
+        LOG(WARNING) << "applied masterchain block " << head.to_str() << " reached the consensus cleanup checkpoint "
+                     << checkpoint->to_str() << "; validator groups may start";
+      }
+      consensus_checkpoint_reached_ = true;
+      consensus_checkpoint_conflict_ = false;
+      break;
+    case consensus::CheckpointRelation::Behind:
+      consensus_checkpoint_reached_ = false;
+      consensus_checkpoint_conflict_ = false;
+      if (!consensus_checkpoint_gap_warning_at_ || consensus_checkpoint_gap_warning_at_.is_in_past()) {
+        LOG(WARNING) << "not validating: the applied masterchain block " << head.to_str()
+                     << " is below the consensus cleanup checkpoint " << checkpoint->to_str()
+                     << "; validator groups start once the local chain is replayed up to it. If the blocks or "
+                        "states between them are missing locally, this node stays non-signing until they arrive";
+        consensus_checkpoint_gap_warning_at_ = td::Timestamp::in(60.0);
+      }
+      break;
+    case consensus::CheckpointRelation::Conflict:
+      if (!consensus_checkpoint_conflict_) {
+        LOG(ERROR) << "not validating: the applied masterchain block " << head.to_str()
+                   << " is on a branch that excludes the consensus cleanup checkpoint " << checkpoint->to_str()
+                   << "; every validator group is retired";
+      }
+      consensus_checkpoint_reached_ = false;
+      consensus_checkpoint_conflict_ = true;
+      break;
+  }
+}
+
+td::Status ValidatorManagerImpl::admit_consensus_checkpoint_head(const BlockIdExt &head,
+                                                                 const td::Ref<MasterchainState> &state) const {
+  // The installed checkpoint and the one being written both bind the chain this
+  // node may follow; a head that excludes either is refused before it is installed.
+  for (const auto *checkpoint : {&consensus_checkpoint_.installed(), &consensus_checkpoint_.in_flight()}) {
+    if (!*checkpoint) {
+      continue;
+    }
+    auto relation = consensus::relate_to_consensus_cleanup_checkpoint(**checkpoint, head, [&](const BlockIdExt &id) {
+      return state.not_null() && state->check_old_mc_block_id(id, /*strict=*/true);
+    });
+    if (relation == consensus::CheckpointRelation::Conflict) {
+      return td::Status::Error(ErrorCode::error, PSLICE() << "refusing masterchain block " << head.to_str()
+                                                          << ": it is on a branch that excludes the consensus "
+                                                             "cleanup checkpoint "
+                                                          << (*checkpoint)->to_str());
+    }
+  }
+  return td::Status::OK();
+}
+
+void ValidatorManagerImpl::try_advance_consensus_cleanup_checkpoint() {
+  if (!consensus_checkpoint_loaded_) {
+    return;
+  }
+  using Candidate = ConsensusCheckpointCandidate;
+  decltype(consensus_checkpoint_)::Environment env;
+  env.gc_advancing = gc_advancing_;
+  if (gc_masterchain_handle_ && gc_masterchain_state_.not_null() &&
+      gc_masterchain_state_->get_block_id() == gc_masterchain_handle_->id()) {
+    env.gc_block = gc_masterchain_handle_->id();
+  }
+  env.candidate_coherent = [](const Candidate &c) {
+    return c.handle && c.state.not_null() && c.handle->is_applied() && c.state->get_block_id() == c.handle->id();
+  };
+  env.candidate_verifies = [](const Candidate &c, const BlockIdExt &id) {
+    return c.state->check_old_mc_block_id(id, /*strict=*/true);
+  };
+  env.head_covers = [this](const BlockIdExt &id) {
+    if (!last_masterchain_block_handle_ || last_masterchain_state_.is_null()) {
+      return false;
+    }
+    return consensus::relate_to_consensus_cleanup_checkpoint(id, last_masterchain_block_id_, [&](const BlockIdExt &x) {
+             return last_masterchain_state_->check_old_mc_block_id(x, /*strict=*/true);
+           }) == consensus::CheckpointRelation::Reached;
+  };
+  auto attempt = consensus_checkpoint_.try_issue(td::Time::now(), env);
+  switch (attempt.outcome) {
+    case decltype(consensus_checkpoint_)::Outcome::Issued:
+      td::actor::send_closure(db_, &Db::update_consensus_cleanup_checkpoint, attempt.id,
+                              [SelfId = actor_id(this), id = attempt.id](td::Result<td::Unit> R) {
+                                td::actor::send_closure(SelfId,
+                                                        &ValidatorManagerImpl::consensus_cleanup_checkpoint_written,
+                                                        id, std::move(R));
+                              });
+      break;
+    case decltype(consensus_checkpoint_)::Outcome::Dropped:
+      LOG(INFO) << "not advancing the consensus cleanup checkpoint to " << attempt.id.to_str() << ": "
+                << attempt.reason;
+      break;
+    case decltype(consensus_checkpoint_)::Outcome::Waiting:
+    case decltype(consensus_checkpoint_)::Outcome::Idle:
+      break;
+  }
+}
+
+void ValidatorManagerImpl::consensus_cleanup_checkpoint_written(BlockIdExt id, td::Result<td::Unit> R) {
+  auto installed = consensus_checkpoint_.complete(id, R.is_ok());
+  if (R.is_error()) {
+    if (!consensus_checkpoint_write_warning_at_ || consensus_checkpoint_write_warning_at_.is_in_past()) {
+      LOG(WARNING) << "failed to persist the consensus cleanup checkpoint " << id.to_str() << ", keeping "
+                   << (consensus_checkpoint_.installed() ? consensus_checkpoint_.installed()->to_str() : "none")
+                   << ": " << R.move_as_error();
+      consensus_checkpoint_write_warning_at_ = td::Timestamp::in(60.0);
+    }
+  } else if (installed) {
+    LOG(INFO) << "consensus cleanup checkpoint advanced to " << id.to_str();
+    install_consensus_cleanup_checkpoint(std::move(installed->handle), std::move(installed->state));
+  }
+  // The write is no longer in flight: GC may move again (up to the checkpoint).
   try_advance_gc_masterchain_block();
 }
 
@@ -4243,6 +4495,11 @@ void ValidatorManagerImpl::update_shard_client_block_handle(BlockHandle handle, 
   shard_client_handle_ = std::move(handle);
   auto seqno = shard_client_handle_->id().seqno();
   if (state.not_null()) {
+    // The shard client reports a block only after its own StateDb update was
+    // acknowledged: a durable, applied candidate for the consensus cleanup
+    // checkpoint. It is checked and rate-limited before any write.
+    consensus_checkpoint_.offer(shard_client_handle_->id(), ConsensusCheckpointCandidate{shard_client_handle_, state});
+    try_advance_consensus_cleanup_checkpoint();
     shard_client_state_ = state;
     shard_client_shards_ = state->get_shards();
     if (last_liteserver_state_.is_null() || last_liteserver_state_->get_block_id().seqno() < seqno) {
@@ -4292,6 +4549,8 @@ void ValidatorManagerImpl::state_serializer_update(BlockSeqno seqno) {
 }
 
 void ValidatorManagerImpl::alarm() {
+  // A rate-limited or deferred checkpoint candidate is retried here.
+  try_advance_consensus_cleanup_checkpoint();
   try_advance_gc_masterchain_block();
   handles_.sweep_expired(handle_sweep_alarm_budget_);
   alarm_timestamp() = td::Timestamp::in(1.0);
@@ -4305,6 +4564,17 @@ void ValidatorManagerImpl::alarm() {
                                  last_known_key_block_handle_);
   }
   if (shard_client_state_.not_null() && gc_masterchain_handle_) {
+    // Archive TTL pruning also keeps the consensus cleanup checkpoint's block
+    // handle, with no retention mechanism of its own. archive_packages_by_ttl
+    // (db/archive-gc-floor.h) considers only packages whose first masterchain
+    // block is older than gc_ts - archive_ttl, and keeps the newest of those. GC
+    // never passes the checkpoint (try_advance_gc_masterchain_block and the check
+    // in got_next_gc_masterchain_state), and masterchain timestamps are monotonic,
+    // so gc_ts <= the checkpoint's time. Any package after the checkpoint's starts
+    // at or after that time, hence above the cutoff: the checkpoint's own package
+    // is either not a candidate or the newest one, and is kept. State GC deletes
+    // only masterchain states strictly older than the GC block
+    // (allow_block_state_gc), so the checkpoint's state is kept as well.
     td::actor::send_closure(db_, &Db::run_gc, shard_client_state_, gc_masterchain_handle_->unix_time(),
                             opts_->archive_ttl());
   }
@@ -4593,6 +4863,9 @@ void ValidatorManagerImpl::prepare_stats(td::Promise<std::vector<std::pair<std::
     vec.emplace_back("masterchainblock", last_masterchain_block_id_.to_str());
     vec.emplace_back("masterchainblocktime", td::to_string(last_masterchain_block_handle_->unix_time()));
     vec.emplace_back("gcmasterchainblock", gc_masterchain_handle_->id().to_str());
+    vec.emplace_back("consensuscleanupcheckpoint",
+                     consensus_checkpoint_.installed() ? consensus_checkpoint_.installed()->to_str() : "none");
+    vec.emplace_back("consensuscheckpointreached", consensus_checkpoint_reached_ ? "1" : "0");
     vec.emplace_back("keymasterchainblock", last_key_block_handle_->id().to_str());
     vec.emplace_back("knownkeymasterchainblock", last_known_key_block_handle_->id().to_str());
     vec.emplace_back("rotatemasterchainblock", last_rotate_block_id_.to_str());

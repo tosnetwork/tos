@@ -37,7 +37,41 @@ struct ValidatorManagerInitResult {
   td::Ref<MasterchainState> gc_state;
 
   BlockHandle last_key_block_handle_;
+
+  // The consensus cleanup checkpoint, loaded and verified before any validator
+  // group can be built. Both are null when the checkpoint key is absent.
+  BlockHandle consensus_cleanup_checkpoint_handle;
+  td::Ref<MasterchainState> consensus_cleanup_checkpoint_state;
 };
+
+// A loaded consensus cleanup checkpoint: its applied handle and its own state.
+// A null handle means the key is absent.
+struct LoadedConsensusCleanupCheckpoint {
+  BlockHandle handle;
+  td::Ref<MasterchainState> state;
+};
+
+// Reads the checkpoint key and loads its handle and state. Only a genuinely
+// absent key yields an empty result. A read error, a damaged record, a missing or
+// unapplied handle, a pruned state, or a state that does not describe the
+// checkpoint fails with a refusal (consensus::is_consensus_checkpoint_refusal).
+td::actor::Task<LoadedConsensusCleanupCheckpoint> load_consensus_cleanup_checkpoint_for_startup(
+    td::actor::ActorId<Db> db, td::actor::ActorId<ValidatorManager> manager);
+
+// Startup boundary checks against a loaded checkpoint. `head` is a block the
+// node is about to start from (the init block, a reinitialization block, or a
+// rollback target) and `head_state` its state. `allow_behind` admits a block
+// below the checkpoint (normal startup replays from an older init block; the
+// validator groups wait for the replay). A block at or above the checkpoint's
+// height must be the checkpoint or a verified descendant of it.
+td::Status check_consensus_cleanup_checkpoint_boundary(const LoadedConsensusCleanupCheckpoint &checkpoint,
+                                                      const BlockIdExt &head,
+                                                      const td::Ref<MasterchainState> &head_state,
+                                                      bool allow_behind, td::Slice what);
+
+// Logs the refusal and stops the process with exit status 2. Used for every
+// startup refusal tied to the consensus cleanup checkpoint.
+[[noreturn]] void refuse_startup_for_consensus_cleanup_checkpoint(const td::Status &status);
 
 void validator_manager_init(td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager,
                             td::actor::ActorId<Db> db, td::Promise<ValidatorManagerInitResult> promise);
