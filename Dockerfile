@@ -1,7 +1,8 @@
-# Use pre-built builder image with Clang 21 already installed.
-# To rebuild: docker build -f Dockerfile.builder --target builder-22 -t ghcr.io/tosnetwork/tos-builder:ubuntu-22.04 .
+# Use pre-built builder image with Clang 21 already installed. It is published
+# for linux/amd64 and linux/arm64 by .github/workflows/build-builder-image.yml;
+# local equivalent: docker build -f Dockerfile.builder --target builder-24 -t tos-builder:ubuntu-24.04 .
 # No external script downloads at build time.
-FROM ghcr.io/tosnetwork/tos-builder:ubuntu-22.04 AS builder
+FROM ghcr.io/tosnetwork/tos-builder:ubuntu-24.04 AS builder
 ENV CCACHE_DISABLE=1
 
 WORKDIR /
@@ -21,11 +22,11 @@ RUN mkdir build && \
         -DOPENSSL_ROOT_DIR=/tos/build/third-party/openssl -DOPENSSL_USE_STATIC_LIBS=TRUE && \
         ninja -C /tos/build-pq-key tos-pq-key
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && \
     apt-get install -y wget curl libatomic1 openssl libsodium-dev libmicrohttpd-dev liblz4-dev libjemalloc-dev htop \
-    net-tools netcat iptraf-ng jq tcpdump pv plzip && \
+    net-tools netcat-openbsd iptraf-ng jq tcpdump pv plzip && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /var/tos-work/db /var/tos-work/scripts /usr/share/tos/smartcont/auto /usr/lib/fift/

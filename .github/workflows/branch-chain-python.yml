@@ -61,6 +61,7 @@ jobs:
           python3 scripts/test-build-tool-pins.py
           python3 scripts/test-build-tool-pipelines.py
           python3 scripts/test-linux-build-triggers.py
+          python3 scripts/test_container_platforms.py
 
       - name: Configure the minimal native fixture build
         run: >-

@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04-arm
+    runs-on: ubuntu-24.04-arm
 
     steps:
     - name: Check out repository
@@ -41,8 +41,8 @@ jobs:
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-ccache-${{ steps.date-stamp.outputs.timestamp }}
-        restore-keys: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-ccache
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-arm-portable-ccache-${{ steps.date-stamp.outputs.timestamp }}
+        restore-keys: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-arm-portable-ccache
 
     # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install repository-pinned Rust toolchain
@@ -59,7 +59,7 @@ jobs:
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-ccache-${{ steps.date-stamp.outputs.timestamp }}
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-arm-portable-ccache-${{ steps.date-stamp.outputs.timestamp }}
 
     - name: Make AppImages
       run: |
@@ -74,8 +74,8 @@ jobs:
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-libs-ccache-${{ steps.date-stamp.outputs.timestamp }}
-        restore-keys: ${{ runner.os }}-${{ runner.arch }}-ubuntu-22.04-arm-portable-libs-ccache
+        key: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-arm-portable-libs-ccache-${{ steps.date-stamp.outputs.timestamp }}
+        restore-keys: ${{ runner.os }}-${{ runner.arch }}-ubuntu-24.04-arm-portable-libs-ccache
 
     - name: Build TOS libs
       run: |

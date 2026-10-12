@@ -20,6 +20,10 @@ the iOS wallet vendors, with Apple's toolchain.
 
 ## Linux Prerequisites
 
+Ubuntu 24.04 is the build and release baseline. CI, the builder image, the
+node container image and the release binaries are all built on 24.04, so the
+released binaries need glibc 2.39 or newer and do not run on Ubuntu 22.04.
+
 ```bash
 sudo apt update
 sudo apt install -y \
