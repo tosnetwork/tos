@@ -84,7 +84,7 @@ jobs:
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport \
             test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
-            test-notarize-after-transient-resolve test-state-resolver-teardown \
+            test-notarize-after-transient-resolve test-state-resolver-teardown test-late-candidate-window \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
             test-adnl-ext-input-budget test-adnl-ext-output-backpressure test-adnl-ext-refusal-close \
@@ -223,6 +223,12 @@ jobs:
       # must never be retried into an unsafe late vote.
       - name: Check Simplex parent-state retry voting
         run: ctest --test-dir build --output-on-failure -R '^c05-notarize-'
+
+      # A candidate that arrives after its slot is finalized is still stored while the
+      # candidate resolver retains the slot, and nothing outside that window is; a resolve
+      # task keeps its resolver entry alive until it ends.
+      - name: Check Simplex late candidates for finalized slots
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-late-candidate-window$'
 
       # C10: a group that stops while a finalization is in flight and other
       # callers wait on it must cancel them, make no further manager request,
