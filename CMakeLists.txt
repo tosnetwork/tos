@@ -1068,6 +1068,15 @@ target_include_directories(test-startup-catchup-importer PRIVATE ${CMAKE_CURRENT
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-startup-catchup-importer PRIVATE validator full-node validator-common validator-db
                       tos_validator tos_db tos_crypto tdutils tdactor)
+if (USE_QUIC)
+  add_executable(test-startup-catchup-manager test/test-td-main.cpp test/test-startup-catchup-manager.cpp)
+  target_include_directories(test-startup-catchup-manager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                             ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+  target_link_libraries(test-startup-catchup-manager PRIVATE validator validator-common validator-db full-node quic
+                        tos_validator tos_block tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl
+                        overlay dht tl_api tdactor tdutils)
+  tos_test(test-startup-catchup-manager)
+endif()
 add_executable(test-startup-orphan-reconcile test/test-td-main.cpp test/test-startup-orphan-reconcile.cpp)
 target_include_directories(test-startup-orphan-reconcile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
