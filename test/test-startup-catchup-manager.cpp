@@ -770,6 +770,20 @@ TEST(StartupCatchupManager, T31_NonMemberFallsBackToTheLegacyLoop) {
   ASSERT_TRUE(f.query()[4]);
 }
 
+// C5. Prestart completion runs once: a second completion is refused, so the shard client
+// is started once and the inventory runs once.
+TEST(StartupCatchupManager, PrestartCompletesOnce) {
+  Fixture f;
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kFresh);
+  ASSERT_TRUE(!f.decide());
+  f.complete_prestart();
+  ASSERT_TRUE(f.wait_event("shard client start", 30.0));
+  f.complete_prestart();
+  f.run_for(1.0);
+  ASSERT_EQ(1u, f.journal->count("shard client start"));
+}
+
 // T15 (without the cleanup checkpoint). The group predicate is the fence alone while
 // the checkpoint condition is absent; it is open outside the mode.
 TEST(StartupCatchupManager, T15_PredicateWithoutTheCheckpoint) {

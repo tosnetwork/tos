@@ -3339,9 +3339,6 @@ void ValidatorManagerImpl::startup_orphan_persisted(td::uint64 token,
 }
 
 void ValidatorManagerImpl::startup_orphan_reconcile_finished(consensus::StartupOrphanSummary summary) {
-  if (startup_reconciled_) {
-    return;
-  }
   startup_reconciled_ = true;
   finish_prestart_completion();
 }
