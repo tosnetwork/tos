@@ -25,10 +25,19 @@ inline std::vector<metrics::MetricFamily> chain_progress_families(const std::str
     const double value = wall - static_cast<double>(at);
     families.push_back(metrics::MetricFamily::make_scalar(prefix + name, "gauge", value > 0 ? value : 0, help));
   };
-  age("_masterchain_head_age_seconds", gauges.masterchain_block_unix_seconds.load(std::memory_order_relaxed),
+  const auto masterchain_unix = gauges.masterchain_block_unix_seconds.load(std::memory_order_relaxed);
+  const auto shard_client_unix = gauges.shard_client_unix_seconds.load(std::memory_order_relaxed);
+  age("_masterchain_head_age_seconds", masterchain_unix,
       "Seconds since the generation time of the last masterchain block this node accepted.");
-  age("_shard_client_age_seconds", gauges.shard_client_unix_seconds.load(std::memory_order_relaxed),
+  age("_shard_client_age_seconds", shard_client_unix,
       "Seconds since the generation time of the masterchain block whose state this node has applied.");
+  // A node that knows the masterchain head but has no applied state has no
+  // shard-client age to alert on; this says so explicitly.
+  if (masterchain_unix != 0) {
+    families.push_back(metrics::MetricFamily::make_scalar(
+        prefix + "_shard_client_state_known", "gauge", shard_client_unix != 0 ? 1 : 0,
+        "1 when the applied state (shard client) is known, 0 while the masterchain head is known but it is not."));
+  }
   families.push_back(metrics::MetricFamily::make_scalar(
       prefix + "_wait_block_data_net_failures_total", "counter",
       static_cast<double>(gauges.block_data_net_failures.load(std::memory_order_relaxed)),

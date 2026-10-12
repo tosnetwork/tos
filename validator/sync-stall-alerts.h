@@ -5,7 +5,10 @@
  */
 #pragma once
 
+#include <atomic>
 #include <cstdint>
+#include <limits>
+#include <string>
 
 namespace tos::validator {
 
@@ -62,6 +65,9 @@ inline constexpr double kMasterchainLagWarnIntervalSeconds = 60.0;
 struct MasterchainLagAlertState {
   bool active = false;
   double last_warned_at = -1;
+  // When the applied state (shard client) was first seen unknown while the
+  // masterchain head was known; negative while it is known.
+  double shard_client_unknown_since = -1;
 };
 
 enum class MasterchainLagAction { None, Warn, Clear };
@@ -94,6 +100,109 @@ inline MasterchainLagDecision decide_masterchain_lag_alert(const MasterchainLagA
     decision.next = MasterchainLagAlertState{};
   }
   return decision;
+}
+
+// Consecutive failed network attempts of one block-data waiter, and the
+// warnings they are worth. The waiter calls on_failure for every failed
+// attempt and on_delivered once the network delivers the block.
+class BlockDataNetFailures {
+ public:
+  struct Report {
+    // The block keeps failing: the rate-limited stall warning is due.
+    bool stall_warning = false;
+    // This failure is worth a warning of its own (see block_data_failure_warns).
+    bool failure_warning = false;
+    std::uint64_t consecutive = 0;
+  };
+
+  // `total` is the process-wide failure counter the exporter publishes.
+  Report on_failure(bool not_ready, double now, std::atomic<std::uint64_t> &total) {
+    if (consecutive_ < std::numeric_limits<std::uint64_t>::max()) {
+      ++consecutive_;
+    }
+    total.fetch_add(1, std::memory_order_relaxed);
+    Report report;
+    report.consecutive = consecutive_;
+    if (block_data_net_failure_warning_due(consecutive_, now, warned_at_)) {
+      warned_at_ = now;
+      report.stall_warning = true;
+    }
+    report.failure_warning = block_data_failure_warns(not_ready, non_routine_warned_);
+    return report;
+  }
+
+  void on_delivered() {
+    consecutive_ = 0;
+    warned_at_ = -1;
+    non_routine_warned_ = false;
+  }
+
+ private:
+  std::uint64_t consecutive_ = 0;
+  double warned_at_ = -1;
+  bool non_routine_warned_ = false;
+};
+
+// What one manager tick found about masterchain progress.
+struct MasterchainLagReport {
+  MasterchainLagAction action = MasterchainLagAction::None;
+  double masterchain_age = 0;
+  // The applied state's age; while its block time is unknown, the time since
+  // it was first seen unknown with a known masterchain head.
+  double shard_client_age = 0;
+  bool shard_client_known = false;
+};
+
+// One manager tick: publishes the two block times (unix seconds, 0 unknown)
+// for the exporter and decides the lag alert. Nothing is decided before the
+// masterchain head is known. An applied state that stays unknown once the
+// head is known is a node that applies nothing, so it ages from the moment it
+// was first seen unknown and warns like any other stalled applied state.
+inline MasterchainLagReport observe_masterchain_lag(MasterchainLagAlertState &state, std::uint64_t masterchain_unix,
+                                                    std::uint64_t shard_client_unix, double wall, double now,
+                                                    std::atomic<std::uint64_t> &masterchain_gauge,
+                                                    std::atomic<std::uint64_t> &shard_client_gauge) {
+  masterchain_gauge.store(masterchain_unix, std::memory_order_relaxed);
+  shard_client_gauge.store(shard_client_unix, std::memory_order_relaxed);
+  MasterchainLagReport report;
+  if (masterchain_unix == 0) {
+    return report;
+  }
+  report.masterchain_age = non_negative_age(wall, static_cast<double>(masterchain_unix));
+  if (shard_client_unix != 0) {
+    report.shard_client_known = true;
+    report.shard_client_age = non_negative_age(wall, static_cast<double>(shard_client_unix));
+    state.shard_client_unknown_since = -1;
+  } else {
+    if (state.shard_client_unknown_since < 0) {
+      state.shard_client_unknown_since = now;
+    }
+    report.shard_client_age = non_negative_age(now, state.shard_client_unknown_since);
+  }
+  const double unknown_since = state.shard_client_unknown_since;
+  auto decision = decide_masterchain_lag_alert(state, now, report.masterchain_age, report.shard_client_age);
+  state = decision.next;
+  state.shard_client_unknown_since = unknown_since;
+  report.action = decision.action;
+  return report;
+}
+
+// The log line for a Warn or Clear report; empty for None.
+inline std::string masterchain_lag_message(const MasterchainLagReport &report) {
+  if (report.action == MasterchainLagAction::None) {
+    return {};
+  }
+  const std::string shard_client =
+      report.shard_client_known
+          ? std::to_string(static_cast<std::uint64_t>(report.shard_client_age)) + " s old"
+          : "unknown for " + std::to_string(static_cast<std::uint64_t>(report.shard_client_age)) + " s";
+  const std::string masterchain =
+      "last masterchain block " + std::to_string(static_cast<std::uint64_t>(report.masterchain_age)) + " s old";
+  if (report.action == MasterchainLagAction::Warn) {
+    return "masterchain is behind: applied state (shard client) " + shard_client + ", " + masterchain + " (threshold " +
+           std::to_string(static_cast<std::uint64_t>(kMasterchainLagWarnSeconds)) + " s)";
+  }
+  return "masterchain caught up: applied state (shard client) " + shard_client + ", " + masterchain;
 }
 
 }  // namespace tos::validator

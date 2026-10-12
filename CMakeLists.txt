@@ -2092,6 +2092,14 @@ add_test(NAME pq-unsafe-rotation-source-mutations
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/pq-unsafe-rotation-source-mutations.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pq-unsafe-rotation-source-mutations PROPERTIES LABELS "source-guard" RUN_SERIAL TRUE)
+add_test(NAME sync-stall-wiring-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-sync-stall-wiring.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sync-stall-wiring-source PROPERTIES LABELS "source-guard")
+add_test(NAME sync-stall-wiring-source-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-sync-stall-wiring.py
+          ${CMAKE_CURRENT_SOURCE_DIR} --self-test)
+set_tests_properties(sync-stall-wiring-source-self-test PROPERTIES LABELS "source-guard")
 add_test(NAME regression-fixture-concurrency
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-regression-concurrency.sh
           ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})

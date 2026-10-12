@@ -22,6 +22,7 @@
 #include "interfaces/block-handle.h"
 #include "interfaces/validator-manager.h"
 #include "validator/finality-cache-policy.h"
+#include "validator/sync-stall-alerts.h"
 
 namespace tos {
 
@@ -91,11 +92,8 @@ class WaitBlockData : public td::actor::Actor {
   bool is_hardfork_ = false;
   td::Timestamp try_read_static_file_ = td::Timestamp::now();
   // Consecutive failed network attempts for this block, reset when the
-  // network delivers it; drives the rate-limited stall warning.
-  std::uint64_t net_failures_ = 0;
-  double net_failure_warned_at_ = -1;
-  // Whether a failure other than "not ready" has been logged as a warning.
-  bool net_non_routine_warned_ = false;
+  // network delivers it; drives the stall warnings.
+  BlockDataNetFailures net_failures_;
 
   td::PerfWarningTimer perf_timer_;
 };

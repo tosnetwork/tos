@@ -99,6 +99,13 @@ void chain_progress_unit() {
   auto unknown = render(1700000000);
   CHECK(unknown.find("tos_masterchain_head_age_seconds") == std::string::npos);
   CHECK(unknown.find("tos_shard_client_age_seconds") == std::string::npos);
+  CHECK(unknown.find("tos_shard_client_state_known") == std::string::npos);
+  // The masterchain head is known but the applied state is not: there is no
+  // shard-client age, and the known gauge says why.
+  gauges.masterchain_block_unix_seconds.store(1700000000 - 25);
+  auto no_applied_state = render(1700000000);
+  CHECK(no_applied_state.find("tos_shard_client_age_seconds") == std::string::npos);
+  CHECK(no_applied_state.find("\ntos_shard_client_state_known 0") != std::string::npos);
   CHECK(unknown.find("# TYPE tos_wait_block_data_net_failures_total counter\n") != std::string::npos);
   CHECK(unknown.find("\ntos_wait_block_data_net_failures_total 0") != std::string::npos);
   // Consensus is current but the applied state is hours behind: both ages are
@@ -112,6 +119,7 @@ void chain_progress_unit() {
   CHECK(behind.find("\ntos_masterchain_head_age_seconds 25") != std::string::npos);
   CHECK(behind.find("# TYPE tos_shard_client_age_seconds gauge\n") != std::string::npos);
   CHECK(behind.find("\ntos_shard_client_age_seconds 9000") != std::string::npos);
+  CHECK(behind.find("\ntos_shard_client_state_known 1") != std::string::npos);
   CHECK(behind.find("\ntos_wait_block_data_net_failures_total 42") != std::string::npos);
   // The ages keep growing with the collection clock even when nobody
   // refreshes the block times.

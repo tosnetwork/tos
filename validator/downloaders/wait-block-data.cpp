@@ -17,8 +17,6 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include <limits>
-
 #include "adnl/utils.hpp"
 #include "common/delay.h"
 #include "crypto/block/mc-config.h"
@@ -29,7 +27,6 @@
 #include "block-auto.h"
 #include "block-parse.h"
 #include "fabric.h"
-#include "sync-stall-alerts.h"
 #include "wait-block-data.hpp"
 
 namespace tos {
@@ -250,20 +247,16 @@ void WaitBlockData::got_block_data_from_db(td::Ref<BlockData> data) {
 }
 
 void WaitBlockData::failed_to_get_block_data_from_net(td::Status reason) {
-  if (net_failures_ < std::numeric_limits<std::uint64_t>::max()) {
-    ++net_failures_;
-  }
-  health::node_state.block_data_net_failures.fetch_add(1, std::memory_order_relaxed);
   // "Not ready" is routine while a block propagates, so a single one stays at
   // DEBUG; a block that keeps failing is a stall and is reported at WARNING,
   // rate-limited, whatever the error.
-  const double now = td::Timestamp::now().at();
-  if (block_data_net_failure_warning_due(net_failures_, now, net_failure_warned_at_)) {
-    net_failure_warned_at_ = now;
-    LOG(WARNING) << "still cannot get block " << handle_->id() << " data from net after " << net_failures_
+  const auto report = net_failures_.on_failure(reason.code() == ErrorCode::notready, td::Timestamp::now().at(),
+                                               health::node_state.block_data_net_failures);
+  if (report.stall_warning) {
+    LOG(WARNING) << "still cannot get block " << handle_->id() << " data from net after " << report.consecutive
                  << " consecutive failures: " << reason;
   }
-  if (block_data_failure_warns(reason.code() == ErrorCode::notready, net_non_routine_warned_)) {
+  if (report.failure_warning) {
     LOG(WARNING) << "failed to get block " << handle_->id() << " data from net: " << reason;
   } else {
     LOG(DEBUG) << "failed to get block " << handle_->id() << " data from net: " << reason;
@@ -279,9 +272,7 @@ void WaitBlockData::loaded_data(ReceivedBlock block) {
     failed_to_get_block_data_from_net(X.move_as_error_prefix("bad block from net: "));
     return;
   }
-  net_failures_ = 0;
-  net_failure_warned_at_ = -1;
-  net_non_routine_warned_ = false;
+  net_failures_.on_delivered();
   loaded_block_data(X.move_as_ok());
 }
 

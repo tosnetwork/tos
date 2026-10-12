@@ -13,6 +13,9 @@
 // WARNING, and when the masterchain or the applied state is far enough behind
 // to warn, how often, and when the warning clears.
 
+#include <atomic>
+#include <string>
+
 #include "td/utils/tests.h"
 #include "validator/sync-stall-alerts.h"
 
@@ -133,6 +136,111 @@ TEST(SyncStallAlerts, LagWithABackwardsClockDoesNotFlood) {
   MasterchainLagAlertState state;
   ASSERT_TRUE(evaluate(state, 1000, 300, 300).action == MasterchainLagAction::Warn);
   ASSERT_TRUE(evaluate(state, 900, 300, 300).action == MasterchainLagAction::None);
+}
+
+// The manager's tick, as the manager runs it: block times in, gauges and the
+// log line out.
+struct Tick {
+  MasterchainLagAlertState state;
+  std::atomic<std::uint64_t> masterchain_gauge{0};
+  std::atomic<std::uint64_t> shard_client_gauge{0};
+  MasterchainLagReport run(std::uint64_t masterchain_unix, std::uint64_t shard_client_unix, double wall, double now) {
+    return observe_masterchain_lag(state, masterchain_unix, shard_client_unix, wall, now, masterchain_gauge,
+                                   shard_client_gauge);
+  }
+};
+
+TEST(SyncStallAlerts, TickPublishesBothBlockTimes) {
+  Tick tick;
+  tick.run(1000, 400, 1002, 50);
+  ASSERT_EQ(1000u, tick.masterchain_gauge.load());
+  ASSERT_EQ(400u, tick.shard_client_gauge.load());
+  // Unknown is published as unknown, not as the previous value.
+  tick.run(1001, 0, 1003, 51);
+  ASSERT_EQ(0u, tick.shard_client_gauge.load());
+}
+
+TEST(SyncStallAlerts, TickWarnsWithTheAgesInTheLogLine) {
+  Tick tick;
+  auto report = tick.run(10000 - 2, 10000 - 9000, 10000, 50);
+  ASSERT_TRUE(report.action == MasterchainLagAction::Warn);
+  ASSERT_EQ(std::string("masterchain is behind: applied state (shard client) 9000 s old, last masterchain block 2 s "
+                        "old (threshold 120 s)"),
+            masterchain_lag_message(report));
+  report = tick.run(10100 - 2, 10100 - 3, 10100, 150);
+  ASSERT_TRUE(report.action == MasterchainLagAction::Clear);
+  ASSERT_EQ(std::string("masterchain caught up: applied state (shard client) 3 s old, last masterchain block 2 s old"),
+            masterchain_lag_message(report));
+  ASSERT_EQ(std::string(), masterchain_lag_message(tick.run(10101 - 2, 10101 - 3, 10101, 151)));
+}
+
+TEST(SyncStallAlerts, NothingIsDecidedBeforeTheMasterchainHeadIsKnown) {
+  Tick tick;
+  for (int t = 0; t < 1000; t += 10) {
+    ASSERT_TRUE(tick.run(0, 0, 5000 + t, t).action == MasterchainLagAction::None);
+  }
+  ASSERT_TRUE(tick.state.shard_client_unknown_since < 0);
+}
+
+TEST(SyncStallAlerts, AnAppliedStateThatStaysUnknownWarns) {
+  // The masterchain head is current but the shard client never published a
+  // handle: once that has lasted past the threshold it is a stalled node.
+  Tick tick;
+  double now = 100;
+  for (; now <= 100 + kMasterchainLagWarnSeconds; now += 1) {
+    ASSERT_TRUE(tick.run(5000, 0, 5002, now).action == MasterchainLagAction::None);
+  }
+  auto report = tick.run(5000, 0, 5002, now);
+  ASSERT_TRUE(report.action == MasterchainLagAction::Warn);
+  ASSERT_TRUE(!report.shard_client_known);
+  ASSERT_EQ(std::string("masterchain is behind: applied state (shard client) unknown for 121 s, last masterchain "
+                        "block 2 s old (threshold 120 s)"),
+            masterchain_lag_message(report));
+  // The grace clock is not restarted by the warning, so it keeps warning
+  // once a minute.
+  ASSERT_TRUE(tick.run(5000, 0, 5002, now + 30).action == MasterchainLagAction::None);
+  ASSERT_TRUE(tick.run(5000, 0, 5002, now + 60).action == MasterchainLagAction::Warn);
+  // Once the applied state is known and current the alert clears, and a
+  // later unknown period starts a fresh grace clock.
+  ASSERT_TRUE(tick.run(5100, 5099, 5102, now + 61).action == MasterchainLagAction::Clear);
+  ASSERT_TRUE(tick.run(5100, 0, 5102, now + 62).action == MasterchainLagAction::None);
+  ASSERT_EQ(now + 62, tick.state.shard_client_unknown_since);
+}
+
+TEST(SyncStallAlerts, WaiterCountsEveryFailureAndWarnsOnTheStall) {
+  BlockDataNetFailures failures;
+  std::atomic<std::uint64_t> total{5};
+  int stall_warnings = 0;
+  for (std::uint64_t i = 1; i <= kBlockDataNetFailureWarnThreshold; i++) {
+    auto report = failures.on_failure(true, 1000 + 0.1 * static_cast<double>(i), total);
+    ASSERT_EQ(i, report.consecutive);
+    ASSERT_TRUE(!report.failure_warning);
+    stall_warnings += report.stall_warning ? 1 : 0;
+  }
+  ASSERT_EQ(1, stall_warnings);
+  ASSERT_EQ(5u + kBlockDataNetFailureWarnThreshold, total.load());
+  // Within the interval: neither the stall nor a repeated "not ready" warns;
+  // the first failure of another kind does.
+  ASSERT_TRUE(!failures.on_failure(true, 1010, total).stall_warning);
+  auto other = failures.on_failure(false, 1011, total);
+  ASSERT_TRUE(other.failure_warning && !other.stall_warning);
+  ASSERT_TRUE(!failures.on_failure(false, 1012, total).failure_warning);
+  ASSERT_TRUE(failures.on_failure(true, 1061, total).stall_warning);
+}
+
+TEST(SyncStallAlerts, WaiterStartsOverWhenTheBlockArrives) {
+  BlockDataNetFailures failures;
+  std::atomic<std::uint64_t> total{0};
+  for (std::uint64_t i = 0; i < kBlockDataNetFailureWarnThreshold; i++) {
+    failures.on_failure(false, 1000, total);
+  }
+  failures.on_delivered();
+  auto report = failures.on_failure(false, 1001, total);
+  ASSERT_EQ(1u, report.consecutive);
+  ASSERT_TRUE(report.failure_warning);
+  ASSERT_TRUE(!report.stall_warning);
+  // The process-wide counter is never reset.
+  ASSERT_EQ(kBlockDataNetFailureWarnThreshold + 1, total.load());
 }
 
 }  // namespace
