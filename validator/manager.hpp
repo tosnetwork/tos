@@ -28,10 +28,10 @@
 
 #include "collator-node/collator-node.hpp"
 #include "common/refcnt.hpp"
+#include "consensus/consensus-cleanup-checkpoint.h"
 #include "consensus/session-compat.h"
 #include "consensus/validator-cleanup-manager.h"
 #include "consensus/validator-cleanup-worker.h"
-#include "consensus/consensus-cleanup-checkpoint.h"
 #include "consensus/validator-cleanup.h"
 #include "db/db-event-publisher.hpp"
 #include "impl/ext-message-pool.hpp"

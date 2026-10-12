@@ -408,8 +408,8 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
     promise.set_value(td::Unit());
   }
   void checkpoint(td::Promise<std::tuple<std::optional<BlockIdExt>, bool, BlockIdExt>> promise) {
-    promise.set_value(
-        std::make_tuple(consensus_checkpoint_.installed(), bool{consensus_checkpoint_reached_}, last_masterchain_block_id_));
+    promise.set_value(std::make_tuple(consensus_checkpoint_.installed(), bool{consensus_checkpoint_reached_},
+                                      last_masterchain_block_id_));
   }
   void complete_sync(td::Promise<> promise) {
     sync_complete({});
@@ -623,10 +623,9 @@ class Fixture {
   }
   void install_checkpoint(BlockIdExt id, bool at_runtime = false) {
     query<td::Unit>([&](auto promise) {
-      td::actor::send_closure(manager_,
-                              at_runtime ? &TwostepManagerProbe::advance_checkpoint
-                                         : &TwostepManagerProbe::install_checkpoint,
-                              id, std::move(promise));
+      td::actor::send_closure(
+          manager_, at_runtime ? &TwostepManagerProbe::advance_checkpoint : &TwostepManagerProbe::install_checkpoint,
+          id, std::move(promise));
     }).ensure();
     pump();
   }
@@ -1292,8 +1291,8 @@ TEST(TwostepWiring, CheckpointAdvanceDuringReplayWaitsForTheHead) {
     ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(h), Fixture::main_ancestors(h)).is_ok());
   ASSERT_TRUE(!f.validators().first.empty());
   f.retry_checkpoint();
-  ASSERT_TRUE(f.eventually(
-      [&] { return std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{Fixture::main_block(7)}; }));
+  ASSERT_TRUE(
+      f.eventually([&] { return std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{Fixture::main_block(7)}; }));
   ASSERT_TRUE(std::get<1>(f.checkpoint()));
   ASSERT_TRUE(!f.validators().first.empty());
   ASSERT_TRUE(f.closed().empty());

@@ -102,13 +102,13 @@ inline td::Result<BlockIdExt> decode_consensus_cleanup_checkpoint(td::Slice valu
   }
   auto version = detail::get_u32_le(p + 4);
   if (version != detail::kCheckpointVersion) {
-    return td::Status::Error(ErrorCode::error, PSLICE() << "consensus cleanup checkpoint record has unsupported version "
-                                                        << version);
+    return td::Status::Error(ErrorCode::error,
+                             PSLICE() << "consensus cleanup checkpoint record has unsupported version " << version);
   }
   if (value.size() != detail::kCheckpointEncodedSize) {
-    return td::Status::Error(ErrorCode::error, PSLICE() << "consensus cleanup checkpoint record has length "
-                                                        << value.size() << ", expected "
-                                                        << detail::kCheckpointEncodedSize);
+    return td::Status::Error(ErrorCode::error, PSLICE()
+                                                   << "consensus cleanup checkpoint record has length " << value.size()
+                                                   << ", expected " << detail::kCheckpointEncodedSize);
   }
   BlockIdExt id;
   id.id.workchain = static_cast<WorkchainId>(detail::get_u32_le(p + 8));
@@ -188,8 +188,8 @@ enum class CheckpointRelation {
 
 using VerifiesStrictAncestorFn = std::function<bool(const BlockIdExt&)>;
 
-inline CheckpointRelation relate_to_consensus_cleanup_checkpoint(const BlockIdExt& checkpoint, const BlockIdExt& block,
-                                                                 const VerifiesStrictAncestorFn& verifies_strict_ancestor) {
+inline CheckpointRelation relate_to_consensus_cleanup_checkpoint(
+    const BlockIdExt& checkpoint, const BlockIdExt& block, const VerifiesStrictAncestorFn& verifies_strict_ancestor) {
   if (block.seqno() < checkpoint.seqno()) {
     return CheckpointRelation::Behind;
   }
@@ -200,7 +200,7 @@ inline CheckpointRelation relate_to_consensus_cleanup_checkpoint(const BlockIdEx
     return CheckpointRelation::Conflict;
   }
   return verifies_strict_ancestor && verifies_strict_ancestor(checkpoint) ? CheckpointRelation::Reached
-                                                                         : CheckpointRelation::Conflict;
+                                                                          : CheckpointRelation::Conflict;
 }
 
 // Error code for a refusal that must stop the process with exit status 2.
@@ -273,10 +273,10 @@ class ConsensusCleanupCheckpointTracker {
   };
 
   enum class Outcome {
-    Issued,       // a write was issued for the returned id
-    Idle,         // nothing to do
-    Waiting,      // a candidate is kept for a later attempt
-    Dropped,      // the candidate was refused and discarded
+    Issued,   // a write was issued for the returned id
+    Idle,     // nothing to do
+    Waiting,  // a candidate is kept for a later attempt
+    Dropped,  // the candidate was refused and discarded
   };
 
   struct Attempt {
@@ -358,8 +358,8 @@ class ConsensusCleanupCheckpointTracker {
         return drop(id, PSTRING() << "not above the checkpoint " << installed_->to_str());
       }
       if (!env.candidate_verifies || !env.candidate_verifies(pending_->second, *installed_)) {
-        return drop(id, PSTRING() << "its state does not verify the checkpoint " << installed_->to_str()
-                                  << " as an ancestor");
+        return drop(
+            id, PSTRING() << "its state does not verify the checkpoint " << installed_->to_str() << " as an ancestor");
       }
     } else {
       if (!env.gc_block) {

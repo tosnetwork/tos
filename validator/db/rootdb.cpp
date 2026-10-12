@@ -621,18 +621,17 @@ void RootDb::truncate(BlockSeqno seqno, ConstBlockHandle handle, td::Promise<td:
   // consensus cleanup checkpoint is checked here, before either is dispatched:
   // a refusal must leave both untouched. StateDb repeats a weaker check as
   // defence in depth.
-  td::actor::send_closure(
-      state_db_, &StateDb::get_consensus_cleanup_checkpoint,
-      [SelfId = actor_id(this), seqno, handle,
-       promise = std::move(promise)](td::Result<std::optional<BlockIdExt>> R) mutable {
-        if (R.is_error()) {
-          promise.set_error(consensus::consensus_checkpoint_refusal(
-              PSLICE() << "refusing to truncate: " << R.move_as_error().message()));
-          return;
-        }
-        td::actor::send_closure(SelfId, &RootDb::truncate_checked, seqno, std::move(handle), R.move_as_ok(),
-                                std::move(promise));
-      });
+  td::actor::send_closure(state_db_, &StateDb::get_consensus_cleanup_checkpoint,
+                          [SelfId = actor_id(this), seqno, handle,
+                           promise = std::move(promise)](td::Result<std::optional<BlockIdExt>> R) mutable {
+                            if (R.is_error()) {
+                              promise.set_error(consensus::consensus_checkpoint_refusal(
+                                  PSLICE() << "refusing to truncate: " << R.move_as_error().message()));
+                              return;
+                            }
+                            td::actor::send_closure(SelfId, &RootDb::truncate_checked, seqno, std::move(handle),
+                                                    R.move_as_ok(), std::move(promise));
+                          });
 }
 
 void RootDb::truncate_checked(BlockSeqno seqno, ConstBlockHandle handle, std::optional<BlockIdExt> checkpoint,
@@ -672,8 +671,8 @@ void RootDb::truncate_checked(BlockSeqno seqno, ConstBlockHandle handle, std::op
     }
     auto state = R.move_as_ok();
     const auto *mc_state = dynamic_cast<const MasterchainState *>(state.get());
-    auto status = consensus::check_consensus_checkpoint_rollback(
-        checkpoint, handle->id(), [mc_state](const BlockIdExt &id) {
+    auto status =
+        consensus::check_consensus_checkpoint_rollback(checkpoint, handle->id(), [mc_state](const BlockIdExt &id) {
           return mc_state != nullptr && mc_state->check_old_mc_block_id(id, /*strict=*/true);
         });
     if (status.is_error()) {

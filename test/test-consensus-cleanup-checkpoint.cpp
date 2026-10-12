@@ -224,8 +224,7 @@ TEST(ConsensusCleanupCheckpoint, store_is_monotonic_and_survives_reopen) {
 TEST(ConsensusCleanupCheckpoint, head_relation) {
   Chain chain{.fork_from = 50};
   auto cp = block(60);
-  ASSERT_TRUE(relate_to_consensus_cleanup_checkpoint(cp, block(59), chain.of(block(59))) ==
-              CheckpointRelation::Behind);
+  ASSERT_TRUE(relate_to_consensus_cleanup_checkpoint(cp, block(59), chain.of(block(59))) == CheckpointRelation::Behind);
   // Behind even on another branch: replay below the height is not judged yet.
   ASSERT_TRUE(relate_to_consensus_cleanup_checkpoint(cp, block(55, 1), chain.of(block(55, 1))) ==
               CheckpointRelation::Behind);

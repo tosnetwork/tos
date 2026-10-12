@@ -21,11 +21,10 @@
 #include "td/db/RocksDb.h"
 #include "tos/tos-shard.h"
 #include "tos/tos-tl.hpp"
-
-#include "statedb.hpp"
-
 #include "validator/consensus/consensus-cleanup-checkpoint.h"
 #include "validator/consensus/validator-cleanup-store.h"
+
+#include "statedb.hpp"
 
 namespace tos {
 
@@ -495,15 +494,14 @@ void StateDb::truncate(BlockSeqno masterchain_seqno, ConstBlockHandle handle, td
   {
     auto r_checkpoint = consensus::load_consensus_cleanup_checkpoint(*kv_);
     if (r_checkpoint.is_error()) {
-      promise.set_error(consensus::consensus_checkpoint_refusal(
-          PSLICE() << "refusing to truncate: " << r_checkpoint.move_as_error().message()));
+      promise.set_error(consensus::consensus_checkpoint_refusal(PSLICE() << "refusing to truncate: "
+                                                                         << r_checkpoint.move_as_error().message()));
       return;
     }
     auto checkpoint = r_checkpoint.move_as_ok();
     if (checkpoint) {
       bool below = masterchain_seqno < checkpoint->seqno();
-      bool sideways =
-          masterchain_seqno == checkpoint->seqno() && (!handle || !(handle->id() == *checkpoint));
+      bool sideways = masterchain_seqno == checkpoint->seqno() && (!handle || !(handle->id() == *checkpoint));
       if (below || sideways) {
         promise.set_error(consensus::consensus_checkpoint_refusal(
             PSLICE() << "refusing to truncate to masterchain seqno " << masterchain_seqno

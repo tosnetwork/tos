@@ -89,16 +89,16 @@ td::actor::Task<LoadedConsensusCleanupCheckpoint> load_consensus_cleanup_checkpo
 }
 
 td::Status check_consensus_cleanup_checkpoint_boundary(const LoadedConsensusCleanupCheckpoint &checkpoint,
-                                                      const BlockIdExt &head,
-                                                      const td::Ref<MasterchainState> &head_state,
-                                                      bool allow_behind, td::Slice what) {
+                                                       const BlockIdExt &head,
+                                                       const td::Ref<MasterchainState> &head_state, bool allow_behind,
+                                                       td::Slice what) {
   if (!checkpoint.handle) {
     return td::Status::OK();
   }
   auto cp = checkpoint.handle->id();
   if (head_state.is_null() || !(head_state->get_block_id() == head)) {
-    return consensus::consensus_checkpoint_refusal(PSLICE() << "refusing to start from " << what << " "
-                                                            << head.to_str() << ": its state is not loaded");
+    return consensus::consensus_checkpoint_refusal(PSLICE() << "refusing to start from " << what << " " << head.to_str()
+                                                            << ": its state is not loaded");
   }
   auto relation = consensus::relate_to_consensus_cleanup_checkpoint(
       cp, head, [&](const BlockIdExt &id) { return head_state->check_old_mc_block_id(id, /*strict=*/true); });
@@ -596,8 +596,9 @@ td::actor::Task<ValidatorManagerInitResult> ValidatorManagerMasterchainStarter::
         co_await td::actor::ask(manager_, &ValidatorManager::get_block_handle, last_key_block_id, true);
   }
   LOG(INFO) << "Last key block is " << last_key_block_handle->id().to_str();
-  co_return ValidatorManagerInitResult{handle_,  state_,   std::move(shard_client), gc_handle, gc_state,
-                                       last_key_block_handle, checkpoint_.handle,     checkpoint_.state};
+  co_return ValidatorManagerInitResult{
+      handle_,          state_, std::move(shard_client), gc_handle, gc_state, last_key_block_handle, checkpoint_.handle,
+      checkpoint_.state};
 }
 
 td::actor::Task<> ValidatorManagerMasterchainStarter::get_latest_applied_block() {

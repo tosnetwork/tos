@@ -65,9 +65,9 @@ td::actor::Task<LoadedConsensusCleanupCheckpoint> load_consensus_cleanup_checkpo
 // validator groups wait for the replay). A block at or above the checkpoint's
 // height must be the checkpoint or a verified descendant of it.
 td::Status check_consensus_cleanup_checkpoint_boundary(const LoadedConsensusCleanupCheckpoint &checkpoint,
-                                                      const BlockIdExt &head,
-                                                      const td::Ref<MasterchainState> &head_state,
-                                                      bool allow_behind, td::Slice what);
+                                                       const BlockIdExt &head,
+                                                       const td::Ref<MasterchainState> &head_state, bool allow_behind,
+                                                       td::Slice what);
 
 // Logs the refusal and stops the process with exit status 2. Used for every
 // startup refusal tied to the consensus cleanup checkpoint.

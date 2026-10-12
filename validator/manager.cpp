@@ -4459,8 +4459,8 @@ void ValidatorManagerImpl::try_advance_consensus_cleanup_checkpoint() {
       td::actor::send_closure(db_, &Db::update_consensus_cleanup_checkpoint, attempt.id,
                               [SelfId = actor_id(this), id = attempt.id](td::Result<td::Unit> R) {
                                 td::actor::send_closure(SelfId,
-                                                        &ValidatorManagerImpl::consensus_cleanup_checkpoint_written,
-                                                        id, std::move(R));
+                                                        &ValidatorManagerImpl::consensus_cleanup_checkpoint_written, id,
+                                                        std::move(R));
                               });
       break;
     case decltype(consensus_checkpoint_)::Outcome::Dropped:
@@ -4478,8 +4478,8 @@ void ValidatorManagerImpl::consensus_cleanup_checkpoint_written(BlockIdExt id, t
   if (R.is_error()) {
     if (!consensus_checkpoint_write_warning_at_ || consensus_checkpoint_write_warning_at_.is_in_past()) {
       LOG(WARNING) << "failed to persist the consensus cleanup checkpoint " << id.to_str() << ", keeping "
-                   << (consensus_checkpoint_.installed() ? consensus_checkpoint_.installed()->to_str() : "none")
-                   << ": " << R.move_as_error();
+                   << (consensus_checkpoint_.installed() ? consensus_checkpoint_.installed()->to_str() : "none") << ": "
+                   << R.move_as_error();
       consensus_checkpoint_write_warning_at_ = td::Timestamp::in(60.0);
     }
   } else if (installed) {
