@@ -15,7 +15,7 @@ impl CommandManager {
     pub async fn execute(
         cmd: &Commands,
         cancellation_ctx: CancellationCtx,
-    ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
+    ) -> anyhow::Result<Option<tokio::task::JoinHandle<anyhow::Result<()>>>> {
         let _log_guard = if !matches!(cmd, Commands::Service(_) | Commands::Explorer(_)) {
             setup_log(None)?
         } else {

@@ -41,7 +41,7 @@ impl ServiceCmd {
     pub async fn run(
         &self,
         cancellation_ctx: CancellationCtx,
-    ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+    ) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>> {
         tracing::info!("starting node control service");
         Ok(tokio::spawn(service_main_task::run(cancellation_ctx, self.config.clone())))
     }
@@ -51,7 +51,7 @@ impl ExplorerCmd {
     pub async fn run(
         &self,
         cancellation_ctx: CancellationCtx,
-    ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
+    ) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>> {
         tracing::info!("starting read-only explorer service");
         Ok(tokio::spawn(service_main_task::run_explorer(cancellation_ctx, self.config.clone())))
     }

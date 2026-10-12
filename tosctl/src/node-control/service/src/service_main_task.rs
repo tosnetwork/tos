@@ -29,40 +29,45 @@ enum ServiceProfile {
     Explorer,
 }
 
-pub async fn run(cancellation_ctx: CancellationCtx, config_path: String) {
-    run_profile(cancellation_ctx, config_path, ServiceProfile::Full).await;
+/// Runs the full service until it is cancelled. An error that ends the service
+/// is returned, not only logged, so the process exits non-zero and a
+/// supervisor that restarts on failure restarts it: logging it and exiting 0
+/// left an election task dead after a reboot, when the node's RPC was not up
+/// yet.
+pub async fn run(cancellation_ctx: CancellationCtx, config_path: String) -> anyhow::Result<()> {
+    run_profile(cancellation_ctx, config_path, ServiceProfile::Full).await
 }
 
-pub async fn run_explorer(cancellation_ctx: CancellationCtx, config_path: String) {
-    run_profile(cancellation_ctx, config_path, ServiceProfile::Explorer).await;
+/// Runs the read-only explorer profile; errors are returned as for [`run`].
+pub async fn run_explorer(
+    cancellation_ctx: CancellationCtx,
+    config_path: String,
+) -> anyhow::Result<()> {
+    run_profile(cancellation_ctx, config_path, ServiceProfile::Explorer).await
 }
 
 async fn run_profile(
     cancellation_ctx: CancellationCtx,
     config_path: String,
     profile: ServiceProfile,
-) {
-    let app_cfg = Arc::new(match AppConfig::load(Path::new(&config_path)) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("Failed to open config file: {:#}", e);
-            return;
-        }
-    });
+) -> anyhow::Result<()> {
+    let app_cfg = Arc::new(AppConfig::load(Path::new(&config_path)).map_err(|e| {
+        eprintln!("Failed to open config file: {:#}", e);
+        e.context("open config file")
+    })?);
 
-    let _log_guard = match setup_log(Some(&app_cfg)) {
-        Ok(guard) => guard,
-        Err(e) => {
-            eprintln!("Failed to setup log file: {:#}", e);
-            return;
-        }
-    };
+    let _log_guard = setup_log(Some(&app_cfg)).map_err(|e| {
+        eprintln!("Failed to setup log file: {:#}", e);
+        e.context("set up the log file")
+    })?;
 
     tracing::info!(profile = ?profile, "Service started");
-    if let Err(e) = run_with_profile(cancellation_ctx, app_cfg, config_path, profile).await {
+    let result = run_with_profile(cancellation_ctx, app_cfg, config_path, profile).await;
+    if let Err(e) = &result {
         tracing::error!("service error: {:#}", e);
     }
     tracing::info!(profile = ?profile, "Service stopped");
+    result
 }
 
 pub async fn run_with_config(
@@ -220,4 +225,52 @@ async fn run_with_profile(
     //    while finalizers are still running their cleanup.
     shutdown_tasks(&tasks, shutdown_deadline).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn closed_loopback_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.local_addr().expect("addr").port()
+    }
+
+    #[tokio::test]
+    async fn a_missing_config_is_returned_as_an_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("missing.json").to_string_lossy().into_owned();
+        let result = run(CancellationCtx::new(), path).await;
+        let message = format!("{:#}", result.expect_err("a missing config must fail the service"));
+        assert!(message.contains("open config file"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn a_runtime_initialization_failure_is_returned_as_an_error() {
+        // The service must end with an error when it cannot initialize, so
+        // the process exits non-zero, instead of logging it and returning as
+        // if it had stopped cleanly. Here initialization stops at the vault
+        // (no VAULT_URL in the test process); after a reboot it stopped at the
+        // chain RPC, which was not up yet. Both return through the same path.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tosctl-config.json");
+        let config = serde_json::json!({
+            "nodes": {},
+            "chain_rpc": {"urls": [format!("http://127.0.0.1:{}/jsonRPC", closed_loopback_port())]},
+            "http": {},
+            "master_wallet": null,
+            "log": null
+        });
+        std::fs::write(&path, config.to_string()).expect("write config");
+        let result = tokio::time::timeout(
+            Duration::from_secs(120),
+            run(CancellationCtx::new(), path.to_string_lossy().into_owned()),
+        )
+        .await
+        .expect("the service must give up when it cannot initialize, not run on");
+        let message =
+            format!("{:#}", result.expect_err("a failed initialization must fail the service"));
+        assert!(message.contains("initialize runtime config store"), "{message}");
+    }
 }
