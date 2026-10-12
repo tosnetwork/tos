@@ -298,4 +298,45 @@ TEST(Log, FileLogRemovesGenerationsBeyondAReducedLimit) {
   }
   cleanup();
 }
+
+TEST(Log, TsFileLogPrunesIdleThreadArchivesAtStart) {
+  // A per-thread log opens its file on the thread's first append. A thread
+  // that logged in a previous run with a larger kept number but stays idle now
+  // must still lose the generations beyond the reduced number at start.
+  const std::string base = "tmplog_ts_prune_test";
+  const std::string idle = base + ".thread31.log";
+  auto cleanup = [&] {
+    for (auto &path : {base, idle}) {
+      for (auto suffix : {"", ".old", ".old.1", ".old.2", ".old.3", ".old.4", ".old.9"}) {
+        td::unlink(path + suffix).ignore();
+      }
+    }
+  };
+  cleanup();
+  // Gapped generations: .old.2 is missing.
+  for (auto suffix : {".old", ".old.1", ".old.3", ".old.4", ".old.9"}) {
+    td::write_file(idle + suffix, "x").ensure();
+  }
+  // Names that only look like another log's archives are left alone.
+  const std::string foreign = base + "x.thread31.log.old.9";
+  const std::string unparsable = idle + ".old.9x";
+  td::write_file(foreign, "x").ensure();
+  td::write_file(unparsable, "x").ensure();
+  {
+    auto log = td::TsFileLog::create(base, 1 << 20, false, 2).move_as_ok();
+    log->append(td::CSlice("only the main thread writes\n"));
+  }
+  ASSERT_TRUE(td::stat(base).is_ok());
+  ASSERT_TRUE(td::stat(idle).is_error());
+  ASSERT_TRUE(td::stat(idle + ".old").is_ok());
+  ASSERT_TRUE(td::stat(idle + ".old.1").is_ok());
+  ASSERT_TRUE(td::stat(idle + ".old.3").is_error());
+  ASSERT_TRUE(td::stat(idle + ".old.4").is_error());
+  ASSERT_TRUE(td::stat(idle + ".old.9").is_error());
+  ASSERT_TRUE(td::stat(foreign).is_ok());
+  ASSERT_TRUE(td::stat(unparsable).is_ok());
+  td::unlink(foreign).ignore();
+  td::unlink(unparsable).ignore();
+  cleanup();
+}
 #endif

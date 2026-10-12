@@ -21,14 +21,81 @@
 #include <array>
 
 #include "td/utils/FileLog.h"
+#include "td/utils/PathView.h"
 #include "td/utils/Slice.h"
 #include "td/utils/TsFileLog.h"
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
+#include "td/utils/misc.h"
+#include "td/utils/port/path.h"
 #include "td/utils/port/thread_local.h"
 
 namespace td {
 namespace detail {
+namespace {
+
+// Parses a decimal number of at most 9 digits that makes up all of `s`.
+bool parse_small_number(Slice s, int64 &value) {
+  if (s.empty() || s.size() > 9) {
+    return false;
+  }
+  value = 0;
+  for (char c : s) {
+    if (c < '0' || c > '9') {
+      return false;
+    }
+    value = value * 10 + (c - '0');
+  }
+  return true;
+}
+
+// Removes the archives of every per-thread log of `path` beyond the kept
+// number: <path>.thread<N>.log.old.<k> for k >= keep_rotated. Only thread 0
+// opens its file at start (and prunes it then); the others open on their
+// first append, which a thread that stays idle in this process never reaches,
+// so without this a reduced kept number would leave a previous run's idle
+// threads' generations on disk forever. One scan of the log directory, so the
+// cost does not depend on how many generations or threads could exist.
+void prune_idle_thread_archives(const string &path, int32 keep_rotated, int32 max_threads) {
+  PathView view(path);
+  string dir = view.parent_dir().empty() ? string(".") : view.parent_dir_noslash().str();
+  string prefix = PSTRING() << view.file_name() << ".thread";
+  vector<string> doomed;
+  WalkPath::run(dir, [&](CSlice name, WalkPath::Type type) {
+    if (type == WalkPath::Type::EnterDir) {
+      return name == dir ? WalkPath::Action::Continue : WalkPath::Action::SkipDir;
+    }
+    if (type != WalkPath::Type::RegularFile) {
+      return WalkPath::Action::Continue;
+    }
+    Slice base = PathView(name).file_name();
+    if (!begins_with(base, prefix)) {
+      return WalkPath::Action::Continue;
+    }
+    // <N>.log.old.<k>
+    Slice rest = base.substr(prefix.size());
+    auto dot = rest.find('.');
+    int64 thread = 0;
+    int64 generation = 0;
+    Slice marker(".log.old.");
+    if (dot == Slice::npos || !parse_small_number(rest.substr(0, dot), thread)) {
+      return WalkPath::Action::Continue;
+    }
+    rest = rest.substr(dot);
+    if (!begins_with(rest, marker) || !parse_small_number(rest.substr(marker.size()), generation)) {
+      return WalkPath::Action::Continue;
+    }
+    if (thread >= 1 && thread < max_threads && generation >= keep_rotated) {
+      doomed.push_back(name.str());
+    }
+    return WalkPath::Action::Continue;
+  }).ignore();
+  for (auto &file : doomed) {
+    unlink(file).ignore();
+  }
+}
+
+}  // namespace
 class TsFileLog : public LogInterface {
  public:
   Status init(string path, td::int64 rotate_threshold, bool redirect_stderr, td::int32 keep_rotated) {
@@ -39,6 +106,7 @@ class TsFileLog : public LogInterface {
     for (int i = 0; i < (int)logs_.size(); i++) {
       logs_[i].id = i;
     }
+    prune_idle_thread_archives(path_, keep_rotated_ < 1 ? 1 : keep_rotated_, static_cast<int32>(logs_.size()));
     return init_info(&logs_[0]);
   }
 
