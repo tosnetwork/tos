@@ -78,7 +78,13 @@ pub struct WalletAddCmd {
     version: WalletVersion,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42", help = "Subwallet ID")]
     subwallet_id: u32,
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Workchain ID")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Workchain ID"
+    )]
     workchain: i32,
 }
 
@@ -469,11 +475,10 @@ impl WalletStakeCmd {
             require_observable_wallet_seqno(wallet_info_res.wallet, wallet_info_res.seqno)?;
         let pool_address = resolve_pool_address(pool_cfg, &wallet_address)?;
         let pool_addr_bytes = pool_address.address().clone().storage().to_vec();
+        let live_pool =
+            NominatorWrapperImpl::new(contract_provider!(rpc_client.clone()), pool_address.clone());
         let live_roles =
-            NominatorWrapperImpl::new(contract_provider!(rpc_client.clone()), pool_address.clone())
-                .get_roles()
-                .await
-                .context("read live single-nominator pool roles")?;
+            live_pool.get_roles().await.context("read live single-nominator pool roles")?;
         verify_live_pool_roles(pool_cfg, &wallet_address, &live_roles)?;
 
         // Connect to validator node via control protocol
@@ -594,18 +599,19 @@ impl WalletStakeCmd {
         // the node signs with its custodied key, while live Param47 admits the
         // controller's deploy code. Refuse before constructing a wallet send.
         let live_policy = provider.live_controller_policy().await?;
-        let payload = build_verified_manual_pool_stake(
+        let payload = manual_pool_stake_payload(
+            &live_pool,
             binding,
             &self.binding,
             pool_cfg,
             &authorization,
             &live_policy,
-            time_format::now(),
             stake_nanotos,
             election_id as u32,
             max_factor_raw,
             &adnl_addr,
-        )?;
+        )
+        .await?;
 
         // Build wallet message to nominator pool (wallet sends only gas, pool has the stake)
         let wallet =
@@ -777,6 +783,41 @@ fn verify_live_pool_roles(
         "stake wallet is not the live pool validator/operator"
     );
     Ok(())
+}
+
+/// The pool order for a manual stake. The pool relays it through its validator
+/// controller, which accepts only its own next relay sequence number as the
+/// query id, so the id is read from the live controller: any other value is
+/// bounced back to the pool and the stake never reaches the elector.
+#[allow(clippy::too_many_arguments)]
+async fn manual_pool_stake_payload(
+    live_pool: &dyn NominatorWrapper,
+    binding: &NodeBinding,
+    binding_name: &str,
+    pool_cfg: &PoolConfig,
+    authorization: &control_client::client_api::PqStakeAuthorization,
+    live_policy: &Cell,
+    stake_amount: u64,
+    stake_at: u32,
+    max_factor: u32,
+    adnl_addr: &[u8],
+) -> anyhow::Result<Cell> {
+    let query_id = live_pool
+        .next_relay_query()
+        .await
+        .context("read the pool controller's next relay query")?;
+    build_verified_manual_pool_stake(
+        binding,
+        binding_name,
+        pool_cfg,
+        authorization,
+        live_policy,
+        query_id,
+        stake_amount,
+        stake_at,
+        max_factor,
+        adnl_addr,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1037,5 +1078,106 @@ mod birth_artifact_tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("not admitted by live ConfigParam 47"), "wrong refusal: {error}");
+    }
+
+    /// A pool whose controller's next relay query is fixed.
+    struct RelayQueryPool(u64);
+
+    #[async_trait::async_trait]
+    impl contracts::SmartContract for RelayQueryPool {
+        async fn balance(&self) -> anyhow::Result<u64> {
+            Ok(0)
+        }
+
+        fn address(&self) -> MsgAddressInt {
+            MsgAddressInt::standard(-1, [0x44; 32])
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl NominatorWrapper for RelayQueryPool {
+        async fn get_roles(&self) -> anyhow::Result<NominatorRoles> {
+            anyhow::bail!("roles are not part of this test")
+        }
+
+        async fn next_relay_query(&self) -> anyhow::Result<u64> {
+            Ok(self.0)
+        }
+
+        async fn get_pool_data(&self) -> anyhow::Result<nominator::PoolData> {
+            anyhow::bail!("pool data is not part of this test")
+        }
+    }
+
+    /// The controller relays only its own next sequence number, which lives in
+    /// the stake-relay domain above 2^63. A manual stake must carry exactly
+    /// that number, never a locally chosen one such as the current time.
+    #[tokio::test]
+    async fn manual_stake_uses_the_controller_next_relay_query() {
+        let code = BuilderData::with_raw(vec![0x11], 8).unwrap().into_cell().unwrap();
+        let data = BuilderData::with_raw(vec![0x22], 8).unwrap().into_cell().unwrap();
+        let state = StateInit::with_code_and_data(code.clone(), data);
+        let state_cell = state.write_to_new_cell().unwrap().into_cell().unwrap();
+        let controller_id = *state_cell.repr_hash().as_slice();
+        let artifact_path = std::env::temp_dir().join(format!(
+            "tosctl-manual-stake-query-{}-{}.boc",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        let mut artifact = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&artifact_path)
+            .expect("unique test-only birth artifact");
+        let _artifact_cleanup = scopeguard::guard(artifact_path.clone(), |path| {
+            let _ = std::fs::remove_file(path);
+        });
+        artifact.write_all(&write_boc(&state_cell).unwrap()).unwrap();
+        drop(artifact);
+
+        let mut admitted = HashmapE::with_bit_len(256);
+        let code_key = SliceData::load_builder(
+            BuilderData::with_raw(code.repr_hash().as_slice().to_vec(), 256).unwrap(),
+        )
+        .unwrap();
+        admitted.set(code_key, &SliceData::default()).unwrap();
+        let mut policy_builder = BuilderData::new();
+        policy_builder
+            .append_bit_one()
+            .unwrap()
+            .checked_append_reference(HashmapType::data(&admitted).unwrap().clone())
+            .unwrap();
+        let live_policy = policy_builder.into_cell().unwrap();
+        let pool_cfg = PoolConfig::SNP {
+            address: Some(MsgAddressInt::standard(-1, [0x44; 32]).to_string()),
+            owner: None,
+            controller: MsgAddressInt::standard(-1, controller_id).to_string(),
+        };
+        let authorization = control_client::client_api::PqStakeAuthorization {
+            validator_id: controller_id.to_vec(),
+            key_id: vec![0x33; 32],
+            algorithm_id: 1,
+            public_key: vec![0x55; 1312],
+            signature: vec![0x66; 2420],
+        };
+
+        let next_relay = (1_u64 << 63) + 7;
+        let body = manual_pool_stake_payload(
+            &RelayQueryPool(next_relay),
+            &binding(artifact_path.to_str()),
+            "node-1",
+            &pool_cfg,
+            &authorization,
+            &live_policy,
+            10_000_000_000_000,
+            1_700_000_000,
+            65_536,
+            &[0x22; 32],
+        )
+        .await
+        .expect("admitted controller produces a pool order");
+        let mut fields = SliceData::load_cell(body).unwrap();
+        assert_eq!(fields.get_next_u32().unwrap(), nominator::opcodes::NEW_STAKE);
+        assert_eq!(fields.get_next_u64().unwrap(), next_relay);
     }
 }

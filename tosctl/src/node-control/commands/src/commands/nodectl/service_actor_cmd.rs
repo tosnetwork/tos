@@ -133,7 +133,7 @@ pub struct ServiceActorDeployCmd {
     from: String,
     #[arg(long, default_value_t = 0.2, help = "Message value funding the deploy, in TOS")]
     amount: f64,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(long)]
     yes: bool,
@@ -342,7 +342,7 @@ pub struct ServiceActorBuildStateCmd {
                 over the request-bound attestation domain"
     )]
     attestor_pubkey: Option<String>,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,

@@ -97,7 +97,7 @@ pub struct DisputeDeployCmd {
     from: String,
     #[arg(long, default_value_t = 0.05, help = "Message value funding the deploy, in TOS")]
     amount: f64,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(long)]
     yes: bool,

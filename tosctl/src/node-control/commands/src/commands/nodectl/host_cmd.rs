@@ -499,9 +499,8 @@ impl HostModeEnableCmd {
         use std::path::Path;
 
         let config = AppConfig::load(Path::new(config_path))?;
-        let (node_name, node_cfg) =
-            config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
-        let adnl_config = node_cfg.to_node_adnl_config(None).await?;
+        let (node_name, node_cfg) = super::utils::select_node(&config, None)?;
+        let adnl_config = super::utils::node_adnl_config(node_cfg, None).await?;
         let mut client = ControlClientAdnl::new(adnl_config, 1);
         client.connect().await?;
         Ok((node_name.clone(), client))
