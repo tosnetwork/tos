@@ -670,21 +670,20 @@ TEST(StartupCatchupManager, T6_VerificationEntryRefusesAMovedTip) {
   ASSERT_TRUE(f.verify(old_tip, next) == startup_catchup::SuccessorVerdict::FrontierMoved);
 }
 
-// T28. The mode is left early (local replay made the tip fresh) at catchain seqno 1;
-// replay continues to seqno 2. The inventory runs at prestart completion, on the final
-// state, and records the session that rotation made obsolete.
+// T28. The entry is refused at once (the tip is not stale), at catchain seqno 1; the
+// local replay then advances to seqno 2. The inventory runs at prestart completion, on
+// the final state, and records the session that rotation made obsolete.
 TEST(StartupCatchupManager, T28_InventoryRunsOnTheFinalState) {
   Fixture f;
   f.hold(f.current, 0);
   auto first = f.snapshot(f.current, 1);
-  f.set_tip(first, 10, kStale);
+  f.set_tip(first, 10, kFresh);
   auto session = f.session_of(first);
   f.make_session_dir(session, 1);
-  ASSERT_TRUE(f.decide());
-  f.advance(first, 10, kStale);
+  ASSERT_TRUE(!f.decide());  // Done already
+  f.advance(first, 10, kFresh);
   f.advance(f.snapshot(f.current, 2), 20, kFresh);  // local replay
-  f.run_mode();                                     // ends NotStale
-  ASSERT_TRUE(!f.query()[0]);
+  f.run_mode();                                     // the mode is not active: nothing runs
   f.complete_prestart();
   ASSERT_TRUE(f.wait_event("shard client start", 30.0));
   auto record = f.record_of(session);
