@@ -81,7 +81,9 @@ class ContainerPlatformTests(unittest.TestCase):
         self.assertIsNotNone(pr, "check workflow has no path-filtered pull_request trigger")
         push_paths = re.findall(r"(?m)^      - (\S+)$", push.group(1))
         pr_paths = re.findall(r"(?m)^      - (\S+)$", pr.group(1))
-        self.assertTrue(push_paths)
+        # .dockerignore decides what reaches the build context, so it is a builder input too.
+        for required in ("Dockerfile.builder", ".dockerignore"):
+            self.assertIn(required, push_paths)
         self.assertEqual(pr_paths, push_paths + [".github/workflows/check-builder-image.yml"])
         self.assertRegex(check, r"(?m)^permissions:\n  contents: read\n\n")
         self.assertNotRegex(check, r":\s*write\b|write-all|login-action|secrets\.")

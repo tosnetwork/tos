@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - Dockerfile.builder
+      - .dockerignore
       - scripts/install-llvm-toolchain.sh
       - scripts/keys/apt-llvm-org.asc
       - scripts/build-tool-pins.json
