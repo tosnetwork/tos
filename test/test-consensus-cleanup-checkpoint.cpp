@@ -360,10 +360,10 @@ TEST(ConsensusCleanupCheckpoint, one_write_in_flight_coalesces_and_ignores_stale
   // A completion for a block that is not in flight changes nothing.
   ASSERT_TRUE(!t.complete(block(90), Synced));
   ASSERT_TRUE(!t.installed());
-  ASSERT_TRUE(t.in_flight().value() == block(10));
+  ASSERT_TRUE(t.in_flight() == std::optional<BlockIdExt>{block(10)});
   auto installed = t.complete(block(10), Synced);
   ASSERT_TRUE(installed.has_value());
-  ASSERT_TRUE(t.installed().value() == block(10));
+  ASSERT_TRUE(t.installed() == std::optional<BlockIdExt>{block(10)});
   // A duplicate completion of the same write is stale now.
   ASSERT_TRUE(!t.complete(block(10), Synced));
   auto a = t.try_issue(500, env.make());
@@ -378,7 +378,7 @@ TEST(ConsensusCleanupCheckpoint, refused_write_keeps_the_checkpoint_and_counts_a
   offer(t, block(20));
   ASSERT_TRUE(t.try_issue(100, env.make()).outcome == Outcome::Issued);
   ASSERT_TRUE(!t.complete(block(20), NotAttempted));
-  ASSERT_TRUE(t.installed().value() == block(10));
+  ASSERT_TRUE(t.installed() == std::optional<BlockIdExt>{block(10)});
   ASSERT_TRUE(!t.in_flight());
   // The failed attempt is rate-limited like a successful one.
   offer(t, block(21));
@@ -416,7 +416,7 @@ TEST(ConsensusCleanupCheckpoint, block_threshold_does_not_overflow_near_the_seqn
   offer(t, block(0x7fffffff));
   ASSERT_TRUE(t.try_issue(0, env.make()).outcome == Outcome::Issued);
   t.complete(block(0x7fffffff), Synced);
-  ASSERT_TRUE(t.installed().value() == block(0x7fffffff));
+  ASSERT_TRUE(t.installed() == std::optional<BlockIdExt>{block(0x7fffffff)});
   // GC next-seqno arithmetic at the top of the range.
   ASSERT_TRUE(t.gc_may_start_advance(0x7ffffffe));
   ASSERT_TRUE(!t.gc_may_start_advance(0x7fffffff));
@@ -527,8 +527,8 @@ TEST(ConsensusCleanupCheckpoint, uncertain_write_keeps_gc_excluded_until_a_synce
   ASSERT_TRUE(t.try_issue(100, env.make()).outcome == Outcome::Issued);
   ASSERT_TRUE(!t.complete(block(80), Uncertain));
   ASSERT_TRUE(t.uncertain());
-  ASSERT_TRUE(t.in_flight().value() == block(80));
-  ASSERT_TRUE(t.installed().value() == block(10));
+  ASSERT_TRUE(t.in_flight() == std::optional<BlockIdExt>{block(80)});
+  ASSERT_TRUE(t.installed() == std::optional<BlockIdExt>{block(10)});
   ASSERT_TRUE(!t.gc_may_start_advance(5));
   ASSERT_TRUE(!t.gc_may_persist(6));
   // Nothing else is issued meanwhile.
@@ -536,17 +536,17 @@ TEST(ConsensusCleanupCheckpoint, uncertain_write_keeps_gc_excluded_until_a_synce
   ASSERT_TRUE(t.try_issue(500, env.make()).outcome == Outcome::Idle);
   // Rewrites are rate-limited, and one at a time.
   ASSERT_TRUE(!t.try_retry(100.5));
-  ASSERT_TRUE(t.try_retry(101).value() == block(80));
+  ASSERT_TRUE(t.try_retry(101) == std::optional<BlockIdExt>{block(80)});
   ASSERT_TRUE(!t.try_retry(105));
   // Repeated failures keep the exclusion.
   for (double now : {110.0, 120.0, 130.0}) {
     ASSERT_TRUE(!t.complete(block(80), Uncertain));
     ASSERT_TRUE(!t.gc_may_persist(6));
-    ASSERT_TRUE(t.try_retry(now).value() == block(80));
+    ASSERT_TRUE(t.try_retry(now) == std::optional<BlockIdExt>{block(80)});
   }
   auto installed = t.complete(block(80), Synced);
   ASSERT_TRUE(installed.has_value());
-  ASSERT_TRUE(t.installed().value() == block(80));
+  ASSERT_TRUE(t.installed() == std::optional<BlockIdExt>{block(80)});
   ASSERT_TRUE(!t.in_flight());
   ASSERT_TRUE(!t.uncertain());
   ASSERT_TRUE(t.gc_may_start_advance(5));
@@ -574,12 +574,12 @@ TEST(ConsensusCleanupCheckpoint, not_attempted_releases_only_without_an_earlier_
     offer(t, block(80));
     ASSERT_TRUE(t.try_issue(100, env.make()).outcome == Outcome::Issued);
     ASSERT_TRUE(!t.complete(block(80), Uncertain));
-    ASSERT_TRUE(t.try_retry(101).value() == block(80));
+    ASSERT_TRUE(t.try_retry(101) == std::optional<BlockIdExt>{block(80)});
     ASSERT_TRUE(!t.complete(block(80), NotAttempted));
-    ASSERT_TRUE(t.in_flight().value() == block(80));
+    ASSERT_TRUE(t.in_flight() == std::optional<BlockIdExt>{block(80)});
     ASSERT_TRUE(t.uncertain());
     ASSERT_TRUE(!t.gc_may_persist(10));
-    ASSERT_TRUE(t.try_retry(102).value() == block(80));
+    ASSERT_TRUE(t.try_retry(102) == std::optional<BlockIdExt>{block(80)});
     ASSERT_TRUE(t.complete(block(80), Synced).has_value());
   }
 }

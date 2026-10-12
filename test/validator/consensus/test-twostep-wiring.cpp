@@ -1476,14 +1476,14 @@ TEST(TwostepWiring, CheckpointRestartDoesNotReopenADeletedSession) {
   f.hold(f.current, 0);
   auto ready = f.start_from_disk(with_s, real(3), real_ancestors(3));
   ASSERT_TRUE(ready.is_ok());
-  ASSERT_TRUE(!ready.ok());
-  ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{real(6)});
   auto s_absent = [&] {
     auto [active, tentative] = f.validators();
     return std::find(active.begin(), active.end(), s) == active.end() &&
            std::find(tentative.begin(), tentative.end(), s) == tentative.end() && !f.consensus_dir_exists(s, s_cc);
   };
   ASSERT_TRUE(s_absent());
+  ASSERT_TRUE(!ready.ok());
+  ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{real(6)});
   ASSERT_TRUE(f.apply_head(with_s, real(4), real_ancestors(4)).is_ok());
   ASSERT_TRUE(s_absent());
   for (BlockSeqno h : {5u, 6u}) {

@@ -227,19 +227,21 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
   // The production replay interval around an injected replay operation that
   // applies `heads` through the production new_block path, in order. A head
   // given with `defer` is submitted without waiting for it (a pending head) and
-  // awaited after the next one.
+  // awaited after the next one. The replay operation ignores each head's own
+  // result, so a refusal can stop the process only through the replay interval
+  // itself, not through the replay's result.
   struct ReplayStep {
     BlockHandle handle;
     td::Ref<MasterchainState> state;
     bool defer = false;
   };
   void replay(std::vector<ReplayStep> steps, bool fail_at_end, td::Promise<td::Unit> promise) {
-    finish_with(run_initial_replay(apply_steps(std::move(steps), fail_at_end)), std::move(promise))
+    finish_with(run_initial_replay(apply_steps(std::move(steps), fail_at_end, true)), std::move(promise))
         .start()
         .detach_silent();
   }
   void apply_heads(std::vector<ReplayStep> steps, td::Promise<td::Unit> promise) {
-    finish_with(apply_steps(std::move(steps), false), std::move(promise)).start().detach_silent();
+    finish_with(apply_steps(std::move(steps), false, false), std::move(promise)).start().detach_silent();
   }
 
  private:
@@ -248,7 +250,7 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     promise.set_result(std::move(R));
     co_return td::Unit{};
   }
-  td::actor::Task<> apply_steps(std::vector<ReplayStep> steps, bool fail_at_end) {
+  td::actor::Task<> apply_steps(std::vector<ReplayStep> steps, bool fail_at_end, bool ignore_results) {
     std::optional<td::actor::StartedTask<td::Unit>> deferred;
     for (auto& step : steps) {
       auto task = td::actor::ask(actor_id(this), &ValidatorManager::new_block, step.handle,
@@ -257,11 +259,17 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
         deferred.emplace(std::move(task));
         continue;
       }
-      co_await std::move(task);
+      auto applied = co_await std::move(task).wrap();
+      if (applied.is_error() && !ignore_results) {
+        co_return applied.move_as_error();
+      }
       if (deferred) {
         auto pending = std::move(*deferred);
         deferred.reset();
-        co_await std::move(pending);
+        auto pending_applied = co_await std::move(pending).wrap();
+        if (pending_applied.is_error() && !ignore_results) {
+          co_return pending_applied.move_as_error();
+        }
       }
     }
     if (fail_at_end) {
@@ -1632,8 +1640,9 @@ int main(int argc, char** argv) {
     auto root = fresh_root(base, "crash-before-persist");
     EXPECT(seed_db(root, chain, seed).is_ok(), "seed crash-before-persist");
     auto [code_a, log_a] = run_child("pre-persist-crash", root);
-    EXPECT(code_a == 137 && contains(log_a, "held=1 installed=2 dir_present=1"),
-           "a cleanup pass while the next checkpoint's write is held deletes nothing (exit " << code_a << ")");
+    EXPECT(code_a == 137 && contains(log_a, "held=1 installed=2"),
+           "the next checkpoint's write was issued and held, and not installed (exit " << code_a << ")");
+    EXPECT(contains(log_a, "dir_present=1"), "a cleanup pass while that write is held deletes nothing");
     auto [code_a2, log_a2] = run_child("cleanup-pass", root);
     EXPECT(code_a2 == 0 && contains(log_a2, "checkpoint=" + chain["B2"].id.to_str()) &&
                contains(log_a2, "dir_present=true record_present=true"),
