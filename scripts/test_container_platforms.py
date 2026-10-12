@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 UBUNTU = "24.04"
-# Debian architecture names used by BuildKit (TARGETARCH) -> uv release names.
+# Architecture names the container build passes in TARGETARCH -> uv release names.
 UV_ARCH = {"amd64": "x86_64", "arm64": "aarch64"}
 
 
@@ -53,11 +53,15 @@ class ContainerPlatformTests(unittest.TestCase):
                     self.assertEqual(runner, expected)
 
     def test_node_image_builds_from_the_published_multi_arch_tag(self):
-        published = re.search(r'imagetools create --tag "\$image:([^"]+)"', self.builder_wf.read_text())
+        published = re.search(
+            r'imagetools create --tag "\$image:([^"]+)"', self.builder_wf.read_text()
+        )
         self.assertIsNotNone(published, "builder workflow publishes no index tag")
         tag = published.group(1)
         self.assertEqual(tag, f"ubuntu-{UBUNTU}")
-        self.assertRegex(self.dockerfile, rf"(?m)^FROM ghcr\.io/\S+-builder:{re.escape(tag)} AS builder$")
+        self.assertRegex(
+            self.dockerfile, rf"(?m)^FROM ghcr\.io/\S+-builder:{re.escape(tag)} AS builder$"
+        )
 
     def test_builder_index_is_checked_for_both_architectures(self):
         self.assertIn('[ "$platforms" = "amd64,arm64" ]', self.builder_wf.read_text())

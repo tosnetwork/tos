@@ -27,8 +27,8 @@ RUN bash /opt/tos/scripts/install-llvm-toolchain.sh 21 all && rm -rf /var/lib/ap
 ENV CC=/usr/bin/clang-21
 ENV CXX=/usr/bin/clang++-21
 
-# Install uv (pinned version). TARGETARCH is set by BuildKit for the platform
-# being built; each architecture has its own pinned digest in build-tool-pins.json.
+# Install uv (pinned version). The container build sets TARGETARCH to the
+# platform being built; each architecture has its own pinned digest in build-tool-pins.json.
 ARG TARGETARCH
 COPY scripts/verify-build-tool.py scripts/build-tool-pins.json /opt/tos/scripts/
 RUN set -eu; \
