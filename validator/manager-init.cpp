@@ -124,6 +124,20 @@ td::Status check_consensus_cleanup_checkpoint_boundary(const LoadedConsensusClea
   return consensus::consensus_checkpoint_refusal("unknown consensus cleanup checkpoint relation");
 }
 
+td::actor::Task<ReinitGcBlock> persist_reinit_gc_block(td::actor::ActorId<ValidatorManager> manager,
+                                                       const LoadedConsensusCleanupCheckpoint &checkpoint,
+                                                       BlockHandle block, td::Ref<MasterchainState> state) {
+  // GC never passes the consensus cleanup checkpoint, also when reinitializing
+  // at a descendant of it: keeping GC at the checkpoint (already loaded and
+  // verified) only retains more, and keeps the checkpoint's own state loadable.
+  ReinitGcBlock gc{std::move(block), std::move(state)};
+  if (checkpoint.handle) {
+    gc = ReinitGcBlock{checkpoint.handle, checkpoint.state};
+  }
+  co_await td::actor::ask(manager, &ValidatorManager::update_gc_block_handle, gc.handle);
+  co_return gc;
+}
+
 void refuse_startup_for_consensus_cleanup_checkpoint(const td::Status &status) {
   LOG(ERROR) << status;
   std::_Exit(2);
@@ -149,19 +163,11 @@ td::actor::Task<> ValidatorManagerMasterchainReiniter::load_checkpoint() {
     refuse_startup_for_consensus_cleanup_checkpoint(R.move_as_error());
   }
   checkpoint_ = R.move_as_ok();
-  write_hardforks();
+  lookup_init_block();
   co_return td::Unit{};
 }
 
-void ValidatorManagerMasterchainReiniter::write_hardforks() {
-  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
-    R.ensure();
-    td::actor::send_closure(SelfId, &ValidatorManagerMasterchainReiniter::written_hardforks);
-  });
-  td::actor::send_closure(db_, &Db::update_hardforks, opts_->get_hardforks(), std::move(P));
-}
-
-void ValidatorManagerMasterchainReiniter::written_hardforks() {
+void ValidatorManagerMasterchainReiniter::lookup_init_block() {
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<BlockHandle> R) {
     R.ensure();
     td::actor::send_closure(SelfId, &ValidatorManagerMasterchainReiniter::got_masterchain_handle, R.move_as_ok());
@@ -405,10 +411,19 @@ void ValidatorManagerMasterchainReiniter::downloaded_masterchain_state(td::Ref<S
   CHECK(handle_->received_state());
   CHECK(handle_->is_applied());
   LOG(INFO) << "downloaded masterchain state";
-  // Checked before the shard client exists: in init mode it writes the
-  // shard-client metadata, and finishing writes the GC block. Neither may be
-  // written for a block below the checkpoint or off its branch.
+  // Checked before this path writes any metadata: the hardfork list here, the
+  // shard-client state (written by the shard client in init mode) and the GC
+  // block. None may be written for a block below the checkpoint or off its
+  // branch.
   check_checkpoint_boundary();
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
+    R.ensure();
+    td::actor::send_closure(SelfId, &ValidatorManagerMasterchainReiniter::start_shard_client);
+  });
+  td::actor::send_closure(db_, &Db::update_hardforks, opts_->get_hardforks(), std::move(P));
+}
+
+void ValidatorManagerMasterchainReiniter::start_shard_client() {
   td::actor::send_closure(manager_, &ValidatorManager::init_last_masterchain_state, state_);
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::Unit> R) {
     R.ensure();
@@ -429,17 +444,19 @@ void ValidatorManagerMasterchainReiniter::check_checkpoint_boundary() {
 void ValidatorManagerMasterchainReiniter::downloaded_all_shards() {
   LOG(INFO) << "downloaded all shards";
   check_checkpoint_boundary();
-  td::actor::send_closure(manager_, &ValidatorManager::update_gc_block_handle, handle_,
-                          [SelfId = actor_id(this)](td::Result<td::Unit> R) {
-                            R.ensure();
-                            td::actor::send_closure(SelfId, &ValidatorManagerMasterchainReiniter::finish);
-                          });
+  persist_gc().start().detach_ensure("reiniter GC block");
 }
 
-void ValidatorManagerMasterchainReiniter::finish() {
+td::actor::Task<> ValidatorManagerMasterchainReiniter::persist_gc() {
+  auto gc = co_await persist_reinit_gc_block(manager_, checkpoint_, handle_, state_);
+  finish(std::move(gc));
+  co_return td::Unit{};
+}
+
+void ValidatorManagerMasterchainReiniter::finish(ReinitGcBlock gc) {
   CHECK(handle_->id().id.seqno == 0 || handle_->is_key_block());
-  promise_.set_value(ValidatorManagerInitResult{handle_, state_, std::move(client_), handle_, state_, handle_,
-                                                checkpoint_.handle, checkpoint_.state});
+  promise_.set_value(ValidatorManagerInitResult{handle_, state_, std::move(client_), std::move(gc.handle),
+                                                std::move(gc.state), handle_, checkpoint_.handle, checkpoint_.state});
   LOG(INFO) << "persistent state download finished";
   stop();
 }

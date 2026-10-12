@@ -371,10 +371,30 @@ class ValidatorManagerImpl : public ValidatorManager {
   // enables advancement and cleanup authority.
   void install_loaded_consensus_cleanup_checkpoint(BlockHandle handle, td::Ref<MasterchainState> state);
   void install_consensus_cleanup_checkpoint(BlockHandle handle, td::Ref<MasterchainState> state);
-  void recompute_consensus_checkpoint_readiness();
+  // Recomputes readiness against the applied head. A head that conflicts with
+  // the installed checkpoint stops the process (fail_stop_consensus_checkpoint);
+  // returns false then, for test overrides of that hook that return.
+  bool recompute_consensus_checkpoint_readiness();
+  // Stops the process with exit status 2. Production never returns from it;
+  // callers return right after it. Virtual only for tests that observe the call.
+  virtual void fail_stop_consensus_checkpoint(td::Status status);
   td::Status admit_consensus_checkpoint_head(const BlockIdExt &head, const td::Ref<MasterchainState> &state) const;
+  // A head was refused by admit_consensus_checkpoint_head: fail-stop during the
+  // initial replay of the node's own applied blocks, else only log (the caller
+  // rejects it and keeps the current head).
+  void refuse_consensus_checkpoint_head(td::Status status);
+  td::actor::Task<> run_initial_replay(td::actor::Task<> replay);
   void try_advance_consensus_cleanup_checkpoint();
+  void write_consensus_cleanup_checkpoint(BlockIdExt id);
+  // The checkpoint's durable store; virtual for tests that inject failures.
+  virtual void persist_consensus_cleanup_checkpoint(BlockIdExt id, td::Promise<td::Unit> promise);
+  virtual void read_consensus_cleanup_checkpoint(td::Promise<std::optional<BlockIdExt>> promise);
   void consensus_cleanup_checkpoint_written(BlockIdExt id, td::Result<td::Unit> R);
+  void consensus_cleanup_checkpoint_diagnosed(td::Result<std::optional<BlockIdExt>> R);
+  // The node is replaying its own applied masterchain blocks at start-up.
+  bool initial_replay_ = false;
+  // A durable checkpoint value this node could not have written was observed.
+  bool consensus_checkpoint_unexpected_ = false;
 
   BlockIdExt last_rotate_block_id_;
 
@@ -700,6 +720,12 @@ class ValidatorManagerImpl : public ValidatorManager {
   void start_up() override;
   void init_last_masterchain_state(td::Ref<MasterchainState> state) override;
   void started(ValidatorManagerInitResult result);
+  // started() in two steps: install what the init path loaded (synchronous; the
+  // head, GC and consensus cleanup checkpoint), then the asynchronous rest of
+  // start-up, which ends in finish_start_up. Virtual for test fixtures that
+  // drive the production handoff without the network start-up.
+  void install_init_result(ValidatorManagerInitResult &result);
+  virtual void continue_start_up();
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
   // Steps of one validator cleanup pass (see validator-cleanup-dispatch.h): the page

@@ -43,8 +43,7 @@ class ValidatorManagerMasterchainReiniter : public td::actor::Actor {
   }
   void start_up() override;
   td::actor::Task<> load_checkpoint();
-  void write_hardforks();
-  void written_hardforks();
+  void lookup_init_block();
   void got_masterchain_handle(BlockHandle handle);
   void download_proof_link(bool try_local = true);
   void downloaded_proof_link(td::BufferSlice data);
@@ -59,8 +58,10 @@ class ValidatorManagerMasterchainReiniter : public td::actor::Actor {
   void downloaded_masterchain_state(td::Ref<ShardState> state);
 
   void check_checkpoint_boundary();
+  void start_shard_client();
   void downloaded_all_shards();
-  void finish();
+  td::actor::Task<> persist_gc();
+  void finish(ReinitGcBlock gc);
 
  private:
   td::Ref<ValidatorManagerOptions> opts_;

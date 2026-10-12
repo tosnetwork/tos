@@ -33,6 +33,12 @@ namespace tos {
 
 namespace validator {
 
+// Tests only: while set, a truncation whose target is above the consensus cleanup
+// checkpoint calls `gate` right before it loads the target's state, and continues
+// only once the promise it was given is fulfilled (an error ends the truncation).
+// This lets a test hold a truncation at a known point of its preflight.
+void set_truncation_state_load_gate_for_testing(std::function<void(td::Promise<td::Unit>)> gate);
+
 class RootDb : public Db {
  public:
   enum class Flags : td::uint32 { f_started = 1, f_ready = 2, f_switched = 4, f_archived = 8 };
@@ -180,9 +186,18 @@ class RootDb : public Db {
   void iterate_temp_block_handles(std::function<void(const BlockHandleInterface &)> f) override;
 
  private:
-  void truncate_checked(BlockSeqno seqno, ConstBlockHandle handle, std::optional<BlockIdExt> checkpoint,
-                        td::Promise<td::Unit> promise);
-  void truncate_unchecked(BlockSeqno seqno, ConstBlockHandle handle, td::Promise<td::Unit> promise);
+  void truncate_checked(BlockSeqno seqno, ConstBlockHandle handle, td::Result<std::optional<BlockIdExt>> checkpoint);
+  void load_truncation_target_state(BlockSeqno seqno, ConstBlockHandle handle, std::optional<BlockIdExt> checkpoint);
+  void start_truncation_mutations(BlockSeqno seqno, ConstBlockHandle handle);
+  void truncation_part_done(td::Status status);
+  void finish_truncation(td::Status status);
+
+  // A truncation is between its checkpoint preflight and the completion of both
+  // of its mutations.
+  bool truncating_ = false;
+  td::Promise<td::Unit> truncation_promise_;
+  int truncation_parts_left_ = 0;
+  td::Status truncation_status_;
 
   td::actor::ActorId<ValidatorManager> validator_manager_;
   std::string root_path_;

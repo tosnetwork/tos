@@ -147,21 +147,20 @@ inline td::Result<std::optional<BlockIdExt>> load_consensus_cleanup_checkpoint(t
   return std::optional<BlockIdExt>{id};
 }
 
-// Persists a new checkpoint in its own synced write batch. The store refuses a
+// Persists a checkpoint in its own synced write batch. The store refuses a
 // regression or a different block at the stored height, so the stored value is
-// monotonic even if a caller is wrong; rewriting the stored value is a no-op.
-// Ancestry cannot be checked here (it needs the candidate's state); the manager
-// checks it before issuing the write.
+// monotonic even if a caller is wrong. Storing the value already present is a
+// real synced rewrite, not a no-op: after a write whose outcome is uncertain, a
+// value that is merely visible is not proven durable, and only a successful
+// synced write confirms it. Ancestry cannot be checked here (it needs the
+// candidate's state); the manager checks it before issuing the write.
 inline td::Status store_consensus_cleanup_checkpoint(td::KeyValue& kv, const BlockIdExt& id) {
   if (!is_consensus_cleanup_checkpoint_id(id)) {
     return td::Status::Error(ErrorCode::error, PSLICE() << "refusing to store consensus cleanup checkpoint "
                                                         << id.to_str() << ": not a full masterchain block id");
   }
   TRY_RESULT(current, load_consensus_cleanup_checkpoint(kv));
-  if (current) {
-    if (*current == id) {
-      return td::Status::OK();
-    }
+  if (current && !(*current == id)) {
     if (id.seqno() <= current->seqno()) {
       return td::Status::Error(ErrorCode::error, PSLICE() << "refusing to move consensus cleanup checkpoint from "
                                                           << current->to_str() << " to " << id.to_str()
@@ -219,6 +218,15 @@ inline td::Status consensus_checkpoint_refusal(td::Slice message) {
 
 inline bool is_consensus_checkpoint_refusal(const td::Status& status) {
   return status.is_error() && status.code() == kConsensusCheckpointRefusalCode;
+}
+
+// Error code for a checkpoint write that was refused before anything was
+// written (RootDb refuses updates while a truncation is running). Any other
+// write error leaves the outcome uncertain.
+constexpr int kConsensusCheckpointNotAttemptedCode = 3;
+
+inline bool is_consensus_checkpoint_not_attempted(const td::Status& status) {
+  return status.is_error() && status.code() == kConsensusCheckpointNotAttemptedCode;
 }
 
 // A rollback (truncation or hardfork installation) to `target` keeps the blocks up
@@ -393,32 +401,78 @@ class ConsensusCleanupCheckpointTracker {
     }
     last_attempt_ = now;
     in_flight_ = id;
+    write_outstanding_ = true;
+    uncertain_ = false;
     in_flight_payload_ = std::move(pending_->second);
     pending_.reset();
     return {Outcome::Issued, id, {}};
   }
 
+  enum class WriteResult {
+    Synced,        // a synced write of the id succeeded
+    NotAttempted,  // refused before anything was written
+    Uncertain,     // failed; the value may or may not become durable
+  };
+
   // The result of a write. Returns the payload to install when the write is the
-  // one in flight, succeeded, and moves the checkpoint forward; nullopt otherwise
-  // (a stale or failed completion changes nothing).
-  std::optional<Payload> complete(const BlockIdExt& id, bool ok) {
-    if (!in_flight_ || !(*in_flight_ == id)) {
+  // one in flight, a synced write succeeded, and the checkpoint moves forward;
+  // nullopt otherwise. A stale completion changes nothing.
+  //
+  // After an uncertain result the write stays in flight, so GC stays excluded:
+  // the value may already be visible, or may reappear after recovery, and only a
+  // later successful synced write of the same id (try_retry) settles it. A
+  // "not attempted" refusal releases the write only if no earlier attempt of it
+  // was uncertain.
+  std::optional<Payload> complete(const BlockIdExt& id, WriteResult result) {
+    if (!in_flight_ || !(*in_flight_ == id) || !write_outstanding_) {
       return std::nullopt;
     }
-    in_flight_.reset();
+    write_outstanding_ = false;
+    if (result == WriteResult::Uncertain) {
+      uncertain_ = true;
+      return std::nullopt;
+    }
+    if (result == WriteResult::NotAttempted) {
+      if (!uncertain_) {
+        release();
+      }
+      return std::nullopt;
+    }
     auto payload = std::move(in_flight_payload_);
-    in_flight_payload_.reset();
-    if (!ok || !payload) {
-      return std::nullopt;
-    }
-    if (installed_ && id.seqno() <= installed_->seqno()) {
+    release();
+    if (!payload || (installed_ && id.seqno() <= installed_->seqno())) {
       return std::nullopt;
     }
     installed_ = id;
     return payload;
   }
 
+  // The write in flight had an uncertain result: rewrite the same validated id
+  // (rate-limited like any attempt) until a synced write succeeds.
+  std::optional<BlockIdExt> try_retry(double now) {
+    if (!in_flight_ || !uncertain_ || write_outstanding_) {
+      return std::nullopt;
+    }
+    if (last_attempt_ && now - *last_attempt_ < kMinAttemptSeconds) {
+      return std::nullopt;
+    }
+    last_attempt_ = now;
+    write_outstanding_ = true;
+    return in_flight_;
+  }
+
+  bool uncertain() const {
+    return uncertain_;
+  }
+
  private:
+  void release() {
+    in_flight_.reset();
+    in_flight_payload_.reset();
+    uncertain_ = false;
+    write_outstanding_ = false;
+  }
+
   bool far_enough(const BlockIdExt& id) const {
     if (!installed_) {
       return true;
@@ -438,6 +492,10 @@ class ConsensusCleanupCheckpointTracker {
   std::optional<Payload> in_flight_payload_;
   std::optional<std::pair<BlockIdExt, Payload>> pending_;
   std::optional<double> last_attempt_;
+  // A write of in_flight_ was issued and has not completed.
+  bool write_outstanding_ = false;
+  // An attempt of in_flight_ failed in a way that may or may not have persisted it.
+  bool uncertain_ = false;
 };
 
 }  // namespace tos::validator::consensus

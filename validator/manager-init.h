@@ -69,6 +69,18 @@ td::Status check_consensus_cleanup_checkpoint_boundary(const LoadedConsensusClea
                                                        const td::Ref<MasterchainState> &head_state, bool allow_behind,
                                                        td::Slice what);
 
+// The GC block a reinitialization at `block` persists and starts with: the
+// consensus cleanup checkpoint when one exists (the reinitialization block is
+// then the checkpoint or a verified descendant of it, already checked), else
+// `block` itself. Persists it through the manager before returning.
+struct ReinitGcBlock {
+  BlockHandle handle;
+  td::Ref<MasterchainState> state;
+};
+td::actor::Task<ReinitGcBlock> persist_reinit_gc_block(td::actor::ActorId<ValidatorManager> manager,
+                                                       const LoadedConsensusCleanupCheckpoint &checkpoint,
+                                                       BlockHandle block, td::Ref<MasterchainState> state);
+
 // Logs the refusal and stops the process with exit status 2. Used for every
 // startup refusal tied to the consensus cleanup checkpoint.
 [[noreturn]] void refuse_startup_for_consensus_cleanup_checkpoint(const td::Status &status);
