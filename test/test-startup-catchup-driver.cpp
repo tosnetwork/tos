@@ -51,6 +51,8 @@ struct Observed {
   double elapsed = 0;
   bool persist_acked_before_end = true;
   int persists = 0;
+  int acks = 0;
+  int acks_at_end = -1;
 };
 
 class DriverHarness : public td::actor::Actor {
@@ -120,6 +122,12 @@ class DriverHarness : public td::actor::Actor {
     co_return co_await std::move(task);
   }
   td::actor::Task<td::Unit> catchup_sleep(double seconds) {
+    {
+      std::lock_guard<std::mutex> lock(*mu_);
+      if (observed_->attempts > 20) {
+        co_return td::Status::Error("the mode did not end within 20 attempts");
+      }
+    }
     now += seconds;
     co_return td::Unit{};
   }
@@ -137,6 +145,7 @@ class DriverHarness : public td::actor::Actor {
       }
       self->observed_->elapsed = self->now - self->start_;
       self->observed_->persist_acked_before_end = !self->persist_in_flight;
+      self->observed_->acks_at_end = self->observed_->acks;
       co_return td::Unit{};
     }(this)
                                    .start()
@@ -156,6 +165,10 @@ class DriverHarness : public td::actor::Actor {
   void ack_persist(BlockSeqno seqno, td::Promise<td::Unit> promise) {
     shard_client = seqno;
     persist_in_flight = false;
+    {
+      std::lock_guard<std::mutex> lock(*mu_);
+      observed_->acks++;
+    }
     promise.set_value(td::Unit());
   }
 
@@ -220,6 +233,11 @@ Observed drive(DriverHarness::RoundFn round, DriverHarness::AttemptFn attempt, D
         break;
       }
     }
+    scheduler.run(0.01);
+  }
+  // Let anything still running after the mode ended show itself.
+  auto settle = td::Timestamp::in(1.0);
+  while (!settle.is_in_past()) {
     scheduler.run(0.01);
   }
   scheduler.run_in_context([&] {
@@ -291,7 +309,9 @@ TEST(StartupCatchupDriver, T11_ExitWaitsForTheShardClientWrite) {
   ASSERT_TRUE(!o.failed);
   ASSERT_TRUE(o.reason == ExitReason::Fresh);
   ASSERT_TRUE(o.persist_acked_before_end);
+  // Every shard-client update the mode started was acknowledged before it ended.
   ASSERT_EQ(1, o.persists);
+  ASSERT_EQ(o.persists, o.acks_at_end);
 }
 
 // T19. The deadline passes while the shard-client write is in flight: the write
