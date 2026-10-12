@@ -59,6 +59,7 @@
 #include "shard-client.hpp"
 #include "state-serializer.hpp"
 #include "storage-stat-cache.hpp"
+#include "sync-stall-alerts.h"
 #include "token-manager.h"
 #include "validator-group.hpp"
 #include "weak-ptr-registry.hpp"
@@ -367,6 +368,11 @@ class ValidatorManagerImpl : public ValidatorManager {
   };
   void publish_health_node_state(const HealthWaiterSample &block_data, const HealthWaiterSample &state,
                                  const HealthWaiterSample &shard_client);
+  // Warns while the last masterchain block or the applied state (shard
+  // client) is older than the lag threshold, and publishes both block times
+  // for the metrics exporter.
+  void check_masterchain_lag();
+  MasterchainLagAlertState masterchain_lag_alert_;
   void update_gc_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) override;
   void update_shard_client_block_handle(BlockHandle handle, td::Ref<MasterchainState> state,
                                         td::Promise<td::Unit> promise) override;

@@ -4149,6 +4149,40 @@ void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &b
   g.observed_unix_seconds.store(static_cast<std::uint64_t>(td::Clocks::system()), std::memory_order_release);
 }
 
+void ValidatorManagerImpl::check_masterchain_lag() {
+  auto &g = health::node_state;
+  const auto masterchain_unix = health_block_unix_seconds(last_masterchain_block_handle_);
+  const auto shard_client_unix = health_block_unix_seconds(shard_client_handle_);
+  g.masterchain_block_unix_seconds.store(masterchain_unix, std::memory_order_relaxed);
+  g.shard_client_unix_seconds.store(shard_client_unix, std::memory_order_relaxed);
+  if (masterchain_unix == 0) {
+    return;
+  }
+  // The STATUS line above stays as it is for the tools that parse it; this
+  // is the line that says the node is behind, and only when it is.
+  const double wall = td::Clocks::system();
+  const double masterchain_age = non_negative_age(wall, static_cast<double>(masterchain_unix));
+  const double shard_client_age =
+      shard_client_unix == 0 ? 0 : non_negative_age(wall, static_cast<double>(shard_client_unix));
+  auto decision = decide_masterchain_lag_alert(masterchain_lag_alert_, td::Timestamp::now().at(), masterchain_age,
+                                               shard_client_age);
+  masterchain_lag_alert_ = decision.next;
+  auto shard_client_text = [&]() -> std::string {
+    if (shard_client_unix == 0) {
+      return "unknown";
+    }
+    return PSTRING() << static_cast<std::uint64_t>(shard_client_age) << " s";
+  };
+  if (decision.action == MasterchainLagAction::Warn) {
+    LOG(WARNING) << "masterchain is behind: applied state (shard client) is " << shard_client_text()
+                 << " old, last masterchain block " << static_cast<std::uint64_t>(masterchain_age)
+                 << " s old (threshold " << static_cast<std::uint64_t>(kMasterchainLagWarnSeconds) << " s)";
+  } else if (decision.action == MasterchainLagAction::Clear) {
+    LOG(INFO) << "masterchain caught up: applied state (shard client) is " << shard_client_text()
+              << " old, last masterchain block " << static_cast<std::uint64_t>(masterchain_age) << " s old";
+  }
+}
+
 void ValidatorManagerImpl::try_advance_gc_masterchain_block() {
   if (gc_masterchain_handle_ && last_masterchain_seqno_ > 0 && !gc_advancing_ &&
       gc_masterchain_handle_->inited_next_left() &&
@@ -4323,6 +4357,7 @@ void ValidatorManagerImpl::alarm() {
     log_status_at_ = td::Timestamp::in(60.0);
   }
   alarm_timestamp().relax(log_status_at_);
+  check_masterchain_lag();
   if (resend_shard_blocks_at_ && resend_shard_blocks_at_.is_in_past()) {
     resend_shard_blocks_at_ = td::Timestamp::never();
     for (auto &B : out_shard_blocks_) {

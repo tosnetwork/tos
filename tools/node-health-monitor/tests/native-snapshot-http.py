@@ -179,6 +179,12 @@ def check(mode, padding=None):
             )
             for name in snapshot_names:
                 assert name in body
+            # Masterchain progress is exported whatever the health flag says.
+            assert b"# TYPE tos_masterchain_head_age_seconds gauge\n" in body
+            assert b"# TYPE tos_shard_client_age_seconds gauge\n" in body
+            assert b"\ntos_wait_block_data_net_failures_total 7" in body
+            shard_client_age = re.search(rb"\ntos_shard_client_age_seconds ([0-9.]+)\n", body)
+            assert shard_client_age and float(shard_client_age.group(1)) >= 9000, body
             for name in old_live_names:
                 assert name not in body
             assert (

@@ -32,6 +32,15 @@ struct NodeStateGauges {
   std::atomic<std::uint64_t> db_free_bytes{0};
   std::atomic<std::uint32_t> gc_seqno{0};
   std::atomic<std::uint32_t> persistent_state_seqno{0};
+  // Block times (unix seconds) of the last masterchain block and of the
+  // applied state (shard client), refreshed every manager tick; 0 is unknown.
+  // The exporter derives the ages when it collects, so they keep growing
+  // even if the manager itself stops refreshing them.
+  std::atomic<std::uint64_t> masterchain_block_unix_seconds{0};
+  std::atomic<std::uint64_t> shard_client_unix_seconds{0};
+  // Failed network attempts to fetch block data, for any reason; monotonic
+  // per process.
+  std::atomic<std::uint64_t> block_data_net_failures{0};
 };
 inline NodeStateGauges node_state;
 }  // namespace tos::health

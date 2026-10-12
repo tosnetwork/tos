@@ -90,6 +90,10 @@ class WaitBlockData : public td::actor::Actor {
   bool reading_from_db_ = false;
   bool is_hardfork_ = false;
   td::Timestamp try_read_static_file_ = td::Timestamp::now();
+  // Consecutive failed network attempts for this block, reset when the
+  // network delivers it; drives the rate-limited stall warning.
+  std::uint64_t net_failures_ = 0;
+  double net_failure_warned_at_ = -1;
 
   td::PerfWarningTimer perf_timer_;
 };

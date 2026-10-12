@@ -17,15 +17,19 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <limits>
+
 #include "adnl/utils.hpp"
 #include "common/delay.h"
 #include "crypto/block/mc-config.h"
+#include "metrics/node-state-snapshot.h"
 #include "tos/tos-io.hpp"
 #include "vm/cells/MerkleProof.h"
 
 #include "block-auto.h"
 #include "block-parse.h"
 #include "fabric.h"
+#include "sync-stall-alerts.h"
 #include "wait-block-data.hpp"
 
 namespace tos {
@@ -246,6 +250,19 @@ void WaitBlockData::got_block_data_from_db(td::Ref<BlockData> data) {
 }
 
 void WaitBlockData::failed_to_get_block_data_from_net(td::Status reason) {
+  if (net_failures_ < std::numeric_limits<std::uint64_t>::max()) {
+    ++net_failures_;
+  }
+  health::node_state.block_data_net_failures.fetch_add(1, std::memory_order_relaxed);
+  // "Not ready" is routine while a block propagates, so a single one stays at
+  // DEBUG; a block that keeps failing is a stall and is reported at WARNING,
+  // rate-limited, whatever the error.
+  const double now = td::Timestamp::now().at();
+  if (block_data_net_failure_warning_due(net_failures_, now, net_failure_warned_at_)) {
+    net_failure_warned_at_ = now;
+    LOG(WARNING) << "still cannot get block " << handle_->id() << " data from net after " << net_failures_
+                 << " consecutive failures: " << reason;
+  }
   if (reason.code() == ErrorCode::notready) {
     LOG(DEBUG) << "failed to get block " << handle_->id() << " data from net: " << reason;
   } else {
@@ -262,6 +279,8 @@ void WaitBlockData::loaded_data(ReceivedBlock block) {
     failed_to_get_block_data_from_net(X.move_as_error_prefix("bad block from net: "));
     return;
   }
+  net_failures_ = 0;
+  net_failure_warned_at_ = -1;
   loaded_block_data(X.move_as_ok());
 }
 
