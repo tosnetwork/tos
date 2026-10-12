@@ -490,6 +490,17 @@ void FullNodeImpl::download_archive(BlockSeqno masterchain_seqno, ShardIdFull sh
                           timeout, std::move(promise));
 }
 
+void FullNodeImpl::probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                                td::Promise<startup_catchup::RoundResult> promise) {
+  auto shard = get_shard(ShardIdFull{masterchainId});
+  if (shard.empty()) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "masterchain shard not ready"));
+    return;
+  }
+  td::actor::send_closure(shard, &FullNodeShard::probe_next_masterchain_block, prev, deadline, probe_budget,
+                          std::move(promise));
+}
+
 void FullNodeImpl::download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                                 block::ImportedMsgQueueLimits limits, td::Timestamp timeout,
                                                 td::Promise<std::vector<td::Ref<OutMsgQueueProof>>> promise) {
@@ -778,6 +789,11 @@ void FullNodeImpl::start_up() {
                           td::Timestamp timeout, td::Promise<std::string> promise) override {
       td::actor::send_closure(id_, &FullNodeImpl::download_archive, masterchain_seqno, shard_prefix, std::move(tmp_dir),
                               timeout, std::move(promise));
+    }
+    void probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                      td::Promise<startup_catchup::RoundResult> promise) override {
+      td::actor::send_closure(id_, &FullNodeImpl::probe_next_masterchain_block, prev, deadline, probe_budget,
+                              std::move(promise));
     }
     void download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                       block::ImportedMsgQueueLimits limits, td::Timestamp timeout,

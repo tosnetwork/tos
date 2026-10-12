@@ -31,6 +31,7 @@
 #include "net/download-proof.hpp"
 #include "net/download-state.hpp"
 #include "net/get-next-key-blocks.hpp"
+#include "net/startup-probe.hpp"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Random.h"
 #include "td/utils/SharedSlice.h"
@@ -1130,6 +1131,44 @@ void FullNodeShardImpl::download_archive(BlockSeqno masterchain_seqno, ShardIdFu
   td::actor::create_actor<DownloadArchiveSlice>(
       "archive", masterchain_seqno, shard_prefix, std::move(tmp_dir), adnl_id_, overlay_id_, b.adnl_id, timeout,
       validator_manager_, rldp2_, overlays_, adnl_, client_, create_neighbour_promise(b, std::move(promise)))
+      .release();
+}
+
+void FullNodeShardImpl::probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                                     td::Promise<startup_catchup::RoundResult> promise) {
+  if (!shard_.is_masterchain()) {
+    promise.set_error(td::Status::Error(ErrorCode::error, "successor probes go to the masterchain overlay"));
+    return;
+  }
+  // Distinct peers of this overlay, one probe actor each.
+  class Transport : public StartupDiscoveryRound::Transport {
+   public:
+    Transport(adnl::AdnlNodeIdShort local_id, overlay::OverlayIdShort overlay_id,
+              td::actor::ActorId<ValidatorManagerInterface> manager, td::actor::ActorId<adnl::AdnlSenderInterface> rldp,
+              td::actor::ActorId<overlay::Overlays> overlays)
+        : local_id_(local_id), overlay_id_(overlay_id), manager_(manager), rldp_(rldp), overlays_(overlays) {
+    }
+    void get_peers(td::uint32 count, td::Promise<std::vector<adnl::AdnlNodeIdShort>> promise) override {
+      td::actor::send_closure(overlays_, &overlay::Overlays::get_overlay_random_peers, local_id_, overlay_id_, count,
+                              std::move(promise));
+    }
+    void probe(adnl::AdnlNodeIdShort peer, BlockIdExt prev, td::Timestamp deadline,
+               td::Promise<startup_catchup::ProbeAnswer> promise) override {
+      td::actor::create_actor<ProbeNextMasterchainBlock>("startupprobe", local_id_, overlay_id_, prev, peer, deadline,
+                                                         manager_, rldp_, overlays_, std::move(promise))
+          .release();
+    }
+
+   private:
+    adnl::AdnlNodeIdShort local_id_;
+    overlay::OverlayIdShort overlay_id_;
+    td::actor::ActorId<ValidatorManagerInterface> manager_;
+    td::actor::ActorId<adnl::AdnlSenderInterface> rldp_;
+    td::actor::ActorId<overlay::Overlays> overlays_;
+  };
+  td::actor::create_actor<StartupDiscoveryRound>(
+      "startupdiscovery", prev, deadline, probe_budget,
+      std::make_unique<Transport>(adnl_id_, overlay_id_, validator_manager_, rldp2_, overlays_), std::move(promise))
       .release();
 }
 

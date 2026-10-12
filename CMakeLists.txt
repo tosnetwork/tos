@@ -1054,6 +1054,15 @@ add_executable(test-startup-catchup-policy test/test-td-main.cpp test/test-start
 target_include_directories(test-startup-catchup-policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-startup-catchup-policy PRIVATE tos_crypto tdutils)
+add_executable(test-startup-catchup-driver test/test-td-main.cpp test/test-startup-catchup-driver.cpp)
+target_include_directories(test-startup-catchup-driver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-catchup-driver PRIVATE tos_crypto tdactor tdutils)
+add_executable(test-startup-catchup-probe test/test-td-main.cpp test/test-startup-catchup-probe.cpp)
+target_include_directories(test-startup-catchup-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-catchup-probe PRIVATE full-node validator-common tos_validator tos_crypto tdutils
+                      tdactor adnl overlay tl_api dht)
 add_executable(test-startup-catchup-importer test/test-td-main.cpp test/test-startup-catchup-importer.cpp)
 target_include_directories(test-startup-catchup-importer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
@@ -1989,6 +1998,8 @@ tos_test(test-validator-cleanup-statedb)
 tos_test(test-validator-cleanup-worker)
 tos_test(test-validator-cleanup-integration)
 tos_test(test-startup-catchup-policy)
+tos_test(test-startup-catchup-driver)
+tos_test(test-startup-catchup-probe)
 tos_test(test-startup-catchup-importer)
 tos_test(test-startup-orphan-reconcile)
 tos_test(test-node-consensus-membership)
