@@ -44,6 +44,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <fcntl.h>
 #include <spawn.h>
 #include <sstream>
 #include <string>
@@ -486,12 +487,20 @@ int child_main(const std::string& mode, const std::string& boc, const std::strin
   return 0;
 }
 
-int spawn_child(const char* program, const std::string& mode, const std::string& boc, const std::string& root) {
+// Runs the child and returns its exit status; its output goes to `log_path`.
+int spawn_child(const char* program, const std::string& mode, const std::string& boc, const std::string& root,
+                const std::string& log_path) {
   std::string m = mode, b = boc, r = root;
   std::string flag = "--child";
   char* args[] = {const_cast<char*>(program), flag.data(), m.data(), b.data(), r.data(), nullptr};
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_addopen(&actions, 2, log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  posix_spawn_file_actions_adddup2(&actions, 2, 1);
   pid_t pid = -1;
-  if (posix_spawn(&pid, program, nullptr, nullptr, args, environ) != 0) {
+  int spawned = posix_spawn(&pid, program, &actions, nullptr, args, environ);
+  posix_spawn_file_actions_destroy(&actions);
+  if (spawned != 0) {
     return -1;
   }
   int status = 0;
@@ -499,6 +508,13 @@ int spawn_child(const char* program, const std::string& mode, const std::string&
     return -1;
   }
   return WEXITSTATUS(status);
+}
+
+std::string read_text(const std::string& path) {
+  std::ifstream input(path, std::ios::binary);
+  std::ostringstream text;
+  text << input.rdbuf();
+  return text.str();
 }
 
 }  // namespace
@@ -664,22 +680,29 @@ int main(int argc, char** argv) {
     std::function<void(const std::string&)> damage;
     int expected_exit;
     std::string what;
+    // The refusal the startup path itself must report (not a later backstop).
+    std::string refusal = {};
   };
   std::vector<StartupCase> cases;
   cases.push_back({"plain", {}, [&](const std::string& root) { put_raw_checkpoint(root, td::Slice{"garbage"}); }, 2,
-                   "a damaged checkpoint stops startup with exit status 2"});
-  cases.push_back({"truncate-below", {}, nullptr, 2, "--truncate-db below the checkpoint is refused"});
-  cases.push_back({"hardfork-below", {}, nullptr, 2, "a hardfork below the checkpoint is refused"});
+                   "a damaged checkpoint stops startup with exit status 2",
+                   "cannot load the consensus cleanup checkpoint"});
+  cases.push_back({"truncate-below", {}, nullptr, 2, "--truncate-db below the checkpoint is refused",
+                   "refusing to start from the truncation target"});
+  cases.push_back({"hardfork-below", {}, nullptr, 2, "a hardfork below the checkpoint is refused",
+                   "refusing to start from the truncation target"});
   {
     Seed conflicting;
     conflicting.init = "F5";
-    cases.push_back({"plain", conflicting, nullptr, 2, "an init block off the checkpoint's branch is refused"});
+    cases.push_back({"plain", conflicting, nullptr, 2, "an init block off the checkpoint's branch is refused",
+                     "refusing to start from the init block"});
   }
   {
     Seed missing_init;
     missing_init.write_init = false;
     cases.push_back({"plain", missing_init, nullptr, 2,
-                     "reinitialization below the checkpoint is refused before the shard client writes"});
+                     "reinitialization below the checkpoint is refused before the shard client writes",
+                     "refusing to start from the reinitialization block"});
   }
   cases.push_back({"truncate-descendant", {}, nullptr, 0, "--truncate-db to a verified descendant starts"});
   {
@@ -696,8 +719,13 @@ int main(int argc, char** argv) {
       c.damage(root);
     }
     auto before = c.expected_exit == 2 && !c.damage ? snapshot_db(root, chain) : td::Result<Snapshot>{};
-    int code = spawn_child(argv[0], c.mode, boc, root);
+    auto log_path = root + ".child.log";
+    int code = spawn_child(argv[0], c.mode, boc, root, log_path);
     EXPECT(code == c.expected_exit, c.what << " (exit " << code << ")");
+    if (!c.refusal.empty()) {
+      EXPECT(read_text(log_path).find(c.refusal) != std::string::npos,
+             c.what << ": refused by the startup check (\"" << c.refusal << "\")");
+    }
     if (c.expected_exit == 2 && !c.damage) {
       auto after = snapshot_db(root, chain);
       bool same = before.is_ok() && after.is_ok() && before.ok().init == after.ok().init &&
