@@ -1059,6 +1059,11 @@ target_include_directories(test-startup-catchup-importer PRIVATE ${CMAKE_CURRENT
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-startup-catchup-importer PRIVATE validator full-node validator-common validator-db
                       tos_validator tos_db tos_crypto tdutils tdactor)
+add_executable(test-startup-orphan-reconcile test/test-td-main.cpp test/test-startup-orphan-reconcile.cpp)
+target_include_directories(test-startup-orphan-reconcile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-orphan-reconcile PRIVATE tos_validator validator-common validator-db full-node
+                      tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
@@ -1985,6 +1990,7 @@ tos_test(test-validator-cleanup-worker)
 tos_test(test-validator-cleanup-integration)
 tos_test(test-startup-catchup-policy)
 tos_test(test-startup-catchup-importer)
+tos_test(test-startup-orphan-reconcile)
 tos_test(test-node-consensus-membership)
 tos_test(test-pq-consensus-key-rotation)
 # The production signer, and the binaries built on it, have no way to move the consensus key
