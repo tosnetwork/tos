@@ -28,8 +28,8 @@
 #include "td/utils/filesystem.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
-#include "td/utils/port/path.h"
 #include "td/utils/port/Stat.h"
+#include "td/utils/port/path.h"
 #include "td/utils/port/thread.h"
 #include "td/utils/tests.h"
 

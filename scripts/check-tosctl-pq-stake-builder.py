@@ -62,11 +62,27 @@ def main() -> None:
         fail("election daemon no longer refuses a missing controller birth artifact")
     wallet = collapsed(pool_callers["config-wallet pool command"][0])
     roles_read = wallet.find(
-        '.get_roles() .await .context("read live single-nominator pool roles")?'
+        'live_pool.get_roles().await.context("read live single-nominator pool roles")?'
     )
     roles_check = wallet.find("verify_live_pool_roles(pool_cfg, &wallet_address, &live_roles)?;")
-    verified_order = wallet.find("let payload = build_verified_manual_pool_stake(")
+    verified_order = wallet.find("let payload = manual_pool_stake_payload( &live_pool,")
     message = wallet.find("let msg = wallet.message(")
+    # The pool relays a stake through its controller, which accepts only its own
+    # next relay sequence number as the query id; any other id bounces and the
+    # stake never reaches the elector. The order's query id must come from there.
+    raw = pool_callers["config-wallet pool command"][0].read_text(encoding="utf-8")
+    production = raw.split("#[cfg(test)]", 1)[0]
+    payload_fn = production.split("async fn manual_pool_stake_payload(", 1)
+    payload_body = payload_fn[1].split("\n}\n", 1)[0] if len(payload_fn) == 2 else ""
+    if (
+        payload_body.count(".next_relay_query()") != 1
+        or payload_body.count("build_verified_manual_pool_stake(") != 1
+        or "time_format::now()" in payload_body
+    ):
+        fail("config-wallet stake query id no longer comes from the controller's next relay query")
+    # Outside tests: the builder's definition and its one call, inside manual_pool_stake_payload.
+    if production.count("build_verified_manual_pool_stake(") != 2:
+        fail("config-wallet builds a verified pool order outside manual_pool_stake_payload")
     if verified_order < 0 or message < 0 or verified_order >= message:
         fail("config-wallet verified pool order no longer precedes the fee-bearing wallet message")
     if not (0 <= roles_read < roles_check < verified_order):

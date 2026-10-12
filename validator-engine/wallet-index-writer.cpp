@@ -1448,7 +1448,7 @@ std::atomic<bool> g_run_cleared{false};
 std::atomic<uint64_t> g_dropped_blocks{0};
 // What the last drop warning reported, and when (take_wc0_index_drop_report).
 std::mutex g_drop_report_mutex;
-uint64_t g_dropped_blocks_reported = 0;                                   // guarded by g_drop_report_mutex
+uint64_t g_dropped_blocks_reported = 0;                                    // guarded by g_drop_report_mutex
 std::optional<std::chrono::steady_clock::time_point> g_last_drop_warning;  // guarded by g_drop_report_mutex
 
 std::atomic<bool> g_marking_fault{false};
@@ -1493,8 +1493,9 @@ bool mark_queued_blocks(const std::vector<MarkedBlock>& block_ids) {
   {
     auto dropped = g_dropped_blocks.load();
     std::lock_guard<std::mutex> guard(g_drop_report_mutex);
-    auto newly_dropped = take_wc0_index_drop_report(dropped, g_dropped_blocks_reported, std::chrono::steady_clock::now(),
-                                                    g_last_drop_warning, kWc0IndexDropWarningInterval);
+    auto newly_dropped =
+        take_wc0_index_drop_report(dropped, g_dropped_blocks_reported, std::chrono::steady_clock::now(),
+                                   g_last_drop_warning, kWc0IndexDropWarningInterval);
     if (newly_dropped > 0) {
       LOG(WARNING) << "wc0-index: indexing fell " << kWc0IndexQueueCapacity << " blocks behind; " << newly_dropped
                    << " more block(s) left marked for re-indexing at the next start (" << dropped
