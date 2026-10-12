@@ -1047,6 +1047,19 @@ target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CU
 target_link_libraries(test-validator-cleanup-integration PRIVATE tos_validator validator-common validator-db full-node
                       tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+# Startup archive catch-up of a stale validator: the pure policy, the bounded
+# archive import attempt, the mode driver, the startup inventory of orphaned
+# validator session directories, the successor probe and the manager wiring.
+add_executable(test-startup-catchup-policy test/test-td-main.cpp test/test-startup-catchup-policy.cpp)
+target_include_directories(test-startup-catchup-policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-catchup-policy PRIVATE tos_crypto tdutils)
+add_executable(test-startup-catchup-importer test/test-td-main.cpp test/test-startup-catchup-importer.cpp)
+target_include_directories(test-startup-catchup-importer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-catchup-importer PRIVATE validator full-node validator-common validator-db
+                      tos_validator tos_db tos_crypto tdutils tdactor)
+
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
 add_executable(test-json-rpc-storage test/test-td-main.cpp test/test-json-rpc-storage.cpp)
@@ -1970,6 +1983,8 @@ tos_test(test-validator-cleanup)
 tos_test(test-validator-cleanup-statedb)
 tos_test(test-validator-cleanup-worker)
 tos_test(test-validator-cleanup-integration)
+tos_test(test-startup-catchup-policy)
+tos_test(test-startup-catchup-importer)
 tos_test(test-node-consensus-membership)
 tos_test(test-pq-consensus-key-rotation)
 # The production signer, and the binaries built on it, have no way to move the consensus key
