@@ -55,9 +55,14 @@ inline constexpr BlockSeqno kMaxShardClientLag = 16;
 // Discovery of verified progress: one monotonic window covering peer selection,
 // queries and proof verification.
 inline constexpr double kDiscoveryWindowSeconds = 30.0;
-// Distinct peers whose explicit "no next block" answers end discovery early.
+// Two separate limits govern discovery. At most kProbePeers probe slots are occupied
+// at a time (outstanding or explicitly negative), and kProbePeers distinct explicit
+// "no next block" answers end discovery early. An inconclusive answer frees its slot
+// for a replacement peer, so within one window up to kProbeBudget distinct peers can
+// be contacted.
 inline constexpr std::uint32_t kProbePeers = 3;
-// Probes per discovery window, shared by every restart after the frontier moved.
+// Probes per 30-second discovery window, shared by every restart after the frontier
+// moved.
 inline constexpr std::uint32_t kProbeBudget = 2 * kProbePeers;
 // Per-probe query timeout, further capped by the discovery window.
 inline constexpr double kProbeQueryTimeoutSeconds = 5.0;
@@ -420,7 +425,8 @@ struct RoundResult {
 // One discovery round about one exact local tip. Distinct peers only: a peer is
 // probed at most once and only its first answer counts. At most `peers` probes
 // are outstanding or explicitly negative at a time; an inconclusive answer frees
-// its slot for a new peer. The round is decided by the first verified successor,
+// its slot for a new peer, up to `budget` probes (and so up to `budget` distinct
+// peers) in total. The round is decided by the first verified successor,
 // by `peers` distinct explicit negatives, by an answer saying the frontier moved,
 // or at the deadline.
 template <class PeerId>

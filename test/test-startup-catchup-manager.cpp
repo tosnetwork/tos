@@ -296,6 +296,10 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
   void hold(std::shared_ptr<const pq::ValidatorPQKeyStore> store, ValidatorId id, td::uint32 expire_at) {
     pq_custody_.install(id, std::move(store), 0, expire_at).ensure();
   }
+  // An Ed25519 operator key only: no post-quantum consensus custody.
+  void hold_operator_key() {
+    permanent_keys_.insert(PublicKeyHash{hash("operator-key")});
+  }
   // Install a masterchain tip (and the same shard-client block) aged `age` seconds,
   // without running the group update.
   void set_tip(Snapshot snapshot, BlockSeqno height, double age) {
@@ -506,6 +510,10 @@ class Fixture {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold, epoch.windowed(index, i, expire_at),
                               epoch.members[i].validator_id, expire_at);
     });
+  }
+  void hold_operator_key() {
+    scheduler_.run_in_context(
+        [&] { td::actor::send_closure(manager_, &StartupCatchupManagerProbe::hold_operator_key); });
   }
   void set_tip(Snapshot s, BlockSeqno height, double age) {
     scheduler_.run_in_context(
@@ -768,6 +776,24 @@ TEST(StartupCatchupManager, T31_NonMemberFallsBackToTheLegacyLoop) {
   f.complete_prestart();
   ASSERT_TRUE(f.wait_event("shard client start", 30.0));
   ASSERT_TRUE(f.query()[4]);
+}
+
+// The entry counts any held validator key, an Ed25519 operator key included: a node
+// with no post-quantum custody at all enters the mode, builds no group when it ends,
+// and keeps the legacy non-validator fallback.
+TEST(StartupCatchupManager, Ed25519OnlyKeyEnters) {
+  Fixture f;
+  f.hold_operator_key();
+  f.set_tip(f.snapshot(f.current, 1), 10, kStale);
+  ASSERT_TRUE(f.decide());
+  f.advance(f.snapshot(f.current, 1), 10, kStale);
+  f.end(ExitReason::NoVerifiedSuccessor);
+  auto q = f.query();
+  ASSERT_TRUE(!q[0]);
+  ASSERT_TRUE(q[3]);  // the legacy non-validator branch: out of sync
+  std::lock_guard<std::mutex> lock(f.journal->mu);
+  ASSERT_EQ(0u, f.journal->validator_groups.size());
+  ASSERT_EQ(0, f.journal->observer_groups);
 }
 
 // C5. Prestart completion runs once: a second completion is refused, so the shard client

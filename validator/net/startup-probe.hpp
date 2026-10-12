@@ -92,10 +92,12 @@ class ProbeNextMasterchainBlock : public td::actor::Actor {
 };
 
 // One discovery round about one exact local tip: draws distinct peers, probes them in
-// parallel, retries peer selection while fewer than K were probed, and reports the
-// round's decision (startup_catchup::DiscoveryRound) once, at the first verified
-// successor, at K distinct explicit negatives, when the tip moved, or at the
-// deadline. Answers arriving after the decision are dropped with the actor.
+// parallel with at most K = 3 slots occupied, replaces a peer whose answer was
+// inconclusive, retries peer selection while slots are free, and stops drawing at the
+// round's probe budget (at most 6 probes, so at most 6 distinct peers, per 30-second
+// window). It reports the round's decision (startup_catchup::DiscoveryRound) once, at
+// the first verified successor, at K distinct explicit negatives, when the tip moved,
+// or at the deadline. Answers arriving after the decision are dropped with the actor.
 class StartupDiscoveryRound : public td::actor::Actor {
  public:
   class Transport {
