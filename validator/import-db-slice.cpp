@@ -697,6 +697,13 @@ void ArchiveImporter::downloaded_shard_archive(std::string path) {
   td::Status S = process_package(path, false);
   if (S.is_error()) {
     LOG(INFO) << "Error processing package: " << S;
+    if (bounded_) {
+      // The attempt cannot apply this prefix: record the error and drain. Sibling
+      // downloads still outstanding settle and their files are unlinked.
+      --pending_shard_archives_;
+      abort_query(S.move_as_error_prefix("shard archive package: "));
+      return;
+    }
   }
   --pending_shard_archives_;
   if (pending_shard_archives_ == 0) {
@@ -803,6 +810,9 @@ void ArchiveImporter::shard_join_result(BlockSeqno seqno, td::Result<td::Unit> R
   }
   if (R.is_error() && shard_join_.first_error.is_ok()) {
     shard_join_.first_error = R.move_as_error_prefix(PSTRING() << "shard application for #" << seqno << ": ");
+    // Drain at once: the siblings still outstanding stay counted until they settle,
+    // but none of them may start further predecessor work or an apply.
+    settlement_.drain(shard_join_.first_error.clone());
   }
   shard_join_.pending--;
   if (shard_join_.pending > 0) {

@@ -151,6 +151,7 @@ struct World {
   Layout layout;
   std::set<BlockIdExt> applied;
   int inflight = 0;
+  int requests = 0;  // every child the importer dispatched
   int inflight_at_publish = -1;
   bool attempt_active = false;
   bool overlap_seen = false;
@@ -201,6 +202,7 @@ td::Promise<T> tracked(std::shared_ptr<World> world, td::Promise<T> inner) {
   {
     WorldLock lock(world->mu);
     world->inflight++;
+    world->requests++;
   }
   return [world, inner = std::move(inner)](td::Result<T> R) mutable {
     {
@@ -814,4 +816,99 @@ TEST(StartupCatchupImporter, T20_PartialProgressThenDeadline) {
   ASSERT_TRUE(p.error);
   ASSERT_EQ(kLocal + 2, p.coherent);
   ASSERT_EQ(kTop, p.masterchain_top);
+}
+
+// The first failed required shard drains the attempt at once. Shard B is held before
+// its next dispatch (its proof-link check); shard A's apply fails; B's check then
+// succeeds. B must start no further predecessor work and no apply, and the attempt
+// settles.
+TEST(StartupCatchupImporter, FirstShardErrorDrainsAtOnce) {
+  Harness t(two_shards());
+  t.world->on_link_check = [w = t.world](BlockIdExt id, td::Promise<BlockHandle> p) {
+    WorldLock lock(w->mu);
+    if (id.seqno() == kLocal + 1 && id.id.shard == kLeft) {
+      w->held_link_checks.push_back(std::move(p));
+      return;
+    }
+    p.set_value(make_handle(*w, id));
+  };
+  auto right_failed = std::make_shared<bool>(false);
+  t.world->on_apply = [w = t.world, right_failed](BlockIdExt id, td::Promise<td::Unit> p) {
+    WorldLock lock(w->mu);
+    if (!id.is_masterchain() && id.seqno() == kLocal + 1 && id.id.shard == kRight) {
+      *right_failed = true;
+      p.set_error(td::Status::Error(ErrorCode::error, "apply failed"));
+      return;
+    }
+    w->applied.insert(id);
+    p.set_value(td::Unit());
+  };
+  t.start_bounded(60.0);
+  ASSERT_TRUE(t.wait(
+      [&] {
+        WorldLock lock(t.world->mu);
+        return *right_failed && t.world->held_link_checks.size() == 1;
+      },
+      10.0));
+  t.run_for(0.3);
+  ASSERT_TRUE(!t.published().has_value());
+  int requests_before;
+  BlockHandle handle;
+  {
+    WorldLock lock(t.world->mu);
+    requests_before = t.world->requests;
+    handle = make_handle(*t.world, sh_id(kLeft, kLocal + 1));
+  }
+  t.release(t.world->held_link_checks, 0, td::Result<BlockHandle>(handle));
+  ASSERT_TRUE(t.wait_published(5.0));
+  auto p = *t.published();
+  ASSERT_TRUE(p.error);
+  ASSERT_EQ(kLocal, p.coherent);
+  ASSERT_EQ(0, t.world->inflight_at_publish);
+  WorldLock lock(t.world->mu);
+  ASSERT_EQ(requests_before, t.world->requests);
+  ASSERT_TRUE(!t.world->contains(sh_id(kLeft, kLocal + 1)));
+}
+
+// A shard package that cannot be processed is an error of the attempt: it is reported,
+// the attempt drains, nothing further is dispatched, and the sibling download still
+// outstanding settles with its late file unlinked.
+TEST(StartupCatchupImporter, MalformedShardPackageDrains) {
+  Harness t(two_shards(1));
+  t.world->on_archive = [w = t.world](ShardIdFull prefix, td::Promise<std::string> p) {
+    WorldLock lock(w->mu);
+    if (prefix.is_masterchain()) {
+      p.set_value(w->make_package(prefix));
+      return;
+    }
+    if (prefix.shard == kLeft) {
+      auto path = PSTRING() << w->tmp << "/malformed-" << td::Random::fast_uint32() << ".pack";
+      td::write_file(path, "this is not a package").ensure();
+      p.set_value(std::move(path));
+      return;
+    }
+    w->held_archives.push_back(std::move(p));
+  };
+  t.start_bounded(60.0);
+  ASSERT_TRUE(t.wait([&] { return t.count(t.world->held_archives) == 1; }, 10.0));
+  t.run_for(0.3);
+  ASSERT_TRUE(!t.published().has_value());
+  int requests_before;
+  std::string late;
+  {
+    WorldLock lock(t.world->mu);
+    requests_before = t.world->requests;
+    late = t.world->make_package(ShardIdFull{basechainId, kRight});
+  }
+  t.release(t.world->held_archives, 0, td::Result<std::string>(late));
+  ASSERT_TRUE(t.wait_published(5.0));
+  auto p = *t.published();
+  ASSERT_TRUE(p.error);
+  ASSERT_TRUE(p.error_text.find("shard archive package") != std::string::npos);
+  ASSERT_EQ(kLocal, p.coherent);
+  ASSERT_EQ(0, t.world->inflight_at_publish);
+  ASSERT_TRUE(td::stat(late).is_error());
+  ASSERT_TRUE(t.tmp_empty());
+  WorldLock lock(t.world->mu);
+  ASSERT_EQ(requests_before, t.world->requests);
 }
