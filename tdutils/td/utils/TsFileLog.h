@@ -29,7 +29,9 @@ class TsFileLog {
   static constexpr int64 DEFAULT_ROTATE_THRESHOLD = 10 * (1 << 20);
 
  public:
+  // Each thread logs to its own file and keeps keep_rotated rotated files of
+  // it (FileLog::init).
   static Result<td::unique_ptr<LogInterface>> create(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD,
-                                                     bool redirect_stderr = true);
+                                                     bool redirect_stderr = true, int32 keep_rotated = 1);
 };
 }  // namespace td

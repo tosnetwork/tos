@@ -42,7 +42,9 @@ namespace validator {
 namespace fullnode {
 
 constexpr int VERBOSITY_NAME(FULL_NODE_WARNING) = verbosity_WARNING;
-constexpr int VERBOSITY_NAME(FULL_NODE_BENCHMARK) = verbosity_WARNING;
+// Per-message serialization timings: DEBUG. At WARNING they were a fifth of a
+// validator's default log.
+constexpr int VERBOSITY_NAME(FULL_NODE_BENCHMARK) = verbosity_DEBUG;
 constexpr int VERBOSITY_NAME(FULL_NODE_NOTICE) = verbosity_INFO;
 constexpr int VERBOSITY_NAME(FULL_NODE_INFO) = verbosity_DEBUG;
 constexpr int VERBOSITY_NAME(FULL_NODE_DEBUG) = verbosity_DEBUG;

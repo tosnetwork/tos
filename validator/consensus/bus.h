@@ -162,6 +162,10 @@ struct MisbehaviorReport {
 };
 
 struct TraceEvent {
+  // Routine and frequent: traced at DEBUG, so the default log keeps hours of the
+  // events an incident analysis needs (candidates, certificates, finalization).
+  using LogToDebug = std::true_type;
+
   std::unique_ptr<const stats::Event> event;
 
   std::string contents_to_string() const;

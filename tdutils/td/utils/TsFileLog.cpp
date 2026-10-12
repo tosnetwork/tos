@@ -31,9 +31,10 @@ namespace td {
 namespace detail {
 class TsFileLog : public LogInterface {
  public:
-  Status init(string path, td::int64 rotate_threshold, bool redirect_stderr) {
+  Status init(string path, td::int64 rotate_threshold, bool redirect_stderr, td::int32 keep_rotated) {
     path_ = std::move(path);
     rotate_threshold_ = rotate_threshold;
+    keep_rotated_ = keep_rotated;
     redirect_stderr_ = redirect_stderr;
     for (int i = 0; i < (int)logs_.size(); i++) {
       logs_[i].id = i;
@@ -63,6 +64,7 @@ class TsFileLog : public LogInterface {
     int id;
   };
   int64 rotate_threshold_;
+  int32 keep_rotated_ = 1;
   bool redirect_stderr_;
   std::string path_;
   std::array<Info, MAX_THREADS> logs_;
@@ -86,7 +88,7 @@ class TsFileLog : public LogInterface {
     // dead: the on-disk log grew without bound. Each thread keeps its own
     // file pair, so this bounds every file to rotate_threshold_ (+ at most one
     // trailing append) plus its retained `.old`.
-    TRY_STATUS(info->log.init(get_path(info), rotate_threshold_, info->id == 0 && redirect_stderr_));
+    TRY_STATUS(info->log.init(get_path(info), rotate_threshold_, info->id == 0 && redirect_stderr_, keep_rotated_));
     info->is_inited = true;
     return Status::OK();
   }
@@ -108,9 +110,10 @@ class TsFileLog : public LogInterface {
 };
 }  // namespace detail
 
-Result<td::unique_ptr<LogInterface>> TsFileLog::create(string path, td::int64 rotate_threshold, bool redirect_stderr) {
+Result<td::unique_ptr<LogInterface>> TsFileLog::create(string path, td::int64 rotate_threshold, bool redirect_stderr,
+                                                       td::int32 keep_rotated) {
   auto res = td::make_unique<detail::TsFileLog>();
-  TRY_STATUS(res->init(path, rotate_threshold, redirect_stderr));
+  TRY_STATUS(res->init(path, rotate_threshold, redirect_stderr, keep_rotated));
   return std::move(res);
 }
 }  // namespace td

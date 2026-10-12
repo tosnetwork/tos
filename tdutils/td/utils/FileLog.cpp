@@ -29,12 +29,13 @@
 
 namespace td {
 
-Status FileLog::init(string path, int64 rotate_threshold, bool redirect_stderr) {
+Status FileLog::init(string path, int64 rotate_threshold, bool redirect_stderr, int32 keep_rotated) {
   if (path.empty()) {
     return Status::Error("Log file path can't be empty");
   }
   if (path == path_) {
     set_rotate_threshold(rotate_threshold);
+    set_keep_rotated(keep_rotated);
     return Status::OK();
   }
 
@@ -54,6 +55,7 @@ Status FileLog::init(string path, int64 rotate_threshold, bool redirect_stderr) 
   }
   TRY_RESULT_ASSIGN(size_, fd_.get_size());
   rotate_threshold_ = rotate_threshold;
+  set_keep_rotated(keep_rotated);
   redirect_stderr_ = redirect_stderr;
   return Status::OK();
 }
@@ -67,6 +69,9 @@ vector<string> FileLog::get_file_paths() {
   if (!path_.empty()) {
     result.push_back(path_);
     result.push_back(PSTRING() << path_ << ".old");
+    for (int32 i = 1; i < keep_rotated_; i++) {
+      result.push_back(PSTRING() << path_ << ".old." << i);
+    }
   }
   return result;
 }
@@ -77,6 +82,28 @@ void FileLog::set_rotate_threshold(int64 rotate_threshold) {
 
 int64 FileLog::get_rotate_threshold() const {
   return rotate_threshold_;
+}
+
+void FileLog::set_keep_rotated(int32 keep_rotated) {
+  keep_rotated_ = keep_rotated < 1 ? 1 : keep_rotated;
+}
+
+int32 FileLog::get_keep_rotated() const {
+  return keep_rotated_;
+}
+
+// Makes room for a new <path>.old: <path>.old.<k-1> becomes <path>.old.<k>
+// for the kept files, oldest first, and <path>.old becomes <path>.old.1. A
+// file that does not exist yet (the first rotations) is skipped, and the
+// oldest kept file is overwritten by the rename, so at most keep_rotated_
+// rotated files remain.
+void FileLog::shift_rotated() {
+  for (int32 k = keep_rotated_ - 1; k >= 2; k--) {
+    rename(PSLICE() << path_ << ".old." << (k - 1), PSLICE() << path_ << ".old." << k).ignore();
+  }
+  if (keep_rotated_ >= 2) {
+    rename(PSLICE() << path_ << ".old", PSLICE() << path_ << ".old.1").ignore();
+  }
 }
 
 void FileLog::append(CSlice cslice, int log_level) {
@@ -95,6 +122,7 @@ void FileLog::append(CSlice cslice, int log_level) {
   }
 
   if (size_ > rotate_threshold_ || want_rotate_.load(std::memory_order_relaxed)) {
+    shift_rotated();
     auto status = rename(path_, PSLICE() << path_ << ".old");
     if (status.is_error()) {
       process_fatal_error(PSLICE() << status.error() << " in " << __FILE__ << " at " << __LINE__);
@@ -130,9 +158,10 @@ void FileLog::do_rotate() {
   size_ = 0;
 }
 
-Result<td::unique_ptr<LogInterface>> FileLog::create(string path, int64 rotate_threshold, bool redirect_stderr) {
+Result<td::unique_ptr<LogInterface>> FileLog::create(string path, int64 rotate_threshold, bool redirect_stderr,
+                                                     int32 keep_rotated) {
   auto l = make_unique<FileLog>();
-  TRY_STATUS(l->init(std::move(path), rotate_threshold, redirect_stderr));
+  TRY_STATUS(l->init(std::move(path), rotate_threshold, redirect_stderr, keep_rotated));
   return std::move(l);
 }
 

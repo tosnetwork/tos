@@ -29,7 +29,9 @@
 
 namespace tos::validator::consensus {
 
-constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_BENCHMARK) = verbosity_WARNING;
+// Per-message serialization timings: DEBUG. At WARNING they were a fifth of a
+// validator's default log.
+constexpr int VERBOSITY_NAME(VALIDATOR_SESSION_BENCHMARK) = verbosity_DEBUG;
 
 using ValidatorSessionCandidateId = td::Bits256;
 

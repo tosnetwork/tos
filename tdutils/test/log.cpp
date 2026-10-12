@@ -25,6 +25,7 @@
 #include "td/utils/Slice.h"
 #include "td/utils/TsFileLog.h"
 #include "td/utils/benchmark.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
 #include "td/utils/port/path.h"
@@ -186,5 +187,50 @@ TEST(Log, TsFileLogRotationBoundsFileSize) {
     td::unlink(path).ignore();
     td::unlink(path + ".old").ignore();
   }
+}
+
+TEST(Log, FileLogKeepsTheConfiguredNumberOfRotatedFiles) {
+  // One rotated file per log keeps minutes of a busy validator's log, so an
+  // engine exit leaves no evidence. With keep_rotated = 3 the log keeps .old,
+  // .old.1 and .old.2, newest first, and drops anything older.
+  const std::string base = "tmplog_keep_test";
+  auto cleanup = [&] {
+    for (auto suffix : {"", ".old", ".old.1", ".old.2", ".old.3"}) {
+      td::unlink(base + suffix).ignore();
+    }
+  };
+  cleanup();
+  {
+    td::FileLog log;
+    log.init(base, 100, false, 3).ensure();
+    ASSERT_EQ(3, log.get_keep_rotated());
+    // Each append is one generation: it passes the threshold, so it is rotated
+    // away and the next append starts a fresh file.
+    for (char generation : std::string("ABCDE")) {
+      log.append(td::CSlice(std::string(150, generation) + "\n"), VERBOSITY_NAME(INFO));
+    }
+  }
+  auto first_byte = [](std::string path) -> char {
+    auto r = td::read_file_str(path);
+    return r.is_ok() && !r.ok().empty() ? r.ok()[0] : '-';
+  };
+  ASSERT_EQ('E', first_byte(base + ".old"));
+  ASSERT_EQ('D', first_byte(base + ".old.1"));
+  ASSERT_EQ('C', first_byte(base + ".old.2"));
+  ASSERT_TRUE(td::stat(base + ".old.3").is_error());
+  cleanup();
+
+  // The default keeps one rotated file, as before.
+  {
+    td::FileLog log;
+    log.init(base, 100, false).ensure();
+    ASSERT_EQ(1, log.get_keep_rotated());
+    for (char generation : std::string("AB")) {
+      log.append(td::CSlice(std::string(150, generation) + "\n"), VERBOSITY_NAME(INFO));
+    }
+  }
+  ASSERT_EQ('B', first_byte(base + ".old"));
+  ASSERT_TRUE(td::stat(base + ".old.1").is_error());
+  cleanup();
 }
 #endif

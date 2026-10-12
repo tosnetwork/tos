@@ -781,7 +781,7 @@ void ValidateQuery::request_latest_mc_state() {
 void ValidateQuery::after_get_latest_mc_state(td::Result<std::pair<Ref<MasterchainState>, BlockIdExt>> res,
                                               td::PerfLogAction token) {
   token.finish(res);
-  LOG(WARNING) << "in ValidateQuery::after_get_latest_mc_state()";
+  LOG(DEBUG) << "in ValidateQuery::after_get_latest_mc_state()";
   --pending;
   if (res.is_error()) {
     fatal_error(res.move_as_error());
@@ -1765,7 +1765,7 @@ void ValidateQuery::got_neighbor_out_queue(int i, td::Result<Ref<MessageQueue>> 
     }
     Ref<MessageQueue> outq_descr = res.move_as_ok();
     block::McShardDescr& descr = neighbors_.at(i);
-    LOG(WARNING) << "obtained outbound queue for neighbor #" << i << " : " << descr.shard().to_str();
+    LOG(DEBUG) << "obtained outbound queue for neighbor #" << i << " : " << descr.shard().to_str();
     if (outq_descr->get_block_id() != descr.blk_) {
       LOG(DEBUG) << "outq_descr->id = " << outq_descr->get_block_id().to_str()
                  << " ; descr.id = " << descr.blk_.to_str();

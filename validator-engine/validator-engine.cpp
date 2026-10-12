@@ -6775,14 +6775,40 @@ int main(int argc, char *argv[]) {
     td::set_signal_handler(td::SignalType::HangUp, force_rotate_logs).ensure();
   });
   std::string session_logs_file;
+  // The log file is opened after every option is parsed, so --log-rotate-mb
+  // and --log-keep-files apply wherever they stand on the command line.
+  std::string log_file;
+  td::int64 log_rotate_mib = 10;
+  td::int32 log_keep_files = 1;
+  bool log_rotation_set = false;
   p.add_option('l', "logname", "log to file", [&](td::Slice fname) {
     if (session_logs_file.empty()) {
       session_logs_file = fname.str() + ".session-stats";
     }
-    logger_ = td::TsFileLog::create(fname.str()).move_as_ok();
-    td::log_interface = logger_.get();
-    td::set_log_fatal_error_callback([](td::CSlice s) { std::cerr << "FATAL_ERROR: " << s.c_str() << std::endl; });
+    log_file = fname.str();
   });
+  p.add_checked_option('\0', "log-rotate-mb",
+                       "rotate each log file (one per thread) when it passes this many MiB, 1 to 4096 (default 10)",
+                       [&](td::Slice arg) {
+                         TRY_RESULT(v, td::to_integer_safe<td::int64>(arg));
+                         if (v < 1 || v > 4096) {
+                           return td::Status::Error("--log-rotate-mb must be between 1 and 4096");
+                         }
+                         log_rotate_mib = v;
+                         log_rotation_set = true;
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('\0', "log-keep-files",
+                       "rotated files kept per log file: <log>.old, then <log>.old.1 and so on, 1 to 1000 (default 1)",
+                       [&](td::Slice arg) {
+                         TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
+                         if (v < 1 || v > 1000) {
+                           return td::Status::Error("--log-keep-files must be between 1 and 1000");
+                         }
+                         log_keep_files = v;
+                         log_rotation_set = true;
+                         return td::Status::OK();
+                       });
   p.add_checked_option('s', "state-ttl", "state will be gc'd after this time (in seconds) default=86400",
                        [&](td::Slice fname) {
                          auto v = td::to_double(fname);
@@ -7592,6 +7618,19 @@ int main(int argc, char *argv[]) {
   auto S = p.run(argc, argv);
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
+    std::_Exit(2);
+  }
+  if (!log_file.empty()) {
+    auto r_logger = td::TsFileLog::create(log_file, log_rotate_mib << 20, true, log_keep_files);
+    if (r_logger.is_error()) {
+      LOG(ERROR) << "cannot open log file " << log_file << ": " << r_logger.move_as_error();
+      std::_Exit(2);
+    }
+    logger_ = r_logger.move_as_ok();
+    td::log_interface = logger_.get();
+    td::set_log_fatal_error_callback([](td::CSlice s) { std::cerr << "FATAL_ERROR: " << s.c_str() << std::endl; });
+  } else if (log_rotation_set) {
+    LOG(ERROR) << "--log-rotate-mb and --log-keep-files need -l/--logname";
     std::_Exit(2);
   }
   if (validator_consensus_cleanup_flags.enable && validator_consensus_cleanup_flags.disable) {

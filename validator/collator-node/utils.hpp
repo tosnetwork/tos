@@ -21,7 +21,9 @@
 
 namespace tos::validator {
 
-constexpr int VERBOSITY_NAME(COLLATOR_NODE_BENCHMARK) = verbosity_WARNING;
+// Per-message serialization timings: DEBUG. At WARNING they were a fifth of a
+// validator's default log.
+constexpr int VERBOSITY_NAME(COLLATOR_NODE_BENCHMARK) = verbosity_DEBUG;
 
 tl_object_ptr<tos_api::collatorNode_Candidate> serialize_candidate(const BlockCandidate& block, bool compress);
 td::Result<BlockCandidate> deserialize_candidate(tl_object_ptr<tos_api::collatorNode_Candidate> f,

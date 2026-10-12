@@ -32,8 +32,12 @@ class FileLog : public LogInterface {
 
  public:
   static Result<td::unique_ptr<LogInterface>> create(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD,
-                                                     bool redirect_stderr = true);
-  Status init(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD, bool redirect_stderr = true);
+                                                     bool redirect_stderr = true, int32 keep_rotated = 1);
+  // keep_rotated is how many rotated files are kept: the newest is <path>.old,
+  // older ones <path>.old.1 up to <path>.old.<keep_rotated - 1>. Values below 1
+  // count as 1, which keeps only <path>.old.
+  Status init(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD, bool redirect_stderr = true,
+              int32 keep_rotated = 1);
 
   Slice get_path() const;
 
@@ -42,6 +46,10 @@ class FileLog : public LogInterface {
   void set_rotate_threshold(int64 rotate_threshold);
 
   int64 get_rotate_threshold() const;
+
+  void set_keep_rotated(int32 keep_rotated);
+
+  int32 get_keep_rotated() const;
 
   void append(CSlice cslice, int log_level) override;
 
@@ -54,10 +62,12 @@ class FileLog : public LogInterface {
   string path_;
   int64 size_ = 0;
   int64 rotate_threshold_ = 0;
+  int32 keep_rotated_ = 1;
   bool redirect_stderr_ = false;
   std::atomic<bool> want_rotate_{};
 
   void do_rotate();
+  void shift_rotated();
 };
 
 }  // namespace td
