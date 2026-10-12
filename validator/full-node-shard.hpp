@@ -150,7 +150,7 @@ class FullNodeShardImpl : public FullNodeShard {
                      td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getPersistentStateSizeV2 &query,
                      td::Promise<td::BufferSlice> promise);
-  void receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Promise<td::BufferSlice> promise);
+  void receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Promise<adnl::AdnlQueryAnswer> promise);
   void receive_message(adnl::AdnlNodeIdShort src, td::BufferSlice data);
 
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast &query);

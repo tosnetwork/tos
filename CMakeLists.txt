@@ -1120,6 +1120,17 @@ target_link_libraries(test-download-refusal-answers PRIVATE validator full-node 
                       tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-download-refusal-answers PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 
+# How long an RLDP answer with its own delivery deadline is kept: over RLDP
+# alone, through the overlay manager's buffer, and through a production
+# full-node shard and its admission to the production downloader.
+add_executable(test-rldp2-refusal-lifetime test/test-rldp2-refusal-lifetime.cpp)
+target_include_directories(test-rldp2-refusal-lifetime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-rldp2-refusal-lifetime PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common adnl adnltest
+                      overlay rldp2 dht tl_api)
+target_compile_definitions(test-rldp2-refusal-lifetime PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
 # Retry policy of a consensus group: the initial chain-state resolution and
 # the acceptance of finalized blocks.
 add_executable(test-consensus-retry-backoff test/test-td-main.cpp test/test-consensus-retry-backoff.cpp)
@@ -1980,6 +1991,7 @@ tos_test(test-download-next-blocks-validation)
 tos_test(test-download-refusal-answers)
 tos_test(test-consensus-retry-backoff)
 tos_test(test-bridge-retirement)
+tos_test(test-rldp2-refusal-lifetime)
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-manager)
 tos_test(test-ext-message-ingress)

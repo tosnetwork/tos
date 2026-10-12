@@ -33,6 +33,7 @@ using tos::validator::fullnode::full_node_rate_limits;
 using tos::validator::fullnode::FullNodeRateLimiter;
 using tos::validator::fullnode::k_default_ratelimit_global;
 using tos::validator::fullnode::k_default_ratelimit_window_size;
+using tos::validator::fullnode::k_refusal_answer_lifetime;
 using tos::validator::fullnode::make_full_node_rate_limiter;
 using tos::validator::fullnode::QueryAdmission;
 using tos::validator::fullnode::RefusalAnswerBudget;
@@ -116,13 +117,13 @@ size_t exhaust(ShardQueryAdmission &admission, adnl::AdnlNodeIdShort src, const 
 // returned for dispatch.
 struct Settled {
   bool dispatched = false;
-  std::optional<td::Result<td::BufferSlice>> answer;
+  std::optional<td::Result<adnl::AdnlQueryAnswer>> answer;
 };
 
 Settled settle(ShardQueryAdmission &admission, adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Timestamp t) {
   Settled settled;
-  std::optional<td::Result<td::BufferSlice>> got;
-  td::Promise<td::BufferSlice> promise = [&got](td::Result<td::BufferSlice> R) { got = std::move(R); };
+  std::optional<td::Result<adnl::AdnlQueryAnswer>> got;
+  td::Promise<adnl::AdnlQueryAnswer> promise = [&got](td::Result<adnl::AdnlQueryAnswer> R) { got = std::move(R); };
   auto function = admission.admit_or_answer(src, std::move(query), promise, t);
   settled.dispatched = function != nullptr;
   if (settled.dispatched) {
@@ -301,7 +302,11 @@ TEST(ShardQueryAdmission, AnswerableRefusalsGetTheirTypesEmptyReply) {
     auto settled = settle(admission, src, c.query.clone(), t0);
     ASSERT_TRUE(!settled.dispatched);
     ASSERT_TRUE(settled.answer && settled.answer->is_ok());
-    auto answer = settled.answer->move_as_ok();
+    auto answered = settled.answer->move_as_ok();
+    // The answer may stay in the transport for the refusal lifetime from the
+    // admission's own clock, an absolute deadline.
+    ASSERT_EQ(t0.at() + k_refusal_answer_lifetime, answered.delivery_deadline.at());
+    auto answer = std::move(answered.data);
     ASSERT_EQ(c.answer_id, *reinterpret_cast<const td::int32 *>(answer.as_slice().data()));
     ASSERT_EQ(1u, budget->answered());
     // The bytes are exactly what the type's own handler sends when it has
@@ -380,6 +385,8 @@ TEST(RefusalAnswerBudget, DefaultsAreTwiceTheDefaultAdmissionRates) {
   ASSERT_EQ(96.0, limits.global_burst);
   ASSERT_EQ(48.0, limits.source_rate);
   ASSERT_EQ(24.0, limits.source_burst);
+  // An answer may stay in the transport this long.
+  ASSERT_EQ(3.0, k_refusal_answer_lifetime);
 }
 
 TEST(RefusalAnswerBudget, EachSourceGetsItsBurst) {

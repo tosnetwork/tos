@@ -180,13 +180,16 @@ class Server {
     held_types_.insert(query);
   }
 
-  void serve(td::BufferSlice query, td::Timestamp deadline, Path path, td::Promise<td::BufferSlice> promise) {
+  void serve(td::BufferSlice query, td::Timestamp deadline, Path path, td::Promise<td::BufferSlice> plain) {
     std::unique_lock lock(mutex_);
     sent_.push_back(Sent{query_id(query), deadline, path});
-    auto function = admission_.admit_or_answer(k_requester, std::move(query), promise, td::Timestamp::at(clock_));
+    // These stand-in transports send plain data, as the external client does.
+    auto answer = adnl::ignore_answer_metadata(std::move(plain));
+    auto function = admission_.admit_or_answer(k_requester, std::move(query), answer, td::Timestamp::at(clock_));
     if (!function) {
       return;
     }
+    auto promise = adnl::drop_answer_metadata(std::move(answer));
     if (held_types_.count(function->get_id())) {
       held_.push_back(std::move(promise));
       return;

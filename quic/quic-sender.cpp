@@ -1020,6 +1020,14 @@ td::actor::Task<> QuicSender::on_inbound_query(std::shared_ptr<Connection> conne
                                                td::BufferSlice query, QuicInboundByteCharge charge) {
   // The query's bytes stay charged until its handler has answered, so queries
   // a slow or stalled handler holds count against the budget.
+  //
+  // An answer's delivery deadline is not used here. A remote peer can send a
+  // full-node shard query over QUIC (no in-tree requester does, but that does
+  // not remove the exposure), and the shard's answer to a capacity refusal
+  // then stays under QUIC's stream budgets and the absolute inbound-stream
+  // lifetime (inbound_stream_lifetime, 120 s by default, re-armed after the
+  // input FIN), not under the shorter deadline RLDP gives it. The RLDP bound
+  // on live refusal answers does not cover answers sent here.
   auto answer = co_await td::actor::ask(adnl_, &adnl::AdnlPeerTable::deliver_query, connection->path.second,
                                         connection->path.first, std::move(query));
   charge.reset();

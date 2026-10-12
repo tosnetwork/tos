@@ -62,8 +62,11 @@ class Overlay : public td::actor::Actor {
 
   virtual void receive_message(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
                                td::BufferSlice data) = 0;
+  // Answers carry delivery metadata for the transport, so the overlay
+  // forwards a callback's answer whole. This internal interface took plain
+  // data before; its one caller, the overlay manager, was migrated with it.
   virtual void receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
-                             td::BufferSlice data, td::Promise<td::BufferSlice> promise) = 0;
+                             td::BufferSlice data, td::Promise<adnl::AdnlQueryAnswer> promise) = 0;
   virtual void send_message_to_neighbours(td::BufferSlice data) = 0;
   virtual void send_broadcast(PublicKeyHash send_as, td::uint32 flags, td::BufferSlice data) = 0;
   virtual void send_broadcast_fec(PublicKeyHash send_as, td::uint32 flags, td::BufferSlice data,

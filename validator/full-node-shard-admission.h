@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "adnl/adnl-node-id.hpp"
+#include "adnl/adnl-query-answer.h"
 #include "auto/tl/tos_api.h"
 #include "auto/tl/tos_api.hpp"
 #include "common/errorcode.h"
@@ -185,6 +186,16 @@ struct RefusalAnswerLimits {
   double source_burst;
   size_t max_sources;
 };
+
+// How long an answer to a capacity refusal may stay in the transport that
+// sends it. Over RLDP that bounds the live refusal-answer transfers to the
+// budget's burst plus this many seconds of its rate: 96 + 192 * 3 = 672 in
+// all and 24 + 48 * 3 = 168 per source, before expiry slack. Plain ADNL
+// answers sit in their own bounded, non-retransmitted queue (10 s TTL), and
+// QUIC answers stay under QUIC's stream budgets and its absolute inbound
+// stream lifetime (120 s by default), not under this bound; those figures
+// are for RLDP only.
+constexpr double k_refusal_answer_lifetime = 3.0;
 
 // Sources tracked by the refusal-answer budget at most. The global budget
 // already keeps the live entries near its burst plus one refill time of its
@@ -395,21 +406,24 @@ class ShardQueryAdmission {
 
   // The reply to a query refused for capacity: its type's empty answer while
   // the refusal-answer budget lasts, otherwise the refusal error, which leaves
-  // the requester to its own timeout as before.
-  td::Result<td::BufferSlice> answer_capacity_refusal(adnl::AdnlNodeIdShort src, const tos_api::Function &function,
-                                                      td::Timestamp now = td::Timestamp::now()) {
+  // the requester to its own timeout as before. An answer may stay in the
+  // transport for k_refusal_answer_lifetime from `now`, an absolute deadline
+  // set here once and never restarted on the way to the transport.
+  td::Result<adnl::AdnlQueryAnswer> answer_capacity_refusal(adnl::AdnlNodeIdShort src,
+                                                            const tos_api::Function &function,
+                                                            td::Timestamp now = td::Timestamp::now()) {
     auto answer = capacity_refusal_answer(function.get_id());
     if (!answer || !refusal_answers_ || !refusal_answers_->try_take(src, now)) {
       return td::Status::Error(ErrorCode::failure, "too many requests");
     }
-    return std::move(*answer);
+    return adnl::AdnlQueryAnswer{std::move(*answer), td::Timestamp::in(k_refusal_answer_lifetime, now)};
   }
 
   // Admits one query and settles on `promise` what admission alone decides:
   // a failure with its error, a capacity refusal with its answer or error.
   // Returns the query when it is admitted, with `promise` left for dispatch.
   tos_api::object_ptr<tos_api::Function> admit_or_answer(adnl::AdnlNodeIdShort src, td::BufferSlice query,
-                                                         td::Promise<td::BufferSlice> &promise,
+                                                         td::Promise<adnl::AdnlQueryAnswer> &promise,
                                                          td::Timestamp now = td::Timestamp::now()) {
     auto admission = admit(src, std::move(query), now);
     switch (admission.outcome()) {

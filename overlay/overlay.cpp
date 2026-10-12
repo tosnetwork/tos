@@ -221,7 +221,7 @@ void OverlayImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_repa
 */
 
 void OverlayImpl::receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
-                                td::BufferSlice data, td::Promise<td::BufferSlice> promise) {
+                                td::BufferSlice data, td::Promise<adnl::AdnlQueryAnswer> promise) {
   if (!check_src_peer(src, extra ? extra->certificate_.get() : nullptr)) {
     VLOG(OVERLAY_WARNING) << this << ": received query in private overlay from unknown source " << src;
     promise.set_error(td::Status::Error(ErrorCode::protoviolation, "overlay is not public"));
@@ -237,7 +237,7 @@ void OverlayImpl::receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api
 
   if (R.is_error()) {
     // allow custom query to be here
-    callback_->receive_query(src, overlay_id_, std::move(data), std::move(promise));
+    callback_->receive_query_ex(src, overlay_id_, std::move(data), std::move(promise));
     return;
   }
 
@@ -245,7 +245,7 @@ void OverlayImpl::receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api
 
   VLOG(OVERLAY_EXTRA_DEBUG) << this << "query from " << src << ": " << tos_api::to_string(Q);
 
-  tos_api::downcast_call(*Q.get(), [&](auto &object) { this->process_query(src, object, std::move(promise)); });
+  tos_api::downcast_call(*Q.get(), [&](auto &object) { this->dispatch_query(src, object, std::move(promise)); });
 }
 
 td::actor::Task<> OverlayImpl::process_broadcast(adnl::AdnlNodeIdShort message_from,

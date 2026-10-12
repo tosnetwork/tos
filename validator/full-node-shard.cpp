@@ -97,6 +97,13 @@ void FullNodeShardImpl::create_overlay() {
     }
     void receive_query(adnl::AdnlNodeIdShort src, overlay::OverlayIdShort overlay_id, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
+      td::actor::send_closure(node_, &FullNodeShardImpl::receive_query, src, std::move(data),
+                              adnl::ignore_answer_metadata(std::move(promise)));
+    }
+    // The shard's answers to capacity refusals carry a short delivery
+    // deadline, so it takes the answer promise that can carry it.
+    void receive_query_ex(adnl::AdnlNodeIdShort src, overlay::OverlayIdShort overlay_id, td::BufferSlice data,
+                          td::Promise<adnl::AdnlQueryAnswer> promise) override {
       td::actor::send_closure(node_, &FullNodeShardImpl::receive_query, src, std::move(data), std::move(promise));
     }
     void receive_broadcast(PublicKeyHash src, overlay::OverlayIdShort overlay_id, td::BufferSlice data) override {
@@ -728,7 +735,7 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNod
 }
 
 void FullNodeShardImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query,
-                                      td::Promise<td::BufferSlice> promise) {
+                                      td::Promise<adnl::AdnlQueryAnswer> promise) {
   if (!active_) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_message, src, adnl_id_, overlay_id_,
                             create_serialize_tl_object<tos_api::tosNode_forgetPeer>());
@@ -740,12 +747,14 @@ void FullNodeShardImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice
   // before anything is dispatched. A refusal for capacity is answered with
   // the query type's empty reply where one exists and the refusal-answer
   // budget allows, so the requester can ask again instead of waiting out its
-  // timeout.
+  // timeout; that answer carries its own short delivery deadline. Admitted
+  // queries are answered by the handlers with plain data.
   auto fun_ptr = admission_.admit_or_answer(src, std::move(query), promise);
   if (!fun_ptr) {
     return;
   }
-  tos_api::downcast_call(*fun_ptr.get(), [&](auto &obj) { this->process_query(src, obj, std::move(promise)); });
+  auto plain = adnl::drop_answer_metadata(std::move(promise));
+  tos_api::downcast_call(*fun_ptr.get(), [&](auto &obj) { this->process_query(src, obj, std::move(plain)); });
 }
 
 void FullNodeShardImpl::receive_message(adnl::AdnlNodeIdShort src, td::BufferSlice data) {

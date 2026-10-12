@@ -109,6 +109,17 @@ class Rldp : public adnl::AdnlSenderEx {
   };
   virtual void get_connection_stats(td::Promise<ConnectionStats> promise) = 0;
 
+  // Outbound transfers, queries and answers alike, on every live connection
+  // of one local id: those still held until the peer acknowledges them or
+  // they expire, and those ever opened. For diagnostics and tests; a
+  // connection that is gone no longer counts.
+  struct OutboundTransferStats {
+    size_t live{0};
+    td::uint64 started{0};
+  };
+  virtual void get_outbound_transfer_stats(adnl::AdnlNodeIdShort local_id,
+                                           td::Promise<OutboundTransferStats> promise) = 0;
+
   // An observer sees completed inbound FEC parts after successful decode. It
   // cannot alter transfer validity; measurement tools use it to place an
   // independently counted network-loss window after real progress.
