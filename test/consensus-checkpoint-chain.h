@@ -66,9 +66,9 @@ inline td::Bits256 label_hash(td::Slice label) {
 
 // The state at `seqno` whose prev_blocks additionally records `prev`. Each step
 // advances the generation time by `utime_step` seconds.
-inline td::Result<td::Ref<vm::Cell>> derive_state(td::Ref<vm::Cell> prev_root, const BlockIdExt& prev,
-                                                  BlockSeqno seqno, const BlockIdExt& genesis,
-                                                  LogicalTime genesis_lt, td::uint32 utime_step) {
+inline td::Result<td::Ref<vm::Cell>> derive_state(td::Ref<vm::Cell> prev_root, const BlockIdExt& prev, BlockSeqno seqno,
+                                                  const BlockIdExt& genesis, LogicalTime genesis_lt,
+                                                  td::uint32 utime_step) {
   block::gen::ShardStateUnsplit::Record info;
   if (!tlb::unpack_cell(prev_root, info)) {
     return td::Status::Error("cannot unpack the previous state");

@@ -4514,7 +4514,7 @@ void ValidatorManagerImpl::try_advance_consensus_cleanup_checkpoint() {
 
 void ValidatorManagerImpl::consensus_cleanup_checkpoint_written(BlockIdExt id, td::Result<td::Unit> R) {
   using WriteResult = decltype(consensus_checkpoint_)::WriteResult;
-  auto result = R.is_ok()                                                ? WriteResult::Synced
+  auto result = R.is_ok()                                                     ? WriteResult::Synced
                 : consensus::is_consensus_checkpoint_not_attempted(R.error()) ? WriteResult::NotAttempted
                                                                               : WriteResult::Uncertain;
   auto installed = consensus_checkpoint_.complete(id, result);

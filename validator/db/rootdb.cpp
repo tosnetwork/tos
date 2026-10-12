@@ -662,8 +662,8 @@ void RootDb::truncate(BlockSeqno seqno, ConstBlockHandle handle, td::Promise<td:
 void RootDb::truncate_checked(BlockSeqno seqno, ConstBlockHandle handle,
                               td::Result<std::optional<BlockIdExt>> r_checkpoint) {
   if (r_checkpoint.is_error()) {
-    finish_truncation(consensus::consensus_checkpoint_refusal(
-        PSLICE() << "refusing to truncate: " << r_checkpoint.move_as_error().message()));
+    finish_truncation(consensus::consensus_checkpoint_refusal(PSLICE() << "refusing to truncate: "
+                                                                       << r_checkpoint.move_as_error().message()));
     return;
   }
   auto checkpoint = r_checkpoint.move_as_ok();
@@ -714,29 +714,29 @@ void RootDb::truncate_checked(BlockSeqno seqno, ConstBlockHandle handle,
 
 void RootDb::load_truncation_target_state(BlockSeqno seqno, ConstBlockHandle handle,
                                           std::optional<BlockIdExt> checkpoint) {
-  get_block_state(handle, [SelfId = actor_id(this), seqno, handle,
-                           checkpoint](td::Result<td::Ref<ShardState>> R) mutable {
-    if (R.is_error()) {
-      td::actor::send_closure(
-          SelfId, &RootDb::finish_truncation,
-          consensus::consensus_checkpoint_refusal(
-              PSLICE() << "refusing to truncate to " << handle->id().to_str()
-                       << ": its state is needed to check it against the consensus cleanup checkpoint "
-                       << checkpoint->to_str() << " and cannot be loaded: " << R.move_as_error().message()));
-      return;
-    }
-    auto state = R.move_as_ok();
-    const auto *mc_state = dynamic_cast<const MasterchainState *>(state.get());
-    auto status =
-        consensus::check_consensus_checkpoint_rollback(checkpoint, handle->id(), [mc_state](const BlockIdExt &id) {
-          return mc_state != nullptr && mc_state->check_old_mc_block_id(id, /*strict=*/true);
-        });
-    if (status.is_error()) {
-      td::actor::send_closure(SelfId, &RootDb::finish_truncation, std::move(status));
-      return;
-    }
-    td::actor::send_closure(SelfId, &RootDb::start_truncation_mutations, seqno, std::move(handle));
-  });
+  get_block_state(
+      handle, [SelfId = actor_id(this), seqno, handle, checkpoint](td::Result<td::Ref<ShardState>> R) mutable {
+        if (R.is_error()) {
+          td::actor::send_closure(
+              SelfId, &RootDb::finish_truncation,
+              consensus::consensus_checkpoint_refusal(
+                  PSLICE() << "refusing to truncate to " << handle->id().to_str()
+                           << ": its state is needed to check it against the consensus cleanup checkpoint "
+                           << checkpoint->to_str() << " and cannot be loaded: " << R.move_as_error().message()));
+          return;
+        }
+        auto state = R.move_as_ok();
+        const auto *mc_state = dynamic_cast<const MasterchainState *>(state.get());
+        auto status =
+            consensus::check_consensus_checkpoint_rollback(checkpoint, handle->id(), [mc_state](const BlockIdExt &id) {
+              return mc_state != nullptr && mc_state->check_old_mc_block_id(id, /*strict=*/true);
+            });
+        if (status.is_error()) {
+          td::actor::send_closure(SelfId, &RootDb::finish_truncation, std::move(status));
+          return;
+        }
+        td::actor::send_closure(SelfId, &RootDb::start_truncation_mutations, seqno, std::move(handle));
+      });
 }
 
 void RootDb::start_truncation_mutations(BlockSeqno seqno, ConstBlockHandle handle) {
@@ -745,8 +745,7 @@ void RootDb::start_truncation_mutations(BlockSeqno seqno, ConstBlockHandle handl
   truncation_parts_left_ = 2;
   truncation_status_ = td::Status::OK();
   auto part = [SelfId = actor_id(this)](td::Result<td::Unit> R) {
-    td::actor::send_closure(SelfId, &RootDb::truncation_part_done,
-                            R.is_ok() ? td::Status::OK() : R.move_as_error());
+    td::actor::send_closure(SelfId, &RootDb::truncation_part_done, R.is_ok() ? td::Status::OK() : R.move_as_error());
   };
   td::actor::send_closure(archive_db_, &ArchiveManager::truncate, seqno, handle, td::PromiseCreator::lambda(part));
   td::actor::send_closure(state_db_, &StateDb::truncate, seqno, handle, td::PromiseCreator::lambda(part));

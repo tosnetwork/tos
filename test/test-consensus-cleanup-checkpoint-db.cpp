@@ -46,8 +46,8 @@
 #include <limits>
 #include <map>
 #include <mutex>
-#include <set>
 #include <optional>
+#include <set>
 #include <spawn.h>
 #include <sstream>
 #include <string>
@@ -253,8 +253,8 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
   td::actor::Task<> apply_steps(std::vector<ReplayStep> steps, bool fail_at_end, bool ignore_results) {
     std::optional<td::actor::StartedTask<td::Unit>> deferred;
     for (auto& step : steps) {
-      auto task = td::actor::ask(actor_id(this), &ValidatorManager::new_block, step.handle,
-                                 td::Ref<ShardState>{step.state});
+      auto task =
+          td::actor::ask(actor_id(this), &ValidatorManager::new_block, step.handle, td::Ref<ShardState>{step.state});
       if (step.defer) {
         deferred.emplace(std::move(task));
         continue;
@@ -292,7 +292,7 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
   // Sets the head and installs a loaded checkpoint directly (component tests;
   // the production handoff is `handoff`).
   void set_head_and_checkpoint(BlockHandle head, td::Ref<MasterchainState> head_state, BlockHandle checkpoint,
-                           td::Ref<MasterchainState> checkpoint_state, td::Promise<bool> promise) {
+                               td::Ref<MasterchainState> checkpoint_state, td::Promise<bool> promise) {
     last_masterchain_block_handle_ = head;
     last_masterchain_block_id_ = head->id();
     last_masterchain_seqno_ = head->id().seqno();
@@ -330,8 +330,8 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
       return;
     }
     consensus::PendingValidatorConsensusDbCleanup record;
-    record.session_id = td::sha256_bits256(PSLICE() << "session-" << shard.to_str() << "-" << retirement.to_str()
-                                                    << "-" << retired_cc);
+    record.session_id =
+        td::sha256_bits256(PSLICE() << "session-" << shard.to_str() << "-" << retirement.to_str() << "-" << retired_cc);
     record.retirement_checkpoint = retirement;
     record.dir_name = consensus::consensus_db_dir_name(shard, retired_cc, record.session_id, "");
     auto is_live = [live](const ValidatorSessionId&) { return live; };
@@ -584,8 +584,8 @@ td::actor::Task<ConsensusCheckpointDbProbe::CheckpointStatus> checkpoint_status(
 td::actor::Task<std::pair<BlockHandle, td::Ref<MasterchainState>>> load_block(
     td::actor::ActorId<ConsensusCheckpointDbProbe> probe, const BlockIdExt& id) {
   auto handle = co_await td::actor::ask(probe, &ValidatorManager::get_block_handle, id, false);
-  auto state = td::Ref<MasterchainState>{co_await td::actor::ask(probe, &ValidatorManager::get_shard_state_from_db,
-                                                                 ConstBlockHandle{handle})};
+  auto state = td::Ref<MasterchainState>{
+      co_await td::actor::ask(probe, &ValidatorManager::get_shard_state_from_db, ConstBlockHandle{handle})};
   co_return std::make_pair(std::move(handle), std::move(state));
 }
 
@@ -682,9 +682,8 @@ int retention_child(const std::string& boc, const std::string& root, bool gc_pas
         // itself does not observe a lost archive package here.)
         std::string present;
         for (const auto& name : {"R1", "R2", "R3"}) {
-          auto id =
-              co_await td::actor::ask(db, &Db::get_archive_id, chain[name].id.seqno(), ShardIdFull{masterchainId})
-                  .wrap();
+          auto id = co_await td::actor::ask(db, &Db::get_archive_id, chain[name].id.seqno(), ShardIdFull{masterchainId})
+                        .wrap();
           present += PSTRING() << " " << name << "=" << (id.is_ok() ? 1 : 0);
         }
         auto loaded = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe).wrap();
@@ -742,12 +741,11 @@ int child_main(const std::string& mode, const std::string& boc, const std::strin
                                  : std::string("none");
         auto gc_id = result.gc_handle->id();
         auto gc_state_id = result.gc_state->get_block_id();
-        auto ready = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::handoff, result.handle, result.state,
-                                             result.gc_handle, result.gc_state,
-                                             result.consensus_cleanup_checkpoint_handle,
-                                             result.consensus_cleanup_checkpoint_state);
-        outcome = PSTRING() << "head=" << head_seqno << " checkpoint=" << checkpoint_id
-                            << " gc=" << gc_id.seqno() << " gc_state=" << gc_state_id.seqno() << " ready=" << ready;
+        auto ready = co_await td::actor::ask(
+            probe, &ConsensusCheckpointDbProbe::handoff, result.handle, result.state, result.gc_handle, result.gc_state,
+            result.consensus_cleanup_checkpoint_handle, result.consensus_cleanup_checkpoint_state);
+        outcome = PSTRING() << "head=" << head_seqno << " checkpoint=" << checkpoint_id << " gc=" << gc_id.seqno()
+                            << " gc_state=" << gc_state_id.seqno() << " ready=" << ready;
         if (mode == "late-conflict") {
           // A checkpoint the running head does not descend from is persisted and
           // then installed through the production installation path, as an
@@ -781,11 +779,9 @@ int child_main(const std::string& mode, const std::string& boc, const std::strin
           co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::shard_client_advanced, handle, state);
           auto s = co_await checkpoint_status(probe);
           co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::cleanup_tick);
-          co_await wait_until(
-              db, [&]() -> td::actor::Task<bool> { co_return !retired_dir_exists(root, chain); }, 3.0);
-          std::cout << "CHILD_PRE_PERSIST held=" << s.held << " installed="
-                    << (s.installed ? s.installed->seqno() : 0) << " dir_present=" << retired_dir_exists(root, chain)
-                    << std::endl;
+          co_await wait_until(db, [&]() -> td::actor::Task<bool> { co_return !retired_dir_exists(root, chain); }, 3.0);
+          std::cout << "CHILD_PRE_PERSIST held=" << s.held << " installed=" << (s.installed ? s.installed->seqno() : 0)
+                    << " dir_present=" << retired_dir_exists(root, chain) << std::endl;
           std::_Exit(137);
         } else if (mode == "persist-then-crash" || mode == "advance-disabled") {
           auto [handle, state] = co_await load_block(probe, chain["B5"].id);
@@ -794,7 +790,7 @@ int child_main(const std::string& mode, const std::string& boc, const std::strin
               db,
               [&]() -> td::actor::Task<bool> {
                 auto s = co_await checkpoint_status(probe);
-                co_return s.installed && s.installed->seqno() > 2;
+                co_return s.installed&& s.installed->seqno() > 2;
               },
               10.0);
           std::cout << "CHILD_ADVANCED installed=" << installed << " dir_present=" << retired_dir_exists(root, chain)
@@ -1107,8 +1103,9 @@ int main(int argc, char** argv) {
             auto h = create_empty_block_handle(chain[name].id);
             return h;
           };
-          ready.push_back(co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_head_and_checkpoint, handle("B2"),
-                                                  td::Ref<MasterchainState>{chain["B2"].state}, cp.handle, cp.state));
+          ready.push_back(co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_head_and_checkpoint,
+                                                  handle("B2"), td::Ref<MasterchainState>{chain["B2"].state}, cp.handle,
+                                                  cp.state));
           for (const auto& name : {"B3", "B4", "B5"}) {
             ready.push_back(co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::replay_head, handle(name),
                                                     td::Ref<MasterchainState>{chain[name].state}));
@@ -1191,28 +1188,28 @@ int main(int argc, char** argv) {
     EXPECT(seed_db(root, chain, seed).is_ok(), "seed the GC boundary database");
     std::vector<std::pair<BlockIdExt, bool>> memory;
     std::vector<BlockIdExt> durable;
-    auto r =
-        run_scenario(root, make_options(chain),
-                     [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
-                         td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
-                       auto handle = [&](const std::string& name) { return create_empty_block_handle(chain[name].id); };
-                       co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_gc, handle("B3"),
-                                               td::Ref<MasterchainState>{chain["B3"].state});
-                       auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
-                       co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_head_and_checkpoint, handle("B6"),
-                                               td::Ref<MasterchainState>{chain["B6"].state}, cp.handle, cp.state);
-                       for (const auto& name : {"B5", "B4"}) {
-                         co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::gc_step, handle(name),
-                                                 td::Ref<MasterchainState>{chain[name].state});
-                         // Let a dispatched GC write and its continuation finish.
-                         for (int i = 0; i < 20; i++) {
-                           co_await td::actor::ask(db, &Db::get_gc_masterchain_block);
-                         }
-                         memory.push_back(co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::gc_block));
-                         durable.push_back(co_await td::actor::ask(db, &Db::get_gc_masterchain_block));
-                       }
-                       co_return td::Unit{};
-                     });
+    auto r = run_scenario(
+        root, make_options(chain),
+        [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
+            td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
+          auto handle = [&](const std::string& name) { return create_empty_block_handle(chain[name].id); };
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_gc, handle("B3"),
+                                  td::Ref<MasterchainState>{chain["B3"].state});
+          auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_head_and_checkpoint, handle("B6"),
+                                  td::Ref<MasterchainState>{chain["B6"].state}, cp.handle, cp.state);
+          for (const auto& name : {"B5", "B4"}) {
+            co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::gc_step, handle(name),
+                                    td::Ref<MasterchainState>{chain[name].state});
+            // Let a dispatched GC write and its continuation finish.
+            for (int i = 0; i < 20; i++) {
+              co_await td::actor::ask(db, &Db::get_gc_masterchain_block);
+            }
+            memory.push_back(co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::gc_block));
+            durable.push_back(co_await td::actor::ask(db, &Db::get_gc_masterchain_block));
+          }
+          co_return td::Unit{};
+        });
     EXPECT(r.is_ok(), "GC boundary scenario ran: " << r);
     EXPECT(durable == (std::vector<BlockIdExt>{chain["B3"].id, chain["B4"].id}),
            "the GC write to B5 past the checkpoint B4 was refused; the write to B4 itself was persisted");
@@ -1249,20 +1246,19 @@ int main(int argc, char** argv) {
     }
     EXPECT(seed_db(root, chain, seed).is_ok(), "seed the reinitialization GC database");
     std::optional<BlockIdExt> returned_gc, returned_gc_state, durable_gc;
-    auto r = run_scenario(
-        root, make_options(chain),
-        [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
-            td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
-          auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
-          auto [handle, state] = co_await load_block(probe, chain["B6"].id);
-          auto gc = co_await persist_reinit_gc_block(probe, cp, handle, state);
-          returned_gc = gc.handle->id();
-          returned_gc_state = gc.state->get_block_id();
-          durable_gc = co_await td::actor::ask(db, &Db::get_gc_masterchain_block);
-          // As the manager records the init block after a reinitialization.
-          co_await td::actor::ask(db, &Db::update_init_masterchain_block, chain["B6"].id);
-          co_return td::Unit{};
-        });
+    auto r = run_scenario(root, make_options(chain),
+                          [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
+                              td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
+                            auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
+                            auto [handle, state] = co_await load_block(probe, chain["B6"].id);
+                            auto gc = co_await persist_reinit_gc_block(probe, cp, handle, state);
+                            returned_gc = gc.handle->id();
+                            returned_gc_state = gc.state->get_block_id();
+                            durable_gc = co_await td::actor::ask(db, &Db::get_gc_masterchain_block);
+                            // As the manager records the init block after a reinitialization.
+                            co_await td::actor::ask(db, &Db::update_init_masterchain_block, chain["B6"].id);
+                            co_return td::Unit{};
+                          });
     auto expected = with_checkpoint ? chain["B4"].id : chain["B6"].id;
     EXPECT(r.is_ok(), "reinitialization GC scenario ran: " << r);
     EXPECT(returned_gc == expected && returned_gc_state == expected && durable_gc == expected,
@@ -1342,10 +1338,10 @@ int main(int argc, char** argv) {
           auto [b5, b5_state] = co_await load_block(probe, chain["B5"].id);
           auto [b6, b6_state] = co_await load_block(probe, chain["B6"].id);
           auto truncation = td::actor::ask(db, &Db::truncate, 5, ConstBlockHandle{b5});
-          observed_blocked = co_await wait_until(
-              db, [&]() -> td::actor::Task<bool> { co_return gate->blocked.load(); }, 10.0);
-          concurrent_update = co_await td::actor::ask(db, &Db::update_consensus_cleanup_checkpoint, chain["B6"].id)
-                                  .wrap();
+          observed_blocked =
+              co_await wait_until(db, [&]() -> td::actor::Task<bool> { co_return gate->blocked.load(); }, 10.0);
+          concurrent_update =
+              co_await td::actor::ask(db, &Db::update_consensus_cleanup_checkpoint, chain["B6"].id).wrap();
           second_truncation = co_await td::actor::ask(db, &Db::truncate, 6, ConstBlockHandle{b6}).wrap();
           gate->release();
           first_truncation = co_await std::move(truncation).wrap();
@@ -1448,7 +1444,8 @@ int main(int argc, char** argv) {
           auto [h2, s2] = co_await load_block(probe, chain["B2"].id);
           auto [h0, s0] = co_await load_block(probe, chain["B0"].id);
           co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::handoff, h2, s2, h0, s0, cp.handle, cp.state);
-          auto step = [&](const std::string& name, bool defer = false) -> td::actor::Task<ConsensusCheckpointDbProbe::ReplayStep> {
+          auto step = [&](const std::string& name,
+                          bool defer = false) -> td::actor::Task<ConsensusCheckpointDbProbe::ReplayStep> {
             auto [h, s] = co_await load_block(probe, chain[name].id);
             co_return ConsensusCheckpointDbProbe::ReplayStep{h, s, defer};
           };
@@ -1521,7 +1518,7 @@ int main(int argc, char** argv) {
                 db,
                 [&]() -> td::actor::Task<bool> {
                   auto s = co_await checkpoint_status(probe, 1);
-                  co_return s.uncertain && s.reads > 0;
+                  co_return s.uncertain&& s.reads > 0;
                 },
                 5.0);
             after_failure = co_await checkpoint_status(probe, 1);
@@ -1570,23 +1567,21 @@ int main(int argc, char** argv) {
     auto root = fresh_root(base, "not-attempted");
     EXPECT(seed_db(root, chain, {}).is_ok(), "seed not-attempted");
     ConsensusCheckpointDbProbe::CheckpointStatus status;
-    auto r = run_scenario(root, make_options(chain),
-                          [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
-                              td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
-                            auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
-                            auto [h6, s6] = co_await load_block(probe, chain["B6"].id);
-                            auto [h0, s0] = co_await load_block(probe, chain["B0"].id);
-                            co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::handoff, h6, s6, h0, s0,
-                                                    cp.handle, cp.state);
-                            co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_persist_mode,
-                                                    Mode::NotAttempted, false);
-                            auto [h5, s5] = co_await load_block(probe, chain["B5"].id);
-                            co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::shard_client_advanced, h5,
-                                                    s5);
-                            co_await wait_seconds(db, 0.2);
-                            status = co_await checkpoint_status(probe, 4);
-                            co_return td::Unit{};
-                          });
+    auto r = run_scenario(
+        root, make_options(chain),
+        [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
+            td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
+          auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
+          auto [h6, s6] = co_await load_block(probe, chain["B6"].id);
+          auto [h0, s0] = co_await load_block(probe, chain["B0"].id);
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::handoff, h6, s6, h0, s0, cp.handle, cp.state);
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_persist_mode, Mode::NotAttempted, false);
+          auto [h5, s5] = co_await load_block(probe, chain["B5"].id);
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::shard_client_advanced, h5, s5);
+          co_await wait_seconds(db, 0.2);
+          status = co_await checkpoint_status(probe, 4);
+          co_return td::Unit{};
+        });
     EXPECT(r.is_ok() && !status.in_flight && !status.uncertain && status.gc_may_persist_next &&
                status.installed == chain["B4"].id,
            "a write refused before anything was written releases GC and keeps the checkpoint");
@@ -1608,7 +1603,8 @@ int main(int argc, char** argv) {
                           [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
                               td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
                             for (const auto& name : {"R1", "R2", "R3"}) {
-                              auto h = co_await td::actor::ask(db, &Db::get_block_handle, archive_chain[name].id).wrap();
+                              auto h =
+                                  co_await td::actor::ask(db, &Db::get_block_handle, archive_chain[name].id).wrap();
                               present[name] = h.is_ok();
                             }
                             reloaded = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe).wrap();
@@ -1662,8 +1658,8 @@ int main(int argc, char** argv) {
     root = fresh_root(base, "cleanup-disabled");
     EXPECT(seed_db(root, chain, seed).is_ok(), "seed cleanup-disabled");
     auto [code_c, log_c] = run_child("advance-disabled", root);
-    EXPECT(code_c == 0 && contains(log_c, "installed=1"), "with cleanup disabled the checkpoint advances (exit "
-                                                              << code_c << ")");
+    EXPECT(code_c == 0 && contains(log_c, "installed=1"),
+           "with cleanup disabled the checkpoint advances (exit " << code_c << ")");
     auto [code_c2, log_c2] = run_child("cleanup-pass-disabled", root);
     EXPECT(code_c2 == 0 && contains(log_c2, "dir_present=true record_present=true"),
            "with cleanup disabled nothing is deleted (exit " << code_c2 << ")");
@@ -1699,32 +1695,32 @@ int main(int argc, char** argv) {
       CatchainSeqno r;
       bool expected;
     };
-    std::vector<Row> rows = {{parent, 5, true},  {parent, 6, false}, {left, 6, true},  {left, 7, false},
-                             {right, 6, true},   {right, 8, false},  {merged, 8, true}, {merged, 9, false}};
+    std::vector<Row> rows = {{parent, 5, true}, {parent, 6, false}, {left, 6, true},   {left, 7, false},
+                             {right, 6, true},  {right, 8, false},  {merged, 8, true}, {merged, 9, false}};
     std::vector<bool> with_checkpoint, with_gc;
-    auto r = run_scenario(
-        root, make_options(chain),
-        [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
-            td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
-          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_gc, create_empty_block_handle(chain["B0"].id),
-                                  td::Ref<MasterchainState>{chain["B0"].state});
-          // A head that descends from the checkpoint.
-          BlockIdExt head_id{masterchainId, shardIdAll, 7, label_hash("topology-head-root"),
-                             label_hash("topology-head-file")};
-          auto head_ancestors = ancestors;
-          head_ancestors.insert(cp_id);
-          auto head_state = td::Ref<MasterchainState>{
-              td::make_ref<TopologyState>(head_id, std::map<ShardIdFull, CatchainSeqno>{}, head_ancestors)};
-          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_head_and_checkpoint,
-                                  create_empty_block_handle(head_id), head_state, create_empty_block_handle(cp_id),
-                                  topology);
-          for (const auto& row : rows) {
-            auto d = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::cleanup_decision_in, row.shard,
-                                             chain["B4"].id, row.r, false);
-            with_checkpoint.push_back(d.second);
-          }
-          co_return td::Unit{};
-        });
+    auto r = run_scenario(root, make_options(chain),
+                          [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
+                              td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
+                            co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_gc,
+                                                    create_empty_block_handle(chain["B0"].id),
+                                                    td::Ref<MasterchainState>{chain["B0"].state});
+                            // A head that descends from the checkpoint.
+                            BlockIdExt head_id{masterchainId, shardIdAll, 7, label_hash("topology-head-root"),
+                                               label_hash("topology-head-file")};
+                            auto head_ancestors = ancestors;
+                            head_ancestors.insert(cp_id);
+                            auto head_state = td::Ref<MasterchainState>{td::make_ref<TopologyState>(
+                                head_id, std::map<ShardIdFull, CatchainSeqno>{}, head_ancestors)};
+                            co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_head_and_checkpoint,
+                                                    create_empty_block_handle(head_id), head_state,
+                                                    create_empty_block_handle(cp_id), topology);
+                            for (const auto& row : rows) {
+                              auto d = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::cleanup_decision_in,
+                                                               row.shard, chain["B4"].id, row.r, false);
+                              with_checkpoint.push_back(d.second);
+                            }
+                            co_return td::Unit{};
+                          });
     std::vector<bool> expected;
     for (const auto& row : rows) {
       expected.push_back(row.expected);

@@ -17,13 +17,13 @@
 #include "rldp2/rldp.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
-#include "test/consensus-checkpoint-chain.h"
-#include "validator/consensus/db-path.h"
 #include "td/utils/tests.h"
+#include "test/consensus-checkpoint-chain.h"
 #include "test/plumtree/scheduler.h"
 #include "test/plumtree/transport.h"
 #include "test/plumtree/util.h"
 #include "validator/consensus/bus.h"
+#include "validator/consensus/db-path.h"
 #include "validator/consensus/simplex/bus.h"
 #include "validator/fabric.h"
 #include "validator/impl/applied-ext-message-cleanup.hpp"
@@ -451,14 +451,13 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
     handle->set_applied_stored();
     handle->set_processed();
     auto db = db_.get();
-    td::actor::send_closure(
-        db, &Db::store_block_state, handle, td::Ref<ShardState>{state}, vm::StoreCellHint{},
-        [db, handle, promise = std::move(promise)](td::Result<td::Ref<ShardState>> R) mutable {
-          if (R.is_error()) {
-            return promise.set_error(R.move_as_error());
-          }
-          td::actor::send_closure(db, &Db::store_block_handle, handle, std::move(promise));
-        });
+    td::actor::send_closure(db, &Db::store_block_state, handle, td::Ref<ShardState>{state}, vm::StoreCellHint{},
+                            [db, handle, promise = std::move(promise)](td::Result<td::Ref<ShardState>> R) mutable {
+                              if (R.is_error()) {
+                                return promise.set_error(R.move_as_error());
+                              }
+                              td::actor::send_closure(db, &Db::store_block_handle, handle, std::move(promise));
+                            });
   }
   // Persists a checkpoint and installs it, as an acknowledged write does.
   void persist_and_install_checkpoint(BlockIdExt id, td::Promise<> promise) {
@@ -531,7 +530,8 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
     head->set_unix_time(static_cast<UnixTime>(td::Clocks::system()));
     head->set_applied();
     head->flushed_upto(head->version());
-    auto head_state = td::Ref<MasterchainState>{td::make_ref<State>(head_id, std::move(snapshot), std::move(ancestors))};
+    auto head_state =
+        td::Ref<MasterchainState>{td::make_ref<State>(head_id, std::move(snapshot), std::move(ancestors))};
     ValidatorManagerInitResult R;
     R.handle = head;
     R.state = head_state;
