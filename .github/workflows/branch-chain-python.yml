@@ -83,7 +83,8 @@ jobs:
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport \
-            test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
+            test-n5-manager-db-fixture test-consensus-cleanup-checkpoint test-consensus-cleanup-checkpoint-db \
+            test-twostep-wiring test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
             test-notarize-after-transient-resolve test-state-resolver-teardown \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
@@ -165,6 +166,20 @@ jobs:
       # not substitute for downstream AcceptBlock integration evidence.
       - name: Check pending PQ finality proof queue
         run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
+
+      # The consensus cleanup checkpoint: its storage, advancement and GC rules,
+      # and the real RootDb, startup refusals (exit status 2), reinitialization,
+      # truncation serialization, uncertain writes, archive retention and crash
+      # ordering. The genesis state both suites derive their chains from is the
+      # checked-in test/pq-native/data/c04-pq-genesis.boc, passed by CTest.
+      - name: Check the consensus cleanup checkpoint
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(test-consensus-cleanup-checkpoint|test-consensus-cleanup-checkpoint-db)$'
+
+      # The production manager's validator group wiring, including the checkpoint
+      # gates, the late-conflict fail-stop and the restart that must not reopen a
+      # deleted session (TOS_TEST_GENESIS_BOC is set by its CTest registration).
+      - name: Check validator group wiring and the checkpoint gates
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-twostep-wiring$'
 
       # Unverified or unbound broadcasts must never be remembered under a block
       # id, or they would keep the genuine one from reaching custom overlays.

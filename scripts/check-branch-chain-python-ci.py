@@ -29,6 +29,9 @@ REQUIRED_NATIVE_TARGETS = {
     "test-control-getter-transport",
     "proof-verify-fs-shim",
     "test-n5-manager-db-fixture",
+    "test-consensus-cleanup-checkpoint",
+    "test-consensus-cleanup-checkpoint-db",
+    "test-twostep-wiring",
     "test-consensus",
     "test-notarize-after-transient-resolve",
     "test-state-resolver-teardown",
@@ -336,6 +339,41 @@ def main() -> int:
         is not None,
         "N5 cold continuation CTest is absent or no longer invokes its seq2 mode",
     )
+    checkpoint_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^(test-consensus-cleanup-checkpoint|test-consensus-cleanup-checkpoint-db)$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(checkpoint_ctest)}\s*$", text) is not None,
+        "consensus cleanup checkpoint gate is absent",
+    )
+    wiring_ctest = "ctest --test-dir build --output-on-failure --no-tests=error -R '^test-twostep-wiring$'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(wiring_ctest)}\s*$", text) is not None,
+        "validator group wiring and checkpoint gate is absent",
+    )
+    require(
+        re.search(r"(?m)^tos_test\(test-consensus-cleanup-checkpoint\)\s*$", cmake) is not None
+        and re.search(
+            r"tos_test\(test-consensus-cleanup-checkpoint-db\s+"
+            r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "consensus cleanup checkpoint CTest registrations are absent or lost their genesis state",
+    )
+    consensus_cmake = (root / "test/validator/consensus/CMakeLists.txt").read_text(encoding="utf-8")
+    require(
+        re.search(r"(?m)^\s*add_test\(NAME test-twostep-wiring COMMAND test-twostep-wiring\)\s*$", consensus_cmake)
+        is not None
+        and re.search(
+            r'(?s)set_tests_properties\(test-twostep-wiring PROPERTIES\s+ENVIRONMENT\s+'
+            r'"TOS_TEST_GENESIS_BOC=\$\{CMAKE_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc"\)',
+            consensus_cmake,
+        )
+        is not None,
+        "validator group wiring CTest is absent or lost its genesis state",
+    )
     c05_ctest = "ctest --test-dir build --output-on-failure -R '^c05-notarize-'"
     require(
         re.search(rf"(?m)^\s*run: {re.escape(c05_ctest)}\s*$", text) is not None,
@@ -417,6 +455,7 @@ def main() -> int:
         "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
         "the anchored proof verifier, its CLI and the C09 Config34 path, "
         "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
+        "the consensus cleanup checkpoint suites and the validator group wiring with its checkpoint gates, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
         "five named restart-origin controls, and the E04 Python negative-window tests; "
