@@ -113,6 +113,11 @@ void ArchiveImporter::settled(Child child) {
     LOG(ERROR) << "archive import: a " << ImportSettlement::child_name(child)
                << " reported with none outstanding; settlement accounting is broken";
   }
+  // Every report may be the last one a drained attempt waits for, including a report
+  // whose promise has no consumer left (an input of a join that already failed).
+  // Decide publication once the reporting handler, with whatever it completes or
+  // dispatches, has run.
+  td::actor::send_closure_later(actor_id(this), &ArchiveImporter::maybe_publish);
 }
 
 void ArchiveImporter::fail(td::Status error) {

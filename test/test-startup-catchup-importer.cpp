@@ -164,10 +164,12 @@ struct World {
   std::function<void(ShardIdFull, td::Promise<std::string>)> on_archive;
   std::function<void(BlockIdExt, td::Promise<td::Unit>)> on_apply;
   std::function<void(BlockIdExt, td::Promise<BlockHandle>)> on_link_check;
+  std::function<void(BlockIdExt, td::Promise<BlockHandle>)> on_handle;
 
   std::vector<td::Promise<std::string>> held_archives;
   std::vector<td::Promise<td::Unit>> held_applies;
   std::vector<td::Promise<BlockHandle>> held_link_checks;
+  std::vector<td::Promise<BlockHandle>> held_handles;
 
   bool contains(BlockIdExt id) {
     return applied.count(id) > 0;
@@ -339,6 +341,15 @@ class TestImporter : public ArchiveImporter {
   }
   void request_block_handle(BlockIdExt id, bool, td::Promise<BlockHandle> promise) override {
     auto p = tracked(world_, std::move(promise));
+    std::function<void(BlockIdExt, td::Promise<BlockHandle>)> behaviour;
+    {
+      WorldLock lock(world_->mu);
+      behaviour = world_->on_handle;
+    }
+    if (behaviour) {
+      behaviour(id, std::move(p));
+      return;
+    }
     BlockHandle handle;
     {
       WorldLock lock(world_->mu);
@@ -911,4 +922,54 @@ TEST(StartupCatchupImporter, MalformedShardPackageDrains) {
   ASSERT_TRUE(t.tmp_empty());
   WorldLock lock(t.world->mu);
   ASSERT_EQ(requests_before, t.world->requests);
+}
+
+// A merged shard block checks both predecessors. One lookup fails at once, which fails
+// the join and drains the attempt; the other is held across the attempt deadline and
+// then answers. That last report leaves nothing outstanding and must publish the
+// outcome promptly, without advancing the frontier.
+TEST(StartupCatchupImporter, LastMergePredecessorLookupPublishes) {
+  Harness t;
+  const auto merged = sh_id(shardIdAll, kLocal + 1);
+  const auto left = sh_id(kLeft, kLocal);
+  const auto right = sh_id(kRight, kLocal);
+  t.world->on_handle = [w = t.world, merged, left, right](BlockIdExt id, td::Promise<BlockHandle> p) {
+    WorldLock lock(w->mu);
+    if (id == merged) {
+      auto handle = create_empty_block_handle(id);
+      handle->set_merge(true);
+      handle->set_split(false);
+      handle->set_prev(left);
+      handle->set_prev(right);
+      handle->flushed_upto(handle->version());
+      p.set_value(std::move(handle));
+      return;
+    }
+    if (id == left) {
+      p.set_error(td::Status::Error(ErrorCode::notready, "predecessor lookup failed"));
+      return;
+    }
+    if (id == right) {
+      w->held_handles.push_back(std::move(p));
+      return;
+    }
+    p.set_value(make_handle(*w, id));
+  };
+  t.start_bounded(1.0);
+  ASSERT_TRUE(t.wait([&] { return t.count(t.world->held_handles) == 1; }, 10.0));
+  t.run_for(1.5);  // past the attempt deadline, the lookup still outstanding
+  ASSERT_TRUE(!t.published().has_value());
+  BlockHandle answered;
+  {
+    WorldLock lock(t.world->mu);
+    answered = create_empty_block_handle(right);
+    answered->set_applied();
+    answered->flushed_upto(answered->version());
+  }
+  t.release(t.world->held_handles, 0, td::Result<BlockHandle>(answered));
+  ASSERT_TRUE(t.wait_published(2.0));
+  auto p = *t.published();
+  ASSERT_TRUE(p.error);
+  ASSERT_EQ(kLocal, p.coherent);
+  ASSERT_EQ(0, t.world->inflight_at_publish);
 }
