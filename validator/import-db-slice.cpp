@@ -64,8 +64,7 @@ ArchiveImporter::ArchiveImporter(std::string db_root, td::Ref<MasterchainState> 
 
 ArchiveImporter::ArchiveImporter(std::string db_root, td::Ref<MasterchainState> state, BlockSeqno shard_client_seqno,
                                  td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager,
-                                 td::Timestamp attempt_deadline,
-                                 td::Promise<startup_catchup::ImportOutcome> promise)
+                                 td::Timestamp attempt_deadline, td::Promise<startup_catchup::ImportOutcome> promise)
     : db_root_(std::move(db_root))
     , last_masterchain_state_(std::move(state))
     , shard_client_seqno_(shard_client_seqno)
@@ -136,10 +135,9 @@ void ArchiveImporter::maybe_publish() {
   outcome.masterchain_top = last_masterchain_state_->get_seqno();
   outcome.coherent_shard_client_seqno = std::min<BlockSeqno>(outcome.masterchain_top, shard_client_seqno_);
   outcome.first_error = settlement_.publish();
-  LOG(INFO) << "Archive import attempt settled in " << perf_timer_.elapsed()
-            << "s: mc_top=" << outcome.masterchain_top
-            << " coherent_shard_client=" << outcome.coherent_shard_client_seqno << " error="
-            << (outcome.first_error.is_error() ? outcome.first_error.to_string() : std::string("none"));
+  LOG(INFO) << "Archive import attempt settled in " << perf_timer_.elapsed() << "s: mc_top=" << outcome.masterchain_top
+            << " coherent_shard_client=" << outcome.coherent_shard_client_seqno
+            << " error=" << (outcome.first_error.is_error() ? outcome.first_error.to_string() : std::string("none"));
   outcome_promise_.set_value(std::move(outcome));
   stop();
 }
@@ -438,8 +436,8 @@ void ArchiveImporter::check_masterchain_block(BlockSeqno seqno) {
     td::actor::send_closure(SelfId, &ArchiveImporter::checked_masterchain_proof_result, id, std::move(data),
                             std::move(R));
   };
-  request_masterchain_proof_check(it->second, std::move(proof), last_masterchain_state_,
-                                  opts_->is_hardfork(it->second), *timeout, std::move(P));
+  request_masterchain_proof_check(it->second, std::move(proof), last_masterchain_state_, opts_->is_hardfork(it->second),
+                                  *timeout, std::move(P));
 }
 
 void ArchiveImporter::checked_masterchain_proof_result(BlockIdExt prev, td::Ref<BlockData> data,
@@ -821,8 +819,8 @@ void ArchiveImporter::shard_join_result(BlockSeqno seqno, td::Result<td::Unit> R
 void ArchiveImporter::checked_shard_client_seqno(BlockSeqno seqno) {
   if (bounded_) {
     if (startup_catchup::saturating_add(shard_client_seqno_, 1) != seqno) {
-      abort_query(td::Status::Error(ErrorCode::error, PSTRING() << "shard-client step " << seqno
-                                                                << " does not follow " << shard_client_seqno_));
+      abort_query(td::Status::Error(
+          ErrorCode::error, PSTRING() << "shard-client step " << seqno << " does not follow " << shard_client_seqno_));
       return;
     }
   } else {
@@ -849,12 +847,12 @@ void ArchiveImporter::apply_shard_block(BlockIdExt block_id, BlockIdExt masterch
     };
     settlement_.begin(Child::HandleRead);
   }
-  request_block_handle(block_id, true,
-                       [SelfId = actor_id(this), masterchain_block_id,
-                        promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
-                         td::actor::send_closure(SelfId, &ArchiveImporter::shard_block_handle_result,
-                                                 masterchain_block_id, std::move(promise), std::move(R));
-                       });
+  request_block_handle(
+      block_id, true,
+      [SelfId = actor_id(this), masterchain_block_id, promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
+        td::actor::send_closure(SelfId, &ArchiveImporter::shard_block_handle_result, masterchain_block_id,
+                                std::move(promise), std::move(R));
+      });
 }
 
 void ArchiveImporter::shard_chain_done(td::Promise<td::Unit> promise, td::Result<td::Unit> R) {
@@ -902,12 +900,11 @@ void ArchiveImporter::apply_shard_block_cont1(BlockHandle handle, BlockIdExt mas
       return;
     }
     settlement_.begin(Child::StateDownload);
-    request_state_download(handle->id(), masterchain_block_id, split_depth, child_timeout(3600.0),
-                           [SelfId = actor_id(this), promise = std::move(promise)](
-                               td::Result<td::Ref<ShardState>> R) mutable {
-                             td::actor::send_closure(SelfId, &ArchiveImporter::shard_state_downloaded,
-                                                     std::move(promise), std::move(R));
-                           });
+    request_state_download(
+        handle->id(), masterchain_block_id, split_depth, child_timeout(3600.0),
+        [SelfId = actor_id(this), promise = std::move(promise)](td::Result<td::Ref<ShardState>> R) mutable {
+          td::actor::send_closure(SelfId, &ArchiveImporter::shard_state_downloaded, std::move(promise), std::move(R));
+        });
     return;
   }
 
@@ -929,8 +926,8 @@ void ArchiveImporter::apply_shard_block_cont1(BlockHandle handle, BlockIdExt mas
   }
   auto P = [SelfId = actor_id(this), handle, masterchain_block_id,
             promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
-    td::actor::send_closure(SelfId, &ArchiveImporter::shard_proof_link_checked, std::move(handle),
-                            masterchain_block_id, std::move(promise), std::move(R));
+    td::actor::send_closure(SelfId, &ArchiveImporter::shard_proof_link_checked, std::move(handle), masterchain_block_id,
+                            std::move(promise), std::move(R));
   };
   request_proof_link_check(handle->id(), std::move(proof), *timeout, std::move(P));
 }

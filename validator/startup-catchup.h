@@ -199,14 +199,14 @@ inline double block_age_seconds(double now, double block_unix_time) {
 // ---------------------------------------------------------------------------
 
 enum class EntryRefusal {
-  None,              // enter the mode
-  MandatorySync,     // a mandatory reason holds: the legacy path imports anyway
-  NotStale,          // younger than the entry threshold
-  NoValidatorKeys,   // a node without validator keys can never build a group
-  GroupsExist,       // a group already exists (a defect at this point)
-  OperatorImport,    // operator-supplied import files keep the legacy path
-  HardforkNext,      // the next block is a configured hardfork
-  AlreadyDecided,    // the decision was taken earlier in this process
+  None,             // enter the mode
+  MandatorySync,    // a mandatory reason holds: the legacy path imports anyway
+  NotStale,         // younger than the entry threshold
+  NoValidatorKeys,  // a node without validator keys can never build a group
+  GroupsExist,      // a group already exists (a defect at this point)
+  OperatorImport,   // operator-supplied import files keep the legacy path
+  HardforkNext,     // the next block is a configured hardfork
+  AlreadyDecided,   // the decision was taken earlier in this process
 };
 
 inline const char* entry_refusal_name(EntryRefusal refusal) {

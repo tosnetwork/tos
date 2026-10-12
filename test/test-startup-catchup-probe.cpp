@@ -165,8 +165,7 @@ class FakeTransport : public StartupDiscoveryRound::Transport {
     world_->peer_calls++;
     promise.set_value(std::vector<adnl::AdnlNodeIdShort>(world_->peer_lists[index]));
   }
-  void probe(adnl::AdnlNodeIdShort peer, BlockIdExt, td::Timestamp,
-             td::Promise<ProbeAnswer> promise) override {
+  void probe(adnl::AdnlNodeIdShort peer, BlockIdExt, td::Timestamp, td::Promise<ProbeAnswer> promise) override {
     std::lock_guard<std::mutex> lock(world_->mu);
     if (world_->first_probe_at == 0) {
       world_->first_probe_at = td::Time::now();
@@ -241,7 +240,8 @@ using tos::validator::startup_catchup::SuccessorVerdict;
 // A well-formed successor whose proof the manager verifies is progress.
 TEST(StartupCatchupProbe, VerifiedSuccessor) {
   auto next = mc_block(101, "next-data");
-  auto [answer, seen] = probe(Script{[&] { return td::Result<td::BufferSlice>(full_answer(next, "proof", "next-data")); }});
+  auto [answer, seen] =
+      probe(Script{[&] { return td::Result<td::BufferSlice>(full_answer(next, "proof", "next-data")); }});
   ASSERT_TRUE(answer.kind == ProbeAnswerKind::Verified);
   ASSERT_TRUE(answer.next == next);
   ASSERT_EQ(1, seen->verifications);
@@ -260,9 +260,8 @@ TEST(StartupCatchupProbe, T5_NotProgress) {
   ASSERT_TRUE(kind_of(Script{[&] {
                 return td::Result<td::BufferSlice>(full_answer(next, "proof", "next-data", true));
               }}) == ProbeAnswerKind::Inconclusive);
-  ASSERT_TRUE(kind_of(Script{[&] {
-                return td::Result<td::BufferSlice>(full_answer(next, "proof", "other-data"));
-              }}) == ProbeAnswerKind::Inconclusive);
+  ASSERT_TRUE(kind_of(Script{[&] { return td::Result<td::BufferSlice>(full_answer(next, "proof", "other-data")); }}) ==
+              ProbeAnswerKind::Inconclusive);
   ASSERT_TRUE(kind_of(Script{[&] { return td::Result<td::BufferSlice>(full_answer(next, "proof", "next-data")); },
                              [] {
                                return td::Result<SuccessorVerdict>(
@@ -285,8 +284,7 @@ TEST(StartupCatchupProbe, T5_NotProgress) {
                 return td::Result<td::BufferSlice>(full_answer(next, "proof", big));
               }}) == ProbeAnswerKind::Inconclusive);
   ASSERT_TRUE(kind_of(Script{[] {
-                return td::Result<td::BufferSlice>(
-                    create_serialize_tl_object<tos_api::tosNode_dataFullEmpty>());
+                return td::Result<td::BufferSlice>(create_serialize_tl_object<tos_api::tosNode_dataFullEmpty>());
               }}) == ProbeAnswerKind::Empty);
   ASSERT_TRUE(kind_of(Script{[] {
                 return td::Result<td::BufferSlice>(td::Status::Error(ErrorCode::timeout, "query timed out"));
@@ -297,8 +295,9 @@ TEST(StartupCatchupProbe, T5_NotProgress) {
 // says so, and is neither progress nor a negative.
 TEST(StartupCatchupProbe, T6_FrontierMovedVerdict) {
   auto next = mc_block(101, "next-data");
-  auto [answer, seen] = probe(Script{[&] { return td::Result<td::BufferSlice>(full_answer(next, "proof", "next-data")); },
-                                     [] { return td::Result<SuccessorVerdict>(SuccessorVerdict::FrontierMoved); }});
+  auto [answer, seen] =
+      probe(Script{[&] { return td::Result<td::BufferSlice>(full_answer(next, "proof", "next-data")); },
+                   [] { return td::Result<SuccessorVerdict>(SuccessorVerdict::FrontierMoved); }});
   ASSERT_TRUE(answer.kind == ProbeAnswerKind::FrontierMoved);
 }
 

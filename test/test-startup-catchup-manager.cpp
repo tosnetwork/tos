@@ -27,8 +27,8 @@
 #include <string>
 #include <vector>
 
-#include "block/validator-session-id.h"
 #include "adnl/adnl.h"
+#include "block/validator-session-id.h"
 #include "common/checksum.h"
 #include "keyring/keyring.h"
 #include "quic/quic-sender.h"
@@ -222,7 +222,8 @@ struct Journal {
 
 class FakeGroup : public IValidatorGroup {
  public:
-  FakeGroup(std::shared_ptr<Journal> journal, ValidatorSessionId session) : journal_(std::move(journal)), session_(session) {
+  FakeGroup(std::shared_ptr<Journal> journal, ValidatorSessionId session)
+      : journal_(std::move(journal)), session_(session) {
   }
   void start(std::vector<BlockIdExt>, BlockIdExt) override {
     journal_->add("start " + session_.to_hex());
@@ -327,8 +328,8 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
       promise.set_value(td::Unit());
       co_return td::Unit{};
     }(this, std::move(promise))
-                                                                     .start()
-                                                                     .detach();
+                                                                               .start()
+                                                                               .detach();
   }
   void complete_prestart(td::Promise<td::Unit> promise) {
     completed_prestart_sync();
@@ -502,8 +503,9 @@ class Fixture {
     });
   }
   bool decide() {
-    return ask<bool>(
-        [&](td::Promise<bool> p) { td::actor::send_closure(manager_, &StartupCatchupManagerProbe::decide, std::move(p)); });
+    return ask<bool>([&](td::Promise<bool> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::decide, std::move(p));
+    });
   }
   void end(startup_catchup::ExitReason reason) {
     ask<td::Unit>([&](td::Promise<td::Unit> p) {
@@ -559,7 +561,8 @@ class Fixture {
   }
   void make_session_dir(const ValidatorSessionId& s, CatchainSeqno cc) {
     td::mkdir(consensus::consensus_db_root(root_)).ignore();
-    td::mkdir(consensus::consensus_db_root(root_) + consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc, s, ""))
+    td::mkdir(consensus::consensus_db_root(root_) +
+              consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, cc, s, ""))
         .ensure();
   }
 

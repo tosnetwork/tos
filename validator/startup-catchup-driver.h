@@ -88,8 +88,8 @@ td::actor::Task<DiscoveryDecision> discover_successor(Self* self) {
     }
     bool restart = result.outcome == RoundOutcome::FrontierMoved || !tip_unchanged;
     if (restart && budget > 0 && time_left) {
-      LOG(INFO) << "startup catch-up discovery: the local tip moved from " << prev.to_str()
-                << "; restarting from " << self->catchup_tip().to_str() << " with " << budget << " probes left";
+      LOG(INFO) << "startup catch-up discovery: the local tip moved from " << prev.to_str() << "; restarting from "
+                << self->catchup_tip().to_str() << " with " << budget << " probes left";
       continue;
     }
     co_return decision;

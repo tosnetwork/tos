@@ -320,8 +320,7 @@ void advance_startup_orphan_reconcile(Self* self, td::actor::ActorId<Self> self_
     self->startup_orphan_read_record(
         session, [self_id, token = st.token(), candidate = std::move(candidate)](
                      td::Result<std::optional<PendingValidatorConsensusDbCleanup>> R) mutable {
-          td::actor::send_closure(self_id, &Self::startup_orphan_point_read, token, std::move(candidate),
-                                  std::move(R));
+          td::actor::send_closure(self_id, &Self::startup_orphan_point_read, token, std::move(candidate), std::move(R));
         });
     return;  // the next entry is read when this point read reports
   }

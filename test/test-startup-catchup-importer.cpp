@@ -407,8 +407,9 @@ class Harness {
         published_ = p;
       };
       importer_ = td::actor::create_actor<TestImporter>(
-          "bounded-import", world, world->tmp, td::Ref<MasterchainState>{td::make_ref<FakeMcState>(kLocal, world->layout)},
-          kLocal, opts, td::actor::ActorId<ValidatorManager>{}, td::Timestamp::in(deadline_in),
+          "bounded-import", world, world->tmp,
+          td::Ref<MasterchainState>{td::make_ref<FakeMcState>(kLocal, world->layout)}, kLocal, opts,
+          td::actor::ActorId<ValidatorManager>{}, td::Timestamp::in(deadline_in),
           td::Promise<ImportOutcome>(std::move(promise)));
     });
   }
@@ -417,8 +418,9 @@ class Harness {
     scheduler_.run_in_context([&] {
       auto opts = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
       importer_ = td::actor::create_actor<TestImporter>(
-          "legacy-import", world, world->tmp, td::Ref<MasterchainState>{td::make_ref<FakeMcState>(kLocal, world->layout)},
-          kLocal, opts, td::actor::ActorId<ValidatorManager>{}, std::vector<std::string>{},
+          "legacy-import", world, world->tmp,
+          td::Ref<MasterchainState>{td::make_ref<FakeMcState>(kLocal, world->layout)}, kLocal, opts,
+          td::actor::ActorId<ValidatorManager>{}, std::vector<std::string>{},
           td::Promise<std::pair<BlockSeqno, BlockSeqno>>(std::move(done)));
     });
   }
@@ -659,10 +661,12 @@ TEST(StartupCatchupImporter, T26_ProofCheckCappedAtDeadline) {
     Harness t;
     t.world->clock_offset = 100.0 - 0.5;  // the importer sees a clock 0.5 s before its deadline
     t.start_bounded(100.0);
-    ASSERT_TRUE(t.wait([&] {
-      WorldLock lock(t.world->mu);
-      return t.world->mc_checks > 0;
-    }, 10.0));
+    ASSERT_TRUE(t.wait(
+        [&] {
+          WorldLock lock(t.world->mu);
+          return t.world->mc_checks > 0;
+        },
+        10.0));
     double first;
     {
       WorldLock lock(t.world->mu);

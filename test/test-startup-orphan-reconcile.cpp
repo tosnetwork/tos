@@ -141,8 +141,7 @@ class Harness : public td::actor::Actor {
   }
   void startup_orphan_point_read(td::uint64 token, consensus::StartupOrphanCandidate candidate,
                                  td::Result<std::optional<PendingValidatorConsensusDbCleanup>> record) {
-    consensus::handle_startup_orphan_point_read(this, actor_id(this), token, std::move(candidate),
-                                                std::move(record));
+    consensus::handle_startup_orphan_point_read(this, actor_id(this), token, std::move(candidate), std::move(record));
   }
   void startup_orphan_persisted(td::uint64 token, std::vector<std::pair<ValidatorSessionId, td::uint64>> retired,
                                 td::Result<td::Unit> result) {
@@ -174,9 +173,8 @@ class Harness : public td::actor::Actor {
     owner_.destroyed.insert(session(n));
     td::actor::send_closure(db_, &Db::persist_validator_retirement,
                             std::vector<ValidatorSessionId>(owner_.destroyed.begin(), owner_.destroyed.end()),
-                            std::vector<PendingValidatorConsensusDbCleanup>{record}, [](td::Result<td::Unit> R) {
-                              R.ensure();
-                            });
+                            std::vector<PendingValidatorConsensusDbCleanup>{record},
+                            [](td::Result<td::Unit> R) { R.ensure(); });
   }
   // An init-block rotation the way the manager handles it: the snapshot of the set is
   // taken at the rotation, and only when the init-block write is acknowledged are the
@@ -222,19 +220,17 @@ class Harness : public td::actor::Actor {
       return;
     }
     for (auto& c : candidates) {
-      td::actor::send_closure(
-          db_, &Db::get_pending_validator_consensus_db_cleanup_record, c.session_id,
-          [self = actor_id(this), token = request.token,
-           c](td::Result<std::optional<PendingValidatorConsensusDbCleanup>> current) {
-            td::actor::send_closure(self, &Harness::cleanup_point, token, c, std::move(current));
-          });
+      td::actor::send_closure(db_, &Db::get_pending_validator_consensus_db_cleanup_record, c.session_id,
+                              [self = actor_id(this), token = request.token,
+                               c](td::Result<std::optional<PendingValidatorConsensusDbCleanup>> current) {
+                                td::actor::send_closure(self, &Harness::cleanup_point, token, c, std::move(current));
+                              });
     }
   }
   void cleanup_point(td::uint64 token, PendingValidatorConsensusDbCleanup candidate,
                      td::Result<std::optional<PendingValidatorConsensusDbCleanup>> current) {
-    auto reserved = cleanup_.on_point_read_result(token, candidate, current, [this](const ValidatorSessionId& s) {
-      return owner_.live.count(s) > 0;
-    });
+    auto reserved = cleanup_.on_point_read_result(
+        token, candidate, current, [this](const ValidatorSessionId& s) { return owner_.live.count(s) > 0; });
     if (reserved) {
       reserved_.push_back(reserved->record.session_id);
     }
@@ -260,9 +256,9 @@ class Harness : public td::actor::Actor {
     o.is_live = [](const ValidatorSessionId&) { return false; };
     auto candidates = cleanup_.on_page(*request, page, o);
     CHECK(candidates.size() == 1);
-    auto reserved = cleanup_.on_point_read_result(
-        request->token, record, td::Result<std::optional<PendingValidatorConsensusDbCleanup>>(record),
-        [](const ValidatorSessionId&) { return false; });
+    auto reserved = cleanup_.on_point_read_result(request->token, record,
+                                                  td::Result<std::optional<PendingValidatorConsensusDbCleanup>>(record),
+                                                  [](const ValidatorSessionId&) { return false; });
     CHECK(reserved.has_value());
     cleanup_.end_pass();
     CHECK(cleanup_.is_delete_in_flight(session(n)));
@@ -382,8 +378,9 @@ class Session {
     });
   }
   void acknowledge_rotation() {
-    ask<td::Unit>(
-        [&](td::Promise<td::Unit> p) { td::actor::send_closure(harness_, &Harness::acknowledge_rotation, std::move(p)); });
+    ask<td::Unit>([&](td::Promise<td::Unit> p) {
+      td::actor::send_closure(harness_, &Harness::acknowledge_rotation, std::move(p));
+    });
   }
 
  private:

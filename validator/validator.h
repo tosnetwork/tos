@@ -386,8 +386,8 @@ class ValidatorManagerInterface : public td::actor::Actor {
   // masterchain tip (otherwise the verdict is FrontierMoved and nothing is checked).
   // The verified proof may be stored; the block is neither stored nor applied. The
   // check is not started with less than its own time left before `deadline`.
-  virtual void verify_startup_probe_successor(BlockIdExt prev_block_id, BlockIdExt next_block_id,
-                                              td::BufferSlice proof, td::Timestamp deadline,
+  virtual void verify_startup_probe_successor(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
+                                              td::Timestamp deadline,
                                               td::Promise<startup_catchup::SuccessorVerdict> promise) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "startup successor verification is not supported"));
   }

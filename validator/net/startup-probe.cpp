@@ -16,13 +16,13 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "startup-probe.hpp"
-
 #include "common/checksum.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 #include "validator/full-node-serializer.hpp"
 #include "validator/full-node.h"
+
+#include "startup-probe.hpp"
 
 namespace tos {
 
@@ -32,9 +32,9 @@ namespace fullnode {
 
 using startup_catchup::ProbeAnswer;
 
-ProbeNextMasterchainBlock::ProbeNextMasterchainBlock(adnl::AdnlNodeIdShort local_id,
-                                                     overlay::OverlayIdShort overlay_id, BlockIdExt prev,
-                                                     adnl::AdnlNodeIdShort peer, td::Timestamp deadline,
+ProbeNextMasterchainBlock::ProbeNextMasterchainBlock(adnl::AdnlNodeIdShort local_id, overlay::OverlayIdShort overlay_id,
+                                                     BlockIdExt prev, adnl::AdnlNodeIdShort peer,
+                                                     td::Timestamp deadline,
                                                      td::actor::ActorId<ValidatorManagerInterface> manager,
                                                      td::actor::ActorId<adnl::AdnlSenderInterface> rldp,
                                                      td::actor::ActorId<overlay::Overlays> overlays,

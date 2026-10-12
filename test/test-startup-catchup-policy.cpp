@@ -144,8 +144,8 @@ TEST(StartupCatchupPolicy, T3_LegacyReasonsUnchanged) {
       asked = true;
       return r.validator;
     });
-    bool legacy = legacy_out_of_sync(r.mc, r.shard_client, r.sync_upto, in.block_unix_time, in.now, r.known_key,
-                                     r.validator);
+    bool legacy =
+        legacy_out_of_sync(r.mc, r.shard_client, r.sync_upto, in.block_unix_time, in.now, r.known_key, r.validator);
     ASSERT_EQ(legacy, out_of_sync_value(reason, false));
     if (reason == SyncReason::StaleValidator) {
       ASSERT_TRUE(!legacy);

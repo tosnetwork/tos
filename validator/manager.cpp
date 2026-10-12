@@ -3237,8 +3237,8 @@ void ValidatorManagerImpl::catchup_phase(startup_catchup::Phase phase) {
 }
 
 td::actor::Task<startup_catchup::RoundResult> ValidatorManagerImpl::catchup_probe_round(BlockIdExt prev,
-                                                                                         double deadline,
-                                                                                         std::uint32_t budget) {
+                                                                                        double deadline,
+                                                                                        std::uint32_t budget) {
   auto [task, promise] = td::actor::StartedTask<startup_catchup::RoundResult>::make_bridge();
   callback_->probe_next_masterchain_block(prev, td::Timestamp::at(deadline), budget, std::move(promise));
   co_return co_await std::move(task);
@@ -3256,9 +3256,9 @@ td::actor::Task<startup_catchup::ImportOutcome> ValidatorManagerImpl::catchup_im
 
 td::actor::Task<td::Unit> ValidatorManagerImpl::catchup_persist_shard_client(BlockSeqno seqno) {
   if (seqno > last_masterchain_seqno_) {
-    co_return td::Status::Error(ErrorCode::error, PSTRING() << "shard-client seqno " << seqno
-                                                            << " is above the masterchain tip "
-                                                            << last_masterchain_seqno_);
+    co_return td::Status::Error(ErrorCode::error, PSTRING()
+                                                      << "shard-client seqno " << seqno
+                                                      << " is above the masterchain tip " << last_masterchain_seqno_);
   }
   // The identity comes from the applied, proof-checked masterchain state.
   BlockIdExt block_id;

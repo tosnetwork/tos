@@ -110,8 +110,8 @@ class ArchiveImporter : public td::actor::Actor {
   virtual td::Result<td::Ref<ProofLink>> parse_proof_link(BlockIdExt block_id, td::BufferSlice data);
   virtual td::Result<td::Ref<BlockData>> parse_block(BlockIdExt block_id, td::BufferSlice data);
   virtual void request_masterchain_proof_check(BlockIdExt block_id, td::Ref<Proof> proof,
-                                               td::Ref<MasterchainState> state, bool is_hardfork,
-                                               td::Timestamp timeout, td::Promise<BlockHandle> promise);
+                                               td::Ref<MasterchainState> state, bool is_hardfork, td::Timestamp timeout,
+                                               td::Promise<BlockHandle> promise);
   virtual void request_proof_link_check(BlockIdExt block_id, td::Ref<ProofLink> proof, td::Timestamp timeout,
                                         td::Promise<BlockHandle> promise);
   virtual void request_apply(BlockIdExt block_id, td::Ref<BlockData> data, BlockIdExt masterchain_block_id,

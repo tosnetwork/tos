@@ -139,8 +139,8 @@ class DriverHarness : public td::actor::Actor {
       self->observed_->persist_acked_before_end = !self->persist_in_flight;
       co_return td::Unit{};
     }(this)
-                                                .start()
-                                                .detach();
+                                   .start()
+                                   .detach();
   }
 
   // A persistence write that completes `delay` real seconds later, durably moving the
@@ -202,14 +202,14 @@ void persist_now(DriverHarness& h, BlockSeqno seqno, td::Promise<td::Unit> promi
 }
 
 Observed drive(DriverHarness::RoundFn round, DriverHarness::AttemptFn attempt, DriverHarness::PersistFn persist,
-             DriverHarness::SyncFn sync) {
+               DriverHarness::SyncFn sync) {
   auto mu = std::make_shared<std::mutex>();
   auto observed = std::make_shared<Observed>();
   td::actor::Scheduler scheduler({1});
   td::actor::ActorOwn<DriverHarness> harness;
   scheduler.run_in_context([&] {
-    harness = td::actor::create_actor<DriverHarness>("driver", std::move(round), std::move(attempt),
-                                                     std::move(persist), std::move(sync), mu, observed);
+    harness = td::actor::create_actor<DriverHarness>("driver", std::move(round), std::move(attempt), std::move(persist),
+                                                     std::move(sync), mu, observed);
     td::actor::send_closure(harness, &DriverHarness::run);
   });
   auto deadline = td::Timestamp::in(30.0);
@@ -243,12 +243,12 @@ using namespace tos::validator::startup_catchup;
 // fake time, and startup continues.
 TEST(StartupCatchupDriver, T9_AbandonedWithinTheBound) {
   auto o = drive([](DriverHarness& h, BlockIdExt, double, std::uint32_t) { return verified(h); },
-               [](DriverHarness& h, double deadline, td::Promise<ImportOutcome> p) {
-                 h.now = deadline;  // every attempt uses its whole budget
-                 p.set_value(outcome(h.tip.seqno(), h.shard_client,
-                                     td::Status::Error(ErrorCode::timeout, "no peer serves the archive")));
-               },
-               persist_now, [](DriverHarness&) { return true; });
+                 [](DriverHarness& h, double deadline, td::Promise<ImportOutcome> p) {
+                   h.now = deadline;  // every attempt uses its whole budget
+                   p.set_value(outcome(h.tip.seqno(), h.shard_client,
+                                       td::Status::Error(ErrorCode::timeout, "no peer serves the archive")));
+                 },
+                 persist_now, [](DriverHarness&) { return true; });
   ASSERT_TRUE(!o.failed);
   ASSERT_TRUE(o.reason == ExitReason::Abandoned);
   ASSERT_EQ(3, o.attempts);
@@ -259,19 +259,17 @@ TEST(StartupCatchupDriver, T9_AbandonedWithinTheBound) {
 // it; after importing it the next attempt fails, re-discovery proves nothing, and the
 // mode ends NoVerifiedSuccessor although the tip is still old.
 TEST(StartupCatchupDriver, T10_StoppedNetworkUnequalTips) {
-  auto o = drive(
-      [](DriverHarness& h, BlockIdExt, double, std::uint32_t) {
-        return h.tip.seqno() == 100 ? verified(h) : negative();
-      },
-      [](DriverHarness& h, double, td::Promise<ImportOutcome> p) {
-        if (h.tip.seqno() == 100) {
-          h.tip = tip_at(110);
-          p.set_value(outcome(110, 110));
-        } else {
-          p.set_value(outcome(110, 110, td::Status::Error("no new masterchain blocks were imported")));
-        }
-      },
-      persist_now, [](DriverHarness&) { return true; });
+  auto o = drive([](DriverHarness& h, BlockIdExt, double,
+                    std::uint32_t) { return h.tip.seqno() == 100 ? verified(h) : negative(); },
+                 [](DriverHarness& h, double, td::Promise<ImportOutcome> p) {
+                   if (h.tip.seqno() == 100) {
+                     h.tip = tip_at(110);
+                     p.set_value(outcome(110, 110));
+                   } else {
+                     p.set_value(outcome(110, 110, td::Status::Error("no new masterchain blocks were imported")));
+                   }
+                 },
+                 persist_now, [](DriverHarness&) { return true; });
   ASSERT_TRUE(!o.failed);
   ASSERT_TRUE(o.reason == ExitReason::NoVerifiedSuccessor);
   ASSERT_EQ(2, o.attempts);
@@ -281,14 +279,15 @@ TEST(StartupCatchupDriver, T10_StoppedNetworkUnequalTips) {
 // while the attempt deadline passes and the exit condition becomes true: the mode does
 // not end until the write is acknowledged.
 TEST(StartupCatchupDriver, T11_ExitWaitsForTheShardClientWrite) {
-  auto o = drive([](DriverHarness& h, BlockIdExt, double, std::uint32_t) { return verified(h); },
-               [](DriverHarness& h, double deadline, td::Promise<ImportOutcome> p) {
-                 h.now = deadline + 1.0;
-                 h.tip = tip_at(150);
-                 p.set_value(outcome(150, 150));
-               },
-               [](DriverHarness& h, BlockSeqno seqno, td::Promise<td::Unit> p) { h.hold_persist(seqno, 0.5, std::move(p)); },
-               [](DriverHarness& h) { return h.tip.seqno() < 150; });
+  auto o = drive(
+      [](DriverHarness& h, BlockIdExt, double, std::uint32_t) { return verified(h); },
+      [](DriverHarness& h, double deadline, td::Promise<ImportOutcome> p) {
+        h.now = deadline + 1.0;
+        h.tip = tip_at(150);
+        p.set_value(outcome(150, 150));
+      },
+      [](DriverHarness& h, BlockSeqno seqno, td::Promise<td::Unit> p) { h.hold_persist(seqno, 0.5, std::move(p)); },
+      [](DriverHarness& h) { return h.tip.seqno() < 150; });
   ASSERT_TRUE(!o.failed);
   ASSERT_TRUE(o.reason == ExitReason::Fresh);
   ASSERT_TRUE(o.persist_acked_before_end);
@@ -299,18 +298,19 @@ TEST(StartupCatchupDriver, T11_ExitWaitsForTheShardClientWrite) {
 // completes and is counted as progress, so the next attempt starts without
 // re-discovery, from the durable frontier.
 TEST(StartupCatchupDriver, T19_WriteInFlightAtDeadlineIsCounted) {
-  auto o = drive([](DriverHarness& h, BlockIdExt, double, std::uint32_t) { return verified(h); },
-               [](DriverHarness& h, double deadline, td::Promise<ImportOutcome> p) {
-                 if (h.attempt_index++ == 0) {
-                   h.now = deadline + 5.0;
-                   p.set_value(outcome(140, 140));
-                 } else {
-                   h.tip = tip_at(160);
-                   p.set_value(outcome(160, 160));
-                 }
-               },
-               [](DriverHarness& h, BlockSeqno seqno, td::Promise<td::Unit> p) { h.hold_persist(seqno, 0.3, std::move(p)); },
-               [](DriverHarness& h) { return h.tip.seqno() < 160; });
+  auto o = drive(
+      [](DriverHarness& h, BlockIdExt, double, std::uint32_t) { return verified(h); },
+      [](DriverHarness& h, double deadline, td::Promise<ImportOutcome> p) {
+        if (h.attempt_index++ == 0) {
+          h.now = deadline + 5.0;
+          p.set_value(outcome(140, 140));
+        } else {
+          h.tip = tip_at(160);
+          p.set_value(outcome(160, 160));
+        }
+      },
+      [](DriverHarness& h, BlockSeqno seqno, td::Promise<td::Unit> p) { h.hold_persist(seqno, 0.3, std::move(p)); },
+      [](DriverHarness& h) { return h.tip.seqno() < 160; });
   ASSERT_TRUE(!o.failed);
   ASSERT_TRUE(o.reason == ExitReason::Fresh);
   ASSERT_EQ(1, o.rounds);
@@ -322,21 +322,21 @@ TEST(StartupCatchupDriver, T19_WriteInFlightAtDeadlineIsCounted) {
 // made durable before the next attempt, and the failure count is reset by it.
 TEST(StartupCatchupDriver, T20_PartialProgressResetsTheCount) {
   auto o = drive([](DriverHarness& h, BlockIdExt, double, std::uint32_t) { return verified(h); },
-               [](DriverHarness& h, double, td::Promise<ImportOutcome> p) {
-                 switch (h.attempt_index++) {
-                   case 0:
-                   case 1:
-                     p.set_value(outcome(120, h.shard_client, td::Status::Error("no archive")));
-                     return;
-                   case 2:
-                     p.set_value(outcome(120, 103, td::Status::Error(ErrorCode::timeout, "deadline")));
-                     return;
-                   default:
-                     p.set_value(outcome(120, h.shard_client, td::Status::Error("no archive")));
-                     return;
-                 }
-               },
-               persist_now, [](DriverHarness&) { return true; });
+                 [](DriverHarness& h, double, td::Promise<ImportOutcome> p) {
+                   switch (h.attempt_index++) {
+                     case 0:
+                     case 1:
+                       p.set_value(outcome(120, h.shard_client, td::Status::Error("no archive")));
+                       return;
+                     case 2:
+                       p.set_value(outcome(120, 103, td::Status::Error(ErrorCode::timeout, "deadline")));
+                       return;
+                     default:
+                       p.set_value(outcome(120, h.shard_client, td::Status::Error("no archive")));
+                       return;
+                   }
+                 },
+                 persist_now, [](DriverHarness&) { return true; });
   ASSERT_TRUE(!o.failed);
   ASSERT_TRUE(o.reason == ExitReason::Abandoned);
   // Two failures, one partial success that resets the count, then three failures.
@@ -399,8 +399,8 @@ TEST(StartupCatchupDriver, T6_T17_DiscoveryRestartsFromTheNewTip) {
           r.probes_used = budget < 2 ? budget : 2;
           return r;
         },
-        [](DriverHarness&, double, td::Promise<ImportOutcome> p) { p.set_value(outcome(0, 0)); },
-        persist_now, [](DriverHarness&) { return true; });
+        [](DriverHarness&, double, td::Promise<ImportOutcome> p) { p.set_value(outcome(0, 0)); }, persist_now,
+        [](DriverHarness&) { return true; });
     ASSERT_TRUE(o.reason == ExitReason::NoVerifiedSuccessor);
     ASSERT_EQ(3, o.rounds);
     ASSERT_EQ(0, o.attempts);
