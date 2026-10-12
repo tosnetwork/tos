@@ -5,9 +5,17 @@
  */
 #pragma once
 
+#include <algorithm>
+#include <atomic>
+#include <iterator>
+#include <list>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <set>
 #include <utility>
+#include <vector>
 
 #include "adnl/adnl-node-id.hpp"
 #include "auto/tl/tos_api.h"
@@ -62,6 +70,13 @@ inline size_t full_node_request_cost(tos_api::Function &function) {
   return cost;
 }
 
+// Default admission limits of the full node: the window and the global,
+// heavy and medium allowances per window.
+constexpr double k_default_ratelimit_window_size = 1.0;
+constexpr size_t k_default_ratelimit_global = 96;
+constexpr size_t k_default_ratelimit_heavy = 64;
+constexpr size_t k_default_ratelimit_medium = 72;
+
 struct FullNodeRateLimits {
   RateLimit global;
   RateLimit heavy;
@@ -104,14 +119,239 @@ inline std::shared_ptr<FullNodeRateLimiter> make_full_node_rate_limiter(const Fu
                tos_api::tosNode_preparePersistentState::ID, tos_api::tosNode_getPersistentStateSizeV2::ID});
 }
 
+// The reply a query refused for capacity may carry: for each query type
+// listed here, the reply its own handler gives when it has nothing to offer,
+// which every requester of that type takes as "not ready, ask again". Only
+// types with a served handler and such an empty reply are listed. Raw block
+// and proof downloads have no empty reply and prepareBlocks has no handler,
+// so they and every other type keep the silent refusal. The reply is fixed
+// and built here without any lookup.
+inline std::optional<td::BufferSlice> capacity_refusal_answer(td::int32 function_id) {
+  switch (function_id) {
+    case tos_api::tosNode_downloadBlockFull::ID:
+    case tos_api::tosNode_downloadNextBlockFull::ID:
+      return create_serialize_tl_object<tos_api::tosNode_dataFullEmpty>();
+    case tos_api::tosNode_downloadNextBlocksFull::ID:
+      return create_serialize_tl_object<tos_api::tosNode_nextBlocksFull>(
+          std::vector<tos_api::object_ptr<tos_api::tosNode_DataFull>>{});
+    case tos_api::tosNode_prepareBlock::ID:
+      return create_serialize_tl_object<tos_api::tosNode_notFound>();
+    case tos_api::tosNode_prepareBlockProof::ID:
+    case tos_api::tosNode_prepareKeyBlockProof::ID:
+      return create_serialize_tl_object<tos_api::tosNode_preparedProofEmpty>();
+    case tos_api::tosNode_preparePersistentState::ID:
+    case tos_api::tosNode_prepareZeroState::ID:
+      return create_serialize_tl_object<tos_api::tosNode_notFoundState>();
+    default:
+      return std::nullopt;
+  }
+}
+
+// `rate` tokens a second, held up to `burst`; it starts full. Time that runs
+// backwards adds nothing.
+class TokenBucket {
+ public:
+  TokenBucket(double rate, double burst, td::Timestamp now) : rate_(rate), burst_(burst), tokens_(burst), at_(now) {
+  }
+
+  void refill(td::Timestamp now) {
+    double elapsed = now.at() - at_.at();
+    if (elapsed > 0.0) {
+      tokens_ = std::min(burst_, tokens_ + elapsed * rate_);
+      at_ = now;
+    }
+  }
+  bool has_token() const {
+    return tokens_ >= 1.0;
+  }
+  void take() {
+    tokens_ -= 1.0;
+  }
+  bool full() const {
+    return tokens_ >= burst_;
+  }
+
+ private:
+  double rate_;
+  double burst_;
+  double tokens_;
+  td::Timestamp at_;
+};
+
+struct RefusalAnswerLimits {
+  double global_rate;
+  double global_burst;
+  double source_rate;
+  double source_burst;
+  size_t max_sources;
+};
+
+// Sources tracked by the refusal-answer budget at most. The global budget
+// already keeps the live entries near its burst plus one refill time of its
+// rate, so this cap only matters if that reasoning breaks.
+constexpr size_t k_refusal_answer_max_sources = 1024;
+
+// An answer costs the node a transfer, more than the admission check that
+// refused the query, so answers get their own budget: twice the default
+// admission rate, globally and for each source's share of it, with one
+// window's allowance as the burst. The budget does not follow the configured
+// limits, so a node that loosens or disables admission still bounds it.
+inline RefusalAnswerLimits default_refusal_answer_limits() {
+  constexpr double window = k_default_ratelimit_window_size;
+  const double global = static_cast<double>(k_default_ratelimit_global);
+  const double share = static_cast<double>(FullNodeRateLimiter::per_source_limit(k_default_ratelimit_global));
+  return RefusalAnswerLimits{2.0 * global / window, global, 2.0 * share / window, share, k_refusal_answer_max_sources};
+}
+
+// The budget for answering capacity refusals, shared by every shard actor
+// that shares the node's limiter. Each answer is charged once to the global
+// bucket and once to its source's; past either, the refusal stays silent.
+// Sources are kept in order of their latest charge and dropped once their
+// bucket is full again, when they are indistinguishable from a new source.
+// Only aggregate counts are kept.
+class RefusalAnswerBudget {
+ public:
+  explicit RefusalAnswerBudget(RefusalAnswerLimits limits = default_refusal_answer_limits(),
+                               td::Timestamp now = td::Timestamp::now())
+      : limits_(limits), global_(limits.global_rate, limits.global_burst, now) {
+  }
+  RefusalAnswerBudget(const RefusalAnswerBudget &) = delete;
+  RefusalAnswerBudget &operator=(const RefusalAnswerBudget &) = delete;
+
+  // Takes one answer from both budgets, or nothing when either is spent.
+  bool try_take(const adnl::AdnlNodeIdShort &source, td::Timestamp now) {
+    std::unique_lock lock(mutex_);
+    expire_sources(now);
+    global_.refill(now);
+    auto it = sources_.find(source);
+    std::optional<TokenBucket> fresh;
+    TokenBucket *bucket = nullptr;
+    if (it != sources_.end()) {
+      bucket = &it->second.bucket;
+      bucket->refill(now);
+    } else if (sources_.size() < limits_.max_sources) {
+      fresh.emplace(limits_.source_rate, limits_.source_burst, now);
+      bucket = &*fresh;
+    }
+    if (bucket == nullptr || !bucket->has_token() || !global_.has_token()) {
+      suppressed_.fetch_add(1, std::memory_order_relaxed);
+      return false;
+    }
+    global_.take();
+    bucket->take();
+    if (it == sources_.end()) {
+      order_.push_back(source);
+      sources_.emplace(source, SourceState{*fresh, std::prev(order_.end())});
+    } else {
+      order_.splice(order_.end(), order_, it->second.order);
+    }
+    answered_.fetch_add(1, std::memory_order_relaxed);
+    return true;
+  }
+
+  td::uint64 answered() const {
+    return answered_.load(std::memory_order_relaxed);
+  }
+  td::uint64 suppressed() const {
+    return suppressed_.load(std::memory_order_relaxed);
+  }
+  size_t tracked_sources(td::Timestamp now) {
+    std::unique_lock lock(mutex_);
+    expire_sources(now);
+    return sources_.size();
+  }
+
+ private:
+  struct SourceState {
+    TokenBucket bucket;
+    std::list<adnl::AdnlNodeIdShort>::iterator order;
+  };
+
+  // The front entry is the least recently charged; an entry charged more
+  // often behind it is dropped at most one refill time later.
+  void expire_sources(td::Timestamp now) {
+    while (!order_.empty()) {
+      auto it = sources_.find(order_.front());
+      if (it == sources_.end()) {
+        order_.pop_front();
+        continue;
+      }
+      it->second.bucket.refill(now);
+      if (!it->second.bucket.full()) {
+        return;
+      }
+      order_.pop_front();
+      sources_.erase(it);
+    }
+  }
+
+  RefusalAnswerLimits limits_;
+  std::mutex mutex_;
+  TokenBucket global_;
+  std::map<adnl::AdnlNodeIdShort, SourceState> sources_;
+  std::list<adnl::AdnlNodeIdShort> order_;
+  std::atomic<td::uint64> answered_{0};
+  std::atomic<td::uint64> suppressed_{0};
+};
+
+// What admission decided about one query: admitted for dispatch, refused for
+// capacity after parsing (the parsed query is kept, so the refusal can be
+// answered without parsing or charging it again), or failed with the error
+// to answer with (a malformed query, or no limiter).
+class QueryAdmission {
+ public:
+  enum class Outcome { admitted, refused_for_capacity, failed };
+
+  static QueryAdmission admitted(tos_api::object_ptr<tos_api::Function> function) {
+    return QueryAdmission{Outcome::admitted, std::move(function), td::Status::OK()};
+  }
+  static QueryAdmission refused_for_capacity(tos_api::object_ptr<tos_api::Function> function) {
+    return QueryAdmission{Outcome::refused_for_capacity, std::move(function), td::Status::OK()};
+  }
+  static QueryAdmission failed(td::Status error) {
+    return QueryAdmission{Outcome::failed, nullptr, std::move(error)};
+  }
+
+  Outcome outcome() const {
+    return outcome_;
+  }
+  bool is_admitted() const {
+    return outcome_ == Outcome::admitted;
+  }
+  // The parsed query; null when admission failed.
+  const tos_api::Function *function() const {
+    return function_.get();
+  }
+  tos_api::object_ptr<tos_api::Function> move_function() {
+    return std::move(function_);
+  }
+  // The error of a failed admission.
+  const td::Status &error() const {
+    return error_;
+  }
+  td::Status move_error() {
+    return std::move(error_);
+  }
+
+ private:
+  QueryAdmission(Outcome outcome, tos_api::object_ptr<tos_api::Function> function, td::Status error)
+      : outcome_(outcome), function_(std::move(function)), error_(std::move(error)) {
+  }
+
+  Outcome outcome_;
+  tos_api::object_ptr<tos_api::Function> function_;
+  td::Status error_;
+};
+
 // Admission of overlay queries for one shard of the full node: it holds the
 // shard's registration in the shared limiter, parses each query, charges it
 // to the sending source and to this shard, and refuses it before anything is
 // dispatched. A query that cannot be parsed is still charged to its source.
 class ShardQueryAdmission {
  public:
-  ShardQueryAdmission(std::shared_ptr<FullNodeRateLimiter> limiter, ShardIdFull shard)
-      : limiter_(std::move(limiter)), shard_(shard) {
+  ShardQueryAdmission(std::shared_ptr<FullNodeRateLimiter> limiter, ShardIdFull shard,
+                      std::shared_ptr<RefusalAnswerBudget> refusal_answers = nullptr)
+      : limiter_(std::move(limiter)), refusal_answers_(std::move(refusal_answers)), shard_(shard) {
   }
   ShardQueryAdmission(const ShardQueryAdmission &) = delete;
   ShardQueryAdmission &operator=(const ShardQueryAdmission &) = delete;
@@ -133,29 +373,61 @@ class ShardQueryAdmission {
     }
   }
 
-  // Returns the parsed query when it is admitted, or the error to answer with.
-  // Without a limiter every query is refused.
-  td::Result<tos_api::object_ptr<tos_api::Function>> admit(adnl::AdnlNodeIdShort src, td::BufferSlice query,
-                                                           td::Timestamp now = td::Timestamp::now()) {
+  // Parses the query and charges it once. Without a limiter every query
+  // fails, as it does when it cannot be parsed.
+  QueryAdmission admit(adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Timestamp now = td::Timestamp::now()) {
     if (!limiter_) {
-      return td::Status::Error(ErrorCode::failure, "too many requests");
+      return QueryAdmission::failed(td::Status::Error(ErrorCode::failure, "too many requests"));
     }
     auto parsed = fetch_tl_object<tos_api::Function>(std::move(query), true);
     if (parsed.is_error()) {
       if (!limiter_->check_in_unparseable(shard_, src, now)) {
-        return td::Status::Error(ErrorCode::failure, "too many requests");
+        return QueryAdmission::failed(td::Status::Error(ErrorCode::failure, "too many requests"));
       }
-      return td::Status::Error(ErrorCode::protoviolation, "cannot parse tosnode query");
+      return QueryAdmission::failed(td::Status::Error(ErrorCode::protoviolation, "cannot parse tosnode query"));
     }
     auto function = parsed.move_as_ok();
     if (!limiter_->check_in(function->get_id(), full_node_request_cost(*function), shard_, src, now)) {
+      return QueryAdmission::refused_for_capacity(std::move(function));
+    }
+    return QueryAdmission::admitted(std::move(function));
+  }
+
+  // The reply to a query refused for capacity: its type's empty answer while
+  // the refusal-answer budget lasts, otherwise the refusal error, which leaves
+  // the requester to its own timeout as before.
+  td::Result<td::BufferSlice> answer_capacity_refusal(adnl::AdnlNodeIdShort src, const tos_api::Function &function,
+                                                      td::Timestamp now = td::Timestamp::now()) {
+    auto answer = capacity_refusal_answer(function.get_id());
+    if (!answer || !refusal_answers_ || !refusal_answers_->try_take(src, now)) {
       return td::Status::Error(ErrorCode::failure, "too many requests");
     }
-    return std::move(function);
+    return std::move(*answer);
+  }
+
+  // Admits one query and settles on `promise` what admission alone decides:
+  // a failure with its error, a capacity refusal with its answer or error.
+  // Returns the query when it is admitted, with `promise` left for dispatch.
+  tos_api::object_ptr<tos_api::Function> admit_or_answer(adnl::AdnlNodeIdShort src, td::BufferSlice query,
+                                                         td::Promise<td::BufferSlice> &promise,
+                                                         td::Timestamp now = td::Timestamp::now()) {
+    auto admission = admit(src, std::move(query), now);
+    switch (admission.outcome()) {
+      case QueryAdmission::Outcome::failed:
+        promise.set_error(admission.move_error());
+        return nullptr;
+      case QueryAdmission::Outcome::refused_for_capacity:
+        promise.set_result(answer_capacity_refusal(src, *admission.function(), now));
+        return nullptr;
+      case QueryAdmission::Outcome::admitted:
+        break;
+    }
+    return admission.move_function();
   }
 
  private:
   std::shared_ptr<FullNodeRateLimiter> limiter_;
+  std::shared_ptr<RefusalAnswerBudget> refusal_answers_;
   ShardIdFull shard_;
   bool registered_ = false;
 };

@@ -262,10 +262,9 @@ void FullNodeImpl::update_shard_actor(ShardIdFull shard, bool active, bool enabl
       td::actor::send_closure(keyring_, &tos::keyring::Keyring::add_key, std::move(private_key), true,
                               [](td::Result<>) {});
     }
-    info.actor =
-        FullNodeShard::create(shard, info.local_id, adnl_id_, zero_state_file_hash_, opts_, limiter_, keyring_, adnl_,
-                              rldp2_, quic_, overlays_, validator_manager_, client_, actor_id(this), active,
-                              enable_plumtree_broadcast);
+    info.actor = FullNodeShard::create(shard, info.local_id, adnl_id_, zero_state_file_hash_, opts_, limiter_,
+                                       refusal_answers_, keyring_, adnl_, rldp2_, quic_, overlays_, validator_manager_,
+                                       client_, actor_id(this), active, enable_plumtree_broadcast);
     if (!validator_transport_roots_.empty()) {
       td::actor::send_closure(info.actor, &FullNodeShard::update_validators, validator_transport_roots_, sign_cert_by_);
     }

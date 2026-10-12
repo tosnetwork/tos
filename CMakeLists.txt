@@ -1110,6 +1110,23 @@ target_link_libraries(test-download-state-budget PRIVATE validator-common full-n
 add_executable(test-download-next-blocks-validation test/test-download-next-blocks-validation.cpp)
 target_link_libraries(test-download-next-blocks-validation PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+# The production download actors against a server shard whose admission
+# refuses them for capacity: answered refusals, token release, retries and
+# query deadlines, over the overlay and the external-client path.
+add_executable(test-download-refusal-answers test/test-download-refusal-answers.cpp)
+target_include_directories(test-download-refusal-answers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-download-refusal-answers PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-download-refusal-answers PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+# Retry policy of a consensus group: the initial chain-state resolution and
+# the acceptance of finalized blocks.
+add_executable(test-consensus-retry-backoff test/test-td-main.cpp test/test-consensus-retry-backoff.cpp)
+target_include_directories(test-consensus-retry-backoff PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-consensus-retry-backoff PRIVATE tdactor tdutils)
+
 add_executable(test-pq-network-parser-resource test/pq-native/pq-network-parser-resource-test.cpp)
 target_link_libraries(test-pq-network-parser-resource PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht
                       tl_lite_api tl-lite-utils tos_mldsa44 tos_pq_consensus)
@@ -1951,6 +1968,8 @@ tos_test(test-full-node-master-admission)
 tos_test(test-adnl-ext-input-budget)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
+tos_test(test-download-refusal-answers)
+tos_test(test-consensus-retry-backoff)
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-manager)
 tos_test(test-ext-message-ingress)
