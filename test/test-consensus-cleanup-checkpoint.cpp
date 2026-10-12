@@ -32,6 +32,7 @@
 #include "td/utils/port/path.h"
 #include "td/utils/tests.h"
 #include "validator/consensus/consensus-cleanup-checkpoint.h"
+#include "validator/db/archive-gc-floor.h"
 
 using namespace tos;
 using namespace tos::validator::consensus;
@@ -463,4 +464,50 @@ TEST(ConsensusCleanupCheckpoint, checkpoint_in_flight_blocks_gc_until_installed)
   ASSERT_TRUE(t.gc_may_persist(70));
   ASSERT_TRUE(!t.gc_may_persist(71));
   ASSERT_TRUE(!t.gc_may_start_advance(70));
+}
+
+// ---- retention ----------------------------------------------------------------
+
+// Archive TTL pruning keeps the checkpoint's package whenever the GC block is at
+// or below the checkpoint (the bound GC is held to), because pruning is keyed on
+// the GC block's time and masterchain time is monotonic. The archive needs no
+// retention mechanism of its own for the checkpoint; this exercises the real
+// pruning selection and admission (validator/db/archive-gc-floor.h).
+namespace {
+// Package i holds masterchain blocks [100 i, 100 i + 99]; block s was generated
+// at time 1000 + s.
+size_t pruned_checkpoint_package(BlockSeqno checkpoint, BlockSeqno gc, double archive_ttl) {
+  std::vector<tos::validator::ArchivePackage> packages;
+  for (uint32_t i = 0; i < 20; i++) {
+    packages.push_back({1000.0 + 100.0 * i, i + 1 < 20 ? (i + 1) * 100 : tos::validator::kNoArchiveGcFloor});
+  }
+  tos::validator::reset_archive_retention_for_testing();
+  size_t checkpoint_package = checkpoint / 100;
+  size_t removed_checkpoint_package = 0;
+  tos::validator::prune_archive_packages(packages, 1000.0 + gc, archive_ttl, /*shard_client_seqno=*/1u << 30,
+                                         [&](size_t index) {
+                                           if (index == checkpoint_package) {
+                                             removed_checkpoint_package++;
+                                           }
+                                         });
+  tos::validator::reset_archive_retention_for_testing();
+  return removed_checkpoint_package;
+}
+}  // namespace
+
+TEST(ConsensusCleanupCheckpoint, archive_ttl_pruning_keeps_the_checkpoint_package_while_gc_stays_behind) {
+  size_t cases = 0;
+  for (BlockSeqno checkpoint : {0u, 1u, 99u, 100u, 150u, 199u, 1234u, 1899u}) {
+    for (double ttl : {0.5, 1.0, 50.0, 100.0, 500.0}) {
+      for (BlockSeqno gc = 0; gc <= checkpoint; gc += 7) {
+        ASSERT_EQ(pruned_checkpoint_package(checkpoint, gc, ttl), 0u);
+        cases++;
+      }
+      ASSERT_EQ(pruned_checkpoint_package(checkpoint, checkpoint, ttl), 0u);
+    }
+  }
+  ASSERT_TRUE(cases > 500);
+  // Sensitivity: once GC is far past the checkpoint, the same pruning does take
+  // the checkpoint's package. The instrument can see a deletion.
+  ASSERT_EQ(pruned_checkpoint_package(150, 900, 50.0), 1u);
 }

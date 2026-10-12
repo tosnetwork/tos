@@ -101,6 +101,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   friend class N5ManagerDbFixture;
   friend class TwostepManagerProbe;
   friend class ExtMessageManagerTestHarness;
+  friend class ConsensusCheckpointDbProbe;
 
  private:
   // WAITERS

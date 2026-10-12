@@ -899,6 +899,13 @@ target_link_libraries(test-n5-manager-db-fixture PRIVATE validator full-node tos
                       tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-n5-manager-db-fixture PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
 
+add_executable(test-consensus-cleanup-checkpoint-db test/test-consensus-cleanup-checkpoint-db.cpp)
+target_include_directories(test-consensus-cleanup-checkpoint-db PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-consensus-cleanup-checkpoint-db PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-consensus-cleanup-checkpoint-db PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
 add_executable(test-pq-launch-cap test/pq-native/pq-launch-cap-test.cpp)
 target_link_libraries(test-pq-launch-cap PRIVATE tos_block)
 
@@ -1677,6 +1684,7 @@ add_test(NAME test-n5-cut6-check-proof COMMAND test-c04-real-state-proof --n5-cu
 add_test(NAME test-n5-cold-continuation COMMAND test-c04-real-state-proof --n5-continue
          ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-n5-manager-db-fixture ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+tos_test(test-consensus-cleanup-checkpoint-db ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
 tos_test(test-pq-launch-cap)
 add_dependencies(all-tests test-measurement-contract)
 add_test(NAME n6-metric-schema COMMAND test-measurement-contract --filter MetricSchema)
