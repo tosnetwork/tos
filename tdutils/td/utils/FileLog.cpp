@@ -94,16 +94,17 @@ int32 FileLog::get_keep_rotated() const {
 }
 
 // Removes rotated files beyond the kept number (<path>.old.<keep_rotated_> and
-// up), left behind by a run that kept more. Generations are contiguous, so the
-// first missing one ends the scan.
+// up), left behind by a run that kept more. Every index up to the largest
+// number an engine accepts is tried: a run interrupted mid-shift, or files
+// removed by hand, can leave gaps, so a missing index does not end the scan.
+// It runs at start and once per rotation, so the unlinks of absent files cost
+// nothing that matters.
 void FileLog::prune_rotated() {
   if (path_.empty()) {
     return;
   }
-  for (int32 k = keep_rotated_; k < kMaxKeepRotated; k++) {
-    if (unlink(PSLICE() << path_ << ".old." << k).is_error()) {
-      break;
-    }
+  for (int32 k = keep_rotated_; k <= kMaxKeepRotated; k++) {
+    unlink(PSLICE() << path_ << ".old." << k).ignore();
   }
 }
 

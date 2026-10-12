@@ -266,5 +266,20 @@ TEST(Log, FileLogRemovesGenerationsBeyondAReducedLimit) {
   ASSERT_TRUE(td::stat(base + ".old.1").is_error());
   ASSERT_TRUE(td::stat(base + ".old.2").is_error());
   cleanup();
+
+  // A gap in the numbering does not stop the removal: .old.2 is missing, .old.3
+  // and .old.7 must still go.
+  for (auto suffix : {".old", ".old.1", ".old.3", ".old.7"}) {
+    td::write_file(base + suffix, "x").ensure();
+  }
+  {
+    td::FileLog log;
+    log.init(base, 1 << 20, false, 2).ensure();
+  }
+  ASSERT_TRUE(td::stat(base + ".old.1").is_ok());
+  ASSERT_TRUE(td::stat(base + ".old.3").is_error());
+  ASSERT_TRUE(td::stat(base + ".old.7").is_error());
+  td::unlink(base + ".old.7").ignore();
+  cleanup();
 }
 #endif
