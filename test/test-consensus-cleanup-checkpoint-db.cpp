@@ -62,6 +62,8 @@
 #include "td/utils/port/path.h"
 #include "quic/quic-sender.h"
 #include "validator/consensus/consensus-cleanup-checkpoint.h"
+#include "validator/consensus/db-path.h"
+#include "validator/consensus/validator-cleanup.h"
 #include "validator/fabric.h"
 #include "validator/impl/applied-ext-message-cleanup.hpp"
 #include "validator/impl/ext-message-pool.hpp"
@@ -112,6 +114,37 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     last_masterchain_state_ = std::move(head_state);
     recompute_consensus_checkpoint_readiness();
     promise.set_value(bool{consensus_checkpoint_reached_});
+  }
+  // The production cleanup decision for one retired masterchain session: the
+  // manager's oracles (anchored to the checkpoint, or to the GC block while the
+  // key is absent) fed to the production eligibility predicate. The anchor is
+  // nullopt when there are no oracles at all.
+  void cleanup_decision(BlockIdExt retirement, CatchainSeqno retired_cc, bool live,
+                        td::Promise<std::pair<std::optional<BlockIdExt>, bool>> promise) {
+    auto oracles = validator_cleanup_oracles();
+    if (!oracles) {
+      promise.set_value(std::make_pair(std::optional<BlockIdExt>{}, false));
+      return;
+    }
+    consensus::PendingValidatorConsensusDbCleanup record;
+    record.session_id = td::sha256_bits256(PSLICE() << "session-" << retirement.to_str() << "-" << retired_cc);
+    record.retirement_checkpoint = retirement;
+    record.dir_name = consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, retired_cc, record.session_id, "");
+    auto is_live = [live](const ValidatorSessionId&) { return live; };
+    auto eligible = consensus::validator_cleanup_eligible(record, oracles->gc, oracles->ancestor_or_equal_of_gc,
+                                                          oracles->gc_shard_catchain_seqno, is_live,
+                                                          [](const ValidatorSessionId&) { return true; });
+    promise.set_value(std::make_pair(std::optional<BlockIdExt>{oracles->gc}, eligible));
+  }
+  // One GC step that reached its write: the production continuation after the
+  // next GC block's state was loaded. Reports the in-memory GC block afterwards.
+  void gc_step(BlockHandle next, td::Ref<MasterchainState> state, td::Promise<td::Unit> promise) {
+    gc_advancing_ = true;
+    got_next_gc_masterchain_state(std::move(next), std::move(state));
+    promise.set_value(td::Unit());
+  }
+  void gc_block(td::Promise<std::pair<BlockIdExt, bool>> promise) {
+    promise.set_value(std::make_pair(gc_masterchain_handle_->id(), bool{gc_advancing_}));
   }
   void admit(BlockIdExt head, td::Ref<MasterchainState> state, td::Promise<td::Unit> promise) {
     promise.set_result(admit_consensus_checkpoint_head(head, state));
@@ -185,6 +218,16 @@ td::Result<td::Ref<vm::Cell>> derive_state(td::Ref<vm::Cell> prev_root, const Bl
     return td::Status::Error("cannot add the previous block to prev_blocks");
   }
   extra.r1.prev_blocks = std::move(dict).extract_root();
+  // The masterchain catchain seqno grows with the height, so cleanup's r < g
+  // check has something to compare against.
+  block::gen::ValidatorInfo::Record val_info;
+  if (!tlb::csr_unpack(extra.r1.validator_info, val_info)) {
+    return td::Status::Error("cannot unpack ValidatorInfo");
+  }
+  val_info.catchain_seqno = prev.seqno() + 1;
+  if (!tlb::csr_pack(extra.r1.validator_info, val_info)) {
+    return td::Status::Error("cannot pack ValidatorInfo");
+  }
   vm::CellBuilder last_key;
   if (!(last_key.store_bool_bool(true) && last_key.store_long_bool(genesis_lt, 64) &&
         last_key.store_long_bool(genesis.seqno(), 32) && last_key.store_bits_bool(genesis.root_hash) &&
@@ -707,6 +750,98 @@ int main(int argc, char** argv) {
            "validation waits for the replay to reach the checkpoint, needs no rotation, and stops on a conflict");
     EXPECT(admitted == (std::vector<bool>{false, false, true, true}),
            "heads off the checkpoint's branch are refused before installation; descendants and older blocks are not");
+  }
+
+  // 7. Cleanup authority: anchored to the checkpoint while GC is still at
+  //    genesis; the GC block only while the key is absent; nothing when a present
+  //    checkpoint's state does not match it.
+  {
+    auto root = fresh_root(base, "oracles");
+    EXPECT(seed_db(root, chain, {}).is_ok(), "seed the oracle database");
+    using Decision = std::pair<std::optional<BlockIdExt>, bool>;
+    std::vector<Decision> with_checkpoint, without_checkpoint, mismatched;
+    auto r = run_scenario(
+        root, make_options(chain),
+        [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
+            td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
+          auto handle = [&](const std::string& name) { return create_empty_block_handle(chain[name].id); };
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_gc, handle("B0"),
+                                  td::Ref<MasterchainState>{chain["B0"].state});
+          auto decide = [&](const std::string& name, CatchainSeqno cc, bool live) {
+            return td::actor::ask(probe, &ConsensusCheckpointDbProbe::cleanup_decision, chain[name].id, cc, live);
+          };
+          // GC fallback while the key is absent.
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::install_init_result, handle("B6"),
+                                  td::Ref<MasterchainState>{chain["B6"].state}, BlockHandle{},
+                                  td::Ref<MasterchainState>{});
+          without_checkpoint.push_back(co_await decide("B0", 0, false));
+          without_checkpoint.push_back(co_await decide("B2", 1, false));
+          // The loaded checkpoint B4 (g = 4) with GC still at genesis.
+          auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::install_init_result, handle("B6"),
+                                  td::Ref<MasterchainState>{chain["B6"].state}, cp.handle, cp.state);
+          with_checkpoint.push_back(co_await decide("B2", 1, false));  // r < g, an ancestor
+          with_checkpoint.push_back(co_await decide("B4", 3, false));  // equal to the anchor
+          with_checkpoint.push_back(co_await decide("B2", 4, false));  // r == g: the current set
+          with_checkpoint.push_back(co_await decide("B5", 1, false));  // above the anchor
+          with_checkpoint.push_back(co_await decide("F4", 1, false));  // off its branch
+          with_checkpoint.push_back(co_await decide("B2", 1, true));   // live
+          // A present checkpoint whose state is not its own.
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::install_init_result, handle("B6"),
+                                  td::Ref<MasterchainState>{chain["B6"].state}, cp.handle,
+                                  td::Ref<MasterchainState>{chain["B5"].state});
+          mismatched.push_back(co_await decide("B2", 1, false));
+          co_return td::Unit{};
+        });
+    EXPECT(r.is_ok(), "oracle scenario ran: " << r);
+    auto gc0 = std::optional<BlockIdExt>{chain["B0"].id};
+    auto cp4 = std::optional<BlockIdExt>{chain["B4"].id};
+    EXPECT(without_checkpoint == (std::vector<Decision>{{gc0, false}, {gc0, false}}),
+           "without a checkpoint, cleanup is anchored to the GC block at genesis and deletes nothing");
+    EXPECT(with_checkpoint ==
+               (std::vector<Decision>{{cp4, true}, {cp4, true}, {cp4, false}, {cp4, false}, {cp4, false}, {cp4, false}}),
+           "with the checkpoint, sessions retired at or below it on its branch with r < g are deletable while GC "
+           "stays at genesis; r == g, above, off-branch and live sessions are not");
+    EXPECT(mismatched == (std::vector<Decision>{{std::nullopt, false}}),
+           "a checkpoint whose state does not match it gives no cleanup authority, not the GC fallback");
+  }
+
+  // 8. The GC write never passes the checkpoint: a GC step to B5 with the
+  //    checkpoint at B4 is not persisted; a step to B4 (equal) is.
+  {
+    auto root = fresh_root(base, "gc-boundary");
+    Seed seed;
+    seed.gc = "B3";
+    EXPECT(seed_db(root, chain, seed).is_ok(), "seed the GC boundary database");
+    std::vector<std::pair<BlockIdExt, bool>> memory;
+    std::vector<BlockIdExt> durable;
+    auto r = run_scenario(
+        root, make_options(chain),
+        [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
+            td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
+          auto handle = [&](const std::string& name) { return create_empty_block_handle(chain[name].id); };
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_gc, handle("B3"),
+                                  td::Ref<MasterchainState>{chain["B3"].state});
+          auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::install_init_result, handle("B6"),
+                                  td::Ref<MasterchainState>{chain["B6"].state}, cp.handle, cp.state);
+          for (const auto& name : {"B5", "B4"}) {
+            co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::gc_step, handle(name),
+                                    td::Ref<MasterchainState>{chain[name].state});
+            // Let a dispatched GC write and its continuation finish.
+            for (int i = 0; i < 20; i++) {
+              co_await td::actor::ask(db, &Db::get_gc_masterchain_block);
+            }
+            memory.push_back(co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::gc_block));
+            durable.push_back(co_await td::actor::ask(db, &Db::get_gc_masterchain_block));
+          }
+          co_return td::Unit{};
+        });
+    EXPECT(r.is_ok(), "GC boundary scenario ran: " << r);
+    EXPECT(durable == (std::vector<BlockIdExt>{chain["B3"].id, chain["B4"].id}),
+           "the GC write to B5 past the checkpoint B4 was refused; the write to B4 itself was persisted");
+    EXPECT(memory == (std::vector<std::pair<BlockIdExt, bool>>{{chain["B3"].id, false}, {chain["B4"].id, false}}),
+           "the refused GC step left the in-memory GC block and released the advance");
   }
 
   td::rmrf(base).ignore();
