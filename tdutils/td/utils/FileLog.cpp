@@ -36,6 +36,9 @@ Status FileLog::init(string path, int64 rotate_threshold, bool redirect_stderr, 
   if (path == path_) {
     set_rotate_threshold(rotate_threshold);
     set_keep_rotated(keep_rotated);
+    // A smaller kept number takes effect now, not at the next rotation, which
+    // a quiet log may never reach.
+    prune_rotated();
     return Status::OK();
   }
 

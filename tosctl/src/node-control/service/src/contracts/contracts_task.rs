@@ -27,6 +27,11 @@ const MIN_WALLET_BALANCE: u64 = 5_000_000_000; // 5 TOS
 const WALLET_GAS: u64 = 100_000_000; // 0.1 TOS
 /// Amount to top up a wallet if its balance is below the minimum threshold.
 const TOP_UP_AMOUNT: u64 = 10_000_000_000; // 10 TOS
+// Balances the master wallet needs to deploy, or to top up, one wallet: the
+// amount plus the gas of the sending message. Saturating, so a later change of
+// the constants can only make a payment unaffordable, never wrap around.
+const DEPLOY_REQUIRED: u64 = DEPLOY_AMOUNT.saturating_add(WALLET_GAS);
+const TOP_UP_REQUIRED: u64 = TOP_UP_AMOUNT.saturating_add(WALLET_GAS);
 
 pub(crate) async fn run(
     cancellation_ctx: CancellationCtx,
@@ -95,7 +100,7 @@ impl ContractsMonitor {
                 wallet,
                 MIN_WALLET_BALANCE as f64 / 1e9,
                 *master_balance as f64 / 1e9,
-                (TOP_UP_AMOUNT + WALLET_GAS) as f64 / 1e9,
+                TOP_UP_REQUIRED as f64 / 1e9,
             ),
         }
         *standby = Some(condition);
@@ -276,11 +281,8 @@ impl ContractsMonitor {
         );
 
         let master_balance = self.master_wallet.balance().await.context("master wallet balance")?;
-        if master_balance < DEPLOY_AMOUNT + WALLET_GAS {
-            return Err(Self::insufficient_master_balance_error(
-                master_balance,
-                DEPLOY_AMOUNT + WALLET_GAS,
-            ));
+        if master_balance < DEPLOY_REQUIRED {
+            return Err(Self::insufficient_master_balance_error(master_balance, DEPLOY_REQUIRED));
         }
 
         let si = wallet.state_init().await?;
@@ -355,11 +357,8 @@ impl ContractsMonitor {
 
         let master_balance =
             self.master_wallet.balance().await.context("get master wallet balance")?;
-        if master_balance < DEPLOY_AMOUNT + WALLET_GAS {
-            return Err(Self::insufficient_master_balance_error(
-                master_balance,
-                DEPLOY_AMOUNT + WALLET_GAS,
-            ));
+        if master_balance < DEPLOY_REQUIRED {
+            return Err(Self::insufficient_master_balance_error(master_balance, DEPLOY_REQUIRED));
         }
 
         if pool.state_init().is_none() {
@@ -424,7 +423,7 @@ impl ContractsMonitor {
             // way, so a master wallet that cannot afford one is waited out.
             let master_balance =
                 self.master_wallet.balance().await.context("get master wallet balance")?;
-            if master_balance < TOP_UP_AMOUNT + WALLET_GAS {
+            if master_balance < TOP_UP_REQUIRED {
                 let wallet = addr.to_string();
                 self.enter_standby(Standby::TopUpUnaffordable { wallet, master_balance });
                 return Ok(false);

@@ -281,5 +281,21 @@ TEST(Log, FileLogRemovesGenerationsBeyondAReducedLimit) {
   ASSERT_TRUE(td::stat(base + ".old.7").is_error());
   td::unlink(base + ".old.7").ignore();
   cleanup();
+
+  // Reinitializing the same log with a smaller number prunes at once: a quiet
+  // log may never rotate again.
+  {
+    td::FileLog log;
+    log.init(base, 1 << 20, false, 3).ensure();
+    for (auto suffix : {".old", ".old.1", ".old.2"}) {
+      td::write_file(base + suffix, "x").ensure();
+    }
+    log.init(log.get_path().str(), 1 << 20, false, 1).ensure();
+    ASSERT_EQ(1, log.get_keep_rotated());
+    ASSERT_TRUE(td::stat(base + ".old").is_ok());
+    ASSERT_TRUE(td::stat(base + ".old.1").is_error());
+    ASSERT_TRUE(td::stat(base + ".old.2").is_error());
+  }
+  cleanup();
 }
 #endif
