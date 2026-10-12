@@ -154,8 +154,15 @@ class StateConfig : public ConfigHolder {
 };
 class State : public MasterchainStateQ {
  public:
-  State(BlockIdExt id, Snapshot snapshot)
-      : MasterchainStateQ(id, vm::CellBuilder{}.finalize_novm()), snapshot_(std::move(snapshot)) {
+  // `ancestors` are the masterchain blocks this state verifies as strict
+  // ancestors (its prev_blocks), for the consensus cleanup checkpoint checks.
+  State(BlockIdExt id, Snapshot snapshot, std::set<BlockIdExt> ancestors = {})
+      : MasterchainStateQ(id, vm::CellBuilder{}.finalize_novm())
+      , snapshot_(std::move(snapshot))
+      , ancestors_(std::move(ancestors)) {
+  }
+  bool check_old_mc_block_id(const BlockIdExt& id, bool strict) const override {
+    return ancestors_.contains(id) || (!strict && id == get_block_id());
   }
   td::Ref<block::ValidatorSet> get_total_validator_set(int offset) const override {
     return offset < 0 ? snapshot_.previous : offset > 0 ? snapshot_.next : snapshot_.current;
@@ -199,6 +206,7 @@ class State : public MasterchainStateQ {
 
  private:
   Snapshot snapshot_;
+  std::set<BlockIdExt> ancestors_;
 };
 std::recursive_mutex observation_mutex;
 struct ReceivedCandidate {
@@ -360,6 +368,68 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   void wait_block_data_short(BlockIdExt, td::uint32, td::Timestamp, td::Promise<td::Ref<BlockData>> promise) override {
     held_data_requests_.push_back(std::move(promise));
   }
+  // Installs a checkpoint as the startup loader's result does (started()).
+  void install_checkpoint(BlockIdExt id, td::Promise<> promise) {
+    install_loaded_consensus_cleanup_checkpoint(create_empty_block_handle(id), td::make_ref<State>(id, Snapshot{}));
+    promise.set_value(td::Unit());
+  }
+  // Installs a checkpoint as an acknowledged checkpoint write does, at runtime.
+  void advance_checkpoint(BlockIdExt id, td::Promise<> promise) {
+    if (!consensus_checkpoint_loaded_) {
+      install_loaded_consensus_cleanup_checkpoint({}, {});
+    }
+    install_consensus_cleanup_checkpoint(create_empty_block_handle(id), td::make_ref<State>(id, Snapshot{}));
+    promise.set_value(td::Unit());
+  }
+  // A new applied masterchain block through the production admission path.
+  void apply(Snapshot snapshot, BlockIdExt id, std::set<BlockIdExt> ancestors, td::Promise<> promise) {
+    if (!consensus_checkpoint_loaded_) {
+      install_loaded_consensus_cleanup_checkpoint({}, {});
+    }
+    last_masterchain_seqno_ = id.seqno() - 1;
+    auto handle = create_empty_block_handle(id);
+    handle->set_is_key_block(false);
+    handle->set_unix_time(static_cast<UnixTime>(td::Clocks::system()));
+    handle->flushed_upto(handle->version());
+    new_block_cont(handle, td::make_ref<State>(id, std::move(snapshot), std::move(ancestors)), std::move(promise));
+  }
+  // The shard client's durable advance, through the production entry point.
+  void shard_client_advanced(Snapshot snapshot, BlockIdExt id, std::set<BlockIdExt> ancestors, td::Promise<> promise) {
+    auto handle = create_empty_block_handle(id);
+    handle->set_is_key_block(false);
+    handle->set_unix_time(static_cast<UnixTime>(td::Clocks::system()));
+    handle->set_applied();
+    handle->flushed_upto(handle->version());
+    update_shard_client_block_handle(handle, td::make_ref<State>(id, std::move(snapshot), std::move(ancestors)),
+                                     std::move(promise));
+  }
+  void retry_checkpoint(td::Promise<> promise) {
+    try_advance_consensus_cleanup_checkpoint();
+    promise.set_value(td::Unit());
+  }
+  void checkpoint(td::Promise<std::tuple<std::optional<BlockIdExt>, bool, BlockIdExt>> promise) {
+    promise.set_value(
+        std::make_tuple(consensus_checkpoint_.installed(), bool{consensus_checkpoint_reached_}, last_masterchain_block_id_));
+  }
+  void complete_sync(td::Promise<> promise) {
+    sync_complete({});
+    promise.set_value(td::Unit());
+  }
+  void validators(td::Promise<std::pair<std::vector<ValidatorSessionId>, std::vector<ValidatorSessionId>>> promise) {
+    std::vector<ValidatorSessionId> active, tentative;
+    for (const auto& [id, entry] : validator_groups_)
+      active.push_back(id);
+    for (const auto& [id, entry] : next_validator_groups_)
+      tentative.push_back(id);
+    promise.set_value(std::make_pair(std::move(active), std::move(tentative)));
+  }
+  void closed(td::Promise<std::set<ValidatorSessionId>> promise) {
+    promise.set_value(std::set<ValidatorSessionId>(closed_.begin(), closed_.end()));
+  }
+  void consensus_db_closed(ValidatorSessionId session_id, td::uint64 generation, std::string dir_name) override {
+    closed_.insert(session_id);
+    ValidatorManagerImpl::consensus_db_closed(session_id, generation, std::move(dir_name));
+  }
   void preflight(td::Promise<std::optional<std::set<adnl::AdnlNodeIdShort>>> promise) {
     promise.set_value(get_twostep_relay_snapshot());
   }
@@ -383,6 +453,7 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   }
 
  private:
+  std::set<ValidatorSessionId> closed_;
   std::vector<td::Promise<td::Ref<ShardState>>> held_state_requests_;
   std::vector<td::Promise<td::Ref<BlockData>>> held_data_requests_;
 };
@@ -490,6 +561,133 @@ class Fixture {
     wait_for([&] { return done.load(); }, "manager advance did not complete");
     // An equal historical Bus/overlay count is not evidence that this update's
     // new groups have started. Wait for every registered live session too.
+    std::map<ValidatorSessionId, size_t> required;
+    for (const auto& id : entries())
+      ++required[id];
+    for (const auto& id : entries(true))
+      ++required[id];
+    wait_for(
+        [&] {
+          std::map<ValidatorSessionId, size_t> observed;
+          size_t expected_overlays = 0;
+          for (const auto& bus : buses) {
+            ++observed[bus->session_id];
+            expected_overlays +=
+                (bus->is_validator() || bus->config.observers_in_private_overlay()) + bus->config.enable_block_sync();
+          }
+          return overlays.size() == expected_overlays &&
+                 std::all_of(required.begin(), required.end(),
+                             [&](const auto& row) { return observed[row.first] >= row.second; });
+        },
+        "registered sessions or their overlays did not start");
+  }
+  // ---- consensus cleanup checkpoint ----
+  static BlockIdExt main_block(BlockSeqno height) {
+    return BlockIdExt{masterchainId, shardIdAll, height, hash(PSTRING() << "root-" << height),
+                      hash(PSTRING() << "file-" << height)};
+  }
+  // A block at `height` on a branch that leaves the main chain after `fork_point`.
+  static BlockIdExt fork_block(BlockSeqno height) {
+    return BlockIdExt{masterchainId, shardIdAll, height, hash(PSTRING() << "fork-root-" << height),
+                      hash(PSTRING() << "fork-file-" << height)};
+  }
+  static std::set<BlockIdExt> main_ancestors(BlockSeqno height) {
+    std::set<BlockIdExt> result;
+    for (BlockSeqno h = 1; h < height; ++h)
+      result.insert(main_block(h));
+    return result;
+  }
+  static std::set<BlockIdExt> fork_ancestors(BlockSeqno height, BlockSeqno fork_point) {
+    auto result = main_ancestors(fork_point + 1);
+    for (BlockSeqno h = fork_point + 1; h < height; ++h)
+      result.insert(fork_block(h));
+    return result;
+  }
+  template <class T, class Call>
+  td::Result<T> query(Call call) {
+    std::optional<td::Result<T>> result;
+    scheduler_.run_in_context(
+        [&] { call(td::PromiseCreator::lambda([&](td::Result<T> value) { result = std::move(value); })); });
+    wait_for([&] { return result.has_value(); }, "manager query did not complete");
+    return std::move(*result);
+  }
+  td::Status apply_head(Snapshot snapshot, BlockIdExt id, std::set<BlockIdExt> ancestors) {
+    auto r = query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::apply, std::move(snapshot), id, std::move(ancestors),
+                              std::move(promise));
+    });
+    if (r.is_error())
+      return r.move_as_error();
+    wait_registered_started();
+    return td::Status::OK();
+  }
+  void install_checkpoint(BlockIdExt id, bool at_runtime = false) {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_,
+                              at_runtime ? &TwostepManagerProbe::advance_checkpoint
+                                         : &TwostepManagerProbe::install_checkpoint,
+                              id, std::move(promise));
+    }).ensure();
+    pump();
+  }
+  std::tuple<std::optional<BlockIdExt>, bool, BlockIdExt> checkpoint() {
+    return query<std::tuple<std::optional<BlockIdExt>, bool, BlockIdExt>>([&](auto promise) {
+             td::actor::send_closure(manager_, &TwostepManagerProbe::checkpoint, std::move(promise));
+           })
+        .move_as_ok();
+  }
+  void complete_sync() {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::complete_sync, std::move(promise));
+    }).ensure();
+    pump();
+  }
+  std::pair<std::vector<ValidatorSessionId>, std::vector<ValidatorSessionId>> validators() {
+    return query<std::pair<std::vector<ValidatorSessionId>, std::vector<ValidatorSessionId>>>([&](auto promise) {
+             td::actor::send_closure(manager_, &TwostepManagerProbe::validators, std::move(promise));
+           })
+        .move_as_ok();
+  }
+  std::set<ValidatorSessionId> closed() {
+    return query<std::set<ValidatorSessionId>>([&](auto promise) {
+             td::actor::send_closure(manager_, &TwostepManagerProbe::closed, std::move(promise));
+           })
+        .move_as_ok();
+  }
+  // Drops the fixture's own references to every bus, so a retired group's bus
+  // can finish stopping (a bus stops only once its last reference is gone).
+  void release_buses() {
+    scheduler_.run_in_context([&] {
+      std::lock_guard lock(observation_mutex);
+      buses.clear();
+      observed_buses_.clear();
+    });
+  }
+  size_t validator_buses() {
+    pump();
+    return std::count_if(buses.begin(), buses.end(), [](const auto& bus) { return bus->is_validator(); });
+  }
+  template <class Predicate>
+  bool eventually(Predicate ready) {
+    for (unsigned round = 0; round < 1000; ++round) {
+      pump();
+      if (ready())
+        return true;
+    }
+    return false;
+  }
+  void shard_client_advanced(Snapshot snapshot, BlockIdExt id, std::set<BlockIdExt> ancestors) {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::shard_client_advanced, std::move(snapshot), id,
+                              std::move(ancestors), std::move(promise));
+    }).ensure();
+  }
+  void retry_checkpoint() {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::retry_checkpoint, std::move(promise));
+    }).ensure();
+  }
+  void wait_registered_started() {
     std::map<ValidatorSessionId, size_t> required;
     for (const auto& id : entries())
       ++required[id];
@@ -991,4 +1189,112 @@ TEST(TwostepWiring, LegacyTotalSetSwitchReusesBroadTentative) {
   for (const auto& bus : f.buses)
     ASSERT_TRUE(!bus->all_current_validators);
   LOG(INFO) << "legacy rotation reused tentative=" << tentative[0] << " with broad first hops";
+}
+
+// ---- consensus cleanup checkpoint: the production group gates ----------------
+//
+// Validator groups (current and tentative) are selected, built and activated
+// only once the applied masterchain head is the consensus cleanup checkpoint or
+// a verified descendant. Observer groups carry no votes and are not gated, so
+// these tests look at validator groups and validator buses only.
+
+// Startup replay from an older init block: nothing is built or activated below
+// the checkpoint, sync completion activates nothing, and reaching the checkpoint
+// starts the groups without any rotation.
+TEST(TwostepWiring, CheckpointGatesValidatorGroupsUntilTheHeadReachesIt) {
+  Fixture f;
+  f.hold(f.current, 0);
+  f.hold(f.old, 0);
+  f.hold(f.next, 0);
+  f.install_checkpoint(Fixture::main_block(5));
+  for (BlockSeqno h : {3u, 4u}) {
+    ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(h), Fixture::main_ancestors(h)).is_ok());
+    auto [active, tentative] = f.validators();
+    ASSERT_TRUE(active.empty());
+    ASSERT_TRUE(tentative.empty());
+    ASSERT_EQ(f.validator_buses(), 0u);
+    ASSERT_TRUE(!std::get<1>(f.checkpoint()));
+  }
+  f.complete_sync();
+  ASSERT_EQ(f.validator_buses(), 0u);
+  ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(5), Fixture::main_ancestors(5)).is_ok());
+  auto [active, tentative] = f.validators();
+  ASSERT_TRUE(!active.empty());
+  ASSERT_TRUE(!tentative.empty());
+  ASSERT_TRUE(f.validator_buses() > 0);
+  ASSERT_TRUE(std::get<1>(f.checkpoint()));
+}
+
+// A head that excludes the checkpoint -- at its height or above it -- is refused
+// before it is installed; the head and the running groups are unchanged.
+TEST(TwostepWiring, CheckpointRefusesAConflictingHeadBeforeInstallation) {
+  Fixture f;
+  f.hold(f.current, 0);
+  f.hold(f.old, 0);
+  f.install_checkpoint(Fixture::main_block(5));
+  ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(5), Fixture::main_ancestors(5)).is_ok());
+  auto before = f.validators();
+  ASSERT_TRUE(!before.first.empty());
+  ASSERT_TRUE(f.apply_head(f.initial(), Fixture::fork_block(5), Fixture::fork_ancestors(5, 4)).is_error());
+  ASSERT_TRUE(f.apply_head(f.initial(), Fixture::fork_block(6), Fixture::fork_ancestors(6, 3)).is_error());
+  ASSERT_TRUE(std::get<2>(f.checkpoint()) == Fixture::main_block(5));
+  ASSERT_TRUE(std::get<1>(f.checkpoint()));
+  ASSERT_TRUE(f.validators() == before);
+  ASSERT_TRUE(f.closed().empty());
+  // A descendant is admitted.
+  ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(6), Fixture::main_ancestors(6)).is_ok());
+  ASSERT_TRUE(std::get<1>(f.checkpoint()));
+}
+
+// A conflict found only after the head was installed (here: a checkpoint is
+// installed that the running head does not descend from) stops every existing
+// validator group, tentative ones included: each one's bus is stopped and its
+// database closed, and none is selected again.
+TEST(TwostepWiring, CheckpointConflictFoundAfterInstallationStopsEveryGroup) {
+  Fixture f;
+  f.hold(f.current, 0);
+  f.hold(f.old, 0);
+  f.hold(f.next, 0);
+  ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(3), Fixture::main_ancestors(3)).is_ok());
+  auto [active, tentative] = f.validators();
+  ASSERT_TRUE(!active.empty());
+  ASSERT_TRUE(!tentative.empty());
+  std::set<ValidatorSessionId> running(active.begin(), active.end());
+  running.insert(tentative.begin(), tentative.end());
+  f.install_checkpoint(Fixture::fork_block(2), /*at_runtime=*/true);
+  ASSERT_TRUE(!std::get<1>(f.checkpoint()));
+  auto after = f.validators();
+  ASSERT_TRUE(after.first.empty());
+  ASSERT_TRUE(after.second.empty());
+  f.release_buses();
+  ASSERT_TRUE(f.eventually([&] {
+    auto closed = f.closed();
+    return std::includes(closed.begin(), closed.end(), running.begin(), running.end());
+  }));
+}
+
+// The checkpoint advances through the production shard-client entry point only
+// once the applied head covers the candidate: an advancement offered during
+// replay waits, and activates nothing; once written and installed, readiness is
+// recomputed and the running groups stay.
+TEST(TwostepWiring, CheckpointAdvanceDuringReplayWaitsForTheHead) {
+  Fixture f;
+  f.hold(f.current, 0);
+  f.hold(f.old, 0);
+  f.install_checkpoint(Fixture::main_block(5));
+  ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(3), Fixture::main_ancestors(3)).is_ok());
+  f.shard_client_advanced(f.initial(), Fixture::main_block(7), Fixture::main_ancestors(7));
+  f.retry_checkpoint();
+  ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{Fixture::main_block(5)});
+  f.complete_sync();
+  ASSERT_EQ(f.validator_buses(), 0u);
+  for (BlockSeqno h = 4; h <= 7; ++h)
+    ASSERT_TRUE(f.apply_head(f.initial(), Fixture::main_block(h), Fixture::main_ancestors(h)).is_ok());
+  ASSERT_TRUE(!f.validators().first.empty());
+  f.retry_checkpoint();
+  ASSERT_TRUE(f.eventually(
+      [&] { return std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{Fixture::main_block(7)}; }));
+  ASSERT_TRUE(std::get<1>(f.checkpoint()));
+  ASSERT_TRUE(!f.validators().first.empty());
+  ASSERT_TRUE(f.closed().empty());
 }
