@@ -335,6 +335,20 @@ class StartupCatchupManagerProbe : public ValidatorManagerImpl {
     completed_prestart_sync();
     promise.set_value(td::Unit());
   }
+  // Build a group for the current masterchain set directly, past every caller's gate.
+  void build_directly(td::Promise<bool> promise) {
+    auto set = last_masterchain_state_->get_validator_set(ShardIdFull{masterchainId});
+    auto selected = last_masterchain_state_->get_selected_new_consensus_config(masterchainId);
+    consensus::ValidatorSessionOptions opts{last_masterchain_state_->get_consensus_config()};
+    auto group = create_validator_group(hash("direct"), ShardIdFull{masterchainId}, set, 0, selected.value().config,
+                                        opts, false);
+    bool built = !group.empty();
+    if (built) {
+      td::actor::send_closure(group, &IValidatorGroup::destroy);
+      group.release();
+    }
+    promise.set_value(std::move(built));
+  }
   void sync_done(td::Promise<td::Unit> promise) {
     sync_complete({});
     promise.set_value(td::Unit());
@@ -412,7 +426,7 @@ namespace {
 
 class Fixture {
  public:
-  Epoch old{1}, current{2}, next{3};
+  Epoch old{1}, current{2}, next{3}, outsider{4, 1};
   std::shared_ptr<Journal> journal = std::make_shared<Journal>();
 
   Fixture() : root_(td::mkdtemp("/tmp", "startup-catchup-manager").move_as_ok()), scheduler_({1}) {
@@ -522,6 +536,11 @@ class Fixture {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::complete_prestart, std::move(p));
     });
   }
+  bool build_directly() {
+    return ask<bool>([&](td::Promise<bool> p) {
+      td::actor::send_closure(manager_, &StartupCatchupManagerProbe::build_directly, std::move(p));
+    });
+  }
   void sync_done() {
     ask<td::Unit>([&](td::Promise<td::Unit> p) {
       td::actor::send_closure(manager_, &StartupCatchupManagerProbe::sync_done, std::move(p));
@@ -622,6 +641,23 @@ TEST(StartupCatchupManager, T12_FenceThenExactGroupsBeforeShardClient) {
   ASSERT_TRUE(f.wait_event("create_session " + expected.to_hex(), 10.0));
 }
 
+// T12 (final defence). The group factory itself refuses while the mode is active, even
+// when called past the group update's own gates; once the mode ended the same call
+// builds the group.
+TEST(StartupCatchupManager, T12_FactoryRefusesWhileFenced) {
+  Fixture f;
+  f.hold(f.current, 0);
+  f.set_tip(f.snapshot(f.current, 1), 10, kStale);
+  ASSERT_TRUE(f.decide());
+  ASSERT_TRUE(!f.build_directly());
+  {
+    std::lock_guard<std::mutex> lock(f.journal->mu);
+    ASSERT_EQ(0u, f.journal->validator_groups.size());
+  }
+  f.end(ExitReason::Fresh);
+  ASSERT_TRUE(f.build_directly());
+}
+
 // T13. The old signing key has expired and only the new set's key is held: the node
 // is not a member of the restored set, yet it enters the mode; the fence holds while
 // the import crosses into the set that contains it, and the mode does not end early.
@@ -646,7 +682,9 @@ TEST(StartupCatchupManager, T13_NewKeyHolderEntersAndStaysFenced) {
 // paths again neither re-enter it nor start discovery.
 TEST(StartupCatchupManager, T14_NoReentry) {
   Fixture f;
-  f.hold(f.current, 0);
+  // A key of no set at all: no validator or observer group is built when the mode
+  // ends, so nothing but the terminal state can refuse a second entry.
+  f.hold(f.outsider, 0);
   f.set_tip(f.snapshot(f.current, 1), 10, kStale);
   ASSERT_TRUE(f.decide());
   f.end(ExitReason::NoVerifiedSuccessor);
@@ -678,7 +716,9 @@ TEST(StartupCatchupManager, T28_InventoryRunsOnTheFinalState) {
   f.hold(f.current, 0);
   auto first = f.snapshot(f.current, 1);
   f.set_tip(first, 10, kFresh);
-  auto session = f.session_of(first);
+  // A session of the previous process this node never reopens: a directory only the
+  // inventory can record (a group this process builds is recorded when it retires).
+  auto session = f.session_of(f.snapshot(f.old, 1));
   f.make_session_dir(session, 1);
   ASSERT_TRUE(!f.decide());  // Done already
   f.advance(first, 10, kFresh);
@@ -697,7 +737,9 @@ TEST(StartupCatchupManager, T29_InventoryAfterLegacyImport) {
   f.hold(f.current, 0);
   auto first = f.snapshot(f.current, 1);
   f.set_tip(first, 10, kStale);
-  auto session = f.session_of(first);
+  // A session of the previous process this node never reopens: a directory only the
+  // inventory can record (a group this process builds is recorded when it retires).
+  auto session = f.session_of(f.snapshot(f.old, 1));
   f.make_session_dir(session, 1);
   ASSERT_TRUE(f.decide());
   f.advance(first, 10, kStale);
