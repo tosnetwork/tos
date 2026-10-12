@@ -11,6 +11,9 @@ on:
       - 'validator/consensus/types.cpp'
       - 'validator-engine/validator-engine.cpp'
       - 'test/test-health-*.cpp'
+      - 'test/test-sync-stall-alerts.cpp'
+      - 'validator/sync-stall-alerts.h'
+      - 'validator/downloaders/wait-block-data.cpp'
       - 'validator-engine/validator-engine.hpp'
       - 'CMakeLists.txt'
       - '.github/workflows/node-health-monitor.yml'
@@ -82,7 +85,7 @@ jobs:
         run: |
           ccache -M 2G
           cmake -S . -B build-health -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SKIP_INSTALL_RULES=ON
-          cmake --build build-health --target test-http-server-limits test-http-listen-address test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j"$(nproc)"
+          cmake --build build-health --target test-http-server-limits test-http-listen-address test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-sync-stall-alerts test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j"$(nproc)"
           ccache -s
       - name: Run native behavior tests
         run: |
@@ -99,6 +102,7 @@ jobs:
           build-health/test-health-source-policy
           build-health/test-health-publisher-bench
           build-health/test-metrics-label-bound
+          build-health/test-sync-stall-alerts
           build-health/crypto/pq/test-pq-consensus
           python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
           build-health/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv

@@ -263,7 +263,10 @@ void WaitBlockData::failed_to_get_block_data_from_net(td::Status reason) {
     LOG(WARNING) << "still cannot get block " << handle_->id() << " data from net after " << net_failures_
                  << " consecutive failures: " << reason;
   }
-  if (reason.code() == ErrorCode::notready) {
+  // Only the first failure of another kind is a warning of its own; repeats are
+  // retried every 0.1 s, so they stay at DEBUG and the rate-limited line above
+  // reports them.
+  if (reason.code() == ErrorCode::notready || net_failures_ > 1) {
     LOG(DEBUG) << "failed to get block " << handle_->id() << " data from net: " << reason;
   } else {
     LOG(WARNING) << "failed to get block " << handle_->id() << " data from net: " << reason;
