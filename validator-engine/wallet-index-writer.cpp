@@ -1446,7 +1446,10 @@ std::mutex g_run_marker_mutex;
 std::atomic<bool> g_run_cleared{false};
 // Blocks the hook could not queue because the worker was too far behind.
 std::atomic<uint64_t> g_dropped_blocks{0};
-std::atomic<uint64_t> g_dropped_blocks_logged{0};
+// What the last drop warning reported, and when (take_wc0_index_drop_report).
+std::mutex g_drop_report_mutex;
+uint64_t g_dropped_blocks_reported = 0;                                   // guarded by g_drop_report_mutex
+std::optional<std::chrono::steady_clock::time_point> g_last_drop_warning;  // guarded by g_drop_report_mutex
 
 std::atomic<bool> g_marking_fault{false};
 std::mutex g_marking_stall_mutex;
@@ -1487,11 +1490,17 @@ td::Status record_run_active(WalletIndexDb& db) {
 // never reaches (dropped, or the node stopped first) stays marked, startup
 // recovery re-indexes it, and RPC reports the index unfinished until then.
 bool mark_queued_blocks(const std::vector<MarkedBlock>& block_ids) {
-  auto dropped = g_dropped_blocks.load();
-  auto logged = g_dropped_blocks_logged.exchange(dropped);
-  if (dropped > logged) {
-    LOG(WARNING) << "wc0-index: indexing fell " << kWc0IndexQueueCapacity << " blocks behind; " << dropped - logged
-                 << " block(s) left marked for re-indexing at the next start";
+  {
+    auto dropped = g_dropped_blocks.load();
+    std::lock_guard<std::mutex> guard(g_drop_report_mutex);
+    auto newly_dropped = take_wc0_index_drop_report(dropped, g_dropped_blocks_reported, std::chrono::steady_clock::now(),
+                                                    g_last_drop_warning, kWc0IndexDropWarningInterval);
+    if (newly_dropped > 0) {
+      LOG(WARNING) << "wc0-index: indexing fell " << kWc0IndexQueueCapacity << " blocks behind; " << newly_dropped
+                   << " more block(s) left marked for re-indexing at the next start (" << dropped
+                   << " since start; this warning repeats at most every "
+                   << std::chrono::duration_cast<std::chrono::seconds>(kWc0IndexDropWarningInterval).count() << " s)";
+    }
   }
   auto* db = wallet_index_db();
   if (db == nullptr) {
@@ -1981,6 +1990,22 @@ void set_wc0_index_marking_stall_for_testing(bool stall) {
 
 void set_wc0_index_fetch_timeout_for_testing(std::chrono::milliseconds limit) {
   g_fetch_timeout_ms.store(limit.count());
+}
+
+uint64_t take_wc0_index_drop_report(uint64_t dropped_total, uint64_t& reported,
+                                    std::chrono::steady_clock::time_point now,
+                                    std::optional<std::chrono::steady_clock::time_point>& last_warning,
+                                    std::chrono::steady_clock::duration interval) {
+  if (dropped_total <= reported) {
+    return 0;
+  }
+  if (last_warning.has_value() && now - *last_warning < interval) {
+    return 0;
+  }
+  auto newly_dropped = dropped_total - reported;
+  reported = dropped_total;
+  last_warning = now;
+  return newly_dropped;
 }
 
 void set_wc0_index_marking_fault_for_testing(bool fail) {
