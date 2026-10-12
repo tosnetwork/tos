@@ -49,6 +49,13 @@
 //    it, and a head on a branch that excludes it is refused;
 //  - truncation and hardfork rollback below it, or off its branch, are refused.
 //
+// Importing persistent states or archives into an existing database, and the
+// reinitialization path, never write the checkpoint. Restoring a whole older
+// database backup replaces the checkpoint along with everything else and cannot
+// be detected here: it is not a safe rollback for the same signing identity, for
+// the same reason a truncation below the checkpoint is refused. Copying a
+// consensus directory into a database without the checkpoint is unsupported.
+//
 // This header holds the pure parts (encoding, persistence helpers over a
 // KeyValue, the head/rollback relation and the advancement state machine), so
 // the safety logic is exercised by tests with the same functions the node uses.
