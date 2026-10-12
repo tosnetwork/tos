@@ -263,13 +263,10 @@ void WaitBlockData::failed_to_get_block_data_from_net(td::Status reason) {
     LOG(WARNING) << "still cannot get block " << handle_->id() << " data from net after " << net_failures_
                  << " consecutive failures: " << reason;
   }
-  // Only the first failure of another kind is a warning of its own; repeats are
-  // retried every 0.1 s, so they stay at DEBUG and the rate-limited line above
-  // reports them.
-  if (reason.code() == ErrorCode::notready || net_failures_ > 1) {
-    LOG(DEBUG) << "failed to get block " << handle_->id() << " data from net: " << reason;
-  } else {
+  if (block_data_failure_warns(reason.code() == ErrorCode::notready, net_non_routine_warned_)) {
     LOG(WARNING) << "failed to get block " << handle_->id() << " data from net: " << reason;
+  } else {
+    LOG(DEBUG) << "failed to get block " << handle_->id() << " data from net: " << reason;
   }
 
   delay_action([SelfId = actor_id(this)]() mutable { td::actor::send_closure(SelfId, &WaitBlockData::start); },
@@ -284,6 +281,7 @@ void WaitBlockData::loaded_data(ReceivedBlock block) {
   }
   net_failures_ = 0;
   net_failure_warned_at_ = -1;
+  net_non_routine_warned_ = false;
   loaded_block_data(X.move_as_ok());
 }
 

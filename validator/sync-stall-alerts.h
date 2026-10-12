@@ -39,6 +39,19 @@ inline bool block_data_net_failure_warning_due(std::uint64_t consecutive_failure
   return non_negative_age(now, last_warned_at) >= kBlockDataNetFailureWarnIntervalSeconds;
 }
 
+// Whether one failed attempt is a warning of its own. "Not ready" never is.
+// The first failure of any other kind is, however many "not ready" answers
+// came before it; later ones are retried every 0.1 s and left to the
+// rate-limited stall warning. `non_routine_warned` is the waiter's record of
+// that first warning, cleared when the block arrives.
+inline bool block_data_failure_warns(bool not_ready, bool &non_routine_warned) {
+  if (not_ready || non_routine_warned) {
+    return false;
+  }
+  non_routine_warned = true;
+  return true;
+}
+
 // Masterchain blocks come every few seconds, so two minutes without progress
 // is a stall, not jitter. The applied state (shard client) is checked as well
 // as the last masterchain block: a node can keep accepting new masterchain

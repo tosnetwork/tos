@@ -112,6 +112,23 @@ TEST(SyncStallAlerts, LagClearsOnceWhenBothAgesRecover) {
   ASSERT_TRUE(evaluate(state, 1004, 500, 3).action == MasterchainLagAction::Warn);
 }
 
+TEST(SyncStallAlerts, TheFirstNonRoutineFailureWarnsAfterNotReadyAnswers) {
+  // "Not ready" answers first, then a timeout: the timeout is the first failure
+  // of its kind and must reach the default log; repeats of it must not.
+  bool warned = false;
+  ASSERT_TRUE(!block_data_failure_warns(true, warned));
+  ASSERT_TRUE(!block_data_failure_warns(true, warned));
+  ASSERT_TRUE(!block_data_failure_warns(true, warned));
+  ASSERT_TRUE(block_data_failure_warns(false, warned));
+  ASSERT_TRUE(!block_data_failure_warns(false, warned));
+  ASSERT_TRUE(!block_data_failure_warns(true, warned));
+  ASSERT_TRUE(!block_data_failure_warns(false, warned));
+  // The waiter clears the record when the block arrives; a later failure of
+  // another kind warns again.
+  warned = false;
+  ASSERT_TRUE(block_data_failure_warns(false, warned));
+}
+
 TEST(SyncStallAlerts, LagWithABackwardsClockDoesNotFlood) {
   MasterchainLagAlertState state;
   ASSERT_TRUE(evaluate(state, 1000, 300, 300).action == MasterchainLagAction::Warn);
