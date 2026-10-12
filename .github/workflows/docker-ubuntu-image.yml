@@ -1,4 +1,4 @@
-name: Docker Ubuntu 22.04 image
+name: Docker Ubuntu 24.04 image
 
 # Builds the node image for a release tag and publishes it under that tag only.
 # The multi-architecture index digest is attested with build provenance, and
@@ -47,9 +47,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-22.04
+            runner: ubuntu-24.04
           - arch: arm64
-            runner: ubuntu-22.04-arm
+            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read

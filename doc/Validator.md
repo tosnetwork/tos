@@ -53,7 +53,7 @@ until a re-run reads the funded balance. The elections task of
 ## Production Hardware Requirements
 
 The following requirements apply to a normal TOS validator participating in
-consensus. They assume a 64-bit Ubuntu 22.04 or 24.04 host, a validator
+consensus. They assume a 64-bit Ubuntu 24.04 host, a validator
 binary built with the production configuration, and a node that is not also
 running unrelated workloads.
 
@@ -63,7 +63,7 @@ running unrelated workloads.
 | Memory | 4 GB RAM | 128 GB RAM |
 | Storage | 100 GB SSD | 2 × 1.92 TB enterprise NVMe SSD; target at least 250k read IOPS and 83k write IOPS per device |
 | Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 1 Gbps symmetric bandwidth with a fixed public IP |
-| Operating system | Ubuntu 22.04 or 24.04, 64-bit | Ubuntu 22.04 or 24.04, 64-bit, on a dedicated host |
+| Operating system | Ubuntu 24.04, 64-bit | Ubuntu 24.04, 64-bit, on a dedicated host |
 
 The production values are aligned with the TON-derived validator-engine,
 consensus, storage, and peer-to-peer operating model used by TOS. The testnet

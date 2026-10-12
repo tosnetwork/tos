@@ -351,6 +351,9 @@ these namespaces were introduced keep their names.
 Both release sets ship Linux binaries only, for x86-64 (`tos-x86_64-linux`)
 and arm64 (`tos-arm64-linux`), built by the two AppImage workflows. There are
 no macOS, Windows, Android or WebAssembly release artifacts.
+The binaries are built on Ubuntu 24.04 and need glibc 2.39 or newer. The
+node container image is published for the same two architectures, from a
+builder image published for both (`scripts/test_container_platforms.py`).
 `scripts/test_release_artifacts.py` fails if a set names any other build
 artifact. The macOS leg of `.github/workflows/quantum-mobile-native.yml` is not
 a release platform: it tests the wallet's post-quantum C API
