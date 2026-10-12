@@ -460,13 +460,13 @@ TEST(StartupOrphanReconcile, T22_T23_OrphanBecomesEligibleInTheSameProcess) {
   s.start(owner);
   auto summary = s.reconcile();
   ASSERT_EQ(1u, summary.recorded);
-  ASSERT_EQ(0u, s.open_retirements());
   // The anchor has not reached the retirement block yet: not eligible.
   ASSERT_TRUE(s.cleanup_pass(checkpoint(99), 5).empty());
   // It has: eligible and reserved, in this process.
   auto reserved = s.cleanup_pass(checkpoint(120), 5);
   ASSERT_EQ(1u, reserved.size());
   ASSERT_TRUE(reserved[0] == session(7));
+  ASSERT_EQ(0u, s.open_retirements());
 }
 
 // T30. Edge cases: an unknown catchain seqno and a seqno not below the current one are
