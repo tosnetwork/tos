@@ -347,7 +347,9 @@ def main() -> int:
         re.search(rf"(?m)^\s*run: {re.escape(checkpoint_ctest)}\s*$", text) is not None,
         "consensus cleanup checkpoint gate is absent",
     )
-    wiring_ctest = "ctest --test-dir build --output-on-failure --no-tests=error -R '^test-twostep-wiring$'"
+    wiring_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error -R '^test-twostep-wiring$'"
+    )
     require(
         re.search(rf"(?m)^\s*run: {re.escape(wiring_ctest)}\s*$", text) is not None,
         "validator group wiring and checkpoint gate is absent",
@@ -364,10 +366,13 @@ def main() -> int:
     )
     consensus_cmake = (root / "test/validator/consensus/CMakeLists.txt").read_text(encoding="utf-8")
     require(
-        re.search(r"(?m)^\s*add_test\(NAME test-twostep-wiring COMMAND test-twostep-wiring\)\s*$", consensus_cmake)
+        re.search(
+            r"(?m)^\s*add_test\(NAME test-twostep-wiring COMMAND test-twostep-wiring\)\s*$",
+            consensus_cmake,
+        )
         is not None
         and re.search(
-            r'(?s)set_tests_properties\(test-twostep-wiring PROPERTIES\s+ENVIRONMENT\s+'
+            r"(?s)set_tests_properties\(test-twostep-wiring PROPERTIES\s+ENVIRONMENT\s+"
             r'"TOS_TEST_GENESIS_BOC=\$\{CMAKE_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc"\)',
             consensus_cmake,
         )
