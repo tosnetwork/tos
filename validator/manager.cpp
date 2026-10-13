@@ -2489,7 +2489,21 @@ void ValidatorManagerImpl::get_node_consensus_status(td::Promise<NodeConsensusSt
 
 void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 priority,
                                                   td::Promise<ReceivedBlock> promise) {
-  if (auto cached = cached_block_data_.get(id, false)) {
+  // The cache holds candidate bytes as they were received, before any check.
+  // They are served only if they pass the same full block check the waiter
+  // applies (file hash, BOC, root hash); anything else is evicted and the
+  // block is downloaded. So whatever this answers is either the network's or
+  // bytes the waiter accepts, and the waiter never retries the same bad entry.
+  auto valid = [&id](const td::BufferSlice &data) {
+    auto block = create_block(id, data.clone());
+    if (block.is_error()) {
+      LOG(WARNING) << "send_get_block_request: evicting cached block data for " << id.to_str() << ": "
+                   << block.move_as_error();
+      return false;
+    }
+    return true;
+  };
+  if (auto cached = cached_block_data_.get_if_valid(id, valid, false)) {
     LOG(DEBUG) << "send_get_block_request: got result from block data cache for " << id.to_str();
     return promise.set_value(ReceivedBlock{id, cached->clone()});
   }
@@ -4149,6 +4163,21 @@ void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &b
   g.observed_unix_seconds.store(static_cast<std::uint64_t>(td::Clocks::system()), std::memory_order_release);
 }
 
+void ValidatorManagerImpl::check_masterchain_lag() {
+  auto &g = health::node_state;
+  // The STATUS line above stays as it is for the tools that parse it; this
+  // is the line that says the node is behind, and only when it is.
+  const auto report =
+      observe_masterchain_lag(masterchain_lag_alert_, health_block_unix_seconds(last_masterchain_block_handle_),
+                              health_block_unix_seconds(shard_client_handle_), td::Clocks::system(),
+                              td::Timestamp::now().at(), g.masterchain_block_unix_seconds, g.shard_client_unix_seconds);
+  if (report.action == MasterchainLagAction::Warn) {
+    LOG(WARNING) << masterchain_lag_message(report);
+  } else if (report.action == MasterchainLagAction::Clear) {
+    LOG(INFO) << masterchain_lag_message(report);
+  }
+}
+
 void ValidatorManagerImpl::try_advance_gc_masterchain_block() {
   if (gc_masterchain_handle_ && last_masterchain_seqno_ > 0 && !gc_advancing_ &&
       gc_masterchain_handle_->inited_next_left() &&
@@ -4323,6 +4352,7 @@ void ValidatorManagerImpl::alarm() {
     log_status_at_ = td::Timestamp::in(60.0);
   }
   alarm_timestamp().relax(log_status_at_);
+  check_masterchain_lag();
   if (resend_shard_blocks_at_ && resend_shard_blocks_at_.is_in_past()) {
     resend_shard_blocks_at_ = td::Timestamp::never();
     for (auto &B : out_shard_blocks_) {

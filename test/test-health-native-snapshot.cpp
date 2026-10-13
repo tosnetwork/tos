@@ -2,12 +2,14 @@
 #include <iostream>
 #include <limits>
 
+#include "metrics/chain-progress-metrics.h"
 #include "metrics/core-health.h"
 #include "metrics/native-core-snapshot.h"
 #include "metrics/prometheus-exporter.h"
 #include "td/actor/actor.h"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/check.h"
+#include "td/utils/port/Clocks.h"
 namespace {
 class Fixture final : public td::actor::Actor, public tos::metrics::AsyncCollector {
  public:
@@ -82,6 +84,53 @@ class Fixture final : public td::actor::Actor, public tos::metrics::AsyncCollect
   unsigned peak_ = 0;
   tos::metrics::MetricsPromise pending_;
 };
+// The masterchain progress families an operator alerts on: the two ages are
+// derived from the published block times against the collection's wall clock,
+// left out while a block time is unknown and clamped at zero when the block
+// time is ahead of the clock; the failure counter is always present.
+void chain_progress_unit() {
+  using namespace tos::health;
+  NodeStateGauges gauges;
+  auto render = [&](double wall) {
+    tos::metrics::MetricSet set;
+    set.families = chain_progress_families("tos", wall, gauges);
+    return std::move(set).render();
+  };
+  auto unknown = render(1700000000);
+  CHECK(unknown.find("tos_masterchain_head_age_seconds") == std::string::npos);
+  CHECK(unknown.find("tos_shard_client_age_seconds") == std::string::npos);
+  CHECK(unknown.find("tos_shard_client_state_known") == std::string::npos);
+  // The masterchain head is known but the applied state is not: there is no
+  // shard-client age, and the known gauge says why.
+  gauges.masterchain_block_unix_seconds.store(1700000000 - 25);
+  auto no_applied_state = render(1700000000);
+  CHECK(no_applied_state.find("tos_shard_client_age_seconds") == std::string::npos);
+  CHECK(no_applied_state.find("\ntos_shard_client_state_known 0") != std::string::npos);
+  CHECK(unknown.find("# TYPE tos_wait_block_data_net_failures_total counter\n") != std::string::npos);
+  CHECK(unknown.find("\ntos_wait_block_data_net_failures_total 0") != std::string::npos);
+  // Consensus is current but the applied state is hours behind: both ages are
+  // exported, each from its own block time.
+  gauges.masterchain_block_unix_seconds.store(1700000000 - 25);
+  gauges.shard_client_unix_seconds.store(1700000000 - 9000);
+  gauges.block_data_net_failures.store(42);
+  auto behind = render(1700000000);
+  std::cout << "CHAIN_PROGRESS " << behind << std::endl;
+  CHECK(behind.find("# TYPE tos_masterchain_head_age_seconds gauge\n") != std::string::npos);
+  CHECK(behind.find("\ntos_masterchain_head_age_seconds 25") != std::string::npos);
+  CHECK(behind.find("# TYPE tos_shard_client_age_seconds gauge\n") != std::string::npos);
+  CHECK(behind.find("\ntos_shard_client_age_seconds 9000") != std::string::npos);
+  CHECK(behind.find("\ntos_shard_client_state_known 1") != std::string::npos);
+  CHECK(behind.find("\ntos_wait_block_data_net_failures_total 42") != std::string::npos);
+  // The ages keep growing with the collection clock even when nobody
+  // refreshes the block times.
+  auto later = render(1700000000 + 600);
+  CHECK(later.find("\ntos_shard_client_age_seconds 9600") != std::string::npos);
+  // A block time ahead of the wall clock is age zero, never negative.
+  auto skewed = render(1700000000 - 9000 - 30);
+  CHECK(skewed.find("\ntos_masterchain_head_age_seconds 0") != std::string::npos);
+  CHECK(skewed.find("\ntos_shard_client_age_seconds 0") != std::string::npos);
+  CHECK(skewed.find("seconds -") == std::string::npos);
+}
 void unit() {
   using namespace tos::health;
   std::string expected;
@@ -263,6 +312,7 @@ void unit() {
   auto no_disk_body = no_disk->read(10);
   CHECK(no_disk_body);
   CHECK(no_disk_body->find("\"node_state\":null") != std::string::npos);
+  chain_progress_unit();
   std::cout << "native_snapshot_unit_passed" << std::endl;
 }
 }  // namespace
@@ -277,6 +327,11 @@ int main(int argc, char **argv) {
   td::IPAddress address;
   address.init_host_port(td::CSlice((std::string("127.0.0.1:") + argv[1]).c_str())).ensure();
   tos::health::enabled.store(mode != "gateoff");
+  // Masterchain progress is exported with or without the health flag.
+  const auto now_unix = static_cast<std::uint64_t>(td::Clocks::system());
+  tos::health::node_state.masterchain_block_unix_seconds.store(now_unix - 5);
+  tos::health::node_state.shard_client_unix_seconds.store(now_unix - 9000);
+  tos::health::node_state.block_data_net_failures.store(7);
   tos::health::pq_sign.completed.store(9007199254740993ULL);
   td::actor::Scheduler scheduler({1});
   td::actor::ActorOwn<tos::PrometheusExporter> exporter;

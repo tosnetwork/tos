@@ -109,6 +109,22 @@ class CandidateDataCache {
     return &it->second.data;
   }
 
+  // As get(), but only if `valid(payload)` accepts the payload. A rejected
+  // entry is evicted, so the caller falls back to fetching the data the
+  // normal way and is never handed the same bad bytes again.
+  template <class Valid>
+  const td::BufferSlice *get_if_valid(const Key &key, Valid &&valid, bool touch = true) {
+    const td::BufferSlice *data = get(key, touch);
+    if (data == nullptr) {
+      return nullptr;
+    }
+    if (!valid(*data)) {
+      erase(key);
+      return nullptr;
+    }
+    return data;
+  }
+
   bool contains(const Key &key) const {
     return entries_.contains(key);
   }

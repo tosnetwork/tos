@@ -1245,6 +1245,10 @@ add_executable(test-health-publisher-bench test/test-health-publisher-bench.cpp)
 target_include_directories(test-health-publisher-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-health-publisher-bench PRIVATE metrics tdutils)
 
+add_executable(test-sync-stall-alerts test/test-td-main.cpp test/test-sync-stall-alerts.cpp)
+target_include_directories(test-sync-stall-alerts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-sync-stall-alerts PRIVATE tdutils)
+
 add_executable(test-metrics-label-bound test/test-td-main.cpp test/test-metrics-label-bound.cpp)
 target_include_directories(test-metrics-label-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-metrics-label-bound PRIVATE metrics tdactor tdutils)
@@ -2062,6 +2066,7 @@ tos_test(test-rldp2-connection-limits)
 tos_test(test-promise-loss-contract)
 tos_test(test-json-rpc-handler-guard)
 tos_test(test-metrics-label-bound)
+tos_test(test-sync-stall-alerts)
 tos_test(test-health-collector-completion)
 tos_test(test-health-collector-timestamps)
 tos_test(test-health-collector-budget)
@@ -2128,6 +2133,14 @@ add_test(NAME pq-unsafe-rotation-source-mutations
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/pq-unsafe-rotation-source-mutations.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pq-unsafe-rotation-source-mutations PROPERTIES LABELS "source-guard" RUN_SERIAL TRUE)
+add_test(NAME sync-stall-wiring-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-sync-stall-wiring.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sync-stall-wiring-source PROPERTIES LABELS "source-guard")
+add_test(NAME sync-stall-wiring-source-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-sync-stall-wiring.py
+          ${CMAKE_CURRENT_SOURCE_DIR} --self-test)
+set_tests_properties(sync-stall-wiring-source-self-test PROPERTIES LABELS "source-guard")
 add_test(NAME regression-fixture-concurrency
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-regression-concurrency.sh
           ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
