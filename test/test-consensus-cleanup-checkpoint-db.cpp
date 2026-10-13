@@ -159,7 +159,17 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     persist_calls_++;
     switch (persist_mode_) {
       case PersistMode::Pass:
-        ValidatorManagerImpl::persist_consensus_cleanup_checkpoint(id, std::move(promise));
+        // The production write; its errors are recorded for the receipt.
+        ValidatorManagerImpl::persist_consensus_cleanup_checkpoint(
+            id, [this, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
+              if (R.is_error()) {
+                persist_errors_++;
+                if (first_persist_error_.empty()) {
+                  first_persist_error_ = R.error().to_string();
+                }
+              }
+              promise.set_result(std::move(R));
+            });
         return;
       case PersistMode::WriteThenFail:
         ValidatorManagerImpl::persist_consensus_cleanup_checkpoint(
@@ -197,6 +207,8 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     size_t held = 0;
     bool reached = false;
     bool replay_held = false;
+    int persist_errors = 0;
+    std::string first_persist_error;
     BlockIdExt head;
   };
   void checkpoint_status(BlockSeqno gc_next, td::Promise<CheckpointStatus> promise) {
@@ -211,6 +223,8 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     s.held = held_writes_.size();
     s.reached = consensus_checkpoint_reached_;
     s.replay_held = replay_hold_.has_value();
+    s.persist_errors = persist_errors_;
+    s.first_persist_error = first_persist_error_;
     s.head = last_masterchain_block_id_;
     promise.set_value(std::move(s));
   }
@@ -302,6 +316,8 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
   int reads_ = 0;
   std::vector<td::Promise<td::Unit>> held_writes_;
   std::optional<td::Promise<td::Unit>> replay_hold_;
+  int persist_errors_ = 0;
+  std::string first_persist_error_;
 
  public:
   void set_gc(BlockHandle handle, td::Ref<MasterchainState> state, td::Promise<td::Unit> promise) {
@@ -987,6 +1003,54 @@ int child_main(const std::string& mode, const std::string& boc, const std::strin
                                    : consensus::is_consensus_checkpoint_refusal(n.error()) ? "refusal"
                                                                                            : "ordinary")
                                << " head_after=" << s.head.seqno();
+        } else if (mode == "sync-fault") {
+          // Runs under checkpoint-sync-fault-shim. The shard client's own
+          // metadata write is acknowledged first; then the fault is armed, so
+          // the checkpoint write is the first to reach the failing WAL sync.
+          auto trigger =
+              std::string(std::getenv("CHECKPOINT_FAULT_TRIGGER") ? std::getenv("CHECKPOINT_FAULT_TRIGGER") : "");
+          auto [h5, s5] = co_await load_block(probe, chain["B5"].id);
+          co_await td::actor::ask(db, &Db::update_shard_client_state, chain["B5"].id);
+          bool armed = !trigger.empty() && td::write_file(trigger, td::Slice{"armed"}).is_ok();
+          auto before = co_await checkpoint_status(probe, 1);
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::shard_client_advanced, h5, s5);
+          bool uncertain = co_await wait_until(
+              db,
+              [&]() -> td::actor::Task<bool> {
+                auto s = co_await checkpoint_status(probe, 1);
+                co_return s.uncertain&& s.reads > 0;
+              },
+              10.0);
+          // Rewrites, paced to the backoff (1 s, then 2 s); all fail.
+          for (double wait : {1.1, 2.1}) {
+            co_await wait_until(db, []() -> td::actor::Task<bool> { co_return false; }, wait);
+            co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::retry_checkpoint);
+          }
+          co_await wait_until(db, []() -> td::actor::Task<bool> { co_return false; }, 0.3);
+          auto s = co_await checkpoint_status(probe, 1);
+          // The cleanup authority while the write is uncertain: the oracles'
+          // exact anchor, and the production eligibility decision for the
+          // retired session (retired at B4, r = 1).
+          auto [anchor, eligible] = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::cleanup_decision,
+                                                            chain["B4"].id, CatchainSeqno{1}, false);
+          // A production cleanup pass while the write is uncertain.
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::cleanup_tick);
+          co_await wait_until(db, [&]() -> td::actor::Task<bool> { co_return !retired_dir_exists(root, chain); }, 3.0);
+          auto record = co_await td::actor::ask(db, &Db::get_pending_validator_consensus_db_cleanup_record,
+                                                label_hash("checkpoint-retired-session"))
+                            .wrap();
+          std::cout << "CHILD_SYNC_FAULT armed=" << armed << " issued_before=" << before.persist_calls
+                    << " uncertain=" << (uncertain && s.uncertain)
+                    << " installed=" << (s.installed ? static_cast<long long>(s.installed->seqno()) : -1LL)
+                    << " in_flight=" << (s.in_flight ? static_cast<long long>(s.in_flight->seqno()) : -1LL)
+                    << " gc_may_persist=" << s.gc_may_persist_next << " attempts=" << s.persist_calls
+                    << " failures=" << s.persist_errors << " reads=" << s.reads
+                    << " dir_present=" << retired_dir_exists(root, chain)
+                    << " record_present=" << (record.is_ok() && record.ok().has_value()) << std::endl;
+          std::cout << "CHILD_SYNC_FAULT_AUTHORITY anchor=" << (anchor ? anchor->to_str() : std::string("none"))
+                    << " eligible=" << eligible << std::endl;
+          std::cout << "CHILD_SYNC_FAULT_FIRST_ERROR " << s.first_persist_error << std::endl;
+          std::_Exit(137);
         } else if (mode == "pre-persist-crash") {
           // The next checkpoint's write is issued and held before it reaches the
           // database; a cleanup pass runs meanwhile; then the process crashes.
@@ -1043,7 +1107,7 @@ int child_main(const std::string& mode, const std::string& boc, const std::strin
 
 // Runs the child and returns its exit status; its output goes to `log_path`.
 int spawn_child(const char* program, const std::string& mode, const std::string& boc, const std::string& root,
-                const std::string& log_path) {
+                const std::string& log_path, const std::vector<std::string>& extra_env = {}) {
   std::string m = mode, b = boc, r = root;
   std::string flag = "--child";
   char* args[] = {const_cast<char*>(program), flag.data(), m.data(), b.data(), r.data(), nullptr};
@@ -1052,7 +1116,17 @@ int spawn_child(const char* program, const std::string& mode, const std::string&
   posix_spawn_file_actions_addopen(&actions, 2, log_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
   posix_spawn_file_actions_adddup2(&actions, 2, 1);
   pid_t pid = -1;
-  int spawned = posix_spawn(&pid, program, &actions, nullptr, args, environ);
+  // The parent's environment, plus `extra_env` ("NAME=value").
+  std::vector<std::string> env_storage(extra_env.begin(), extra_env.end());
+  std::vector<char*> envp;
+  for (char** e = environ; *e != nullptr; ++e) {
+    envp.push_back(*e);
+  }
+  for (auto& e : env_storage) {
+    envp.push_back(e.data());
+  }
+  envp.push_back(nullptr);
+  int spawned = posix_spawn(&pid, program, &actions, nullptr, args, envp.data());
   posix_spawn_file_actions_destroy(&actions);
   if (spawned != 0) {
     return -1;
@@ -1434,10 +1508,11 @@ int main(int argc, char** argv) {
            "the refused GC step left the in-memory GC block and released the advance");
   }
 
-  auto run_child = [&](const std::string& mode, const std::string& root) {
+  auto run_child = [&](const std::string& mode, const std::string& root,
+                       const std::vector<std::string>& extra_env = {}) {
     static int sequence = 0;
     auto log_path = PSTRING() << root << ".child-" << ++sequence << "-" << mode << ".log";
-    int code = spawn_child(argv[0], mode, boc, root, log_path);
+    int code = spawn_child(argv[0], mode, boc, root, log_path, extra_env);
     return std::make_pair(code, read_text(log_path));
   };
   auto contains = [](const std::string& text, const std::string& needle) {
@@ -1956,6 +2031,70 @@ int main(int argc, char** argv) {
     EXPECT(r.is_ok() && !status.in_flight && !status.uncertain && status.gc_may_persist_next &&
                status.installed == chain["B4"].id,
            "a write refused before anything was written releases GC and keeps the checkpoint");
+  }
+
+  // 14b. A real RocksDB fault: the StateDb's WAL sync fails (EIO) under the
+  //      test-only checkpoint-sync-fault-shim, after the data was written. The
+  //      checkpoint write is uncertain, its rewrites keep failing, GC stays
+  //      excluded, and a cleanup pass deletes nothing. The process then
+  //      crashes and reopens without the fault: whichever checkpoint is durable
+  //      (the old one or the uncertain one) is loaded, and cleanup then deletes
+  //      exactly when that durable value authorizes it. The candidate is the
+  //      seeded shard-client block B6 (B5, offered at runtime, coalesces under
+  //      it). The retired session (retired at B4, r = 1) is deletable only from
+  //      B5 on. Run with an
+  //      existing checkpoint B2 and with no checkpoint key at all (the first
+  //      checkpoint, where cleanup is anchored to GC B0).
+  for (bool first_checkpoint : {false, true}) {
+    const std::string name = first_checkpoint ? "sync-fault-first" : "sync-fault";
+    std::string shim = CHECKPOINT_SYNC_FAULT_SHIM;
+    EXPECT(td::stat(shim).is_ok(), name << ": the fault shim is built at " << shim);
+    Seed seed;
+    seed.checkpoint = first_checkpoint ? std::optional<std::string>{} : std::optional<std::string>{"B2"};
+    seed.retired = std::make_pair(std::string("B4"), CatchainSeqno{1});
+    auto root = fresh_root(base, name);
+    EXPECT(seed_db(root, chain, seed).is_ok(), "seed " << name);
+    auto fault_log = root + ".fault-log";
+    auto [code, log] =
+        run_child("sync-fault", root,
+                  {"LD_PRELOAD=" + shim, "CHECKPOINT_FAULT_DIR=" + root + "/state/",
+                   "CHECKPOINT_FAULT_TRIGGER=" + root + ".fault-armed", "CHECKPOINT_FAULT_LOG=" + fault_log});
+    auto faults = read_text(fault_log);
+    auto line = child_line(log, "CHILD_SYNC_FAULT ");
+    auto first_error = child_line(log, "CHILD_SYNC_FAULT_FIRST_ERROR");
+    std::string installed = first_checkpoint ? "-1" : "2";
+    EXPECT(code == 137 && contains(line, "armed=1 issued_before=0 uncertain=1 installed=" + installed +
+                                             " in_flight=6 gc_may_persist=0"),
+           name << ": the checkpoint write to B6 is uncertain, not installed, and GC stays excluded (exit " << code
+                << "): " << line);
+    EXPECT(contains(faults, "fdatasync " + root + "/state/") && contains(faults, ".log"),
+           name << ": the shim failed a real WAL sync of the StateDb: "
+                << faults.substr(0, std::min<size_t>(faults.size(), 300)));
+    EXPECT(contains(first_error, "IO error") && contains(first_error, "fdatasync"),
+           name << ": the first write error is that sync failure: " << first_error);
+    EXPECT(contains(line, "attempts=3 failures=3"), name << ": the rewrites were issued and all failed: " << line);
+    auto authority = child_line(log, "CHILD_SYNC_FAULT_AUTHORITY");
+    EXPECT(contains(authority, "anchor=" + chain[first_checkpoint ? "B0" : "B2"].id.to_str() + " eligible=0"),
+           name << ": while the write is uncertain, cleanup stays anchored to the previous authority ("
+                << (first_checkpoint ? "the GC block B0" : "the checkpoint B2")
+                << ") and the retired session is not eligible: " << authority);
+    EXPECT(contains(line, "dir_present=1 record_present=1"),
+           name << ": a cleanup pass while the write is uncertain deletes nothing");
+    // Reopen without the fault (and without the shim).
+    auto [code2, log2] = run_child("cleanup-pass", root);
+    bool durable_new = contains(log2, "checkpoint=" + chain["B6"].id.to_str());
+    bool durable_old =
+        first_checkpoint ? contains(log2, "checkpoint=none") : contains(log2, "checkpoint=" + chain["B2"].id.to_str());
+    std::cout << "CHECKPOINT_DB_NOTE: " << name << ": after the crash the durable checkpoint is "
+              << (durable_new   ? "the uncertain B6"
+                  : durable_old ? "the previous value"
+                                : "unexpected")
+              << '\n';
+    EXPECT(code2 == 0 && (durable_new || durable_old),
+           name << ": the restart loads either the previous checkpoint or the uncertain one (exit " << code2 << ")");
+    EXPECT(durable_new ? contains(log2, "dir_present=false record_present=false")
+                       : contains(log2, "dir_present=true record_present=true"),
+           name << ": cleanup after the restart deletes exactly when the durable checkpoint authorizes it");
   }
 
   // 15. Archive TTL pruning with the GC block at the checkpoint deletes older

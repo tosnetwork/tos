@@ -905,6 +905,13 @@ target_include_directories(test-consensus-cleanup-checkpoint-db PRIVATE ${CMAKE_
 target_link_libraries(test-consensus-cleanup-checkpoint-db PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
                       tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
 target_compile_definitions(test-consensus-cleanup-checkpoint-db PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+# The suite's uncertain-write case runs a child under this LD_PRELOAD shim, which
+# fails the StateDb's real WAL sync; the suite fails if the shim is missing.
+add_library(checkpoint-sync-fault-shim SHARED test/checkpoint-sync-fault-shim.cpp)
+target_link_libraries(checkpoint-sync-fault-shim PRIVATE ${CMAKE_DL_LIBS})
+add_dependencies(test-consensus-cleanup-checkpoint-db checkpoint-sync-fault-shim)
+target_compile_definitions(test-consensus-cleanup-checkpoint-db
+                           PRIVATE CHECKPOINT_SYNC_FAULT_SHIM="$<TARGET_FILE:checkpoint-sync-fault-shim>")
 
 add_executable(test-pq-launch-cap test/pq-native/pq-launch-cap-test.cpp)
 target_link_libraries(test-pq-launch-cap PRIVATE tos_block)
