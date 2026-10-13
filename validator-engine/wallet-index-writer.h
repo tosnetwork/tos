@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <functional>
+#include <optional>
 
 #include "td/utils/Status.h"
 #include "tos/tos-shard.h"
@@ -88,6 +90,21 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
 
 // Blocks waiting to be indexed at most. Each holds its block and state cells.
 constexpr size_t kWc0IndexQueueCapacity = 256;
+// The warning about blocks dropped from a full queue is given at most once per
+// this interval. While a node catches up the queue stays full and every batch
+// drops blocks; one warning per batch flooded the log (thousands a minute).
+constexpr std::chrono::seconds kWc0IndexDropWarningInterval{60};
+
+// How many dropped blocks a warning due now should report, or 0 when none is
+// due. `dropped_total` counts every block dropped since start; `reported` is
+// the count up to the last warning and `last_warning` its time, both advanced
+// when a warning is due. A warning is due when there are unreported drops and
+// either none was given yet or `interval` has passed since the last one. Pure,
+// so the policy is tested without a log; the caller serializes calls.
+uint64_t take_wc0_index_drop_report(uint64_t dropped_total, uint64_t& reported,
+                                    std::chrono::steady_clock::time_point now,
+                                    std::optional<std::chrono::steady_clock::time_point>& last_warning,
+                                    std::chrono::steady_clock::duration interval);
 // How long the worker waits for block data it asked the fetcher for. A block
 // whose data does not come in time stays marked for recovery.
 constexpr std::chrono::seconds kWc0IndexFetchTimeout{60};

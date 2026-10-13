@@ -649,6 +649,17 @@ pub struct AdnlConfig {
     pub timeouts: TimeoutVariant,
 }
 
+/// Why a node's control client key cannot be used, and how to fix it: the
+/// control connection needs the raw Ed25519 private key, which the vault only
+/// hands out for a key stored as extractable.
+pub fn non_extractable_console_key_error(name: &str) -> String {
+    format!(
+        "control client key '{name}' is stored as non-extractable, but the node control \
+         connection needs its raw private key; re-import the key from its private key with \
+         `tosctl key import --name {name} --extractable`"
+    )
+}
+
 impl AdnlConfig {
     pub async fn to_node_adnl_config(
         &self,
@@ -671,6 +682,15 @@ impl AdnlConfig {
             _ => anyhow::bail!("Unsupported secret type"),
         };
 
+        // The control handshake runs a key agreement and signs the server's
+        // nonce with the raw private key, so the vault must hand it out.
+        if !client_keypair.extractable().await? {
+            let name = match &self.client_key {
+                KeyConfig::VaultKey { name } => name.as_str(),
+                _ => "<inline>",
+            };
+            anyhow::bail!(non_extractable_console_key_error(name));
+        }
         let client_pvt_key = client_keypair.private_key().await?;
         let pvt_key = client_pvt_key.lock().await?;
         if pvt_key.len() < 32 {

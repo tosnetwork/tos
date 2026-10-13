@@ -392,6 +392,7 @@ pub struct AgentTaskCreateCmd {
     #[arg(
         short = 'w',
         long = "workchain",
+        allow_negative_numbers = true,
         help = "Deployment workchain; defaults to the Agent Account workchain, or -1 with --from"
     )]
     workchain: Option<i32>,
@@ -567,7 +568,7 @@ pub struct AgentTaskBuildStateCmd {
         help = "Optional 32-byte ed25519 public key; when set, settle also requires a signature over result_hash"
     )]
     attestor_pubkey: Option<String>,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -667,7 +668,13 @@ pub struct AgentAccountBuildStateCmd {
     #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
     wallet: String,
 
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Agent Account workchain"
+    )]
     workchain: i32,
 
     #[arg(short, long, default_value = "table")]
@@ -683,7 +690,13 @@ pub struct AgentAccountDeployCmd {
     #[arg(long = "from", help = "Funding wallet name from config, or master_wallet")]
     from: String,
 
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Agent Account workchain"
+    )]
     workchain: i32,
 
     #[arg(long = "amount", default_value_t = 0.2, help = "Initial Agent Account balance, in TOS")]
@@ -721,7 +734,13 @@ pub struct AgentAccountStatusCmd {
     #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
     wallet: String,
 
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Agent Account workchain"
+    )]
     workchain: i32,
 
     #[arg(short, long, default_value = "table")]
@@ -1077,7 +1096,7 @@ pub struct AgentAccountEconomicPaymentCorroborationProfileCmd {
     zero_state_root_hash: String,
     #[arg(long)]
     zero_state_file_hash: String,
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     workchain_id: i32,
     #[arg(
         long = "quorum-config",
@@ -1187,7 +1206,13 @@ pub struct AgentWalletCreateCmd {
     )]
     version: String,
 
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Workchain ID")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Workchain ID"
+    )]
     workchain: i32,
 
     #[arg(short = 'i', long = "subwallet-id", default_value = "4242", help = "Subwallet ID")]

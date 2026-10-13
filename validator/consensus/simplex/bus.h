@@ -23,6 +23,10 @@ struct BootstrapVote {
 };
 
 struct BroadcastVote {
+  // Routine and frequent: traced at DEBUG, so the default log keeps hours of the
+  // events an incident analysis needs (candidates, certificates, finalization).
+  using LogToDebug = std::true_type;
+
   using ReturnType = td::Unit;
 
   Vote vote;
@@ -44,6 +48,10 @@ struct BroadcastVote {
 // again after a restart is equally valid and a different object, and a peer may already
 // hold the first one inside a certificate.
 struct PersistOwnVoteIntent {
+  // Routine and frequent: traced at DEBUG, so the default log keeps hours of the
+  // events an incident analysis needs (candidates, certificates, finalization).
+  using LogToDebug = std::true_type;
+
   // The journal sequence number this vote was committed under. The signed record replaces
   // the intent under the same key and must carry the same number.
   using ReturnType = td::int64;
@@ -54,6 +62,10 @@ struct PersistOwnVoteIntent {
 };
 
 struct PersistOwnSignedVote {
+  // Routine and frequent: traced at DEBUG, so the default log keeps hours of the
+  // events an incident analysis needs (candidates, certificates, finalization).
+  using LogToDebug = std::true_type;
+
   using ReturnType = td::Unit;
 
   Vote vote;
@@ -87,6 +99,10 @@ struct LeaderWindowObserved {
 };
 
 struct WaitForParent {
+  // Routine and frequent: traced at DEBUG, so the default log keeps hours of the
+  // events an incident analysis needs (candidates, certificates, finalization).
+  using LogToDebug = std::true_type;
+
   using ReturnType = std::optional<MisbehaviorRef>;
 
   CandidateRef candidate;

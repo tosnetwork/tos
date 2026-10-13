@@ -125,7 +125,13 @@ pub struct WalletCreateCmd {
     name: String,
     #[arg(short = 'v', long = "version", default_value = "V3R2", help = "Wallet version")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Workchain ID")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Workchain ID"
+    )]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42", help = "Subwallet ID")]
     subwallet_id: u32,
@@ -166,7 +172,7 @@ pub struct WalletImportCmd {
     private_key: super::key_cmd::PrivateKeyInput,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -179,7 +185,7 @@ pub struct WalletMnemonicGenerateCmd {
     words: usize,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -208,7 +214,7 @@ pub struct WalletMnemonicImportCmd {
     mnemonic_fd: Option<i32>,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -259,7 +265,7 @@ pub struct WalletTestFixtureCmd {
     words: usize,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "0")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "0")]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "0")]
     subwallet_id: u32,

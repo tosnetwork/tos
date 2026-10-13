@@ -38,6 +38,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -1385,6 +1386,36 @@ TEST(WalletIndexQueue, AFullQueueDropsTheWorkButStillRecordsIt) {
   for (int id = 0; id < 4; ++id) {
     ASSERT_TRUE(std::find(log.recorded.begin(), log.recorded.end(), id) != log.recorded.end());
   }
+}
+
+TEST(WalletIndexQueue, DropWarningIsDueAtMostOncePerInterval) {
+  // While a node catches up, every batch drops blocks; one warning per batch
+  // logged about 10,700 lines in ten minutes on a public testnet validator.
+  using std::chrono::seconds;
+  const auto start = std::chrono::steady_clock::time_point{} + std::chrono::hours(1);
+  const auto interval = std::chrono::steady_clock::duration(tos_wallet_index::kWc0IndexDropWarningInterval);
+  uint64_t reported = 0;
+  std::optional<std::chrono::steady_clock::time_point> last;
+
+  // No drop, no warning.
+  ASSERT_EQ(tos_wallet_index::take_wc0_index_drop_report(0, reported, start, last, interval), 0u);
+  ASSERT_TRUE(!last.has_value());
+  // The first drop is reported at once.
+  ASSERT_EQ(tos_wallet_index::take_wc0_index_drop_report(3, reported, start, last, interval), 3u);
+  // Further drops inside the interval are counted, not reported.
+  for (int batch = 1; batch <= 50; ++batch) {
+    ASSERT_EQ(tos_wallet_index::take_wc0_index_drop_report(3 + batch, reported, start + seconds(1), last, interval),
+              0u);
+  }
+  ASSERT_EQ(tos_wallet_index::take_wc0_index_drop_report(60, reported, start + interval - seconds(1), last, interval),
+            0u);
+  // At the interval, everything since the last warning is reported in one.
+  ASSERT_EQ(tos_wallet_index::take_wc0_index_drop_report(60, reported, start + interval, last, interval), 57u);
+  ASSERT_EQ(reported, 60u);
+  // A quiet interval with no new drop gives no warning, and a later drop is
+  // reported at once because the interval has passed.
+  ASSERT_EQ(tos_wallet_index::take_wc0_index_drop_report(60, reported, start + 3 * interval, last, interval), 0u);
+  ASSERT_EQ(tos_wallet_index::take_wc0_index_drop_report(61, reported, start + 3 * interval, last, interval), 1u);
 }
 
 TEST(WalletIndexQueue, WorkLeftAtShutdownStaysRecordedAndUndone) {

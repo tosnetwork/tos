@@ -90,7 +90,7 @@ pub struct CapabilityRegistryDeployCmd {
     from: String,
     #[arg(long, default_value_t = 0.2, help = "Message value funding the deploy, in TOS")]
     amount: f64,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(long)]
     yes: bool,
@@ -166,7 +166,11 @@ pub struct CapabilityRegistrySendCmd {
     verifier: Option<String>,
     #[arg(long, help = "Amount to withdraw from the bond, in TOS, for withdraw-bond")]
     withdraw_amount: Option<f64>,
-    #[arg(long, help = "Signed reputation delta for update-reputation")]
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help = "Signed reputation delta for update-reputation"
+    )]
     delta: Option<i32>,
     #[arg(
         long,
@@ -197,7 +201,7 @@ pub struct CapabilityRegistryBuildStateCmd {
     bond: f64,
     #[arg(long, help = "Unix registration timestamp; defaults to now")]
     registered_at: Option<u64>,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,

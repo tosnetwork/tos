@@ -13,7 +13,9 @@ use crate::commands::nodectl::{
 use adnl::common::Timeouts;
 use anyhow::Context;
 use colored::Colorize;
-use common::app_config::{AdnlConfig, AppConfig, KeyConfig, TimeoutVariant};
+use common::app_config::{
+    AdnlConfig, AppConfig, KeyConfig, TimeoutVariant, non_extractable_console_key_error,
+};
 use control_client::client_adnl::ControlClientAdnl;
 use secrets_vault::{vault::SecretVault, vault_builder::SecretVaultBuilder};
 use std::{collections::HashMap, path::Path, sync::Arc};
@@ -104,6 +106,15 @@ impl NodeAddCmd {
             .context("Failed to decode control server public key")?,
         };
 
+        // Checked before the node is saved: a secret the control connection
+        // cannot use must not leave a node behind that fails on every call.
+        let secret_exists_in_vault = match SecretVaultBuilder::from_env().await {
+            Ok(vault) => {
+                control_client_secret_exists(&vault, &self.control_client_secret_name).await?
+            }
+            Err(_) => None,
+        };
+
         let client_key = KeyConfig::VaultKey { name: self.control_client_secret_name.clone() };
         let adnl_config = AdnlConfig {
             server_address: self.control_server_endpoint.clone(),
@@ -114,14 +125,6 @@ impl NodeAddCmd {
         config.nodes.insert(self.name.clone(), adnl_config);
         save_config(&config, path)?;
 
-        let secret_exists_in_vault = match SecretVaultBuilder::from_env().await {
-            Ok(vault) => {
-                let secret_id = self.control_client_secret_name.as_str().into();
-                vault.exists(&secret_id).await.ok()
-            }
-            Err(_) => None,
-        };
-
         if secret_exists_in_vault == Some(false) {
             warn_missing_secret(&self.control_client_secret_name);
             println!();
@@ -129,6 +132,26 @@ impl NodeAddCmd {
         println!("\n{} Node '{}' added\n", "OK".green().bold(), self.name);
         Ok(())
     }
+}
+
+/// Whether the control client secret `name` is in `vault`; `None` when the
+/// vault cannot tell. A secret stored as non-extractable is refused, because
+/// the control connection needs its raw private key.
+async fn control_client_secret_exists(
+    vault: &SecretVault,
+    name: &str,
+) -> anyhow::Result<Option<bool>> {
+    let secret_id = name.into();
+    match vault.exists(&secret_id).await {
+        Ok(true) => {}
+        Ok(false) => return Ok(Some(false)),
+        Err(_) => return Ok(None),
+    }
+    let metadata = vault.load_metadata(&secret_id).await?;
+    if !metadata.extractable {
+        anyhow::bail!(non_extractable_console_key_error(name));
+    }
+    Ok(Some(true))
 }
 
 #[derive(serde::Serialize)]
@@ -267,5 +290,36 @@ impl NodeRmCmd {
 
         println!("\n{} Node '{}' removed\n", "OK".green().bold(), self.name);
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::control_client_secret_exists;
+    use crate::commands::nodectl::utils::test_vault;
+
+    #[tokio::test]
+    async fn node_add_refuses_a_non_extractable_control_client_secret() {
+        let test_vault =
+            test_vault::with_ed25519_keys(&[("usable", true), ("sealed", false)]).await;
+        let vault = test_vault.open().await;
+
+        assert_eq!(
+            control_client_secret_exists(&vault, "usable").await.expect("usable"),
+            Some(true)
+        );
+        assert_eq!(
+            control_client_secret_exists(&vault, "missing").await.expect("missing"),
+            Some(false)
+        );
+        let error = control_client_secret_exists(&vault, "sealed")
+            .await
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(
+            error.contains("tosctl key import --name sealed --extractable"),
+            "unexpected result for a non-extractable secret: {error}"
+        );
     }
 }

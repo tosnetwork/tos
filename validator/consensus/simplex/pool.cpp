@@ -1159,7 +1159,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
       votes[signature.validator.value()] = 'V';
     }
 
-    LOG(WARNING) << "Obtained certificate for " << cert->vote << ": " << votes;
+    LOG(INFO) << "Obtained certificate for " << cert->vote << ": " << votes;
 
     if (!suppress_certificate_broadcast_) {
       owning_bus().publish<OutgoingProtocolMessage>(
