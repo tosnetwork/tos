@@ -679,8 +679,8 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast> query) {
     // A finalized slot still in the candidate resolver's window is admitted: its candidate
-    // may be the one the finalized chain needs, and Consensus only stores it. The duplicate
-    // filter below still allows one broadcast per slot there.
+    // may be the one the finalized chain needs, and the candidate resolver only stores it.
+    // The duplicate filter below still allows one broadcast per slot there.
     if (query->slot < late_window_begin(first_nonfinalized_slot_, retained_slots_)) {
       co_return td::Status::Error("Slot is finalized and outside the retained window");
     }

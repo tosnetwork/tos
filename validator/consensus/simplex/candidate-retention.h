@@ -19,9 +19,9 @@ namespace tos::validator::consensus::simplex {
 
 constexpr td::uint32 DEFAULT_CANDIDATE_RETENTION_SLOTS = 4096;
 
-// The number of finalized slots CandidateResolver keeps. Consensus and Pool read the same
-// value, so the window in which they still admit a candidate for an already finalized slot
-// is exactly the window the resolver retains it in.
+// The number of finalized slots CandidateResolver keeps. Pool reads the same value, so the
+// window in which it still admits a broadcast for an already finalized slot is exactly the
+// window in which the resolver keeps that slot's late candidate.
 inline td::uint32 candidate_retention_slots_from_env() {
   const char* value = std::getenv("TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS");
   if (value == nullptr) {

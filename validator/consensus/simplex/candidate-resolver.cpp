@@ -259,33 +259,25 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
 
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<StoreCandidate> request) {
-    auto &state = state_[request->candidate->id];
+    auto id = request->candidate->id;
+    auto &state = state_[id];
     begin_operation(state);
     SCOPE_EXIT {
-      end_operation(request->candidate->id, state);
+      end_operation(id, state);
     };
+    co_return co_await store_pinned_candidate(request->candidate, state);
+  }
 
-    state.candidate_and_cert.candidate = request->candidate;
-    maybe_resume_resolve_awaiters(state);
-
-    if (state.candidate_stored) {
-      co_return td::Unit{};
+  // A candidate for a slot that is already finalized gets no vote, but it may be the one the
+  // finalized chain still needs. Validators and observers both run this actor, and it owns the
+  // retained window, so a late candidate is kept here and nothing else is done with it. A
+  // candidate for a slot that is not finalized yet is left to Consensus.
+  template <>
+  void handle(BusHandle, std::shared_ptr<const CandidateReceived> event) {
+    if (!is_late_and_retained(event->candidate->id)) {
+      return;
     }
-
-    auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
-    state.store_awaiters.push_back(std::move(promise));
-
-    if (state.store_awaiters.size() == 1) {
-      auto result = co_await store_candidate(request->candidate->id, state).wrap();
-
-      for (auto &p : state.store_awaiters) {
-        p.set_result(result.clone());
-      }
-      state.store_awaiters.clear();
-    }
-
-    co_await std::move(task);
-    co_return td::Unit{};
+    store_late_candidate(event->candidate).start().detach();
   }
 
   template <>
@@ -600,6 +592,64 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
                  << result.error();
     }
     prune_finalized();
+    co_return td::Unit{};
+  }
+
+  // True when `id` is for a finalized slot the resolver still retains: at or below the latest
+  // finalized slot and not before the retained window. The upper end is the verified finalized
+  // frontier, so a candidate for a slot that is not finalized is never admitted here.
+  bool is_late_and_retained(const CandidateId &id) const {
+    auto latest_finalized = retention_policy_.latest_finalized_slot();
+    return latest_finalized.has_value() && id.slot <= *latest_finalized &&
+           !retention_policy_.is_before_retained_window(id);
+  }
+
+  td::actor::Task<> store_late_candidate(CandidateRef candidate) {
+    auto id = candidate->id;
+    // The task runs after the notification that started it, and a finalization handled in
+    // between can move the window past this slot. Decide again, and create and pin the entry
+    // with no suspension in between, so nothing outside the window is inserted or persisted.
+    if (!is_late_and_retained(id)) {
+      LOG(DEBUG) << "Simplex candidate-resolver: not keeping the late candidate " << id
+                 << ", its slot left the retained window";
+      co_return td::Unit{};
+    }
+    auto &state = state_[id];
+    begin_operation(state);
+    SCOPE_EXIT {
+      end_operation(id, state);
+    };
+    auto stored = co_await store_pinned_candidate(std::move(candidate), state).wrap();
+    if (stored.is_error()) {
+      LOG(WARNING) << "Simplex candidate-resolver: failed to store the late candidate " << id
+                   << " for a finalized slot: " << stored.error();
+    }
+    co_return td::Unit{};
+  }
+
+  // Requires the caller to hold an operation pin on `state` for the whole call.
+  td::actor::Task<> store_pinned_candidate(CandidateRef candidate, CandidateState &state) {
+    auto id = candidate->id;
+    state.candidate_and_cert.candidate = std::move(candidate);
+    maybe_resume_resolve_awaiters(state);
+
+    if (state.candidate_stored) {
+      co_return td::Unit{};
+    }
+
+    auto [task, promise] = td::actor::StartedTask<td::Unit>::make_bridge();
+    state.store_awaiters.push_back(std::move(promise));
+
+    if (state.store_awaiters.size() == 1) {
+      auto result = co_await store_candidate(id, state).wrap();
+
+      for (auto &p : state.store_awaiters) {
+        p.set_result(result.clone());
+      }
+      state.store_awaiters.clear();
+    }
+
+    co_await std::move(task);
     co_return td::Unit{};
   }
 

@@ -5,10 +5,11 @@
  */
 // Actor-level regression: a candidate that arrives after its slot is finalized.
 //
-// One validator node runs the production Consensus, Pool, CandidateResolver, StateResolver,
-// BlockValidator, BlockAccepter and Db actors. The stand-ins are the validator manager (which
-// records accepted blocks), the private overlay (which refuses every candidate request, as the
-// peers of a retired session do) and the database backend.
+// One node runs the production Consensus, Pool, CandidateResolver, StateResolver,
+// BlockValidator, BlockAccepter and Db actors (an observer runs only those its role spawns).
+// The stand-ins are the validator manager (which records accepted blocks), the private overlay
+// (which refuses every candidate request, as the peers of a retired session do, and records
+// every vote the node sends) and the database backend.
 //
 // A finalized slot whose candidate this node never received can only be applied once the
 // candidate reaches the candidate resolver. Peers cannot supply it here, so the late broadcast
@@ -23,15 +24,25 @@
 //   outside-window        with a one-slot window, after slot 1 is finalized a broadcast for
 //                         slot 0 is refused and a candidate for slot 0 is not persisted, while
 //                         one for slot 1 is.
-//   frontier-skew         Pool has not seen the finalization Consensus and the resolver act
-//                         on: Pool admits the slot-0 broadcast, Consensus still does not store
-//                         its candidate; once Pool sees a later finalization it refuses slot 0.
+//   frontier-skew         Pool has not seen the finalization the resolver acts on: Pool admits
+//                         the slot-0 broadcast, the resolver still does not store its
+//                         candidate; once Pool sees a later finalization it refuses slot 0.
 //   late-dedup-bound      a second distinct broadcast for a finalized slot is refused, also
 //                         after a later slot is finalized.
 //   resolver-pin          a resolve task asleep after a refused request keeps the candidate
 //                         resolver's entry alive after a store completes it and the window
 //                         passes its slot; the entry is evicted when the task ends.
 //   resolver-pin-error    a resolve task that fails releases its pin too.
+//   bootstrap-before-start
+//                         a restarted validator replays a stored FinalCert for a slot above
+//                         Consensus's too-new bound and has not been started yet: a late
+//                         candidate for that slot is stored, one for an unfinalized slot is
+//                         not; after Start the block is applied without a vote, and a candidate
+//                         for the next slot is voted on (both vote recorders see it).
+//   observer-late         a private-overlay observer: the late candidate wakes its resolver
+//                         and the block is applied, and the observer sends and traces no vote.
+//   late-frontier-advance a finalization handled between a late candidate's notification and
+//                         its storage moves the window past the slot: nothing is persisted.
 //   window-helper         late_window_begin() agrees with CandidateRetentionPolicy.
 //
 // Without an argument every mode runs in its own child process.
@@ -130,11 +141,19 @@ enum class Mode {
   ResolverPin,
   ResolverPinError,
   FrontierSkew,
+  BootstrapBeforeStart,
+  ObserverLate,
+  LateFrontierAdvance,
 };
 
 struct Observations {
   std::mutex mutex;
   std::vector<CandidateId> notarize_votes;
+  // Every vote of this node, by kind: as traced before it is signed, and as sent.
+  size_t traced_votes = 0;
+  std::vector<CandidateId> sent_notarize_votes;
+  size_t sent_votes = 0;
+  td::uint32 latest_leader_window_start = 0;
   std::vector<CandidateId> notarized;
   std::vector<td::uint32> finalized_slots;
   std::vector<CandidateId> overlay_requests;
@@ -151,6 +170,26 @@ size_t count_of(const std::vector<CandidateId>& list, const CandidateId& id) {
 size_t notarize_votes_for(const CandidateId& id) {
   std::scoped_lock lock(observations.mutex);
   return count_of(observations.notarize_votes, id);
+}
+
+size_t sent_notarize_votes_for(const CandidateId& id) {
+  std::scoped_lock lock(observations.mutex);
+  return count_of(observations.sent_notarize_votes, id);
+}
+
+td::uint32 latest_leader_window_start() {
+  std::scoped_lock lock(observations.mutex);
+  return observations.latest_leader_window_start;
+}
+
+size_t traced_votes() {
+  std::scoped_lock lock(observations.mutex);
+  return observations.traced_votes;
+}
+
+size_t sent_votes() {
+  std::scoped_lock lock(observations.mutex);
+  return observations.sent_votes;
 }
 
 bool is_notarized(const CandidateId& id) {
@@ -195,6 +234,11 @@ class ObserverActor : public td::actor::SpawnsWith<simplex::Bus>, public td::act
     if (voted == nullptr) {
       return;
     }
+    {
+      std::scoped_lock lock(observations.mutex);
+      ++observations.traced_votes;
+    }
+    emit(PSTRING() << "LATE_VOTE traced " << voted->vote());
     if (auto notar = std::get_if<simplex::NotarizeVote>(&voted->vote().vote)) {
       std::scoped_lock lock(observations.mutex);
       observations.notarize_votes.push_back(notar->id);
@@ -212,6 +256,12 @@ class ObserverActor : public td::actor::SpawnsWith<simplex::Bus>, public td::act
   void handle(simplex::BusHandle, std::shared_ptr<const simplex::FinalizationObserved> event) {
     std::scoped_lock lock(observations.mutex);
     observations.finalized_slots.push_back(event->id.slot);
+  }
+
+  template <>
+  void handle(simplex::BusHandle, std::shared_ptr<const simplex::LeaderWindowObserved> event) {
+    std::scoped_lock lock(observations.mutex);
+    observations.latest_leader_window_start = std::max(observations.latest_leader_window_start, event->start_slot);
   }
 
   template <>
@@ -241,6 +291,22 @@ class OverlayStub : public td::actor::SpawnsWith<simplex::Bus>, public td::actor
       observations.overlay_requests.push_back(id);
     }
     co_return ProtocolMessage{create_serialize_tl_object<tos_api::consensus_requestError>()};
+  }
+
+  // Every vote leaves the node here, after it is signed and journalled.
+  template <>
+  void handle(simplex::BusHandle, std::shared_ptr<const OutgoingProtocolMessage> message) {
+    auto vote = fetch_tl_object<tos_api::consensus_simplex_vote>(message->message.data, true);
+    if (vote.is_error()) {
+      return;
+    }
+    auto unsigned_vote = simplex::Vote::from_tl(*vote.ok()->vote_);
+    emit(PSTRING() << "LATE_VOTE sent " << unsigned_vote);
+    std::scoped_lock lock(observations.mutex);
+    ++observations.sent_votes;
+    if (auto notar = std::get_if<simplex::NotarizeVote>(&unsigned_vote.vote)) {
+      observations.sent_notarize_votes.push_back(notar->id);
+    }
   }
 };
 
@@ -279,6 +345,12 @@ class MemoryDb : public consensus::Db {
 
   td::actor::Task<> close() override {
     co_return td::Unit{};
+  }
+
+  // Seeds a record before the actors start, as a database left by an earlier run would hold it.
+  void put(td::BufferSlice key, td::BufferSlice value) {
+    std::scoped_lock lock(mutex_);
+    map_[std::move(key)] = std::move(value);
   }
 
  private:
@@ -397,7 +469,10 @@ class Driver : public td::actor::Actor {
   std::shared_ptr<simplex::Bus> bus_ptr_;
   // Owned by the bus; kept to read what the actors persisted.
   const MemoryDb* db_ = nullptr;
+  MemoryDb* db_seed_ = nullptr;
   size_t target_ = 1;
+  td::uint32 bootstrap_slot_ = 0;
+  CandidateId bootstrap_id_;
 
   td::BufferSlice sign(size_t signer, td::Slice inner) const {
     auto envelope =
@@ -582,16 +657,57 @@ class Driver : public td::actor::Actor {
     bus->validator_set_hash = 0;
     auto db = std::make_unique<MemoryDb>();
     db_ = db.get();
+    db_seed_ = db.get();
     bus->db = std::move(db);
     bus_ptr_ = bus;
 
-    bus->pq_signer = signers_.at(target_);
-    bus->local_id = validators.at(target_);
-    bus->local_adnl_id = validators.at(target_).adnl_id;
+    if (mode_ == Mode::ObserverLate) {
+      // A private-overlay observer: no validator identity and no consensus signer, so the
+      // actors that vote are not spawned and nothing could sign a vote.
+      bus->pq_signer = nullptr;
+      bus->local_id = std::nullopt;
+      bus->local_adnl_id = adnl::AdnlNodeIdShort{fill(0xee)};
+      CHECK(bus->config.observers_in_private_overlay() && !bus->config.enable_block_sync());
+    } else {
+      bus->pq_signer = signers_.at(target_);
+      bus->local_id = validators.at(target_);
+      bus->local_adnl_id = validators.at(target_).adnl_id;
+    }
+
+    if (mode_ == Mode::BootstrapBeforeStart) {
+      // What a restarted node holds: the certificates it saved before it stopped.
+      bootstrap_slot_ = first_slot_too_new_before_start() + SLOTS_PER_LEADER_WINDOW;
+      bootstrap_id_ =
+          CandidateHashData::create_full(make_block(1, FIRST_PARENT), std::nullopt).build_id_with(bootstrap_slot_);
+      seed_certificate(simplex::NotarizeVote{bootstrap_id_});
+      seed_certificate(simplex::FinalizeVote{bootstrap_id_});
+    }
 
     bus_ = runtime_.start(std::static_pointer_cast<simplex::Bus>(bus), "late-target");
+    if (mode_ != Mode::BootstrapBeforeStart) {
+      publish_start();
+    }
+  }
+
+  void publish_start() {
     bus_.publish<Start>(
         td::make_ref<ChainState>(ChainState::ZerostateTip{FIRST_PARENT, gen_shard_state(0)}, MIN_MC_BLOCK_ID));
+  }
+
+  // The first slot Consensus treats as too new while its leader window is still 0, which it is
+  // until Start: no leader window is announced before then.
+  td::uint32 first_slot_too_new_before_start() const {
+    return (bus_ptr_->config.noncritical_params.max_leader_window_desync + 1) * SLOTS_PER_LEADER_WINDOW;
+  }
+
+  // Writes a certificate the way the Db actor saves one, so the production Db actor loads it at
+  // start and Pool and the candidate resolver replay it.
+  template <typename VoteT>
+  void seed_certificate(const VoteT& vote) {
+    auto cert = make_cert(vote)->to_tl();
+    auto hash = td::sha256_bits256(serialize_tl_object(cert, true));
+    db_seed_->put(create_serialize_tl_object<tos_api::consensus_simplex_db_key_vote>(hash),
+                  create_serialize_tl_object<tos_api::consensus_simplex_db_cert>(std::move(cert)));
   }
 
   td::actor::Task<> run_inner() {
@@ -624,8 +740,134 @@ class Driver : public td::actor::Actor {
         co_return co_await run_resolver_pin_error(X_alt, Y);
       case Mode::FrontierSkew:
         co_return co_await run_frontier_skew(X_alt, Y, Y_alt, Z);
+      case Mode::BootstrapBeforeStart:
+        co_return co_await run_bootstrap_before_start();
+      case Mode::ObserverLate:
+        co_return co_await run_observer_late(X);
+      case Mode::LateFrontierAdvance:
+        co_return co_await run_late_frontier_advance(X, X_alt, Y);
     }
     co_return td::Unit{};
+  }
+
+  // A restarted validator has replayed a FinalCert for slot S but has not been started, so its
+  // Consensus is still in leader window 0, where S is too new. The late candidate for S must
+  // still reach the resolver; a candidate for an unfinalized slot must not be stored by the
+  // late path. The block is applied without a vote (the check is made after Start), and the
+  // vote recorders are shown to see a vote that is cast.
+  td::actor::Task<> run_bootstrap_before_start() {
+    const td::uint32 S = bootstrap_slot_;
+    auto X = make_candidate(1, FIRST_PARENT, std::nullopt, S);
+    auto U = make_candidate(2, X->block_id(), X->id, S + 3);
+    auto N = make_candidate(2, X->block_id(), X->id, S + 1);
+    if (X->id != bootstrap_id_ || S < first_slot_too_new_before_start()) {
+      finish(1, "LATE_PRECONDITION_FAILED: the replayed slot is not above the pre-Start bound");
+    }
+    if (!co_await wait_until([&] { return is_finalized(S); })) {
+      finish(1, "LATE_PRECONDITION_FAILED: the stored FinalCert was not replayed");
+    }
+    auto status = co_await precheck(S, fill(0xf1));
+    if (status.is_error()) {
+      finish(1, "LATE_PRECONDITION_FAILED: precheck refused the replayed slot: " + status.to_string());
+    }
+    if (candidate_persisted(X->id) || candidate_persisted(U->id)) {
+      finish(1, "LATE_PRECONDITION_FAILED: a candidate was persisted before it was delivered");
+    }
+
+    deliver_candidate(U, "unfinalized-before-start");
+    deliver_candidate(X, "late-before-start");
+    bool stored = co_await wait_until([&] { return candidate_persisted(X->id); });
+    co_await settle(0.5);
+    emit(PSTRING() << "LATE_RESULT before_start persisted late=" << candidate_persisted(X->id) << " unfinalized="
+                   << candidate_persisted(U->id) << " overlay_requests=" << overlay_requests_for(X->id));
+    if (!stored) {
+      finish(3, "LATE_BOOTSTRAP_DROPPED: the late candidate for the replayed slot was not stored before Start");
+    }
+    if (candidate_persisted(U->id)) {
+      finish(3, "LATE_WINDOW_FAILED: a candidate for an unfinalized slot was stored by the late path");
+    }
+
+    publish_start();
+    bool applied = co_await wait_until([&] { return accepted_count(X) >= 1; });
+    emit(PSTRING() << "LATE_RESULT after_start applied=" << applied << " traced_votes=" << traced_votes()
+                   << " sent_votes=" << sent_votes() << " misbehavior_reports=" << misbehavior_reports());
+    if (!applied) {
+      finish(3, "LATE_NOT_APPLIED: the stored late candidate was not applied after Start");
+    }
+    if (traced_votes() != 0 || sent_votes() != 0 || misbehavior_reports() != 0) {
+      finish(4, "LATE_VOTED: a late candidate must only be stored");
+    }
+
+    // The recorders the observer mode relies on see a vote that is cast. Consensus leaves
+    // leader window 0 only when Pool announces the window after Start.
+    if (!co_await wait_until([&] { return latest_leader_window_start() >= N->id.slot; })) {
+      finish(1, "LATE_PRECONDITION_FAILED: no leader window was announced after Start");
+    }
+    deliver_candidate(N, "next-slot-after-start");
+    if (!co_await wait_until([&] { return notarize_votes_for(N->id) >= 1 && sent_notarize_votes_for(N->id) >= 1; })) {
+      finish(1, PSTRING() << "LATE_PRECONDITION_FAILED: no notarize vote for the next slot was recorded (traced="
+                          << notarize_votes_for(N->id) << " sent=" << sent_notarize_votes_for(N->id) << ")");
+    }
+    finish(0, "LATE_BOOTSTRAP_OK");
+  }
+
+  // A private-overlay observer runs the candidate resolver but not Consensus. The late
+  // candidate must still wake its resolver, and the observer must never vote.
+  td::actor::Task<> run_observer_late(CandidateRef X) {
+    co_await notarize_and_finalize(X->id);
+    if (!co_await wait_until([&] { return overlay_requests_for(X->id) >= 1; })) {
+      finish(1, "LATE_PRECONDITION_FAILED: the observer never asked a peer for the finalized candidate");
+    }
+    if (accepted_count(X) != 0) {
+      finish(1, "LATE_PRECONDITION_FAILED: the block was applied before its candidate arrived");
+    }
+    auto status = co_await precheck(X->id.slot, fill(0xb2));
+    if (status.is_error()) {
+      finish(1, "LATE_PRECONDITION_FAILED: the observer's precheck refused the late broadcast: " + status.to_string());
+    }
+
+    deliver_candidate(X, "late-to-observer");
+    bool applied = co_await wait_until([&] { return accepted_count(X) >= 1; });
+    co_await settle(0.5);
+    emit(PSTRING() << "LATE_RESULT observer applied=" << applied << " traced_votes=" << traced_votes()
+                   << " sent_votes=" << sent_votes() << " misbehavior_reports=" << misbehavior_reports());
+    if (!applied) {
+      finish(3, "LATE_NOT_APPLIED: the late candidate never reached the observer's resolver");
+    }
+    if (traced_votes() != 0 || sent_votes() != 0 || misbehavior_reports() != 0) {
+      finish(4, "LATE_VOTED: an observer cast or sent a vote");
+    }
+    finish(0, "LATE_OBSERVER_OK");
+  }
+
+  // With a one-slot window, a late candidate for slot 0 is announced and a finalization of
+  // slot 1 is handled before the storage it started runs. The candidate must not be persisted.
+  // It is a candidate nothing else persists: the certified X is stored first, as the positive
+  // control that a late candidate for slot 0 is kept while slot 0 is retained.
+  td::actor::Task<> run_late_frontier_advance(CandidateRef X, CandidateRef X_alt, CandidateRef Y) {
+    co_await notarize_and_finalize(X->id);
+    deliver_candidate(X, "late-retained");
+    if (!co_await wait_until([&] { return candidate_persisted(X->id); })) {
+      finish(1, "LATE_PRECONDITION_FAILED: a late candidate for the retained slot was not stored");
+    }
+    if (candidate_persisted(X_alt->id)) {
+      finish(1, "LATE_PRECONDITION_FAILED: the race candidate was persisted before it was delivered");
+    }
+
+    auto final_cert = make_cert(simplex::FinalizeVote{Y->id});
+    // Back to back: the resolver handles the notification, then this finalization, then the
+    // storage task the notification started.
+    deliver_candidate(X_alt, "late-then-window-moves");
+    bus_.publish<simplex::FinalizationObserved>(Y->id, final_cert);
+    if (!co_await wait_until([&] { return is_finalized(Y->id.slot); })) {
+      finish(1, "LATE_PRECONDITION_FAILED: the later finalization was not observed");
+    }
+    co_await settle(0.5);
+    emit(PSTRING() << "LATE_RESULT frontier_advanced persisted=" << candidate_persisted(X_alt->id));
+    if (candidate_persisted(X_alt->id)) {
+      finish(3, "LATE_WINDOW_FAILED: a candidate whose slot left the window before storage was persisted");
+    }
+    finish(0, "LATE_FRONTIER_ADVANCE_OK");
   }
 
   td::actor::Task<> run_late_apply(CandidateRef X) {
@@ -688,7 +930,7 @@ class Driver : public td::actor::Actor {
     finish(0, "LATE_WINDOW_OK");
   }
 
-  // Delivers a candidate for a slot outside Consensus's window and then one inside it. The
+  // Delivers a candidate for a slot outside the resolver's window and then one inside it. The
   // resolver erases an evictable entry outside its window as soon as the store ends, so what
   // is observed is the persisted candidate, not a resolver entry. The candidate inside the
   // window must be persisted before the absence of the other one counts for anything.
@@ -710,12 +952,12 @@ class Driver : public td::actor::Actor {
     co_return td::Unit{};
   }
 
-  // Pool's finalization frontier lags the one Consensus and the resolver act on. Each actor
-  // applies its own window: Pool still admits the broadcast for slot 0, Consensus does not
-  // store its candidate. When Pool catches up, it refuses the broadcast too.
+  // Pool's finalization frontier lags the one the resolver acts on. Each actor applies its own
+  // window: Pool still admits the broadcast for slot 0, the resolver does not store its
+  // candidate. When Pool catches up, it refuses the broadcast too.
   td::actor::Task<> run_frontier_skew(CandidateRef X_alt, CandidateRef Y, CandidateRef Y_alt, CandidateRef Z) {
-    // Only Consensus, the resolver and the Db actor see this finalization; Pool learns of a
-    // finalization from the certificate itself, which it has not received.
+    // Only Consensus, the resolver, the state resolver and the Db actor see this finalization;
+    // Pool learns of a finalization from the certificate itself, which it has not received.
     bus_.publish<simplex::FinalizationObserved>(Y->id, make_cert(simplex::FinalizeVote{Y->id}));
 
     auto pool_behind = co_await precheck(0, fill(0xe0));
@@ -923,6 +1165,9 @@ const ModeSpec MODES[] = {
     {"resolver-pin", Mode::ResolverPin, "1", nullptr},
     {"resolver-pin-error", Mode::ResolverPinError, "1", "1"},
     {"frontier-skew", Mode::FrontierSkew, "1", nullptr},
+    {"bootstrap-before-start", Mode::BootstrapBeforeStart, nullptr, nullptr},
+    {"observer-late", Mode::ObserverLate, nullptr, nullptr},
+    {"late-frontier-advance", Mode::LateFrontierAdvance, "1", nullptr},
     {"window-helper", std::nullopt, nullptr, nullptr},
 };
 

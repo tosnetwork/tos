@@ -32,6 +32,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-consensus",
     "test-notarize-after-transient-resolve",
     "test-state-resolver-teardown",
+    "test-late-candidate-window",
     "test-custom-overlay-relay-dedup",
     "test-pq-consensus-key-rotation",
     "test-fsync-dir-failure-shim",
@@ -48,6 +49,16 @@ RESTART_ORIGIN_TESTS = (
     "test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control",
     "test-consensus-simplex2-pq-restart-transient-origin",
     "test-consensus-simplex2-pq-restart-permanent-origin",
+)
+
+# Modes the late-candidate test must keep running: the finalized-slot window and the paths
+# that only the candidate resolver covers (before Start, and on an observer).
+LATE_CANDIDATE_MODES = (
+    ("late-after-precheck", "late candidate applied without a vote"),
+    ("outside-window", "retained-window lower bound"),
+    ("bootstrap-before-start", "replayed finalization before Start"),
+    ("observer-late", "private-overlay observer recovery without voting"),
+    ("late-frontier-advance", "window rechecked when the late candidate is stored"),
 )
 
 
@@ -356,6 +367,26 @@ def main() -> int:
             is not None,
             f"C05 four-node behavior CTest is absent or has wrong fault budget: {test_name}",
         )
+    late_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^test-late-candidate-window$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(late_ctest)}\s*$", text) is not None,
+        "Simplex late-candidate behavior gate is absent",
+    )
+    require(
+        re.search(r"(?m)^tos_test\(test-late-candidate-window\)\s*$", consensus_tests) is not None,
+        "Simplex late-candidate CTest registration is absent",
+    )
+    late_source = (root / "test/validator/consensus/test-late-candidate-window.cpp").read_text(
+        encoding="utf-8"
+    )
+    for mode, boundary in LATE_CANDIDATE_MODES:
+        require(
+            re.search(rf'(?m)^\s*\{{"{re.escape(mode)}", ', late_source) is not None,
+            f"Simplex late-candidate mode is absent from the test's mode table: {mode} ({boundary})",
+        )
     for test_name in RESTART_ORIGIN_TESTS:
         command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
         require(
@@ -419,6 +450,7 @@ def main() -> int:
         "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
+        "the Simplex late-candidate modes for the validator, bootstrap and observer paths, "
         "five named restart-origin controls, and the E04 Python negative-window tests; "
         "the Rust job compiles every test target and runs the E04 exact wallet confirmation group"
     )

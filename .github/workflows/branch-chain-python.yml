@@ -247,7 +247,8 @@ jobs:
 
       # A candidate that arrives after its slot is finalized is still stored while the
       # candidate resolver retains the slot, and nothing outside that window is; a resolve
-      # task keeps its resolver entry alive until it ends.
+      # task keeps its resolver entry alive until it ends. This also holds before Start on a
+      # restarted validator and on a private-overlay observer, which never votes.
       - name: Check Simplex late candidates for finalized slots
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-late-candidate-window$'
 

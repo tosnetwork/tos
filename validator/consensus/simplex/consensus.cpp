@@ -11,7 +11,6 @@
 #include "td/actor/coro_utils.h"
 
 #include "bus.h"
-#include "candidate-retention.h"
 #include "misbehavior.h"
 
 namespace tos::validator::consensus::simplex {
@@ -193,15 +192,9 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     }
     auto slot = state_->slot_at(slot_idx);
     if (!slot.has_value()) {
-      // The slot is already finalized, so there is nothing to vote on. The candidate may
-      // still be the one the finalized chain needs and that the state resolver is trying
-      // to fetch, so while the candidate resolver retains the slot it is stored there and
-      // nothing else is done with it.
-      if (slot_idx >= late_window_begin(state_->tracked_slots_interval().begin, retained_slots_)) {
-        store_late_candidate(event->candidate).start().detach();
-      } else {
-        LOG(DEBUG) << "Dropping a candidate for slot " << slot_idx << ", finalized and outside the retained window";
-      }
+      // The slot is already finalized, so there is nothing to vote on. The candidate
+      // resolver, which validators and observers both run, keeps a late candidate for a
+      // finalized slot it still retains.
       return;
     }
     if (slot->state->voted_notar) {
@@ -240,15 +233,6 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   }
 
  private:
-  td::actor::Task<> store_late_candidate(CandidateRef candidate) {
-    auto id = candidate->id;
-    auto stored = co_await owning_bus().publish<StoreCandidate>(std::move(candidate)).wrap();
-    if (stored.is_error()) {
-      LOG(WARNING) << "Failed to store the late candidate " << id << " for a finalized slot: " << stored.error();
-    }
-    co_return td::Unit{};
-  }
-
   td::actor::Task<> start_generation(ParentId base, td::uint32 start_slot) {
     auto parent = co_await owning_bus().publish<ResolveState>(base);
     td::Timestamp start_time = td::Timestamp::now();
@@ -405,8 +389,6 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   bool finality_behind_ = false;
   std::optional<State> state_;
   td::uint32 current_window_ = 0;
-  // Finalized slots for which a late candidate is still handed to the candidate resolver.
-  td::uint32 retained_slots_ = candidate_retention_slots_from_env();
 };
 
 }  // namespace
