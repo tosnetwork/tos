@@ -11,6 +11,7 @@
 #include "validator/measurement/measurement-contract.h"
 
 #include "bus.h"
+#include "candidate-retention.h"
 #include "misbehavior.h"
 #include "state.h"
 #include "stats.h"
@@ -677,8 +678,11 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
   template <>
   td::actor::Task<> process(BusHandle, std::shared_ptr<PrecheckCandidateBroadcast> query) {
-    if (query->slot < first_nonfinalized_slot_) {
-      co_return td::Status::Error("Slot is already finalized");
+    // A finalized slot still in the candidate resolver's window is admitted: its candidate
+    // may be the one the finalized chain needs, and Consensus only stores it. The duplicate
+    // filter below still allows one broadcast per slot there.
+    if (query->slot < late_window_begin(first_nonfinalized_slot_, retained_slots_)) {
+      co_return td::Status::Error("Slot is finalized and outside the retained window");
     }
     if (query->slot > now_ + params_.max_leader_window_desync * slots_per_leader_window_) {
       co_return td::Status::Error("Slot is too far in the future");
@@ -1221,7 +1225,10 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     while (!skip_intervals_.empty() && *skip_intervals_.begin() <= id.slot) {
       skip_intervals_.erase(skip_intervals_.begin());
     }
-    seen_broadcasts_.erase(seen_broadcasts_.begin(), seen_broadcasts_.upper_bound(id.slot));
+    // Kept until the slot leaves the retained window, not only until it is finalized: late
+    // broadcasts are still admitted there, and the entry is what limits them to one per slot.
+    seen_broadcasts_.erase(seen_broadcasts_.begin(),
+                           seen_broadcasts_.lower_bound(late_window_begin(first_nonfinalized_slot_, retained_slots_)));
 
     state_->notify_finalized(id.slot);
     owning_bus()->health_session.vote_ledger.retire_before(static_cast<std::uint64_t>(id.slot) + 1);
@@ -1287,7 +1294,9 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
 
   std::vector<Request> requests_;
 
+  // First broadcast seen per slot, for slots from the start of the retained window on.
   std::map<td::uint32, td::Bits256> seen_broadcasts_;
+  td::uint32 retained_slots_ = candidate_retention_slots_from_env();
 
   // Candidates observed via CandidateReceived, keyed by CandidateId.
   // Used by QueryValidatorGroupInfo to return block-level metadata.
