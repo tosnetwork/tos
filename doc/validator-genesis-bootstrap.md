@@ -47,7 +47,7 @@ existing Elector process.
 | ConfigParam 19 global ID | 1 | Mainnet signature replay domain; local development uses 3 |
 | ConfigParam 34 descriptor | `validator_pq_addr#b3` | PQ-only bootstrap consensus identities |
 | PQ algorithm ID | 1 (ML-DSA-44) | 1,312-byte consensus public keys |
-| ConfigParam 12 basechain | `min_split` 0, `max_split` 2 | One basechain shard at genesis; load may split it into at most four |
+| ConfigParam 12 basechain | `workchain_v2`, `min_split` 0, `max_split` 2, persistent-state split depth 4 | One basechain shard at genesis; load may split it into at most four |
 | ConfigParam 30 | Simplex version 2, QUIC enabled, 400 ms target rate, 700 ms first-block timeout, 300 ms minimum block interval; leader windows of 4 slots (masterchain) and 16 slots (shards) | Consensus protocol; distinct from ConfigParam 8 |
 | ConfigParam 47 | Compiled controller v1 code hash | Admission for subsequent controller-based elections |
 

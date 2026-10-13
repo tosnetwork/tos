@@ -65,14 +65,27 @@ hashu dup =: basestate0_rhash
 ."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
 "basestate0" +suffix +".rhash" B>file
 
-// root-hash file-hash start-at actual-min-split min-split-depth max-split-depth wc-id
+// The basechain descriptor uses the workchain_v2 (#a7) constructor, written
+// out here because add-std-workchain only builds #a6:
+//   enabled_since actual_min_split min_split max_split | basic active accept_msgs
+//   flags | zerostate root and file hash | version | wfmt_basic vm_version vm_mode
+//   | wc_split_merge_timings | persistent_state_split_depth
 // The basechain starts as one shard: min_split 0 forces no split, and
 // max_split 2 lets load split it into at most four shards. A forced min_split
 // of 4 made a four-validator network run 17 consensus groups per node (the
 // masterchain plus 16 basechain shards) from about 400 s after genesis; the
 // extra groups saturated disk flushes and pushed the masterchain block interval
 // from about 470 ms to about 1 s. Mainnet-scale networks use min 0 / max 2.
-basestate0_rhash basestate0_fhash now 0 0 2 0 add-std-workchain
+// The split/merge timings are the node defaults, written explicitly: delay
+// 100 s, interval 100 s, minimum interval 30 s, maximum delay 1000 s.
+// persistent_state_split_depth 4 serializes the basechain's persistent state
+// in 16 parts by account prefix, as mainnet-scale networks do.
+<b x{a7} s, now 32 u, 0 8 u, 0 8 u, 2 8 u, x{e000} s,
+   basestate0_rhash 256 u, basestate0_fhash 256 u, 0 32 u, x{1} s, -1 32 i, 0 64 u,
+   x{0} s, 100 32 u, 100 32 u, 30 32 u, 1000 32 u, 4 8 u, b>
+dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+<s 0 workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+workchain-dict !
 
 config.workchains!
 
