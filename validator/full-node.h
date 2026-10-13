@@ -63,8 +63,9 @@ struct FullNodeOptions {
   double private_broadcast_speed_multiplier_ = 1.0;
   double fast_sync_broadcast_speed_multiplier_ = 1.0;
   double initial_sync_delay_ = 60.0;
-  double ratelimit_window_size_ = 1.0;
-  size_t ratelimit_global_ = 96, ratelimit_heavy_ = 64, ratelimit_medium_ = 72;
+  double ratelimit_window_size_ = k_default_ratelimit_window_size;
+  size_t ratelimit_global_ = k_default_ratelimit_global, ratelimit_heavy_ = k_default_ratelimit_heavy,
+         ratelimit_medium_ = k_default_ratelimit_medium;
 };
 
 struct CustomOverlayParams {

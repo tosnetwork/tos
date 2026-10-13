@@ -28,6 +28,7 @@
 #include "adnl-ext-query-failure.h"
 #include "adnl-node-id.hpp"
 #include "adnl-node.h"
+#include "adnl-query-answer.h"
 
 namespace tos {
 
@@ -82,6 +83,12 @@ class Adnl : public AdnlSenderInterface {
       // ADNL messages but not queries used to leave callers hanging on
       // their own timeout, as in message-only callbacks such as ShardBlockVerifier.
       promise.set_error(td::Status::Error("ADNL Callback subclass does not handle queries"));
+    }
+    // A query whose answer may carry delivery metadata. A subscriber that only
+    // answers with plain data keeps the default: its answers carry none.
+    virtual void receive_query_ex(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
+                                  td::Promise<AdnlQueryAnswer> promise) {
+      receive_query(src, dst, std::move(data), drop_answer_metadata(std::move(promise)));
     }
     virtual ~Callback() = default;
   };

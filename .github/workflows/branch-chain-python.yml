@@ -89,8 +89,21 @@ jobs:
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
             test-adnl-ext-input-budget test-adnl-ext-output-backpressure test-adnl-ext-refusal-close \
             test-rate-limiter test-security-boundaries test-full-node-shard-admission test-full-node-master-admission \
-            test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap
+            test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap \
+            test-download-refusal-answers test-consensus-retry-backoff test-bridge-retirement \
+            test-rldp2-refusal-lifetime
           ccache --show-stats
+
+      # Answered capacity refusals through the download actors, their query
+      # deadlines, the consensus group's retry policy, prompt destruction of a
+      # group retired while its initial state is still owed, and the RLDP
+      # lifetime of refusal answers over the production overlay path.
+      - name: Verify answered refusals, download deadlines and consensus retries
+        run: |
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-download-refusal-answers$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-consensus-retry-backoff$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-bridge-retirement$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-rldp2-refusal-lifetime$'
 
       # These security regressions previously ran only after merging to main.
       # Check registration too: ctest must not silently pass a reduced set.

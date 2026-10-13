@@ -220,7 +220,7 @@ class OverlayImpl : public Overlay {
   void receive_message(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
                        td::BufferSlice data) override;
   void receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
-                     td::BufferSlice data, td::Promise<td::BufferSlice> promise) override;
+                     td::BufferSlice data, td::Promise<adnl::AdnlQueryAnswer> promise) override;
   void send_message_to_neighbours(td::BufferSlice data) override;
   void send_broadcast(PublicKeyHash send_as, td::uint32 flags, td::BufferSlice data) override;
   void send_broadcast_fec(PublicKeyHash send_as, td::uint32 flags, td::BufferSlice data,
@@ -413,9 +413,21 @@ class OverlayImpl : public Overlay {
   friend class OverlayImplPlumtreeRepairTest;
   friend class OverlayImplBroadcastCapacityTest;
 
+  // A query the overlay does not handle itself goes to its callback, whose
+  // answer is forwarded whole, delivery metadata included.
   template <class T>
-  void process_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<td::BufferSlice> promise) {
-    callback_->receive_query(src, overlay_id_, serialize_tl_object(&query, true), std::move(promise));
+  void process_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<adnl::AdnlQueryAnswer> promise) {
+    callback_->receive_query_ex(src, overlay_id_, serialize_tl_object(&query, true), std::move(promise));
+  }
+  // The overlay's own handlers answer with plain data, and so carry no
+  // delivery metadata.
+  template <class T>
+  void dispatch_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<adnl::AdnlQueryAnswer> promise) {
+    if constexpr (requires(td::Promise<td::BufferSlice> plain) { this->process_query(src, query, std::move(plain)); }) {
+      process_query(src, query, adnl::drop_answer_metadata(std::move(promise)));
+    } else {
+      process_query(src, query, std::move(promise));
+    }
   }
 
   void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getRandomPeers &query,

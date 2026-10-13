@@ -114,9 +114,14 @@ class ChainState : public td::CntObject {
 
   using Tip = std::variant<NormalTip, BeforeMergeTip, BeforeSplitTip, ZerostateTip>;
 
+  // How long a resolution waits for the manager's state and block data by
+  // default.
+  static constexpr double DEFAULT_WAIT_TIMEOUT = 10.0;
+
   static td::actor::Task<td::Ref<ChainState>> from_manager(
       td::actor::ActorId<ManagerFacade> manager, ShardIdFull shard, std::vector<BlockIdExt> blocks,
-      BlockIdExt min_mc_block_id, std::optional<CandidateId> requesting_candidate = std::nullopt);
+      BlockIdExt min_mc_block_id, std::optional<CandidateId> requesting_candidate = std::nullopt,
+      double wait_timeout = DEFAULT_WAIT_TIMEOUT);
 
   ChainState(Tip tip, BlockIdExt min_mc_block_id);
 

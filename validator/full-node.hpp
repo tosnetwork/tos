@@ -197,6 +197,9 @@ class FullNodeImpl : public FullNode {
       td::actor::create_actor<TokenManager>("tokens", /* max_tokens = */ 1);
 
   std::shared_ptr<FullNodeRateLimiter> limiter_;
+  // Shared by every shard actor, like the limiter, so the answers to its
+  // refusals are bounded once for the node.
+  std::shared_ptr<RefusalAnswerBudget> refusal_answers_ = std::make_shared<RefusalAnswerBudget>();
 
   decltype(limiter_) make_limiter(const FullNodeOptions& opts);
 };

@@ -150,7 +150,7 @@ class FullNodeShardImpl : public FullNodeShard {
                      td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getPersistentStateSizeV2 &query,
                      td::Promise<td::BufferSlice> promise);
-  void receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Promise<td::BufferSlice> promise);
+  void receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Promise<adnl::AdnlQueryAnswer> promise);
   void receive_message(adnl::AdnlNodeIdShort src, td::BufferSlice data);
 
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast &query);
@@ -253,9 +253,9 @@ class FullNodeShardImpl : public FullNodeShard {
 
   FullNodeShardImpl(ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id,
                     FileHash zero_state_file_hash, FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter,
-                    td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
-                    td::actor::ActorId<rldp2::Rldp> rldp2, td::actor::ActorId<quic::QuicSender> quic,
-                    td::actor::ActorId<overlay::Overlays> overlays,
+                    std::shared_ptr<RefusalAnswerBudget> refusal_answers, td::actor::ActorId<keyring::Keyring> keyring,
+                    td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
+                    td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
                     td::actor::ActorId<ValidatorManagerInterface> validator_manager,
                     td::actor::ActorId<adnl::AdnlExtClient> client, td::actor::ActorId<FullNode> full_node, bool active,
                     bool enable_plumtree_broadcast);

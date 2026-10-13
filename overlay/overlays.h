@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "adnl/adnl-node-id.hpp"
+#include "adnl/adnl-query-answer.h"
 #include "adnl/adnl-sender-ex.h"
 #include "auto/tl/tos_api.h"
 #include "dht/dht.h"
@@ -373,6 +374,13 @@ class Overlays : public td::actor::Actor, public metrics::AsyncCollector {
       // promise. Concrete overlay implementations that do not support
       // queries should follow the same contract.
       promise.set_error(td::Status::Error("overlay Callback subclass does not handle queries"));
+    }
+    // A query whose answer may carry delivery metadata for the transport. A
+    // callback that only answers with plain data keeps the default: its
+    // answers carry none.
+    virtual void receive_query_ex(adnl::AdnlNodeIdShort src, OverlayIdShort overlay_id, td::BufferSlice data,
+                                  td::Promise<adnl::AdnlQueryAnswer> promise) {
+      receive_query(src, overlay_id, std::move(data), adnl::drop_answer_metadata(std::move(promise)));
     }
     virtual void receive_broadcast(PublicKeyHash src, OverlayIdShort overlay_id, td::BufferSlice data) {
     }

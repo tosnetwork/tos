@@ -55,6 +55,7 @@ class AdnlLocalId : public td::actor::Actor {
     deliver(src, std::move(data));
   }
   void deliver_query(AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
+  void deliver_query_ex(AdnlNodeIdShort src, td::BufferSlice data, td::Promise<AdnlQueryAnswer> promise);
   void receive(td::IPAddress addr, td::BufferSlice data);
   td::actor::Task<> receive_coro(td::IPAddress addr, td::BufferSlice data);
 

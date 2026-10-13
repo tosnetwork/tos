@@ -25,6 +25,7 @@
 #include "validator/full-node.h"
 
 #include "download-block-new.hpp"
+#include "download-deadline.h"
 #include "full-node-serializer.hpp"
 
 namespace tos {
@@ -156,6 +157,12 @@ void DownloadBlockNew::got_download_token(std::unique_ptr<ActionToken> token) {
 void DownloadBlockNew::got_node_to_download(adnl::AdnlNodeIdShort node) {
   download_from_ = node;
 
+  auto deadline = download_query_deadline(timeout_, 15.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
+    return;
+  }
+
   VLOG(FULL_NODE_DEBUG) << "downloading proof for " << block_id_;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) mutable {
@@ -169,12 +176,12 @@ void DownloadBlockNew::got_node_to_download(adnl::AdnlNodeIdShort node) {
   td::BufferSlice q = create_serialize_tl_object<tos_api::tosNode_downloadBlockFull>(create_tl_block_id(block_id_));
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_, overlay_id_,
-                            "get_block_full", std::move(P), td::Timestamp::in(15.0), std::move(q),
+                            "get_block_full", std::move(P), deadline.ok(), std::move(q),
                             FullNode::max_proof_size() + FullNode::max_block_size() + 128, rldp_);
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_block_full",
-                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)),
-                            td::Timestamp::in(15.0), std::move(P));
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)), deadline.ok(),
+                            std::move(P));
   }
 }
 

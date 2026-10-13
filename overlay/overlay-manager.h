@@ -114,6 +114,8 @@ class OverlayManager : public Overlays {
 
   void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                      td::Promise<td::BufferSlice> promise);
+  void receive_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
+                        td::Promise<adnl::AdnlQueryAnswer> promise);
   void receive_message(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data);
 
   void register_overlay(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id, OverlayMemberCertificate cert,
@@ -153,7 +155,7 @@ class OverlayManager : public Overlays {
     adnl::AdnlNodeIdShort dst;
     OverlayIdShort overlay_id;
     td::BufferSlice data;
-    std::optional<td::Promise<td::BufferSlice>> promise;
+    std::optional<td::Promise<adnl::AdnlQueryAnswer>> promise;
     std::list<BufferedRequest>::iterator next_for_overlay;
   };
 
@@ -172,7 +174,7 @@ class OverlayManager : public Overlays {
 
     void evict_oldest();
     void add_request(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, OverlayIdShort overlay_id,
-                     td::BufferSlice data, std::optional<td::Promise<td::BufferSlice>> promise);
+                     td::BufferSlice data, std::optional<td::Promise<adnl::AdnlQueryAnswer>> promise);
     std::vector<BufferedRequest> extract_for_overlay(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id);
   };
 
@@ -197,6 +199,10 @@ class OverlayManager : public Overlays {
     void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
       td::actor::send_closure(id_, &OverlayManager::receive_query, src, dst, std::move(data), std::move(promise));
+    }
+    void receive_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
+                          td::Promise<adnl::AdnlQueryAnswer> promise) override {
+      td::actor::send_closure(id_, &OverlayManager::receive_query_ex, src, dst, std::move(data), std::move(promise));
     }
     AdnlCallback(td::actor::ActorId<OverlayManager> id) : id_(id) {
     }
