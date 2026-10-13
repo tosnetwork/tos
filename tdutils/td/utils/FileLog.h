@@ -57,6 +57,21 @@ class FileLog : public LogInterface {
 
   void lazy_rotate();
 
+  // Process-wide counts of failures the log cannot report through itself: a
+  // rotated file that could not be shifted to the next generation, and a stale
+  // rotated file that could not be removed. Each failure is also written as
+  // one line to the process stderr. A file that is already missing is not a
+  // failure.
+  static uint64 rotation_failures();
+  static uint64 prune_failures();
+
+  // Counts and reports a failed removal of stale rotated files, for callers
+  // that prune on the log's behalf.
+  static void report_prune_failure(const Status &error);
+
+  // Whether `error` says the file it names does not exist.
+  static bool is_missing_file_error(const Status &error);
+
  private:
   FileFd fd_;
   string path_;

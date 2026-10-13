@@ -56,42 +56,56 @@ bool parse_small_number(Slice s, int64 &value) {
 // so without this a reduced kept number would leave a previous run's idle
 // threads' generations on disk forever. One scan of the log directory, so the
 // cost does not depend on how many generations or threads could exist.
+//
+// A failed scan or removal is counted and reported, and start goes on: a log
+// that keeps a few files too many must not stop the engine. Only a file that
+// disappears between the scan and its removal is not a failure. An entry with
+// an archive's name that is not a regular file (a directory, say) is taken as
+// an archive too, so that it is reported rather than silently kept.
 void prune_idle_thread_archives(const string &path, int32 keep_rotated, int32 max_threads) {
   PathView view(path);
   string dir = view.parent_dir().empty() ? string(".") : view.parent_dir_noslash().str();
   string prefix = PSTRING() << view.file_name() << ".thread";
-  vector<string> doomed;
-  WalkPath::run(dir, [&](CSlice name, WalkPath::Type type) {
-    if (type == WalkPath::Type::EnterDir) {
-      return name == dir ? WalkPath::Action::Continue : WalkPath::Action::SkipDir;
-    }
-    if (type != WalkPath::Type::RegularFile) {
-      return WalkPath::Action::Continue;
-    }
-    Slice base = PathView(name).file_name();
+  // Whether `base` is <path>.thread<N>.log.old.<k> with k beyond the kept number.
+  auto is_stale_archive = [&](Slice base) {
     if (!begins_with(base, prefix)) {
-      return WalkPath::Action::Continue;
+      return false;
     }
-    // <N>.log.old.<k>
     Slice rest = base.substr(prefix.size());
     auto dot = rest.find('.');
     int64 thread = 0;
     int64 generation = 0;
     Slice marker(".log.old.");
     if (dot == Slice::npos || !parse_small_number(rest.substr(0, dot), thread)) {
-      return WalkPath::Action::Continue;
+      return false;
     }
     rest = rest.substr(dot);
     if (!begins_with(rest, marker) || !parse_small_number(rest.substr(marker.size()), generation)) {
+      return false;
+    }
+    return thread >= 1 && thread < max_threads && generation >= keep_rotated;
+  };
+  vector<string> doomed;
+  auto walk = WalkPath::run(dir, [&](CSlice name, WalkPath::Type type) {
+    if (type == WalkPath::Type::ExitDir) {
       return WalkPath::Action::Continue;
     }
-    if (thread >= 1 && thread < max_threads && generation >= keep_rotated) {
+    if (type == WalkPath::Type::EnterDir && name == dir) {
+      return WalkPath::Action::Continue;
+    }
+    if (is_stale_archive(PathView(name).file_name())) {
       doomed.push_back(name.str());
     }
-    return WalkPath::Action::Continue;
-  }).ignore();
+    return type == WalkPath::Type::EnterDir ? WalkPath::Action::SkipDir : WalkPath::Action::Continue;
+  });
+  if (walk.is_error()) {
+    FileLog::report_prune_failure(walk);
+  }
   for (auto &file : doomed) {
-    unlink(file).ignore();
+    auto status = unlink(file);
+    if (status.is_error() && !FileLog::is_missing_file_error(status)) {
+      FileLog::report_prune_failure(status);
+    }
   }
 }
 

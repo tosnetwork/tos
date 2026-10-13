@@ -18,6 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
+#include <cerrno>
 #include <functional>
 #include <limits>
 
@@ -339,4 +340,179 @@ TEST(Log, TsFileLogPrunesIdleThreadArchivesAtStart) {
   td::unlink(unparsable).ignore();
   cleanup();
 }
+
+#if TD_PORT_POSIX
+TEST(Log, FileLogTellsAMissingFileFromOtherOsErrors) {
+  // The rotation and prune code treat only a missing file as benign, by the
+  // errno the OS error carries.
+  const std::string base = "tmplog_errno_test";
+  td::rmrf(base + ".dir").ignore();
+  auto missing = td::rename(base + ".missing", base + ".other");
+  ASSERT_TRUE(missing.is_error());
+  ASSERT_EQ(ENOENT, missing.code());
+  ASSERT_TRUE(td::FileLog::is_missing_file_error(missing));
+  ASSERT_TRUE(td::FileLog::is_missing_file_error(td::unlink(base + ".missing")));
+
+  td::mkdir(base + ".dir").ensure();
+  td::write_file(base + ".dir/inside", "x").ensure();
+  auto is_dir = td::unlink(base + ".dir");
+  ASSERT_TRUE(is_dir.is_error());
+  ASSERT_TRUE(is_dir.code() != 0);
+  ASSERT_TRUE(!td::FileLog::is_missing_file_error(is_dir));
+  ASSERT_TRUE(!td::FileLog::is_missing_file_error(td::Status::OK()));
+  td::rmrf(base + ".dir").ensure();
+}
+
+TEST(Log, FileLogStopsShiftingWhenARenameFails) {
+  // A rename that fails for any reason but a missing source must stop the
+  // shift: going on would move newer generations over files that were never
+  // moved out of the way. The current file still rotates into .old, so the
+  // log keeps working and stays bounded, and the failure is counted.
+  const std::string base = "tmplog_shift_fail_test";
+  auto cleanup = [&] {
+    td::rmrf(base + ".old.3").ignore();
+    for (auto suffix : {"", ".old", ".old.1", ".old.2", ".old.3", ".old.4"}) {
+      td::unlink(base + suffix).ignore();
+    }
+  };
+  auto first_byte = [](std::string path) -> char {
+    auto r = td::read_file_str(path);
+    return r.is_ok() && !r.ok().empty() ? r.ok()[0] : '-';
+  };
+  cleanup();
+  // A non-empty directory where the oldest kept generation goes: a file cannot
+  // be renamed onto it.
+  td::mkdir(base + ".old.3").ensure();
+  td::write_file(base + ".old.3/inside", "x").ensure();
+
+  auto rotation_failures = td::FileLog::rotation_failures();
+  auto prune_failures = td::FileLog::prune_failures();
+  {
+    td::FileLog log;
+    log.init(base, 100, false, 4).ensure();
+    // A, B and C fill .old, .old.1 and .old.2. Every missing source on the way
+    // is skipped without counting.
+    for (char generation : std::string("ABC")) {
+      log.append(td::CSlice(std::string(150, generation) + "\n"), VERBOSITY_NAME(INFO));
+    }
+    ASSERT_EQ(rotation_failures, td::FileLog::rotation_failures());
+    ASSERT_EQ('C', first_byte(base + ".old"));
+    ASSERT_EQ('B', first_byte(base + ".old.1"));
+    ASSERT_EQ('A', first_byte(base + ".old.2"));
+
+    // D cannot shift .old.2 into .old.3. Nothing older moves, and D replaces
+    // only .old.
+    log.append(td::CSlice(std::string(150, 'D') + "\n"), VERBOSITY_NAME(INFO));
+    ASSERT_EQ(rotation_failures + 1, td::FileLog::rotation_failures());
+    ASSERT_EQ('D', first_byte(base + ".old"));
+    ASSERT_EQ('B', first_byte(base + ".old.1"));
+    ASSERT_EQ('A', first_byte(base + ".old.2"));
+
+    // Each later rotation fails the same way and is counted again; the log
+    // still writes, and no file beyond the kept ones appears.
+    log.append(td::CSlice(std::string(150, 'E') + "\n"), VERBOSITY_NAME(INFO));
+    ASSERT_EQ(rotation_failures + 2, td::FileLog::rotation_failures());
+    log.append(td::CSlice("still logging\n"), VERBOSITY_NAME(INFO));
+    ASSERT_EQ('E', first_byte(base + ".old"));
+    ASSERT_EQ('B', first_byte(base + ".old.1"));
+    ASSERT_EQ('A', first_byte(base + ".old.2"));
+    ASSERT_EQ('s', first_byte(base));
+    ASSERT_TRUE(td::stat(base + ".old.3/inside").is_ok());
+    ASSERT_TRUE(td::stat(base + ".old.4").is_error());
+  }
+  // The directory sits inside the kept range, so pruning never touched it.
+  ASSERT_EQ(prune_failures, td::FileLog::prune_failures());
+  cleanup();
+}
+
+TEST(Log, FileLogReportsAStaleFileItCannotRemove) {
+  // A stale generation that cannot be removed is counted and reported, and
+  // init still succeeds: a few files too many must not stop the engine. The
+  // absent generations the scan also tries do not count.
+  const std::string base = "tmplog_prune_fail_test";
+  auto cleanup = [&] {
+    td::rmrf(base + ".old.5").ignore();
+    for (auto suffix : {"", ".old", ".old.1", ".old.2"}) {
+      td::unlink(base + suffix).ignore();
+    }
+  };
+  cleanup();
+  auto prune_failures = td::FileLog::prune_failures();
+  {
+    td::FileLog log;
+    log.init(base, 1 << 20, false, 2).ensure();
+  }
+  ASSERT_EQ(prune_failures, td::FileLog::prune_failures());
+
+  td::mkdir(base + ".old.5").ensure();
+  td::write_file(base + ".old.5/inside", "x").ensure();
+  td::write_file(base + ".old.2", "x").ensure();
+  {
+    td::FileLog log;
+    log.init(base, 1 << 20, false, 2).ensure();
+    log.append(td::CSlice("logging\n"), VERBOSITY_NAME(INFO));
+  }
+  ASSERT_EQ(prune_failures + 1, td::FileLog::prune_failures());
+  ASSERT_TRUE(td::stat(base + ".old.2").is_error());
+  ASSERT_TRUE(td::stat(base + ".old.5/inside").is_ok());
+  cleanup();
+}
+
+TEST(Log, TsFileLogReportsIdleArchivesItCannotRemove) {
+  // The same at start for an idle thread's archives: an entry it cannot remove
+  // and a directory it cannot scan are counted, and the log still starts.
+  const std::string base = "tmplog_ts_prune_fail_test";
+  const std::string idle = base + ".thread31.log";
+  auto cleanup = [&] {
+    td::rmrf(idle + ".old.5").ignore();
+    for (auto suffix : {"", ".old", ".old.2", ".old.3"}) {
+      td::unlink(base + suffix).ignore();
+      td::unlink(idle + suffix).ignore();
+    }
+  };
+  cleanup();
+  auto prune_failures = td::FileLog::prune_failures();
+  // Nothing stale on disk: nothing counts.
+  {
+    auto log = td::TsFileLog::create(base, 1 << 20, false, 2).move_as_ok();
+    log->append(td::CSlice("first start\n"));
+  }
+  ASSERT_EQ(prune_failures, td::FileLog::prune_failures());
+
+  td::mkdir(idle + ".old.5").ensure();
+  td::write_file(idle + ".old.5/inside", "x").ensure();
+  td::write_file(idle + ".old.3", "x").ensure();
+  {
+    auto r_log = td::TsFileLog::create(base, 1 << 20, false, 2);
+    ASSERT_TRUE(r_log.is_ok());
+    r_log.move_as_ok()->append(td::CSlice("second start\n"));
+  }
+  ASSERT_EQ(prune_failures + 1, td::FileLog::prune_failures());
+  ASSERT_TRUE(td::stat(idle + ".old.3").is_error());
+  ASSERT_TRUE(td::stat(idle + ".old.5/inside").is_ok());
+  cleanup();
+
+  // A log directory that can be written but not listed: the scan fails, which
+  // counts, and the log still starts.
+  const std::string dir = base + ".unlistable";
+  const std::string inner = dir + "/log";
+  td::unlink(inner).ignore();
+  td::rmdir(dir).ignore();
+  td::mkdir(dir, 0300).ensure();
+  auto unlistable = td::WalkPath::run(dir, [](td::CSlice, td::WalkPath::Type) {});
+  if (unlistable.is_error()) {
+    // Not so when the test runs with the right to read any directory.
+    prune_failures = td::FileLog::prune_failures();
+    {
+      auto r_log = td::TsFileLog::create(inner, 1 << 20, false, 2);
+      ASSERT_TRUE(r_log.is_ok());
+      r_log.move_as_ok()->append(td::CSlice("unlistable directory\n"));
+    }
+    ASSERT_EQ(prune_failures + 1, td::FileLog::prune_failures());
+    ASSERT_TRUE(td::stat(inner).is_ok());
+  }
+  td::unlink(inner).ignore();
+  td::rmdir(dir).ignore();
+}
+#endif
 #endif
