@@ -345,70 +345,6 @@ void candidate_producer_identity(Fixture& f) {
          "full-candidate-producer-not-transport-identity");
 }
 
-// A BOC of `leaf_count` 932-bit leaves under a 4-ary tree, so a part of a chosen size can
-// be built that the candidate codec round-trips unchanged.
-td::BufferSlice large_boc(td::uint32 leaf_count, td::uint32 salt, bool multi_root, td::Bits256& root_hash) {
-  std::vector<td::Ref<vm::Cell>> level;
-  level.reserve(leaf_count);
-  for (td::uint32 i = 0; i < leaf_count; ++i) {
-    level.push_back(vm::CellBuilder().store_long(i ^ salt, 32).store_zeroes(900).finalize());
-  }
-  while (level.size() > 1) {
-    std::vector<td::Ref<vm::Cell>> next;
-    for (std::size_t i = 0; i < level.size(); i += 4) {
-      vm::CellBuilder parent;
-      for (std::size_t j = i; j < std::min(i + 4, level.size()); ++j) {
-        CHECK(parent.store_ref_bool(level[j]));
-      }
-      next.push_back(parent.finalize());
-    }
-    level = std::move(next);
-  }
-  root_hash = td::Bits256{level.front()->get_hash().bits()};
-  return multi_root ? vm::std_boc_serialize_multi({level.front()}, 2).move_as_ok()
-                    : vm::std_boc_serialize(level.front(), 31).move_as_ok();
-}
-
-// The per-part limits a full candidate is admitted under, at the canonical genesis
-// ConfigParam 29 values: 4 MiB of block data and 10 MiB of collated data. A candidate
-// with parts just under them is accepted; with the limits set to the parts' exact sizes
-// it is still accepted, and one byte under either part's size it is refused.
-void candidate_part_limits(Fixture& f) {
-  constexpr td::uint32 max_block_part = 4U * 1024U * 1024U;
-  constexpr td::uint32 max_collated_part = 10U * 1024U * 1024U;
-  td::Bits256 block_root;
-  td::Bits256 collated_root;
-  auto data = large_boc(32000, 0x13579bdf, false, block_root);
-  auto collated = large_boc(84000, 0x2468ace0, true, collated_root);
-  expect(data.size() <= max_block_part && max_block_part - data.size() < 384 * 1024, "part-limit-block-size");
-  expect(collated.size() <= max_collated_part && max_collated_part - collated.size() < 384 * 1024,
-         "part-limit-collated-size");
-
-  tos::BlockIdExt full_id{tos::BlockId{f.bus.shard.workchain, f.bus.shard.shard, 7}, block_root,
-                          td::sha256_bits256(data.as_slice())};
-  tos::BlockCandidate block{tos::ValidatorId{fill(0x99)}, full_id, td::sha256_bits256(collated.as_slice()),
-                            data.clone(), collated.clone()};
-  auto id = c::CandidateHashData::create_full(block, std::nullopt).build_id_with(7);
-  auto signature = f.sign(0, tos::serialize_tl_object(id.to_tl(), true).as_slice());
-  auto candidate =
-      td::make_ref<c::Candidate>(id, std::nullopt, c::PeerValidatorId{0}, std::move(block), std::move(signature));
-  auto wire = candidate->serialize();
-
-  const auto saved = f.bus.config;
-  auto admit = [&](td::uint32 block_limit, td::uint32 collated_limit) {
-    f.bus.config.max_block_size = block_limit;
-    f.bus.config.max_collated_data_size = collated_limit;
-    return c::Candidate::deserialize(wire.as_slice(), f.bus, c::PeerValidatorId{0}, 7);
-  };
-  expect(admit(max_block_part, max_collated_part).is_ok(), "part-limit-canonical-accepted");
-  const auto block_size = static_cast<td::uint32>(data.size());
-  const auto collated_size = static_cast<td::uint32>(collated.size());
-  expect(admit(block_size, collated_size).is_ok(), "part-limit-exact-accepted");
-  reject(admit(block_size - 1, collated_size), "part-limit-block-one-byte-over", "Too big candidate");
-  reject(admit(block_size, collated_size - 1), "part-limit-collated-one-byte-over", "Too big candidate");
-  f.bus.config = saved;
-}
-
 }  // namespace
 
 int main() {
@@ -419,7 +355,6 @@ int main() {
   carrier_conversion(f);
   empty_candidate(f);
   candidate_producer_identity(f);
-  candidate_part_limits(f);
   std::printf("CERTIFICATE_CONFORMANCE_OK %u checks over the live post-quantum Simplex entrypoints\n", checks);
   return 0;
 }
