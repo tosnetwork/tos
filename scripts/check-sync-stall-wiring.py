@@ -6,7 +6,10 @@ block-data waiter run (validator/sync-stall-alerts.h). This guard pins the
 other half: that the manager's alarm still runs the tick, that the tick still
 publishes the block times and logs the report, that the waiter still feeds
 every failed attempt and every delivery to its tracker and logs the
-warnings, and that the exporter still publishes the families. Removing any of
+warnings, that it tells the tracker whether the bytes came from the network
+or from the local candidate store, that the manager answers a block request
+from its cache only with bytes matching the file hash (evicting anything
+else), and that the exporter still publishes the families. Removing any of
 these leaves the unit tests green, so it is checked here.
 
 With --self-test, each pinned call is removed from an in-memory copy of the
@@ -40,10 +43,27 @@ REQUIRED = [
         ],
     ),
     (
-        "waiter",
-        "void WaitBlockData::failed_to_get_block_data_from_net(",
+        "manager",
+        "void ValidatorManagerImpl::send_get_block_request(",
         [
-            "net_failures_.on_failure(reason.code() == ErrorCode::notready",
+            "block::compute_file_hash(cached->as_slice()) == id.file_hash",
+            "cached_block_data_.erase(id);",
+        ],
+    ),
+    (
+        "waiter",
+        "void WaitBlockData::start()",
+        [
+            "ReceivedBlock{id, R.move_as_ok()}, BlockDataSource::LocalCandidate",
+            'R.move_as_error_prefix("net error: "), BlockDataSource::Network',
+            "&WaitBlockData::loaded_data, R.move_as_ok(), BlockDataSource::Network",
+        ],
+    ),
+    (
+        "waiter",
+        "void WaitBlockData::failed_to_get_block_data(",
+        [
+            "net_failures_.on_failure(source, reason.code() == ErrorCode::notready",
             "health::node_state.block_data_net_failures",
             "if (report.stall_warning) {",
             'LOG(WARNING) << "still cannot get block "',
@@ -51,7 +71,14 @@ REQUIRED = [
             'LOG(WARNING) << "failed to get block "',
         ],
     ),
-    ("waiter", "void WaitBlockData::loaded_data(", ["net_failures_.on_delivered();"]),
+    (
+        "waiter",
+        "void WaitBlockData::loaded_data(",
+        [
+            'block_data_source_name(source) << ": "), source);',
+            "net_failures_.on_delivered();",
+        ],
+    ),
     (
         "exporter",
         "void PrometheusExporter::collection_completed(",
@@ -125,14 +152,14 @@ def main():
             mutated = dict(texts)
             text = mutated[source]
             start = text.find(signature)
-            index = text.find(fragment, start)
-            if index < 0:
-                # The fragment is split over lines in the source; remove the
-                # first token of it instead.
-                head = fragment.split("(")[0]
-                index = text.find(head, start)
-                fragment = head
-            mutated[source] = text[:index] + "/* removed */" + text[index + len(fragment) :]
+            # The fragment may be split over lines in the source: match its
+            # tokens across any whitespace.
+            pattern = r"\s+".join(re.escape(token) for token in fragment.split())
+            match = re.compile(pattern).search(text, start)
+            if match is None:
+                survivors.append(f"{SOURCES[source]}: {fragment!r} could not be located to remove")
+                continue
+            mutated[source] = text[: match.start()] + "/* removed */" + text[match.end() :]
             if not problems(mutated):
                 survivors.append(f"{SOURCES[source]}: removing {fragment!r} was not detected")
     for survivor in survivors:

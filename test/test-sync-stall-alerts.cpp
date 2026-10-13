@@ -207,12 +207,15 @@ TEST(SyncStallAlerts, AnAppliedStateThatStaysUnknownWarns) {
   ASSERT_EQ(now + 62, tick.state.shard_client_unknown_since);
 }
 
+constexpr auto kNet = BlockDataSource::Network;
+constexpr auto kLocal = BlockDataSource::LocalCandidate;
+
 TEST(SyncStallAlerts, WaiterCountsEveryFailureAndWarnsOnTheStall) {
   BlockDataNetFailures failures;
   std::atomic<std::uint64_t> total{5};
   int stall_warnings = 0;
   for (std::uint64_t i = 1; i <= kBlockDataNetFailureWarnThreshold; i++) {
-    auto report = failures.on_failure(true, 1000 + 0.1 * static_cast<double>(i), total);
+    auto report = failures.on_failure(kNet, true, 1000 + 0.1 * static_cast<double>(i), total);
     ASSERT_EQ(i, report.consecutive);
     ASSERT_TRUE(!report.failure_warning);
     stall_warnings += report.stall_warning ? 1 : 0;
@@ -221,26 +224,75 @@ TEST(SyncStallAlerts, WaiterCountsEveryFailureAndWarnsOnTheStall) {
   ASSERT_EQ(5u + kBlockDataNetFailureWarnThreshold, total.load());
   // Within the interval: neither the stall nor a repeated "not ready" warns;
   // the first failure of another kind does.
-  ASSERT_TRUE(!failures.on_failure(true, 1010, total).stall_warning);
-  auto other = failures.on_failure(false, 1011, total);
+  ASSERT_TRUE(!failures.on_failure(kNet, true, 1010, total).stall_warning);
+  auto other = failures.on_failure(kNet, false, 1011, total);
   ASSERT_TRUE(other.failure_warning && !other.stall_warning);
-  ASSERT_TRUE(!failures.on_failure(false, 1012, total).failure_warning);
-  ASSERT_TRUE(failures.on_failure(true, 1061, total).stall_warning);
+  ASSERT_TRUE(!failures.on_failure(kNet, false, 1012, total).failure_warning);
+  ASSERT_TRUE(failures.on_failure(kNet, true, 1061, total).stall_warning);
 }
 
 TEST(SyncStallAlerts, WaiterStartsOverWhenTheBlockArrives) {
   BlockDataNetFailures failures;
   std::atomic<std::uint64_t> total{0};
   for (std::uint64_t i = 0; i < kBlockDataNetFailureWarnThreshold; i++) {
-    failures.on_failure(false, 1000, total);
+    failures.on_failure(kNet, false, 1000, total);
   }
   failures.on_delivered();
-  auto report = failures.on_failure(false, 1001, total);
+  auto report = failures.on_failure(kNet, false, 1001, total);
   ASSERT_EQ(1u, report.consecutive);
   ASSERT_TRUE(report.failure_warning);
   ASSERT_TRUE(!report.stall_warning);
   // The process-wide counter is never reset.
   ASSERT_EQ(kBlockDataNetFailureWarnThreshold + 1, total.load());
+}
+
+TEST(SyncStallAlerts, BadLocalCandidateIsReportedOnceAndNotCountedAsANetworkFailure) {
+  // A candidate read back from this node's own cache or database that does
+  // not parse says nothing about the network: the network counter and the
+  // consecutive-failure run must not move, and no stall is claimed.
+  BlockDataNetFailures failures;
+  std::atomic<std::uint64_t> total{7};
+  auto first = failures.on_failure(kLocal, false, 1000, total);
+  ASSERT_TRUE(first.failure_warning);
+  ASSERT_TRUE(!first.stall_warning);
+  ASSERT_EQ(0u, first.consecutive);
+  // Far past the stall threshold, and "not ready" or not: still one warning,
+  // still nothing counted.
+  for (std::uint64_t i = 0; i < 10 * kBlockDataNetFailureWarnThreshold; i++) {
+    auto report = failures.on_failure(kLocal, i % 2 == 0, 1000 + static_cast<double>(i), total);
+    ASSERT_TRUE(!report.failure_warning);
+    ASSERT_TRUE(!report.stall_warning);
+    ASSERT_EQ(0u, report.consecutive);
+  }
+  ASSERT_EQ(7u, total.load());
+  // The network path after it starts its own run from one, and its first
+  // non-routine failure still warns.
+  auto net = failures.on_failure(kNet, false, 2000, total);
+  ASSERT_EQ(1u, net.consecutive);
+  ASSERT_TRUE(net.failure_warning);
+  ASSERT_EQ(8u, total.load());
+  // A local failure in the middle of a network run neither extends nor resets
+  // it.
+  ASSERT_EQ(1u, failures.on_failure(kLocal, false, 2001, total).consecutive);
+  ASSERT_EQ(2u, failures.on_failure(kNet, true, 2002, total).consecutive);
+  ASSERT_EQ(9u, total.load());
+}
+
+TEST(SyncStallAlerts, BadLocalCandidateWarnsOncePerWaiterEvenAfterDelivery) {
+  BlockDataNetFailures failures;
+  std::atomic<std::uint64_t> total{0};
+  ASSERT_TRUE(failures.on_failure(kLocal, false, 1000, total).failure_warning);
+  failures.on_delivered();
+  ASSERT_TRUE(!failures.on_failure(kLocal, false, 1001, total).failure_warning);
+  ASSERT_EQ(0u, total.load());
+  // A fresh waiter reports its own bad local candidate.
+  BlockDataNetFailures other;
+  ASSERT_TRUE(other.on_failure(kLocal, false, 1002, total).failure_warning);
+}
+
+TEST(SyncStallAlerts, BlockDataSourcesAreNamedForTheLog) {
+  ASSERT_EQ(std::string("net"), std::string(block_data_source_name(kNet)));
+  ASSERT_EQ(std::string("local candidate store"), std::string(block_data_source_name(kLocal)));
 }
 
 }  // namespace

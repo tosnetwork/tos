@@ -102,9 +102,19 @@ inline MasterchainLagDecision decide_masterchain_lag_alert(const MasterchainLagA
   return decision;
 }
 
+// Where the bytes of a failed block-data attempt came from. A download is the
+// network; a candidate read back from this node's own candidate cache or
+// database is local, and bytes that fail to parse there say nothing about the
+// network.
+enum class BlockDataSource { Network, LocalCandidate };
+
+inline const char *block_data_source_name(BlockDataSource source) {
+  return source == BlockDataSource::Network ? "net" : "local candidate store";
+}
+
 // Consecutive failed network attempts of one block-data waiter, and the
 // warnings they are worth. The waiter calls on_failure for every failed
-// attempt and on_delivered once the network delivers the block.
+// attempt and on_delivered once the block is delivered.
 class BlockDataNetFailures {
  public:
   struct Report {
@@ -115,8 +125,17 @@ class BlockDataNetFailures {
     std::uint64_t consecutive = 0;
   };
 
-  // `total` is the process-wide failure counter the exporter publishes.
-  Report on_failure(bool not_ready, double now, std::atomic<std::uint64_t> &total) {
+  // `total` is the process-wide network failure counter the exporter
+  // publishes. A local failure is not a network failure: it neither counts
+  // nor feeds the stall warning, and it warns once per waiter.
+  Report on_failure(BlockDataSource source, bool not_ready, double now, std::atomic<std::uint64_t> &total) {
+    if (source != BlockDataSource::Network) {
+      Report report;
+      report.consecutive = consecutive_;
+      report.failure_warning = !local_warned_;
+      local_warned_ = true;
+      return report;
+    }
     if (consecutive_ < std::numeric_limits<std::uint64_t>::max()) {
       ++consecutive_;
     }
@@ -141,6 +160,8 @@ class BlockDataNetFailures {
   std::uint64_t consecutive_ = 0;
   double warned_at_ = -1;
   bool non_routine_warned_ = false;
+  // Never cleared: a waiter reports a bad local candidate once.
+  bool local_warned_ = false;
 };
 
 // What one manager tick found about masterchain progress.
