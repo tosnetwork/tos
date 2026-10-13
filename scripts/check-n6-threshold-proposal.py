@@ -136,9 +136,9 @@ for name in positive_fields:
 facts = proposal["source_facts"]
 expected_facts = {
     "simplex_target_rate_ms": 400,
-    "simplex_first_block_timeout_ms": 1000,
+    "simplex_first_block_timeout_ms": 700,
     "simplex_slots_per_leader_window": 4,
-    "simplex_first_leader_window_ms": 2600,
+    "simplex_first_leader_window_ms": 2300,
     "simplex_standstill_timeout_ms": 10000,
     "block_signature_context_timeout_ms": 2000,
     "lite_query_timeout_ms": 10000,
@@ -221,8 +221,8 @@ if "validator_count > MAX_MASTERCHAIN_COMMITTEE" not in test_genesis:
 zerostate = collapsed(root / "crypto/smartcont/gen-zerostate.fif")
 if zerostate.count("<b 400 32 u, b> <s 0 rot 8 udict! drop") != 2:
     fail("authoritative masterchain/shard target_rate is no longer 400 ms")
-if zerostate.count("<b 1000 32 u, b> <s 1 rot 8 udict! drop") != 2:
-    fail("authoritative masterchain/shard first_block_timeout is no longer 1000 ms")
+if zerostate.count("<b 700 32 u, b> <s 1 rot 8 udict! drop") != 2:
+    fail("authoritative masterchain/shard first_block_timeout is no longer 700 ms")
 if zerostate.count("<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>") != 2:
     fail("authoritative masterchain/shard Simplex v2 leader-window configuration changed")
 
@@ -267,8 +267,8 @@ if (
 
 expected_resolved_proposals = {
     "max_p99_persisted_finality_ms": (
-        1300,
-        "floor(2600 * (1 - headroom_fractions.finality_window))",
+        1150,
+        "floor(2300 * (1 - headroom_fractions.finality_window))",
     ),
     "max_p99_block_signature_verify_ms": (
         1000,

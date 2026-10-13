@@ -52,6 +52,10 @@ Do not encode off-chain model endpoints, private prompts, service API keys, or l
 - `workchain_id = 0`
 - `vm_version = -1`
 - TVM execution
+- `actual_min_split = 0`, `min_split = 0`, `max_split = 2`: the basechain
+  starts as one shard and load can split it into at most four. Mainnet-scale
+  networks use these limits; a forced `min_split` multiplies the consensus
+  groups every validator runs.
 
 Descriptors for unsupported execution domains are not valid for this binary because their execution engines are not registered.
 

@@ -64,9 +64,9 @@
   },
   "source_facts": {
     "simplex_target_rate_ms": 400,
-    "simplex_first_block_timeout_ms": 1000,
+    "simplex_first_block_timeout_ms": 700,
     "simplex_slots_per_leader_window": 4,
-    "simplex_first_leader_window_ms": 2600,
+    "simplex_first_leader_window_ms": 2300,
     "simplex_standstill_timeout_ms": 10000,
     "block_signature_context_timeout_ms": 2000,
     "lite_query_timeout_ms": 10000,
@@ -103,9 +103,9 @@
       "rationale": "Consensus cost must pass alone and with reviewed fractions of the authoritative gas, byte and collated-data limits."
     },
     "max_p99_persisted_finality_ms": {
-      "proposal": 1300,
-      "formula": "floor(2600 * (1 - headroom_fractions.finality_window))",
-      "hard_envelope_ms": 2600,
+      "proposal": 1150,
+      "formula": "floor(2300 * (1 - headroom_fractions.finality_window))",
+      "hard_envelope_ms": 2300,
       "rationale": "The normal persisted-finality SLO must finish, including persistence, before ConfigParam30's first leader window (first-block timeout plus four target-rate slots); the owner-selected reserve is recovery headroom."
     },
     "max_p99_block_signature_verify_ms": {
