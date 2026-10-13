@@ -29,6 +29,7 @@
 #include "collator-node/collator-node.hpp"
 #include "common/refcnt.hpp"
 #include "consensus/session-compat.h"
+#include "consensus/startup-orphan-reconcile.h"
 #include "consensus/validator-cleanup-manager.h"
 #include "consensus/validator-cleanup-worker.h"
 #include "consensus/validator-cleanup.h"
@@ -101,6 +102,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   friend class N5ManagerDbFixture;
   friend class TwostepManagerProbe;
   friend class ExtMessageManagerTestHarness;
+  friend class StartupCatchupManagerProbe;
 
  private:
   // WAITERS
@@ -384,6 +386,82 @@ class ValidatorManagerImpl : public ValidatorManager {
   void checked_archive_slice(BlockSeqno new_last_mc_seqno, BlockSeqno new_shard_client_seqno);
   void finish_prestart_sync();
   void completed_prestart_sync();
+
+  // Startup archive catch-up of a stale validator (startup-catchup.h). The decision
+  // is taken once, before the first group could be built; the mode ends in
+  // end_startup_catchup, which opens the group fence and builds the groups the
+  // resulting state selects.
+  startup_catchup::SyncReason classify_startup_sync();
+  void decide_startup_catchup();
+  td::actor::Task<> run_startup_catchup_mode();
+  void end_startup_catchup(startup_catchup::ExitReason reason);
+  // Validator groups may be selected, built and activated. Further readiness
+  // conditions join this predicate with AND.
+  bool validator_groups_permitted() const;
+  bool observer_groups_permitted() const;
+  // Prestart completion: the startup inventory of orphaned session directories runs
+  // once, after all startup advancement, and the shard client starts only after it.
+  void finish_prestart_completion();
+
+  startup_catchup::Mode startup_catchup_;
+  consensus::StartupOrphanReconcile startup_orphan_reconcile_;
+  bool prestart_completion_started_ = false;
+  bool startup_reconciled_ = false;
+  bool prestart_finished_ = false;
+
+ protected:
+  // The shard client is started here once prestart completed.
+  virtual void start_shard_client();
+  // The one point where a validator or observer group actor is constructed.
+  virtual td::actor::ActorOwn<IValidatorGroup> construct_group(
+      bool observer, ValidatorSessionId session, ShardIdFull shard,
+      const std::function<td::actor::ActorOwn<IValidatorGroup>()> &make);
+
+ public:
+  // The owner surface of the catch-up mode loop (startup-catchup-driver.h).
+  double catchup_monotonic_now();
+  BlockIdExt catchup_tip();
+  BlockSeqno catchup_masterchain_seqno();
+  BlockSeqno catchup_shard_client_seqno();
+  bool catchup_out_of_sync();
+  void catchup_phase(startup_catchup::Phase phase);
+  td::actor::Task<startup_catchup::RoundResult> catchup_probe_round(BlockIdExt prev, double deadline,
+                                                                    std::uint32_t budget);
+  td::actor::Task<startup_catchup::ImportOutcome> catchup_import_attempt(double attempt_deadline);
+  td::actor::Task<td::Unit> catchup_persist_shard_client(BlockSeqno seqno);
+  td::actor::Task<td::Unit> catchup_sleep(double seconds);
+
+  // The owner surface of the startup orphan inventory (consensus/startup-orphan-reconcile.h).
+  consensus::StartupOrphanReconcile &startup_orphan_reconcile() {
+    return startup_orphan_reconcile_;
+  }
+  bool startup_orphan_session_live(const ValidatorSessionId &session) {
+    return validator_groups_.contains(session) || next_validator_groups_.contains(session);
+  }
+  std::set<ValidatorSessionId> &startup_orphan_destroyed_sessions() {
+    return destroyed_validator_sessions_;
+  }
+  consensus::ValidatorCleanupManager &startup_orphan_cleanup_manager() {
+    return validator_cleanup_manager_;
+  }
+  std::optional<CatchainSeqno> startup_orphan_current_catchain_seqno(ShardIdFull shard);
+  BlockIdExt startup_orphan_retirement_checkpoint() {
+    return last_masterchain_block_id_;
+  }
+  void startup_orphan_read_record(ValidatorSessionId session,
+                                  td::Promise<std::optional<consensus::PendingValidatorConsensusDbCleanup>> promise);
+  void startup_orphan_persist(std::vector<ValidatorSessionId> destroyed,
+                              std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
+                              td::Promise<td::Unit> promise);
+  void startup_orphan_point_read(td::uint64 token, consensus::StartupOrphanCandidate candidate,
+                                 td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> record);
+  void startup_orphan_persisted(td::uint64 token, std::vector<std::pair<ValidatorSessionId, td::uint64>> retired,
+                                td::Result<td::Unit> result);
+  void startup_orphan_reconcile_finished(consensus::StartupOrphanSummary summary);
+
+  void verify_startup_probe_successor(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
+                                      td::Timestamp deadline,
+                                      td::Promise<startup_catchup::SuccessorVerdict> promise) override;
 
  public:
   void install_callback(std::unique_ptr<Callback> new_callback, td::Promise<td::Unit> promise) override {

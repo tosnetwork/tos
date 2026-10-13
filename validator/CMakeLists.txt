@@ -173,6 +173,8 @@ set(FULL_NODE_SOURCE
   net/download-proof.cpp
   net/get-next-key-blocks.hpp
   net/get-next-key-blocks.cpp
+  net/startup-probe.hpp
+  net/startup-probe.cpp
 )
 
 add_library(validator-measurement STATIC

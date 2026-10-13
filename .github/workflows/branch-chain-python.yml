@@ -91,7 +91,9 @@ jobs:
             test-rate-limiter test-security-boundaries test-full-node-shard-admission test-full-node-master-admission \
             test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap \
             test-download-refusal-answers test-consensus-retry-backoff test-bridge-retirement \
-            test-rldp2-refusal-lifetime
+            test-rldp2-refusal-lifetime \
+            test-startup-catchup-policy test-startup-catchup-importer test-startup-catchup-driver \
+            test-startup-catchup-probe test-startup-catchup-manager test-startup-orphan-reconcile
           ccache --show-stats
 
       # Answered capacity refusals through the download actors, their query
@@ -109,6 +111,12 @@ jobs:
       # Check registration too: ctest must not silently pass a reduced set.
       - name: Verify authenticated control-getter queries and transport
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^control-getter-(query-(service|boundary|admission|completion)|transport)$'
+
+      # Startup archive catch-up of a stale validator: the policy, the bounded
+      # import attempt, the mode loop, the successor probe, the manager wiring and
+      # the startup inventory of orphaned session directories.
+      - name: Check startup archive catch-up
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-startup-(catchup-(policy|importer|driver|probe|manager)|orphan-reconcile)$'
 
       - name: Install repository-pinned Rust toolchain for engine integration
         run: scripts/install-rust-toolchain.sh

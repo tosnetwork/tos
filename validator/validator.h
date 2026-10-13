@@ -41,6 +41,7 @@
 #include "tos/tos-types.h"
 
 #include "admission-work-profile.h"
+#include "startup-catchup.h"
 #include "state-download-buffer.h"
 #include "types.h"
 
@@ -344,6 +345,13 @@ class ValidatorManagerInterface : public td::actor::Actor {
     virtual void download_archive(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, std::string tmp_dir,
                                   td::Timestamp timeout, td::Promise<std::string> promise) {
     }
+    // One startup catch-up discovery round: probe distinct masterchain peers for a
+    // verified successor of the exact block `prev`, within `deadline` and at most
+    // `probe_budget` probes.
+    virtual void probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                              td::Promise<startup_catchup::RoundResult> promise) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "successor probing is not supported"));
+    }
     virtual void download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                               block::ImportedMsgQueueLimits limits, td::Timestamp timeout,
                                               td::Promise<std::vector<td::Ref<OutMsgQueueProof>>> promise) {
@@ -373,6 +381,16 @@ class ValidatorManagerInterface : public td::actor::Actor {
 
   virtual void validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
                                             td::Promise<td::Unit> promise) = 0;
+  // Startup catch-up discovery: verify that `proof` proves `next_block_id` is the
+  // successor of the exact block `prev_block_id`, which must still be the local
+  // masterchain tip (otherwise the verdict is FrontierMoved and nothing is checked).
+  // The verified proof may be stored; the block is neither stored nor applied. The
+  // check is not started with less than its own time left before `deadline`.
+  virtual void verify_startup_probe_successor(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
+                                              td::Timestamp deadline,
+                                              td::Promise<startup_catchup::SuccessorVerdict> promise) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "startup successor verification is not supported"));
+  }
   virtual void validate_block_proof(BlockIdExt block_id, td::BufferSlice proof, td::Promise<td::Unit> promise) = 0;
   virtual void validate_block_proof_link(BlockIdExt block_id, td::BufferSlice proof, td::Promise<td::Unit> promise) = 0;
   virtual void validate_block_proof_rel(BlockIdExt block_id, BlockIdExt rel_block_id, td::BufferSlice proof,

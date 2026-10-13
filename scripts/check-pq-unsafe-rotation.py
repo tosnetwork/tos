@@ -16,7 +16,8 @@ def require(condition: bool, message: str) -> None:
 root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1])
 manager = (root / "validator/manager.cpp").read_text()
 active_begin = "active_validator_groups_master_ = active_validator_groups_shard_ = 0;"
-future_begin = "if (allow_validate_) {\n    for (auto &shard : future_shards)"
+# validate_now is allow_validate_ gated on the validator group predicate.
+future_begin = "if (validate_now) {\n    for (auto &shard : future_shards)"
 require(
     manager.count(active_begin) == 1 and manager.count(future_begin) == 1,
     "manager group regions changed",
