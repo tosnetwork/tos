@@ -7,7 +7,8 @@
 // refuses them for capacity.
 //
 // The production download actors (DownloadBlockNew, DownloadNextBlocks,
-// DownloadProof, DownloadState) send their queries through a stand-in
+// DownloadProof, DownloadState, and for deadlines also DownloadArchiveSlice
+// and GetNextKeyBlocks) send their queries through a stand-in
 // transport, over the overlay path and over the external-client path. The
 // stand-in hands each query to the production ShardQueryAdmission of a
 // server shard, with tight limits and the production refusal-answer budget,
@@ -52,11 +53,13 @@
 #include "validator/impl/ext-message-pool.hpp"
 #include "validator/impl/shard.hpp"
 #include "validator/manager.hpp"
+#include "validator/net/download-archive-slice.hpp"
 #include "validator/net/download-block-new.hpp"
 #include "validator/net/download-deadline.h"
 #include "validator/net/download-next-blocks.hpp"
 #include "validator/net/download-proof.hpp"
 #include "validator/net/download-state.hpp"
+#include "validator/net/get-next-key-blocks.hpp"
 
 namespace {
 
@@ -504,6 +507,10 @@ class Harness {
   td::actor::ActorId<ValidatorManagerInterface> manager() {
     return manager_.get();
   }
+  // A directory downloads may write their temporary files into.
+  const std::string &root() const {
+    return root_;
+  }
   int live_tokens() const {
     return live_tokens_->load();
   }
@@ -733,13 +740,53 @@ void download_state(Harness &h, Path path, bool zero_state) {
   std::printf("  ok: %s\n", what.c_str());
 }
 
+// The ids of the queries a server received, in the order it received them.
+std::vector<td::int32> sent_ids(const std::vector<Server::Sent> &sent) {
+  std::vector<td::int32> ids;
+  ids.reserve(sent.size());
+  for (const auto &s : sent) {
+    ids.push_back(s.id);
+  }
+  return ids;
+}
+
+// A download whose queries before the phase under test are answered and whose
+// phase query is held: it must have sent exactly `expected`, in order, with
+// the last one still held and each one bounded by the download's own
+// deadline; it must give up with a timeout at that deadline and give its
+// tokens back.
+template <class T>
+void require_phase_held(Harness &h, Server &server, const std::shared_ptr<Outcome<T>> &outcome, td::Timestamp deadline,
+                        const std::vector<td::int32> &expected, Path path, const std::string &what) {
+  const double tolerance = 1e-6;
+  h.wait_until([&] { return outcome->done(); }, what + ": the download did not give up");
+  auto sent = server.sent();
+  require(sent_ids(sent) == expected, what + ": the download did not reach the phase under test (" +
+                                          std::to_string(sent.size()) + " queries sent, " +
+                                          std::to_string(expected.size()) + " expected)");
+  require(server.held() == 1, what + ": the phase query is not the one held");
+  for (const auto &s : sent) {
+    require(s.path == path, what + ": a query took another path");
+    require(s.deadline.at() <= deadline.at() + tolerance, what + ": a query outlives its download");
+  }
+  {
+    std::unique_lock lock(outcome->mutex);
+    require_error(*outcome->result, ErrorCode::timeout, what + ": the download did not time out");
+  }
+  h.wait_until([&] { return h.live_tokens() == 0; }, what + ": the download kept its token", 5.0);
+  server.release_held();
+}
+
 // Each query a download sends is bounded by the download's own deadline, not
-// only by the query's: on both paths, for the first query and the later
-// ones. The token is given back when the download gives up, while the held
+// only by the query's: on both paths, for the first query and every later
+// phase. The token is given back when the download gives up, while the held
 // transport query lives on until its own, capped, deadline.
 void query_deadlines(Harness &h, Path path) {
   std::string where = std::string(" over the ") + path_name(path);
   const double tolerance = 1e-6;
+  // Shorter than every query's own bound, so a query that is not capped by
+  // the download outlives it.
+  const double download_timeout = 0.8;
 
   {
     auto server = std::make_shared<Server>();
@@ -770,6 +817,7 @@ void query_deadlines(Harness &h, Path path) {
   }
 
   {
+    // Proof: the download after its preparation.
     auto server = std::make_shared<Server>();
     auto id = block_with_data(basechainId, 51, block_bytes(0x51));
     server->answer(tos_api::tosNode_prepareBlockProof::ID,
@@ -779,24 +827,19 @@ void query_deadlines(Harness &h, Path path) {
     auto outcome = std::make_shared<Outcome<td::BufferSlice>>();
     td::Timestamp deadline;
     h.run([&] {
-      deadline = td::Timestamp::in(0.8);
+      deadline = td::Timestamp::in(download_timeout);
       td::actor::create_actor<DownloadProof>("proof", id, false, false, k_local, k_overlay, peer_for(path), 1, deadline,
                                              h.manager(), td::actor::ActorId<adnl::AdnlSenderInterface>{}, overlays,
                                              td::actor::ActorId<adnl::Adnl>{}, client, outcome->promise(outcome))
           .release();
     });
-    h.wait_until([&] { return server->held() == 1 || outcome->done(); }, "proof queries were not sent" + where);
-    auto sent = server->sent();
-    require(!sent.empty(), "no proof query was sent" + where);
-    for (auto &s : sent) {
-      require(s.deadline.at() <= deadline.at() + tolerance, "a proof query outlives its download" + where);
-    }
-    h.wait_until([&] { return outcome->done(); }, "proof download did not end" + where);
-    h.wait_until([&] { return h.live_tokens() == 0; }, "proof download kept its token" + where, 5.0);
-    server->release_held();
+    require_phase_held(h, *server, outcome, deadline,
+                       {tos_api::tosNode_prepareBlockProof::ID, tos_api::tosNode_downloadBlockProof::ID}, path,
+                       "proof download" + where);
   }
 
   {
+    // Zero state: the download after its preparation.
     auto server = std::make_shared<Server>();
     BlockIdExt id{basechainId, shardIdAll, 0, fill(0x52), fill(0x53)};
     server->answer(tos_api::tosNode_prepareZeroState::ID, create_serialize_tl_object<tos_api::tosNode_preparedState>());
@@ -805,21 +848,114 @@ void query_deadlines(Harness &h, Path path) {
     auto outcome = std::make_shared<Outcome<DownloadedPersistentState>>();
     td::Timestamp deadline;
     h.run([&] {
-      deadline = td::Timestamp::in(0.8);
+      deadline = td::Timestamp::in(download_timeout);
       td::actor::create_actor<DownloadState>("state", id, BlockIdExt{}, UnsplitStateType{}, k_local, k_overlay,
                                              peer_for(path), 1, deadline, h.manager(),
                                              td::actor::ActorId<adnl::AdnlSenderInterface>{}, overlays,
                                              td::actor::ActorId<adnl::Adnl>{}, client, outcome->promise(outcome))
           .release();
     });
-    h.wait_until([&] { return server->held() == 1 || outcome->done(); }, "state queries were not sent" + where);
-    auto sent = server->sent();
-    require(!sent.empty(), "no state query was sent" + where);
-    for (auto &s : sent) {
-      require(s.deadline.at() <= deadline.at() + tolerance, "a state query outlives its download" + where);
-    }
-    h.wait_until([&] { return outcome->done(); }, "state download did not end" + where);
-    server->release_held();
+    require_phase_held(h, *server, outcome, deadline,
+                       {tos_api::tosNode_prepareZeroState::ID, tos_api::tosNode_downloadZeroState::ID}, path,
+                       "zero-state download" + where);
+  }
+
+  {
+    // Archive: the slice after the archive lookup.
+    auto server = std::make_shared<Server>();
+    server->answer(tos_api::tosNode_getArchiveInfo::ID, create_serialize_tl_object<tos_api::tosNode_archiveInfo>(7));
+    server->hold(tos_api::tosNode_getArchiveSlice::ID);
+    auto [overlays, client] = h.transport(server, path);
+    auto outcome = std::make_shared<Outcome<std::string>>();
+    td::Timestamp deadline;
+    h.run([&] {
+      deadline = td::Timestamp::in(download_timeout);
+      td::actor::create_actor<DownloadArchiveSlice>("archive", 100, ShardIdFull{masterchainId}, h.root(), k_local,
+                                                    k_overlay, peer_for(path), deadline, h.manager(),
+                                                    td::actor::ActorId<adnl::AdnlSenderInterface>{}, overlays,
+                                                    td::actor::ActorId<adnl::Adnl>{}, client, outcome->promise(outcome))
+          .release();
+    });
+    require_phase_held(h, *server, outcome, deadline,
+                       {tos_api::tosNode_getArchiveInfo::ID, tos_api::tosNode_getArchiveSlice::ID}, path,
+                       "archive slice download" + where);
+  }
+
+  {
+    // Key blocks: the proof download of a listed key block, sent by the proof
+    // download the key-block lookup starts with its own deadline.
+    auto server = std::make_shared<Server>();
+    auto from = block_with_data(masterchainId, 60, block_bytes(0x60));
+    auto key_block = block_with_data(masterchainId, 61, block_bytes(0x61));
+    std::vector<tos_api::object_ptr<tos_api::tosNode_blockIdExt>> listed;
+    listed.push_back(create_tl_block_id(key_block));
+    server->answer(tos_api::tosNode_getNextKeyBlockIds::ID,
+                   create_serialize_tl_object<tos_api::tosNode_keyBlocks>(std::move(listed), false, false));
+    server->answer(tos_api::tosNode_prepareKeyBlockProof::ID,
+                   create_serialize_tl_object<tos_api::tosNode_preparedProof>());
+    server->hold(tos_api::tosNode_downloadKeyBlockProof::ID);
+    auto [overlays, client] = h.transport(server, path);
+    auto outcome = std::make_shared<Outcome<std::vector<BlockIdExt>>>();
+    td::Timestamp deadline;
+    h.run([&] {
+      deadline = td::Timestamp::in(download_timeout);
+      td::actor::create_actor<GetNextKeyBlocks>("key blocks", from, 8, k_local, k_overlay, peer_for(path), 1, deadline,
+                                                h.manager(), td::actor::ActorId<adnl::AdnlSenderInterface>{}, overlays,
+                                                td::actor::ActorId<adnl::Adnl>{}, client, outcome->promise(outcome))
+          .release();
+    });
+    require_phase_held(h, *server, outcome, deadline,
+                       {tos_api::tosNode_getNextKeyBlockIds::ID, tos_api::tosNode_prepareKeyBlockProof::ID,
+                        tos_api::tosNode_downloadKeyBlockProof::ID},
+                       path, "key-block proof download" + where);
+  }
+
+  BlockIdExt persistent_id{basechainId, shardIdAll, 30, fill(0x56), fill(0x57)};
+  BlockIdExt persistent_mc_id{masterchainId, shardIdAll, 40, fill(0x58), fill(0x59)};
+  auto start_persistent_state = [&](td::actor::ActorId<overlay::Overlays> overlays,
+                                    td::actor::ActorId<adnl::AdnlExtClient> client,
+                                    const std::shared_ptr<Outcome<DownloadedPersistentState>> &outcome) {
+    td::Timestamp deadline;
+    h.run([&] {
+      deadline = td::Timestamp::in(download_timeout);
+      td::actor::create_actor<DownloadState>("state", persistent_id, persistent_mc_id, UnsplitStateType{}, k_local,
+                                             k_overlay, peer_for(path), 1, deadline, h.manager(),
+                                             td::actor::ActorId<adnl::AdnlSenderInterface>{}, overlays,
+                                             td::actor::ActorId<adnl::Adnl>{}, client, outcome->promise(outcome))
+          .release();
+    });
+    return deadline;
+  };
+
+  {
+    // Persistent state: the size request after the preparation.
+    auto server = std::make_shared<Server>();
+    server->answer(tos_api::tosNode_preparePersistentState::ID,
+                   create_serialize_tl_object<tos_api::tosNode_preparedState>());
+    server->hold(tos_api::tosNode_getPersistentStateSizeV2::ID);
+    auto [overlays, client] = h.transport(server, path);
+    auto outcome = std::make_shared<Outcome<DownloadedPersistentState>>();
+    auto deadline = start_persistent_state(overlays, client, outcome);
+    require_phase_held(h, *server, outcome, deadline,
+                       {tos_api::tosNode_preparePersistentState::ID, tos_api::tosNode_getPersistentStateSizeV2::ID},
+                       path, "persistent-state size request" + where);
+  }
+
+  {
+    // Persistent state: the first slice after the size.
+    auto server = std::make_shared<Server>();
+    server->answer(tos_api::tosNode_preparePersistentState::ID,
+                   create_serialize_tl_object<tos_api::tosNode_preparedState>());
+    server->answer(tos_api::tosNode_getPersistentStateSizeV2::ID,
+                   create_serialize_tl_object<tos_api::tosNode_persistentStateSize>(td::int64{1000}));
+    server->hold(tos_api::tosNode_downloadPersistentStateSliceV2::ID);
+    auto [overlays, client] = h.transport(server, path);
+    auto outcome = std::make_shared<Outcome<DownloadedPersistentState>>();
+    auto deadline = start_persistent_state(overlays, client, outcome);
+    require_phase_held(h, *server, outcome, deadline,
+                       {tos_api::tosNode_preparePersistentState::ID, tos_api::tosNode_getPersistentStateSizeV2::ID,
+                        tos_api::tosNode_downloadPersistentStateSliceV2::ID},
+                       path, "persistent-state slice download" + where);
   }
 
   {

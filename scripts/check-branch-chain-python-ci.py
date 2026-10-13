@@ -40,7 +40,54 @@ REQUIRED_NATIVE_TARGETS = {
     "create-hardfork",
     "test-tos-collator",
     "test-apply-block-readback-latency",
+    # Answered refusals, download deadlines, consensus retries, group
+    # retirement and block acceptance.
+    "test-download-refusal-answers",
+    "test-consensus-retry-backoff",
+    "test-bridge-retirement",
+    "test-block-accepter",
+    "test-rldp2-refusal-lifetime",
 }
+
+# Each runs as its own anchored CTest that must exist (--no-tests=error).
+REFUSAL_AND_RETIREMENT_TESTS = (
+    "test-download-refusal-answers",
+    "test-consensus-retry-backoff",
+    "test-bridge-retirement",
+    "test-bridge-retirement-nonzero",
+    "test-block-accepter",
+    "test-rldp2-refusal-lifetime",
+)
+
+# The registrations, with the mode argument and the token each case prints, so
+# a registration that loses or swaps its argument cannot pass as the other
+# case.
+REFUSAL_AND_RETIREMENT_REGISTRATIONS = (
+    (
+        r"tos_test\(test-download-refusal-answers\)",
+        "download refusal and deadline CTest",
+    ),
+    (
+        r"tos_test\(test-bridge-retirement zerostate-destroy\)\s*\n"
+        r'set_tests_properties\(test-bridge-retirement PROPERTIES PASS_REGULAR_EXPRESSION "BRIDGE_RETIREMENT_ZEROSTATE_OK"\)',
+        "zero-state group destruction CTest, its mode argument or its pass token",
+    ),
+    (
+        r"add_test\(NAME test-bridge-retirement-nonzero COMMAND test-bridge-retirement nonzero-retirement\)\s*\n"
+        r"set_tests_properties\(test-bridge-retirement-nonzero PROPERTIES "
+        r'PASS_REGULAR_EXPRESSION "BRIDGE_RETIREMENT_NONZERO_OK"\)',
+        "non-zero-state group retirement CTest, its mode argument or its pass token",
+    ),
+    (
+        r"add_executable\(test-block-accepter test/validator/consensus/test-block-accepter\.cpp\)",
+        "block accepter test executable",
+    ),
+    (
+        r"tos_test\(test-block-accepter\)\s*\n"
+        r'set_tests_properties\(test-block-accepter PROPERTIES PASS_REGULAR_EXPRESSION "BLOCK_ACCEPTER_OK"\)',
+        "block accepter CTest or its pass token",
+    ),
+)
 
 RESTART_ORIGIN_TESTS = (
     "test-consensus-simplex2-pq-empty-chain-restart",
@@ -362,6 +409,14 @@ def main() -> int:
             re.search(rf"(?m)^\s*{re.escape(command)}\s*$", text) is not None,
             f"Simplex restart-origin behavior gate is absent: {test_name}",
         )
+    for test_name in REFUSAL_AND_RETIREMENT_TESTS:
+        command = f"ctest --test-dir build --output-on-failure --no-tests=error -R '^{test_name}$'"
+        require(
+            re.search(rf"(?m)^\s*{re.escape(command)}\s*$", text) is not None,
+            f"refusal, deadline, retirement or acceptance behavior gate is absent: {test_name}",
+        )
+    for registration, what in REFUSAL_AND_RETIREMENT_REGISTRATIONS:
+        require(re.search(registration, cmake) is not None, f"{what} is absent from CMakeLists.txt")
     rust_job = re.search(
         r"(?ms)^  rust-workspace-tests-compile:\s*\n(?P<body>.*?)(?=^  [\w-]+:\s*$|\Z)",
         text,
@@ -419,7 +474,8 @@ def main() -> int:
         "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
-        "five named restart-origin controls, and the E04 Python negative-window tests; "
+        "five named restart-origin controls, the six refusal, deadline, retirement and acceptance CTests, "
+        "and the E04 Python negative-window tests; "
         "the Rust job compiles every test target and runs the E04 exact wallet confirmation group"
     )
     return 0
