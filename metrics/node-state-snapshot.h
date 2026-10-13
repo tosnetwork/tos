@@ -41,6 +41,14 @@ struct NodeStateGauges {
   // Failed network attempts to fetch block data, for any reason; monotonic
   // per process.
   std::atomic<std::uint64_t> block_data_net_failures{0};
+  // The full node's budget for answering queries it refused for capacity:
+  // refusals it decided to answer (the answer is handed to the transport,
+  // not acknowledged), and supported capacity refusals the budget left
+  // unanswered. Monotonic per process, summed over every budget feeding them.
+  struct RefusalAnswers {
+    std::atomic<std::uint64_t> answered{0};
+    std::atomic<std::uint64_t> suppressed{0};
+  } refusal_answers;
 };
 inline NodeStateGauges node_state;
 }  // namespace tos::health

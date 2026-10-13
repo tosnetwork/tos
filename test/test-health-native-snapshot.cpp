@@ -108,11 +108,18 @@ void chain_progress_unit() {
   CHECK(no_applied_state.find("\ntos_shard_client_state_known 0") != std::string::npos);
   CHECK(unknown.find("# TYPE tos_wait_block_data_net_failures_total counter\n") != std::string::npos);
   CHECK(unknown.find("\ntos_wait_block_data_net_failures_total 0") != std::string::npos);
+  // The refusal-answer counters are always present, zero before any refusal.
+  CHECK(unknown.find("# TYPE tos_full_node_refusal_answers_total counter\n") != std::string::npos);
+  CHECK(unknown.find("\ntos_full_node_refusal_answers_total 0.000000\n") != std::string::npos);
+  CHECK(unknown.find("# TYPE tos_full_node_refusal_answers_suppressed_total counter\n") != std::string::npos);
+  CHECK(unknown.find("\ntos_full_node_refusal_answers_suppressed_total 0.000000\n") != std::string::npos);
   // Consensus is current but the applied state is hours behind: both ages are
   // exported, each from its own block time.
   gauges.masterchain_block_unix_seconds.store(1700000000 - 25);
   gauges.shard_client_unix_seconds.store(1700000000 - 9000);
   gauges.block_data_net_failures.store(42);
+  gauges.refusal_answers.answered.store(31);
+  gauges.refusal_answers.suppressed.store(5);
   auto behind = render(1700000000);
   std::cout << "CHAIN_PROGRESS " << behind << std::endl;
   CHECK(behind.find("# TYPE tos_masterchain_head_age_seconds gauge\n") != std::string::npos);
@@ -121,6 +128,8 @@ void chain_progress_unit() {
   CHECK(behind.find("\ntos_shard_client_age_seconds 9000") != std::string::npos);
   CHECK(behind.find("\ntos_shard_client_state_known 1") != std::string::npos);
   CHECK(behind.find("\ntos_wait_block_data_net_failures_total 42") != std::string::npos);
+  CHECK(behind.find("\ntos_full_node_refusal_answers_total 31.000000\n") != std::string::npos);
+  CHECK(behind.find("\ntos_full_node_refusal_answers_suppressed_total 5.000000\n") != std::string::npos);
   // The ages keep growing with the collection clock even when nobody
   // refreshes the block times.
   auto later = render(1700000000 + 600);
@@ -332,6 +341,8 @@ int main(int argc, char **argv) {
   tos::health::node_state.masterchain_block_unix_seconds.store(now_unix - 5);
   tos::health::node_state.shard_client_unix_seconds.store(now_unix - 9000);
   tos::health::node_state.block_data_net_failures.store(7);
+  tos::health::node_state.refusal_answers.answered.store(13);
+  tos::health::node_state.refusal_answers.suppressed.store(4);
   tos::health::pq_sign.completed.store(9007199254740993ULL);
   td::actor::Scheduler scheduler({1});
   td::actor::ActorOwn<tos::PrometheusExporter> exporter;

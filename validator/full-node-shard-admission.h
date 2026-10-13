@@ -22,6 +22,7 @@
 #include "auto/tl/tos_api.h"
 #include "auto/tl/tos_api.hpp"
 #include "common/errorcode.h"
+#include "metrics/node-state-snapshot.h"
 #include "td/utils/Status.h"
 #include "td/utils/Time.h"
 #include "td/utils/overloaded.h"
@@ -219,12 +220,15 @@ inline RefusalAnswerLimits default_refusal_answer_limits() {
 // bucket and once to its source's; past either, the refusal stays silent.
 // Sources are kept in order of their latest charge and dropped once their
 // bucket is full again, when they are indistinguishable from a new source.
-// Only aggregate counts are kept.
+// Only aggregate counts are kept; with a sink, they are also added to it,
+// which is how the node's budget reaches the metrics exporter.
 class RefusalAnswerBudget {
  public:
+  using Counters = health::NodeStateGauges::RefusalAnswers;
+
   explicit RefusalAnswerBudget(RefusalAnswerLimits limits = default_refusal_answer_limits(),
-                               td::Timestamp now = td::Timestamp::now())
-      : limits_(limits), global_(limits.global_rate, limits.global_burst, now) {
+                               td::Timestamp now = td::Timestamp::now(), Counters *sink = nullptr)
+      : limits_(limits), global_(limits.global_rate, limits.global_burst, now), sink_(sink) {
   }
   RefusalAnswerBudget(const RefusalAnswerBudget &) = delete;
   RefusalAnswerBudget &operator=(const RefusalAnswerBudget &) = delete;
@@ -246,6 +250,9 @@ class RefusalAnswerBudget {
     }
     if (bucket == nullptr || !bucket->has_token() || !global_.has_token()) {
       suppressed_.fetch_add(1, std::memory_order_relaxed);
+      if (sink_ != nullptr) {
+        sink_->suppressed.fetch_add(1, std::memory_order_relaxed);
+      }
       return false;
     }
     global_.take();
@@ -257,6 +264,9 @@ class RefusalAnswerBudget {
       order_.splice(order_.end(), order_, it->second.order);
     }
     answered_.fetch_add(1, std::memory_order_relaxed);
+    if (sink_ != nullptr) {
+      sink_->answered.fetch_add(1, std::memory_order_relaxed);
+    }
     return true;
   }
 
@@ -303,6 +313,7 @@ class RefusalAnswerBudget {
   std::list<adnl::AdnlNodeIdShort> order_;
   std::atomic<td::uint64> answered_{0};
   std::atomic<td::uint64> suppressed_{0};
+  Counters *sink_ = nullptr;
 };
 
 // What admission decided about one query: admitted for dispatch, refused for

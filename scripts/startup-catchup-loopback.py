@@ -19,14 +19,24 @@ Evidence is accepted only when it is valid:
   * RSS only from a live process, for the restarted node and every peer in every
     sample;
   * the fence criteria only from actor samples taken while the mode was active.
-Missing evidence makes a criterion INCONCLUSIVE, never PASS.
+Missing evidence makes a criterion INCONCLUSIVE, never PASS; a violation that was
+observed is a FAIL whatever else is missing.
+
+Samples are taken every 10 s from the restart for the whole window, each with its
+own start and end time; a gap of more than 30 s anywhere in the window (including
+before the first sample and after the last) makes the window INCONCLUSIVE.
 
 Scenarios:
   L1  four validators; one stopped 30 min, then restarted. Within 20 min of the
-      restart shard_client_ago < 60 s; RSS < 1.5 x the peers' median throughout;
-      at 10 min live WaitBlockState < 5000 and BridgeImpl equal to the peers';
-      while the mode is active no BridgeImpl and no new consensus directory; the
-      mode is entered and ends Fresh.
+      restart shard_client_ago < 60 s; RSS < 1.5 x the median of the peers'
+      trailing 300 s RSS peaks throughout (the peers' RSS cycles by about a factor
+      of two every few minutes, so an instantaneous peer reading is not a stable
+      denominator; their RSS is also sampled during the last 300 s of the downtime
+      so the first samples have a full window); at 10 min live WaitBlockState <
+      5000 and BridgeImpl equal to the peers', read from the first sample started
+      at 10 min, which must have ended by 10 min 30 s; while the mode is active no
+      BridgeImpl and no new consensus directory (against the directories present
+      before the restart); the mode is entered and ends Fresh.
   L2  all four stopped 10 min with equal tips, then started. The stopped tips are
       established before the stop: production is halted by never letting more
       than one validator run (a lone validator has no quorum), each one's head is
@@ -49,14 +59,18 @@ Scenarios:
       read immediately before the stop, and a peer's immediately before the
       restart; a key block generated between the stop and the restart, a changed
       validator set and a higher catchain seqno are all required. Otherwise
-      INCONCLUSIVE ("rotation not established").
+      INCONCLUSIVE ("rotation not established"). L1's 10- and 20-minute bounds
+      scale with the downtime (x downtime / 30 min, never below L1's): a node
+      that was down twice as long has twice the history to import.
   L5  L1 on a validator whose database was initialized from a persistent state:
       its database is removed (keys and config kept) and it resynchronizes before
       the 30-minute stop. INCONCLUSIVE when the node did not start from a
       persistent state.
   L6  SIGKILL of the restarted node during import, after at least two import
       attempts settled, then a second restart: L1's bounds measured from the first
-      restart, the STATUS from the last process, and no failed CHECK in any log.
+      restart, sampled from the first restart through the kill and the second
+      restart, the STATUS from the last process only, and no failed CHECK in any
+      log.
   L7  a running validator frozen for 10 min (SIGSTOP; unprivileged stand-in for
       blocked traffic) and resumed: no catch-up mode entry and no archive import
       after the resume. The log mark is taken while the process is still stopped,
@@ -73,6 +87,7 @@ import base64
 import copy
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -117,6 +132,65 @@ ATTEMPT_RE = re.compile(r"startup catch-up attempt (?P<n>\d+):")
 ARCHIVE_IMPORT = "Importing archive for masterchain seqno"
 FAILED_CHECK = re.compile(r"Check `.*` failed")
 ACTORS = ("WaitBlockState", "BridgeImpl")
+
+# L1's downtime and bounds; other downtimes scale the bounds (see scaled_bounds).
+L1_DOWNTIME = 1800.0
+L1_CHECKPOINT = 600.0
+L1_WINDOW = 1200.0
+SAMPLE_INTERVAL = 10.0
+# The longest a window may go unobserved, and how late the checkpoint sample may end.
+MAX_GAP = 30.0
+# Longer than the period of the peers' RSS cycle (about 4 minutes).
+RSS_WINDOW = 300.0
+WAITER_LIMIT = 5000
+RSS_RATIO = 1.5
+
+
+class Clock:
+    """Monotonic time for schedules and deadlines, wall time for marks."""
+
+    @staticmethod
+    def monotonic() -> float:
+        return time.monotonic()
+
+    @staticmethod
+    def wall() -> float:
+        return time.time()
+
+    @staticmethod
+    def sleep(seconds: float) -> None:
+        if seconds > 0:
+            time.sleep(seconds)
+
+
+CLOCK = Clock()
+
+
+def scaled_bounds(downtime: float) -> tuple[float, float]:
+    """The checkpoint and the window for a downtime: L1's, scaled up with it."""
+    if not (isinstance(downtime, (int, float)) and math.isfinite(downtime) and downtime > 0):
+        raise ValueError(f"downtime must be a finite positive number of seconds, not {downtime!r}")
+    scale = max(1.0, downtime / L1_DOWNTIME)
+    return L1_CHECKPOINT * scale, L1_WINDOW * scale
+
+
+def checkpoint_name(checkpoint: float) -> str:
+    return (
+        f"at {checkpoint / 60:g} min: WaitBlockState < {WAITER_LIMIT} and BridgeImpl equal to peers"
+    )
+
+
+def catchup_name(window: float) -> str:
+    return f"shard_client_ago < 60 s within {window / 60:g} min"
+
+
+def coverage_name(window: float) -> str:
+    return f"samples at most {MAX_GAP:g} s apart over the {window / 60:g} min window"
+
+
+RSS_NAME = (
+    f"RSS < {RSS_RATIO:g} x the median of the peers' trailing {RSS_WINDOW:g} s RSS peaks throughout"
+)
 
 
 def seconds(value: str, unit: str) -> float:
@@ -358,24 +432,137 @@ def evaluate_rotation(
     return criterion(PASS, detail)
 
 
-def evaluate_restart(samples: list[dict], node: int, peers: list[int], window: float) -> dict:
+def peer_rss_peak(rows: list[tuple[float, dict]], peer: int, t: float) -> float | None:
+    """`peer`'s highest RSS observed in the RSS_WINDOW seconds up to `t`.
+
+    `rows` are (t, {node: rss_mb or None}). Nothing unless the readings cover the
+    whole window: the first no later than MAX_GAP after its start, none more than
+    MAX_GAP apart, the last no earlier than MAX_GAP before `t`. A peak over a window
+    with holes is only a lower bound, and would make the ratio look worse than it is.
+    """
+    start = t - RSS_WINDOW
+    points = sorted(
+        (rt, rss[peer]) for rt, rss in rows if start <= rt <= t and rss.get(peer) is not None
+    )
+    if not points:
+        return None
+    times = [start, *(rt for rt, _ in points), t]
+    if any(b - a > MAX_GAP for a, b in zip(times, times[1:])):
+        return None
+    return max(v for _, v in points)
+
+
+def evaluate_rss(samples: list[dict], node: int, peers: list[int], history: list[dict]) -> dict:
+    """The restarted node's RSS in each sample against RSS_RATIO x the median of the
+    peers' trailing-window peaks. `history` holds peer-only readings taken before
+    the restart (negative t); they serve only as the peers' window."""
+    rows = [(h["t"], h["rss"]) for h in history]
+    rows += [(s["t"], {p: s["nodes"][p]["rss_mb"] for p in peers}) for s in samples]
+    judged, over, unjudged = [], [], []
+    for s in samples:
+        mine = s["nodes"][node]["rss_mb"]
+        if mine is None or any(s["nodes"][p]["rss_mb"] is None for p in peers):
+            unjudged.append({"t": s["t"], "missing": "rss"})
+            continue
+        peaks = {p: peer_rss_peak(rows, p, s["t"]) for p in peers}
+        if any(v is None for v in peaks.values()):
+            unjudged.append({"t": s["t"], "missing": "peer window", "peaks": peaks})
+            continue
+        reference = statistics.median(peaks.values())
+        entry = {"t": s["t"], "rss_mb": mine, "peer_peaks_mb": peaks, "reference_mb": reference}
+        judged.append(entry)
+        if mine >= RSS_RATIO * reference:
+            over.append(entry)
+    detail = {
+        "judged": len(judged),
+        "unjudged": len(unjudged),
+        "first_unjudged": unjudged[:3],
+        "over": over[:10],
+        "highest_ratio": max(judged, key=lambda e: e["rss_mb"] / e["reference_mb"], default=None),
+    }
+    if over:
+        return criterion(FAIL, detail)
+    if unjudged or not judged:
+        return criterion(INCONCLUSIVE, detail)
+    return criterion(PASS, detail)
+
+
+def evaluate_checkpoint(
+    samples: list[dict], node: int, peers: list[int], checkpoint: float
+) -> dict:
+    """WaitBlockState and BridgeImpl at the checkpoint.
+
+    The checkpoint reading is the first sample started at or after `checkpoint`,
+    and only if it ended by checkpoint + MAX_GAP: a later complete sample is not the
+    checkpoint reading. Waiters at or above the limit in any sample started inside
+    [checkpoint, checkpoint + MAX_GAP] fail on their own, whatever the peers' samples
+    hold. A missing count at the checkpoint reading is INCONCLUSIVE.
+    """
+    limit = checkpoint + MAX_GAP
+    violations = [
+        {"t": s["t"], "WaitBlockState": a["WaitBlockState"]}
+        for s in samples
+        if checkpoint <= s["t"] <= limit
+        and (a := s["nodes"][node]["actors"]) is not None
+        and a["WaitBlockState"] >= WAITER_LIMIT
+    ]
+    if violations:
+        return criterion(FAIL, {"waiter violations": violations})
+    reading = next((s for s in samples if s["t"] >= checkpoint), None)
+    if reading is None or reading["t_end"] > limit:
+        return criterion(
+            INCONCLUSIVE,
+            {
+                "no sample started at the checkpoint and ended by": limit,
+                "first after": None if reading is None else [reading["t"], reading["t_end"]],
+            },
+        )
+    mine = reading["nodes"][node]["actors"]
+    peer_actors = {p: reading["nodes"][p]["actors"] for p in peers}
+    detail = {"t": reading["t"], "t_end": reading["t_end"], "mine": mine, "peers": peer_actors}
+    if mine is None or any(a is None for a in peer_actors.values()):
+        return criterion(INCONCLUSIVE, detail)
+    peer_bridges = [a["BridgeImpl"] for a in peer_actors.values()]
+    ok = mine["BridgeImpl"] == statistics.median_low(peer_bridges)
+    return criterion(PASS if ok else FAIL, detail)
+
+
+def evaluate_coverage(samples: list[dict], window: float) -> dict:
+    """INCONCLUSIVE when the window has a hole longer than MAX_GAP."""
+    times = [0.0, *(s["t"] for s in samples), window]
+    gaps = [[a, b] for a, b in zip(times, times[1:]) if b - a > MAX_GAP]
+    detail = {"samples": len(samples), "gaps": gaps[:10]}
+    return criterion(INCONCLUSIVE if gaps else PASS, detail)
+
+
+def evaluate_restart(
+    samples: list[dict],
+    node: int,
+    peers: list[int],
+    window: float = L1_WINDOW,
+    checkpoint: float = L1_CHECKPOINT,
+    history: list[dict] | None = None,
+) -> dict:
     """L1's criteria for `node` from samples taken after its restart.
 
-    A sample: {"t": seconds since the restart, "mode_active": bool,
-    "new_dirs": [new consensus directories], "nodes": {n: {"alive": bool,
-    "rss_mb": float | None, "actors": dict | None, "status": dict | None}}}, where
-    the restarted node's status is only one its new process wrote after the restart.
+    A sample: {"t": seconds since the restart when it started, "t_end": when it
+    ended, "final_process": whether the restarted node's STATUS in it comes from
+    the process the scenario judges, "mode_active": bool, "new_dirs": [new consensus
+    directories], "nodes": {n: {"alive": bool, "rss_mb": float | None, "actors":
+    dict | None, "status": dict | None}}}, where the restarted node's status is only
+    one its process wrote after its own start.
     """
     out: dict = {}
     if not samples:
         reason = "no samples"
         for name in (
             "engines alive throughout",
-            "shard_client_ago < 60 s within 20 min",
-            "RSS < 1.5 x peer median throughout",
-            "at 10 min: WaitBlockState < 5000 and BridgeImpl equal to peers",
+            catchup_name(window),
+            RSS_NAME,
+            checkpoint_name(checkpoint),
             "no BridgeImpl while the mode is active",
             "no new consensus directory while the mode is active",
+            coverage_name(window),
         ):
             out[name] = criterion(INCONCLUSIVE, reason)
         return out
@@ -383,52 +570,23 @@ def evaluate_restart(samples: list[dict], node: int, peers: list[int], window: f
     dead = [(s["t"], n) for s in samples for n in [node, *peers] if not s["nodes"][n]["alive"]]
     out["engines alive throughout"] = criterion(FAIL if dead else PASS, dead[:10])
 
-    fresh = [(s["t"], s["nodes"][node]["status"]) for s in samples if s["nodes"][node]["status"]]
-    caught = [t for t, st in fresh if st["shard_client_ago"] < 60]
-    if caught and caught[0] <= min(window, 1200):
-        out["shard_client_ago < 60 s within 20 min"] = criterion(PASS, caught[0])
-    elif fresh:
-        out["shard_client_ago < 60 s within 20 min"] = criterion(FAIL, fresh[-1])
-    else:
-        out["shard_client_ago < 60 s within 20 min"] = criterion(
-            INCONCLUSIVE, "no STATUS from the restarted process"
-        )
-
-    missing_rss = [
-        s["t"] for s in samples if any(s["nodes"][n]["rss_mb"] is None for n in [node, *peers])
-    ]
-    if missing_rss:
-        out["RSS < 1.5 x peer median throughout"] = criterion(
-            INCONCLUSIVE, {"samples_missing_rss": len(missing_rss), "first": missing_rss[0]}
-        )
-    else:
-        over = [
-            s["t"]
-            for s in samples
-            if s["nodes"][node]["rss_mb"]
-            >= 1.5 * statistics.median([s["nodes"][p]["rss_mb"] for p in peers])
-        ]
-        out["RSS < 1.5 x peer median throughout"] = criterion(FAIL if over else PASS, over[:10])
-
-    at_10m = [
-        s
+    fresh = [
+        (s["t"], s["nodes"][node]["status"])
         for s in samples
-        if s["t"] >= 600 and all(s["nodes"][n]["actors"] is not None for n in [node, *peers])
+        if s["final_process"] and s["nodes"][node]["status"]
     ]
-    if not at_10m:
-        out["at 10 min: WaitBlockState < 5000 and BridgeImpl equal to peers"] = criterion(
-            INCONCLUSIVE, "no complete actor sample at or after 10 min"
-        )
+    caught = [t for t, st in fresh if st["shard_client_ago"] < 60]
+    if caught and caught[0] <= window:
+        out[catchup_name(window)] = criterion(PASS, caught[0])
+    elif fresh:
+        out[catchup_name(window)] = criterion(FAIL, fresh[-1])
     else:
-        s = at_10m[0]
-        mine = s["nodes"][node]["actors"]
-        peer_bridges = [s["nodes"][p]["actors"]["BridgeImpl"] for p in peers]
-        ok = mine["WaitBlockState"] < 5000 and mine["BridgeImpl"] == statistics.median_low(
-            peer_bridges
+        out[catchup_name(window)] = criterion(
+            INCONCLUSIVE, "no STATUS from the judged process of the restarted node"
         )
-        out["at 10 min: WaitBlockState < 5000 and BridgeImpl equal to peers"] = criterion(
-            PASS if ok else FAIL, {"t": s["t"], "mine": mine, "peer_bridges": peer_bridges}
-        )
+
+    out[RSS_NAME] = evaluate_rss(samples, node, peers, history or [])
+    out[checkpoint_name(checkpoint)] = evaluate_checkpoint(samples, node, peers, checkpoint)
 
     active = [s for s in samples if s["mode_active"]]
     if not active:
@@ -439,20 +597,23 @@ def evaluate_restart(samples: list[dict], node: int, peers: list[int], window: f
             INCONCLUSIVE, "no sample taken while the mode was active"
         )
     else:
+        observed = [s for s in active if s["nodes"][node]["actors"] is not None]
         unobserved = [s["t"] for s in active if s["nodes"][node]["actors"] is None]
-        if unobserved:
+        bridges = [(s["t"], s["nodes"][node]["actors"]["BridgeImpl"]) for s in observed]
+        seen = [b for b in bridges if b[1] != 0]
+        if seen:
+            out["no BridgeImpl while the mode is active"] = criterion(FAIL, seen[:10])
+        elif unobserved:
             out["no BridgeImpl while the mode is active"] = criterion(
                 INCONCLUSIVE, {"active_samples_without_actors": unobserved}
             )
         else:
-            bridges = max(s["nodes"][node]["actors"]["BridgeImpl"] for s in active)
-            out["no BridgeImpl while the mode is active"] = criterion(
-                PASS if bridges == 0 else FAIL, bridges
-            )
+            out["no BridgeImpl while the mode is active"] = criterion(PASS, 0)
         new_dirs = sorted({d for s in active for d in s["new_dirs"]})
         out["no new consensus directory while the mode is active"] = criterion(
             FAIL if new_dirs else PASS, new_dirs
         )
+    out[coverage_name(window)] = evaluate_coverage(samples, window)
     return out
 
 
@@ -539,16 +700,32 @@ def self_test() -> int:
         nodes[node]["status"] = {"shard_client_ago": ago}
         if active:
             nodes[node]["actors"] = {"WaitBlockState": 10, "BridgeImpl": 0}
-        return {"t": t, "mode_active": active, "new_dirs": [], "nodes": nodes}
+        return {
+            "t": t,
+            "t_end": t + 1.0,
+            "final_process": True,
+            "mode_active": active,
+            "new_dirs": [],
+            "nodes": nodes,
+        }
 
-    good = [sample(0, True, 900), sample(300, True, 200), sample(600, False, 10)]
-    criteria = evaluate_restart(good, node, peers, 1200)
+    # Every SAMPLE_INTERVAL for the whole window: active and catching up for the
+    # first five minutes, then caught up; the peers' RSS observed before the restart.
+    good = [
+        sample(t, t < 300, 900 - t if t < 300 else 10)
+        for t in range(0, int(L1_WINDOW), int(SAMPLE_INTERVAL))
+    ]
+    history = [
+        {"t": float(t), "rss": {p: 1000.0 for p in peers}}
+        for t in range(-int(RSS_WINDOW), 0, int(SAMPLE_INTERVAL))
+    ]
+    criteria = evaluate_restart(good, node, peers, L1_WINDOW, L1_CHECKPOINT, history)
     assert overall(criteria) == PASS, criteria
 
     def red(mutate, name: str, expected: str) -> None:
         samples = copy.deepcopy(good)
         mutate(samples)
-        got = evaluate_restart(samples, node, peers, 1200)
+        got = evaluate_restart(samples, node, peers, L1_WINDOW, L1_CHECKPOINT, history)
         assert got[name]["status"] == expected, (name, got[name])
         assert overall(got) != PASS, got
 
@@ -585,7 +762,7 @@ def self_test() -> int:
     red(dead_process, "engines alive throughout", FAIL)
     red(stale_status, "shard_client_ago < 60 s within 20 min", INCONCLUSIVE)
     red(no_active_samples, "no BridgeImpl while the mode is active", INCONCLUSIVE)
-    red(missing_rss, "RSS < 1.5 x peer median throughout", INCONCLUSIVE)
+    red(missing_rss, RSS_NAME, INCONCLUSIVE)
 
     # Everything missing at once: dead engines, no RSS, empty actors, stale STATUS.
     def nothing(samples):
@@ -772,6 +949,42 @@ def self_test() -> int:
     return 0
 
 
+def proc_state(pid: int) -> str | None:
+    """The state letter in /proc/<pid>/stat, or nothing when it cannot be read."""
+    try:
+        fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+    if not fields or len(fields[0]) != 1:
+        return None
+    return fields[0]
+
+
+def process_stopped(pid: int) -> bool:
+    """Whether `pid` has stopped running.
+
+    The runner's own child is reaped, so it does not stay a zombie the runner
+    keeps alive; any other process has stopped when it no longer exists or is a
+    zombie its parent has not reaped yet. A process that exists but cannot be
+    signalled or read is not taken as stopped.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        raise ValueError(f"invalid pid {pid!r}")
+    try:
+        reaped, _ = os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        pass  # not the runner's child
+    else:
+        return reaped == pid
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return proc_state(pid) in ("Z", "X")
+
+
 class Network:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -813,8 +1026,8 @@ class Network:
             stderr=subprocess.STDOUT,
         )
         self.follow_thread.start()
-        deadline = time.time() + 1200
-        while time.time() < deadline:
+        deadline = CLOCK.wall() + 1200
+        while CLOCK.wall() < deadline:
             text = (self.work / "rehearsal.log").read_text(errors="replace")
             if "holding the network" in text:
                 return
@@ -822,7 +1035,7 @@ class Network:
                 raise RuntimeError(
                     "the loopback rehearsal ended before holding the network; see rehearsal.log"
                 )
-            time.sleep(5)
+            CLOCK.sleep(5)
         raise RuntimeError("the loopback rehearsal did not reach its hold within 20 minutes")
 
     def close(self) -> None:
@@ -848,11 +1061,8 @@ class Network:
             os.kill(pid, 0)
         except OSError:
             return False
-        try:
-            state = Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0]
-        except (OSError, IndexError):
-            return False
-        return state != "Z"
+        state = proc_state(pid)
+        return state is not None and state not in ("Z", "X")
 
     def send_signal(self, node: int, sig: int) -> None:
         pid = self.pid(node)
@@ -860,7 +1070,7 @@ class Network:
             raise RuntimeError(f"node {node} has no pid")
         os.kill(pid, sig)
 
-    def stop(self, node: int, sig: int = signal.SIGTERM) -> None:
+    def stop(self, node: int, sig: int = signal.SIGTERM, timeout: float = 300.0) -> None:
         pid = self.pid(node)
         if pid is None:
             raise RuntimeError(f"node {node} has no pid")
@@ -869,19 +1079,19 @@ class Network:
             os.kill(pid, signal.SIGCONT)  # a frozen engine handles SIGTERM only once resumed
         except OSError:
             pass
-        deadline = time.time() + 300
-        while time.time() < deadline:
-            try:
-                os.kill(pid, 0)
-            except OSError:
+        deadline = CLOCK.monotonic() + timeout
+        while True:
+            if process_stopped(pid):
                 return
-            time.sleep(1)
+            if CLOCK.monotonic() >= deadline:
+                break
+            CLOCK.sleep(0.2)
         raise RuntimeError(f"node {node} did not stop")
 
     def mark(self, node: int) -> dict:
         with self.follow_lock:
             seq = self.followers[node].mark()
-        return {"t": time.time(), "pid": self.pid(node), "seq": seq}
+        return {"t": CLOCK.wall(), "mono": CLOCK.monotonic(), "pid": self.pid(node), "seq": seq}
 
     def restart(self, node: int) -> dict:
         before = self.mark(node)
@@ -891,15 +1101,16 @@ class Network:
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        deadline = time.time() + 60
-        while time.time() < deadline:
+        deadline = CLOCK.monotonic() + 60
+        while CLOCK.monotonic() < deadline:
             pid = self.pid(node)
             if pid is not None and pid != before["pid"] and self.alive(node):
                 break
-            time.sleep(0.5)
+            CLOCK.sleep(0.5)
         else:
             raise RuntimeError(f"node {node} did not start")
-        before["t"] = time.time()
+        before["t"] = CLOCK.wall()
+        before["mono"] = CLOCK.monotonic()
         before["pid"] = self.pid(node)
         return before
 
@@ -974,7 +1185,7 @@ class Network:
 
     def rotation_snapshot(self, node: int) -> dict | None:
         """`node`'s own last key block, catchain seqno and validator set, at its head."""
-        t = time.time()
+        t = CLOCK.wall()
         head = self.head(node)
         if head is None:
             return None
@@ -1063,9 +1274,9 @@ class Network:
         tips = {}
         for n in nodes:
             self.send_signal(n, signal.SIGCONT)
-            time.sleep(20)
+            CLOCK.sleep(20)
             first = self.head(n)
-            time.sleep(10)
+            CLOCK.sleep(10)
             second = self.head(n)
             self.send_signal(n, signal.SIGSTOP)
             if first is None or second is None or first != second:
@@ -1091,7 +1302,20 @@ class Report:
         return overall(self.data["criteria"])
 
 
-def take_sample(net: Network, node: int, mark: dict, dirs_before: set[str], t0: float) -> dict:
+def take_sample(
+    net: Network,
+    node: int,
+    mark: dict,
+    dirs_before: set[str],
+    t0: float,
+    final_process: bool = True,
+) -> dict:
+    """One sample of every node, timed from `t0` (monotonic) at its start and end.
+
+    The restarted node's mode and STATUS come from the process started at `mark`;
+    `final_process` says whether that is the process the scenario judges.
+    """
+    start = CLOCK.monotonic()
     mode = net.mode(node, mark)
     active = mode["entered"] > len(mode["ended"])
     nodes = {}
@@ -1104,56 +1328,155 @@ def take_sample(net: Network, node: int, mark: dict, dirs_before: set[str], t0: 
             "head": net.head(n),
         }
     return {
-        "t": round(time.time() - t0, 1),
+        "t": round(start - t0, 1),
+        "t_end": round(CLOCK.monotonic() - t0, 1),
+        "pid": mark["pid"],
+        "final_process": final_process,
         "mode_active": active,
         "new_dirs": sorted(net.consensus_dirs(node) - dirs_before) if active else [],
         "nodes": nodes,
     }
 
 
-def measure_restart(
-    net: Network, report: Report, node: int, mark: dict, t0: float, window: float = 1200.0
+class Sampler:
+    """Takes samples on a fixed SAMPLE_INTERVAL grid from `t0` (monotonic).
+
+    A slot already passed when the previous sample ends is skipped, never made up
+    by a burst or a back-dated reading; the gap then shows in the coverage criterion.
+    """
+
+    def __init__(self, net: Network, report: Report, node: int, dirs_before: set[str], t0: float):
+        self.net = net
+        self.report = report
+        self.node = node
+        self.dirs_before = dirs_before
+        self.t0 = t0
+        self.slot = 0
+        self.samples: list[dict] = []
+
+    def wait_for_slot(self, end: float) -> bool:
+        """Sleeps until the next unmissed slot before `end` (seconds from t0); False if none."""
+        now = CLOCK.monotonic() - self.t0
+        slot = max(self.slot, math.ceil(now / SAMPLE_INTERVAL - 1e-9))
+        if slot * SAMPLE_INTERVAL >= end:
+            return False
+        CLOCK.sleep(slot * SAMPLE_INTERVAL - now)
+        self.slot = slot + 1
+        return True
+
+    def take(self, mark: dict, final_process: bool = True) -> dict:
+        row = take_sample(self.net, self.node, mark, self.dirs_before, self.t0, final_process)
+        self.samples.append(row)
+        self.report.data["samples"].append(row)
+        return row
+
+
+def peer_rss_history(net: Network, node: int, seconds: float) -> list[dict]:
+    """The peers' RSS every SAMPLE_INTERVAL for `seconds`, while `node` is down.
+
+    Each row carries its monotonic time; restart_history() turns it into seconds
+    relative to the restart.
+    """
+    rows = []
+    start = CLOCK.monotonic()
+    slot = 0
+    while slot * SAMPLE_INTERVAL < seconds:
+        CLOCK.sleep(start + slot * SAMPLE_INTERVAL - CLOCK.monotonic())
+        rows.append(
+            {
+                "mono": CLOCK.monotonic(),
+                "rss": {p: net.rss_mb(p) for p in NODES if p != node},
+            }
+        )
+        slot = max(slot + 1, math.ceil((CLOCK.monotonic() - start) / SAMPLE_INTERVAL - 1e-9))
+    CLOCK.sleep(start + seconds - CLOCK.monotonic())
+    return rows
+
+
+def restart_history(rows: list[dict], t0: float) -> list[dict]:
+    return [{"t": round(r["mono"] - t0, 1), "rss": r["rss"]} for r in rows]
+
+
+def stop_and_observe_downtime(net: Network, node: int, downtime: float) -> list[dict]:
+    """Stops `node` for `downtime` seconds, recording the peers' RSS over its last
+    RSS_WINDOW seconds."""
+    net.stop(node)
+    observed = min(RSS_WINDOW, downtime)
+    CLOCK.sleep(downtime - observed)
+    return peer_rss_history(net, node, observed)
+
+
+def finish_restart(
+    net: Network,
+    report: Report,
+    node: int,
+    mark: dict,
+    samples: list[dict],
+    window: float,
+    checkpoint: float,
+    history: list[dict],
 ) -> None:
-    """L1's numbers for `node`, sampled every 30 s from `t0`; STATUS from `mark`'s process."""
     peers = [n for n in NODES if n != node]
-    dirs_before = net.consensus_dirs(node)
-    samples = []
-    while time.time() < t0 + window:
-        row = take_sample(net, node, mark, dirs_before, t0)
-        samples.append(row)
-        report.data["samples"].append(row)
-        st = row["nodes"][node]["status"]
-        if st is not None and st["shard_client_ago"] < 60 and row["t"] >= 660:
-            break
-        time.sleep(30)
-    report.merge(evaluate_restart(samples, node, peers, window))
+    report.data["rss_history"] = history
+    report.merge(evaluate_restart(samples, node, peers, window, checkpoint, history))
     mode = net.mode(node, mark)
     report.check("no failed CHECK", mode["failed_checks"] == 0, mode["failed_checks"])
     report.data["mode"] = mode
 
 
+def measure_restart(
+    net: Network,
+    report: Report,
+    node: int,
+    mark: dict,
+    dirs_before: set[str],
+    history: list[dict],
+    window: float = L1_WINDOW,
+    checkpoint: float = L1_CHECKPOINT,
+) -> None:
+    """L1's numbers for `node`, sampled every SAMPLE_INTERVAL from its restart at
+    `mark` to the end of `window`. `dirs_before` are the consensus directories that
+    existed before the restart."""
+    sampler = Sampler(net, report, node, dirs_before, mark["mono"])
+    while sampler.wait_for_slot(window):
+        sampler.take(mark)
+    finish_restart(
+        net,
+        report,
+        node,
+        mark,
+        sampler.samples,
+        window,
+        checkpoint,
+        restart_history(history, mark["mono"]),
+    )
+
+
 def scenario_l1(
     net: Network,
     report: Report,
-    downtime: float = 1800.0,
+    downtime: float = L1_DOWNTIME,
     node: int = 3,
     boundary: dict | None = None,
 ) -> None:
     """L1; with `boundary`, also the stopped validator's rotation state around the
     downtime: its own snapshot immediately before the stop, and a peer's immediately
-    before the restart."""
-    time.sleep(600)
-    report.data["notes"].append({"head_before_stop": net.head(node)})
+    before the restart. A longer downtime scales the bounds (scaled_bounds)."""
+    checkpoint, window = scaled_bounds(downtime)
+    CLOCK.sleep(600)
+    report.data["notes"].append(
+        {"head_before_stop": net.head(node), "checkpoint": checkpoint, "window": window}
+    )
     if boundary is not None:
         boundary["before"] = net.rotation_snapshot(node)
-        boundary["stop_t"] = time.time()
-    net.stop(node)
-    time.sleep(downtime)
+        boundary["stop_t"] = CLOCK.wall()
+    history = stop_and_observe_downtime(net, node, downtime)
     if boundary is not None:
         boundary["after"] = net.rotation_snapshot_from_peer(node)
-        boundary["restart_t"] = time.time()
+        boundary["restart_t"] = CLOCK.wall()
+    dirs_before = net.consensus_dirs(node)
     mark = net.restart(node)
-    measure_restart(net, report, node, mark, mark["t"])
+    measure_restart(net, report, node, mark, dirs_before, history, window, checkpoint)
     mode = net.mode(node, mark)
     report.check(
         "mode entered and ended Fresh",
@@ -1163,12 +1486,12 @@ def scenario_l1(
 
 
 def production_beyond(net: Network, seqno: int, deadline: float) -> dict | None:
-    while time.time() < deadline:
+    while CLOCK.wall() < deadline:
         for n in NODES:
             h = net.head(n)
             if h is not None and int(h["seqno"]) > seqno:
                 return h
-        time.sleep(10)
+        CLOCK.sleep(10)
     return None
 
 
@@ -1183,14 +1506,14 @@ def sustained(heads: dict[int, int | None], top: int, blocks: int = SUSTAINED_BL
 
 def sustained_production(net: Network, top: int, deadline: float) -> dict:
     heads: dict[int, int | None] = {n: None for n in NODES}
-    while time.time() < deadline:
+    while CLOCK.wall() < deadline:
         for n in NODES:
             h = net.head(n)
             if h is not None:
                 heads[n] = max(heads[n] or 0, int(h["seqno"]))
         if sustained(heads, top):
             break
-        time.sleep(10)
+        CLOCK.sleep(10)
     return heads
 
 
@@ -1211,7 +1534,7 @@ def check_resumed(net: Network, report: Report, top: int, last_start: float) -> 
 
 
 def scenario_l2(net: Network, report: Report) -> None:
-    time.sleep(300)
+    CLOCK.sleep(300)
     tips = net.freeze_and_read_tips(list(NODES))
     report.data["notes"].append({"stopped_tips": tips})
     if tips is None:
@@ -1225,7 +1548,7 @@ def scenario_l2(net: Network, report: Report) -> None:
     top = max(int(t["seqno"]) for t in tips.values())
     for n in NODES:
         net.stop(n)
-    time.sleep(600)
+    CLOCK.sleep(600)
     marks = {n: net.restart(n) for n in NODES}
     last_start = max(m["t"] for m in marks.values())
     check_resumed(net, report, top, last_start)
@@ -1244,10 +1567,10 @@ def scenario_l2(net: Network, report: Report) -> None:
 
 
 def scenario_l3(net: Network, report: Report) -> None:
-    time.sleep(300)
+    CLOCK.sleep(300)
     lagging = net.head(1)
     net.stop(1)
-    time.sleep(120)
+    CLOCK.sleep(120)
     tips = net.freeze_and_read_tips([2, 3, 4])
     report.data["notes"].append({"lagging_head": lagging, "stopped_tips": tips})
     if lagging is None or tips is None:
@@ -1262,7 +1585,7 @@ def scenario_l3(net: Network, report: Report) -> None:
     report.set("distinct stopped tips", PASS, {"lagging": lagging["seqno"], "others": top})
     for n in (2, 3, 4):
         net.stop(n)
-    time.sleep(600)
+    CLOCK.sleep(600)
     marks = {n: net.restart(n) for n in NODES}
     last_start = max(m["t"] for m in marks.values())
     check_resumed(net, report, top, last_start)
@@ -1311,7 +1634,7 @@ def scenario_l4(net: Network, report: Report) -> None:
 
 def scenario_l5(net: Network, report: Report) -> None:
     node = 3
-    time.sleep(600)
+    CLOCK.sleep(600)
     net.stop(node)
     db = net.net / f"node{node}"
     for entry in db.iterdir():
@@ -1322,12 +1645,12 @@ def scenario_l5(net: Network, report: Report) -> None:
         else:
             entry.unlink()
     mark = net.restart(node)
-    deadline = time.time() + 3600
-    while time.time() < deadline:
+    deadline = CLOCK.wall() + 3600
+    while CLOCK.wall() < deadline:
         st = net.fresh_status(node, mark)
         if st is not None and st["shard_client_ago"] < 60:
             break
-        time.sleep(30)
+        CLOCK.sleep(30)
     from_persistent = "persistent state" in net.text_since(node, mark).lower()
     report.set(
         "the node started from a persistent state",
@@ -1338,39 +1661,81 @@ def scenario_l5(net: Network, report: Report) -> None:
 
 
 def scenario_l6(net: Network, report: Report) -> None:
+    """Sampled from the first restart: through the wait for two settled import
+    attempts (the engine logs "attempt N" once an attempt and its frontier write
+    have finished), the kill and the second restart, to the end of L1's window.
+    Only the last process's STATUS counts for catch-up."""
     node = 3
-    time.sleep(600)
-    net.stop(node)
-    time.sleep(1800)
+    checkpoint, window = L1_CHECKPOINT, L1_WINDOW
+    CLOCK.sleep(600)
+    history = stop_and_observe_downtime(net, node, L1_DOWNTIME)
+    dirs_before = net.consensus_dirs(node)
     first = net.restart(node)
-    deadline = time.time() + 1200
-    while time.time() < deadline and net.mode(node, first)["attempts"] < 2:
-        time.sleep(5)
-    attempts = net.mode(node, first)["attempts"]
+    sampler = Sampler(net, report, node, dirs_before, first["mono"])
+    attempts = 0
+    while sampler.wait_for_slot(window):
+        sampler.take(first, final_process=False)
+        attempts = net.mode(node, first)["attempts"]
+        if attempts >= 2:
+            break
+    last = first
     if attempts < 2:
         report.set("killed after at least two import attempts settled", INCONCLUSIVE, attempts)
-        return
-    report.set("killed after at least two import attempts settled", PASS, attempts)
-    net.stop(node, signal.SIGKILL)
-    second = net.restart(node)
-    measure_restart(net, report, node, second, first["t"])
+    else:
+        report.set("killed after at least two import attempts settled", PASS, attempts)
+        kill_t = round(CLOCK.monotonic() - first["mono"], 1)
+        net.stop(node, signal.SIGKILL)
+        last = net.restart(node)
+        report.data["notes"].append(
+            {
+                "deliberate outage (not sampled)": [
+                    kill_t,
+                    round(last["mono"] - first["mono"], 1),
+                ]
+            }
+        )
+        final_samples = 0
+        while sampler.wait_for_slot(window):
+            sampler.take(last, final_process=True)
+            final_samples += 1
+        report.set(
+            "the last process was sampled inside the window",
+            PASS if final_samples else INCONCLUSIVE,
+            final_samples,
+        )
+        report.check(
+            "the mode was entered again in the new process",
+            net.mode(node, last)["entered"] >= 1,
+            net.mode(node, last),
+        )
+    # Whatever was observed is judged, even when the kill never happened: a fence
+    # violation in the first process is a failure, not hidden by the early stop.
+    finish_restart(
+        net,
+        report,
+        node,
+        last,
+        sampler.samples,
+        window,
+        checkpoint,
+        restart_history(history, first["mono"]),
+    )
+    first_mode = net.mode(node, first)
     report.check(
-        "the mode was entered again in the new process",
-        net.mode(node, second)["entered"] >= 1,
-        net.mode(node, second),
+        "no failed CHECK in the first process", first_mode["failed_checks"] == 0, first_mode
     )
 
 
 def scenario_l7(net: Network, report: Report) -> None:
     node = 3
-    time.sleep(600)
+    CLOCK.sleep(600)
     if not net.alive(node):
         report.set("the validator runs before the freeze", INCONCLUSIVE, None)
         return
     net.send_signal(node, signal.SIGSTOP)
-    time.sleep(600)
+    CLOCK.sleep(600)
     mark = resume_observed(lambda: net.mark(node), lambda: net.send_signal(node, signal.SIGCONT))
-    time.sleep(600)
+    CLOCK.sleep(600)
     if not net.alive(node) or net.pid(node) != mark["pid"]:
         report.set("the same process ran through the freeze", FAIL, None)
         return

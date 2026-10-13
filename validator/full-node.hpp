@@ -200,8 +200,9 @@ class FullNodeImpl : public FullNode {
 
   std::shared_ptr<FullNodeRateLimiter> limiter_;
   // Shared by every shard actor, like the limiter, so the answers to its
-  // refusals are bounded once for the node.
-  std::shared_ptr<RefusalAnswerBudget> refusal_answers_ = std::make_shared<RefusalAnswerBudget>();
+  // refusals are bounded once for the node. Its counts are exported.
+  std::shared_ptr<RefusalAnswerBudget> refusal_answers_ = std::make_shared<RefusalAnswerBudget>(
+      default_refusal_answer_limits(), td::Timestamp::now(), &health::node_state.refusal_answers);
 
   decltype(limiter_) make_limiter(const FullNodeOptions& opts);
 };

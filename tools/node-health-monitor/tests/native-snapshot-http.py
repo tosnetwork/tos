@@ -183,6 +183,10 @@ def check(mode, padding=None):
             assert b"# TYPE tos_masterchain_head_age_seconds gauge\n" in body
             assert b"# TYPE tos_shard_client_age_seconds gauge\n" in body
             assert b"\ntos_wait_block_data_net_failures_total 7" in body
+            assert b"# TYPE tos_full_node_refusal_answers_total counter\n" in body
+            assert b"\ntos_full_node_refusal_answers_total 13.000000\n" in body
+            assert b"# TYPE tos_full_node_refusal_answers_suppressed_total counter\n" in body
+            assert b"\ntos_full_node_refusal_answers_suppressed_total 4.000000\n" in body
             shard_client_age = re.search(rb"\ntos_shard_client_age_seconds ([0-9.]+)\n", body)
             assert shard_client_age and float(shard_client_age.group(1)) >= 9000, body
             for name in old_live_names:
