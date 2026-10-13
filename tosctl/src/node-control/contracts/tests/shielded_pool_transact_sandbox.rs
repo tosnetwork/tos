@@ -658,8 +658,8 @@ impl Pool {
     /// `limit` replaces the network's per-transaction gas ceiling. This chain
     /// grants 30,000,000, so the only use left for this is the opposite of
     /// what it was built for: starving a transaction on a network configured
-    /// like TON's basechain, to show what the contract's own ceiling is
-    /// protecting against.
+    /// like the reference implementation's basechain, to show what the
+    /// contract's own ceiling is protecting against.
     fn deploy_with_gas_limit(nullifier_root: Field, limit: Option<u64>) -> Self {
         let mut bc = match limit {
             None => Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
@@ -1088,14 +1088,15 @@ fn what_a_transact_spends_and_where() {
     //
     // It used to assert this was above a million, because it was. At global
     // version 18 the two insertions stopped walking their paths in FunC and
-    // the whole path to the proof came to 825,393 -- under the 1,000,000 a
-    // TON basechain grants a transaction, which is the figure the gas budget
-    // work spent a day being wrong about. The bound is kept, pointing the
+    // the whole path to the proof came to 825,393 -- under the 1,000,000 the
+    // reference implementation's basechain grants a transaction, which is the
+    // figure the gas budget work spent a day being wrong about. The bound is kept, pointing the
     // other way, so that losing the saving is loud.
     assert!(
         reached_proof < 1_000_000,
-        "the path to the proof costs {reached_proof} gas, back above the million a TON \
-         basechain grants; POSEIDON2_PATH7 brought it to 825,393 and something has undone that"
+        "the path to the proof costs {reached_proof} gas, back above the million the \
+         reference implementation's basechain grants; POSEIDON2_PATH7 brought it to 825,393 \
+         and something has undone that"
     );
 }
 
@@ -1103,9 +1104,9 @@ fn what_a_transact_spends_and_where() {
 /// limits that actually bound it.
 ///
 /// This test used to assert that the path did not fit "the network", having
-/// measured it against the executor's default table -- which carried TON's
-/// basechain limit of 1,000,000 while this chain's zero state grants
-/// 30,000,000. The claim was false for this chain by a factor of twenty-seven.
+/// measured it against the executor's default table -- which carried the
+/// reference implementation's basechain limit of 1,000,000 while this chain's
+/// zero state grants 30,000,000. The claim was false for this chain by a factor of twenty-seven.
 /// `chain_gas_envelope_sandbox.rs` now generates the zero state and holds the
 /// two tables together, and what is left to say here is what the path costs
 /// and how much room it has.

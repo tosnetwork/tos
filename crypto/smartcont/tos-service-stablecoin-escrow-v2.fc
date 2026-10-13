@@ -58,7 +58,7 @@ const int err::bad_acceptance = 2409;
 const int err::insufficient_gas = 2410;
 const int err::weak_key = 2411;
 
-;; Fixed native-TON budget attached to a settlement's jetton transfer, sized
+;; Fixed native-coin budget attached to a settlement's jetton transfer, sized
 ;; (per the vendored third-party DEX reference under crypto/smartcont/reference/)
 ;; to cover one external jetton-wallet
 ;; hop (~0.07 TOS) plus the recipient wallet's storage (~0.01 TOS) with margin.

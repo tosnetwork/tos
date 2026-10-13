@@ -318,11 +318,11 @@ end of this file for the activation plan.
 - When the action phase fails with bounce-on-fail, bounce now returns the whole remaining
   message balance from before the action phase, instead of whatever was left after partially
   processed actions.
-- TOS-specific (not part of upstream TON's version 14): deploy activation after a StateInit
-  message now requires the compute phase to have committed successfully (`success`), rather than
-  merely accepted gas (`accepted`). Before version 14, an account could be deployed by a message
-  that accepted gas but then threw during compute, matching legacy TON behavior. See
-  `compute_phase_can_activate_account` in `crypto/block/transaction.cpp`.
+- TOS-specific (not part of the reference implementation's version 14): deploy activation after
+  a StateInit message now requires the compute phase to have committed successfully (`success`),
+  rather than merely accepted gas (`accepted`). Before version 14, an account could be deployed by
+  a message that accepted gas but then threw during compute, matching the legacy behavior of the
+  reference implementation. See `compute_phase_can_activate_account` in `crypto/block/transaction.cpp`.
 
 ## Version 15
 

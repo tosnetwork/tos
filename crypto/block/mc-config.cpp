@@ -451,7 +451,7 @@ td::optional<tos::SelectedNewConsensusConfig> Config::get_selected_new_consensus
             },
         .cell_hash = td::Bits256{c2->get_hash().bits()}};
   } else if (gen::NewConsensusConfig::Record_simplex_config_v2 v2; gen::unpack_cell(c2, v2)) {
-    // The five flag bits in TON's #22 layout are reserved as well. The two
+    // The five flag bits in the upstream #22 layout are reserved as well. The two
     // protocol-version bits are intentionally separate and are checked by
     // protocol_version_supported() before a validator group starts.
     if (v2.flags != 0) {

@@ -42,7 +42,8 @@ impl DefaultConfig for MsgForwardPrices {
             // crypto/smartcont/gen-zerostate.fif. Contracts use ConfigParam
             // 25 directly through GETFORWARDFEE, so an upstream-like default
             // here would invalidate production-contract fee/reserve tests.
-            // TON mainnet's live basechain ConfigParam25, read on 2026-09-21.
+            // The reference implementation's live mainnet basechain ConfigParam25,
+            // read on 2026-09-21.
             // Each was six times these for the same reason the gas price was.
             lump_price: 66667,
             bit_price: 4369067,

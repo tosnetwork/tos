@@ -991,7 +991,7 @@ TEST(TorrentHeader, NameValidation) {
   // itself lands on a slash, so a run of slashes collapses into a component
   // that starts with '/' instead of surfacing as an empty component. This
   // predates and is unrelated to the NUL/Windows-path hardening backported
-  // here (upstream ton-c has the identical `r = l + 1` structure both
+  // here (the upstream implementation has the identical `r = l + 1` structure both
   // before and after 9c07336d), so it is left unfixed and untested here.
   CHECK(validate_single_file_name(".").is_error());
   CHECK(validate_single_file_name("..").is_error());

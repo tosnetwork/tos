@@ -2,7 +2,7 @@
     Copyright (C) 2025-2026 TOS Network.
 
     VmState::max_library_loads enforcement tests. Ports the counting logic
-    ton-c added in commit b647a8d5 (crypto/vm/vm.h/.cpp) -- TOS parsed
+    upstream added in commit b647a8d5 (crypto/vm/vm.h/.cpp) -- TOS parsed
     ConfigParam 43 v3's max_transaction_library_loads (crypto/block/
     mc-config.cpp) but never enforced it in the VM or wired it into the
     consensus/emulator VM setup paths. See crypto/block/transaction.cpp's

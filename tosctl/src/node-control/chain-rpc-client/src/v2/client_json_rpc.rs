@@ -1341,7 +1341,7 @@ fn bounded_detail(value: &str) -> String {
 }
 
 fn normalize_get_transactions(res: serde_json::Value) -> anyhow::Result<GetTransactionsRes> {
-    // The validator JSON-RPC surface returns the current toncenter-style array
+    // The validator JSON-RPC surface returns the current upstream-HTTP-API-style array
     // with nested `transaction_id`, while older deployments used
     // `{transactions:[...]}` and top-level `lt`/`hash`.
     let values = if let Some(array) = res.as_array() {

@@ -260,7 +260,7 @@ td::Status AdnlInboundConnection::process_custom_packet(td::BufferSlice &data, b
       auto pub_key = PublicKey{f->key_};
       // ADNL node identities are Ed25519 keys.  PublicKey also supports
       // symmetric/overlay key types, but accepting those here would widen the
-      // TCP authentication protocol beyond the identity scheme used by TON
+      // TCP authentication protocol beyond the identity scheme of the reference implementation
       // and allow a non-node key to become a remote ADNL identity.
       if (!pub_key.is_ed25519()) {
         return td::Status::Error("expected ed25519 key");
