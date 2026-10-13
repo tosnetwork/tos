@@ -23,6 +23,7 @@
 #include <limits>
 
 #include "td/utils/FileLog.h"
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/Slice.h"
 #include "td/utils/TsFileLog.h"
 #include "td/utils/benchmark.h"
@@ -491,28 +492,47 @@ TEST(Log, TsFileLogReportsIdleArchivesItCannotRemove) {
   ASSERT_TRUE(td::stat(idle + ".old.3").is_error());
   ASSERT_TRUE(td::stat(idle + ".old.5/inside").is_ok());
   cleanup();
+}
 
-  // A log directory that can be written but not listed: the scan fails, which
-  // counts, and the log still starts.
-  const std::string dir = base + ".unlistable";
-  const std::string inner = dir + "/log";
-  td::unlink(inner).ignore();
-  td::rmdir(dir).ignore();
-  td::mkdir(dir, 0300).ensure();
-  auto unlistable = td::WalkPath::run(dir, [](td::CSlice, td::WalkPath::Type) {});
-  if (unlistable.is_error()) {
-    // Not so when the test runs with the right to read any directory.
-    prune_failures = td::FileLog::prune_failures();
-    {
-      auto r_log = td::TsFileLog::create(inner, 1 << 20, false, 2);
-      ASSERT_TRUE(r_log.is_ok());
-      r_log.move_as_ok()->append(td::CSlice("unlistable directory\n"));
-    }
-    ASSERT_EQ(prune_failures + 1, td::FileLog::prune_failures());
-    ASSERT_TRUE(td::stat(inner).is_ok());
+// Directories the start-up scan opened, through the test seam, and the one
+// directory it lets open; every other open fails as if access were denied, so
+// the tests below do not depend on who runs them.
+namespace {
+std::vector<std::string> opened_directories;
+std::string openable_directory;
+
+td::Status record_directory_open(td::CSlice dir) {
+  opened_directories.push_back(dir.str());
+  if (dir == openable_directory) {
+    return td::Status::OK();
   }
-  td::unlink(inner).ignore();
-  td::rmdir(dir).ignore();
+  return td::Status::Error(PSLICE() << "injected: cannot open " << dir);
+}
+}  // namespace
+
+TEST(Log, TsFileLogReportsALogDirectoryItCannotList) {
+  // A log directory that cannot be listed: the scan fails, which counts, and
+  // the log still starts.
+  const std::string base = "tmplog_ts_unlistable_test";
+  td::unlink(base).ignore();
+  opened_directories.clear();
+  openable_directory.clear();
+  td::TsFileLog::set_directory_open_hook_for_tests(record_directory_open);
+  SCOPE_EXIT {
+    td::TsFileLog::set_directory_open_hook_for_tests(nullptr);
+  };
+  auto prune_failures = td::FileLog::prune_failures();
+  {
+    auto r_log = td::TsFileLog::create(base, 1 << 20, false, 2);
+    ASSERT_TRUE(r_log.is_ok());
+    r_log.move_as_ok()->append(td::CSlice("unlistable directory\n"));
+  }
+  // The injected failure happened, on the log's own directory, and counted.
+  ASSERT_EQ(1u, opened_directories.size());
+  ASSERT_EQ(".", opened_directories[0]);
+  ASSERT_EQ(prune_failures + 1, td::FileLog::prune_failures());
+  ASSERT_TRUE(td::stat(base).is_ok());
+  td::unlink(base).ignore();
 }
 
 TEST(Log, TsFileLogFindsTheDirectoryOfItsLog) {
@@ -542,22 +562,31 @@ TEST(Log, TsFileLogPrunesBesideAnUnreadableDirectory) {
     td::rmdir(unreadable).ignore();
   };
   cleanup();
+  // The seam denies every directory but the log's own; the real mode makes the
+  // neighbour unreadable too for anyone without the right to read any
+  // directory.
   td::mkdir(unreadable, 0).ensure();
-  auto probe = td::WalkPath::run(unreadable, [](td::CSlice, td::WalkPath::Type) {});
-  if (probe.is_error()) {
-    // Not so when the test runs with the right to read any directory.
-    td::write_file(idle + ".old.1", "x").ensure();
-    td::write_file(idle + ".old.3", "x").ensure();
-    auto prune_failures = td::FileLog::prune_failures();
-    {
-      auto r_log = td::TsFileLog::create(base, 1 << 20, false, 2);
-      ASSERT_TRUE(r_log.is_ok());
-      r_log.move_as_ok()->append(td::CSlice("beside an unreadable directory\n"));
-    }
-    ASSERT_EQ(prune_failures, td::FileLog::prune_failures());
-    ASSERT_TRUE(td::stat(idle + ".old.1").is_ok());
-    ASSERT_TRUE(td::stat(idle + ".old.3").is_error());
+  td::write_file(idle + ".old.1", "x").ensure();
+  td::write_file(idle + ".old.3", "x").ensure();
+  opened_directories.clear();
+  openable_directory = ".";
+  td::TsFileLog::set_directory_open_hook_for_tests(record_directory_open);
+  SCOPE_EXIT {
+    td::TsFileLog::set_directory_open_hook_for_tests(nullptr);
+  };
+  auto prune_failures = td::FileLog::prune_failures();
+  {
+    auto r_log = td::TsFileLog::create(base, 1 << 20, false, 2);
+    ASSERT_TRUE(r_log.is_ok());
+    r_log.move_as_ok()->append(td::CSlice("beside an unreadable directory\n"));
   }
+  // The scan went through the seam, opened the log directory and nothing
+  // else, and pruned.
+  ASSERT_EQ(1u, opened_directories.size());
+  ASSERT_EQ(".", opened_directories[0]);
+  ASSERT_EQ(prune_failures, td::FileLog::prune_failures());
+  ASSERT_TRUE(td::stat(idle + ".old.1").is_ok());
+  ASSERT_TRUE(td::stat(idle + ".old.3").is_error());
   cleanup();
 }
 #endif

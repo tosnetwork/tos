@@ -38,5 +38,12 @@ class TsFileLog {
   // "/" for a file directly under the root, "." for a bare file name, and the
   // parent directory, without a trailing slash, otherwise.
   static string log_directory(Slice path);
+
+  // Test seam. When set, the start-up scan calls it with each directory it is
+  // about to open, and an error it returns is taken as that open failing, so a
+  // test can make a directory unreadable whoever runs it. nullptr, the default,
+  // leaves only the real open.
+  using DirectoryOpenHook = Status (*)(CSlice dir);
+  static void set_directory_open_hook_for_tests(DirectoryOpenHook hook);
 };
 }  // namespace td

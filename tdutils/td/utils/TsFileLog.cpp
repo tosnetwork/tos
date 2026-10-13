@@ -19,6 +19,7 @@
 */
 
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <functional>
 
@@ -61,7 +62,13 @@ bool parse_small_number(Slice s, int64 &value) {
 
 // Calls `func` with the name of every entry of `dir` itself, without "." and
 // "..", and without descending into or opening any subdirectory.
+std::atomic<TsFileLog::DirectoryOpenHook> directory_open_hook{nullptr};
+
 Status list_directory(const string &dir, const std::function<void(Slice)> &func) {
+  auto hook = directory_open_hook.load(std::memory_order_acquire);
+  if (hook != nullptr) {
+    TRY_STATUS(hook(dir));
+  }
   DIR *handle = opendir(dir.c_str());
   if (handle == nullptr) {
     return OS_ERROR(PSLICE() << "Can't list directory \"" << dir << '"');
@@ -230,6 +237,10 @@ Result<td::unique_ptr<LogInterface>> TsFileLog::create(string path, td::int64 ro
   auto res = td::make_unique<detail::TsFileLog>();
   TRY_STATUS(res->init(path, rotate_threshold, redirect_stderr, keep_rotated));
   return std::move(res);
+}
+
+void TsFileLog::set_directory_open_hook_for_tests(DirectoryOpenHook hook) {
+  detail::directory_open_hook.store(hook, std::memory_order_release);
 }
 
 string TsFileLog::log_directory(Slice path) {

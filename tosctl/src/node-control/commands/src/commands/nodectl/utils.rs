@@ -61,7 +61,7 @@ pub fn warn_missing_secret(secret_name: &str) {
 
 pub fn warn_chain_rpc_unavailable(error: &anyhow::Error, note: &str) {
     println!("\n{} {}", "[WARNING]".yellow().bold(), "Failed to connect to chain RPC".yellow(),);
-    println!("  {} {}", "Reason:".yellow().bold(), error.root_cause().to_string());
+    println!("  {} {}", "Reason:".yellow().bold(), error.root_cause());
     println!("  {} {}", "Note:".yellow().bold(), note.yellow().italic());
 }
 
@@ -441,9 +441,26 @@ mod tests {
     fn select_node_is_by_name_and_never_by_map_order() {
         let mut config = minimal_config();
         assert!(select_node(&config, None).is_err());
-        for name in ["n3", "n1", "n2"] {
-            config.nodes.insert(name.to_string(), vault_node(name));
-        }
+        // A map whose own iteration order does not start with the node the
+        // selection must return, so taking the map's first entry is caught on
+        // every run. Each new map gets fresh hash keys; about one in three puts
+        // "n1" first, so a few attempts find a counterexample.
+        let build = || {
+            let mut nodes = HashMap::new();
+            for name in ["n3", "n1", "n2"] {
+                nodes.insert(name.to_string(), vault_node(name));
+            }
+            nodes
+        };
+        config.nodes = (0..1000)
+            .map(|_| build())
+            .find(|nodes| nodes.keys().next().map(String::as_str) != Some("n1"))
+            .expect("some hash keys put another node first");
+        assert_ne!(
+            config.nodes.iter().next().map(|(name, _)| name.as_str()),
+            Some("n1"),
+            "precondition: the raw map order must not already give the expected node"
+        );
         for _ in 0..8 {
             assert_eq!(select_node(&config, None).expect("first").0, "n1");
         }
