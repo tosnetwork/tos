@@ -720,6 +720,152 @@ int retention_child(const std::string& boc, const std::string& root, bool gc_pas
   return 1;
 }
 
+// Reinitialization at a descendant of the checkpoint, a crash right after its
+// GC write, then real pruning in a fresh process. One phase per process; each
+// exits with _Exit (as a crash would, and because a pruned package's index
+// database stays open in-process). The retention chain is used so that archive
+// pruning has packages to delete: R3 is the checkpoint, R5 the reinitialization
+// target.
+//  - "reinit-seed": the states, handles and archive packages of B0 and R1..R5,
+//    checkpoint R3, GC B0, shard client R5, and no init record (the reiniter's
+//    precondition).
+//  - "reinit-crash": the production loader, then the production
+//    persist_reinit_gc_block for R5, then _Exit(137) as soon as the GC write is
+//    acknowledged. The init record is never written.
+//  - "reinit-prune": the durable GC block, installed as the manager's GC (as
+//    install_init_result does), drives the production CellDb state GC through
+//    allow_block_state_gc, and archive TTL pruning runs on its time. The phase
+//    waits until every state older than the GC block is deleted and, separately,
+//    until every package archive pruning selects is gone.
+int reinit_child(const std::string& phase, const std::string& boc, const std::string& root) {
+  auto chain = build_retention_chain(boc);
+  const std::vector<std::string> names = {"B0", "R1", "R2", "R3", "R4", "R5"};
+  auto pack = [&](const std::string& package) {
+    return root + "/archive/packages/arch0000/archive." + package + ".pack";
+  };
+  auto status = run_scenario(
+      root, make_options(chain),
+      [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
+          td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
+        if (phase == "reinit-seed") {
+          co_await td::actor::ask(db, &Db::store_zero_state_file, chain["B0"].id, chain.genesis_boc.clone());
+          std::vector<BlockHandle> handles;
+          for (const auto& name : names) {
+            const auto& b = chain[name];
+            auto handle = create_empty_block_handle(b.id);
+            handle->set_logical_time(b.state->get_logical_time());
+            handle->set_unix_time(b.state->get_unix_time());
+            handle->set_split(false);
+            handle->set_merge(false);
+            handle->set_is_key_block(b.id.seqno() == 0);
+            if (b.prev) {
+              handle->set_prev(*b.prev);
+            }
+            handle->set_applied();
+            handle->set_applied_stored();
+            handle->set_processed();
+            co_await td::actor::ask(db, &Db::store_block_state, handle, td::Ref<ShardState>{b.state},
+                                    vm::StoreCellHint{});
+            co_await td::actor::ask(db, &Db::store_block_handle, handle);
+            handles.push_back(handle);
+          }
+          for (size_t i = 1; i < handles.size(); i++) {
+            co_await td::actor::ask(db, &Db::archive, handles[i]);
+          }
+          co_await td::actor::ask(db, &Db::update_gc_masterchain_block, chain["B0"].id);
+          co_await td::actor::ask(db, &Db::update_shard_client_state, chain["R5"].id);
+          co_await td::actor::ask(db, &Db::update_consensus_cleanup_checkpoint, chain["R3"].id);
+          bool packages = true;
+          for (const auto& package : {"00000", "20000", "40000", "60000", "80000"}) {
+            packages = packages && td::stat(pack(package)).is_ok();
+          }
+          std::cout << "CHILD_REINIT_SEEDED packages=" << packages << std::endl;
+          std::_Exit(packages ? 0 : 1);
+        } else if (phase == "reinit-crash") {
+          auto cp = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe);
+          auto [handle, state] = co_await load_block(probe, chain["R5"].id);
+          auto gc = co_await persist_reinit_gc_block(probe, cp, handle, state);
+          std::cout << "CHILD_REINIT_GC_WRITTEN gc=" << gc.handle->id().seqno() << std::endl;
+          std::_Exit(137);
+        } else if (phase == "reinit-prune") {
+          auto gc_id = co_await td::actor::ask(db, &Db::get_gc_masterchain_block);
+          auto [gc_handle, gc_state] = co_await load_block(probe, gc_id);
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_gc, gc_handle, gc_state);
+          // State GC: every state strictly older than the GC block.
+          std::vector<std::string> older;
+          for (const auto& name : names) {
+            if (chain[name].id.seqno() < gc_id.seqno()) {
+              older.push_back(name);
+            }
+          }
+          bool states_deleted = co_await wait_until(
+              db,
+              [&]() -> td::actor::Task<bool> {
+                for (const auto& name : older) {
+                  auto h = co_await td::actor::ask(db, &Db::get_block_handle, chain[name].id).wrap();
+                  if (h.is_error() || !h.ok()->deleted_state_boc()) {
+                    co_return false;
+                  }
+                }
+                co_return true;
+              },
+              60.0);
+          // Recorded now: archive pruning below also removes some of these handles.
+          std::string deleted_states;
+          for (const auto& name : names) {
+            auto h = co_await td::actor::ask(db, &Db::get_block_handle, chain[name].id).wrap();
+            if (h.is_ok() && h.ok()->deleted_state_boc()) {
+              deleted_states += " " + name;
+            }
+          }
+          // Archive TTL pruning on the GC block's time (1 s TTL). Its barrier is
+          // the oldest package (R1's) being gone, which pruning deletes for any
+          // GC block from R2 on; the packages left are reported after it.
+          td::actor::send_closure(db, &Db::run_gc, td::Ref<MasterchainState>{chain["R5"].state},
+                                  gc_state->get_unix_time(), 1.0);
+          bool packages_deleted = co_await wait_until(
+              db,
+              [&]() -> td::actor::Task<bool> {
+                if (td::stat(pack("00000")).is_ok()) {
+                  co_return false;
+                }
+                auto id = co_await td::actor::ask(db, &Db::get_archive_id, 1, ShardIdFull{masterchainId}).wrap();
+                co_return id.is_error();
+              },
+              30.0);
+          // Let a pruning pass that deletes more than one package finish.
+          co_await wait_until(db, []() -> td::actor::Task<bool> { co_return false; }, 2.0);
+          std::string remaining_packages;
+          for (const auto& package : {"00000", "20000", "40000", "60000", "80000"}) {
+            if (td::stat(pack(package)).is_ok()) {
+              remaining_packages += std::string(" ") + package;
+            }
+          }
+          std::cout << "CHILD_PRUNED gc=" << gc_id.seqno() << " states_deleted=" << states_deleted
+                    << " packages_deleted=" << packages_deleted << " deleted_states:" << deleted_states
+                    << " remaining_packages:" << remaining_packages << std::endl;
+          std::_Exit(states_deleted && packages_deleted && !older.empty() ? 0 : 1);
+        } else if (phase == "reinit-reopen") {
+          // A fresh process: the production loader, then the init record write
+          // the manager makes after a reinitialization.
+          auto loaded = co_await load_consensus_cleanup_checkpoint_for_startup(db, probe).wrap();
+          auto gc_id = co_await td::actor::ask(db, &Db::get_gc_masterchain_block);
+          bool ok = loaded.is_ok() && loaded.ok().handle && loaded.ok().handle->id() == chain["R3"].id &&
+                    loaded.ok().state.not_null() && loaded.ok().state->get_block_id() == chain["R3"].id &&
+                    loaded.ok().state->check_old_mc_block_id(chain["R2"].id, true);
+          co_await td::actor::ask(db, &Db::update_init_masterchain_block, chain["R5"].id);
+          std::cout << "CHILD_REOPENED loaded=" << ok << " gc=" << gc_id.seqno()
+                    << " load_status=" << (loaded.is_ok() ? std::string("ok") : loaded.error().to_string())
+                    << std::endl;
+          std::_Exit(0);
+        }
+        co_return td::Unit{};
+      },
+      120.0);
+  std::cerr << "reinit child " << phase << ": " << status.to_string() << '\n';
+  return 1;
+}
+
 // The production startup (validator_manager_init) into the production init
 // handoff (started), then what `mode` asks for. Modes ending in "-disabled" run
 // with validator consensus cleanup disabled.
@@ -732,6 +878,9 @@ int child_main(const std::string& mode, const std::string& boc, const std::strin
   auto chain = r_chain.move_as_ok();
   if (mode == "retention" || mode == "retention-violated") {
     return retention_child(boc, root, mode == "retention-violated");
+  }
+  if (mode == "reinit-seed" || mode == "reinit-crash" || mode == "reinit-prune" || mode == "reinit-reopen") {
+    return reinit_child(mode, boc, root);
   }
   auto opts = make_options(chain);
   if (mode.find("-disabled") != std::string::npos) {
@@ -1294,6 +1443,11 @@ int main(int argc, char** argv) {
   auto contains = [](const std::string& text, const std::string& needle) {
     return text.find(needle) != std::string::npos;
   };
+  // The child's own result line (the first line starting with `tag`), for receipts.
+  auto child_line = [](const std::string& text, const std::string& tag) {
+    auto at = text.find(tag);
+    return at == std::string::npos ? std::string("(none)") : text.substr(at, text.find('\n', at) - at);
+  };
   auto wait_seconds = [](td::actor::ActorId<Db> db, double seconds) -> td::actor::Task<td::Unit> {
     auto deadline = td::Timestamp::in(seconds);
     while (!deadline.is_in_past()) {
@@ -1335,6 +1489,39 @@ int main(int argc, char** argv) {
     auto [code, log] = run_child("plain", root);
     EXPECT(code == 0 && contains(log, with_checkpoint ? "gc=4 gc_state=4" : "gc=6 gc_state=6"),
            "an immediate restart after the reinitialization starts (exit " << code << ")");
+  }
+
+  // 9b. Reinitialization at a descendant (R5) of the checkpoint (R3), a crash
+  //     right after the GC write (no init record yet), real state and archive
+  //     pruning in a fresh process on the durable GC block, then a fresh
+  //     reopen: the checkpoint's handle and state still load, and the
+  //     production startup starts from them. See reinit_child.
+  {
+    auto rchain = build_retention_chain(boc);
+    auto root = fresh_root(base, "reinit-crash-prune");
+    auto [seed_code, seed_log] = run_child("reinit-seed", root);
+    EXPECT(seed_code == 0 && contains(seed_log, "CHILD_REINIT_SEEDED packages=1"),
+           "seed the reinitialization crash database (exit " << seed_code << ")");
+    auto [crash_code, crash_log] = run_child("reinit-crash", root);
+    EXPECT(
+        crash_code == 137 && contains(crash_log, "CHILD_REINIT_GC_WRITTEN gc=40001"),
+        "the reinitialization at R5 wrote GC = the checkpoint R3 and crashed right after (exit " << crash_code << ")");
+    auto [prune_code, prune_log] = run_child("reinit-prune", root);
+    EXPECT(prune_code == 0 && contains(prune_log, "CHILD_PRUNED gc=40001 states_deleted=1 packages_deleted=1"),
+           "state GC and archive pruning ran on the durable GC block R3 (exit "
+               << prune_code << "): " << child_line(prune_log, "CHILD_PRUNED"));
+    EXPECT(contains(prune_log, "deleted_states: B0 R1 R2 remaining_packages: 20000 40000 60000 80000"),
+           "pruning deleted the states older than R3 and the oldest package, and kept R3's state and package");
+    auto [reopen_code, reopen_log] = run_child("reinit-reopen", root);
+    EXPECT(reopen_code == 0 && contains(reopen_log, "CHILD_REOPENED loaded=1 gc=40001 load_status=ok"),
+           "after the crash and the pruning, a fresh process loads the checkpoint R3's handle and state, and the "
+           "durable GC block is R3 (exit "
+               << reopen_code << "): " << child_line(reopen_log, "CHILD_REOPENED"));
+    auto [code, log] = run_child("plain", root);
+    EXPECT(code == 0 && contains(log, "checkpoint=" + rchain["R3"].id.to_str() + " gc=40001 gc_state=40001"),
+           "the production startup then starts from the checkpoint and the GC block (exit "
+               << code << ")"
+               << (code == 0 ? std::string() : "\n" + log.substr(log.size() > 3000 ? log.size() - 3000 : 0)));
   }
 
   // 10. Reinitialization writes the hardfork list only after its target passed
