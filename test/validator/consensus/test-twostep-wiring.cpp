@@ -455,6 +455,13 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   }
   // (checkpoint readiness, catch-up fence closed, validator groups permitted,
   // observer groups permitted)
+  // The ADNL ids of the applied head's masterchain committee.
+  void committee(td::Promise<std::set<adnl::AdnlNodeIdShort>> promise) {
+    std::set<adnl::AdnlNodeIdShort> result;
+    for (const auto& d : last_masterchain_state_->get_validator_set(ShardIdFull{masterchainId})->export_vector())
+      result.emplace(d.addr);
+    promise.set_value(std::move(result));
+  }
   void gates(td::Promise<std::vector<bool>> promise) {
     promise.set_value(std::vector<bool>{consensus_checkpoint_reached_, startup_catchup_.fence_closed(),
                                         validator_groups_permitted(), observer_groups_permitted()});
@@ -941,6 +948,21 @@ class Fixture {
     query<td::Unit>([&](auto promise) {
       td::actor::send_closure(manager_, &TwostepManagerProbe::persist_checkpoint, id, std::move(promise));
     }).ensure();
+  }
+  std::set<adnl::AdnlNodeIdShort> committee() {
+    return query<std::set<adnl::AdnlNodeIdShort>>([&](auto promise) {
+             td::actor::send_closure(manager_, &TwostepManagerProbe::committee, std::move(promise));
+           })
+        .move_as_ok();
+  }
+  // The local ADNL id of the bus of each running validator session.
+  std::set<adnl::AdnlNodeIdShort> local_ids_of(const std::vector<ValidatorSessionId>& sessions) {
+    pump();
+    std::set<adnl::AdnlNodeIdShort> result;
+    for (const auto& bus : buses)
+      if (bus->is_validator() && std::find(sessions.begin(), sessions.end(), bus->session_id) != sessions.end())
+        result.insert(bus->local_adnl_id);
+    return result;
   }
   void set_fail_persist(bool fail) {
     query<td::Unit>([&](auto promise) {
@@ -1687,6 +1709,21 @@ CompositionChain composition_chain() {
 Snapshot rotation(const Fixture& f, CatchainSeqno cc) {
   return {f.old.set(cc), f.current.set(cc), f.next.set(cc + 1), f.current.set(cc, 2), f.next.set(cc + 1), true, 2};
 }
+// Validator-set (membership) changes: the masterchain committee is taken from
+// the `next` epoch, then from the `old` epoch, each with the other two epochs
+// around it.
+Snapshot next_in_office(const Fixture& f, CatchainSeqno cc) {
+  return {f.current.set(cc), f.next.set(cc), f.old.set(cc + 1), f.next.set(cc, 2), f.old.set(cc + 1), true, 2};
+}
+Snapshot old_in_office(const Fixture& f, CatchainSeqno cc) {
+  return {f.next.set(cc), f.old.set(cc), f.current.set(cc + 1), f.old.set(cc, 2), f.current.set(cc + 1), true, 2};
+}
+std::set<adnl::AdnlNodeIdShort> committee_of(const Epoch& epoch) {
+  std::set<adnl::AdnlNodeIdShort> result;
+  for (size_t i = 0; i < 2; ++i)
+    result.emplace(epoch.members[i].addr);
+  return result;
+}
 // Holds a current, a next (tentative) and an old (observer) key; persists the
 // checkpoint B5; enters catch-up first when `fenced`; starts from disk at B3.
 void start_composed(Fixture& f, const CompositionChain& c, bool fenced) {
@@ -1810,26 +1847,34 @@ TEST(TwostepWiring, CompositionCheckpointAloneWithTheFenceOpen) {
   ASSERT_TRUE(f.gates() == (std::vector<bool>{true, false, true, true}));
 }
 
-// T16 (manager-side substitute; it does not run the archive importer): heads
-// cross three catchain rotations while fenced. The checkpoint moves only
-// through the shard client's durable advance; that write fails (uncertain).
-// Readiness, the installed checkpoint and the cleanup anchor stay on B5 through
-// the fence exit; the groups the exit builds are those of the state above the
-// checkpoint. Once a rewrite is synced, the checkpoint and anchor move to B6.
+// T16 (manager-side substitute; it does not run the archive importer): while
+// fenced, heads cross two validator-set (membership) changes and catchain
+// rotations: the committee of the `current` epoch, then of `next`, then of
+// `old`. The checkpoint moves only through the shard client's durable advance;
+// that write fails (uncertain). Readiness, the installed checkpoint and the
+// cleanup anchor stay on B5 through the fence exit. The exit selects the final
+// set's group (this node's `old` key), not an earlier set's. Once a rewrite is
+// synced, the checkpoint and anchor move to B6.
 TEST(TwostepWiring, CompositionRotationsAndAnUncertainWriteWhileFenced) {
   auto c = composition_chain();
   Fixture f;
   start_composed(f, c, true);
-  for (BlockSeqno h : {4u, 5u, 6u}) {
-    ASSERT_TRUE(f.apply_head(rotation(f, h - 2), c.real(h), c.ancestors(h)).is_ok());
-    expect_no_validator_group(f);
-    ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{c.real(5)});
-  }
+  ASSERT_TRUE(f.committee() == committee_of(f.current));
+  ASSERT_TRUE(f.apply_head(next_in_office(f, 2), c.real(4), c.ancestors(4)).is_ok());
+  ASSERT_TRUE(f.committee() == committee_of(f.next));
+  expect_no_validator_group(f);
+  ASSERT_TRUE(f.apply_head(old_in_office(f, 3), c.real(5), c.ancestors(5)).is_ok());
+  ASSERT_TRUE(f.committee() == committee_of(f.old));
+  expect_no_validator_group(f);
+  ASSERT_TRUE(f.apply_head(old_in_office(f, 4), c.real(6), c.ancestors(6)).is_ok());
+  ASSERT_TRUE(f.committee() == committee_of(f.old));
+  expect_no_validator_group(f);
+  ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{c.real(5)});
   auto before = f.write_status();
   ASSERT_TRUE(!before.in_flight && !before.pending && !before.uncertain && before.persist_calls == 0);
   ASSERT_TRUE(before.anchor == std::optional<BlockIdExt>{c.real(5)});
   f.set_fail_persist(true);
-  f.shard_client_advanced(rotation(f, 4), c.real(6), c.ancestors(6));
+  f.shard_client_advanced(old_in_office(f, 4), c.real(6), c.ancestors(6));
   ASSERT_TRUE(f.eventually([&] { return f.write_status().uncertain; }));
   auto failed = f.write_status();
   // Offered, issued and failed: one write attempt, now uncertain.
@@ -1839,7 +1884,10 @@ TEST(TwostepWiring, CompositionRotationsAndAnUncertainWriteWhileFenced) {
   expect_no_validator_group(f);
   f.end_catchup(startup_catchup::ExitReason::Fresh);
   auto [active, tentative] = f.validators();
-  ASSERT_TRUE(!active.empty());
+  ASSERT_EQ(active.size(), 1u);
+  ASSERT_TRUE(f.eventually([&] {
+    return f.local_ids_of(active) == std::set<adnl::AdnlNodeIdShort>{adnl::AdnlNodeIdShort{f.old.members[0].addr}};
+  }));
   auto after_exit = f.write_status();
   ASSERT_TRUE(after_exit.uncertain && after_exit.installed == std::optional<BlockIdExt>{c.real(5)} &&
               after_exit.anchor == std::optional<BlockIdExt>{c.real(5)});
