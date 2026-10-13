@@ -99,7 +99,7 @@ def config_identity(raw):
         prices.uint(128)
         prices.end()
         if credit != expected_credit or (
-            parameter == 21 and (gas_limit, block_limit) != (30000000, 60000000)
+            parameter == 21 and (gas_limit, block_limit) != (2000000, 20000000)
         ):
             raise ValueError("configuration is not the explicit admission candidate")
         gas[str(parameter)] = {

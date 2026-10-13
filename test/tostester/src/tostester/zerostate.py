@@ -535,7 +535,7 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     if config.deployment_fee_schedule:
         credit = 20000 if config.quantum_admission_candidate else 10000
         return {
-            "gas_prices": f"436907 30 *M 30 *M {credit} 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
+            "gas_prices": f"436907 2 *M 2 *M {credit} 20 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
             "mc_gas_prices": "655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000"
             " config.mc_gas_prices!",
             "fwd_prices": "66667 4369067 436906667 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",

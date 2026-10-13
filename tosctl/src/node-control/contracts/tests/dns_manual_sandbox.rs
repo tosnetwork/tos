@@ -559,8 +559,8 @@ fn a_malformed_owner_message_is_charged_only_once() {
 const CLEANUP_LIMIT: usize = 16;
 
 /// The basechain per-transaction gas limit (ConfigParam 21 gas_limit in
-/// crypto/smartcont/gen-zerostate.fif: 30 *M).
-const BASECHAIN_GAS_LIMIT: u64 = 30_000_000;
+/// crypto/smartcont/gen-zerostate.fif: 2 *M).
+const BASECHAIN_GAS_LIMIT: u64 = 2_000_000;
 
 /// More expired query ids than one transaction can delete within that limit: each
 /// deletion costs about 4,600 gas at this size.
@@ -594,9 +594,9 @@ fn an_expired_query_backlog_cannot_unspend_a_query_id() {
         chain_block::TrComputePhase::Skipped(skipped) => panic!("skipped: {:?}", skipped.reason),
     };
     eprintln!("gas with a cleanup of {CLEANUP_LIMIT} expired ids: {gas}");
-    // A bounded cleanup is a small fraction of the limit; the unbounded one needed more
-    // than all of it.
-    assert!(gas * 50 <= BASECHAIN_GAS_LIMIT, "{gas} gas for one message");
+    // A bounded cleanup is a small fraction of the limit (measured at about 137,000 of
+    // 2,000,000); the unbounded one needed more than all of it.
+    assert!(gas * 10 <= BASECHAIN_GAS_LIMIT, "{gas} gas for one message");
     assert_ne!(resolver.data_hash(), before, "the operation applied");
     assert_eq!(resolver.recorded_queries(), BACKLOG as usize - CLEANUP_LIMIT + 1);
 

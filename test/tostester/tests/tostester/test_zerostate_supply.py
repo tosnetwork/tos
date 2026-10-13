@@ -1069,7 +1069,7 @@ def test_admission_candidate_parameter_mutation_is_detected(tmp_path, boundary):
     if boundary == "version":
         anchor, replacement = "18 capCreateStats", "17 capCreateStats"
     else:
-        anchor, replacement = "30 *M 30 *M 20000 60 *M", "30 *M 30 *M 10000 60 *M"
+        anchor, replacement = "2 *M 2 *M 20000 20 *M", "2 *M 2 *M 10000 20 *M"
     assert source.count(anchor) == 1
     mutated = _generate_admission_candidate(
         tmp_path / "mutated", source.replace(anchor, replacement)

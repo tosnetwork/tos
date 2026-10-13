@@ -224,19 +224,24 @@ config.special!
 // 90%. Masterchain gas is untouched as well: elections and configuration are
 // meant to be expensive.
 //
-// The two LIMITS deliberately do not match TON's. Mainnet grants a
-// transaction 1,000,000 gas; a shielded-pool withdrawal is over 1,170,000, so
-// at mainnet's limit the pool cannot run at all. 30,000,000 is what makes it
-// possible and is a considered divergence, not a value nobody got round to
-// aligning. Anyone tempted to "finish the alignment" by lowering it should
-// read `crypto/smartcont/shielded/` first.
+// The per-transaction LIMITS deliberately do not match mainnet-scale
+// networks' 1,000,000 gas. The measured worst-case shielded-pool withdrawal is
+// 1,176,248 gas and the pool's own transact ceiling is 1,510,000, so at
+// 1,000,000 the pool cannot run at all. gas_limit and special_gas_limit are
+// 2,000,000: room above the pool's ceiling, while one worst-case transaction
+// stays at about 50 ms at the measured worst of about 25 ns per gas. (They
+// were 30,000,000, which let a single transaction occupy a validator for
+// most of a second.) Anyone tempted to "finish the alignment" by lowering
+// them to 1,000,000 should read `crypto/smartcont/tos-shielded-pool-v1.fc`
+// first. block_gas_limit is 20,000,000, equal to the basechain block-limit
+// gas hard limit (ConfigParam 23) below; the node does not read it.
 //
 // What this does NOT change: the pool's own state. Gas prices live in the
 // chain's zerostate, not in the contract, so `profile_hash`, the genesis
 // state hash and the deployment address are all unmoved.
-436907 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
+436907 2 *M 2 *M 10000 20 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
 def? quantum-admission-candidate {
-  436907 30 *M 30 *M 20000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
+  436907 2 *M 2 *M 20000 20 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
 } if
 // masterchain gas (aligned with production)
 655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000 config.mc_gas_prices!
@@ -289,12 +294,14 @@ config.new_consensus_params_all!
 500000 1000000 2500000 triple     // gas: underload soft hard
 1000 5000 10000 triple            // lt: underload soft hard
 triple untriple config.mc_block_limits!
-// basechain block limits — gas tiers aligned with ConfigParam 21 gas_limit/
-// block_gas_limit above so collator block-selection and per-tx gas admission
-// agree on the same size envelope. underload=5M, soft=60M, hard=120M
-// (2x soft headroom).
+// basechain block limits. The gas tiers are the ones mainnet-scale networks
+// use: underload 2,000,000, soft 10,000,000, hard 20,000,000, so the hard
+// limit holds ten transactions at the ConfigParam 21 per-transaction limit.
+// They replace 5M/60M/120M, which were sized for a 30,000,000 per-transaction
+// limit; the block tiers are to be re-measured end to end on the regenerated
+// testnet. Bytes and lt tiers are unchanged.
 256 *Ki 1 *Mi 2 *Mi triple           // bytes: underload soft hard
-5000000 60000000 120000000 triple    // gas: underload soft hard
+2000000 10000000 20000000 triple     // gas: underload soft hard
 1000 5000 10000 triple               // lt: underload soft hard
 triple untriple config.block_limits!
 
