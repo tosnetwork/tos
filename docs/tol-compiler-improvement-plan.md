@@ -164,10 +164,13 @@ The source comparison used the official upstream snapshot `ed629c416f7a03cd38386
 
 Pinned comparison sources:
 
-- [Parser restriction](https://github.com/ton-blockchain/ton/blob/ed629c416f7a03cd3838697fcee9f8cd0097700b/tolk/ast-from-tokens.cpp#L1869-L1872)
-- [Compiler pipeline](https://github.com/ton-blockchain/ton/blob/ed629c416f7a03cd3838697fcee9f8cd0097700b/tolk/tolk.cpp)
-- [Assembler capacity handling](https://github.com/ton-blockchain/ton/blob/ed629c416f7a03cd3838697fcee9f8cd0097700b/crypto/fift/lib/Asm.fif#L64-L73)
-- [Coins assignment rules](https://github.com/ton-blockchain/ton/blob/ed629c416f7a03cd3838697fcee9f8cd0097700b/tolk/type-system.cpp#L818-L829)
+All paths are in the upstream repository at commit
+`ed629c416f7a03cd3838697fcee9f8cd0097700b`:
+
+- Parser restriction: `tolk/ast-from-tokens.cpp`, lines 1869-1872
+- Compiler pipeline: `tolk/tolk.cpp`
+- Assembler capacity handling: `crypto/fift/lib/Asm.fif`, lines 64-73
+- Coins assignment rules: `tolk/type-system.cpp`, lines 818-829
 
 ## Evidence provenance and limits
 

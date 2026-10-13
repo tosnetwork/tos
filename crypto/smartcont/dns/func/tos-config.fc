@@ -2,7 +2,7 @@
 ;;
 ;; This file holds the ONLY compile-time value that DNS.md (§6.6) leaves as an
 ;; explicit deployment decision. Everything else in this repository keeps zero
-;; semantic divergence from the upstream TON contracts.
+;; semantic divergence from the upstream reference contracts.
 ;;
 ;; auction_start_time drives two upstream formulas:
 ;;   - the first-auction duration ramp: seven days falling to one hour in

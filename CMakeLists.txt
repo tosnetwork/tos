@@ -1525,8 +1525,8 @@ add_executable(test-emulator
         # Slice 5 receive-context harness for production receive handlers.
         emulator/test/slice-5-receive-context-fixture.cpp
         emulator/test/tos-report-bond-oracle-fixture.cpp
-        # TVM v14/v15 transaction-layer version-gate boundary tests (upstream
-        # ton ships v14/v15 with no dedicated regression tests to port).
+        # TVM v14/v15 transaction-layer version-gate boundary tests (the upstream
+        # implementation ships v14/v15 with no dedicated regression tests to port).
         emulator/test/tvm-v14-v15-transaction-fixture.cpp
         # VmState::max_library_loads enforcement (ConfigParam 43's
         # max_transaction_library_loads was parsed but never wired to the VM).

@@ -404,7 +404,7 @@ pub const RESERVE_FLOOR: u128 = 50_000_000_000;
 ///
 /// ```text
 ///     forwarding prices                 floor    20,000,000 covers it
-///     today (TON's live)              885,601             22.6x
+///     today (upstream live)           885,601             22.6x
 ///     6x    (this chain, until        5,313,600            3.76x
 ///            2026-09-21)
 /// ```

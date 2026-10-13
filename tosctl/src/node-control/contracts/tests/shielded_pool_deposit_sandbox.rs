@@ -52,7 +52,7 @@ const fn compute_fee(gas: u64) -> u64 {
 ///
 /// Derived from the price rather than written down, because it has now been
 /// wrong twice for the same reason: it was 400,000 while gas cost 400 nanotos,
-/// stopped starving anything when the price was aligned to TON's 66.66, was
+/// stopped starving anything when the price was aligned to upstream's 66.66, was
 /// re-derived to 66,667, and stopped starving anything again when the price
 /// was cut tenfold. A value that buys a thousand gas against a path that needs
 /// 1,259 is the thing this constant means; the number that expresses it is the

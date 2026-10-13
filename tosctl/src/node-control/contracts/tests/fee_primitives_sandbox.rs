@@ -124,14 +124,14 @@ fn basechain_compute_fee_uses_the_basechain_price_table() {
         .build();
     bc.send_message(deploy).expect("deploy").expect_success();
 
-    // ConfigParam 21's basechain gas_price is 4,369,067, TON mainnet's live
-    // value cut by ten: 6.666 nanotomi a gas, plus a flat 667 for the first
-    // hundred. So 380,000 gas costs 2,533,336 nanotomi, not the
-    // masterchain-derived figure.
+    // ConfigParam 21's basechain gas_price is 4,369,067, the reference
+    // implementation's live mainnet value cut by ten: 6.666 nanotomi a gas,
+    // plus a flat 667 for the first hundred. So 380,000 gas costs 2,533,336
+    // nanotomi, not the masterchain-derived figure.
     //
     // It was six times the aligned figure until 2026-09-21, when the basechain
-    // prices were aligned with TON's live table, and a tenth of that from
-    // later the same day: a private transfer verifies a Groth16 proof on
+    // prices were aligned with the reference implementation's live table, and
+    // a tenth of that from later the same day: a private transfer verifies a Groth16 proof on
     // chain, and at the aligned price the verification alone cost more than
     // the whole fee a transfer was meant to fit inside.
     let result = bc

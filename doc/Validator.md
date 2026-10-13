@@ -57,17 +57,18 @@ consensus. They assume a 64-bit Ubuntu 24.04 host, a validator
 binary built with the production configuration, and a node that is not also
 running unrelated workloads.
 
-| Resource | Testnet / development minimum | Recommended production configuration (TON-aligned) |
+| Resource | Testnet / development minimum | Recommended production configuration (aligned with mainnet-scale networks) |
 |----------|-----------------------|---------------------------------------|
-| CPU | 2 physical or virtual cores | 16 dedicated cores (32 threads preferred); 8 cores / 16 threads is the lower TON baseline |
+| CPU | 2 physical or virtual cores | 16 dedicated cores (32 threads preferred); 8 cores / 16 threads is the lower baseline of the reference implementation |
 | Memory | 4 GB RAM | 128 GB RAM |
 | Storage | 100 GB SSD | 2 × 1.92 TB enterprise NVMe SSD; target at least 250k read IOPS and 83k write IOPS per device |
 | Network | 10 Mbps symmetric bandwidth; a public IPv4 address is strongly preferred | 1 Gbps symmetric bandwidth with a fixed public IP |
 | Operating system | Ubuntu 24.04, 64-bit | Ubuntu 24.04, 64-bit, on a dedicated host |
 
-The production values are aligned with the TON-derived validator-engine,
-consensus, storage, and peer-to-peer operating model used by TOS. The testnet
-minimum is not a production capacity guarantee.
+The production values are aligned with the validator-engine, consensus,
+storage, and peer-to-peer operating model that TOS inherits from the network
+this codebase derives from. The testnet minimum is not a production capacity
+guarantee.
 
 The testnet minimum is suitable for initial synchronization and a lightly
 loaded development network. It is not a capacity guarantee for a busy
