@@ -37,6 +37,8 @@
 //
 // usage: test-consensus-cleanup-checkpoint-db GENESIS_BOC
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
@@ -62,6 +64,7 @@
 #include "quic/quic-sender.h"
 #include "td/actor/actor.h"
 #include "td/actor/coro_task.h"
+#include "td/actor/coro_utils.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
@@ -426,11 +429,12 @@ td::Ref<ValidatorManagerOptions> make_options(const Chain& chain) {
 }
 
 td::Status run_scenario(const std::string& root, td::Ref<ValidatorManagerOptions> opts, Body body,
-                        double timeout = 60.0) {
+                        double timeout = 60.0, int threads = 1) {
   // A database actor may release a helper actor that outlives the manager (the
   // archive does). Destroying a scheduler with a live actor aborts, so each
-  // scenario's scheduler is stopped and deliberately not destroyed.
-  auto& scheduler = *new td::actor::Scheduler({1});
+  // scenario's scheduler is stopped and deliberately not destroyed. A scenario
+  // that blocks one actor's thread runs with more than one worker thread.
+  auto& scheduler = *new td::actor::Scheduler({threads});
   td::actor::ActorOwn<ConsensusCheckpointDbProbe> probe;
   td::actor::ActorOwn<Driver> driver;
   std::optional<td::Status> result;
@@ -1461,6 +1465,88 @@ int main(int argc, char** argv) {
                      });
     EXPECT(r.is_ok() && refused.is_error() && after_refusal.is_ok(),
            "after a refused truncation the serialization is released");
+  }
+
+  // 11b. A checkpoint write held inside StateDb (staged, not yet committed)
+  //      while a truncation starts. The truncation's preflight read queues
+  //      behind the held write, so it sees the new checkpoint B6 and refuses the
+  //      target B5 before either store is mutated.
+  {
+    struct StoreGate {
+      std::mutex mutex;
+      std::condition_variable cv;
+      bool released = false;
+      std::atomic<bool> entered{false};
+      std::atomic<bool> timed_out{false};
+      void hold() {
+        entered = true;
+        std::unique_lock<std::mutex> lock(mutex);
+        if (!cv.wait_for(lock, std::chrono::seconds(30), [&] { return released; })) {
+          timed_out = true;
+        }
+      }
+      void release() {
+        {
+          std::lock_guard<std::mutex> lock(mutex);
+          released = true;
+        }
+        cv.notify_all();
+      }
+    };
+    auto gate = std::make_shared<StoreGate>();
+    // Released and removed on every exit path, even if an assertion fails.
+    struct StoreGateGuard {
+      std::shared_ptr<StoreGate> gate;
+      ~StoreGateGuard() {
+        set_consensus_checkpoint_store_gate_for_testing({});
+        gate->release();
+      }
+    } guard{gate};
+    auto root = fresh_root(base, "serialize-held-in-statedb");
+    EXPECT(seed_db(root, chain, {}).is_ok(), "seed the held-write serialization database");
+    td::Result<td::Unit> held_update, probe_update, truncation_result;
+    bool entered = false;
+    // Polls without sending anything to the (blocked) StateDb actor.
+    auto poll = [](std::function<bool()> ready, double seconds) -> td::actor::Task<bool> {
+      auto deadline = td::Timestamp::in(seconds);
+      while (!ready()) {
+        if (deadline.is_in_past()) {
+          co_return false;
+        }
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.01));
+      }
+      co_return true;
+    };
+    auto r = run_scenario(
+        root, make_options(chain),
+        [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
+            td::actor::ActorId<Db> db) -> td::actor::Task<td::Unit> {
+          auto [b5, b5_state] = co_await load_block(probe, chain["B5"].id);
+          set_consensus_checkpoint_store_gate_for_testing([gate] { gate->hold(); });
+          auto update = td::actor::ask(db, &Db::update_consensus_cleanup_checkpoint, chain["B6"].id);
+          entered = co_await poll([&] { return gate->entered.load(); }, 10.0);
+          set_consensus_checkpoint_store_gate_for_testing({});
+          auto truncation = td::actor::ask(db, &Db::truncate, 5, ConstBlockHandle{b5});
+          // RootDb handles this after the truncate request: refused unwritten,
+          // because the truncation interval has started.
+          probe_update = co_await td::actor::ask(db, &Db::update_consensus_cleanup_checkpoint, chain["B6"].id).wrap();
+          gate->release();
+          held_update = co_await std::move(update).wrap();
+          truncation_result = co_await std::move(truncation).wrap();
+          co_return td::Unit{};
+        },
+        60.0, 2);
+    auto after = snapshot_db(root, chain);
+    EXPECT(r.is_ok() && entered && !gate->timed_out.load(),
+           "the checkpoint write was held inside StateDb and released by the test: " << r);
+    EXPECT(probe_update.is_error() && consensus::is_consensus_checkpoint_not_attempted(probe_update.error()),
+           "the truncation interval had started before the held write was released");
+    EXPECT(held_update.is_ok(), "the held write completed");
+    EXPECT(truncation_result.is_error() && consensus::is_consensus_checkpoint_refusal(truncation_result.error()),
+           "the truncation saw the held write's checkpoint B6 and refused the target B5");
+    EXPECT(after.is_ok() && after.ok().checkpoint == chain["B6"].id && after.ok().shard_client == chain["B6"].id &&
+               after.ok().handle_present.at("B6") && after.ok().handle_present.at("B5"),
+           "neither the archive nor StateDb was mutated");
   }
 
   // 12. A conflict found after the head was installed stops the process (exit

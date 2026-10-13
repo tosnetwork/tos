@@ -17,6 +17,9 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <functional>
+#include <mutex>
+
 #include "adnl/utils.hpp"
 #include "td/db/RocksDb.h"
 #include "tos/tos-shard.h"
@@ -120,8 +123,23 @@ void StateDb::get_shard_client_state(td::Promise<BlockIdExt> promise) {
   promise.set_value(create_block_id(obj->block_));
 }
 
+namespace {
+std::mutex checkpoint_store_gate_mutex;
+std::function<void()> checkpoint_store_gate;
+}  // namespace
+
+void set_consensus_checkpoint_store_gate_for_testing(std::function<void()> gate) {
+  std::lock_guard<std::mutex> lock(checkpoint_store_gate_mutex);
+  checkpoint_store_gate = std::move(gate);
+}
+
 void StateDb::update_consensus_cleanup_checkpoint(BlockIdExt block, td::Promise<td::Unit> promise) {
-  TRY_STATUS_PROMISE(promise, consensus::store_consensus_cleanup_checkpoint(*kv_, block));
+  std::function<void()> gate;
+  {
+    std::lock_guard<std::mutex> lock(checkpoint_store_gate_mutex);
+    gate = checkpoint_store_gate;
+  }
+  TRY_STATUS_PROMISE(promise, consensus::store_consensus_cleanup_checkpoint(*kv_, block, gate));
   promise.set_value(td::Unit());
 }
 

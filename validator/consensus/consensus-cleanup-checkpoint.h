@@ -155,7 +155,10 @@ inline td::Result<std::optional<BlockIdExt>> load_consensus_cleanup_checkpoint(t
 // value that is merely visible is not proven durable, and only a successful
 // synced write confirms it. Ancestry cannot be checked here (it needs the
 // candidate's state); the manager checks it before issuing the write.
-inline td::Status store_consensus_cleanup_checkpoint(td::KeyValue& kv, const BlockIdExt& id) {
+// `before_commit`, when set, runs after the value is staged and before the
+// synced commit (tests hold a write there).
+inline td::Status store_consensus_cleanup_checkpoint(td::KeyValue& kv, const BlockIdExt& id,
+                                                     const std::function<void()>& before_commit = {}) {
   if (!is_consensus_cleanup_checkpoint_id(id)) {
     return td::Status::Error(ErrorCode::error, PSLICE() << "refusing to store consensus cleanup checkpoint "
                                                         << id.to_str() << ": not a full masterchain block id");
@@ -174,6 +177,9 @@ inline td::Status store_consensus_cleanup_checkpoint(td::KeyValue& kv, const Blo
   if (set.is_error()) {
     kv.abort_write_batch().ignore();
     return set.move_as_error_prefix("cannot write the consensus cleanup checkpoint: ");
+  }
+  if (before_commit) {
+    before_commit();
   }
   // A synced write (RocksDb::commit_write_batch sets WriteOptions::sync). The
   // batch is consumed by the commit whether or not it succeeds.

@@ -19,6 +19,8 @@
 */
 #pragma once
 
+#include <functional>
+
 #include "td/actor/actor.h"
 #include "td/db/KeyValueAsync.h"
 #include "tos/tos-types.h"
@@ -30,6 +32,11 @@ namespace tos {
 namespace validator {
 
 class RootDb;
+
+// Tests only: while set, every consensus cleanup checkpoint write calls `gate`
+// inside the StateDb actor after the value is staged and before the synced
+// commit, so a test can hold a write there. The gate runs on the StateDb thread.
+void set_consensus_checkpoint_store_gate_for_testing(std::function<void()> gate);
 
 class StateDb : public td::actor::Actor {
  public:
