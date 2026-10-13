@@ -232,7 +232,12 @@ def? quantum-admission-candidate {
 // mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
 250 250 1000 21 true config.catchain_params!
 // round-candidates next-cand-delay-ms consensus-timeout-ms fast-attempts attempt-duration cc-max-deps max-block-size max-collated-size new-cc-ids
-3 2000 16000 3 8 4 2 *Mi 2 *Mi true config.consensus_params!
+// Consensus admits a candidate of at most 4 MiB of block data and 10 MiB of
+// collated data, the values mainnet-scale networks use. The previous 2 MiB /
+// 2 MiB equalled the basechain block-limit byte hard limit (ConfigParam 23),
+// so a block the collator's size estimate let through could exceed the
+// consensus limit and end as a collator fatal error or a dropped broadcast.
+3 2000 16000 3 8 4 4 *Mi 10 *Mi true config.consensus_params!
 // ConfigParam 30: Simplex v2 (#22), with the 400 ms target encoded as
 // noncritical parameter 0. Reserved flags are zero, protocol version is 2,
 // QUIC is enabled, and each leader owns four slots. Noncritical parameter 1 is
