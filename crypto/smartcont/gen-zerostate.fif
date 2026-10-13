@@ -372,14 +372,18 @@ def? quantum-network-tag {
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
 // first for ordinary proposals, then for critical proposals
-// Voting rounds as mainnet-scale networks set them (min_tot_rounds is not
-// read by the config contract). An ordinary proposal passes after 2 winning
-// rounds, lives at most 6 rounds and is discarded after more than 5 losing
-// rounds; a critical proposal passes after 3 winning rounds, lives at most 7
-// and is discarded after more than 5 losing rounds. The previous ordinary
-// 2/3/2/2 and critical 4/7/4/2 discarded any proposal after three lost rounds
-// and gave an ordinary one only three rounds to collect its two wins. Store
-// limits and storage prices are unchanged.
+// Voting rounds as mainnet-scale networks set them. The config contract stores
+// max_tot_rounds when a proposal is registered, in a round that already takes
+// votes, decrements it on each later validator-set change and removes the
+// proposal only when it goes negative, so max_tot_rounds 6 / 7 give an ordinary
+// proposal 7 and a critical one 8 voting rounds. A proposal is accepted as soon
+// as it has won min_wins rounds (2 / 3); a round without enough votes is a
+// loss, and it is removed only when its losses exceed max_losses (5). With
+// these values the loss cap and the round cap end a proposal on the same
+// transition. min_tot_rounds is not read by the contract. The previous
+// ordinary 2/3/2/2 and critical 4/7/4/2 removed a proposal after its third
+// lost round. Store limits and storage prices are unchanged. The lifecycle is
+// exercised in tosctl/src/node-control/contracts/tests/elector_sandbox.rs.
 _( 2 6 2 5 1000000 10000000 1 500 )
 _( 4 7 3 5 5000000 20000000 2 1000 )
 config.param_proposals_setup!
