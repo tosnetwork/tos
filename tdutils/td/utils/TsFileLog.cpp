@@ -19,16 +19,26 @@
 */
 
 #include <array>
+#include <cerrno>
+#include <functional>
 
 #include "td/utils/FileLog.h"
 #include "td/utils/PathView.h"
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/Slice.h"
 #include "td/utils/TsFileLog.h"
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
 #include "td/utils/misc.h"
+#include "td/utils/port/config.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/thread_local.h"
+
+// The log runs on Linux only; listing a directory uses POSIX directly.
+#if !TD_PORT_POSIX
+#error "TsFileLog needs a POSIX directory listing"
+#endif
+#include <dirent.h>
 
 namespace td {
 namespace detail {
@@ -49,23 +59,51 @@ bool parse_small_number(Slice s, int64 &value) {
   return true;
 }
 
+// Calls `func` with the name of every entry of `dir` itself, without "." and
+// "..", and without descending into or opening any subdirectory.
+Status list_directory(const string &dir, const std::function<void(Slice)> &func) {
+  DIR *handle = opendir(dir.c_str());
+  if (handle == nullptr) {
+    return OS_ERROR(PSLICE() << "Can't list directory \"" << dir << '"');
+  }
+  SCOPE_EXIT {
+    closedir(handle);
+  };
+  while (true) {
+    errno = 0;
+    const dirent *entry = readdir(handle);
+    if (entry == nullptr) {
+      if (errno != 0) {
+        return OS_ERROR(PSLICE() << "Can't read directory \"" << dir << '"');
+      }
+      return Status::OK();
+    }
+    Slice name(static_cast<const char *>(entry->d_name));
+    if (name != "." && name != "..") {
+      func(name);
+    }
+  }
+}
+
 // Removes the archives of every per-thread log of `path` beyond the kept
 // number: <path>.thread<N>.log.old.<k> for k >= keep_rotated. Only thread 0
 // opens its file at start (and prunes it then); the others open on their
 // first append, which a thread that stays idle in this process never reaches,
 // so without this a reduced kept number would leave a previous run's idle
-// threads' generations on disk forever. One scan of the log directory, so the
-// cost does not depend on how many generations or threads could exist.
+// threads' generations on disk forever. One listing of the log directory's own
+// entries, so the cost does not depend on how many generations or threads
+// could exist. Subdirectories are never opened: one that cannot be read
+// (the log may sit beside any other directory) must not stop the scan.
 //
-// A failed scan or removal is counted and reported, and start goes on: a log
-// that keeps a few files too many must not stop the engine. Only a file that
-// disappears between the scan and its removal is not a failure. An entry with
-// an archive's name that is not a regular file (a directory, say) is taken as
-// an archive too, so that it is reported rather than silently kept.
+// A failed listing or removal is counted and reported, and start goes on: a
+// log that keeps a few files too many must not stop the engine. Only a file
+// that disappears between the listing and its removal is not a failure. An
+// entry with an archive's name that is not a regular file (a directory, say)
+// is taken as an archive too, so that it is reported rather than silently
+// kept.
 void prune_idle_thread_archives(const string &path, int32 keep_rotated, int32 max_threads) {
-  PathView view(path);
-  string dir = view.parent_dir().empty() ? string(".") : view.parent_dir_noslash().str();
-  string prefix = PSTRING() << view.file_name() << ".thread";
+  string dir = TsFileLog::log_directory(path);
+  string prefix = PSTRING() << PathView(path).file_name() << ".thread";
   // Whether `base` is <path>.thread<N>.log.old.<k> with k beyond the kept number.
   auto is_stale_archive = [&](Slice base) {
     if (!begins_with(base, prefix)) {
@@ -85,21 +123,16 @@ void prune_idle_thread_archives(const string &path, int32 keep_rotated, int32 ma
     }
     return thread >= 1 && thread < max_threads && generation >= keep_rotated;
   };
+  string dir_prefix = dir.back() == '/' ? dir : dir + '/';
   vector<string> doomed;
-  auto walk = WalkPath::run(dir, [&](CSlice name, WalkPath::Type type) {
-    if (type == WalkPath::Type::ExitDir) {
-      return WalkPath::Action::Continue;
+  auto listing = list_directory(dir, [&](Slice name) {
+    if (is_stale_archive(name)) {
+      doomed.push_back(dir_prefix + name.str());
     }
-    if (type == WalkPath::Type::EnterDir && name == dir) {
-      return WalkPath::Action::Continue;
-    }
-    if (is_stale_archive(PathView(name).file_name())) {
-      doomed.push_back(name.str());
-    }
-    return type == WalkPath::Type::EnterDir ? WalkPath::Action::SkipDir : WalkPath::Action::Continue;
   });
-  if (walk.is_error()) {
-    FileLog::report_prune_failure(walk);
+  if (listing.is_error()) {
+    // Whatever was listed before the failure is still pruned.
+    FileLog::report_prune_failure(listing);
   }
   for (auto &file : doomed) {
     auto status = unlink(file);
@@ -197,5 +230,18 @@ Result<td::unique_ptr<LogInterface>> TsFileLog::create(string path, td::int64 ro
   auto res = td::make_unique<detail::TsFileLog>();
   TRY_STATUS(res->init(path, rotate_threshold, redirect_stderr, keep_rotated));
   return std::move(res);
+}
+
+string TsFileLog::log_directory(Slice path) {
+  PathView view(path);
+  Slice parent = view.parent_dir();
+  if (parent.empty()) {
+    return ".";
+  }
+  // Strip the trailing slashes, but never the root's own.
+  while (parent.size() > 1 && parent.back() == '/') {
+    parent.remove_suffix(1);
+  }
+  return parent.str();
 }
 }  // namespace td

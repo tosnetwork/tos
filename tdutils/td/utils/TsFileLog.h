@@ -33,5 +33,10 @@ class TsFileLog {
   // it (FileLog::init).
   static Result<td::unique_ptr<LogInterface>> create(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD,
                                                      bool redirect_stderr = true, int32 keep_rotated = 1);
+
+  // The directory that holds the log file `path` and its per-thread files:
+  // "/" for a file directly under the root, "." for a bare file name, and the
+  // parent directory, without a trailing slash, otherwise.
+  static string log_directory(Slice path);
 };
 }  // namespace td

@@ -27,11 +27,29 @@ const MIN_WALLET_BALANCE: u64 = 5_000_000_000; // 5 TOS
 const WALLET_GAS: u64 = 100_000_000; // 0.1 TOS
 /// Amount to top up a wallet if its balance is below the minimum threshold.
 const TOP_UP_AMOUNT: u64 = 10_000_000_000; // 10 TOS
-// Balances the master wallet needs to deploy, or to top up, one wallet: the
-// amount plus the gas of the sending message. Saturating, so a later change of
-// the constants can only make a payment unaffordable, never wrap around.
-const DEPLOY_REQUIRED: u64 = DEPLOY_AMOUNT.saturating_add(WALLET_GAS);
-const TOP_UP_REQUIRED: u64 = TOP_UP_AMOUNT.saturating_add(WALLET_GAS);
+// The constants above must leave room for the gas on top of each payment; a
+// change that breaks this fails the build instead of reaching the checks below.
+const _: () = assert!(DEPLOY_AMOUNT.checked_add(WALLET_GAS).is_some());
+const _: () = assert!(TOP_UP_AMOUNT.checked_add(WALLET_GAS).is_some());
+
+/// The balance the master wallet needs to send `amount` to one wallet: the
+/// amount plus the gas of the sending message. An overflow is an error, never
+/// a clamped or wrapped requirement.
+fn required_balance(amount: u64, gas: u64) -> anyhow::Result<u64> {
+    amount.checked_add(gas).ok_or_else(|| {
+        anyhow::anyhow!("balance requirement overflows u64: amount={} gas={}", amount, gas)
+    })
+}
+
+/// The balance the master wallet needs to deploy one wallet or pool.
+fn deploy_required() -> anyhow::Result<u64> {
+    required_balance(DEPLOY_AMOUNT, WALLET_GAS)
+}
+
+/// The balance the master wallet needs to top up one wallet.
+fn top_up_required() -> anyhow::Result<u64> {
+    required_balance(TOP_UP_AMOUNT, WALLET_GAS)
+}
 
 pub(crate) async fn run(
     cancellation_ctx: CancellationCtx,
@@ -63,7 +81,7 @@ enum Standby {
     /// The master wallet is not deployed and holds too little to deploy itself.
     MasterUnfunded { balance: u64 },
     /// A wallet is below its minimum balance and the master wallet cannot top it up.
-    TopUpUnaffordable { wallet: String, master_balance: u64 },
+    TopUpUnaffordable { wallet: String, master_balance: u64, required: u64 },
 }
 
 struct ContractsMonitor {
@@ -93,14 +111,14 @@ impl ContractsMonitor {
                 *balance as f64 / 1e9,
                 DEPLOY_AMOUNT as f64 / 1e9,
             ),
-            Standby::TopUpUnaffordable { wallet, master_balance } => tracing::warn!(
+            Standby::TopUpUnaffordable { wallet, master_balance, required } => tracing::warn!(
                 target: "contracts",
                 "wallet {} is below {:.4} TOS, but the master wallet holds {:.4} TOS, below the \
                  {:.4} TOS a top-up needs; fund the master wallet or the wallet directly",
                 wallet,
                 MIN_WALLET_BALANCE as f64 / 1e9,
                 *master_balance as f64 / 1e9,
-                TOP_UP_REQUIRED as f64 / 1e9,
+                *required as f64 / 1e9,
             ),
         }
         *standby = Some(condition);
@@ -242,7 +260,7 @@ impl ContractsMonitor {
                 continue;
             }
 
-            match self.deploy_wallet(&node_id, wallet.clone(), *seqno).await {
+            match self.deploy_wallet(node_id, wallet.clone(), *seqno).await {
                 Ok(true) => (),
                 Ok(false) => {
                     all_deployed = false;
@@ -281,8 +299,9 @@ impl ContractsMonitor {
         );
 
         let master_balance = self.master_wallet.balance().await.context("master wallet balance")?;
-        if master_balance < DEPLOY_REQUIRED {
-            return Err(Self::insufficient_master_balance_error(master_balance, DEPLOY_REQUIRED));
+        let required = deploy_required()?;
+        if master_balance < required {
+            return Err(Self::insufficient_master_balance_error(master_balance, required));
         }
 
         let si = wallet.state_init().await?;
@@ -317,7 +336,7 @@ impl ContractsMonitor {
     async fn ensure_pools_deployed(&self, seqno: &mut i64) -> anyhow::Result<bool> {
         let mut all_deployed = true;
         for (node_id, pool) in self.pools.iter() {
-            match self.deploy_pool(&node_id, pool.clone(), *seqno).await {
+            match self.deploy_pool(node_id, pool.clone(), *seqno).await {
                 Ok(true) => (),
                 Ok(false) => {
                     all_deployed = false;
@@ -357,8 +376,9 @@ impl ContractsMonitor {
 
         let master_balance =
             self.master_wallet.balance().await.context("get master wallet balance")?;
-        if master_balance < DEPLOY_REQUIRED {
-            return Err(Self::insufficient_master_balance_error(master_balance, DEPLOY_REQUIRED));
+        let required = deploy_required()?;
+        if master_balance < required {
+            return Err(Self::insufficient_master_balance_error(master_balance, required));
         }
 
         if pool.state_init().is_none() {
@@ -423,9 +443,10 @@ impl ContractsMonitor {
             // way, so a master wallet that cannot afford one is waited out.
             let master_balance =
                 self.master_wallet.balance().await.context("get master wallet balance")?;
-            if master_balance < TOP_UP_REQUIRED {
+            let required = top_up_required()?;
+            if master_balance < required {
                 let wallet = addr.to_string();
-                self.enter_standby(Standby::TopUpUnaffordable { wallet, master_balance });
+                self.enter_standby(Standby::TopUpUnaffordable { wallet, master_balance, required });
                 return Ok(false);
             }
             self.leave_standby();
@@ -466,7 +487,10 @@ impl ContractsMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContractsMonitor, Standby};
+    use super::{
+        ContractsMonitor, DEPLOY_AMOUNT, Standby, TOP_UP_AMOUNT, WALLET_GAS, deploy_required,
+        required_balance, top_up_required,
+    };
     use axum::{Json, Router, extract::State, routing::post};
     use chain_block::{Cell, MsgAddressInt, StateInit};
     use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
@@ -768,10 +792,26 @@ mod tests {
             *monitor.standby.lock().unwrap(),
             Some(Standby::TopUpUnaffordable {
                 wallet: addr(2).to_string(),
-                master_balance: 1_000_000_000
+                master_balance: 1_000_000_000,
+                required: TOP_UP_AMOUNT + WALLET_GAS,
             })
         );
 
         server.shutdown().await;
+    }
+
+    #[test]
+    fn requirement_is_the_amount_plus_the_gas() {
+        assert_eq!(deploy_required().unwrap(), DEPLOY_AMOUNT + WALLET_GAS);
+        assert_eq!(top_up_required().unwrap(), TOP_UP_AMOUNT + WALLET_GAS);
+        assert_eq!(required_balance(7, 3).unwrap(), 10);
+        assert_eq!(required_balance(u64::MAX - 1, 1).unwrap(), u64::MAX);
+    }
+
+    #[test]
+    fn overflowing_requirement_is_an_error_not_a_clamp() {
+        let err = required_balance(u64::MAX, 1).expect_err("must not clamp to u64::MAX");
+        assert!(err.to_string().contains("overflows"), "{err}");
+        assert!(required_balance(u64::MAX - 5, 10).is_err());
     }
 }

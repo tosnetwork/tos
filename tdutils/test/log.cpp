@@ -514,5 +514,51 @@ TEST(Log, TsFileLogReportsIdleArchivesItCannotRemove) {
   td::unlink(inner).ignore();
   td::rmdir(dir).ignore();
 }
+
+TEST(Log, TsFileLogFindsTheDirectoryOfItsLog) {
+  // The idle-archive scan lists the log's own directory; a log directly under
+  // the root lives in "/", not in the working directory.
+  ASSERT_EQ("/", td::TsFileLog::log_directory("/validator.log"));
+  ASSERT_EQ("/", td::TsFileLog::log_directory("//validator.log"));
+  ASSERT_EQ(".", td::TsFileLog::log_directory("validator.log"));
+  ASSERT_EQ("/var/log/tos", td::TsFileLog::log_directory("/var/log/tos/validator.log"));
+  ASSERT_EQ("logs", td::TsFileLog::log_directory("logs/validator.log"));
+  ASSERT_EQ("logs", td::TsFileLog::log_directory("logs//validator.log"));
+  ASSERT_EQ(".", td::TsFileLog::log_directory("./validator.log"));
+}
+
+TEST(Log, TsFileLogPrunesBesideAnUnreadableDirectory) {
+  // The log directory may hold other directories the engine cannot read. The
+  // scan lists only the log directory's own entries, so such a neighbour
+  // neither stops the pruning nor counts as a failure.
+  const std::string base = "tmplog_ts_neighbour_test";
+  const std::string idle = base + ".thread31.log";
+  const std::string unreadable = base + ".unreadable";
+  auto cleanup = [&] {
+    for (auto suffix : {"", ".old", ".old.1", ".old.3"}) {
+      td::unlink(base + suffix).ignore();
+      td::unlink(idle + suffix).ignore();
+    }
+    td::rmdir(unreadable).ignore();
+  };
+  cleanup();
+  td::mkdir(unreadable, 0).ensure();
+  auto probe = td::WalkPath::run(unreadable, [](td::CSlice, td::WalkPath::Type) {});
+  if (probe.is_error()) {
+    // Not so when the test runs with the right to read any directory.
+    td::write_file(idle + ".old.1", "x").ensure();
+    td::write_file(idle + ".old.3", "x").ensure();
+    auto prune_failures = td::FileLog::prune_failures();
+    {
+      auto r_log = td::TsFileLog::create(base, 1 << 20, false, 2);
+      ASSERT_TRUE(r_log.is_ok());
+      r_log.move_as_ok()->append(td::CSlice("beside an unreadable directory\n"));
+    }
+    ASSERT_EQ(prune_failures, td::FileLog::prune_failures());
+    ASSERT_TRUE(td::stat(idle + ".old.1").is_ok());
+    ASSERT_TRUE(td::stat(idle + ".old.3").is_error());
+  }
+  cleanup();
+}
 #endif
 #endif
