@@ -3060,18 +3060,24 @@ td::BufferSlice make_large_candidate_boc(td::uint32 leaf_count, td::uint32 salt,
 }
 
 void test_configured_maximum_candidate() {
-  constexpr size_t max_part_size = 4U * 1024U * 1024U;
-  constexpr int max_envelope_size = 8U * 1024U * 1024U + 1024U;
+  // The canonical genesis ConfigParam 29 limits: 4 MiB of block data and 10 MiB of
+  // collated data. A Simplex broadcast admits a compressed payload of at most their sum
+  // plus 1024 bytes (Candidate::deserialize), so that is the envelope bound used here.
+  constexpr size_t max_block_part = 4U * 1024U * 1024U;
+  constexpr size_t max_collated_part = 10U * 1024U * 1024U;
+  constexpr int max_envelope_size = static_cast<int>(max_block_part + max_collated_part + 1024U);
   constexpr size_t max_slack = 384U * 1024U;
 
   td::Bits256 block_root_hash;
   td::Bits256 collated_root_hash;
   auto block_data = make_large_candidate_boc(32000, 0x13579bdf, false, block_root_hash);
-  auto collated_data = make_large_candidate_boc(32000, 0x2468ace0, true, collated_root_hash);
-  CHECK(block_data.size() <= max_part_size);
-  CHECK(collated_data.size() <= max_part_size);
-  CHECK(max_part_size - block_data.size() < max_slack);
-  CHECK(max_part_size - collated_data.size() < max_slack);
+  auto collated_data = make_large_candidate_boc(84000, 0x2468ace0, true, collated_root_hash);
+  LOG(WARNING) << "configured-maximum candidate: block " << block_data.size() << " of " << max_block_part
+               << ", collated " << collated_data.size() << " of " << max_collated_part;
+  CHECK(block_data.size() <= max_block_part);
+  CHECK(collated_data.size() <= max_collated_part);
+  CHECK(max_block_part - block_data.size() < max_slack);
+  CHECK(max_collated_part - collated_data.size() < max_slack);
 
   size_t decompressed_size = 0;
   auto compressed = validatorsession::compress_candidate_data(block_data, collated_data, decompressed_size,
@@ -3085,6 +3091,7 @@ void test_configured_maximum_candidate() {
   auto decoded = validatorsession::deserialize_candidate(envelope, true, max_envelope_size).move_as_ok();
   CHECK(decoded->data_.as_slice() == block_data.as_slice());
   CHECK(decoded->collated_data_.as_slice() == collated_data.as_slice());
+  // Over-limit control: an envelope bound one byte below the payload refuses it.
   CHECK(validatorsession::deserialize_candidate(envelope, true, static_cast<int>(decompressed_size) - 1).is_error());
 }
 
