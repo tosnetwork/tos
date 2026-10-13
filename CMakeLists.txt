@@ -1175,13 +1175,25 @@ target_include_directories(test-consensus-retry-backoff PRIVATE ${CMAKE_CURRENT_
 target_link_libraries(test-consensus-retry-backoff PRIVATE tdactor tdutils)
 
 # A production consensus group retired while the manager withholds its initial
-# chain state is destroyed at once, and a late answer starts nothing.
+# chain state is destroyed at once, and a late answer starts nothing: a
+# zero-state group destroyed, and a non-zero-state group retired with its
+# database closed, reported and kept.
 add_executable(test-bridge-retirement test/validator/consensus/test-bridge-retirement.cpp)
 target_include_directories(test-bridge-retirement PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-bridge-retirement PRIVATE validator validator-common validator-db full-node tos_validator
                       tos_block tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl adnltest overlay
                       rldp2 dht tl_api tdactor tdutils)
+
+# The production block accepter reports a finalized block accepted exactly
+# when the manager accepted it: never after a cancelled or permanently failed
+# acceptance, nor after the accepter was stopped.
+add_executable(test-block-accepter test/validator/consensus/test-block-accepter.cpp)
+target_include_directories(test-block-accepter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-block-accepter PRIVATE validator tos_validator smc-envelope tos_block tos_crypto
+                      tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl overlay dht tl_api tl-utils tdactor
+                      tdutils)
 
 add_executable(test-pq-network-parser-resource test/pq-native/pq-network-parser-resource-test.cpp)
 target_link_libraries(test-pq-network-parser-resource PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht
@@ -2030,7 +2042,14 @@ tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
 tos_test(test-download-refusal-answers)
 tos_test(test-consensus-retry-backoff)
-tos_test(test-bridge-retirement)
+# Each mode is an explicit argument and prints its own token, so a
+# registration that loses or swaps the argument fails.
+tos_test(test-bridge-retirement zerostate-destroy)
+set_tests_properties(test-bridge-retirement PROPERTIES PASS_REGULAR_EXPRESSION "BRIDGE_RETIREMENT_ZEROSTATE_OK")
+add_test(NAME test-bridge-retirement-nonzero COMMAND test-bridge-retirement nonzero-retirement)
+set_tests_properties(test-bridge-retirement-nonzero PROPERTIES PASS_REGULAR_EXPRESSION "BRIDGE_RETIREMENT_NONZERO_OK")
+tos_test(test-block-accepter)
+set_tests_properties(test-block-accepter PROPERTIES PASS_REGULAR_EXPRESSION "BLOCK_ACCEPTER_OK")
 tos_test(test-rldp2-refusal-lifetime)
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-manager)

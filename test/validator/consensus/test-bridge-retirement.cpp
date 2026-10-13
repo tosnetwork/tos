@@ -1,16 +1,27 @@
 /* Copyright (c) 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-// A production consensus group retired while its initial chain-state wait is
+// A production consensus group stopped while its initial chain-state wait is
 // still owed by the manager must be destroyed at once, not when the manager
 // answers.
 //
 // The group is the production bridge, built by its production factory over a
 // real keyring, loopback ADNL, RLDP and overlay manager. The validator manager
 // is the production one with its network start-up suppressed; it withholds
-// every state and block-data wait and counts them. The test:
-//   1. starts the group and waits until the manager holds its state wait;
-//   2. retires the group and waits for the bridge's destruction notification,
-//      with that wait still withheld;
-//   3. only then fails the withheld wait as a timeout, the answer that would
+// every state and block-data wait and counts them, and records the database
+// notifications the group sends it. The mode is a required argument:
+//
+//   zerostate-destroy   the group starts on a zero state, so it waits for
+//                       that state only, and is stopped with destroy();
+//   nonzero-retirement  the group starts on a non-zero block, so it waits for
+//                       both the state and the block data, and is retired
+//                       with close_for_retirement(), which must close its
+//                       database, report the closure with the retirement
+//                       generation, and leave the directory in place.
+//
+// In both modes the test:
+//   1. starts the group and waits until the manager holds its waits;
+//   2. stops the group and waits for the bridge's destruction notification,
+//      with those waits still withheld;
+//   3. only then fails the withheld waits as a timeout, the answer that would
 //      make a live resolution retry, and checks that no new wait is asked for
 //      and no group bus is started afterwards.
 
@@ -30,8 +41,10 @@
 #include "td/utils/crypto.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/logging.h"
+#include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
 #include "validator/consensus/bus.h"
+#include "validator/consensus/db-path.h"
 #include "validator/fabric.h"
 #include "validator/impl/applied-ext-message-cleanup.hpp"
 #include "validator/impl/ext-message-pool.hpp"
@@ -95,11 +108,25 @@ struct Members {
   }
 };
 
+struct Closure {
+  ValidatorSessionId session_id;
+  td::uint64 generation;
+  std::string dir_name;
+};
+
 struct Observations {
   std::atomic<size_t> state_waits{0};
   std::atomic<size_t> data_waits{0};
   std::atomic<size_t> buses{0};
   std::atomic<bool> destroyed{false};
+  std::atomic<size_t> cleanups_done{0};
+  std::mutex mutex;
+  std::vector<Closure> closures;
+
+  size_t closure_count() {
+    std::lock_guard lock(mutex);
+    return closures.size();
+  }
 };
 
 Observations observations;
@@ -129,8 +156,11 @@ class WithholdingManager : public ValidatorManagerImpl {
     held_data_.push_back(std::move(promise));
   }
   void consensus_db_cleanup_done(std::string) override {
+    observations.cleanups_done++;
   }
-  void consensus_db_closed(ValidatorSessionId, td::uint64, std::string) override {
+  void consensus_db_closed(ValidatorSessionId session_id, td::uint64 generation, std::string dir_name) override {
+    std::lock_guard lock(observations.mutex);
+    observations.closures.push_back(Closure{session_id, generation, std::move(dir_name)});
   }
   // Answers every withheld wait the way a lapsed wait ends.
   void release_as_timeout() {
@@ -198,18 +228,10 @@ class Fixture {
     td::rmrf(root_).ignore();
   }
 
-  void run() {
+  // A zero-state group stopped with destroy().
+  void run_zerostate_destroy() {
     const BlockIdExt zero_state{masterchainId, shardIdAll, 0, hash("retirement-root"), hash("retirement-file")};
-    scheduler_.run_in_context([&] {
-      NewConsensusConfig config;
-      config.protocol_version = 2;
-      group_ = IValidatorGroup::create_bridge_observer(
-          "retirement observer", ShardIdFull{masterchainId}, members_.observer(), hash("retirement-session"),
-          members_.set(), config, keys_.get(), adnl_.get(), rldp_.get(), overlays_.get(), members_.validators(),
-          std::nullopt, root_, manager_.get(), ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{}), false);
-      require(!group_.empty(), "the factory refused the group");
-      td::actor::send_closure(group_, &IValidatorGroup::start, std::vector<BlockIdExt>{zero_state}, zero_state);
-    });
+    start_group(zero_state);
     wait_for([] { return observations.state_waits.load() == 1; }, "the group never asked for its initial state");
     require(observations.buses.load() == 1, "the group bus was not built");
     require(!observations.destroyed.load(), "the group was destroyed before it was retired");
@@ -226,10 +248,81 @@ class Fixture {
     require(observations.state_waits.load() == 1, "a late answer to a retired group started another wait");
     require(observations.data_waits.load() == 0, "a retired group asked for block data");
     require(observations.buses.load() == 1, "a late answer to a retired group built another bus");
-    std::printf("BRIDGE_RETIREMENT_OK\n");
+    std::printf("BRIDGE_RETIREMENT_ZEROSTATE_OK\n");
+  }
+
+  // A group on a non-zero block retired with close_for_retirement(): its
+  // database is closed and reported with the retirement generation, and its
+  // directory is left for the manager to delete.
+  void run_nonzero_retirement() {
+    const BlockIdExt tip{masterchainId, shardIdAll, 7, hash("retirement-tip-root"), hash("retirement-tip-file")};
+    const td::uint64 generation = 42;
+    // The observer factory names the directory with an observer suffix; the
+    // closure reports the directory name alone, the database lives under the
+    // consensus root.
+    const std::string dir_name =
+        consensus::consensus_db_dir_name(ShardIdFull{masterchainId}, members_.set()->get_catchain_seqno(), session_id(),
+                                         PSTRING() << ".observer." << members_.observer().pubkey_hash());
+    const std::string dir_path = consensus::consensus_db_root(root_) + dir_name;
+
+    start_group(tip);
+    // A non-zero tip needs the block data as well as the state; the zero-state
+    // path asks for the state alone.
+    wait_for([] { return observations.state_waits.load() == 1 && observations.data_waits.load() == 1; },
+             "the group never asked for both its initial state and its block data");
+    require(observations.buses.load() == 1, "the group bus was not built");
+    require(!observations.destroyed.load(), "the group was destroyed before it was retired");
+    require(td::stat(dir_path).is_ok(), "the group's consensus database directory was not created: " + dir_path);
+
+    // Retire the group while the manager still owes both waits.
+    scheduler_.run_in_context(
+        [&] { td::actor::send_closure(group_, &IValidatorGroup::close_for_retirement, generation); });
+    wait_for([] { return observations.destroyed.load() && observations.closure_count() >= 1; },
+             "a retired group stayed alive, or never reported its database closed, while the manager withheld its "
+             "initial state",
+             10.0);
+    require(observations.state_waits.load() == 1, "the retired group asked for its state again");
+    require(observations.data_waits.load() == 1, "the retired group asked for its block data again");
+
+    // The manager answers late, with the error a live resolution retries on.
+    scheduler_.run_in_context([&] { td::actor::send_closure(manager_, &WithholdingManager::release_as_timeout); });
+    pump(1.0);
+    require(observations.state_waits.load() == 1, "a late answer to a retired group started another state wait");
+    require(observations.data_waits.load() == 1, "a late answer to a retired group started another data wait");
+    require(observations.buses.load() == 1, "a late answer to a retired group built another bus");
+    {
+      std::lock_guard lock(observations.mutex);
+      require(observations.closures.size() == 1,
+              PSTRING() << "the retired group reported " << observations.closures.size() << " closures, not one");
+      const auto& closure = observations.closures.front();
+      require(closure.session_id == session_id(), "the closure names another session");
+      require(closure.generation == generation,
+              PSTRING() << "the closure reports generation " << closure.generation << ", not " << generation);
+      require(closure.dir_name == dir_name, "the closure names directory " + closure.dir_name + ", not " + dir_name);
+    }
+    require(observations.cleanups_done.load() == 0, "a retired group reported its database deleted");
+    require(td::stat(dir_path).is_ok(), "a retired group deleted its consensus database directory");
+    std::printf("BRIDGE_RETIREMENT_NONZERO_OK\n");
   }
 
  private:
+  static ValidatorSessionId session_id() {
+    return hash("retirement-session");
+  }
+
+  void start_group(BlockIdExt tip) {
+    scheduler_.run_in_context([&] {
+      NewConsensusConfig config;
+      config.protocol_version = 2;
+      group_ = IValidatorGroup::create_bridge_observer(
+          "retirement observer", ShardIdFull{masterchainId}, members_.observer(), session_id(), members_.set(), config,
+          keys_.get(), adnl_.get(), rldp_.get(), overlays_.get(), members_.validators(), std::nullopt, root_,
+          manager_.get(), ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{}), false);
+      require(!group_.empty(), "the factory refused the group");
+      td::actor::send_closure(group_, &IValidatorGroup::start, std::vector<BlockIdExt>{tip}, tip);
+    });
+  }
+
   template <class F>
   void wait_for(F&& done, const std::string& what, double limit = 20.0) {
     auto deadline = td::Timestamp::in(limit);
@@ -263,9 +356,20 @@ class Fixture {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(ERROR));
+  // No default mode: a registration that loses its argument must fail, not
+  // quietly run the other case.
+  const std::string mode = argc == 2 ? argv[1] : "";
+  if (mode != "zerostate-destroy" && mode != "nonzero-retirement") {
+    std::fprintf(stderr, "usage: %s zerostate-destroy|nonzero-retirement\n", argc > 0 ? argv[0] : "test");
+    return 2;
+  }
   Fixture fixture;
-  fixture.run();
+  if (mode == "zerostate-destroy") {
+    fixture.run_zerostate_destroy();
+  } else {
+    fixture.run_nonzero_retirement();
+  }
   return 0;
 }
