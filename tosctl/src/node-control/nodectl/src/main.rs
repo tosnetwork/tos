@@ -39,15 +39,21 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // wait for the service to complete
-    if let Some(run_handle) = run_handle {
-        let _ = run_handle.await;
-    }
+    // Wait for the service to complete. Its error, or its panic, becomes the
+    // process's exit status after the orderly shutdown below, so a supervisor
+    // sees a failed service as failed.
+    let outcome = match run_handle {
+        Some(run_handle) => match run_handle.await {
+            Ok(result) => result,
+            Err(join_error) => Err(anyhow::anyhow!("service task did not complete: {join_error}")),
+        },
+        None => Ok(()),
+    };
     if !cancellation_ctx.is_cancelled() {
         cancellation_ctx.cancel(CancellationReason::GracefullyShutdown());
     }
     // Wait for signal handler to complete
     let _ = signal_handle.await;
     tracing::debug!("shutdown completed");
-    Ok(())
+    outcome.map_err(|e| e.context("service failed"))
 }

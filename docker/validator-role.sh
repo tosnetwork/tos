@@ -162,6 +162,8 @@ LONG_OPTIONS_WITH_ARGUMENT="
   db
   fift-dir
   logname
+  log-rotate-mb
+  log-keep-files
   state-ttl
   mempool-num
   block-ttl

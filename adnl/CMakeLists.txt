@@ -24,6 +24,7 @@ set(ADNL_HEADERS
   adnl-peer.h
   adnl-peer.hpp
   adnl-query.h
+  adnl-query-answer.h
   adnl-proxy-types.h
   adnl-proxy-types.hpp
   adnl-sender-ex.h

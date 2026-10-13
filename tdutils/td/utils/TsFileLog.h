@@ -29,7 +29,21 @@ class TsFileLog {
   static constexpr int64 DEFAULT_ROTATE_THRESHOLD = 10 * (1 << 20);
 
  public:
+  // Each thread logs to its own file and keeps keep_rotated rotated files of
+  // it (FileLog::init).
   static Result<td::unique_ptr<LogInterface>> create(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD,
-                                                     bool redirect_stderr = true);
+                                                     bool redirect_stderr = true, int32 keep_rotated = 1);
+
+  // The directory that holds the log file `path` and its per-thread files:
+  // "/" for a file directly under the root, "." for a bare file name, and the
+  // parent directory, without a trailing slash, otherwise.
+  static string log_directory(Slice path);
+
+  // Test seam. When set, the start-up scan calls it with each directory it is
+  // about to open, and an error it returns is taken as that open failing, so a
+  // test can make a directory unreadable whoever runs it. nullptr, the default,
+  // leaves only the real open.
+  using DirectoryOpenHook = Status (*)(CSlice dir);
+  static void set_directory_open_hook_for_tests(DirectoryOpenHook hook);
 };
 }  // namespace td

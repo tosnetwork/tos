@@ -55,7 +55,7 @@ pub struct AgentAccountPredictionRelayProfileCmd {
     zero_state_root_hash: String,
     #[arg(long)]
     zero_state_file_hash: String,
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     workchain_id: i32,
     #[arg(
         long = "quorum-config",

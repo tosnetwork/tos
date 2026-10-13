@@ -108,11 +108,15 @@ void AdnlLocalId::deliver(AdnlNodeIdShort src, td::BufferSlice data) {
 }
 
 void AdnlLocalId::deliver_query(AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise) {
+  deliver_query_ex(src, std::move(data), ignore_answer_metadata(std::move(promise)));
+}
+
+void AdnlLocalId::deliver_query_ex(AdnlNodeIdShort src, td::BufferSlice data, td::Promise<AdnlQueryAnswer> promise) {
   auto s = std::move(data);
   for (auto &cb : cb_) {
     auto f = cb.first;
     if (f.length() <= s.length() && s.as_slice().substr(0, f.length()) == f) {
-      cb.second->receive_query(src, short_id_, std::move(s), std::move(promise));
+      cb.second->receive_query_ex(src, short_id_, std::move(s), std::move(promise));
       return;
     }
   }

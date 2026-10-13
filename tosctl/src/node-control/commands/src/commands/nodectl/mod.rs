@@ -30,6 +30,8 @@ pub(crate) mod host_cmd;
 pub(crate) mod install_cmd;
 pub(crate) mod key_cmd;
 pub(crate) mod master_wallet_cmd;
+#[cfg(test)]
+mod negative_number_flag_tests;
 pub(crate) mod node_cmd;
 pub(crate) mod observe_cmd;
 pub(crate) mod output_format;

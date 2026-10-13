@@ -273,6 +273,28 @@ class PendingFinalityManagerActorProbe final : public ValidatorManagerImpl {
   // The governing state is reloaded through RootDb before this call. The
   // consumer target handle has no proof, so CheckProof cannot take its
   // already-inited proof shortcut.
+  // The startup catch-up discovery entry, on the cold-restored genesis context.
+  void check_startup_successor(BlockIdExt prev, BlockIdExt next, td::BufferSlice proof,
+                               td::Promise<startup_catchup::SuccessorVerdict> promise) {
+    verify_startup_probe_successor(prev, next, std::move(proof), td::Timestamp::in(30.0), std::move(promise));
+  }
+  // The local tip and what the database holds for `next` after discovery.
+  void startup_successor_effects(BlockIdExt next, td::Promise<std::string> promise) {
+    auto tip = last_masterchain_block_id_;
+    get_block_handle(next, false,
+                     td::PromiseCreator::lambda([tip, promise = std::move(promise)](td::Result<BlockHandle> R) mutable {
+                       td::StringBuilder sb;
+                       sb << "tip=" << tip.to_str();
+                       if (R.is_error()) {
+                         sb << " handle=absent";
+                       } else {
+                         sb << " handle=present proof=" << R.ok()->inited_proof() << " received=" << R.ok()->received()
+                            << " applied=" << R.ok()->is_applied();
+                       }
+                       promise.set_value(sb.as_cslice().str());
+                     }));
+  }
+
   void check_n5_proof_from_restored_state(BlockIdExt id, td::Ref<Proof> proof, td::Promise<BlockHandle> promise) {
     if (last_masterchain_state_.is_null()) {
       return promise.set_error(td::Status::Error("N5 cut6 governing state not restored from RootDb"));
@@ -2052,6 +2074,101 @@ int main(int argc, char **argv) {
       return 1;
     }
     std::cout << "N5_CUT6_CHECKPROOF_OK source=" << argv[3] << " proof=" << argv[4] << '\n';
+    // Startup catch-up discovery on the same real PQ proof: the manager's entry for a
+    // probe answer verifies the successor of the exact local tip with the real
+    // CheckProof, may store the verified proof, and never applies the block or moves
+    // the tip; an altered signature is refused; an answer about another tip is
+    // reported as frontier moved without any check.
+    enum class StartupCase { Valid, Altered, Moved };
+    auto startup_one = [&](std::string_view label, td::Ref<Proof> offered, StartupCase which) {
+      auto consumer_root = require_ok(td::mkdtemp("", "n5-cut6-startup-"), "N5 cut6 startup consumer root");
+      td::actor::Scheduler scheduler({1});
+      td::actor::ActorOwn<PendingFinalityManagerActorProbe> consumer;
+      auto wait = [&](auto &slot) {
+        auto deadline = td::Timestamp::in(30.0);
+        while (!slot && !deadline.is_in_past()) {
+          scheduler.run(0.01);
+        }
+        return slot.has_value();
+      };
+      std::optional<td::Result<td::Unit>> seeded;
+      scheduler.run_in_context([&] {
+        consumer = td::actor::create_actor<PendingFinalityManagerActorProbe>("n5-cut6-startup", id0, consumer_root);
+        td::actor::send_closure(
+            consumer, &PendingFinalityManagerActorProbe::seed_zerostate, id0, state0, boc.clone(),
+            td::PromiseCreator::lambda([&](td::Result<td::Unit> result) { seeded.emplace(std::move(result)); }));
+      });
+      std::optional<td::Result<td::Unit>> restored;
+      if (wait(seeded) && seeded->is_ok()) {
+        scheduler.run_in_context([&] {
+          td::actor::send_closure(
+              consumer, &PendingFinalityManagerActorProbe::restore_zero_context, id0,
+              RootHash{root0->get_hash().bits()},
+              td::PromiseCreator::lambda([&](td::Result<td::Unit> result) { restored.emplace(std::move(result)); }));
+        });
+      }
+      std::optional<td::Result<startup_catchup::SuccessorVerdict>> verdict;
+      std::optional<td::Result<std::string>> effects;
+      if (wait(restored) && restored->is_ok()) {
+        auto prev = id0;
+        if (which == StartupCase::Moved) {
+          prev.root_hash = sha256_bits256(td::Slice("not the local tip"));
+        }
+        scheduler.run_in_context([&] {
+          td::actor::send_closure(consumer, &PendingFinalityManagerActorProbe::check_startup_successor, prev, id1,
+                                  offered->data(),
+                                  td::PromiseCreator::lambda([&](td::Result<startup_catchup::SuccessorVerdict> result) {
+                                    verdict.emplace(std::move(result));
+                                  }));
+        });
+        if (wait(verdict)) {
+          scheduler.run_in_context([&] {
+            td::actor::send_closure(consumer, &PendingFinalityManagerActorProbe::startup_successor_effects, id1,
+                                    td::PromiseCreator::lambda(
+                                        [&](td::Result<std::string> result) { effects.emplace(std::move(result)); }));
+          });
+          wait(effects);
+        }
+      }
+      const std::string tip = "tip=" + id0.to_str();
+      const std::string seen = effects && effects->is_ok() ? effects->ok() : "none";
+      const bool tip_kept = seen.rfind(tip, 0) == 0;
+      const bool not_applied = seen.find("applied=true") == std::string::npos;
+      const bool proof_stored = seen.find("proof=true") != std::string::npos;
+      bool ok = false;
+      switch (which) {
+        case StartupCase::Valid:
+          ok = verdict && verdict->is_ok() && verdict->ok() == startup_catchup::SuccessorVerdict::Verified &&
+               proof_stored && tip_kept && not_applied;
+          break;
+        case StartupCase::Altered:
+          ok = verdict && verdict->is_error() &&
+               verdict->error().to_string().find("pq signatures: invalid signature") != std::string::npos &&
+               !proof_stored && tip_kept && not_applied;
+          break;
+        case StartupCase::Moved:
+          ok = verdict && verdict->is_ok() && verdict->ok() == startup_catchup::SuccessorVerdict::FrontierMoved &&
+               !proof_stored && tip_kept && not_applied;
+          break;
+      }
+      std::cout << "N5_CUT6_STARTUP_PROBE label=" << label << " ok=" << ok << " verdict="
+                << (!verdict ? std::string("none")
+                    : verdict->is_error()
+                        ? verdict->error().to_string()
+                        : std::string(verdict->ok() == startup_catchup::SuccessorVerdict::Verified ? "verified"
+                                                                                                   : "frontier-moved"))
+                << " effects=" << seen << '\n';
+      scheduler.run_in_context([&] { consumer.reset(); });
+      scheduler.stop();
+      return ok;
+    };
+    if (!startup_one("valid", source_proof->ok(), StartupCase::Valid) ||
+        !startup_one("altered-signature", altered_proof, StartupCase::Altered) ||
+        !startup_one("moved-tip", source_proof->ok(), StartupCase::Moved)) {
+      std::cerr << "N5_CUT6_FAILED: the startup successor entry did not verify the real proof without applying it\n";
+      return 1;
+    }
+    std::cout << "N5_CUT6_STARTUP_PROBE_OK\n";
     return 0;
   }
   if (n5_cut5_rebuild || n5_cut5_absent || n5_cut5_no_archive) {

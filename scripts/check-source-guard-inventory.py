@@ -58,6 +58,8 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "snapshot-import-offline",
         "static-analysis-gate-self-test",
         "static-use-after-move-self-test",
+        "sync-stall-wiring-source",
+        "sync-stall-wiring-source-self-test",
         "test-quorum-static-grep",
         "tosctl-election-chain-reads-source",
         "tosctl-pq-stake-builder-source",

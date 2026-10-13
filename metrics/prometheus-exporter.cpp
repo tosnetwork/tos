@@ -3,6 +3,7 @@
 #include "td/actor/coro_utils.h"
 #include "td/utils/StorageHealth.h"
 
+#include "chain-progress-metrics.h"
 #include "core-health.h"
 #include "core-registry.h"
 #include "diagnostic-ipc.h"
@@ -303,6 +304,11 @@ void PrometheusExporter::collection_completed(td::Result<metrics::MetricSet> res
         prefix_ + "_health_storage_commits_observed_total", "counter",
         static_cast<double>(td::storage_health.commits_observed.load(std::memory_order_relaxed))));
     set = std::move(set).join(health::core_registry.collect(native_v2_));
+  }
+  // Masterchain progress is published with or without the health flag: it is
+  // what an operator alerts on when the node stops applying blocks.
+  for (auto &family : health::chain_progress_families(prefix_, wall)) {
+    set.families.push_back(std::move(family));
   }
   set.families.push_back(metrics::MetricFamily::make_scalar(
       prefix_ + "_exporter_snapshot_collection_inflight", "gauge", 0,

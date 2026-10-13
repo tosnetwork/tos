@@ -92,6 +92,8 @@ class FullNodeImpl : public FullNode {
   void get_next_key_blocks(BlockIdExt block_id, td::Timestamp timeout, td::Promise<std::vector<BlockIdExt>> promise);
   void download_archive(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, std::string tmp_dir,
                         td::Timestamp timeout, td::Promise<std::string> promise);
+  void probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                    td::Promise<startup_catchup::RoundResult> promise);
   void download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                     block::ImportedMsgQueueLimits limits, td::Timestamp timeout,
                                     td::Promise<std::vector<td::Ref<OutMsgQueueProof>>> promise);
@@ -197,6 +199,9 @@ class FullNodeImpl : public FullNode {
       td::actor::create_actor<TokenManager>("tokens", /* max_tokens = */ 1);
 
   std::shared_ptr<FullNodeRateLimiter> limiter_;
+  // Shared by every shard actor, like the limiter, so the answers to its
+  // refusals are bounded once for the node.
+  std::shared_ptr<RefusalAnswerBudget> refusal_answers_ = std::make_shared<RefusalAnswerBudget>();
 
   decltype(limiter_) make_limiter(const FullNodeOptions& opts);
 };

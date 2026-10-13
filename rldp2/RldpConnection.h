@@ -139,6 +139,11 @@ class RldpConnection {
     return outbound_transfers_.size();
   }
 
+  // Outbound transfers ever opened on this connection.
+  td::uint64 outbound_transfers_started() const {
+    return outbound_transfers_started_;
+  }
+
   // Local requests still awaiting an answer.
   size_t outstanding_request_count() const {
     return outstanding_requests_;
@@ -151,6 +156,7 @@ class RldpConnection {
   size_t outstanding_requests_{0};
 
   std::map<TransferId, OutboundTransfer> outbound_transfers_;
+  td::uint64 outbound_transfers_started_ = 0;
   td::uint32 in_flight_count_{0};
 
   std::map<TransferId, InboundTransfer> inbound_transfers_;

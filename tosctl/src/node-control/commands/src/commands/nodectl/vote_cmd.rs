@@ -744,22 +744,9 @@ async fn operator_control_client(
     config: &common::app_config::AppConfig,
     vault: Option<std::sync::Arc<secrets_vault::vault::SecretVault>>,
 ) -> anyhow::Result<control_client::client_adnl::ControlClientAdnl> {
-    let (_, node) = config
-        .nodes
-        .iter()
-        .min_by(|(a, _), (b, _)| a.cmp(b))
-        .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
-    let vault = match vault {
-        Some(vault) => Some(vault),
-        None if matches!(node.server_key, common::app_config::KeyConfig::VaultKey { .. })
-            || matches!(node.client_key, common::app_config::KeyConfig::VaultKey { .. }) =>
-        {
-            Some(secrets_vault::vault_builder::SecretVaultBuilder::from_env().await?)
-        }
-        None => None,
-    };
+    let (_, node) = super::utils::select_node(config, None)?;
     Ok(control_client::client_adnl::ControlClientAdnl::new(
-        node.to_node_adnl_config(vault).await?,
+        super::utils::node_adnl_config(node, vault).await?,
         1,
     ))
 }
@@ -1530,9 +1517,8 @@ impl VoteComplaintCastCmd {
 
         // --- Connect to node via ADNL control ---
         println!("\n{}", "Connecting to validator node...".cyan());
-        let (node_name, node_cfg) =
-            config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
-        let adnl_config = node_cfg.to_node_adnl_config(None).await?;
+        let (node_name, node_cfg) = super::utils::select_node(&config, None)?;
+        let adnl_config = super::utils::node_adnl_config(node_cfg, Some(vault)).await?;
         let mut client = ControlClientAdnl::new(adnl_config, 1);
         client.connect().await.context("Failed to connect to validator node via ADNL")?;
         println!("  {} Connected to node '{}'", "OK".green().bold(), node_name);

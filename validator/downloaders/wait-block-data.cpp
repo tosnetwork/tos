@@ -20,6 +20,7 @@
 #include "adnl/utils.hpp"
 #include "common/delay.h"
 #include "crypto/block/mc-config.h"
+#include "metrics/node-state-snapshot.h"
 #include "tos/tos-io.hpp"
 #include "vm/cells/MerkleProof.h"
 
@@ -222,16 +223,20 @@ void WaitBlockData::start() {
                                 td::actor::send_closure(SelfId, &WaitBlockData::start);
                               } else {
                                 td::actor::send_closure(SelfId, &WaitBlockData::loaded_data,
-                                                        ReceivedBlock{id, R.move_as_ok()});
+                                                        ReceivedBlock{id, R.move_as_ok()},
+                                                        BlockDataSource::LocalCandidate);
                               }
                             });
   } else {
+    // The manager answers from its candidate cache only with bytes that pass
+    // the same full block check as loaded_data() and evicts any that fail, so
+    // a parse failure on this path is the network's.
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<ReceivedBlock> R) {
       if (R.is_error()) {
-        td::actor::send_closure(SelfId, &WaitBlockData::failed_to_get_block_data_from_net,
-                                R.move_as_error_prefix("net error: "));
+        td::actor::send_closure(SelfId, &WaitBlockData::failed_to_get_block_data, R.move_as_error_prefix("net error: "),
+                                BlockDataSource::Network);
       } else {
-        td::actor::send_closure(SelfId, &WaitBlockData::loaded_data, R.move_as_ok());
+        td::actor::send_closure(SelfId, &WaitBlockData::loaded_data, R.move_as_ok(), BlockDataSource::Network);
       }
     });
 
@@ -245,23 +250,37 @@ void WaitBlockData::got_block_data_from_db(td::Ref<BlockData> data) {
   finish_query();
 }
 
-void WaitBlockData::failed_to_get_block_data_from_net(td::Status reason) {
-  if (reason.code() == ErrorCode::notready) {
-    LOG(DEBUG) << "failed to get block " << handle_->id() << " data from net: " << reason;
+void WaitBlockData::failed_to_get_block_data(td::Status reason, BlockDataSource source) {
+  // "Not ready" is routine while a block propagates, so a single one stays at
+  // DEBUG; a block that keeps failing is a stall and is reported at WARNING,
+  // rate-limited, whatever the error. A bad local candidate is reported once
+  // and is not counted as a network failure; the retry goes to the network.
+  const auto report = net_failures_.on_failure(source, reason.code() == ErrorCode::notready, td::Timestamp::now().at(),
+                                               health::node_state.block_data_net_failures);
+  if (report.stall_warning) {
+    LOG(WARNING) << "still cannot get block " << handle_->id() << " data from net after " << report.consecutive
+                 << " consecutive failures: " << reason;
+  }
+  if (report.failure_warning) {
+    LOG(WARNING) << "failed to get block " << handle_->id() << " data from " << block_data_source_name(source) << ": "
+                 << reason;
   } else {
-    LOG(WARNING) << "failed to get block " << handle_->id() << " data from net: " << reason;
+    LOG(DEBUG) << "failed to get block " << handle_->id() << " data from " << block_data_source_name(source) << ": "
+               << reason;
   }
 
   delay_action([SelfId = actor_id(this)]() mutable { td::actor::send_closure(SelfId, &WaitBlockData::start); },
                td::Timestamp::in(0.1));
 }
 
-void WaitBlockData::loaded_data(ReceivedBlock block) {
+void WaitBlockData::loaded_data(ReceivedBlock block, BlockDataSource source) {
   auto X = create_block(std::move(block));
   if (X.is_error()) {
-    failed_to_get_block_data_from_net(X.move_as_error_prefix("bad block from net: "));
+    failed_to_get_block_data(
+        X.move_as_error_prefix(PSTRING() << "bad block from " << block_data_source_name(source) << ": "), source);
     return;
   }
+  net_failures_.on_delivered();
   loaded_block_data(X.move_as_ok());
 }
 

@@ -262,10 +262,9 @@ void FullNodeImpl::update_shard_actor(ShardIdFull shard, bool active, bool enabl
       td::actor::send_closure(keyring_, &tos::keyring::Keyring::add_key, std::move(private_key), true,
                               [](td::Result<>) {});
     }
-    info.actor =
-        FullNodeShard::create(shard, info.local_id, adnl_id_, zero_state_file_hash_, opts_, limiter_, keyring_, adnl_,
-                              rldp2_, quic_, overlays_, validator_manager_, client_, actor_id(this), active,
-                              enable_plumtree_broadcast);
+    info.actor = FullNodeShard::create(shard, info.local_id, adnl_id_, zero_state_file_hash_, opts_, limiter_,
+                                       refusal_answers_, keyring_, adnl_, rldp2_, quic_, overlays_, validator_manager_,
+                                       client_, actor_id(this), active, enable_plumtree_broadcast);
     if (!validator_transport_roots_.empty()) {
       td::actor::send_closure(info.actor, &FullNodeShard::update_validators, validator_transport_roots_, sign_cert_by_);
     }
@@ -488,6 +487,17 @@ void FullNodeImpl::download_archive(BlockSeqno masterchain_seqno, ShardIdFull sh
   CHECK(!shard.empty());
   td::actor::send_closure(shard, &FullNodeShard::download_archive, masterchain_seqno, shard_prefix, std::move(tmp_dir),
                           timeout, std::move(promise));
+}
+
+void FullNodeImpl::probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                                td::Promise<startup_catchup::RoundResult> promise) {
+  auto shard = get_shard(ShardIdFull{masterchainId});
+  if (shard.empty()) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "masterchain shard not ready"));
+    return;
+  }
+  td::actor::send_closure(shard, &FullNodeShard::probe_next_masterchain_block, prev, deadline, probe_budget,
+                          std::move(promise));
 }
 
 void FullNodeImpl::download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
@@ -778,6 +788,11 @@ void FullNodeImpl::start_up() {
                           td::Timestamp timeout, td::Promise<std::string> promise) override {
       td::actor::send_closure(id_, &FullNodeImpl::download_archive, masterchain_seqno, shard_prefix, std::move(tmp_dir),
                               timeout, std::move(promise));
+    }
+    void probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                      td::Promise<startup_catchup::RoundResult> promise) override {
+      td::actor::send_closure(id_, &FullNodeImpl::probe_next_masterchain_block, prev, deadline, probe_budget,
+                              std::move(promise));
     }
     void download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                       block::ImportedMsgQueueLimits limits, td::Timestamp timeout,

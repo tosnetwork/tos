@@ -162,6 +162,10 @@ struct MisbehaviorReport {
 };
 
 struct TraceEvent {
+  // Routine and frequent: traced at DEBUG, so the default log keeps hours of the
+  // events an incident analysis needs (candidates, certificates, finalization).
+  using LogToDebug = std::true_type;
+
   std::unique_ptr<const stats::Event> event;
 
   std::string contents_to_string() const;
@@ -261,6 +265,10 @@ using BusHandle = td::actor::BusHandle<Bus>;
 // Observation-only seam: called after the real bridge has populated and started
 // its bus. Tests install it before scheduling actors and clear it after teardown.
 void observe_bridge_bus_for_test(std::function<void(BusHandle)> observer);
+
+// Observation-only seam: called with the group name when a bridge object is
+// destroyed, so a test can see that nothing still holds a retired group.
+void observe_bridge_destroyed_for_test(std::function<void(std::string)> observer);
 
 struct BlockAccepter {
   static void register_in(td::actor::Runtime&);

@@ -131,6 +131,29 @@ foreach(mode control genesis-notready genesis-timeout ancestor-notready permanen
     add_test(NAME c05-notarize-${mode} COMMAND test-notarize-after-transient-resolve ${mode})
 endforeach()
 
+# A candidate that arrives after its slot is finalized, inside and outside the window in
+# which the candidate resolver still retains the slot; and the resolver's lifetime pin for a
+# resolve task that outlives the request it serves.
+add_executable(test-late-candidate-window test-late-candidate-window.cpp)
+target_link_libraries(test-late-candidate-window PRIVATE
+    validator
+    tos_validator
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+tos_test(test-late-candidate-window)
+set_tests_properties(test-late-candidate-window PROPERTIES TIMEOUT 300)
+
 # A group that stops while a finalization is in flight and callers wait on it must release
 # the resolver, its waiters and the bus.
 add_executable(test-state-resolver-teardown test-state-resolver-teardown.cpp)

@@ -1059,6 +1059,42 @@ target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CU
 target_link_libraries(test-validator-cleanup-integration PRIVATE tos_validator validator-common validator-db full-node
                       tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+# Startup archive catch-up of a stale validator: the pure policy, the bounded
+# archive import attempt, the mode driver, the startup inventory of orphaned
+# validator session directories, the successor probe and the manager wiring.
+add_executable(test-startup-catchup-policy test/test-td-main.cpp test/test-startup-catchup-policy.cpp)
+target_include_directories(test-startup-catchup-policy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-catchup-policy PRIVATE tos_crypto tdutils)
+add_executable(test-startup-catchup-driver test/test-td-main.cpp test/test-startup-catchup-driver.cpp)
+target_include_directories(test-startup-catchup-driver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-catchup-driver PRIVATE tos_crypto tdactor tdutils)
+add_executable(test-startup-catchup-probe test/test-td-main.cpp test/test-startup-catchup-probe.cpp)
+target_include_directories(test-startup-catchup-probe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-catchup-probe PRIVATE full-node validator-common tos_validator tos_crypto tdutils
+                      tdactor adnl overlay tl_api dht)
+add_executable(test-startup-catchup-importer test/test-td-main.cpp test/test-startup-catchup-importer.cpp)
+target_include_directories(test-startup-catchup-importer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-catchup-importer PRIVATE validator full-node validator-common validator-db
+                      tos_validator tos_db tos_crypto tdutils tdactor)
+if (USE_QUIC)
+  add_executable(test-startup-catchup-manager test/test-td-main.cpp test/test-startup-catchup-manager.cpp)
+  target_include_directories(test-startup-catchup-manager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                             ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+  target_link_libraries(test-startup-catchup-manager PRIVATE validator validator-common validator-db full-node quic
+                        tos_validator tos_block tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl
+                        overlay dht tl_api tdactor tdutils)
+  tos_test(test-startup-catchup-manager)
+endif()
+add_executable(test-startup-orphan-reconcile test/test-td-main.cpp test/test-startup-orphan-reconcile.cpp)
+target_include_directories(test-startup-orphan-reconcile PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-startup-orphan-reconcile PRIVATE tos_validator validator-common validator-db full-node
+                      tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
 add_executable(test-json-rpc-storage test/test-td-main.cpp test/test-json-rpc-storage.cpp)
@@ -1121,6 +1157,43 @@ target_link_libraries(test-download-state-budget PRIVATE validator-common full-n
 # rejection for the b8c0acaf parallel-block-download port.
 add_executable(test-download-next-blocks-validation test/test-download-next-blocks-validation.cpp)
 target_link_libraries(test-download-next-blocks-validation PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
+# The production download actors against a server shard whose admission
+# refuses them for capacity: answered refusals, token release, retries and
+# query deadlines, over the overlay and the external-client path.
+add_executable(test-download-refusal-answers test/test-download-refusal-answers.cpp)
+target_include_directories(test-download-refusal-answers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-download-refusal-answers PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-download-refusal-answers PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+# How long an RLDP answer with its own delivery deadline is kept: over RLDP
+# alone, through the overlay manager's buffer, and through a production
+# full-node shard and its admission to the production downloader.
+add_executable(test-rldp2-refusal-lifetime test/test-rldp2-refusal-lifetime.cpp)
+target_include_directories(test-rldp2-refusal-lifetime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-rldp2-refusal-lifetime PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common adnl adnltest
+                      overlay rldp2 dht tl_api)
+target_compile_definitions(test-rldp2-refusal-lifetime PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+# Retry policy of a consensus group: the initial chain-state resolution and
+# the acceptance of finalized blocks.
+add_executable(test-consensus-retry-backoff test/test-td-main.cpp test/test-consensus-retry-backoff.cpp)
+target_include_directories(test-consensus-retry-backoff PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-consensus-retry-backoff PRIVATE tdactor tdutils)
+
+# A production consensus group retired while the manager withholds its initial
+# chain state is destroyed at once, and a late answer starts nothing.
+add_executable(test-bridge-retirement test/validator/consensus/test-bridge-retirement.cpp)
+target_include_directories(test-bridge-retirement PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-bridge-retirement PRIVATE validator validator-common validator-db full-node tos_validator
+                      tos_block tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl adnltest overlay
+                      rldp2 dht tl_api tdactor tdutils)
 
 add_executable(test-pq-network-parser-resource test/pq-native/pq-network-parser-resource-test.cpp)
 target_link_libraries(test-pq-network-parser-resource PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht
@@ -1219,6 +1292,10 @@ target_link_libraries(test-health-collector-budget PRIVATE metrics tdactor tduti
 add_executable(test-health-publisher-bench test/test-health-publisher-bench.cpp)
 target_include_directories(test-health-publisher-bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(test-health-publisher-bench PRIVATE metrics tdutils)
+
+add_executable(test-sync-stall-alerts test/test-td-main.cpp test/test-sync-stall-alerts.cpp)
+target_include_directories(test-sync-stall-alerts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-sync-stall-alerts PRIVATE tdutils)
 
 add_executable(test-metrics-label-bound test/test-td-main.cpp test/test-metrics-label-bound.cpp)
 target_include_directories(test-metrics-label-bound PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -1964,6 +2041,10 @@ tos_test(test-full-node-master-admission)
 tos_test(test-adnl-ext-input-budget)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
+tos_test(test-download-refusal-answers)
+tos_test(test-consensus-retry-backoff)
+tos_test(test-bridge-retirement)
+tos_test(test-rldp2-refusal-lifetime)
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-manager)
 tos_test(test-ext-message-ingress)
@@ -1984,6 +2065,11 @@ tos_test(test-validator-cleanup-statedb)
 tos_test(test-consensus-cleanup-checkpoint)
 tos_test(test-validator-cleanup-worker)
 tos_test(test-validator-cleanup-integration)
+tos_test(test-startup-catchup-policy)
+tos_test(test-startup-catchup-driver)
+tos_test(test-startup-catchup-probe)
+tos_test(test-startup-catchup-importer)
+tos_test(test-startup-orphan-reconcile)
 tos_test(test-node-consensus-membership)
 tos_test(test-pq-consensus-key-rotation)
 # The production signer, and the binaries built on it, have no way to move the consensus key
@@ -2035,6 +2121,7 @@ tos_test(test-rldp2-connection-limits)
 tos_test(test-promise-loss-contract)
 tos_test(test-json-rpc-handler-guard)
 tos_test(test-metrics-label-bound)
+tos_test(test-sync-stall-alerts)
 tos_test(test-health-collector-completion)
 tos_test(test-health-collector-timestamps)
 tos_test(test-health-collector-budget)
@@ -2101,6 +2188,14 @@ add_test(NAME pq-unsafe-rotation-source-mutations
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/pq-unsafe-rotation-source-mutations.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(pq-unsafe-rotation-source-mutations PROPERTIES LABELS "source-guard" RUN_SERIAL TRUE)
+add_test(NAME sync-stall-wiring-source
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-sync-stall-wiring.py
+          ${CMAKE_CURRENT_SOURCE_DIR})
+set_tests_properties(sync-stall-wiring-source PROPERTIES LABELS "source-guard")
+add_test(NAME sync-stall-wiring-source-self-test
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-sync-stall-wiring.py
+          ${CMAKE_CURRENT_SOURCE_DIR} --self-test)
+set_tests_properties(sync-stall-wiring-source-self-test PROPERTIES LABELS "source-guard")
 add_test(NAME regression-fixture-concurrency
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-regression-concurrency.sh
           ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})

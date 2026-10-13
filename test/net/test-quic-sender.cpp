@@ -2687,6 +2687,94 @@ TEST(QuicInboundStreamTimeout, InputFinCannotDiscardTheLifetimeOfAHeldSlot) {
   });
 }
 
+// An answer that never gets acknowledged still leaves with its stream. The
+// peer sends a whole query and its input FIN, the node answers, and the
+// node's datagrams are then all lost, so the answer is never acknowledged.
+// The peer keeps the connection busy on a second stream, so neither the
+// inactivity reaper nor the connection idle timeout ends it. The absolute
+// inbound-stream lifetime alone must reclaim the answered stream and its
+// send state: it fails the stream, and since its reset cannot be
+// acknowledged either, ends the connection after the reset grace. This is
+// the bound a full-node refusal answer sent over QUIC stays under, in place
+// of the shorter one RLDP gives it.
+TEST(QuicInboundStreamTimeout, AbsoluteLifetimeReclaimsAnUnacknowledgedAnswer) {
+  run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
+    constexpr int kQuicPortOffset = 1000;  // QuicSender::NODE_PORT_OFFSET
+    auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(8, 1 << 20, 8, 1 << 20);
+    auto silent = std::make_shared<std::atomic<bool>>(false);
+    auto options = quic_test_options();
+    options.inbound_stream_timeout = 1000.0;
+    options.inbound_stream_lifetime = 6.0;
+    options.inbound_stream_budget = budget;
+    options.drop_outgoing_datagram = [silent](td::Slice) { return silent->load(); };
+    auto receiver = co_await t.create_sender_node("unacked-answer", next_port(), options);
+    auto held = std::make_shared<HeldQueries>();
+    td::actor::send_closure(receiver.adnl, &tos::adnl::Adnl::subscribe, receiver.id, "H",
+                            std::make_unique<HoldingCallback>(held));
+    auto client = co_await t.create_endpoint(quic_test_options());
+    auto cid = co_await t.connect_raw_to(client, receiver.port + kQuicPortOffset);
+    auto server_stats = [&]() -> td::actor::Task<tos::quic::QuicConnectionStats> {
+      auto stats = co_await td::actor::ask(receiver.quic_sender, &tos::quic::QuicSender::collect_stats);
+      co_return stats.summary.server_stats.impl_stats;
+    };
+
+    // A whole query with its input FIN.
+    // Within the size a stream may carry before its query is parsed.
+    std::string body = "H" + std::string(800, 'q');
+    auto wire = tos::serialize_tl_object(tos::create_tl_object<tos::tos_api::quic_query>(td::BufferSlice(body)), true);
+    auto sid = co_await t.open_stream_with_retry(client, cid);
+    auto sent =
+        co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, sid, std::move(wire), true)
+            .wrap();
+    LOG_CHECK(sent.is_ok()) << sent.error();
+    co_await poll_until([&] { return held->count() == 1; }, 5.0, "the query reached its handler");
+    ASSERT_EQ(budget->streams(), 1u);
+
+    // From here on nothing the node sends arrives: its answer is never
+    // acknowledged.
+    silent->store(true);
+    held->release_all();
+    co_await poll_until([&] { return budget->bytes() == 0; }, 5.0, "the answered query released its input");
+    {
+      auto deadline = td::Timestamp::in(5.0);
+      while ((co_await server_stats()).bytes_unacked < 800) {
+        ASSERT_TRUE(!deadline.is_in_past());
+        co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+      }
+    }
+    ASSERT_EQ(budget->streams(), 1u);
+    auto open_with_answer = (co_await server_stats()).open_sids;
+
+    // The peer keeps the connection busy on a stream opened later, whose own
+    // lifetime (after t0 + 10.5) ends well after the answered one's (t0 + 6)
+    // and its reset grace, two seconds from the expiry.
+    jump_time_by(4.5);
+    auto busy = co_await t.send_partial_stream(client, cid, 'b');
+    co_await poll_until([&] { return budget->streams() == 2 && budget->bytes() == 1; }, 1.0,
+                        "the second stream was admitted");
+    jump_time_by(1.0);
+    co_await td::actor::ask(client.server, &tos::quic::QuicServer::send_stream, cid, busy, td::BufferSlice("b"), false);
+    co_await poll_until([&] { return budget->bytes() == 2; }, 1.0, "the connection kept carrying traffic");
+    // At t0 + 5.5 the answered stream is still within its lifetime.
+    ASSERT_EQ(budget->streams(), 2u);
+    ASSERT_TRUE((co_await server_stats()).bytes_unacked >= 800);
+
+    // Past the answered stream's lifetime, before the busy stream's and well
+    // before the connection idle timeout. The reset cannot be acknowledged,
+    // so after its grace the lifetime ends the connection: the
+    // unacknowledged answer, its slot and its send state all go.
+    jump_time_by(1.0);
+    co_await poll_until(
+        [&] { return budget->streams() == 0 && budget->bytes() == 0 && budget->tracked_sources() == 0; }, 4.0,
+        "the absolute lifetime did not reclaim the unacknowledged answer");
+    auto after = co_await server_stats();
+    LOG(ERROR) << "unacknowledged answer reclaimed: open streams " << open_with_answer << " -> " << after.open_sids
+               << ", unacknowledged bytes " << after.bytes_unacked;
+    ASSERT_EQ(after.bytes_unacked, 0);
+    co_return td::Unit{};
+  });
+}
+
 TEST(QuicSourceShare, MultipleFullSourcesAllowANewSourceAcrossServers) {
   run_raw_quic_test([](RawQuicTestRunner& t) -> td::actor::Task<td::Unit> {
     auto budget = std::make_shared<tos::quic::QuicInboundStreamBudget>(4, 1 << 20, 2, 1 << 20);

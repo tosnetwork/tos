@@ -24,6 +24,7 @@
 #include "tos/tos-tl.hpp"
 #include "validator/full-node.h"
 
+#include "download-deadline.h"
 #include "download-proof.hpp"
 
 namespace tos {
@@ -148,6 +149,11 @@ void DownloadProof::got_download_token(std::unique_ptr<ActionToken> token) {
 
 void DownloadProof::got_node_to_download(adnl::AdnlNodeIdShort node) {
   download_from_ = node;
+  auto deadline = download_query_deadline(timeout_, 1.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
+    return;
+  }
   VLOG(FULL_NODE_DEBUG) << "downloading proof for " << block_id_;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) mutable {
@@ -169,11 +175,11 @@ void DownloadProof::got_node_to_download(adnl::AdnlNodeIdShort node) {
 
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query, download_from_, local_id_, overlay_id_,
-                            "get_prepare", std::move(P), td::Timestamp::in(1.0), std::move(query));
+                            "get_prepare", std::move(P), deadline.ok(), std::move(query));
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_prepare",
-                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
-                            td::Timestamp::in(1.0), std::move(P));
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)), deadline.ok(),
+                            std::move(P));
   }
 }
 
@@ -183,6 +189,11 @@ void DownloadProof::got_block_proof_description(td::BufferSlice proof_descriptio
   auto F = fetch_tl_object<tos_api::tosNode_PreparedProof>(std::move(proof_description), true);
   if (F.is_error()) {
     abort_query(F.move_as_error());
+    return;
+  }
+  auto deadline = download_query_deadline(timeout_, 3.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
     return;
   }
 
@@ -207,12 +218,12 @@ void DownloadProof::got_block_proof_description(td::BufferSlice proof_descriptio
             }
             if (client_.empty()) {
               td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_,
-                                      overlay_id_, "download block proof", std::move(P), td::Timestamp::in(3.0),
+                                      overlay_id_, "download block proof", std::move(P), deadline.ok(),
                                       std::move(query), FullNode::max_proof_size(), rldp_);
             } else {
               td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_prepare",
                                       create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
-                                      td::Timestamp::in(3.0), std::move(P));
+                                      deadline.ok(), std::move(P));
             }
           },
           [&](tos_api::tosNode_preparedProofLink &obj) {
@@ -238,12 +249,12 @@ void DownloadProof::got_block_proof_description(td::BufferSlice proof_descriptio
             }
             if (client_.empty()) {
               td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_,
-                                      overlay_id_, "download block proof link", std::move(P), td::Timestamp::in(3.0),
+                                      overlay_id_, "download block proof link", std::move(P), deadline.ok(),
                                       std::move(query), FullNode::max_proof_size(), rldp_);
             } else {
               td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "download block proof link",
                                       create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
-                                      td::Timestamp::in(3.0), std::move(P));
+                                      deadline.ok(), std::move(P));
             }
           },
           [&](tos_api::tosNode_preparedProofEmpty &obj) {

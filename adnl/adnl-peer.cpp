@@ -648,6 +648,10 @@ void AdnlPeerPairImpl::process_message(const adnlmessage::AdnlMessageQuery &mess
       }
     }
   });
+  // An answer's delivery deadline is not used here: the answer is one message,
+  // sent once and never retransmitted, and while it waits for a connection it
+  // sits in the outbound queue, which is bounded separately and drops entries
+  // older than message_in_queue_ttl_ (10 s).
   td::actor::send_closure(local_actor_, &AdnlLocalId::deliver_query, peer_id_short_, message.data(), std::move(P));
 }
 

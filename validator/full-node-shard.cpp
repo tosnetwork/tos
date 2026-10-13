@@ -31,6 +31,7 @@
 #include "net/download-proof.hpp"
 #include "net/download-state.hpp"
 #include "net/get-next-key-blocks.hpp"
+#include "net/startup-probe.hpp"
 #include "td/utils/JsonBuilder.h"
 #include "td/utils/Random.h"
 #include "td/utils/SharedSlice.h"
@@ -97,6 +98,13 @@ void FullNodeShardImpl::create_overlay() {
     }
     void receive_query(adnl::AdnlNodeIdShort src, overlay::OverlayIdShort overlay_id, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
+      td::actor::send_closure(node_, &FullNodeShardImpl::receive_query, src, std::move(data),
+                              adnl::ignore_answer_metadata(std::move(promise)));
+    }
+    // The shard's answers to capacity refusals carry a short delivery
+    // deadline, so it takes the answer promise that can carry it.
+    void receive_query_ex(adnl::AdnlNodeIdShort src, overlay::OverlayIdShort overlay_id, td::BufferSlice data,
+                          td::Promise<adnl::AdnlQueryAnswer> promise) override {
       td::actor::send_closure(node_, &FullNodeShardImpl::receive_query, src, std::move(data), std::move(promise));
     }
     void receive_broadcast(PublicKeyHash src, overlay::OverlayIdShort overlay_id, td::BufferSlice data) override {
@@ -728,7 +736,7 @@ void FullNodeShardImpl::process_query(adnl::AdnlNodeIdShort src, tos_api::tosNod
 }
 
 void FullNodeShardImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query,
-                                      td::Promise<td::BufferSlice> promise) {
+                                      td::Promise<adnl::AdnlQueryAnswer> promise) {
   if (!active_) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_message, src, adnl_id_, overlay_id_,
                             create_serialize_tl_object<tos_api::tosNode_forgetPeer>());
@@ -737,14 +745,17 @@ void FullNodeShardImpl::receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice
   }
   // Admission parses the query, charges it to its source and to this shard
   // (malformed queries included, priced before any lookup), and refuses it
-  // before anything is dispatched.
-  auto admitted = admission_.admit(src, std::move(query));
-  if (admitted.is_error()) {
-    promise.set_error(admitted.move_as_error());
+  // before anything is dispatched. A refusal for capacity is answered with
+  // the query type's empty reply where one exists and the refusal-answer
+  // budget allows, so the requester can ask again instead of waiting out its
+  // timeout; that answer carries its own short delivery deadline. Admitted
+  // queries are answered by the handlers with plain data.
+  auto fun_ptr = admission_.admit_or_answer(src, std::move(query), promise);
+  if (!fun_ptr) {
     return;
   }
-  auto fun_ptr = admitted.move_as_ok();
-  tos_api::downcast_call(*fun_ptr.get(), [&](auto &obj) { this->process_query(src, obj, std::move(promise)); });
+  auto plain = adnl::drop_answer_metadata(std::move(promise));
+  tos_api::downcast_call(*fun_ptr.get(), [&](auto &obj) { this->process_query(src, obj, std::move(plain)); });
 }
 
 void FullNodeShardImpl::receive_message(adnl::AdnlNodeIdShort src, td::BufferSlice data) {
@@ -1130,6 +1141,44 @@ void FullNodeShardImpl::download_archive(BlockSeqno masterchain_seqno, ShardIdFu
   td::actor::create_actor<DownloadArchiveSlice>(
       "archive", masterchain_seqno, shard_prefix, std::move(tmp_dir), adnl_id_, overlay_id_, b.adnl_id, timeout,
       validator_manager_, rldp2_, overlays_, adnl_, client_, create_neighbour_promise(b, std::move(promise)))
+      .release();
+}
+
+void FullNodeShardImpl::probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                                     td::Promise<startup_catchup::RoundResult> promise) {
+  if (!shard_.is_masterchain()) {
+    promise.set_error(td::Status::Error(ErrorCode::error, "successor probes go to the masterchain overlay"));
+    return;
+  }
+  // Distinct peers of this overlay, one probe actor each.
+  class Transport : public StartupDiscoveryRound::Transport {
+   public:
+    Transport(adnl::AdnlNodeIdShort local_id, overlay::OverlayIdShort overlay_id,
+              td::actor::ActorId<ValidatorManagerInterface> manager, td::actor::ActorId<adnl::AdnlSenderInterface> rldp,
+              td::actor::ActorId<overlay::Overlays> overlays)
+        : local_id_(local_id), overlay_id_(overlay_id), manager_(manager), rldp_(rldp), overlays_(overlays) {
+    }
+    void get_peers(td::uint32 count, td::Promise<std::vector<adnl::AdnlNodeIdShort>> promise) override {
+      td::actor::send_closure(overlays_, &overlay::Overlays::get_overlay_random_peers, local_id_, overlay_id_, count,
+                              std::move(promise));
+    }
+    void probe(adnl::AdnlNodeIdShort peer, BlockIdExt prev, td::Timestamp deadline,
+               td::Promise<startup_catchup::ProbeAnswer> promise) override {
+      td::actor::create_actor<ProbeNextMasterchainBlock>("startupprobe", local_id_, overlay_id_, prev, peer, deadline,
+                                                         manager_, rldp_, overlays_, std::move(promise))
+          .release();
+    }
+
+   private:
+    adnl::AdnlNodeIdShort local_id_;
+    overlay::OverlayIdShort overlay_id_;
+    td::actor::ActorId<ValidatorManagerInterface> manager_;
+    td::actor::ActorId<adnl::AdnlSenderInterface> rldp_;
+    td::actor::ActorId<overlay::Overlays> overlays_;
+  };
+  td::actor::create_actor<StartupDiscoveryRound>(
+      "startupdiscovery", prev, deadline, probe_budget,
+      std::make_unique<Transport>(adnl_id_, overlay_id_, validator_manager_, rldp2_, overlays_), std::move(promise))
       .release();
 }
 
@@ -1590,7 +1639,8 @@ void FullNodeShardImpl::get_stats_extra(td::Promise<std::string> promise) {
 
 FullNodeShardImpl::FullNodeShardImpl(
     ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-    FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter, td::actor::ActorId<keyring::Keyring> keyring,
+    FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter,
+    std::shared_ptr<RefusalAnswerBudget> refusal_answers, td::actor::ActorId<keyring::Keyring> keyring,
     td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
     td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
     td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client,
@@ -1610,20 +1660,21 @@ FullNodeShardImpl::FullNodeShardImpl(
     , active_(active)
     , enable_plumtree_broadcast_(enable_plumtree_broadcast)
     , opts_(opts)
-    , admission_(std::move(limiter), shard) {
+    , admission_(std::move(limiter), shard, std::move(refusal_answers)) {
 }
 
 td::actor::ActorOwn<FullNodeShard> FullNodeShard::create(
     ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-    FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter, td::actor::ActorId<keyring::Keyring> keyring,
+    FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter,
+    std::shared_ptr<RefusalAnswerBudget> refusal_answers, td::actor::ActorId<keyring::Keyring> keyring,
     td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
     td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
     td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client,
     td::actor::ActorId<FullNode> full_node, bool active, bool enable_plumtree_broadcast) {
-  return td::actor::create_actor<FullNodeShardImpl>(PSTRING() << "tosnode" << shard.to_str(), shard, local_id, adnl_id,
-                                                    zero_state_file_hash, opts, std::move(limiter), keyring, adnl,
-                                                    rldp2, quic, overlays, validator_manager, client, full_node, active,
-                                                    enable_plumtree_broadcast);
+  return td::actor::create_actor<FullNodeShardImpl>(
+      PSTRING() << "tosnode" << shard.to_str(), shard, local_id, adnl_id, zero_state_file_hash, opts,
+      std::move(limiter), std::move(refusal_answers), keyring, adnl, rldp2, quic, overlays, validator_manager, client,
+      full_node, active, enable_plumtree_broadcast);
 }
 
 }  // namespace fullnode

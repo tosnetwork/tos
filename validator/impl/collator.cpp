@@ -1095,7 +1095,7 @@ void Collator::got_neighbor_msg_queue(unsigned i, Ref<OutMsgQueueProof> res) {
   }
   Ref<MessageQueue> outq_descr = outq_descr_res.move_as_ok();
   block::McShardDescr& descr = neighbors_.at(i);
-  LOG(WARNING) << "obtained outbound queue for neighbor #" << i << "(" << descr.shard().to_str() << ")";
+  LOG(DEBUG) << "obtained outbound queue for neighbor #" << i << "(" << descr.shard().to_str() << ")";
   if (outq_descr->get_block_id() != descr.blk_) {
     LOG(DEBUG) << "outq_descr->id = " << outq_descr->get_block_id().to_str() << " ; descr.id = " << descr.blk_.to_str();
     fatal_error(
