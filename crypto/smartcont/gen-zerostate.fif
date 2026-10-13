@@ -242,16 +242,21 @@ def? quantum-admission-candidate {
 // noncritical parameter 0. Reserved flags are zero, protocol version is 2,
 // QUIC is enabled, and each leader owns four slots. Noncritical parameter 1 is
 // first_block_timeout: 700 ms, the value mainnet-scale networks use, instead
-// of the 1000 ms node default.
+// of the 1000 ms node default. Noncritical parameter 13 is min_block_interval:
+// 300 ms, set explicitly as mainnet-scale networks do, instead of the 0 ms
+// node default: a validator does not validate a non-empty candidate earlier
+// than 300 ms after its parent's generation time.
 dictnew
 <b 400 32 u, b> <s 0 rot 8 udict! drop
 <b 700 32 u, b> <s 1 rot 8 udict! drop
 <b 250 32 u, b> <s 10 rot 8 udict! drop
+<b 300 32 u, b> <s 13 rot 8 udict! drop
 <b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
 dictnew
 <b 400 32 u, b> <s 0 rot 8 udict! drop
 <b 700 32 u, b> <s 1 rot 8 udict! drop
 <b 250 32 u, b> <s 10 rot 8 udict! drop
+<b 300 32 u, b> <s 13 rot 8 udict! drop
 <b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
 config.new_consensus_params_all!
 

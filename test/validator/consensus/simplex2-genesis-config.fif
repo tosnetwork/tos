@@ -9,7 +9,8 @@ dictnew
 <b 400 32 u, b> <s 0 rot 8 udict! drop
 <b 700 32 u, b> <s 1 rot 8 udict! drop
 <b 250 32 u, b> <s 10 rot 8 udict! drop
+<b 300 32 u, b> <s 13 rot 8 udict! drop
 <b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
 
-hashu 0x005EDCE2D137CB702EF9B554711E4DB5EF7B4862D9E6B95DEB48E3BD1DBD24C7
+hashu 0x131A33C486174558385E855E497FCD8039019F82E43BE9DB953087FFF6C03457
 = not abort"unexpected Simplex v2 genesis cell hash"

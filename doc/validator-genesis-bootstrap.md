@@ -48,7 +48,7 @@ existing Elector process.
 | ConfigParam 34 descriptor | `validator_pq_addr#b3` | PQ-only bootstrap consensus identities |
 | PQ algorithm ID | 1 (ML-DSA-44) | 1,312-byte consensus public keys |
 | ConfigParam 12 basechain | `min_split` 0, `max_split` 2 | One basechain shard at genesis; load may split it into at most four |
-| ConfigParam 30 | Simplex version 2, QUIC enabled, 400 ms target rate, 700 ms first-block timeout | Consensus protocol; distinct from ConfigParam 8 |
+| ConfigParam 30 | Simplex version 2, QUIC enabled, 400 ms target rate, 700 ms first-block timeout, 300 ms minimum block interval | Consensus protocol; distinct from ConfigParam 8 |
 | ConfigParam 47 | Compiled controller v1 code hash | Admission for subsequent controller-based elections |
 
 ConfigParams 8 and 47 are mandatory and critical. Changing a VM version is not
