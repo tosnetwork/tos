@@ -87,7 +87,21 @@ struct Owner {
   // Runs inside the harness actor right after the inventory's write was issued.
   std::function<void(Harness&)> after_inventory_write;
   BlockIdExt retirement = checkpoint(100);
+  // Replaces the per-entry metadata lookup of the listing when set.
+  consensus::DirectoryCursor::StatFn stat_fn = nullptr;
 };
+
+// The entry name whose metadata lookup fails, and the errno it fails with.
+std::string g_failing_stat_name;
+int g_failing_stat_errno = 0;
+
+int failing_stat(int dirfd, const char* name, struct stat* st, int flags) {
+  if (g_failing_stat_name == name) {
+    errno = g_failing_stat_errno;
+    return -1;
+  }
+  return ::fstatat(dirfd, name, st, flags);
+}
 
 class Harness : public td::actor::Actor {
  public:
@@ -156,6 +170,9 @@ class Harness : public td::actor::Actor {
   // --- test controls ---
   void run(td::Promise<StartupOrphanSummary> done) {
     done_ = std::move(done);
+    if (owner_.stat_fn != nullptr) {
+      reconcile_.set_stat_for_test(owner_.stat_fn);
+    }
     consensus::begin_startup_orphan_reconcile(this, actor_id(this), root_);
   }
   void destroyed_now(td::Promise<std::set<ValidatorSessionId>> promise) {
@@ -633,6 +650,50 @@ TEST(StartupOrphanReconcile, T37_LargeBacklogProgress) {
     }
     ASSERT_EQ(300u, recorded);
     for (int n = 1000; n < 1300; ++n) {
+      ASSERT_TRUE(s.record(n).has_value());
+    }
+  }
+}
+
+// T38. A failure to read one entry's metadata during the listing. An entry that
+// disappeared (ENOENT) is skipped and the inventory is still complete. Any other error
+// ends the listing as a listing failure: the failing entry is neither classified nor
+// silently ignored, and the summary does not claim a complete inventory. Orphans found
+// before the failure are recorded, and the next startup without the failure records the
+// rest.
+TEST(StartupOrphanReconcile, T38_EntryMetadataFailure) {
+  for (int err : {ENOENT, EIO}) {
+    Root root;
+    root.make(30, kBase, 1);
+    root.make(31, kBase, 1);
+    root.make(32, kBase, 1);
+    Owner owner;
+    owner.current_cc = {{kBase, 5}};
+    owner.stat_fn = &failing_stat;
+    g_failing_stat_name = dir_name(31, kBase, 1);
+    g_failing_stat_errno = err;
+    Session s(root.path);
+    s.start(owner);
+    auto summary = s.reconcile();
+    ASSERT_TRUE(!s.record(31).has_value());
+    if (err == ENOENT) {
+      ASSERT_TRUE(!summary.listing_failed);
+      ASSERT_EQ(2u, summary.directories);
+      ASSERT_EQ(2u, summary.recorded);
+      ASSERT_TRUE(s.record(30).has_value());
+      ASSERT_TRUE(s.record(32).has_value());
+    } else {
+      ASSERT_TRUE(summary.listing_failed);
+      ASSERT_TRUE(summary.directories < 3u);
+      ASSERT_EQ(summary.directories, summary.recorded);
+    }
+    // The next startup, without the failure, completes the inventory.
+    g_failing_stat_name.clear();
+    owner.destroyed = s.durable_destroyed();
+    s.start(owner);
+    auto again = s.reconcile();
+    ASSERT_TRUE(!again.listing_failed);
+    for (int n : {30, 31, 32}) {
       ASSERT_TRUE(s.record(n).has_value());
     }
   }

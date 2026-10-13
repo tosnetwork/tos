@@ -41,17 +41,20 @@ class DirectoryCursor {
     std::string name;
     bool is_directory = false;
   };
+  // The metadata lookup of an entry; fstatat(2) unless a test substitutes it.
+  using StatFn = int (*)(int dirfd, const char* name, struct stat* st, int flags);
 
   DirectoryCursor() = default;
   DirectoryCursor(const DirectoryCursor&) = delete;
   DirectoryCursor& operator=(const DirectoryCursor&) = delete;
-  DirectoryCursor(DirectoryCursor&& other) noexcept : dir_(other.dir_) {
+  DirectoryCursor(DirectoryCursor&& other) noexcept : dir_(other.dir_), stat_(other.stat_) {
     other.dir_ = nullptr;
   }
   DirectoryCursor& operator=(DirectoryCursor&& other) noexcept {
     if (this != &other) {
       close();
       dir_ = other.dir_;
+      stat_ = other.stat_;
       other.dir_ = nullptr;
     }
     return *this;
@@ -61,8 +64,9 @@ class DirectoryCursor {
   }
 
   // Opens `path`. A missing directory is an empty listing, not an error.
-  static td::Result<DirectoryCursor> open(const std::string& path) {
+  static td::Result<DirectoryCursor> open(const std::string& path, StatFn stat_fn = &::fstatat) {
     DirectoryCursor cursor;
+    cursor.stat_ = stat_fn;
     cursor.dir_ = ::opendir(path.c_str());
     if (cursor.dir_ == nullptr) {
       int err = errno;
@@ -74,7 +78,10 @@ class DirectoryCursor {
     return cursor;
   }
 
-  // The next entry, nothing at the end of the listing, or an error.
+  // The next entry, nothing at the end of the listing, or an error. An entry that
+  // disappeared between the listing and its metadata lookup is skipped; any other
+  // failure to read an entry's metadata is a listing failure, because the entry can
+  // be neither classified nor ignored.
   td::Result<std::optional<Entry>> next() {
     if (dir_ == nullptr) {
       return std::optional<Entry>{};
@@ -95,11 +102,14 @@ class DirectoryCursor {
         continue;
       }
       struct stat st;
-      bool is_directory = false;
-      if (::fstatat(::dirfd(dir_), ent->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
-        is_directory = S_ISDIR(st.st_mode);
+      if (stat_(::dirfd(dir_), ent->d_name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+        int err = errno;
+        if (err == ENOENT) {
+          continue;
+        }
+        return td::Status::Error(PSLICE() << "cannot read the metadata of " << name << ": " << std::strerror(err));
       }
-      return std::optional<Entry>{Entry{std::move(name), is_directory}};
+      return std::optional<Entry>{Entry{std::move(name), S_ISDIR(st.st_mode)}};
     }
   }
 
@@ -116,6 +126,7 @@ class DirectoryCursor {
   }
 
   DIR* dir_ = nullptr;
+  StatFn stat_ = &::fstatat;
 };
 
 // Whether `path` is a real directory (not a symlink to one).

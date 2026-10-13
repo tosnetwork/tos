@@ -32,13 +32,17 @@ Scenarios:
       than one validator run (a lone validator has no quorum), each one's head is
       read while it runs alone, and the four full block ids must be equal. After
       the restart: a masterchain block beyond the highest stopped tip within 5 min
-      of the last start; every node's mode ends NoVerifiedSuccessor or is not
-      entered; no node imports an archive.
+      of the last start; every node enters the mode and ends NoVerifiedSuccessor;
+      no node imports an archive. A node that did not enter is a failure, unless
+      its log names one of the evaluated entry refusals: then the scenario was not
+      set up, which is INCONCLUSIVE.
   L3  one validator stopped, the others 2 min later; 10 min down; all started. The
       others' stopped tips are established as in L2 and must be equal and at
       least two blocks beyond the lagging node's last head. After the restart: a
       masterchain block beyond the highest stopped tip within 5 min; the lagging
-      node ends Fresh or NoVerifiedSuccessor, never Abandoned.
+      node enters the mode and ends Fresh or NoVerifiedSuccessor, never Abandoned;
+      the others enter it and end NoVerifiedSuccessor. Not entering is judged as
+      in L2.
   L4  L1 with a downtime that crosses a catchain rotation and a validator-set
       (key block) rotation. Needs a short-election configuration; INCONCLUSIVE
       when no key block was produced while the node was down.
@@ -51,7 +55,8 @@ Scenarios:
       restart, the STATUS from the last process, and no failed CHECK in any log.
   L7  a running validator frozen for 10 min (SIGSTOP; unprivileged stand-in for
       blocked traffic) and resumed: no catch-up mode entry and no archive import
-      after the resume.
+      after the resume. The log mark is taken while the process is still stopped,
+      so a line written at the first instant after the resume is counted.
 
 `--self-test` checks the parsers and the evaluation against fixed samples, with an
 independent red control for each kind of missing or invalid evidence, and exits.
@@ -86,6 +91,21 @@ UNITS = {"ns": 1e-9, "us": 1e-6, "ms": 1e-3, "s": 1.0, "h": 3600.0, "d": 86400.0
 ENTER = "startup catch-up: entering"
 ENDED_RE = re.compile(r"startup catch-up ended: (?P<reason>\w+)")
 NOT_ENTERED = "startup catch-up not entered"
+REFUSAL_RE = re.compile(
+    r"startup catch-up not entered: (?P<refusal>[^(]+?) \(sync reason: (?P<reason>[^)]*)\)"
+)
+# The refusals the entry decision evaluates, exactly as the engine logs them.
+ENTRY_REFUSALS = frozenset(
+    {
+        "mandatory sync reason",
+        "not stale",
+        "no validator keys held",
+        "validator or observer groups already exist",
+        "operator import files present",
+        "next block is a configured hardfork",
+        "already decided in this process",
+    }
+)
 ATTEMPT_RE = re.compile(r"startup catch-up attempt (?P<n>\d+):")
 ARCHIVE_IMPORT = "Importing archive for masterchain seqno"
 FAILED_CHECK = re.compile(r"Check `.*` failed")
@@ -248,6 +268,47 @@ def overall(criteria: dict) -> str:
     if INCONCLUSIVE in statuses:
         return INCONCLUSIVE
     return PASS
+
+
+def mode_from_text(text: str) -> dict:
+    """What one node's log since a mark says about the mode."""
+    return {
+        "entered": text.count(ENTER),
+        "not_entered": text.count(NOT_ENTERED),
+        "refusals": [m["refusal"] for m in REFUSAL_RE.finditer(text)],
+        "ended": [m["reason"] for m in ENDED_RE.finditer(text)],
+        "attempts": len(ATTEMPT_RE.findall(text)),
+        "archive_imports": text.count(ARCHIVE_IMPORT),
+        "failed_checks": len(FAILED_CHECK.findall(text)),
+    }
+
+
+def stopped_network_entry(mode: dict, allowed_endings: tuple[str, ...]) -> dict:
+    """A node restarted after the whole network stopped long enough to make it stale.
+
+    It must enter the mode and end with one of `allowed_endings`. Not entering at all
+    is a failure, unless the log names one of the evaluated entry refusals: then the
+    run did not set up the scenario it meant to test, which is INCONCLUSIVE, never PASS.
+    """
+    if mode["entered"] >= 1:
+        last = mode["ended"][-1:]
+        ok = len(last) == 1 and last[0] in allowed_endings and "Abandoned" not in mode["ended"]
+        return criterion(PASS if ok else FAIL, mode)
+    refusals = [r for r in mode["refusals"] if r in ENTRY_REFUSALS]
+    if refusals:
+        return criterion(INCONCLUSIVE, {"entry refused": refusals, "mode": mode})
+    return criterion(FAIL, mode)
+
+
+def resume_observed(mark, resume):
+    """Marks a stopped process's log, then resumes it.
+
+    The mark is taken while the process cannot write, so every line it writes once
+    resumed, including one written at the very first instant, comes after the mark.
+    """
+    taken = mark()
+    resume()
+    return taken
 
 
 def evaluate_restart(samples: list[dict], node: int, peers: list[int], window: float) -> dict:
@@ -493,6 +554,49 @@ def self_test() -> int:
     assert not sustained({1: 101, 2: 101, 3: 101, 4: 101}, 100)
     assert not sustained({1: 130, 2: 130, 3: 100, 4: 130}, 100)
     assert not sustained({1: 130, 2: 130, 3: None, 4: 130}, 100)
+
+    # Entry after a stop of the whole network (L2, L3), from the engine's own lines.
+    nvs = ("NoVerifiedSuccessor",)
+    entered = mode_from_text(
+        "startup catch-up: entering for a stale validator; ...\n"
+        "startup catch-up ended: NoVerifiedSuccessor; ...\n"
+    )
+    assert stopped_network_entry(entered, nvs)["status"] == PASS
+    refused = mode_from_text("startup catch-up not entered: not stale (sync reason: fresh)\n")
+    assert refused["refusals"] == ["not stale"], refused
+    assert stopped_network_entry(refused, nvs)["status"] == INCONCLUSIVE
+    for name in sorted(ENTRY_REFUSALS):
+        line = f"startup catch-up not entered: {name} (sync reason: stale validator)\n"
+        assert stopped_network_entry(mode_from_text(line), nvs)["status"] == INCONCLUSIVE, name
+    # Control: not entering with no validated refusal is not a pass.
+    assert stopped_network_entry(mode_from_text(""), nvs)["status"] == FAIL
+    assert stopped_network_entry(mode_from_text("STATUS: unrelated\n"), nvs)["status"] == FAIL
+    # Control: a refusal the entry decision does not evaluate is not validated.
+    unknown = mode_from_text("startup catch-up not entered: unknown (sync reason: fresh)\n")
+    assert stopped_network_entry(unknown, nvs)["status"] == FAIL
+    # Control: entered, but the wrong ending, no ending, or Abandoned.
+    fresh = mode_from_text("startup catch-up: entering\nstartup catch-up ended: Fresh\n")
+    assert stopped_network_entry(fresh, nvs)["status"] == FAIL
+    assert stopped_network_entry(fresh, ("Fresh", "NoVerifiedSuccessor"))["status"] == PASS
+    assert (
+        stopped_network_entry(mode_from_text("startup catch-up: entering\n"), nvs)["status"] == FAIL
+    )
+    abandoned = mode_from_text("startup catch-up: entering\nstartup catch-up ended: Abandoned\n")
+    assert stopped_network_entry(abandoned, ("Fresh", "NoVerifiedSuccessor"))["status"] == FAIL
+
+    # Control: a line the process writes at the first instant of its resume is counted.
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "node.log.thread1.log"
+        log.write_text(status_line(1.0))
+        follower = LogFollower(Path(tmp))
+
+        def resume() -> None:
+            with open(log, "a") as f:
+                f.write("startup catch-up: entering\nImporting archive for masterchain seqno 7\n")
+
+        mark = resume_observed(follower.mark, resume)
+        after = mode_from_text(follower.text_since(mark))
+        assert after["entered"] == 1 and after["archive_imports"] == 1, after
     print("startup-catchup-loopback self-test: OK")
     return 0
 
@@ -707,16 +811,7 @@ class Network:
         return {p.name for p in root.iterdir()} if root.is_dir() else set()
 
     def mode(self, node: int, mark: dict | None = None) -> dict:
-        text = self.text_since(node, mark)
-        ended = [m["reason"] for m in ENDED_RE.finditer(text)]
-        return {
-            "entered": text.count(ENTER),
-            "not_entered": text.count(NOT_ENTERED),
-            "ended": ended,
-            "attempts": len(ATTEMPT_RE.findall(text)),
-            "archive_imports": text.count(ARCHIVE_IMPORT),
-            "failed_checks": len(FAILED_CHECK.findall(text)),
-        }
+        return mode_from_text(self.text_since(node, mark))
 
     def freeze_and_read_tips(self, nodes: list[int]) -> dict[int, dict] | None:
         """Each node's head with production halted: all frozen, then each run alone.
@@ -882,10 +977,12 @@ def scenario_l2(net: Network, report: Report) -> None:
     check_resumed(net, report, top, last_start)
     for n in NODES:
         mode = net.mode(n, marks[n])
-        report.check(
-            f"node {n} mode ends NoVerifiedSuccessor or is not entered",
-            mode["entered"] == 0 or mode["ended"][-1:] == ["NoVerifiedSuccessor"],
-            mode,
+        report.merge(
+            {
+                f"node {n} enters the mode and ends NoVerifiedSuccessor": stopped_network_entry(
+                    mode, ("NoVerifiedSuccessor",)
+                )
+            }
         )
         report.check(
             f"node {n} imports no archive after the restart", mode["archive_imports"] == 0, mode
@@ -915,13 +1012,23 @@ def scenario_l3(net: Network, report: Report) -> None:
     marks = {n: net.restart(n) for n in NODES}
     last_start = max(m["t"] for m in marks.values())
     check_resumed(net, report, top, last_start)
-    mode = net.mode(1, marks[1])
-    report.check(
-        "the lagging node ends Fresh or NoVerifiedSuccessor, never Abandoned",
-        "Abandoned" not in mode["ended"]
-        and (mode["entered"] == 0 or mode["ended"][-1:] in (["Fresh"], ["NoVerifiedSuccessor"])),
-        mode,
+    report.merge(
+        {
+            "the lagging node enters the mode and ends Fresh or NoVerifiedSuccessor, never "
+            "Abandoned": stopped_network_entry(
+                net.mode(1, marks[1]), ("Fresh", "NoVerifiedSuccessor")
+            )
+        }
     )
+    for n in (2, 3, 4):
+        report.merge(
+            {
+                f"node {n}, stopped at the higher tip, enters the mode and ends "
+                "NoVerifiedSuccessor": stopped_network_entry(
+                    net.mode(n, marks[n]), ("NoVerifiedSuccessor",)
+                )
+            }
+        )
 
 
 def scenario_l4(net: Network, report: Report) -> None:
@@ -999,8 +1106,7 @@ def scenario_l7(net: Network, report: Report) -> None:
         return
     net.send_signal(node, signal.SIGSTOP)
     time.sleep(600)
-    net.send_signal(node, signal.SIGCONT)
-    mark = net.mark(node)
+    mark = resume_observed(lambda: net.mark(node), lambda: net.send_signal(node, signal.SIGCONT))
     time.sleep(600)
     if not net.alive(node) or net.pid(node) != mark["pid"]:
         report.set("the same process ran through the freeze", FAIL, None)

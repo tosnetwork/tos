@@ -153,7 +153,7 @@ class StartupOrphanReconcile {
     summary_ = {};
     records_.clear();
     pending_reads_ = 0;
-    auto cursor = DirectoryCursor::open(consensus_db_root(db_root_));
+    auto cursor = DirectoryCursor::open(consensus_db_root(db_root_), stat_fn_);
     if (cursor.is_error()) {
       return cursor.move_as_error();
     }
@@ -218,8 +218,14 @@ class StartupOrphanReconcile {
     active_ = false;
     records_.clear();
   }
+  // Substitutes the per-entry metadata lookup of later listings, so a test can make
+  // it fail.
+  void set_stat_for_test(DirectoryCursor::StatFn stat_fn) {
+    stat_fn_ = stat_fn;
+  }
 
  private:
+  DirectoryCursor::StatFn stat_fn_ = &::fstatat;
   std::string db_root_;
   std::size_t record_limit_ = startup_catchup::kMaxStartupOrphanRecords;
   td::uint64 token_ = 0;
