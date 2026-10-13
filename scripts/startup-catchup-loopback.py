@@ -31,8 +31,9 @@ Scenarios:
       restart shard_client_ago < 60 s; RSS < 1.5 x the median of the peers'
       trailing 300 s RSS peaks throughout (the peers' RSS cycles by about a factor
       of two every few minutes, so an instantaneous peer reading is not a stable
-      denominator; their RSS is also sampled during the last 300 s of the downtime
-      so the first samples have a full window); at 10 min live WaitBlockState <
+      denominator; their RSS is also recorded by a background thread through the
+      downtime and the restart, so the first samples have a full window); at 10
+      min live WaitBlockState <
       5000 and BridgeImpl equal to the peers', read from the first sample started
       at 10 min, which must have ended by 10 min 30 s; while the mode is active no
       BridgeImpl and no new consensus directory (against the directories present
@@ -951,6 +952,72 @@ def self_test() -> int:
     return 0
 
 
+class RssRecorder:
+    """Records every node's RSS on a SAMPLE_INTERVAL grid in its own thread.
+
+    The main thread blocks in RPCs, console calls and restart waits; this keeps
+    recording through all of them, so the peers' RSS before a restart has no hole
+    the runner made itself. A slot is only a schedule: each row carries the time
+    its reading completed, and a slot missed while a read was slow is skipped,
+    never back-filled. A reading that fails is recorded as missing (None), with
+    the error kept. Rows older than `keep` seconds are dropped.
+    """
+
+    def __init__(
+        self,
+        read,
+        interval: float = SAMPLE_INTERVAL,
+        keep: float = RSS_WINDOW + MAX_GAP + SAMPLE_INTERVAL,
+        wait=None,
+    ) -> None:
+        self.read = read
+        self.interval = interval
+        self.keep = keep
+        self.stopping = threading.Event()
+        # Returns True when the recorder must stop; a test may drive it by hand.
+        self.wait = wait or self.stopping.wait
+        self.lock = threading.Lock()
+        self.rows: list[dict] = []
+        self.errors: list[str] = []
+        self.thread: threading.Thread | None = None
+
+    def run(self) -> None:
+        start = CLOCK.monotonic()
+        slot = 0
+        while True:
+            if self.wait(max(0.0, start + slot * self.interval - CLOCK.monotonic())):
+                return
+            try:
+                rss = self.read()
+                error = None
+            except Exception as exc:  # noqa: BLE001 - a failed reading is a missing one
+                rss = {}
+                error = repr(exc)
+            now = CLOCK.monotonic()
+            row = {"mono": now, "rss": {n: rss.get(n) for n in NODES}}
+            with self.lock:
+                self.rows.append(row)
+                while self.rows and self.rows[0]["mono"] < now - self.keep:
+                    self.rows.pop(0)
+                if error is not None:
+                    self.errors.append(error)
+            slot = max(slot + 1, math.ceil((now - start) / self.interval - 1e-9))
+
+    def start(self) -> None:
+        if self.thread is None:
+            self.thread = threading.Thread(target=self.run, name="rss-recorder", daemon=True)
+            self.thread.start()
+
+    def stop(self, timeout: float = 30.0) -> None:
+        self.stopping.set()
+        if self.thread is not None:
+            self.thread.join(timeout)
+
+    def between(self, since: float, until: float) -> list[dict]:
+        with self.lock:
+            return [copy.deepcopy(r) for r in self.rows if since <= r["mono"] <= until]
+
+
 def proc_state(pid: int) -> str | None:
     """The state letter in /proc/<pid>/stat, or nothing when it cannot be read."""
     try:
@@ -1000,6 +1067,18 @@ class Network:
         self.follow_lock = threading.Lock()
         self.follow_stop = threading.Event()
         self.follow_thread = threading.Thread(target=self._follow, daemon=True)
+        self.rss_recorder = RssRecorder(lambda: {n: self.rss_mb(n) for n in NODES})
+
+    def peer_rss_rows(self, node: int, since: float, until: float) -> list[dict]:
+        """The recorder's rows between two monotonic times, without `node`."""
+        rows = self.rss_recorder.between(since, until)
+        for row in rows:
+            row["rss"].pop(node, None)
+        return rows
+
+    def rss_recorder_errors(self) -> list[str]:
+        with self.rss_recorder.lock:
+            return list(self.rss_recorder.errors)
 
     def _follow(self) -> None:
         while not self.follow_stop.wait(1.0):
@@ -1032,6 +1111,7 @@ class Network:
         while CLOCK.wall() < deadline:
             text = (self.work / "rehearsal.log").read_text(errors="replace")
             if "holding the network" in text:
+                self.rss_recorder.start()
                 return
             if self.process.poll() is not None:
                 raise RuntimeError(
@@ -1042,6 +1122,8 @@ class Network:
 
     def close(self) -> None:
         self.follow_stop.set()
+        # Also on a start that failed: stop() is a no-op for a recorder never started.
+        self.rss_recorder.stop()
         if self.process is not None and self.process.poll() is None:
             self.process.send_signal(signal.SIGTERM)
             try:
@@ -1376,39 +1458,22 @@ class Sampler:
         return row
 
 
-def peer_rss_history(net: Network, node: int, seconds: float) -> list[dict]:
-    """The peers' RSS every SAMPLE_INTERVAL for `seconds`, while `node` is down.
+def stop_for_downtime(net: Network, node: int, downtime: float) -> float:
+    """Stops `node` for `downtime` seconds; the monotonic time the downtime ended.
 
-    Each row carries its monotonic time; restart_history() turns it into seconds
-    relative to the restart.
+    The peers' RSS is recorded throughout by the network's RSS recorder, also while
+    the scenario then reads snapshots and waits for the restart.
     """
-    rows = []
-    start = CLOCK.monotonic()
-    slot = 0
-    while slot * SAMPLE_INTERVAL < seconds:
-        CLOCK.sleep(start + slot * SAMPLE_INTERVAL - CLOCK.monotonic())
-        rows.append(
-            {
-                "mono": CLOCK.monotonic(),
-                "rss": {p: net.rss_mb(p) for p in NODES if p != node},
-            }
-        )
-        slot = max(slot + 1, math.ceil((CLOCK.monotonic() - start) / SAMPLE_INTERVAL - 1e-9))
-    CLOCK.sleep(start + seconds - CLOCK.monotonic())
-    return rows
-
-
-def restart_history(rows: list[dict], t0: float) -> list[dict]:
-    return [{"t": round(r["mono"] - t0, 1), "rss": r["rss"]} for r in rows]
-
-
-def stop_and_observe_downtime(net: Network, node: int, downtime: float) -> list[dict]:
-    """Stops `node` for `downtime` seconds, recording the peers' RSS over its last
-    RSS_WINDOW seconds."""
     net.stop(node)
-    observed = min(RSS_WINDOW, downtime)
-    CLOCK.sleep(downtime - observed)
-    return peer_rss_history(net, node, observed)
+    CLOCK.sleep(downtime)
+    return CLOCK.monotonic()
+
+
+def restart_history(net: Network, node: int, mark: dict, until: float) -> list[dict]:
+    """The peers' recorded RSS over the RSS_WINDOW before the restart at `mark`, read
+    up to `until` (monotonic), in seconds relative to the restart."""
+    rows = net.peer_rss_rows(node, mark["mono"] - RSS_WINDOW - MAX_GAP, until)
+    return [{"t": round(r["mono"] - mark["mono"], 1), "rss": r["rss"]} for r in rows]
 
 
 def finish_restart(
@@ -1423,6 +1488,7 @@ def finish_restart(
 ) -> None:
     peers = [n for n in NODES if n != node]
     report.data["rss_history"] = history
+    report.data["rss_recorder_errors"] = net.rss_recorder_errors()
     report.merge(evaluate_restart(samples, node, peers, window, checkpoint, history))
     mode = net.mode(node, mark)
     report.check("no failed CHECK", mode["failed_checks"] == 0, mode["failed_checks"])
@@ -1453,7 +1519,7 @@ def measure_restart(
         sampler.samples,
         window,
         checkpoint,
-        restart_history(history, mark["mono"]),
+        history,
     )
 
 
@@ -1475,12 +1541,14 @@ def scenario_l1(
     if boundary is not None:
         boundary["before"] = net.rotation_snapshot(node)
         boundary["stop_t"] = CLOCK.wall()
-    history = stop_and_observe_downtime(net, node, downtime)
+    downtime_end = stop_for_downtime(net, node, downtime)
     if boundary is not None:
         boundary["after"] = net.rotation_snapshot_from_peer(node)
         boundary["restart_t"] = CLOCK.wall()
     dirs_before = net.consensus_dirs(node)
     mark = net.restart(node)
+    report.data["notes"].append({"restart_after_downtime_s": round(mark["mono"] - downtime_end, 1)})
+    history = restart_history(net, node, mark, mark["mono"])
     measure_restart(net, report, node, mark, dirs_before, history, window, checkpoint)
     mode = net.mode(node, mark)
     report.check(
@@ -1673,9 +1741,13 @@ def scenario_l6(net: Network, report: Report) -> None:
     node = 3
     checkpoint, window = L1_CHECKPOINT, L1_WINDOW
     CLOCK.sleep(600)
-    history = stop_and_observe_downtime(net, node, L1_DOWNTIME)
+    downtime_end = stop_for_downtime(net, node, L1_DOWNTIME)
     dirs_before = net.consensus_dirs(node)
     first = net.restart(node)
+    report.data["notes"].append(
+        {"restart_after_downtime_s": round(first["mono"] - downtime_end, 1)}
+    )
+    history = restart_history(net, node, first, first["mono"])
     sampler = Sampler(net, report, node, dirs_before, first["mono"])
     attempts = 0
     while sampler.wait_for_slot(window):
@@ -1723,7 +1795,7 @@ def scenario_l6(net: Network, report: Report) -> None:
         sampler.samples,
         window,
         checkpoint,
-        restart_history(history, first["mono"]),
+        history,
     )
     first_mode = net.mode(node, first)
     report.check(

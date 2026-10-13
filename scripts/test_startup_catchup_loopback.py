@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -75,6 +76,13 @@ class Behaviour:
     def on_start(self, net: FakeNet, index: int) -> None:
         pass
 
+    restart_latency = 0.0  # seconds restart() takes before the process is up
+    snapshot_latency = 0.0  # seconds a rotation snapshot read takes
+
+    def recorded_rss(self, node: int, now: float) -> float | None:
+        """What the background recorder read for `node` at `now`; None is missing."""
+        return self.rss(node, now)
+
 
 class FakeNet:
     def __init__(self, clock: FakeClock, behaviour: Behaviour) -> None:
@@ -103,13 +111,38 @@ class FakeNet:
         return None
 
     def rotation_snapshot_from_peer(self, node: int) -> None:
+        self.clock.sleep(self.behaviour.snapshot_latency)
         return None
+
+    def peer_rss_rows(self, node: int, since: float, until: float) -> list[dict]:
+        # The background recorder: one reading every SAMPLE_INTERVAL of simulated
+        # time since the network started, whatever the main thread was doing.
+        until = min(until, self.clock.now)
+        step = loop.SAMPLE_INTERVAL
+        rows = []
+        k = max(0, int(-(-since // step)))
+        while k * step <= until:
+            now = k * step
+            rows.append(
+                {
+                    "mono": now,
+                    "rss": {
+                        n: self.behaviour.recorded_rss(n, now) for n in loop.NODES if n != node
+                    },
+                }
+            )
+            k += 1
+        return rows
+
+    def rss_recorder_errors(self) -> list[str]:
+        return []
 
     def stop(self, node: int, sig: int = signal.SIGTERM, timeout: float = 300.0) -> None:
         self.down.add(node)
         self.events.append(("stop", self.clock.now))
 
     def restart(self, node: int) -> dict:
+        self.clock.sleep(self.behaviour.restart_latency)
         self.down.discard(node)
         self.pids[node] += 100
         self.starts.append((self.pids[node], self.clock.now))
@@ -450,11 +483,51 @@ class Scenarios(unittest.TestCase):
     def test_l1_rss_history_is_taken_before_the_restart(self) -> None:
         data, net = run_scenario("L1", Behaviour())
         history = data["rss_history"]
-        self.assertEqual(len(history), int(loop.RSS_WINDOW / loop.SAMPLE_INTERVAL))
-        self.assertEqual(history[0]["t"], -loop.RSS_WINDOW)
-        self.assertEqual(history[-1]["t"], -loop.SAMPLE_INTERVAL)
+        times = [row["t"] for row in history]
+        self.assertTrue(times, history)
+        self.assertLessEqual(times[0], -loop.RSS_WINDOW)
+        self.assertEqual(times[-1], 0.0)
+        self.assertEqual({round(b - a, 1) for a, b in zip(times, times[1:])}, {10.0})
         self.assertTrue(all(NODE not in row["rss"] for row in history))
         self.assertTrue(all(s["t"] >= 0 for s in data["samples"]))
+
+    def rss_status(self, data: dict) -> str:
+        return data["criteria"][loop.RSS_NAME]["status"]
+
+    def test_slow_start_keeps_the_peer_history_continuous(self) -> None:
+        # The restarted process takes 25 s (then 60 s) to come up; the peers' RSS
+        # keeps being recorded meanwhile, so the first windows are complete.
+        for latency in (25.0, 60.0):
+
+            class SlowStart(Behaviour):
+                restart_latency = latency
+
+            data, _ = run_scenario("L1", SlowStart())
+            self.assertEqual(
+                self.rss_status(data), PASS, (latency, data["criteria"][loop.RSS_NAME])
+            )
+            self.assertEqual(loop.overall(data["criteria"]), PASS, latency)
+
+    def test_slow_l4_snapshot_keeps_the_peer_history_continuous(self) -> None:
+        class SlowSnapshot(Behaviour):
+            snapshot_latency = 45.0
+
+        os.environ.pop("CATCHUP_L4_DOWNTIME", None)
+        data, net = run_scenario("L4", SlowSnapshot())
+        self.assertGreaterEqual(net.events[1][1] - net.events[0][1], 3645.0)
+        self.assertEqual(self.rss_status(data), PASS, data["criteria"][loop.RSS_NAME])
+
+    def test_missing_peer_readings_stay_inconclusive(self) -> None:
+        # The recorder read nothing for peer 2 for 60 s shortly before the restart
+        # (at 600 s + 1800 s of simulated time): the criterion is not loosened.
+        class PeerUnreadable(Behaviour):
+            def recorded_rss(self, node, now):
+                if node == 2 and 2300.0 <= now < 2360.0:
+                    return None
+                return super().recorded_rss(node, now)
+
+        data, _ = run_scenario("L1", PeerUnreadable())
+        self.assertEqual(self.rss_status(data), INCONCLUSIVE, data["criteria"][loop.RSS_NAME])
 
     def test_l4_bounds_scale_with_the_downtime(self) -> None:
         # The bridges reach the peers' count once the mode ends at 15 min and the
@@ -562,6 +635,97 @@ def wait_for_state(pid: int, state: str, timeout: float = 10.0) -> None:
             return
         time.sleep(0.02)
     raise AssertionError(f"process {pid} never reached state {state}")
+
+
+class Recorder(unittest.TestCase):
+    def test_grid_skips_missed_slots_and_dates_by_completion(self) -> None:
+        clock = FakeClock()
+        reads = []
+
+        def read():
+            reads.append(clock.now)
+            clock.sleep(25.0 if len(reads) == 3 else 1.0)  # the third read is slow
+            return {n: 1000.0 for n in loop.NODES}
+
+        def wait(seconds):
+            clock.sleep(seconds)
+            return len(reads) >= 6
+
+        saved = loop.CLOCK
+        loop.CLOCK = clock
+        try:
+            recorder = loop.RssRecorder(read, interval=10.0, keep=1000.0, wait=wait)
+            recorder.run()
+        finally:
+            loop.CLOCK = saved
+        # Each row is dated by when its reading completed, not by its slot.
+        self.assertEqual(
+            [r["mono"] for r in recorder.between(0.0, 1e9)], [1.0, 11.0, 45.0, 51.0, 61.0, 71.0]
+        )
+        # The slots at 30 s and 40 s, passed during the slow read, are skipped.
+        self.assertEqual(reads, [0.0, 10.0, 20.0, 50.0, 60.0, 70.0])
+
+    def test_failed_reading_is_missing_and_kept(self) -> None:
+        clock = FakeClock()
+        calls = []
+
+        def read():
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError("proc unreadable")
+            return {n: 1000.0 for n in loop.NODES}
+
+        saved = loop.CLOCK
+        loop.CLOCK = clock
+        try:
+            recorder = loop.RssRecorder(
+                read, interval=10.0, wait=lambda s: clock.sleep(s) or len(calls) >= 3
+            )
+            recorder.run()
+        finally:
+            loop.CLOCK = saved
+        rows = recorder.between(0.0, 1e9)
+        self.assertEqual([r["rss"][1] for r in rows], [1000.0, None, 1000.0])
+        self.assertEqual(len(recorder.errors), 1)
+
+    def test_old_rows_are_dropped(self) -> None:
+        clock = FakeClock()
+        saved = loop.CLOCK
+        loop.CLOCK = clock
+        try:
+            recorder = loop.RssRecorder(
+                lambda: {n: 1.0 for n in loop.NODES},
+                interval=10.0,
+                keep=100.0,
+                wait=lambda s: clock.sleep(s) or clock.now > 1000,
+            )
+            recorder.run()
+        finally:
+            loop.CLOCK = saved
+        rows = recorder.between(0.0, 1e9)
+        self.assertLessEqual(len(rows), 11)
+        self.assertGreaterEqual(rows[0]["mono"], rows[-1]["mono"] - 100.0)
+
+    def test_records_while_the_main_thread_is_blocked(self) -> None:
+        progressed = threading.Event()
+        count = []
+
+        def read():
+            count.append(1)
+            if len(count) >= 3:
+                progressed.set()
+            return {n: 1.0 for n in loop.NODES}
+
+        recorder = loop.RssRecorder(read, interval=0.05)
+        recorder.start()
+        try:
+            # The main thread does nothing but wait here, as it does inside a
+            # restart or an RPC: the readings must come from the recorder's thread.
+            self.assertTrue(progressed.wait(timeout=30.0), "no readings while blocked")
+        finally:
+            recorder.stop()
+        self.assertIsNotNone(recorder.thread)
+        self.assertFalse(recorder.thread.is_alive())
 
 
 class Stop(unittest.TestCase):
