@@ -193,7 +193,7 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     int reads = 0;
     size_t held = 0;
     bool reached = false;
-    bool initial_replay = false;
+    bool replay_held = false;
     BlockIdExt head;
   };
   void checkpoint_status(BlockSeqno gc_next, td::Promise<CheckpointStatus> promise) {
@@ -207,7 +207,7 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     s.reads = reads_;
     s.held = held_writes_.size();
     s.reached = consensus_checkpoint_reached_;
-    s.initial_replay = initial_replay_;
+    s.replay_held = replay_hold_.has_value();
     s.head = last_masterchain_block_id_;
     promise.set_value(std::move(s));
   }
@@ -224,24 +224,35 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     validator_cleanup_timer();
     promise.set_value(td::Unit());
   }
-  // The production replay interval around an injected replay operation that
-  // applies `heads` through the production new_block path, in order. A head
-  // given with `defer` is submitted without waiting for it (a pending head) and
-  // awaited after the next one. The replay operation ignores each head's own
-  // result, so a refusal can stop the process only through the replay interval
-  // itself, not through the replay's result.
+  // The production replay wrapper (run_initial_replay) around an injected replay
+  // operation that applies `heads` through the production new_block path, in
+  // order, and returns the first head's error, as start_up_advance_mc returns
+  // its apply result. A head given with `defer` is submitted without waiting for
+  // it (a pending head) and awaited after the next one. A head given with `hold`
+  // waits, before it is submitted, until release_replay is called.
   struct ReplayStep {
     BlockHandle handle;
     td::Ref<MasterchainState> state;
     bool defer = false;
+    bool hold = false;
   };
   void replay(std::vector<ReplayStep> steps, bool fail_at_end, td::Promise<td::Unit> promise) {
-    finish_with(run_initial_replay(apply_steps(std::move(steps), fail_at_end, true)), std::move(promise))
+    finish_with(run_initial_replay(apply_steps(std::move(steps), fail_at_end)), std::move(promise))
         .start()
         .detach_silent();
   }
   void apply_heads(std::vector<ReplayStep> steps, td::Promise<td::Unit> promise) {
-    finish_with(apply_steps(std::move(steps), false, false), std::move(promise)).start().detach_silent();
+    finish_with(apply_steps(std::move(steps), false), std::move(promise)).start().detach_silent();
+  }
+  void release_replay(td::Promise<td::Unit> promise) {
+    if (!replay_hold_) {
+      promise.set_error(td::Status::Error("the replay is not held"));
+      return;
+    }
+    auto hold = std::move(*replay_hold_);
+    replay_hold_.reset();
+    hold.set_value(td::Unit());
+    promise.set_value(td::Unit());
   }
 
  private:
@@ -250,9 +261,14 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
     promise.set_result(std::move(R));
     co_return td::Unit{};
   }
-  td::actor::Task<> apply_steps(std::vector<ReplayStep> steps, bool fail_at_end, bool ignore_results) {
+  td::actor::Task<> apply_steps(std::vector<ReplayStep> steps, bool fail_at_end) {
     std::optional<td::actor::StartedTask<td::Unit>> deferred;
     for (auto& step : steps) {
+      if (step.hold) {
+        auto [held, release] = td::actor::StartedTask<td::Unit>::make_bridge();
+        replay_hold_.emplace(std::move(release));
+        co_await std::move(held);
+      }
       auto task =
           td::actor::ask(actor_id(this), &ValidatorManager::new_block, step.handle, td::Ref<ShardState>{step.state});
       if (step.defer) {
@@ -260,14 +276,14 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
         continue;
       }
       auto applied = co_await std::move(task).wrap();
-      if (applied.is_error() && !ignore_results) {
+      if (applied.is_error()) {
         co_return applied.move_as_error();
       }
       if (deferred) {
         auto pending = std::move(*deferred);
         deferred.reset();
         auto pending_applied = co_await std::move(pending).wrap();
-        if (pending_applied.is_error() && !ignore_results) {
+        if (pending_applied.is_error()) {
           co_return pending_applied.move_as_error();
         }
       }
@@ -282,6 +298,7 @@ class ConsensusCheckpointDbProbe : public ValidatorManagerImpl {
   int persist_calls_ = 0;
   int reads_ = 0;
   std::vector<td::Promise<td::Unit>> held_writes_;
+  std::optional<td::Promise<td::Unit>> replay_hold_;
 
  public:
   void set_gc(BlockHandle handle, td::Ref<MasterchainState> state, td::Promise<td::Unit> promise) {
@@ -770,6 +787,53 @@ int child_main(const std::string& mode, const std::string& boc, const std::strin
           }
           auto r = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::replay, std::move(steps), false).wrap();
           outcome += PSTRING() << " replay-survived=" << (r.is_ok() ? "ok" : r.error().to_string());
+        } else if (mode == "replay-window-network") {
+          // The replay applies B3 and is then held before its own F4. Meanwhile a
+          // conflicting F4 arrives through another caller of the same new_block
+          // entry point the network path ends in. It must be refused without
+          // stopping the process; the replay's own F4 then stops it.
+          auto [h3, s3] = co_await load_block(probe, chain["B3"].id);
+          auto [hf4, sf4] = co_await load_block(probe, chain["F4"].id);
+          auto replay = td::actor::ask(
+              probe, &ConsensusCheckpointDbProbe::replay,
+              std::vector<ConsensusCheckpointDbProbe::ReplayStep>{{h3, s3, false, false}, {hf4, sf4, false, true}},
+              false);
+          bool held = co_await wait_until(
+              db, [&]() -> td::actor::Task<bool> { co_return (co_await checkpoint_status(probe)).replay_held; }, 10.0);
+          auto network = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::apply_heads,
+                                                 std::vector<ConsensusCheckpointDbProbe::ReplayStep>{{hf4, sf4}})
+                             .wrap();
+          auto s = co_await checkpoint_status(probe);
+          std::cout << "CHILD_NETWORK_DURING_REPLAY held=" << held << " refused="
+                    << (network.is_error() && consensus::is_consensus_checkpoint_refusal(network.error()))
+                    << " head=" << s.head.seqno() << " still_held=" << s.replay_held << std::endl;
+          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::release_replay);
+          auto r = co_await std::move(replay).wrap();
+          outcome += PSTRING() << " replay-survived=" << (r.is_ok() ? "ok" : r.error().to_string());
+        } else if (mode == "replay-pending-identity") {
+          // Head B3. A conflicting F5 from another caller waits for B4. The
+          // replay then submits its own B5 (same height, different block) and
+          // applies B4, which settles F5. F5's refusal belongs to F5's caller only.
+          auto [hf5, sf5] = co_await load_block(probe, chain["F5"].id);
+          auto [h4, s4] = co_await load_block(probe, chain["B4"].id);
+          auto [h5, s5] = co_await load_block(probe, chain["B5"].id);
+          auto network = td::actor::ask(probe, &ValidatorManager::new_block, hf5, td::Ref<ShardState>{sf5});
+          auto r = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::replay,
+                                           std::vector<ConsensusCheckpointDbProbe::ReplayStep>{{h5, s5, true, false},
+                                                                                               {h4, s4, false, false}},
+                                           false)
+                       .wrap();
+          auto n = co_await std::move(network).wrap();
+          auto s = co_await checkpoint_status(probe);
+          outcome += PSTRING() << " replay="
+                               << (r.is_ok()                                               ? "ok"
+                                   : consensus::is_consensus_checkpoint_refusal(r.error()) ? "refusal"
+                                                                                           : "ordinary")
+                               << " network_f5="
+                               << (n.is_ok()                                               ? "ok"
+                                   : consensus::is_consensus_checkpoint_refusal(n.error()) ? "refusal"
+                                                                                           : "ordinary")
+                               << " head_after=" << s.head.seqno();
         } else if (mode == "pre-persist-crash") {
           // The next checkpoint's write is issued and held before it reaches the
           // database; a cleanup pass runs meanwhile; then the process crashes.
@@ -1427,6 +1491,37 @@ int main(int argc, char** argv) {
     EXPECT(code == 2 && contains(log, "refusing masterchain block") && !contains(log, "replay-survived"),
            mode << ": the startup replay conflict stops the process with exit status 2 (exit " << code << ")");
   }
+  // 13a. Provenance: only the replay's own result stops the process. A
+  //      conflicting block from another caller during the replay is refused and
+  //      the process keeps running; the replay's own conflicting block then
+  //      stops it. (The other caller is a direct new_block call, the entry point
+  //      the network path ends in; a real signed broadcast is not constructed.)
+  {
+    auto root = fresh_root(base, "replay-window-network");
+    Seed seed;
+    seed.init = "B2";
+    EXPECT(seed_db(root, chain, seed).is_ok(), "seed replay-window-network");
+    auto [code, log] = run_child("replay-window-network", root);
+    EXPECT(contains(log, "CHILD_NETWORK_DURING_REPLAY held=1 refused=1 head=3 still_held=1"),
+           "a conflicting block from another caller during the replay is refused, the head stays B3 and the "
+           "process keeps running");
+    EXPECT(code == 2 && contains(log, "refusing masterchain block") && !contains(log, "replay-survived"),
+           "the replay's own conflicting block then stops the process (exit " << code << ")");
+  }
+  // 13b. A waiter gets the result of its own block: the replay's B5, submitted
+  //      while another caller's conflicting F5 is pending at the same height,
+  //      is not queued behind F5 and does not inherit F5's refusal.
+  {
+    auto root = fresh_root(base, "replay-pending-identity");
+    Seed seed;
+    seed.init = "B3";
+    EXPECT(seed_db(root, chain, seed).is_ok(), "seed replay-pending-identity");
+    auto [code, log] = run_child("replay-pending-identity", root);
+    EXPECT(code == 0 && contains(log, "replay=ordinary network_f5=refusal head_after=4"),
+           "F5's refusal reaches only F5's caller; the replay's own B5 gets an ordinary error and the process keeps "
+           "running (exit "
+               << code << ")");
+  }
   {
     auto root = fresh_root(base, "runtime-conflict");
     Seed seed;
@@ -1434,8 +1529,7 @@ int main(int argc, char** argv) {
     EXPECT(seed_db(root, chain, seed).is_ok(), "seed the runtime conflict database");
     td::Result<td::Unit> b3, f4, b4, pending_f5;
     std::vector<ConsensusCheckpointDbProbe::CheckpointStatus> seen;
-    bool flag_after_replay = true, flag_after_error = true;
-    td::Result<td::Unit> ordinary_error;
+    td::Result<td::Unit> replayed, ordinary_error;
     auto r = run_scenario(
         root, make_options(chain),
         [&](td::actor::ActorId<ConsensusCheckpointDbProbe> probe,
@@ -1449,14 +1543,15 @@ int main(int argc, char** argv) {
             auto [h, s] = co_await load_block(probe, chain[name].id);
             co_return ConsensusCheckpointDbProbe::ReplayStep{h, s, defer};
           };
-          // The replay interval clears when the replay finishes, or ends with an ordinary error.
-          co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::replay,
-                                  std::vector<ConsensusCheckpointDbProbe::ReplayStep>{co_await step("B3")}, false);
-          flag_after_replay = (co_await checkpoint_status(probe)).initial_replay;
+          // A successful replay stays successful, and an ordinary replay error
+          // stays an ordinary error (logged by finish_start_up; no stop).
+          replayed =
+              co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::replay,
+                                      std::vector<ConsensusCheckpointDbProbe::ReplayStep>{co_await step("B3")}, false)
+                  .wrap();
           ordinary_error = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::replay,
                                                    std::vector<ConsensusCheckpointDbProbe::ReplayStep>{}, true)
                                .wrap();
-          flag_after_error = (co_await checkpoint_status(probe)).initial_replay;
           // Runtime: a conflicting head is rejected and the valid head kept.
           f4 = co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::apply_heads,
                                        std::vector<ConsensusCheckpointDbProbe::ReplayStep>{co_await step("F4")})
@@ -1471,8 +1566,10 @@ int main(int argc, char** argv) {
           co_return td::Unit{};
         });
     EXPECT(r.is_ok(), "runtime conflict scenario ran: " << r);
-    EXPECT(!flag_after_replay && ordinary_error.is_error() && !flag_after_error,
-           "the initial-replay interval ends when the replay finishes or fails with an ordinary error");
+    EXPECT(replayed.is_ok() && ordinary_error.is_error() &&
+               !consensus::is_consensus_checkpoint_refusal(ordinary_error.error()) &&
+               ordinary_error.error().message().str() == "injected ordinary replay error",
+           "a successful replay succeeds, and an ordinary replay error is returned unchanged");
     EXPECT(f4.is_error() && seen.size() == 2 && seen[0].head == chain["B3"].id,
            "at runtime the conflicting head F4 is rejected and B3 is kept");
     EXPECT(pending_f5.is_error() && seen.size() == 2 && seen[1].head == chain["B4"].id && seen[1].reached,

@@ -382,10 +382,11 @@ class ValidatorManagerImpl : public ValidatorManager {
   // callers return right after it. Virtual only for tests that observe the call.
   virtual void fail_stop_consensus_checkpoint(td::Status status);
   td::Status admit_consensus_checkpoint_head(const BlockIdExt &head, const td::Ref<MasterchainState> &state) const;
-  // A head was refused by admit_consensus_checkpoint_head: fail-stop during the
-  // initial replay of the node's own applied blocks, else only log (the caller
-  // rejects it and keeps the current head).
+  // A head was refused by admit_consensus_checkpoint_head. Only logs: the
+  // caller rejects it and keeps the current head.
   void refuse_consensus_checkpoint_head(td::Status status);
+  // Runs the startup replay; a checkpoint refusal in the replay's own result
+  // stops the process (fail_stop_consensus_checkpoint).
   td::actor::Task<> run_initial_replay(td::actor::Task<> replay);
   void try_advance_consensus_cleanup_checkpoint();
   void write_consensus_cleanup_checkpoint(BlockIdExt id);
@@ -394,8 +395,6 @@ class ValidatorManagerImpl : public ValidatorManager {
   virtual void read_consensus_cleanup_checkpoint(td::Promise<std::optional<BlockIdExt>> promise);
   void consensus_cleanup_checkpoint_written(BlockIdExt id, td::Result<td::Unit> R);
   void consensus_cleanup_checkpoint_diagnosed(td::Result<std::optional<BlockIdExt>> R);
-  // The node is replaying its own applied masterchain blocks at start-up.
-  bool initial_replay_ = false;
   // A durable checkpoint value this node could not have written was observed.
   bool consensus_checkpoint_unexpected_ = false;
 

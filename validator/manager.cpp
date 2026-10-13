@@ -2304,6 +2304,16 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
       VLOG(VALIDATOR_DEBUG) << "new block " << handle->id().id.to_str() << " is too new masterchain block";
       auto it = pending_masterchain_states_.find(handle->id().id.seqno);
       if (it != pending_masterchain_states_.end()) {
+        // A waiter gets the result of the block it submitted. A different block
+        // at the same height is not queued behind the pending one, whose
+        // admission result (a checkpoint refusal included) says nothing about it.
+        if (!(std::get<0>(it->second)->id() == handle->id())) {
+          promise.set_error(td::Status::Error(ErrorCode::error,
+                                              PSTRING() << "masterchain block " << handle->id().to_str()
+                                                        << " is not applied: " << std::get<0>(it->second)->id().to_str()
+                                                        << " is already pending at that height"));
+          return;
+        }
         std::get<2>(it->second).emplace_back(std::move(promise));
       } else {
         std::vector<td::Promise<td::Unit>> v;
@@ -4688,21 +4698,20 @@ td::Status ValidatorManagerImpl::admit_consensus_checkpoint_head(const BlockIdEx
 }
 
 void ValidatorManagerImpl::refuse_consensus_checkpoint_head(td::Status status) {
+  // Whoever submitted the head gets the refusal; the current head is kept. Only
+  // the startup replay turns the refusal of its own block into a stop
+  // (run_initial_replay): a block delivered by the network meanwhile is refused
+  // the same way, and never stops the process.
   LOG(ERROR) << status;
-  if (initial_replay_) {
-    // The node's own applied successors conflict with the checkpoint it already
-    // vouched for: refuse to start, as for a conflicting init block.
-    fail_stop_consensus_checkpoint(std::move(status));
-  }
 }
 
 td::actor::Task<> ValidatorManagerImpl::run_initial_replay(td::actor::Task<> replay) {
-  // The interval in which a head refused by the consensus cleanup checkpoint
-  // stops the process (refuse_consensus_checkpoint_head) instead of being
-  // rejected while the current head is kept.
-  initial_replay_ = true;
+  // The replay applies the node's own stored successors one by one, and each
+  // block's admission result comes back through the replay's own result. A
+  // checkpoint refusal there means the node's own applied chain conflicts with
+  // the checkpoint it already vouched for: refuse to start, as for a conflicting
+  // init block.
   auto R = co_await std::move(replay).wrap();
-  initial_replay_ = false;
   if (R.is_error() && consensus::is_consensus_checkpoint_refusal(R.error())) {
     fail_stop_consensus_checkpoint(R.move_as_error());
     co_return td::Status::Error(ErrorCode::cancelled, "startup replay refused by the consensus cleanup checkpoint");
