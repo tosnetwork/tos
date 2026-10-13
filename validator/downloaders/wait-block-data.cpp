@@ -228,9 +228,9 @@ void WaitBlockData::start() {
                               }
                             });
   } else {
-    // The manager answers from its candidate cache only with bytes that hash
-    // to the requested file hash, i.e. the bytes a download would deliver, so
-    // whatever this request returns is accounted as the network's.
+    // The manager answers from its candidate cache only with bytes that pass
+    // the same full block check as loaded_data() and evicts any that fail, so
+    // a parse failure on this path is the network's.
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<ReceivedBlock> R) {
       if (R.is_error()) {
         td::actor::send_closure(SelfId, &WaitBlockData::failed_to_get_block_data, R.move_as_error_prefix("net error: "),

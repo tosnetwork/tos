@@ -30,7 +30,6 @@
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
 #include "block/block-auto.h"
-#include "block/block-db.h"
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "block/validator-session-id.h"
@@ -2490,18 +2489,23 @@ void ValidatorManagerImpl::get_node_consensus_status(td::Promise<NodeConsensusSt
 
 void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 priority,
                                                   td::Promise<ReceivedBlock> promise) {
-  if (auto cached = cached_block_data_.get(id, false)) {
-    // The cache holds candidate bytes as they were received. Only bytes that
-    // hash to the requested file hash are the block; anything else is evicted
-    // and the block is downloaded, so the waiter never retries the same bad
-    // entry and its network accounting stays truthful.
-    if (block::compute_file_hash(cached->as_slice()) == id.file_hash) {
-      LOG(DEBUG) << "send_get_block_request: got result from block data cache for " << id.to_str();
-      return promise.set_value(ReceivedBlock{id, cached->clone()});
+  // The cache holds candidate bytes as they were received, before any check.
+  // They are served only if they pass the same full block check the waiter
+  // applies (file hash, BOC, root hash); anything else is evicted and the
+  // block is downloaded. So whatever this answers is either the network's or
+  // bytes the waiter accepts, and the waiter never retries the same bad entry.
+  auto valid = [&id](const td::BufferSlice &data) {
+    auto block = create_block(id, data.clone());
+    if (block.is_error()) {
+      LOG(WARNING) << "send_get_block_request: evicting cached block data for " << id.to_str() << ": "
+                   << block.move_as_error();
+      return false;
     }
-    LOG(WARNING) << "send_get_block_request: evicting cached block data for " << id.to_str()
-                 << ": bytes do not match the file hash";
-    cached_block_data_.erase(id);
+    return true;
+  };
+  if (auto cached = cached_block_data_.get_if_valid(id, valid, false)) {
+    LOG(DEBUG) << "send_get_block_request: got result from block data cache for " << id.to_str();
+    return promise.set_value(ReceivedBlock{id, cached->clone()});
   }
   callback_->download_block(id, priority, td::Timestamp::in(10.0), std::move(promise));
 }

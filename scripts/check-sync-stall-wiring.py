@@ -8,8 +8,8 @@ publishes the block times and logs the report, that the waiter still feeds
 every failed attempt and every delivery to its tracker and logs the
 warnings, that it tells the tracker whether the bytes came from the network
 or from the local candidate store, that the manager answers a block request
-from its cache only with bytes matching the file hash (evicting anything
-else), and that the exporter still publishes the families. Removing any of
+from its cache only with bytes that pass the full block check (evicting
+anything else), and that the exporter still publishes the families. Removing any of
 these leaves the unit tests green, so it is checked here.
 
 With --self-test, each pinned call is removed from an in-memory copy of the
@@ -22,6 +22,7 @@ from pathlib import Path
 
 SOURCES = {
     "manager": "validator/manager.cpp",
+    "cache": "validator/candidate-data-cache.h",
     "waiter": "validator/downloaders/wait-block-data.cpp",
     "exporter": "metrics/prometheus-exporter.cpp",
 }
@@ -46,10 +47,12 @@ REQUIRED = [
         "manager",
         "void ValidatorManagerImpl::send_get_block_request(",
         [
-            "block::compute_file_hash(cached->as_slice()) == id.file_hash",
-            "cached_block_data_.erase(id);",
+            "create_block(id, data.clone());",
+            "return false;",
+            "cached_block_data_.get_if_valid(id, valid, false)",
         ],
     ),
+    ("cache", "const td::BufferSlice *get_if_valid(", ["if (!valid(*data)) {", "erase(key);"]),
     (
         "waiter",
         "void WaitBlockData::start()",

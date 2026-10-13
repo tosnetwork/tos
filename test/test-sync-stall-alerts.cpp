@@ -16,7 +16,9 @@
 #include <atomic>
 #include <string>
 
+#include "td/utils/buffer.h"
 #include "td/utils/tests.h"
+#include "validator/candidate-data-cache.h"
 #include "validator/sync-stall-alerts.h"
 
 namespace tos::validator {
@@ -288,6 +290,72 @@ TEST(SyncStallAlerts, BadLocalCandidateWarnsOncePerWaiterEvenAfterDelivery) {
   // A fresh waiter reports its own bad local candidate.
   BlockDataNetFailures other;
   ASSERT_TRUE(other.on_failure(kLocal, false, 1002, total).failure_warning);
+}
+
+// A block request as the manager answers it (send_get_block_request): from the
+// candidate cache if the full block check accepts the cached bytes, otherwise
+// by a download. `check` stands in for create_block; the cached bytes model a
+// candidate that carries the advertised file hash but is not a valid block.
+struct BlockRequest {
+  CandidateDataCache<int> cache{CandidateDataCacheLimits{4, 4 * CandidateDataCache<int>::charge_for(64), 64}};
+  int checks = 0;
+  int downloads = 0;
+  bool serve(int id, const std::string &good, std::string &out) {
+    auto check = [&](const td::BufferSlice &data) {
+      checks++;
+      return data.as_slice() == td::Slice(good);
+    };
+    if (auto cached = cache.get_if_valid(id, check, false)) {
+      out = cached->as_slice().str();
+      return true;
+    }
+    downloads++;
+    out = good;
+    return false;
+  }
+};
+
+TEST(SyncStallAlerts, CachedBlockThatFailsTheFullCheckIsEvictedAndDownloaded) {
+  BlockRequest request;
+  BlockDataNetFailures failures;
+  std::atomic<std::uint64_t> total{3};
+  const std::string good = "the block";
+  ASSERT_TRUE(request.cache.put(1, td::BufferSlice("right file hash, bad cells")) ==
+              CandidateDataCache<int>::PutResult::Stored);
+  // The waiter's loop on this path: request, parse (the same check), and
+  // report a parse failure as the network's, as loaded_data() does. The bad
+  // cached bytes never reach it, so the network counter does not move.
+  for (int attempt = 0; attempt < 3; attempt++) {
+    std::string bytes;
+    request.serve(1, good, bytes);
+    if (bytes == good) {
+      failures.on_delivered();
+    } else {
+      failures.on_failure(kNet, false, 1000 + attempt, total);
+    }
+  }
+  ASSERT_EQ(3u, total.load());
+  // One failed check evicted the entry; every attempt after it downloads
+  // without consulting the cache again.
+  ASSERT_EQ(1, request.checks);
+  ASSERT_EQ(3, request.downloads);
+  ASSERT_TRUE(!request.cache.contains(1));
+}
+
+TEST(SyncStallAlerts, CachedBlockThatPassesTheFullCheckIsServedAndKept) {
+  BlockRequest request;
+  const std::string good = "the block";
+  ASSERT_TRUE(request.cache.put(1, td::BufferSlice(good)) == CandidateDataCache<int>::PutResult::Stored);
+  std::string bytes;
+  ASSERT_TRUE(request.serve(1, good, bytes));
+  ASSERT_TRUE(request.serve(1, good, bytes));
+  ASSERT_EQ(good, bytes);
+  ASSERT_EQ(0, request.downloads);
+  ASSERT_TRUE(request.cache.contains(1));
+  // A miss downloads and checks nothing.
+  ASSERT_TRUE(!request.serve(2, good, bytes));
+  ASSERT_EQ(1, request.downloads);
+  ASSERT_EQ(2, request.checks);
 }
 
 TEST(SyncStallAlerts, BlockDataSourcesAreNamedForTheLog) {
