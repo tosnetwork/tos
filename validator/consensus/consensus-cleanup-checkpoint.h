@@ -18,6 +18,7 @@
 */
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <string>
@@ -429,6 +430,11 @@ class ConsensusCleanupCheckpointTracker {
     }
     write_outstanding_ = false;
     if (result == WriteResult::Uncertain) {
+      if (uncertain_) {
+        // A rewrite failed again: wait twice as long before the next one, up to
+        // kAdvanceSeconds. GC stays excluded whatever the interval.
+        retry_delay_ = std::min(retry_delay_ * 2.0, kAdvanceSeconds);
+      }
       uncertain_ = true;
       return std::nullopt;
     }
@@ -448,12 +454,14 @@ class ConsensusCleanupCheckpointTracker {
   }
 
   // The write in flight had an uncertain result: rewrite the same validated id
-  // (rate-limited like any attempt) until a synced write succeeds.
+  // until a synced write succeeds. The first rewrite waits kMinAttemptSeconds
+  // after the previous attempt; each further uncertain result doubles the wait,
+  // up to kAdvanceSeconds. A "not attempted" result leaves the wait unchanged.
   std::optional<BlockIdExt> try_retry(double now) {
     if (!in_flight_ || !uncertain_ || write_outstanding_) {
       return std::nullopt;
     }
-    if (last_attempt_ && now - *last_attempt_ < kMinAttemptSeconds) {
+    if (last_attempt_ && now - *last_attempt_ < retry_delay_) {
       return std::nullopt;
     }
     last_attempt_ = now;
@@ -464,6 +472,10 @@ class ConsensusCleanupCheckpointTracker {
   bool uncertain() const {
     return uncertain_;
   }
+  // The wait before the next rewrite of an uncertain write.
+  double retry_delay() const {
+    return retry_delay_;
+  }
 
  private:
   void release() {
@@ -471,6 +483,7 @@ class ConsensusCleanupCheckpointTracker {
     in_flight_payload_.reset();
     uncertain_ = false;
     write_outstanding_ = false;
+    retry_delay_ = kMinAttemptSeconds;
   }
 
   bool far_enough(const BlockIdExt& id) const {
@@ -496,6 +509,7 @@ class ConsensusCleanupCheckpointTracker {
   bool write_outstanding_ = false;
   // An attempt of in_flight_ failed in a way that may or may not have persisted it.
   bool uncertain_ = false;
+  double retry_delay_ = kMinAttemptSeconds;
 };
 
 }  // namespace tos::validator::consensus

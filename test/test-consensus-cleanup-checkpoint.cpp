@@ -555,6 +555,49 @@ TEST(ConsensusCleanupCheckpoint, uncertain_write_keeps_gc_excluded_until_a_synce
   ASSERT_TRUE(t.try_issue(500, env.make()).outcome == Outcome::Issued);
 }
 
+// Rewrites of an uncertain write back off: 1 s after the failed attempt, then
+// twice as long after each further uncertain result, capped at 60 s. A "not
+// attempted" result leaves the wait unchanged, and only a settled write (synced,
+// or released) resets it for the next write.
+TEST(ConsensusCleanupCheckpoint, uncertain_rewrites_back_off_to_a_cap_and_reset_once_settled) {
+  Env env;
+  Tracker t;
+  t.set_installed(block(10));
+  offer(t, block(80));
+  ASSERT_TRUE(t.try_issue(100, env.make()).outcome == Outcome::Issued);
+  ASSERT_TRUE(!t.complete(block(80), Uncertain));
+  double last = 100;
+  std::vector<double> waits;
+  for (int i = 0; i < 9; i++) {
+    double wait = t.retry_delay();
+    waits.push_back(wait);
+    // Not one moment sooner, and exactly then.
+    ASSERT_TRUE(!t.try_retry(last + wait - 0.01));
+    ASSERT_TRUE(t.try_retry(last + wait) == std::optional<BlockIdExt>{block(80)});
+    last += wait;
+    ASSERT_TRUE(!t.complete(block(80), Uncertain));
+    ASSERT_TRUE(!t.gc_may_persist(6));
+  }
+  ASSERT_TRUE(waits == (std::vector<double>{1, 2, 4, 8, 16, 32, 60, 60, 60}));
+  // "Not attempted" after an uncertain attempt changes neither the exclusion nor
+  // the wait.
+  double wait = t.retry_delay();
+  ASSERT_TRUE(t.try_retry(last + wait) == std::optional<BlockIdExt>{block(80)});
+  last += wait;
+  ASSERT_TRUE(!t.complete(block(80), NotAttempted));
+  ASSERT_TRUE(t.uncertain() && t.retry_delay() == 60);
+  ASSERT_TRUE(!t.try_retry(last + 59));
+  ASSERT_TRUE(t.try_retry(last + 60) == std::optional<BlockIdExt>{block(80)});
+  last += 60;
+  ASSERT_TRUE(t.complete(block(80), Synced).has_value());
+  ASSERT_TRUE(t.retry_delay() == 1);
+  // The next write's first rewrite waits 1 s again.
+  offer(t, block(200));
+  ASSERT_TRUE(t.try_issue(last + 60, env.make()).outcome == Outcome::Issued);
+  ASSERT_TRUE(!t.complete(block(200), Uncertain));
+  ASSERT_TRUE(t.try_retry(last + 61) == std::optional<BlockIdExt>{block(200)});
+}
+
 // "Not attempted" (nothing was written) releases a write only when no earlier
 // attempt of it was uncertain.
 TEST(ConsensusCleanupCheckpoint, not_attempted_releases_only_without_an_earlier_uncertain_attempt) {

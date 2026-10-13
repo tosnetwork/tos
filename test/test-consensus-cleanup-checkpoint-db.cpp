@@ -1532,8 +1532,9 @@ int main(int argc, char** argv) {
             co_await wait_seconds(db, 0.2);
             after_meanwhile = co_await checkpoint_status(probe, 1);
             co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::set_persist_mode, c.then, c.fail_reads);
-            for (int i = 0; i < 3; i++) {
-              co_await wait_seconds(db, 1.1);
+            // Rewrites back off (1 s, then 2 s, then 4 s after each failure).
+            for (double wait : {2.1, 4.1}) {
+              co_await wait_seconds(db, wait);
               co_await td::actor::ask(probe, &ConsensusCheckpointDbProbe::retry_checkpoint);
             }
             co_await wait_seconds(db, 0.2);
