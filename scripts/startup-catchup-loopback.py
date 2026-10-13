@@ -549,8 +549,9 @@ def evaluate_restart(
     ended, "final_process": whether the restarted node's STATUS in it comes from
     the process the scenario judges, "mode_active": bool, "new_dirs": [new consensus
     directories], "nodes": {n: {"alive": bool, "rss_mb": float | None, "actors":
-    dict | None, "status": dict | None}}}, where the restarted node's status is only
-    one its process wrote after its own start.
+    dict | None, "status": dict | None, "status_t": when the status was read}}},
+    where the restarted node's status is only one its process wrote after its own
+    start, and is dated by when it was read, not by the sample's start.
     """
     out: dict = {}
     if not samples:
@@ -571,7 +572,7 @@ def evaluate_restart(
     out["engines alive throughout"] = criterion(FAIL if dead else PASS, dead[:10])
 
     fresh = [
-        (s["t"], s["nodes"][node]["status"])
+        (s["nodes"][node]["status_t"], s["nodes"][node]["status"])
         for s in samples
         if s["final_process"] and s["nodes"][node]["status"]
     ]
@@ -698,6 +699,7 @@ def self_test() -> int:
             for n in NODES
         }
         nodes[node]["status"] = {"shard_client_ago": ago}
+        nodes[node]["status_t"] = t + 1.0
         if active:
             nodes[node]["actors"] = {"WaitBlockState": 10, "BridgeImpl": 0}
         return {
@@ -1325,6 +1327,9 @@ def take_sample(
             "rss_mb": net.rss_mb(n),
             "actors": net.actors(n),
             "status": net.fresh_status(n, mark) if n == node else net.status_any(n),
+            # When the STATUS was read: a slow read earlier in the sample must not
+            # date it back to the sample's start.
+            "status_t": round(CLOCK.monotonic() - t0, 1),
             "head": net.head(n),
         }
     return {

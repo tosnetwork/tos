@@ -57,6 +57,9 @@ class Behaviour:
     attempt_every = 100.0  # one settled import attempt per this many seconds
     sample_cost = 0.5  # seconds one actor read takes
 
+    def read_cost(self, net: FakeNet, node: int) -> float:
+        return self.sample_cost
+
     def bridges(self, index: int, age: float, active: bool) -> int:
         return 0 if active else 4
 
@@ -142,7 +145,7 @@ class FakeNet:
         return self.behaviour.rss(node, self.clock.now) if self.alive(node) else None
 
     def actors(self, node: int) -> dict | None:
-        self.clock.sleep(self.behaviour.sample_cost)
+        self.clock.sleep(self.behaviour.read_cost(self, node))
         if not self.alive(node):
             return None
         if node != NODE:
@@ -188,6 +191,7 @@ def sample(t: float, **node_fields) -> dict:
         for n in loop.NODES
     }
     nodes[NODE]["status"] = {"shard_client_ago": 10.0}
+    nodes[NODE]["status_t"] = float(t) + 1.0
     nodes[NODE].update(node_fields)
     return {
         "t": float(t),
@@ -405,6 +409,43 @@ class Scenarios(unittest.TestCase):
         self.assertEqual({round(b - a, 1) for a, b in zip(times, times[1:])}, {40.0})
         name = loop.coverage_name(loop.L1_WINDOW)
         self.assertEqual(data["criteria"][name]["status"], INCONCLUSIVE)
+
+    def test_status_read_after_the_deadline_does_not_count(self) -> None:
+        # The last sample starts at 1,190 s, but slow console reads put the
+        # STATUS read at 1,250 s, and the node caught up only after 1,200 s.
+        class SlowAtTheEnd(Behaviour):
+            def read_cost(self, net, node):
+                age = net.clock.now - net.starts[-1][1]
+                return 20.0 if age >= 1190 else 0.5
+
+            def shard_client_ago(self, index, age):
+                return 5.0 if age >= 1200 else 900.0
+
+        data, _ = run_scenario("L1", SlowAtTheEnd())
+        last = data["samples"][-1]
+        self.assertEqual(last["t"], 1190.0)
+        self.assertEqual(last["nodes"][NODE]["status_t"], 1250.0)
+        name = loop.catchup_name(loop.L1_WINDOW)
+        self.assertEqual(data["criteria"][name]["status"], FAIL, data["criteria"][name])
+
+    def test_timely_status_survives_a_slow_peer_read(self) -> None:
+        # The STATUS is read in time; a peer read after it makes the sample end
+        # late, which does not make the timely evidence late.
+        class SlowLastPeer(Behaviour):
+            def read_cost(self, net, node):
+                age = net.clock.now - net.starts[-1][1]
+                return 60.0 if node == 4 and age >= 1190 else 0.5
+
+            def shard_client_ago(self, index, age):
+                return 5.0 if age >= 1190 else 900.0
+
+        data, _ = run_scenario("L1", SlowLastPeer())
+        last = data["samples"][-1]
+        self.assertEqual(last["t"], 1190.0)
+        self.assertGreater(last["t_end"], 1200.0)
+        name = loop.catchup_name(loop.L1_WINDOW)
+        self.assertEqual(data["criteria"][name]["status"], PASS, data["criteria"][name])
+        self.assertLessEqual(data["criteria"][name]["detail"], 1200.0)
 
     def test_l1_rss_history_is_taken_before_the_restart(self) -> None:
         data, net = run_scenario("L1", Behaviour())
