@@ -166,7 +166,8 @@ def test_genesis_simplex_parameters_use_v2_with_ton_mainnet_pacing():
     assert actual == EXPECTED_SIMPLEX_PARAMS
 
     genesis = (REPO / "crypto/smartcont/gen-zerostate.fif").read_text()
-    assert genesis.count("<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>") == 2
+    assert genesis.count("<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>") == 1
+    assert genesis.count("<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 16 32 u, swap dict, b>") == 1
     assert genesis.count("<b 400 32 u, b> <s 0 rot 8 udict! drop") == 2
     assert simplex.protocol_version == EXPECTED_SIMPLEX_PROTOCOL_VERSION
     assert simplex.use_quic

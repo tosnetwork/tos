@@ -17,9 +17,9 @@ PRODUCTION_SHARD_PARAM30 = (
     "dictnew",
     "<b 400 32 u, b> <s 0 rot 8 udict! drop",
     "<b 700 32 u, b> <s 1 rot 8 udict! drop",
-    "<b 250 32 u, b> <s 10 rot 8 udict! drop",
+    "<b 64 32 u, b> <s 10 rot 8 udict! drop",
     "<b 300 32 u, b> <s 13 rot 8 udict! drop",
-    "<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>",
+    "<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 16 32 u, swap dict, b>",
 )
 # Masterchain dictionary, then shard dictionary, then the setter, in order.
 PRODUCTION_PARAM30 = "\n".join(
