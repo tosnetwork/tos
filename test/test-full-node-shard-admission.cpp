@@ -400,6 +400,33 @@ TEST(RefusalAnswerBudget, EachSourceGetsItsBurst) {
   ASSERT_EQ(1u, budget.suppressed());
 }
 
+// The exporter reads the node's counts from a sink: every answer and every
+// suppression reaches it, from each budget that feeds it, and a budget
+// without one leaves it alone.
+TEST(RefusalAnswerBudget, CountsReachTheirSink) {
+  RefusalAnswerBudget::Counters sink;
+  ASSERT_EQ(0u, sink.answered.load());
+  ASSERT_EQ(0u, sink.suppressed.load());
+  RefusalAnswerBudget first(default_refusal_answer_limits(), t0, &sink);
+  RefusalAnswerBudget second(default_refusal_answer_limits(), t0, &sink);
+  RefusalAnswerBudget unsunk(default_refusal_answer_limits(), t0);
+  for (int i = 0; i < 25; i++) {
+    first.try_take(source(1), t0);
+  }
+  for (int i = 0; i < 26; i++) {
+    second.try_take(source(2), t0);
+  }
+  for (int i = 0; i < 30; i++) {
+    unsunk.try_take(source(3), t0);
+  }
+  ASSERT_EQ(24u, first.answered());
+  ASSERT_EQ(1u, first.suppressed());
+  ASSERT_EQ(24u, second.answered());
+  ASSERT_EQ(2u, second.suppressed());
+  ASSERT_EQ(48u, sink.answered.load());
+  ASSERT_EQ(3u, sink.suppressed.load());
+}
+
 TEST(RefusalAnswerBudget, GlobalBudgetIsSharedAcrossShards) {
   auto shared = limiter(96, 64, 4);
   auto budget = std::make_shared<RefusalAnswerBudget>(default_refusal_answer_limits(), t0);

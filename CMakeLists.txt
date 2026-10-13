@@ -2201,6 +2201,9 @@ add_test(NAME sync-stall-wiring-source-self-test
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-sync-stall-wiring.py
           ${CMAKE_CURRENT_SOURCE_DIR} --self-test)
 set_tests_properties(sync-stall-wiring-source-self-test PROPERTIES LABELS "source-guard")
+add_test(NAME startup-catchup-loopback-runner
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_startup_catchup_loopback.py)
+set_tests_properties(startup-catchup-loopback-runner PROPERTIES LABELS "source-guard")
 add_test(NAME regression-fixture-concurrency
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-regression-concurrency.sh
           ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})

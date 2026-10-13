@@ -57,6 +57,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "simplex-exact-ancestor-source-guard",
         "snapshot-import-offline",
         "static-analysis-gate-self-test",
+        "startup-catchup-loopback-runner",
         "static-use-after-move-self-test",
         "sync-stall-wiring-source",
         "sync-stall-wiring-source-self-test",

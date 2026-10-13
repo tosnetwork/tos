@@ -10,7 +10,8 @@
 namespace tos::health {
 // Masterchain progress for alerting: how old the last masterchain block and
 // the applied state (shard client) are, and how many network attempts to
-// fetch block data have failed. The ages are derived here from the block
+// fetch block data have failed, and how the full node's refusal-answer budget
+// has been spent. The ages are derived here from the block
 // times the validator manager publishes, against the collection's own wall
 // clock, so they keep growing while the manager is stuck. An age whose block
 // time is not known yet is left out rather than reported as zero, and a block
@@ -42,6 +43,16 @@ inline std::vector<metrics::MetricFamily> chain_progress_families(const std::str
       prefix + "_wait_block_data_net_failures_total", "counter",
       static_cast<double>(gauges.block_data_net_failures.load(std::memory_order_relaxed)),
       "Failed network attempts to fetch block data, for any reason."));
+  families.push_back(metrics::MetricFamily::make_scalar(
+      prefix + "_full_node_refusal_answers_total", "counter",
+      static_cast<double>(gauges.refusal_answers.answered.load(std::memory_order_relaxed)),
+      "Queries refused for capacity that the full node decided to answer within its refusal-answer budget; "
+      "counted when the answer is handed to the transport, not on delivery."));
+  families.push_back(metrics::MetricFamily::make_scalar(
+      prefix + "_full_node_refusal_answers_suppressed_total", "counter",
+      static_cast<double>(gauges.refusal_answers.suppressed.load(std::memory_order_relaxed)),
+      "Queries refused for capacity, of a type that has an answer, left unanswered because the refusal-answer "
+      "budget was spent."));
   return families;
 }
 }  // namespace tos::health
