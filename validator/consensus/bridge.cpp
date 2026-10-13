@@ -64,6 +64,26 @@ void observe_bridge_destroyed_for_test(std::function<void(std::string)> observer
   bridge_destroyed_observer = std::move(observer);
 }
 
+namespace {
+std::mutex bridge_activated_observer_mutex;
+std::function<void(ValidatorSessionId, bool)> bridge_activated_observer;
+
+void notify_bridge_session_activated(const ValidatorSessionId& session, bool validator) {
+  std::function<void(ValidatorSessionId, bool)> observer;
+  {
+    std::lock_guard lock(bridge_activated_observer_mutex);
+    observer = bridge_activated_observer;
+  }
+  if (observer) {
+    observer(session, validator);
+  }
+}
+}  // namespace
+void observe_bridge_session_activated_for_test(std::function<void(ValidatorSessionId, bool validator)> observer) {
+  std::lock_guard lock(bridge_activated_observer_mutex);
+  bridge_activated_observer = std::move(observer);
+}
+
 std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
     const std::vector<adnl::AdnlNodeIdShort>& members, std::optional<std::set<adnl::AdnlNodeIdShort>> current) {
   if (!current) {
@@ -452,6 +472,9 @@ class BridgeImpl final : public IValidatorGroup {
   virtual void create_session() override {
     CHECK(!is_create_session_called_);
     is_create_session_called_ = true;
+    if (bus_) {
+      notify_bridge_session_activated(bus_->session_id, bus_->is_validator());
+    }
     maybe_start_group();
   }
 
@@ -611,6 +634,9 @@ class BridgeImpl final : public IValidatorGroup {
     }
     if (observer) {
       observer(bus_);
+    }
+    if (is_create_session_called_) {
+      notify_bridge_session_activated(bus_->session_id, bus_->is_validator());
     }
   }
 

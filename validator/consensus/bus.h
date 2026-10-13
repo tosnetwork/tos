@@ -270,6 +270,11 @@ void observe_bridge_bus_for_test(std::function<void(BusHandle)> observer);
 // destroyed, so a test can see that nothing still holds a retired group.
 void observe_bridge_destroyed_for_test(std::function<void(std::string)> observer);
 
+// Observation-only seam: called when a real bridge's session is activated, that
+// is, when the manager's create_session reaches it, or when the bridge was built
+// already activated. `validator` is whether this node signs in the session.
+void observe_bridge_session_activated_for_test(std::function<void(ValidatorSessionId, bool validator)> observer);
+
 struct BlockAccepter {
   static void register_in(td::actor::Runtime&);
 };

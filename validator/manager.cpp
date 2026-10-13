@@ -3268,7 +3268,8 @@ void ValidatorManagerImpl::end_startup_catchup(startup_catchup::ExitReason reaso
   }
   LOG(WARNING) << "startup catch-up ended: " << startup_catchup::exit_reason_name(reason) << "; masterchain "
                << last_masterchain_block_id_.to_str() << ", shard client " << shard_client_handle_->id().seqno()
-               << ". Validator groups are no longer fenced";
+               << ". The startup catch-up fence is open; the consensus cleanup checkpoint "
+               << (consensus_checkpoint_reached_ ? "permits" : "does not yet permit") << " validator groups";
   // Build the groups the resulting state selects now: on a stopped network no new
   // masterchain block would arrive to do it, and producing one needs the groups.
   update_shards();

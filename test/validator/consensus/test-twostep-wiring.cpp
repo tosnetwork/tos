@@ -439,6 +439,76 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   // The rest of start-up after the init handoff talks to the network.
   void continue_start_up() override {
   }
+  // Startup catch-up's group fence: the entry decision taken as entered, and the
+  // production exit, which runs update_shards when the fence opens.
+  void enter_catchup(td::Promise<bool> promise) {
+    promise.set_value(startup_catchup_.decide(startup_catchup::EntryRefusal::None));
+  }
+  void end_catchup(startup_catchup::ExitReason reason, td::Promise<> promise) {
+    // A node always has a shard client handle by then (the exit logs it); the
+    // fixture's shard client is at the head.
+    if (!shard_client_handle_) {
+      shard_client_handle_ = last_masterchain_block_handle_;
+    }
+    end_startup_catchup(reason);
+    promise.set_value(td::Unit());
+  }
+  // (checkpoint readiness, catch-up fence closed, validator groups permitted,
+  // observer groups permitted)
+  void gates(td::Promise<std::vector<bool>> promise) {
+    promise.set_value(std::vector<bool>{consensus_checkpoint_reached_, startup_catchup_.fence_closed(),
+                                        validator_groups_permitted(), observer_groups_permitted()});
+  }
+  // The group factory called directly, past every caller's gate, for the current
+  // masterchain set; a built group is destroyed again at once.
+  void build_directly(td::Promise<bool> promise) {
+    auto set = last_masterchain_state_->get_validator_set(ShardIdFull{masterchainId});
+    auto selected = last_masterchain_state_->get_selected_new_consensus_config(masterchainId);
+    consensus::ValidatorSessionOptions opts{last_masterchain_state_->get_consensus_config()};
+    auto group = create_validator_group(hash("direct-build"), ShardIdFull{masterchainId}, set,
+                                        last_key_block_handle_->id().seqno(), selected.value().config, opts, false);
+    bool built = !group.empty();
+    if (built) {
+      td::actor::send_closure(group, &IValidatorGroup::destroy);
+      group.release();
+    }
+    promise.set_value(std::move(built));
+  }
+  // Checkpoint writes fail with an ordinary (uncertain) error while set.
+  void set_fail_persist(bool fail, td::Promise<> promise) {
+    fail_persist_ = fail;
+    promise.set_value(td::Unit());
+  }
+  void persist_consensus_cleanup_checkpoint(BlockIdExt id, td::Promise<td::Unit> promise) override {
+    persist_calls_++;
+    if (fail_persist_) {
+      promise.set_error(td::Status::Error("injected checkpoint write failure"));
+      return;
+    }
+    ValidatorManagerImpl::persist_consensus_cleanup_checkpoint(id, std::move(promise));
+  }
+  struct WriteStatus {
+    std::optional<BlockIdExt> installed, in_flight, anchor;
+    bool uncertain = false, pending = false;
+    int persist_calls = 0;
+  };
+  // The checkpoint's write state and the cleanup oracles' anchor.
+  void write_status(td::Promise<WriteStatus> promise) {
+    WriteStatus s;
+    s.installed = consensus_checkpoint_.installed();
+    s.in_flight = consensus_checkpoint_.in_flight();
+    s.uncertain = consensus_checkpoint_.uncertain();
+    s.pending = consensus_checkpoint_.has_pending();
+    s.persist_calls = persist_calls_;
+    if (auto oracles = validator_cleanup_oracles()) {
+      s.anchor = oracles->gc;
+    }
+    promise.set_value(std::move(s));
+  }
+  // Persists a checkpoint without installing it (the next start loads it).
+  void persist_checkpoint(BlockIdExt id, td::Promise<> promise) {
+    td::actor::send_closure(db_, &Db::update_consensus_cleanup_checkpoint, id, std::move(promise));
+  }
   // Stores a real block's handle and state, as the node would have.
   void seed_block(BlockIdExt id, td::Ref<MasterchainStateQ> state, td::Promise<> promise) {
     auto handle = create_empty_block_handle(id);
@@ -547,6 +617,8 @@ class TwostepManagerProbe : public ValidatorManagerImpl {
   }
   std::vector<std::string> fail_stops_;
   std::set<ValidatorSessionId> closed_;
+  bool fail_persist_ = false;
+  int persist_calls_ = 0;
   std::vector<td::Promise<td::Ref<ShardState>>> held_state_requests_;
   std::vector<td::Promise<td::Ref<BlockData>>> held_data_requests_;
 };
@@ -571,6 +643,10 @@ class Fixture {
     observe_bridge_bus_for_test([this](BusHandle bus) {
       std::lock_guard lock(observation_mutex);
       observed_buses_.push_back(std::move(bus));
+    });
+    observe_bridge_session_activated_for_test([this](ValidatorSessionId session, bool validator) {
+      std::lock_guard lock(observation_mutex);
+      activated_.push_back({session, validator});
     });
     scheduler_.run_in_context([&] {
       errorlog::ErrorLog::create(root_);
@@ -620,6 +696,7 @@ class Fixture {
       observed_buses_.clear();
     });
     observe_bridge_bus_for_test({});
+    observe_bridge_session_activated_for_test({});
     pump();
     scheduler_.run_in_context([&] {
       manager_.reset();
@@ -832,6 +909,61 @@ class Fixture {
                               std::move(ancestors), std::move(promise));
     }).ensure();
   }
+  // ---- composition with startup catch-up ----
+  bool enter_catchup() {
+    return query<bool>([&](auto promise) {
+             td::actor::send_closure(manager_, &TwostepManagerProbe::enter_catchup, std::move(promise));
+           })
+        .move_as_ok();
+  }
+  void end_catchup(startup_catchup::ExitReason reason) {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::end_catchup, reason, std::move(promise));
+    }).ensure();
+    pump();
+  }
+  // (checkpoint readiness, catch-up fence closed, validator groups permitted,
+  // observer groups permitted)
+  std::vector<bool> gates() {
+    return query<std::vector<bool>>([&](auto promise) {
+             td::actor::send_closure(manager_, &TwostepManagerProbe::gates, std::move(promise));
+           })
+        .move_as_ok();
+  }
+  bool build_directly() {
+    auto built = query<bool>([&](auto promise) {
+                   td::actor::send_closure(manager_, &TwostepManagerProbe::build_directly, std::move(promise));
+                 }).move_as_ok();
+    pump();
+    return built;
+  }
+  void persist_checkpoint(BlockIdExt id) {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::persist_checkpoint, id, std::move(promise));
+    }).ensure();
+  }
+  void set_fail_persist(bool fail) {
+    query<td::Unit>([&](auto promise) {
+      td::actor::send_closure(manager_, &TwostepManagerProbe::set_fail_persist, fail, std::move(promise));
+    }).ensure();
+  }
+  TwostepManagerProbe::WriteStatus write_status() {
+    return query<TwostepManagerProbe::WriteStatus>([&](auto promise) {
+             td::actor::send_closure(manager_, &TwostepManagerProbe::write_status, std::move(promise));
+           })
+        .move_as_ok();
+  }
+  // Sessions the real bridges activated (create_session reached them), in which
+  // this node signs.
+  size_t activated_validator_sessions() {
+    pump();
+    std::lock_guard lock(observation_mutex);
+    return std::count_if(activated_.begin(), activated_.end(), [](const auto& row) { return row.second; });
+  }
+  size_t observer_buses() {
+    pump();
+    return std::count_if(buses.begin(), buses.end(), [](const auto& bus) { return !bus->is_validator(); });
+  }
   void retry_checkpoint() {
     query<td::Unit>([&](auto promise) {
       td::actor::send_closure(manager_, &TwostepManagerProbe::retry_checkpoint, std::move(promise));
@@ -1043,6 +1175,7 @@ class Fixture {
   unsigned broadcast_sequence_ = 0;
   std::vector<td::actor::ActorOwn<IValidatorGroup>> direct_groups_;
   std::vector<BusHandle> observed_buses_;
+  std::vector<std::pair<ValidatorSessionId, bool>> activated_;
   std::vector<Observation> observed_overlays_;
   std::vector<ReceivedCandidate> observed_received_;
   std::string root_;
@@ -1521,4 +1654,198 @@ TEST(TwostepWiring, CheckpointAdvanceDuringReplayWaitsForTheHead) {
   ASSERT_TRUE(std::get<1>(f.checkpoint()));
   ASSERT_TRUE(!f.validators().first.empty());
   ASSERT_TRUE(f.closed().empty());
+}
+
+// ---- composition of the consensus cleanup checkpoint with startup catch-up ----
+//
+// Validator groups need both gates: the applied head has reached the checkpoint,
+// and the startup catch-up fence is open. Observer groups need only the fence.
+// The checkpoint here is the real masterchain block B5 (a state derived from the
+// genesis state), persisted and then loaded by the production startup loader
+// through the production init handoff; the head starts at B3, below it.
+namespace {
+struct CompositionChain {
+  checkpoint_chain::Chain chain;
+  BlockIdExt real(BlockSeqno h) const {
+    return chain[PSTRING() << "B" << h].id;
+  }
+  std::set<BlockIdExt> ancestors(BlockSeqno h) const {
+    std::set<BlockIdExt> result;
+    for (BlockSeqno i = 1; i < h && i <= 6; ++i)
+      result.insert(real(i));
+    return result;
+  }
+};
+CompositionChain composition_chain() {
+  const char* genesis = std::getenv("TOS_TEST_GENESIS_BOC");
+  CHECK(genesis != nullptr);
+  auto r_chain = checkpoint_chain::build_chain(genesis);
+  CHECK(r_chain.is_ok());
+  return CompositionChain{r_chain.move_as_ok()};
+}
+// The masterchain set at catchain seqno `cc` (a catchain rotation per step).
+Snapshot rotation(const Fixture& f, CatchainSeqno cc) {
+  return {f.old.set(cc), f.current.set(cc), f.next.set(cc + 1), f.current.set(cc, 2), f.next.set(cc + 1), true, 2};
+}
+// Holds a current, a next (tentative) and an old (observer) key; persists the
+// checkpoint B5; enters catch-up first when `fenced`; starts from disk at B3.
+void start_composed(Fixture& f, const CompositionChain& c, bool fenced) {
+  f.hold(f.current, 0);
+  f.hold(f.next, 0);
+  f.hold(f.old, 0);
+  for (BlockSeqno h = 1; h <= 6; ++h)
+    f.seed_block(c.real(h), c.chain[PSTRING() << "B" << h].state);
+  f.persist_checkpoint(c.real(5));
+  if (fenced)
+    ASSERT_TRUE(f.enter_catchup());
+  auto ready = f.start_from_disk(rotation(f, 1), c.real(3), c.ancestors(3));
+  ASSERT_TRUE(ready.is_ok());
+  ASSERT_TRUE(!ready.ok());
+  ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{c.real(5)});
+}
+// No validator group is selected, tentative, built (also by a direct factory
+// call) or activated, and no validator bus exists.
+void expect_no_validator_group(Fixture& f) {
+  auto [active, tentative] = f.validators();
+  ASSERT_TRUE(active.empty());
+  ASSERT_TRUE(tentative.empty());
+  ASSERT_EQ(f.validator_buses(), 0u);
+  ASSERT_TRUE(!f.build_directly());
+  ASSERT_EQ(f.validator_buses(), 0u);
+  ASSERT_EQ(f.activated_validator_sessions(), 0u);
+}
+}  // namespace
+
+// Release order 1: the head reaches the checkpoint while the fence is closed,
+// then catch-up ends with no further block. Covers (behind, fenced),
+// (reached, fenced) and (reached, open). Run with and without sync completion
+// arriving while fenced: activation waits for both gates either way.
+TEST(TwostepWiring, CompositionCheckpointReachedThenFenceOpens) {
+  auto c = composition_chain();
+  for (bool sync_while_fenced : {false, true}) {
+    Fixture f;
+    start_composed(f, c, true);
+    expect_no_validator_group(f);
+    ASSERT_EQ(f.observer_buses(), 0u);
+    ASSERT_TRUE(f.gates() == (std::vector<bool>{false, true, false, false}));
+    if (sync_while_fenced) {
+      f.complete_sync();
+      expect_no_validator_group(f);
+    }
+    for (BlockSeqno h : {4u, 5u})
+      ASSERT_TRUE(f.apply_head(rotation(f, 1), c.real(h), c.ancestors(h)).is_ok());
+    expect_no_validator_group(f);
+    ASSERT_EQ(f.observer_buses(), 0u);
+    ASSERT_TRUE(f.gates() == (std::vector<bool>{true, true, false, false}));
+    if (sync_while_fenced) {
+      f.complete_sync();
+      expect_no_validator_group(f);
+    }
+    // The fence opens with no further block: end_startup_catchup builds the groups.
+    f.end_catchup(startup_catchup::ExitReason::Fresh);
+    auto [active, tentative] = f.validators();
+    ASSERT_TRUE(!active.empty());
+    ASSERT_TRUE(!tentative.empty());
+    ASSERT_TRUE(f.eventually([&] { return f.validator_buses() > 0 && f.observer_buses() > 0; }));
+    ASSERT_TRUE(f.gates() == (std::vector<bool>{true, false, true, true}));
+    if (!sync_while_fenced) {
+      ASSERT_EQ(f.activated_validator_sessions(), 0u);
+      f.complete_sync();
+    }
+    ASSERT_TRUE(f.eventually([&] { return f.activated_validator_sessions() > 0; }));
+  }
+}
+
+// Release order 2: catch-up ends first, by each terminal exit, while the head
+// is still below the checkpoint. Covers (behind, fenced), (behind, open) and
+// (reached, open). No exit releases the checkpoint gate: no validator group is
+// built or activated, also after sync completion; observers do start. The
+// checkpoint does not move with applied heads (T15). The head then reaches the
+// checkpoint and the groups start.
+TEST(TwostepWiring, CompositionFenceOpensFirstForEveryTerminalExit) {
+  auto c = composition_chain();
+  for (auto reason : {startup_catchup::ExitReason::NotStale, startup_catchup::ExitReason::NoVerifiedSuccessor,
+                      startup_catchup::ExitReason::Fresh, startup_catchup::ExitReason::Abandoned}) {
+    Fixture f;
+    start_composed(f, c, true);
+    expect_no_validator_group(f);
+    ASSERT_TRUE(f.gates() == (std::vector<bool>{false, true, false, false}));
+    f.end_catchup(reason);
+    expect_no_validator_group(f);
+    ASSERT_TRUE(f.eventually([&] { return f.observer_buses() > 0; }));
+    ASSERT_TRUE(f.gates() == (std::vector<bool>{false, false, false, true}));
+    f.complete_sync();
+    expect_no_validator_group(f);
+    ASSERT_TRUE(f.apply_head(rotation(f, 1), c.real(4), c.ancestors(4)).is_ok());
+    expect_no_validator_group(f);
+    ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{c.real(5)});
+    ASSERT_TRUE(f.apply_head(rotation(f, 1), c.real(5), c.ancestors(5)).is_ok());
+    auto [active, tentative] = f.validators();
+    ASSERT_TRUE(!active.empty());
+    ASSERT_TRUE(!tentative.empty());
+    ASSERT_TRUE(f.eventually([&] { return f.activated_validator_sessions() > 0; }));
+    ASSERT_TRUE(f.gates() == (std::vector<bool>{true, false, true, true}));
+    // T15: applying a head never moves the checkpoint; the shard client's
+    // durable advance does.
+    ASSERT_TRUE(f.apply_head(rotation(f, 1), c.real(6), c.ancestors(6)).is_ok());
+    ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{c.real(5)});
+    f.shard_client_advanced(rotation(f, 1), c.real(6), c.ancestors(6));
+    ASSERT_TRUE(f.eventually([&] { return std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{c.real(6)}; }));
+  }
+}
+
+// Without catch-up entered, the fence is open from the start: (behind, open)
+// with observers running and no validator group, then (reached, open).
+TEST(TwostepWiring, CompositionCheckpointAloneWithTheFenceOpen) {
+  auto c = composition_chain();
+  Fixture f;
+  start_composed(f, c, false);
+  expect_no_validator_group(f);
+  ASSERT_TRUE(f.eventually([&] { return f.observer_buses() > 0; }));
+  ASSERT_TRUE(f.gates() == (std::vector<bool>{false, false, false, true}));
+  f.complete_sync();
+  expect_no_validator_group(f);
+  ASSERT_TRUE(f.apply_head(rotation(f, 1), c.real(5), c.ancestors(5)).is_ok());
+  ASSERT_TRUE(f.eventually([&] { return f.activated_validator_sessions() > 0; }));
+  ASSERT_TRUE(f.gates() == (std::vector<bool>{true, false, true, true}));
+}
+
+// T16 (manager-side substitute; it does not run the archive importer): heads
+// cross three catchain rotations while fenced. The checkpoint moves only
+// through the shard client's durable advance; that write fails (uncertain).
+// Readiness, the installed checkpoint and the cleanup anchor stay on B5 through
+// the fence exit; the groups the exit builds are those of the state above the
+// checkpoint. Once a rewrite is synced, the checkpoint and anchor move to B6.
+TEST(TwostepWiring, CompositionRotationsAndAnUncertainWriteWhileFenced) {
+  auto c = composition_chain();
+  Fixture f;
+  start_composed(f, c, true);
+  for (BlockSeqno h : {4u, 5u, 6u}) {
+    ASSERT_TRUE(f.apply_head(rotation(f, h - 2), c.real(h), c.ancestors(h)).is_ok());
+    expect_no_validator_group(f);
+    ASSERT_TRUE(std::get<0>(f.checkpoint()) == std::optional<BlockIdExt>{c.real(5)});
+  }
+  auto before = f.write_status();
+  ASSERT_TRUE(!before.in_flight && !before.pending && !before.uncertain && before.persist_calls == 0);
+  ASSERT_TRUE(before.anchor == std::optional<BlockIdExt>{c.real(5)});
+  f.set_fail_persist(true);
+  f.shard_client_advanced(rotation(f, 4), c.real(6), c.ancestors(6));
+  ASSERT_TRUE(f.eventually([&] { return f.write_status().uncertain; }));
+  auto failed = f.write_status();
+  // Offered, issued and failed: one write attempt, now uncertain.
+  ASSERT_TRUE(failed.persist_calls == 1 && failed.in_flight == std::optional<BlockIdExt>{c.real(6)});
+  ASSERT_TRUE(failed.installed == std::optional<BlockIdExt>{c.real(5)});
+  ASSERT_TRUE(failed.anchor == std::optional<BlockIdExt>{c.real(5)});
+  expect_no_validator_group(f);
+  f.end_catchup(startup_catchup::ExitReason::Fresh);
+  auto [active, tentative] = f.validators();
+  ASSERT_TRUE(!active.empty());
+  auto after_exit = f.write_status();
+  ASSERT_TRUE(after_exit.uncertain && after_exit.installed == std::optional<BlockIdExt>{c.real(5)} &&
+              after_exit.anchor == std::optional<BlockIdExt>{c.real(5)});
+  f.set_fail_persist(false);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+  f.retry_checkpoint();
+  ASSERT_TRUE(f.eventually([&] { return f.write_status().installed == std::optional<BlockIdExt>{c.real(6)}; }));
+  ASSERT_TRUE(f.write_status().anchor == std::optional<BlockIdExt>{c.real(6)});
 }
