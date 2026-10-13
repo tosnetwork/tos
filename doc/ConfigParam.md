@@ -114,6 +114,17 @@ Validators register the native TVM execution engine. A descriptor for an unsuppo
 
 AI actor applications should be deployed as native TVM contracts on wc=0 unless a future approved protocol change defines otherwise.
 
+The basechain descriptor uses the `workchain_v2` (#a7) constructor with
+`min_split` 0, `max_split` 2 and `persistent_state_split_depth` 4, and explicit
+split/merge timings ([gen-zerostate.fif](../crypto/smartcont/gen-zerostate.fif#L68-L88)). The collator splits any
+shard shallower than `min_split` regardless of load and never merges back below
+it, so `min_split` is the floor on how many basechain shards every validator must
+run. An earlier value of 4 forced 16 shards about 400 s after genesis; with four
+validators each node then ran 17 consensus groups, saturated its disk flushes and
+let the masterchain interval drift from about 470 ms to about 1 s. With 0 the
+basechain stays one shard until load asks for a split, and can split at most
+twice.
+
 ## ConfigParams 6 and 7
 
 ConfigParams 6 and 7 govern extra currencies. They do not define the native TOS supply.
@@ -153,6 +164,33 @@ wire format and rules. The [generated manifest](../artifacts/shielded-pool/genes
 pins these inputs and the resulting state hash. Its verifying key is a
 development fixture; neither the manifest nor compiled version 16 establishes
 network activation or production deployment.
+
+## Genesis values and why they are set
+
+[gen-zerostate.fif](../crypto/smartcont/gen-zerostate.fif) is the authority for every initial value; the links below
+point at the lines that set them. This section records only why each value was
+chosen. The general rule is to follow mainnet-scale networks unless TOS has a
+measured or product reason to differ.
+
+| Param | Where | Why |
+|---|---|---|
+| 11 `ConfigVotingSetup` | [L373-L389](../crypto/smartcont/gen-zerostate.fif#L373-L389) | Mainnet-scale proposal rounds. Because the registering round already counts and a proposal is removed only when its remaining count goes negative, ordinary/critical proposals get 7/8 voting rounds. Acceptance happens at `min_wins`; removal happens only once losses exceed `max_losses`. `elector_sandbox.rs` exercises the lifecycle. |
+| 12 workchains | [L68-L88](../crypto/smartcont/gen-zerostate.fif#L68-L88) | See [ConfigParam 12](#configparam-12): the forced split floor is removed. |
+| 21 basechain gas | [L227-L244](../crypto/smartcont/gen-zerostate.fif#L227-L244) | Per-transaction and special limits are 2,000,000. The worst measured shielded-pool withdrawal is 1,176,248 gas, against a contract ceiling of 1,510,000, so the mainnet-scale 1,000,000 would make every withdrawal fail. 2,000,000 keeps one worst-case transaction near 50 ms. `block_gas_limit` equals the ConfigParam 23 hard limit and is informational; blocks are bounded by ConfigParam 22/23. |
+| 23 basechain block limits | [L297-L304](../crypto/smartcont/gen-zerostate.fif#L297-L304) | Gas tiers 2M / 10M / 20M follow mainnet-scale networks. They are to be re-measured as whole-block validation time on the production hardware class. |
+| 29 consensus | [L263](../crypto/smartcont/gen-zerostate.fif#L263) | The 4 MiB block / 10 MiB collated-data limits sit above the ConfigParam 23 byte limit, so a collator size over-estimate does not turn into a dropped slot. |
+| 30 Simplex | [L264-L289](../crypto/smartcont/gen-zerostate.fif#L264-L289) | The target block rate is 400 ms. `first_block_timeout` is 700 ms. `min_block_interval` is 300 ms, set explicitly. Shard leaders own 16 slots with `max_leader_window_desync` 64; masterchain leaders own 4 slots with a desync of 250. The issuance in ConfigParam 14 assumes the resulting block rate. |
+| 31 fundamental addresses | [L121](../crypto/smartcont/gen-zerostate.fif#L121), [L146](../crypto/smartcont/gen-zerostate.fif#L146) | Only the elector is listed. The bootstrap main wallet is an ordinary account and pays fees. |
+| 43 size limits | [L308-L328](../crypto/smartcont/gen-zerostate.fif#L308-L328) | Mainnet-scale bounds, written out explicitly. No TOS contract on a production path loads more than 3 libraries per transaction or sends extra currencies. |
+
+Measured on the four-validator public testnet (production hardware class: 6 vCPU,
+12 GB RAM, virtio disk), comparing epoch 2 under the earlier values with epoch 3
+under the values above:
+
+- masterchain interval: 605 ms rising towards about 1 s, against about 400–430 ms;
+- basechain shards: 16, against 1;
+- validator CPU: about 2 cores, against under half a core;
+- `consensus/` growth before the first key block: about 137 MB/min, against about 10 MB/min.
 
 ## Validator and Network Parameters
 
