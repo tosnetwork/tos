@@ -44,8 +44,12 @@ Scenarios:
       the others enter it and end NoVerifiedSuccessor. Not entering is judged as
       in L2.
   L4  L1 with a downtime that crosses a catchain rotation and a validator-set
-      (key block) rotation. Needs a short-election configuration; INCONCLUSIVE
-      when no key block was produced while the node was down.
+      (key block) rotation. Needs a short-election configuration. The stopped
+      validator's own last key block, ConfigParam 34 hash and catchain seqno are
+      read immediately before the stop, and a peer's immediately before the
+      restart; a key block generated between the stop and the restart, a changed
+      validator set and a higher catchain seqno are all required. Otherwise
+      INCONCLUSIVE ("rotation not established").
   L5  L1 on a validator whose database was initialized from a persistent state:
       its database is removed (keys and config kept) and it resynchronizes before
       the 30-minute stop. INCONCLUSIVE when the node did not start from a
@@ -65,7 +69,9 @@ independent red control for each kind of missing or invalid evidence, and exits.
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
+import hashlib
 import json
 import os
 import re
@@ -81,6 +87,7 @@ import urllib.request
 from pathlib import Path
 
 NODES = (1, 2, 3, 4)
+SHARD_ALL = -(1 << 63)
 PASS, FAIL, INCONCLUSIVE = "PASS", "FAIL", "INCONCLUSIVE"
 STATUS_RE = re.compile(
     r"STATUS: last_masterchain_block_ago=(?P<mc>-?[0-9.]+)(?P<mcu>ns|us|ms|s|h|d) "
@@ -309,6 +316,46 @@ def resume_observed(mark, resume):
     taken = mark()
     resume()
     return taken
+
+
+ROTATION_NOT_ESTABLISHED = "rotation not established"
+
+
+def evaluate_rotation(
+    before: dict | None, after: dict | None, node: int, stop_t: float, restart_t: float
+) -> dict:
+    """Whether the key block, validator set and catchain all changed during the downtime.
+
+    A snapshot: {"node", "t" (wall clock when read), "key_block": {"seqno",
+    "gen_utime"}, "catchain_seqno", "validator_set" (hash of ConfigParam 34)}.
+    `before` must be the stopped validator's own view, read immediately before it was
+    stopped at `stop_t`; `after` is read while it is down, at `restart_t` at the
+    latest. A change that cannot be placed between the two is not counted: the
+    result is then INCONCLUSIVE, never PASS.
+    """
+    if before is None or after is None:
+        return criterion(INCONCLUSIVE, {ROTATION_NOT_ESTABLISHED: "a snapshot was not read"})
+    detail = {"before": before, "after": after, "stop_t": stop_t, "restart_t": restart_t}
+    missing = []
+    if before["node"] != node:
+        missing.append("baseline not read from the stopped validator")
+    if before["t"] > stop_t:
+        missing.append("baseline read after the stop")
+    if not stop_t <= after["t"] <= restart_t:
+        missing.append("after-state not read during the downtime")
+    key = after["key_block"]
+    if not (
+        key["seqno"] > before["key_block"]["seqno"] and stop_t <= key["gen_utime"] <= restart_t
+    ):
+        missing.append("no key block produced during the downtime")
+    if not after["catchain_seqno"] > before["catchain_seqno"]:
+        missing.append("no catchain rotation")
+    if after["validator_set"] == before["validator_set"]:
+        missing.append("no validator-set change")
+    if missing:
+        detail[ROTATION_NOT_ESTABLISHED] = missing
+        return criterion(INCONCLUSIVE, detail)
+    return criterion(PASS, detail)
 
 
 def evaluate_restart(samples: list[dict], node: int, peers: list[int], window: float) -> dict:
@@ -584,6 +631,130 @@ def self_test() -> int:
     abandoned = mode_from_text("startup catch-up: entering\nstartup catch-up ended: Abandoned\n")
     assert stopped_network_entry(abandoned, ("Fresh", "NoVerifiedSuccessor"))["status"] == FAIL
 
+    # L4: the rotations must fall between the stop (t=1000) and the restart (t=4600).
+    def snap(node: int, t: float, key: int, key_utime: int, cc: int, vset: str) -> dict:
+        return {
+            "node": node,
+            "t": t,
+            "key_block": {"seqno": key, "gen_utime": key_utime},
+            "catchain_seqno": cc,
+            "validator_set": vset,
+        }
+
+    before = snap(3, 999.0, 50, 400, 7, "set-a")
+    after = snap(1, 4590.0, 80, 2500, 9, "set-b")
+    assert evaluate_rotation(before, after, 3, 1000.0, 4600.0)["status"] == PASS
+
+    def not_established(b, a) -> list[str]:
+        result = evaluate_rotation(b, a, 3, 1000.0, 4600.0)
+        assert result["status"] == INCONCLUSIVE, result
+        if ROTATION_NOT_ESTABLISHED in result["detail"]:
+            return result["detail"][ROTATION_NOT_ESTABLISHED]
+        return []
+
+    # Control: a key block produced before the stop (during the warm-up) is not counted,
+    # even though it is newer than a baseline read at the start of the warm-up.
+    warmup = snap(3, 10.0, 50, 400, 7, "set-a")
+    assert "no key block produced during the downtime" in not_established(
+        warmup, snap(1, 4590.0, 60, 600, 9, "set-b")
+    )
+    assert "baseline read after the stop" not in not_established(
+        warmup, snap(1, 4590.0, 60, 600, 9, "set-b")
+    )
+    assert "no key block produced during the downtime" in not_established(
+        before, snap(1, 4590.0, 60, 900, 9, "set-b")
+    )
+    # Control: a key block after the restart is not counted either.
+    assert "no key block produced during the downtime" in not_established(
+        before, snap(1, 4590.0, 80, 4700, 9, "set-b")
+    )
+    # Control: a different node's baseline is not counted.
+    assert "baseline not read from the stopped validator" in not_established(
+        snap(1, 999.0, 50, 400, 7, "set-a"), after
+    )
+    # Control: a missing validator-set change gives INCONCLUSIVE.
+    assert not_established(before, snap(1, 4590.0, 80, 2500, 9, "set-a")) == [
+        "no validator-set change"
+    ]
+    # Control: a missing catchain rotation gives INCONCLUSIVE.
+    assert not_established(before, snap(1, 4590.0, 80, 2500, 7, "set-b")) == [
+        "no catchain rotation"
+    ]
+    # Control: an after-state read outside the downtime, or not read at all.
+    assert "after-state not read during the downtime" in not_established(
+        before, snap(1, 5000.0, 80, 2500, 9, "set-b")
+    )
+    assert "baseline read after the stop" in not_established(
+        snap(3, 1001.0, 50, 400, 7, "set-a"), after
+    )
+    assert evaluate_rotation(None, after, 3, 1000.0, 4600.0)["status"] == INCONCLUSIVE
+    assert evaluate_rotation(before, None, 3, 1000.0, 4600.0)["status"] == INCONCLUSIVE
+
+    # The snapshot reader, against a fake JSON-RPC: the key block is the head's
+    # previous key block, read by its own header; the validator set is ConfigParam 34
+    # at the head.
+    def fake_network(headers: dict, p34: bytes, answering: set[int]):
+        calls = []
+
+        def rpc(node, method, params=None):
+            calls.append((node, method, params))
+            if node not in answering:
+                return None
+            if method == "getMasterchainInfo":
+                return {"last": {"seqno": max(headers)}}
+            if method == "getBlockHeader":
+                return headers.get(params["seqno"])
+            if method == "getConfigParam" and params == {"param": 34, "seqno": max(headers)}:
+                return {"config": {"bytes": base64.b64encode(p34).decode()}}
+            return None
+
+        net = object.__new__(Network)
+        net.rpc = rpc
+        return net, calls
+
+    def header(seqno: int, key: bool, prev_key: int, cc: int, utime: int) -> dict:
+        return {
+            "id": {"seqno": seqno},
+            "is_key_block": key,
+            "prev_key_block_seqno": prev_key,
+            "catchain_seqno": cc,
+            "gen_utime": utime,
+        }
+
+    headers = {40: header(40, True, 30, 5, 1234), 90: header(90, False, 40, 6, 2000)}
+    net, calls = fake_network(headers, b"vset", {3})
+    got = net.rotation_snapshot(3)
+    assert got is not None and got["node"] == 3, got
+    assert got["key_block"] == {"seqno": 40, "gen_utime": 1234}, got
+    assert got["catchain_seqno"] == 6 and got["head_seqno"] == 90, got
+    assert got["validator_set"] == hashlib.sha256(b"vset").hexdigest(), got
+    assert {c[0] for c in calls} == {3}, calls
+    # A head that is itself a key block is the last key block.
+    net, _ = fake_network({90: header(90, True, 40, 6, 2000)}, b"vset", {3})
+    assert net.rotation_snapshot(3)["key_block"] == {"seqno": 90, "gen_utime": 2000}
+    # Control: a header for another seqno, or an unreadable key block, is no snapshot.
+    wrong = {40: header(40, True, 30, 5, 1234), 90: header(91, False, 40, 6, 2000)}
+    net, _ = fake_network(wrong, b"vset", {3})
+    assert net.rotation_snapshot(3) is None
+    net, _ = fake_network({90: header(90, False, 40, 6, 2000)}, b"vset", {3})
+    assert net.rotation_snapshot(3) is None
+    # No key block since the zero state: the zero state has no header to read.
+    net, _ = fake_network({90: header(90, False, 0, 6, 2000)}, b"vset", {3})
+    assert net.rotation_snapshot(3)["key_block"] == {"seqno": 0, "gen_utime": 0}
+    # Control: such a baseline still needs a key block inside the downtime.
+    zero = snap(3, 999.0, 0, 0, 7, "set-a")
+    assert evaluate_rotation(zero, after, 3, 1000.0, 4600.0)["status"] == PASS
+    assert "no key block produced during the downtime" in not_established(
+        zero, snap(1, 4590.0, 0, 0, 9, "set-b")
+    )
+    # The after-state comes from a peer, never the stopped validator, even if it answers.
+    net, calls = fake_network(headers, b"vset", set(NODES))
+    assert net.rotation_snapshot_from_peer(1)["node"] == 2
+    assert all(c[0] != 1 for c in calls), calls
+    net, _ = fake_network(headers, b"vset", {3})
+    assert net.rotation_snapshot_from_peer(1)["node"] == 3
+    assert net.rotation_snapshot_from_peer(3) is None
+
     # Control: a line the process writes at the first instant of its resume is counted.
     with tempfile.TemporaryDirectory() as tmp:
         log = Path(tmp) / "node.log.thread1.log"
@@ -757,9 +928,10 @@ class Network:
             return None
         return None
 
-    def head(self, node: int) -> dict | None:
+    def rpc(self, node: int, method: str, params: dict | None = None) -> dict | None:
+        """One JSON-RPC call to `node`; its result, or nothing on any failure."""
         body = json.dumps(
-            {"jsonrpc": "2.0", "id": 1, "method": "getMasterchainInfo", "params": {}}
+            {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
         ).encode()
         request = urllib.request.Request(
             f"http://127.0.0.1:{self.port(node, 4)}",
@@ -771,11 +943,78 @@ class Network:
         try:
             with opener.open(request, timeout=10) as response:
                 answer = json.load(response)
-            last = answer["result"]["last"]
+            result = answer["result"]
+            return result if isinstance(result, dict) else None
+        except Exception:  # noqa: BLE001 - a node that does not answer gives no result
+            return None
+
+    def head(self, node: int) -> dict | None:
+        result = self.rpc(node, "getMasterchainInfo")
+        try:
+            last = result["last"]
             int(last["seqno"])
             return last
-        except Exception:  # noqa: BLE001 - a node that does not answer has no head
+        except (TypeError, KeyError, ValueError):
             return None
+
+    def header(self, node: int, seqno: int) -> dict | None:
+        result = self.rpc(
+            node,
+            "getBlockHeader",
+            {"workchain": -1, "shard": str(SHARD_ALL), "seqno": seqno},
+        )
+        try:
+            if int(result["id"]["seqno"]) != seqno:
+                return None
+            int(result["catchain_seqno"]), int(result["prev_key_block_seqno"])
+            int(result["gen_utime"]), bool(result["is_key_block"])
+            return result
+        except (TypeError, KeyError, ValueError):
+            return None
+
+    def rotation_snapshot(self, node: int) -> dict | None:
+        """`node`'s own last key block, catchain seqno and validator set, at its head."""
+        t = time.time()
+        head = self.head(node)
+        if head is None:
+            return None
+        seqno = int(head["seqno"])
+        top = self.header(node, seqno)
+        if top is None:
+            return None
+        key_seqno = seqno if top["is_key_block"] else int(top["prev_key_block_seqno"])
+        if key_seqno == seqno:
+            key = top
+        elif key_seqno == 0:
+            # No key block since the zero state, which has no block header; time 0
+            # never falls inside a downtime.
+            key = {"gen_utime": 0}
+        else:
+            key = self.header(node, key_seqno)
+        p34 = self.rpc(node, "getConfigParam", {"param": 34, "seqno": seqno})
+        try:
+            validator_set = hashlib.sha256(base64.b64decode(p34["config"]["bytes"])).hexdigest()
+        except (TypeError, KeyError, ValueError):
+            return None
+        if key is None:
+            return None
+        return {
+            "node": node,
+            "t": t,
+            "head_seqno": seqno,
+            "key_block": {"seqno": key_seqno, "gen_utime": int(key["gen_utime"])},
+            "catchain_seqno": int(top["catchain_seqno"]),
+            "validator_set": validator_set,
+        }
+
+    def rotation_snapshot_from_peer(self, node: int) -> dict | None:
+        """The first running peer's snapshot, while `node` is down."""
+        for peer in NODES:
+            if peer != node:
+                snapshot = self.rotation_snapshot(peer)
+                if snapshot is not None:
+                    return snapshot
+        return None
 
     def actors(self, node: int) -> dict[str, int] | None:
         if not self.alive(node):
@@ -893,11 +1132,26 @@ def measure_restart(
     report.data["mode"] = mode
 
 
-def scenario_l1(net: Network, report: Report, downtime: float = 1800.0, node: int = 3) -> None:
+def scenario_l1(
+    net: Network,
+    report: Report,
+    downtime: float = 1800.0,
+    node: int = 3,
+    boundary: dict | None = None,
+) -> None:
+    """L1; with `boundary`, also the stopped validator's rotation state around the
+    downtime: its own snapshot immediately before the stop, and a peer's immediately
+    before the restart."""
     time.sleep(600)
-    report.data["notes"].append({"head_before_stop": net.head(1)})
+    report.data["notes"].append({"head_before_stop": net.head(node)})
+    if boundary is not None:
+        boundary["before"] = net.rotation_snapshot(node)
+        boundary["stop_t"] = time.time()
     net.stop(node)
     time.sleep(downtime)
+    if boundary is not None:
+        boundary["after"] = net.rotation_snapshot_from_peer(node)
+        boundary["restart_t"] = time.time()
     mark = net.restart(node)
     measure_restart(net, report, node, mark, mark["t"])
     mode = net.mode(node, mark)
@@ -1032,17 +1286,26 @@ def scenario_l3(net: Network, report: Report) -> None:
 
 
 def scenario_l4(net: Network, report: Report) -> None:
-    status_before = net.status_any(1)
-    scenario_l1(net, report, downtime=float(os.environ.get("CATCHUP_L4_DOWNTIME", "3600")))
-    status_after = net.status_any(1)
-    if status_before is None or status_after is None:
-        report.set("a key block was produced while the node was down", INCONCLUSIVE, None)
-        return
-    rotated = status_after["last_known_key_block_ago"] < status_before["last_known_key_block_ago"]
-    report.set(
-        "a key block was produced while the node was down",
-        PASS if rotated else INCONCLUSIVE,
-        {"before": status_before, "after": status_after},
+    node = 3
+    boundary: dict = {}
+    scenario_l1(
+        net,
+        report,
+        downtime=float(os.environ.get("CATCHUP_L4_DOWNTIME", "3600")),
+        node=node,
+        boundary=boundary,
+    )
+    report.merge(
+        {
+            "a key block, a validator-set change and a catchain rotation during the "
+            "downtime": evaluate_rotation(
+                boundary.get("before"),
+                boundary.get("after"),
+                node,
+                boundary.get("stop_t", 0.0),
+                boundary.get("restart_t", 0.0),
+            )
+        }
     )
 
 
