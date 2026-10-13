@@ -27,6 +27,9 @@
 // ValidatorManagerImpl uses for both validator and observer groups, so they
 // cover the whole decision path rather than a hand-built struct.
 
+#include <initializer_list>
+#include <utility>
+
 #include "block/mc-config.h"
 #include "td/utils/tests.h"
 #include "tos/tos-types.h"
@@ -46,6 +49,34 @@ td::Ref<vm::Cell> make_simplex_v2(unsigned flags, unsigned protocol_version) {
   CHECK(cb.store_long_bool(4, 32));  // slots_per_leader_window (>= 1)
   CHECK(cb.store_long_bool(0, 1));   // empty HashmapE
   return cb.finalize();
+}
+
+// A v2 entry as the canonical genesis template writes it: protocol 2, QUIC on,
+// the given leader window and noncritical parameters (key -> uint32 value).
+td::Ref<vm::Cell> make_genesis_simplex_v2(td::uint32 slots_per_leader_window,
+                                          std::initializer_list<std::pair<unsigned, td::uint32>> noncritical) {
+  vm::Dictionary params{8};
+  for (const auto& [key, value] : noncritical) {
+    td::BitArray<8> key_bits;
+    key_bits.store_ulong(key);
+    vm::CellBuilder value_builder;
+    CHECK(value_builder.store_long_bool(value, 32));
+    CHECK(params.set_builder(key_bits, value_builder));
+  }
+  vm::CellBuilder cb;
+  CHECK(cb.store_long_bool(0x22, 8));
+  CHECK(cb.store_long_bool(0, 5));  // flags
+  CHECK(cb.store_long_bool(2, 2));  // protocol_version
+  CHECK(cb.store_long_bool(1, 1));  // use_quic
+  CHECK(cb.store_long_bool(slots_per_leader_window, 32));
+  CHECK(cb.store_maybe_ref(params.get_root_cell()));
+  return cb.finalize();
+}
+
+td::Bits256 bits256_from_hex(td::Slice hex) {
+  td::Bits256 out;
+  CHECK(out.from_hex(hex) == 256);
+  return out;
 }
 
 // simplex_config#21 flags:(## 7) use_quic:Bool target_rate_ms:uint32
@@ -138,6 +169,39 @@ TEST(ConsensusConfigAdmission, selection_keeps_the_exact_parsed_cell_hash) {
   ASSERT_EQ(shard.value().cell_hash, shard_hash);
   ASSERT_EQ(mc.value().config.protocol_version, 2u);
   ASSERT_EQ(shard.value().config.protocol_version, 0u);
+}
+
+TEST(ConsensusConfigAdmission, canonical_genesis_entries_are_admissible) {
+  // The masterchain and shard entries of crypto/smartcont/gen-zerostate.fif.
+  // The shard entry runs protocol 2 with 16-slot leader windows and a 64-window
+  // desync bound; this build must accept it and read every field as written.
+  // The cell hashes are the ones test/validator/consensus/simplex2-genesis-config.fif
+  // pins against the template's own Fift encoding.
+  auto mc_cell = make_genesis_simplex_v2(4, {{0, 400}, {1, 700}, {10, 250}, {13, 300}});
+  auto shard_cell = make_genesis_simplex_v2(16, {{0, 400}, {1, 700}, {10, 64}, {13, 300}});
+  ASSERT_EQ(td::Bits256{mc_cell->get_hash().bits()},
+            bits256_from_hex("131A33C486174558385E855E497FCD8039019F82E43BE9DB953087FFF6C03457"));
+  ASSERT_EQ(td::Bits256{shard_cell->get_hash().bits()},
+            bits256_from_hex("8C97884D0AD8EA682D704782C056F846C33D57777FC01AD90C0F24E2B90E0B09"));
+
+  auto config = make_config(make_param30(std::move(mc_cell), std::move(shard_cell)));
+  ASSERT_TRUE(admissible(config, tos::masterchainId));
+  ASSERT_TRUE(admissible(config, tos::basechainId));
+
+  auto mc = config->get_new_consensus_config(tos::masterchainId);
+  auto shard = config->get_new_consensus_config(tos::basechainId);
+  ASSERT_TRUE(static_cast<bool>(mc));
+  ASSERT_TRUE(static_cast<bool>(shard));
+  for (const auto* entry : {&mc.value(), &shard.value()}) {
+    ASSERT_EQ(entry->protocol_version, 2u);
+    ASSERT_EQ(entry->noncritical_params.target_rate.count(), 400);
+    ASSERT_EQ(entry->noncritical_params.first_block_timeout.count(), 700);
+    ASSERT_EQ(entry->noncritical_params.min_block_interval.count(), 300);
+  }
+  ASSERT_EQ(mc.value().slots_per_leader_window, 4u);
+  ASSERT_EQ(mc.value().noncritical_params.max_leader_window_desync, 250u);
+  ASSERT_EQ(shard.value().slots_per_leader_window, 16u);
+  ASSERT_EQ(shard.value().noncritical_params.max_leader_window_desync, 64u);
 }
 
 TEST(ConsensusConfigAdmission, missing_parameter_fails_closed) {

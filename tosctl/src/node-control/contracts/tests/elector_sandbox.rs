@@ -8358,3 +8358,277 @@ fn a_critical_parameter_needs_the_critical_flag_and_a_mandatory_one_its_current_
         .expect("delivered");
     assert!(replies(&result).contains(&proposal::PROPOSAL_ACCEPTED), "{:02x?}", replies(&result));
 }
+
+// ---------------------------------------------------------------------------
+// How long a proposal lives: the launch ConfigParam 11 lifecycle
+//
+// The canonical genesis votes with normal 2/6/2/5 and critical 4/7/3/5
+// (min_tot_rounds max_tot_rounds min_wins max_losses). The contract stores
+// max_tot_rounds when the proposal is registered, in a round that already takes votes,
+// decrements it on every later validator-set change and removes the proposal only once
+// it goes negative; a round without a winning vote counts as a loss, and the proposal is
+// removed only when losses exceed max_losses. So an ordinary proposal has seven voting
+// rounds and a critical one eight, and with these values the loss cap and the round cap
+// end a proposal on the same transition. These tests run that lifecycle against the
+// launch voting setup, with a round turned over by a change of the current validator set.
+// ---------------------------------------------------------------------------
+
+/// The launch voting setup, read from the zero state rather than restated.
+fn launch_rounds(chain: &Chain, critical: bool) -> (u8, u8, u8, u8) {
+    let setup = voting_setup(chain, critical);
+    (setup.min_tot_rounds, setup.max_tot_rounds, setup.min_wins, setup.max_losses)
+}
+
+/// Register a proposal for parameter 42 with the critical flag as given. Parameter 42 is
+/// not critical, so a critical vote on it is permitted and installs normally.
+fn propose_for_rounds(chain: &mut Chain, critical: bool, value: u32, query_id: u64) -> [u8; 32] {
+    use chain_block::GetRepresentationHash;
+    use contracts::config_contract::messages::proposal;
+    assert!(!is_critical(chain, 42), "the fixture expects an ordinary parameter");
+    let cell = proposal::proposal_cell(42, Some(proposal_value(value)), None).expect("proposal");
+    let hash: [u8; 32] = cell.hash(0).as_slice()[..32].try_into().expect("a 32-byte hash");
+    // Within both setups' store limits: at least 5,000,000 s, at most 10,000,000 s.
+    let body = proposal::new_proposal_body(query_id, 6_000_000, cell, critical).expect("body");
+    let proposer =
+        chain.blockchain.treasury("rounds-proposer", 20_000 * TOS).expect("a funded account");
+    let result = chain
+        .blockchain
+        .send_message(proposer.build_message(
+            &chain.config_contract,
+            10_000 * TOS,
+            true,
+            Some(body),
+        ))
+        .expect("the proposal is delivered");
+    let tags = replies(&result);
+    assert!(tags.contains(&PROPOSAL_ACCEPTED), "the proposal was refused: {tags:02x?}");
+    hash
+}
+
+/// `rounds_remaining wins losses` of a pending proposal, or None once it is gone.
+fn proposal_counters(chain: &Chain, proposal_hash: &[u8; 32]) -> Option<(u8, u8, u8)> {
+    let account =
+        chain.blockchain.get_account(&chain.config_contract).expect("the contract is deployed");
+    let mut slice =
+        chain_block::SliceData::load_cell(account.get_data().expect("storage")).expect("storage");
+    slice.checked_drain_reference().expect("the parameter dictionary");
+    let votes = next_dictionary(&mut slice, 256);
+    let key = chain_block::SliceData::load_builder(
+        chain_block::BuilderData::with_raw(proposal_hash.to_vec(), 256).expect("a key"),
+    )
+    .expect("a key slice");
+    let mut status = votes.get(key).expect("lookup")?;
+    // cfg_proposal_status#ce expires:uint32 proposal:^ConfigProposal is_critical:Bool
+    //   voters:(HashmapE 16 True) remaining_weight:int64 validator_set_id:uint256
+    //   rounds_remaining:uint8 wins:uint8 losses:uint8
+    assert_eq!(status.get_next_byte().expect("tag"), 0xce, "not a proposal status");
+    status.get_next_u32().expect("expiry");
+    status.checked_drain_reference().expect("the proposal");
+    status.get_next_bit().expect("critical");
+    next_dictionary(&mut status, 16);
+    status.get_next_u64().expect("remaining weight");
+    status.get_next_bits(256).expect("validator set id");
+    Some((
+        status.get_next_byte().expect("rounds remaining"),
+        status.get_next_byte().expect("wins"),
+        status.get_next_byte().expect("losses"),
+    ))
+}
+
+/// Turn the voting round over: the current validator set changes identity (its
+/// `utime_since` moves by a second) while its validators and keys stay the same, which
+/// is exactly what the contract compares when it decides a new round has begun.
+fn turn_round(chain: &mut Chain) {
+    use chain_block::IBitstring;
+    let mut key = chain_block::BuilderData::new();
+    key.append_u32(34).expect("the parameter index");
+    let stored = configuration_from_contract(chain)
+        .config_params
+        .get(chain_block::SliceData::load_builder(key).expect("a key slice"))
+        .expect("lookup")
+        .expect("a current validator set");
+    let mut set =
+        chain_block::SliceData::load_cell(stored.reference(0).expect("the set")).expect("set");
+    let tag = set.get_next_byte().expect("tag");
+    let since = set.get_next_u32().expect("utime_since");
+    let mut next = chain_block::BuilderData::new();
+    next.append_u8(tag).expect("tag");
+    next.append_u32(since + 1).expect("utime_since");
+    next.checked_append_references_and_data(&set).expect("the rest of the set");
+    set_contract_parameter(chain, 34, next.into_cell().expect("the next set"));
+}
+
+/// One validator votes: not enough weight to win the round, but the vote makes the
+/// contract apply any pending round change. Returns the status code it answered with.
+fn touch_round(
+    chain: &mut Chain,
+    voter: &PqValidator,
+    proposal_hash: &[u8; 32],
+    query_id: u64,
+) -> i64 {
+    let idx = index_of(chain, voter);
+    let signature =
+        voter.sign_under(&vote_preimage(chain, idx, proposal_hash), CONFIG_VOTE_CONTEXT);
+    let sender = chain.blockchain.treasury("round-voter", 100 * TOS).expect("an account");
+    let result = chain
+        .blockchain
+        .send_message(sender.build_message(
+            &chain.config_contract,
+            VOTE_VALUE,
+            true,
+            Some(vote_body(query_id, &signature, idx, proposal_hash)),
+        ))
+        .expect("the vote is delivered");
+    assert_eq!(exit_code_of(&result), 0, "the vote was refused");
+    let answers: Vec<u32> = replies(&result)
+        .into_iter()
+        .filter(|tag| tag.wrapping_sub(0xd674_5240).wrapping_add(8) < 16)
+        .collect();
+    assert_eq!(answers.len(), 1, "expected one vote confirmation: {answers:02x?}");
+    i64::from(answers[0]) - 0xd674_5240
+}
+
+/// Every validator votes, which is enough weight to win the round. Returns the status
+/// code of the last vote cast; voting stops once the proposal is decided.
+fn win_round(
+    chain: &mut Chain,
+    validators: &[PqValidator],
+    proposal_hash: &[u8; 32],
+    query_base: u64,
+) -> i64 {
+    let mut status = 0;
+    for (n, voter) in validators.iter().enumerate() {
+        status = touch_round(chain, voter, proposal_hash, query_base + n as u64);
+        if proposal_counters(chain, proposal_hash).is_none() {
+            break;
+        }
+    }
+    status
+}
+
+const VOTE_COUNTED: i64 = 2;
+const VOTE_DISCARDED: i64 = -1;
+const ACCEPTED_ORDINARY: i64 = 6;
+const ACCEPTED_CRITICAL: i64 = 7;
+
+fn installed_42(chain: &Chain) -> bool {
+    parameter_present(&configuration_from_contract(chain), 42)
+}
+
+#[test]
+fn an_ordinary_proposal_is_accepted_in_its_seventh_round() {
+    let (mut chain, validators, _) = elect_install_and_rotate();
+    assert_eq!(launch_rounds(&chain, false), (2, 6, 2, 5), "the launch ordinary setup moved");
+    let p = propose_for_rounds(&mut chain, false, 0x0701, 0x7000);
+    assert_eq!(proposal_counters(&chain, &p), Some((6, 0, 0)));
+
+    // Round 1: win.
+    assert_eq!(win_round(&mut chain, &validators, &p, 0x7010), VOTE_COUNTED);
+    // Rounds 2..6: lost, each touched by one vote that cannot win.
+    for round in 2..=6u64 {
+        turn_round(&mut chain);
+        assert_eq!(touch_round(&mut chain, &validators[0], &p, 0x7000 + round * 16), VOTE_COUNTED);
+    }
+    // Round 7: no rounds remain, five losses, one win; this round still takes votes.
+    turn_round(&mut chain);
+    assert_eq!(win_round(&mut chain, &validators, &p, 0x7070), ACCEPTED_ORDINARY);
+    assert_eq!(proposal_counters(&chain, &p), None, "the accepted proposal is still pending");
+    assert!(installed_42(&chain), "the proposal accepted in round 7 was not installed");
+}
+
+#[test]
+fn a_critical_proposal_is_accepted_in_its_eighth_round() {
+    let (mut chain, validators, _) = elect_install_and_rotate();
+    assert_eq!(launch_rounds(&chain, true), (4, 7, 3, 5), "the launch critical setup moved");
+    let p = propose_for_rounds(&mut chain, true, 0x0801, 0x8000);
+    assert_eq!(proposal_counters(&chain, &p), Some((7, 0, 0)));
+
+    // Rounds 1 and 2: win.
+    assert_eq!(win_round(&mut chain, &validators, &p, 0x8010), VOTE_COUNTED);
+    turn_round(&mut chain);
+    assert_eq!(win_round(&mut chain, &validators, &p, 0x8020), VOTE_COUNTED);
+    // Rounds 3..7: lost.
+    for round in 3..=7u64 {
+        turn_round(&mut chain);
+        assert_eq!(touch_round(&mut chain, &validators[0], &p, 0x8000 + round * 16), VOTE_COUNTED);
+    }
+    // Round 8: no rounds remain, five losses, two wins; the third win accepts it.
+    turn_round(&mut chain);
+    assert_eq!(win_round(&mut chain, &validators, &p, 0x8080), ACCEPTED_CRITICAL);
+    assert_eq!(proposal_counters(&chain, &p), None, "the accepted proposal is still pending");
+    assert!(installed_42(&chain), "the proposal accepted in round 8 was not installed");
+}
+
+#[test]
+fn a_proposal_is_removed_on_the_transition_after_its_last_round() {
+    let (mut chain, validators, _) = elect_install_and_rotate();
+    let p = propose_for_rounds(&mut chain, true, 0x0901, 0x9000);
+    // Rounds 1 and 2 won, rounds 3..7 lost, round 8 entered and lost too.
+    assert_eq!(win_round(&mut chain, &validators, &p, 0x9010), VOTE_COUNTED);
+    turn_round(&mut chain);
+    assert_eq!(win_round(&mut chain, &validators, &p, 0x9020), VOTE_COUNTED);
+    for round in 3..=8u64 {
+        turn_round(&mut chain);
+        assert_eq!(touch_round(&mut chain, &validators[0], &p, 0x9000 + round * 16), VOTE_COUNTED);
+    }
+    assert_eq!(proposal_counters(&chain, &p), Some((0, 2, 5)), "round 8 is the last one");
+    // The next transition ends it: no round remains and the sixth loss is recorded.
+    turn_round(&mut chain);
+    assert_eq!(touch_round(&mut chain, &validators[0], &p, 0x9090), VOTE_DISCARDED);
+    assert_eq!(proposal_counters(&chain, &p), None, "the proposal outlived its last round");
+    assert!(!installed_42(&chain), "a removed proposal was installed");
+}
+
+#[test]
+fn five_lost_rounds_keep_a_proposal_and_the_sixth_removes_it() {
+    let (mut chain, validators, _) = elect_install_and_rotate();
+    let p = propose_for_rounds(&mut chain, false, 0x0a01, 0xa000);
+    // Round 1 lost (one vote only), then rounds 2..6 lost: five losses at round 6.
+    assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xa010), VOTE_COUNTED);
+    for round in 2..=6u64 {
+        turn_round(&mut chain);
+        assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xa000 + round * 16), VOTE_COUNTED);
+    }
+    assert_eq!(proposal_counters(&chain, &p), Some((1, 0, 5)), "five losses are still live");
+    // Round 6 lost as well: the sixth loss removes it, with one round still remaining.
+    turn_round(&mut chain);
+    assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xa070), VOTE_DISCARDED);
+    assert_eq!(proposal_counters(&chain, &p), None, "a sixth loss did not remove the proposal");
+}
+
+/// With the launch values the round cap and the loss cap end a proposal on the same
+/// transition, so neither is observable alone through them (loosening only the round cap
+/// changes no outcome). This test lifts the loss cap to 255 to hold the round cap on its
+/// own: an ordinary proposal still lives in round 7 and is gone on the next transition.
+#[test]
+fn the_round_cap_alone_ends_a_proposal_after_its_seventh_round() {
+    use chain_block::IBitstring;
+    let (mut chain, validators, _) = elect_install_and_rotate();
+    let setup = |min_rounds: u8, max_rounds: u8, min_wins: u8, min_store: u32, max_store: u32| {
+        let mut b = chain_block::BuilderData::new();
+        b.append_u8(0x36).expect("tag");
+        for value in [min_rounds, max_rounds, min_wins, 255] {
+            b.append_u8(value).expect("rounds");
+        }
+        for value in [min_store, max_store, 1, 500] {
+            b.append_u32(value).expect("store and price");
+        }
+        b.into_cell().expect("a proposal setup")
+    };
+    let mut value = chain_block::BuilderData::new();
+    value.append_u8(0x91).expect("tag");
+    value.checked_append_reference(setup(2, 6, 2, 1_000_000, 10_000_000)).expect("ordinary");
+    value.checked_append_reference(setup(4, 7, 3, 5_000_000, 20_000_000)).expect("critical");
+    set_contract_parameter(&mut chain, 11, value.into_cell().expect("a voting setup"));
+
+    let p = propose_for_rounds(&mut chain, false, 0x0b01, 0xb000);
+    assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xb010), VOTE_COUNTED);
+    for round in 2..=7u64 {
+        turn_round(&mut chain);
+        assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xb000 + round * 16), VOTE_COUNTED);
+    }
+    assert_eq!(proposal_counters(&chain, &p), Some((0, 0, 6)), "round 7 is still live");
+    turn_round(&mut chain);
+    assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xb080), VOTE_DISCARDED);
+    assert_eq!(proposal_counters(&chain, &p), None, "the proposal outlived max_tot_rounds");
+}

@@ -30,6 +30,16 @@ def main():
     assert credit(config) == 20000
     version = read_dict(config, 32)[8].refs[0].slice()
     assert version.uint(8) == 0xC4 and version.uint(32) == 18
+    # An exhausted transaction stops at the generated basechain gas_limit, read
+    # from ConfigParam 21 rather than restated here.
+    prices = read_dict(config, 32)[21].refs[0].slice()
+    tag = prices.uint(8)
+    if tag == 0xD1:
+        prices.uint(128)
+        tag = prices.uint(8)
+    assert tag in (0xDD, 0xDE), "invalid gas-price constructor"
+    prices.uint(64)
+    basechain_gas_limit = prices.uint(64)
     source = Path(__file__).with_name("post-accept-probe.fc")
     if args.delete_accept:
         original = source.read_text()
@@ -80,7 +90,7 @@ def main():
             if count == 0x7FFFFFFF:
                 assert details["exit"] == -14 and details["aborted"]
                 assert state.hash == data.hash
-                assert details["gas"] == 30000000
+                assert details["gas"] == basechain_gas_limit
             else:
                 assert details["exit"] == 0 and not details["aborted"]
                 assert state.hash == Cell().uint(count, 32).hash

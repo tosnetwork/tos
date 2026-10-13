@@ -47,7 +47,9 @@ existing Elector process.
 | ConfigParam 19 global ID | 1 | Mainnet signature replay domain; local development uses 3 |
 | ConfigParam 34 descriptor | `validator_pq_addr#b3` | PQ-only bootstrap consensus identities |
 | PQ algorithm ID | 1 (ML-DSA-44) | 1,312-byte consensus public keys |
-| ConfigParam 30 | Simplex version 2, QUIC enabled | Consensus protocol; distinct from ConfigParam 8 |
+| ConfigParam 11 proposal voting | ordinary 2/6/2/5, critical 4/7/3/5 (min_tot_rounds/max_tot_rounds/min_wins/max_losses) | A proposal can be voted on for 7 (ordinary) or 8 (critical) rounds, because the registering round counts; it is accepted at 2 / 3 winning rounds and removed after its sixth lost round |
+| ConfigParam 12 basechain | `workchain_v2`, `min_split` 0, `max_split` 2, persistent-state split depth 4 | One basechain shard at genesis; load may split it into at most four |
+| ConfigParam 30 | Simplex version 2, QUIC enabled, 400 ms target rate, 700 ms first-block timeout, 300 ms minimum block interval; leader windows of 4 slots (masterchain) and 16 slots (shards) | Consensus protocol; distinct from ConfigParam 8 |
 | ConfigParam 47 | Compiled controller v1 code hash | Admission for subsequent controller-based elections |
 
 ConfigParams 8 and 47 are mandatory and critical. Changing a VM version is not

@@ -5,14 +5,25 @@ import argparse
 import re
 from pathlib import Path
 
+PRODUCTION_MC_PARAM30 = (
+    "dictnew",
+    "<b 400 32 u, b> <s 0 rot 8 udict! drop",
+    "<b 700 32 u, b> <s 1 rot 8 udict! drop",
+    "<b 250 32 u, b> <s 10 rot 8 udict! drop",
+    "<b 300 32 u, b> <s 13 rot 8 udict! drop",
+    "<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>",
+)
+PRODUCTION_SHARD_PARAM30 = (
+    "dictnew",
+    "<b 400 32 u, b> <s 0 rot 8 udict! drop",
+    "<b 700 32 u, b> <s 1 rot 8 udict! drop",
+    "<b 64 32 u, b> <s 10 rot 8 udict! drop",
+    "<b 300 32 u, b> <s 13 rot 8 udict! drop",
+    "<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 16 32 u, swap dict, b>",
+)
+# Masterchain dictionary, then shard dictionary, then the setter, in order.
 PRODUCTION_PARAM30 = "\n".join(
-    (
-        "dictnew",
-        "<b 400 32 u, b> <s 0 rot 8 udict! drop",
-        "<b 1000 32 u, b> <s 1 rot 8 udict! drop",
-        "<b 250 32 u, b> <s 10 rot 8 udict! drop",
-        "<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>",
-    )
+    PRODUCTION_MC_PARAM30 + PRODUCTION_SHARD_PARAM30 + ("config.new_consensus_params_all!",)
 )
 
 
@@ -23,7 +34,7 @@ def check(production: str, harness: str, manager: str) -> list[str]:
     if production.count("250 250 1000 21 true config.catchain_params!") != 1:
         errors.append("production Param28 launch ceiling changed")
     if (
-        production.count(PRODUCTION_PARAM30) != 2
+        production.count(PRODUCTION_PARAM30) != 1
         or production.count("config.new_consensus_params_all!") != 1
     ):
         errors.append("production masterchain/shard Param30 differs from fixed v2 values")

@@ -36,7 +36,7 @@
     }
   },
   "config": {
-    "bytes": 7387,
+    "bytes": 7475,
     "gas": {
       "20": {
         "block_gas_limit": 2500000,
@@ -44,14 +44,14 @@
         "gas_limit": 1000000
       },
       "21": {
-        "block_gas_limit": 60000000,
+        "block_gas_limit": 20000000,
         "gas_credit": 20000,
-        "gas_limit": 30000000
+        "gas_limit": 2000000
       }
     },
     "global_id": 1,
     "network": "4242424242424242424242424242424242424242424242424242424242424242",
-    "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7",
+    "sha256": "9e4cbbf2c23a3aa98189b571f3216a86d31ec3b0223ce4e9fc3c3170bdde9c93",
     "version": 18
   },
   "files": {
@@ -72,8 +72,8 @@
       "sha256": "96ba6f8b91ad961e9c2fd62be9fb6e662ebf77cc2cf72eb6c276f96e738ce4ec"
     },
     "config.boc": {
-      "bytes": 7387,
-      "sha256": "3d480a6c3d9eed12b6ea687ab75f9d0a5fbcbbbad780a003af6c17a1ec6f72c7"
+      "bytes": 7475,
+      "sha256": "9e4cbbf2c23a3aa98189b571f3216a86d31ec3b0223ce4e9fc3c3170bdde9c93"
     },
     "repository/LICENSE": {
       "bytes": 35149,
@@ -188,8 +188,8 @@
       "sha256": "e839b211e61ea7f981d184b30aa6a44abaa39644a9f5e760440852a2dffd3c42"
     },
     "repository/scripts/build-wallet-quantum-bundle.py": {
-      "bytes": 13187,
-      "sha256": "ce69521fcae93c7ad472987203bd350d63818d39e806ea5700b29d289e5edb30"
+      "bytes": 13186,
+      "sha256": "b2ee8852332a803fb17a414ea8ed4ef6eed60aa5012dfe881ee6cb30882b4ab1"
     },
     "repository/test/auth-extensions/cells.py": {
       "bytes": 7222,

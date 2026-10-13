@@ -97,9 +97,9 @@ def validate(cells):
         )
     require(
         gas["21"]["gas_price"] == 436907
-        and gas["21"]["gas_limit"] == 30000000
-        and gas["21"]["special_gas_limit"] == 30000000
-        and gas["21"]["block_gas_limit"] == 60000000,
+        and gas["21"]["gas_limit"] == 2000000
+        and gas["21"]["special_gas_limit"] == 2000000
+        and gas["21"]["block_gas_limit"] == 20000000,
         "basechain candidate tariff mismatch",
     )
     require(

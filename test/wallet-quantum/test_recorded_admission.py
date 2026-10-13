@@ -12,10 +12,10 @@ def prices(credit, constructor=0xDE, flat=True):
     result = Cell()
     if flat:
         result.uint(0xD1, 8).uint(100, 64).uint(667, 64)
-    result.uint(constructor, 8).uint(436907, 64).uint(30000000, 64)
+    result.uint(constructor, 8).uint(436907, 64).uint(2000000, 64)
     if constructor == 0xDE:
-        result.uint(30000000, 64)
-    return result.uint(credit, 64).uint(60000000, 64).uint(100000000, 64).uint(1000000000, 64)
+        result.uint(2000000, 64)
+    return result.uint(credit, 64).uint(20000000, 64).uint(100000000, 64).uint(1000000000, 64)
 
 
 def config(version=18, credit=20000, constructor=0xDE, flat=True):

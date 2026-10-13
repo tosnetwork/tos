@@ -34,7 +34,7 @@ class CandidateReadbackTests(unittest.TestCase):
             values = (
                 [655360000, 1000000, 70000000, 10000, 2500000, 100000000, 1000000000]
                 if mc
-                else [gas_price, 30000000, 30000000, credit, 60000000, freeze_due, 1000000000]
+                else [gas_price, 2000000, 2000000, credit, 20000000, freeze_due, 1000000000]
             )
             b = (
                 Builder()

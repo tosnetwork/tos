@@ -65,8 +65,27 @@ hashu dup =: basestate0_rhash
 ."root hash=" dup 64x. space 256 u>B dup B>base64url type cr
 "basestate0" +suffix +".rhash" B>file
 
-// root-hash file-hash start-at actual-min-split min-split-depth max-split-depth wc-id
-basestate0_rhash basestate0_fhash now 0 4 8 0 add-std-workchain
+// The basechain descriptor uses the workchain_v2 (#a7) constructor, written
+// out here because add-std-workchain only builds #a6:
+//   enabled_since actual_min_split min_split max_split | basic active accept_msgs
+//   flags | zerostate root and file hash | version | wfmt_basic vm_version vm_mode
+//   | wc_split_merge_timings | persistent_state_split_depth
+// The basechain starts as one shard: min_split 0 forces no split, and
+// max_split 2 lets load split it into at most four shards. A forced min_split
+// of 4 made a four-validator network run 17 consensus groups per node (the
+// masterchain plus 16 basechain shards) from about 400 s after genesis; the
+// extra groups saturated disk flushes and pushed the masterchain block interval
+// from about 470 ms to about 1 s. Mainnet-scale networks use min 0 / max 2.
+// The split/merge timings are the node defaults, written explicitly: delay
+// 100 s, interval 100 s, minimum interval 30 s, maximum delay 1000 s.
+// persistent_state_split_depth 4 serializes the basechain's persistent state
+// in 16 parts by account prefix, as mainnet-scale networks do.
+<b x{a7} s, now 32 u, 0 8 u, 0 8 u, 2 8 u, x{e000} s,
+   basestate0_rhash 256 u, basestate0_fhash 256 u, 0 32 u, x{1} s, -1 32 i, 0 64 u,
+   x{0} s, 100 32 u, 100 32 u, 30 32 u, 1000 32 u, 4 8 u, b>
+dup isWorkchainDescr? not abort"invalid WorkchainDescr created"
+<s 0 workchain-dict @ 32 idict!+ 0= abort"cannot add workchain"
+workchain-dict !
 
 config.workchains!
 
@@ -94,7 +113,12 @@ main_wallet_genesis_balance
 AllOnes 1 * // address
 6 // mode: create+setaddr
 register_smc
-dup make_special dup constant smc1_addr
+// The bootstrap wallet is an ordinary account, not a fundamental (ConfigParam
+// 31) one: it pays storage, gas and forwarding fees like any other masterchain
+// wallet. The genesis fundamental set is the elector (listed below) and the
+// configuration contract (always treated as fundamental). Mainnet-scale
+// networks likewise keep ordinary wallets out of ConfigParam 31.
+dup constant smc1_addr
 Masterchain over
 2dup ."main wallet address = " .addr cr 2dup 6 .Addr cr
 "main-wallet" +suffix +".addr" save-address-verbose
@@ -200,19 +224,24 @@ config.special!
 // 90%. Masterchain gas is untouched as well: elections and configuration are
 // meant to be expensive.
 //
-// The two LIMITS deliberately do not match TON's. Mainnet grants a
-// transaction 1,000,000 gas; a shielded-pool withdrawal is over 1,170,000, so
-// at mainnet's limit the pool cannot run at all. 30,000,000 is what makes it
-// possible and is a considered divergence, not a value nobody got round to
-// aligning. Anyone tempted to "finish the alignment" by lowering it should
-// read `crypto/smartcont/shielded/` first.
+// The per-transaction LIMITS deliberately do not match mainnet-scale
+// networks' 1,000,000 gas. The measured worst-case shielded-pool withdrawal is
+// 1,176,248 gas and the pool's own transact ceiling is 1,510,000, so at
+// 1,000,000 the pool cannot run at all. gas_limit and special_gas_limit are
+// 2,000,000: room above the pool's ceiling, while one worst-case transaction
+// stays at about 50 ms at the measured worst of about 25 ns per gas. (They
+// were 30,000,000, which let a single transaction occupy a validator for
+// most of a second.) Anyone tempted to "finish the alignment" by lowering
+// them to 1,000,000 should read `crypto/smartcont/tos-shielded-pool-v1.fc`
+// first. block_gas_limit is 20,000,000, equal to the basechain block-limit
+// gas hard limit (ConfigParam 23) below; the node does not read it.
 //
 // What this does NOT change: the pool's own state. Gas prices live in the
 // chain's zerostate, not in the contract, so `profile_hash`, the genesis
 // state hash and the deployment address are all unmoved.
-436907 30 *M 30 *M 10000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
+436907 2 *M 2 *M 10000 20 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
 def? quantum-admission-candidate {
-  436907 30 *M 30 *M 20000 60 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
+  436907 2 *M 2 *M 20000 20 *M TM$0.1 TM$1.0 100 667 config.gas_prices!
 } if
 // masterchain gas (aligned with production)
 655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000 config.mc_gas_prices!
@@ -226,20 +255,37 @@ def? quantum-admission-candidate {
 // mc-cc-lifetime sh-cc-lifetime sh-val-lifetime sh-val-num mc-shuffle
 250 250 1000 21 true config.catchain_params!
 // round-candidates next-cand-delay-ms consensus-timeout-ms fast-attempts attempt-duration cc-max-deps max-block-size max-collated-size new-cc-ids
-3 2000 16000 3 8 4 2 *Mi 2 *Mi true config.consensus_params!
-// ConfigParam 30: first-testnet Simplex v2 (#22), with the 400 ms target
-// encoded as noncritical parameter 0. Reserved flags are zero, protocol
-// version is 2, QUIC is enabled, and each leader owns four slots.
+// Consensus admits a candidate of at most 4 MiB of block data and 10 MiB of
+// collated data, the values mainnet-scale networks use. The previous 2 MiB /
+// 2 MiB equalled the basechain block-limit byte hard limit (ConfigParam 23),
+// so a block the collator's size estimate let through could exceed the
+// consensus limit and end as a collator fatal error or a dropped broadcast.
+3 2000 16000 3 8 4 4 *Mi 10 *Mi true config.consensus_params!
+// ConfigParam 30: Simplex v2 (#22), with the 400 ms target encoded as
+// noncritical parameter 0. Reserved flags are zero, protocol version is 2,
+// QUIC is enabled, and each masterchain leader owns four slots. Noncritical
+// parameter 1 is first_block_timeout: 700 ms, the value mainnet-scale networks
+// use, instead of the 1000 ms node default. Noncritical parameter 13 is
+// min_block_interval: 300 ms, set explicitly as mainnet-scale networks do,
+// instead of the 0 ms node default: a validator does not validate a non-empty
+// candidate earlier than 300 ms after its parent's generation time.
+// The shard dictionary differs from the masterchain one in two fields, as on
+// mainnet-scale networks: each shard leader owns 16 consecutive slots instead
+// of 4, and noncritical parameter 10 (max_leader_window_desync) is 64 windows
+// instead of 250, which keeps the accepted look-ahead at about 1000 slots
+// (64 x 16 = 1024, against 250 x 4 = 1000 on the masterchain).
 dictnew
 <b 400 32 u, b> <s 0 rot 8 udict! drop
-<b 1000 32 u, b> <s 1 rot 8 udict! drop
+<b 700 32 u, b> <s 1 rot 8 udict! drop
 <b 250 32 u, b> <s 10 rot 8 udict! drop
+<b 300 32 u, b> <s 13 rot 8 udict! drop
 <b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
 dictnew
 <b 400 32 u, b> <s 0 rot 8 udict! drop
-<b 1000 32 u, b> <s 1 rot 8 udict! drop
-<b 250 32 u, b> <s 10 rot 8 udict! drop
-<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
+<b 700 32 u, b> <s 1 rot 8 udict! drop
+<b 64 32 u, b> <s 10 rot 8 udict! drop
+<b 300 32 u, b> <s 13 rot 8 udict! drop
+<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 16 32 u, swap dict, b>
 config.new_consensus_params_all!
 
 
@@ -248,14 +294,38 @@ config.new_consensus_params_all!
 500000 1000000 2500000 triple     // gas: underload soft hard
 1000 5000 10000 triple            // lt: underload soft hard
 triple untriple config.mc_block_limits!
-// basechain block limits — gas tiers aligned with ConfigParam 21 gas_limit/
-// block_gas_limit above so collator block-selection and per-tx gas admission
-// agree on the same size envelope. underload=5M, soft=60M, hard=120M
-// (2x soft headroom).
+// basechain block limits. The gas tiers are the ones mainnet-scale networks
+// use: underload 2,000,000, soft 10,000,000, hard 20,000,000, so the hard
+// limit holds ten transactions at the ConfigParam 21 per-transaction limit.
+// They replace 5M/60M/120M, which were sized for a 30,000,000 per-transaction
+// limit; the block tiers are to be re-measured end to end on the regenerated
+// testnet. Bytes and lt tiers are unchanged.
 256 *Ki 1 *Mi 2 *Mi triple           // bytes: underload soft hard
-5000000 60000000 120000000 triple    // gas: underload soft hard
+2000000 10000000 20000000 triple     // gas: underload soft hard
 1000 5000 10000 triple               // lt: underload soft hard
 triple untriple config.block_limits!
+
+// ConfigParam 43: size limits, written explicitly with the values
+// mainnet-scale networks use instead of the node defaults. Against those
+// defaults it lowers three limits: a library published by an account holds at
+// most 200 cells (default 1000), a message carries no extra currency (default
+// 2; this genesis defines none, ConfigParam 7 is omitted), and a transaction
+// loads at most 3 library cells (default unlimited). The other fields equal
+// the defaults. This build reads max_transaction_library_loads only from the
+// v3 constructor (#03), which also carries the per-transaction message totals;
+// they are set to their defaults, 5 x 2^20 bits and 20480 cells.
+//   max_msg_bits max_msg_cells max_library_cells max_vm_data_depth
+//   max_ext_msg_size max_ext_msg_depth max_acc_state_cells
+//   max_mc_acc_state_cells max_acc_public_libraries defer_out_queue_size_limit
+//   max_msg_extra_currencies max_acc_fixed_prefix_length
+//   acc_state_cells_for_storage_dict max_transaction_library_loads
+//   max_total_msg_bits max_total_msg_cells
+<b x{03} s, 2097152 32 u, 8192 32 u, 200 32 u, 512 16 u,
+   65535 32 u, 512 16 u, 65536 32 u,
+   2048 32 u, 256 32 u, 256 32 u,
+   0 32 u, 8 8 u,
+   26 32 u, 1 1 u, 3 32 u,
+   5242880 32 u, 20480 32 u, b> 43 config!
 
 // Candidate values calibrated from a four-validator Simplex v2 rehearsal at
 // 2.5 finalized masterchain and basechain blocks per second, retaining the
@@ -302,8 +372,20 @@ def? quantum-network-tag {
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
 // first for ordinary proposals, then for critical proposals
-_( 2 3 2 2 1000000 10000000 1 500 )
-_( 4 7 4 2 5000000 20000000 2 1000 )
+// Voting rounds as mainnet-scale networks set them. The config contract stores
+// max_tot_rounds when a proposal is registered, in a round that already takes
+// votes, decrements it on each later validator-set change and removes the
+// proposal only when it goes negative, so max_tot_rounds 6 / 7 give an ordinary
+// proposal 7 and a critical one 8 voting rounds. A proposal is accepted as soon
+// as it has won min_wins rounds (2 / 3); a round without enough votes is a
+// loss, and it is removed only when its losses exceed max_losses (5). With
+// these values the loss cap and the round cap end a proposal on the same
+// transition. min_tot_rounds is not read by the contract. The previous
+// ordinary 2/3/2/2 and critical 4/7/4/2 removed a proposal after its third
+// lost round. Store limits and storage prices are unchanged. The lifecycle is
+// exercised in tosctl/src/node-control/contracts/tests/elector_sandbox.rs.
+_( 2 6 2 5 1000000 10000000 1 500 )
+_( 4 7 3 5 5000000 20000000 2 1000 )
 config.param_proposals_setup!
 
 // deposit bit_pps cell_pps
