@@ -17,16 +17,17 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <algorithm>
+#include <limits>
+
 #include "td/utils/overloaded.h"
 #include "td/utils/port/path.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 
+#include "download-deadline.h"
 #include "download-state.hpp"
 #include "full-node.h"
-
-#include <algorithm>
-#include <limits>
 
 namespace tos {
 
@@ -352,6 +353,11 @@ void DownloadState::got_block_handle(BlockHandle handle) {
 
 void DownloadState::got_node_to_download(adnl::AdnlNodeIdShort node) {
   download_from_ = node;
+  auto deadline = download_query_deadline(timeout_, 1.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
+    return;
+  }
   LOG(WARNING) << "downloading state " << block_id_.to_str() << " ("
                << persistent_state_type_to_string(block_id_.shard_full(), type_) << ") from " << download_from_;
 
@@ -389,11 +395,11 @@ void DownloadState::got_node_to_download(adnl::AdnlNodeIdShort node) {
 
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query, download_from_, local_id_, overlay_id_,
-                            "get_prepare", std::move(P), td::Timestamp::in(1.0), std::move(query));
+                            "get_prepare", std::move(P), deadline.ok(), std::move(query));
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_prepare",
-                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
-                            td::Timestamp::in(1.0), std::move(P));
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)), deadline.ok(),
+                            std::move(P));
   }
 }
 
@@ -419,6 +425,11 @@ void DownloadState::got_block_state_description(td::BufferSlice data) {
               request_total_size();
               return;
             }
+            auto deadline = download_query_deadline(timeout_, 3.0);
+            if (deadline.is_error()) {
+              abort_query(deadline.move_as_error());
+              return;
+            }
             auto P = td::PromiseCreator::lambda([SelfId = actor_id(self)](td::Result<td::BufferSlice> R) {
               if (R.is_error()) {
                 td::actor::send_closure(SelfId, &DownloadState::abort_query, R.move_as_error());
@@ -431,12 +442,12 @@ void DownloadState::got_block_state_description(td::BufferSlice data) {
                 create_serialize_tl_object<tos_api::tosNode_downloadZeroState>(create_tl_block_id(block_id_));
             if (client_.empty()) {
               td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_,
-                                      overlay_id_, "download state", std::move(P), td::Timestamp::in(3.0),
-                                      std::move(query), FullNode::max_zerostate_size(), rldp_);
+                                      overlay_id_, "download state", std::move(P), deadline.ok(), std::move(query),
+                                      FullNode::max_zerostate_size(), rldp_);
             } else {
               td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "download state",
                                       create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
-                                      td::Timestamp::in(3.0), std::move(P));
+                                      deadline.ok(), std::move(P));
             }
             status_.set_status(PSTRING() << block_id_.id.to_str() << " : download started");
           }));
@@ -466,6 +477,11 @@ void DownloadState::got_state_size(td::BufferSlice size_or_not_found) {
 }
 
 void DownloadState::request_total_size() {
+  auto deadline = download_query_deadline(timeout_, 3.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
+    return;
+  }
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
     if (R.is_error()) {
       td::actor::send_closure(SelfId, &DownloadState::abort_query, R.move_as_error());
@@ -484,11 +500,11 @@ void DownloadState::request_total_size() {
           create_tl_block_id(block_id_), create_tl_block_id(masterchain_block_id_), effective_shard_));
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_, overlay_id_,
-                            "get size", std::move(P), td::Timestamp::in(3.0), std::move(query), 1024, rldp_);
+                            "get size", std::move(P), deadline.ok(), std::move(query), 1024, rldp_);
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get size",
-                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
-                            td::Timestamp::in(3.0), std::move(P));
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)), deadline.ok(),
+                            std::move(P));
   }
 }
 
@@ -592,6 +608,11 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
     return;
   }
 
+  auto deadline = download_query_deadline(timeout_, 20.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
+    return;
+  }
   td::uint32 part_size = static_cast<td::uint32>(
       std::min<td::uint64>(kPersistentStatePartSize, total_size_ - sum_));
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), part_size](td::Result<td::BufferSlice> R) {
@@ -608,12 +629,11 @@ void DownloadState::got_block_state_part(td::BufferSlice data, td::uint32 reques
       sum_, part_size);
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_, overlay_id_,
-                            "download state", std::move(P), td::Timestamp::in(20.0), std::move(query), part_size + 1024,
-                            rldp_);
+                            "download state", std::move(P), deadline.ok(), std::move(query), part_size + 1024, rldp_);
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "download state",
-                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
-                            td::Timestamp::in(20.0), std::move(P));
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)), deadline.ok(),
+                            std::move(P));
   }
 }
 

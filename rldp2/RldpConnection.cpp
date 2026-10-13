@@ -191,6 +191,7 @@ void RldpConnection::send(TransferId transfer_id, td::BufferSlice data, td::Time
     add_limit(timeout, limit);
   }
   outbound_transfers_.emplace(transfer_id, OutboundTransfer{std::move(data)});
+  outbound_transfers_started_++;
 }
 
 void RldpConnection::receive_raw(td::BufferSlice packet) {

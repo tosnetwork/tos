@@ -170,6 +170,7 @@ class RldpIn : public RldpImpl {
   PartCompletedCallback part_completed_callback_;
 
   void get_connection_stats(td::Promise<ConnectionStats> promise) override;
+  void get_outbound_transfer_stats(adnl::AdnlNodeIdShort local_id, td::Promise<OutboundTransferStats> promise) override;
 
   // The number of connections one local id may hold before it must stop
   // taking slots from the others.

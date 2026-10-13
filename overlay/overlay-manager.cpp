@@ -68,7 +68,7 @@ void OverlayManager::RequestBuffer::evict_oldest() {
 
 void OverlayManager::RequestBuffer::add_request(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                                                 OverlayIdShort overlay_id, td::BufferSlice data,
-                                                std::optional<td::Promise<td::BufferSlice>> promise) {
+                                                std::optional<td::Promise<adnl::AdnlQueryAnswer>> promise) {
   OverlayBufferKey key{dst, overlay_id};
 
   requests.push_back(BufferedRequest{src, dst, overlay_id, std::move(data), std::move(promise), requests.end()});
@@ -161,7 +161,7 @@ void OverlayManager::register_overlay(adnl::AdnlNodeIdShort local_id, OverlayIdS
                        << local_id;
     for (auto &req : buffered) {
       if (req.promise.has_value()) {
-        receive_query(req.src, req.dst, std::move(req.data), std::move(req.promise.value()));
+        receive_query_ex(req.src, req.dst, std::move(req.data), std::move(req.promise.value()));
       } else {
         receive_message(req.src, req.dst, std::move(req.data));
       }
@@ -306,6 +306,14 @@ void OverlayManager::receive_message(adnl::AdnlNodeIdShort src, adnl::AdnlNodeId
 
 void OverlayManager::receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                                    td::Promise<td::BufferSlice> promise) {
+  receive_query_ex(src, dst, std::move(data), adnl::ignore_answer_metadata(std::move(promise)));
+}
+
+// The answer is forwarded whole, delivery metadata included, through the
+// buffer as well: its delivery deadline is set once, by whoever answers, and
+// nothing on the way restarts it.
+void OverlayManager::receive_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
+                                      td::Promise<adnl::AdnlQueryAnswer> promise) {
   OverlayIdShort overlay_id;
   tl_object_ptr<tos_api::overlay_messageExtra> extra;
   td::Slice parsed_data = data;
@@ -351,9 +359,9 @@ void OverlayManager::receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdSh
   data.confirm_read(data.size() - parsed_data.size());
   td::actor::send_closure(it2->second.overlay, &Overlay::update_throughput_in_ctr, src, data.size(), true, false);
   promise = [overlay = it2->second.overlay.get(), promise = std::move(promise),
-             src](td::Result<td::BufferSlice> R) mutable {
+             src](td::Result<adnl::AdnlQueryAnswer> R) mutable {
     if (R.is_ok()) {
-      td::actor::send_closure(overlay, &Overlay::update_throughput_out_ctr, src, R.ok().size(), false, true);
+      td::actor::send_closure(overlay, &Overlay::update_throughput_out_ctr, src, R.ok().data.size(), false, true);
     }
     promise.set_result(std::move(R));
   };

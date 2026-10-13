@@ -113,6 +113,12 @@ class AdnlPeerTable : public Adnl {
                                std::shared_ptr<void> held) = 0;
   virtual void deliver_query(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
                              td::Promise<td::BufferSlice> promise) = 0;
+  // Like deliver_query, for a transport that can use the answer's delivery
+  // metadata. A table that does not carry it answers with none.
+  virtual void deliver_query_ex(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
+                                td::Promise<AdnlQueryAnswer> promise) {
+    deliver_query(src, dst, std::move(data), drop_answer_metadata(std::move(promise)));
+  }
   virtual void decrypt_message(AdnlNodeIdShort dst, td::BufferSlice data, td::Promise<td::BufferSlice> promise) = 0;
 
   virtual void set_peer_pair_idle(AdnlNodeIdShort l_id, AdnlNodeIdShort p_id, bool value) = 0;

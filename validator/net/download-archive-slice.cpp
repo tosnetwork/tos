@@ -23,6 +23,7 @@
 #include "td/utils/port/path.h"
 
 #include "download-archive-slice.hpp"
+#include "download-deadline.h"
 
 namespace tos {
 
@@ -110,6 +111,13 @@ void DownloadArchiveSlice::start_up() {
 
 void DownloadArchiveSlice::got_node_to_download(adnl::AdnlNodeIdShort download_from) {
   download_from_ = download_from;
+  // The overlay and the external client have always used different bounds
+  // for this lookup; each keeps its own.
+  auto deadline = download_query_deadline(timeout_, client_.empty() ? 3.0 : 1.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
+    return;
+  }
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
     if (R.is_error()) {
@@ -128,11 +136,11 @@ void DownloadArchiveSlice::got_node_to_download(adnl::AdnlNodeIdShort download_f
   }
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query, download_from_, local_id_, overlay_id_,
-                            "get_archive_info", std::move(P), td::Timestamp::in(3.0), std::move(q));
+                            "get_archive_info", std::move(P), deadline.ok(), std::move(q));
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_archive_info",
-                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)),
-                            td::Timestamp::in(1.0), std::move(P));
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)), deadline.ok(),
+                            std::move(P));
   }
 }
 
@@ -162,6 +170,11 @@ void DownloadArchiveSlice::got_archive_info(td::BufferSlice data) {
 }
 
 void DownloadArchiveSlice::get_archive_slice() {
+  auto deadline = download_query_deadline(timeout_, 15.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
+    return;
+  }
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
     if (R.is_error()) {
       td::actor::send_closure(SelfId, &DownloadArchiveSlice::abort_query, R.move_as_error());
@@ -173,12 +186,11 @@ void DownloadArchiveSlice::get_archive_slice() {
   auto q = create_serialize_tl_object<tos_api::tosNode_getArchiveSlice>(archive_id_, offset_, slice_size());
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query_via, download_from_, local_id_, overlay_id_,
-                            "get_archive_slice", std::move(P), td::Timestamp::in(15.0), std::move(q),
-                            slice_size() + 1024, rldp_);
+                            "get_archive_slice", std::move(P), deadline.ok(), std::move(q), slice_size() + 1024, rldp_);
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_archive_slice",
-                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)),
-                            td::Timestamp::in(15.0), std::move(P));
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(q)), deadline.ok(),
+                            std::move(P));
   }
 }
 

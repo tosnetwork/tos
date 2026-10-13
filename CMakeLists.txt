@@ -1146,6 +1146,43 @@ target_link_libraries(test-download-state-budget PRIVATE validator-common full-n
 add_executable(test-download-next-blocks-validation test/test-download-next-blocks-validation.cpp)
 target_link_libraries(test-download-next-blocks-validation PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+# The production download actors against a server shard whose admission
+# refuses them for capacity: answered refusals, token release, retries and
+# query deadlines, over the overlay and the external-client path.
+add_executable(test-download-refusal-answers test/test-download-refusal-answers.cpp)
+target_include_directories(test-download-refusal-answers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-download-refusal-answers PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common)
+target_compile_definitions(test-download-refusal-answers PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+# How long an RLDP answer with its own delivery deadline is kept: over RLDP
+# alone, through the overlay manager's buffer, and through a production
+# full-node shard and its admission to the production downloader.
+add_executable(test-rldp2-refusal-lifetime test/test-rldp2-refusal-lifetime.cpp)
+target_include_directories(test-rldp2-refusal-lifetime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-rldp2-refusal-lifetime PRIVATE validator full-node tos_block tos_crypto tos_mldsa44
+                      tos_pq_consensus_signer tos_pq_consensus tl_lite_api tdutils tddb validator-common adnl adnltest
+                      overlay rldp2 dht tl_api)
+target_compile_definitions(test-rldp2-refusal-lifetime PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+
+# Retry policy of a consensus group: the initial chain-state resolution and
+# the acceptance of finalized blocks.
+add_executable(test-consensus-retry-backoff test/test-td-main.cpp test/test-consensus-retry-backoff.cpp)
+target_include_directories(test-consensus-retry-backoff PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-consensus-retry-backoff PRIVATE tdactor tdutils)
+
+# A production consensus group retired while the manager withholds its initial
+# chain state is destroyed at once, and a late answer starts nothing.
+add_executable(test-bridge-retirement test/validator/consensus/test-bridge-retirement.cpp)
+target_include_directories(test-bridge-retirement PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-bridge-retirement PRIVATE validator validator-common validator-db full-node tos_validator
+                      tos_block tos_crypto tos_pq_consensus_signer tos_pq_consensus tos_mldsa44 adnl adnltest overlay
+                      rldp2 dht tl_api tdactor tdutils)
+
 add_executable(test-pq-network-parser-resource test/pq-native/pq-network-parser-resource-test.cpp)
 target_link_libraries(test-pq-network-parser-resource PRIVATE full-node tos_crypto tdutils tdactor adnl overlay tl_api dht
                       tl_lite_api tl-lite-utils tos_mldsa44 tos_pq_consensus)
@@ -1987,6 +2024,10 @@ tos_test(test-full-node-master-admission)
 tos_test(test-adnl-ext-input-budget)
 tos_test(test-quic-admission)
 tos_test(test-download-next-blocks-validation)
+tos_test(test-download-refusal-answers)
+tos_test(test-consensus-retry-backoff)
+tos_test(test-bridge-retirement)
+tos_test(test-rldp2-refusal-lifetime)
 tos_test(test-ext-message-pool)
 tos_test(test-ext-message-manager)
 tos_test(test-ext-message-ingress)

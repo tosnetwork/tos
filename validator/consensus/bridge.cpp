@@ -23,6 +23,7 @@
 #include "validator/validator-group.hpp"
 
 #include "candidate-relay-policy.h"
+#include "retry-backoff.h"
 
 namespace tos::validator {
 
@@ -41,6 +42,26 @@ std::function<void(BusHandle)> bridge_bus_observer;
 void observe_bridge_bus_for_test(std::function<void(BusHandle)> observer) {
   std::lock_guard lock(bridge_bus_observer_mutex);
   bridge_bus_observer = std::move(observer);
+}
+
+namespace {
+std::mutex bridge_destroyed_observer_mutex;
+std::function<void(std::string)> bridge_destroyed_observer;
+
+void notify_bridge_destroyed(const std::string& name) {
+  std::function<void(std::string)> observer;
+  {
+    std::lock_guard lock(bridge_destroyed_observer_mutex);
+    observer = bridge_destroyed_observer;
+  }
+  if (observer) {
+    observer(name);
+  }
+}
+}  // namespace
+void observe_bridge_destroyed_for_test(std::function<void(std::string)> observer) {
+  std::lock_guard lock(bridge_destroyed_observer_mutex);
+  bridge_destroyed_observer = std::move(observer);
 }
 
 std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
@@ -128,6 +149,18 @@ td::actor::Task<> await_bus_stop_with_diagnostics(td::actor::StartedTask<> waite
 
 namespace {
 
+// One wait for a group's initial chain state. It leaves the calling actor
+// before it asks the manager anything, and owns copies of everything it uses,
+// so a wait abandoned by a stopped group holds nothing of that group: the
+// group can be destroyed while the manager still owes the answer.
+td::actor::Task<td::Ref<ChainState>> wait_initial_chain_state(td::actor::ActorId<ManagerFacade> manager,
+                                                              ShardIdFull shard, std::vector<BlockIdExt> blocks,
+                                                              BlockIdExt min_mc_block_id, double timeout) {
+  co_await td::actor::detach_from_actor();
+  co_return co_await ChainState::from_manager(manager, shard, std::move(blocks), min_mc_block_id, std::nullopt,
+                                              timeout);
+}
+
 class ManagerFacadeImpl : public ManagerFacade {
  public:
   ManagerFacadeImpl(td::actor::ActorId<ValidatorManager> manager,
@@ -164,22 +197,30 @@ class ManagerFacadeImpl : public ManagerFacade {
                                  td::Ref<block::BlockSignatureSet> signatures, ValidatorSessionId expected_session_id,
                                  int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
                                  bool apply) override {
-    while (true) {
-      auto [task, promise] = td::actor::StartedTask<>::make_bridge();
-      run_accept_block_query(id, data, {}, validator_set_, signatures, expected_session_id, block_broadcast_mode,
-                             finality_broadcast_mode, send_shard_block_desc, apply, manager_, std::move(promise));
-      auto result = co_await std::move(task).wrap();
-      if (result.is_ok() || result.error().code() == ErrorCode::cancelled) {
-        break;
-      }
-      LOG_CHECK(result.error().code() == ErrorCode::timeout || result.error().code() == ErrorCode::notready)
-          << "Failed to accept finalized block " << id.to_str() << " : " << result.error();
-      LOG(WARNING) << "Failed to accept finalized block " << id.to_str() << ", retrying : " << result.error();
-      block_broadcast_mode = 0;
-      finality_broadcast_mode = 0;
-      co_await td::actor::coro_sleep(td::Timestamp::in(1.0));
+    // Only a transient failure is retried. A cancellation or a permanent
+    // error is returned, so the caller never reports the block accepted.
+    auto result = co_await accept_with_retries(
+                      [&]() {
+                        auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+                        run_accept_block_query(id, data, {}, validator_set_, signatures, expected_session_id,
+                                               block_broadcast_mode, finality_broadcast_mode, send_shard_block_desc,
+                                               apply, manager_, std::move(promise));
+                        return std::move(task);
+                      },
+                      [&](const td::Status& error, td::uint32 delay) {
+                        LOG(WARNING) << "Failed to accept finalized block " << id.to_str() << ", retrying in " << delay
+                                     << " s : " << error;
+                        // Later attempts do not broadcast again.
+                        block_broadcast_mode = 0;
+                        finality_broadcast_mode = 0;
+                      })
+                      .wrap();
+    // A permanent failure leaves a finalized block this node did not accept;
+    // the block still reaches it through ordinary sync, but it must be seen.
+    if (result.is_error() && result.error().code() != ErrorCode::cancelled) {
+      LOG(ERROR) << "Failed to accept finalized block " << id.to_str() << " : " << result.error();
     }
-    co_return td::Unit{};
+    co_return std::move(result);
   }
 
   td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout,
@@ -452,6 +493,14 @@ class BridgeImpl final : public IValidatorGroup {
     close_for_retirement_inner(generation).start().detach();
   }
 
+  ~BridgeImpl() override {
+    notify_bridge_destroyed(params_.name);
+  }
+
+  void tear_down() override {
+    start_cancellation_->cancel();
+  }
+
   void start_up() override {
     // Defense in depth. The manager runs this exact check before it creates this group, so
     // reaching a set the post-quantum consensus path cannot run is an invariant break, not
@@ -648,6 +697,7 @@ class BridgeImpl final : public IValidatorGroup {
   }
 
   td::actor::Task<> destroy_inner() {
+    start_cancellation_->cancel();
     if (bus_) {
       LOG(INFO) << "Destroying validator group";
       bus_->health_session.begin_stop();
@@ -702,6 +752,7 @@ class BridgeImpl final : public IValidatorGroup {
   // a checkpoint-bound eligibility check -- never here -- so a still-recreatable
   // session can never lose its consensus state through retirement.
   td::actor::Task<> close_for_retirement_inner(td::uint64 generation) {
+    start_cancellation_->cancel();
     if (bus_) {
       LOG(INFO) << "Closing validator group for retirement (no delete)";
       bus_->health_session.begin_stop();
@@ -726,21 +777,31 @@ class BridgeImpl final : public IValidatorGroup {
     co_return td::Unit{};
   }
 
+  // One long wait for the initial chain state, then retries with a growing
+  // delay for as long as the group lives. Stopping the group wakes the wait
+  // or the delay at once and the group is never started.
   td::actor::Task<> resolve_state_and_start(std::vector<BlockIdExt> blocks, BlockIdExt min_mc_block_id) {
-    td::Ref<ChainState> state;
-    while (true) {
-      auto r_state =
-          co_await ChainState::from_manager(manager_facade_.get(), params_.shard, blocks, min_mc_block_id).wrap();
-      if (!bus_) {
-        co_return td::Status::Error("validator group already destroyed");
-      }
-      if (r_state.is_error() && r_state.error().code() == ErrorCode::timeout) {
-        LOG(WARNING) << "Failed to resolve chain state: timeout, retrying";
-        continue;
-      }
-      state = CO_TRY(std::move(r_state));
-      break;
+    auto cancellation = start_cancellation_;
+    auto manager = manager_facade_.get();
+    auto shard = params_.shard;
+    RetryLogLimiter retry_log(INITIAL_STATE_RETRY_LOG_INTERVAL);
+    auto resolution = resolve_initial_state<td::Ref<ChainState>>(
+        cancellation,
+        [manager, shard, blocks, min_mc_block_id]() {
+          return wait_initial_chain_state(manager, shard, blocks, min_mc_block_id, INITIAL_STATE_WAIT_TIMEOUT);
+        },
+        [&](const td::Status& error, td::uint32 delay) {
+          td::uint64 held_back = 0;
+          if (retry_log.allow(td::Timestamp::now(), held_back)) {
+            LOG(WARNING) << "Failed to resolve chain state: " << error << ", retrying in " << delay << " s ("
+                         << held_back << " retries not logged)";
+          }
+        });
+    auto r_state = co_await std::move(resolution).wrap();
+    if (cancellation->is_cancelled() || !bus_) {
+      co_return td::Status::Error(ErrorCode::cancelled, "validator group already destroyed");
     }
+    auto state = CO_TRY(std::move(r_state));
     start_event_ = std::make_shared<Start>(state);
     maybe_start_group();
     co_return td::Unit{};
@@ -763,6 +824,8 @@ class BridgeImpl final : public IValidatorGroup {
 
   simplex::BusHandle bus_;
   td::optional<td::actor::StartedTask<>> stop_waiter_;
+  // Fired when the group stops, to end the initial chain-state resolution.
+  std::shared_ptr<Cancellation> start_cancellation_ = std::make_shared<Cancellation>();
 
   std::shared_ptr<Start> start_event_;
 
