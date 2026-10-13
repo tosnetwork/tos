@@ -100,7 +100,12 @@ main_wallet_genesis_balance
 AllOnes 1 * // address
 6 // mode: create+setaddr
 register_smc
-dup make_special dup constant smc1_addr
+// The bootstrap wallet is an ordinary account, not a fundamental (ConfigParam
+// 31) one: it pays storage, gas and forwarding fees like any other masterchain
+// wallet. The genesis fundamental set is the elector (listed below) and the
+// configuration contract (always treated as fundamental). Mainnet-scale
+// networks likewise keep ordinary wallets out of ConfigParam 31.
+dup constant smc1_addr
 Masterchain over
 2dup ."main wallet address = " .addr cr 2dup 6 .Addr cr
 "main-wallet" +suffix +".addr" save-address-verbose
