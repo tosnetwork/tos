@@ -320,8 +320,16 @@ def? quantum-network-tag {
 
 // [ min_tot_rounds max_tot_rounds min_wins max_losses min_store_sec max_store_sec bit_pps cell_pps ]
 // first for ordinary proposals, then for critical proposals
-_( 2 3 2 2 1000000 10000000 1 500 )
-_( 4 7 4 2 5000000 20000000 2 1000 )
+// Voting rounds as mainnet-scale networks set them (min_tot_rounds is not
+// read by the config contract). An ordinary proposal passes after 2 winning
+// rounds, lives at most 6 rounds and is discarded after more than 5 losing
+// rounds; a critical proposal passes after 3 winning rounds, lives at most 7
+// and is discarded after more than 5 losing rounds. The previous ordinary
+// 2/3/2/2 and critical 4/7/4/2 discarded any proposal after three lost rounds
+// and gave an ordinary one only three rounds to collect its two wins. Store
+// limits and storage prices are unchanged.
+_( 2 6 2 5 1000000 10000000 1 500 )
+_( 4 7 3 5 5000000 20000000 2 1000 )
 config.param_proposals_setup!
 
 // deposit bit_pps cell_pps
