@@ -40,7 +40,8 @@ jobs:
           cat >> CMakeLists.txt <<'CMAKE'
           add_executable(test-archive-prune test/test-archive-prune.cpp)
           target_include_directories(test-archive-prune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-          target_link_libraries(test-archive-prune PRIVATE validator tdactor tdutils tddb)
+          target_link_libraries(test-archive-prune PRIVATE validator full-node tos_block tos_crypto tos_mldsa44 tos_pq_consensus_signer tos_pq_consensus tl_lite_api tl_api tdactor tdutils tddb validator-common)
+          target_compile_definitions(test-archive-prune PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
           CMAKE
           cmake -S . -B build -G Ninja \
             -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
@@ -66,8 +67,14 @@ jobs:
           retention-days: 14
           path: |
             archive-prune-*.log
+            build/test-archive-prune
+            CMakeLists.txt
+            validator/CMakeLists.txt
             validator/db/archive-slice.cpp
             validator/db/archive-slice.hpp
             validator/db/archive-manager.cpp
             validator/db/archive-manager.hpp
+            tddb/td/db/RocksDb.cpp
+            tddb/td/db/RocksDb.h
+            tdactor/td/actor/core/Scheduler.cpp
             test/test-archive-prune.cpp
