@@ -134,7 +134,8 @@ jobs:
           for source in "$GITHUB_WORKSPACE" /tmp/tos-archive-base; do
             cmake -S "$source" -B "$source/build" -G Ninja \
               -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
-              -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH=x86-64 \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_BUILD_TYPE=Debug -DTOS_ARCH=x86-64 \
               -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
               -DTOS_USE_JEMALLOC=ON -DTOS_PRODUCTION_BUILD=ON
             python3 - "$source/build" <<'PYGEN'
@@ -146,8 +147,25 @@ jobs:
           targets = [line.rsplit(': ', 1)[0] for line in rows.splitlines()
                      if Path(line.rsplit(': ', 1)[0]).suffix in {'.h', '.hpp', '.hh', '.cpp', '.cc', '.c', '.inc'}]
           assert targets, 'no generated targets found'
-          subprocess.run(['ninja', '-C', build, '-j4', *targets], check=True)
+          subprocess.run(['ninja', '-C', build, '-j4', 'mhd', *targets], check=True)
           PYGEN
+            PYTHONDONTWRITEBYTECODE=1 python3 - "$source" "$(uv tool dir --bin)/CodeChecker" <<'PYSCAN'
+          import importlib.util
+          from pathlib import Path
+          import sys
+          import tempfile
+          root = Path(sys.argv[1]).resolve()
+          spec = importlib.util.spec_from_file_location("archive_analysis", root / "scripts/static-analysis.py")
+          module = importlib.util.module_from_spec(spec)
+          sys.modules[spec.name] = module
+          spec.loader.exec_module(module)
+          tools = module.resolve_tools(Path("/usr/lib/llvm-21/bin"), sys.argv[2])
+          build = root / "build"
+          entries = module.analysable(module.load_database(build, root), root, build)
+          with tempfile.TemporaryDirectory() as work:
+              module.scan_dependencies(entries, tools, Path(work), "preflight")
+          print(f"Dependency preflight covered {len(entries)} project compilations", flush=True)
+          PYSCAN
           done
       - name: Run differential C++ analysis
         shell: bash
