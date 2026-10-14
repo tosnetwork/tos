@@ -1,6 +1,6 @@
 # Post-quantum explorer RPC detailed design
 
-**Revision:** 1, proposed for external design review.
+**Revision:** 2, corrected after design audit; proposed for external design review.
 **Implementation status:** no executable RPC changes in this PR.
 **Source baseline:** `d41eae93dbbcb2af730b4ff5015458794ef04cb1`.
 
@@ -8,7 +8,10 @@ This document specifies the implementation of R1–R4 in
 [the parity contract](explorer-pq-rpc-contract.md). Normative words MUST, MUST NOT
 and SHOULD describe proposed requirements, not shipped behavior. The attached
 [JSON Schema](explorer-pq-rpc-v1.schema.json) defines new request/result fragments.
-Legacy result fields remain governed by their existing contracts.
+Legacy result fields remain governed by their existing contracts. Revision 2 refines
+this unshipped v1 contract; it does not change the wire `schema_version`. See the
+[audit and validation receipt](explorer-pq-rpc-audit.md) for the reviewed findings,
+reproducible checks and remaining implementation gates.
 
 ## 1. Decisions and compatibility
 
@@ -197,25 +200,37 @@ Anchor acquisition is a trusted-node operation: obtain a locally validated
 masterchain/key-block identity and its authenticated configuration through the
 validator manager's validated state/proof store. A fresh `lookupBlock` reply alone
 is not that trust source. Choose an available validated anchor at or before N-1;
-if it differs from N-1, acquire and validate the connecting proof chain before
-accepting the requested proof container with outer endpoints N-1 and N. An already validated persisted finality record may
+if it differs from N-1, acquire and validate the connecting native proof chain to
+N-1 before accepting the target proof chain. An already validated persisted finality record may
 be reused only with its bound full ID and historical verification context. If the
 node cannot recover that context, return `BLOCK_UNAVAILABLE` rather than accepting
 a carrier's self-declared context. This adapter is a required implementation seam,
 not an assumption that the current JSON renderer already exposes it.
 
-The proof field contains the complete requested proof container with outer full-ID
-endpoints N-1 and N, not necessarily a single forward link. For an ordinary
-predecessor the native path may be N-1 → K (backward authenticated ancestor
-proof), then K → N (forward finality proof), where K is the source key block.
-Validate every backward and forward link, endpoint continuity, container completion
-and the exact final target N. Never discard the ancestor proof. Report K as
-`validator_set_source`, using the effective historical configuration selected by
-the native verifier. When N-1 is a key block the final forward link may start
-there directly; for N=1 the source is the authenticated zerostate. An ordinary
-N-1 cannot supply key-block configuration merely because it is the predecessor.
-The embedded configuration and signer data must agree with the verification
-result. This container alone is not a proof from an arbitrary client trust anchor.
+The proof field contains the actual native **partialBlockProof container** requested
+with `known_block = N-1` and `target_block = N`. Its outer `from` and `to` are those
+full IDs; these are not necessarily the endpoints of its final forward link.
+`BlockProofLink::validate` extracts a forward link's configuration from its source
+**key block or zerostate**, not from an arbitrary ordinary predecessor. Therefore:
+
+- If N-1 is an ordinary block, allow the native chain `N-1 -> K -> N`, where the
+  first link authenticates an earlier key block K by a backward state proof and
+  the final forward link authenticates N using K's configuration.
+- If N-1 is a key block (or zerostate for N=1), a direct forward link is valid.
+- Validate every link with the native chain validator; require the final forward
+  link's full `to` to equal N. Do not require its `from` to equal N-1. Set
+  `verification.validator_set_source` to that link's actual authenticated source K.
+  Never skip a backward link's state/ancestor check or trust a caller-supplied K.
+
+Require a complete target container (`complete:true`, outer `from = N-1`, outer
+`to = N`) before success. A well-formed incomplete reply is not a successful finality
+response; v1 returns `BLOCK_UNAVAILABLE` for it rather than inventing a complete
+container or splicing unverified pages. Anchor-bridge acquisition may use bounded
+continuations: validate each page before using its endpoint as the next source,
+require progress without repeated endpoints, and enforce the cumulative budgets
+below. The single exported target container is not the optional anchor bridge.
+Its embedded configuration proof and signer data must agree with the verification
+result. It is not by itself a proof from an arbitrary client trust anchor.
 
 Keep ordinary/classical simplex `@type`, `id`, `session_id`, `slot`, `candidate`
 and signature records byte-compatible. Do not add `validator_id` or `key_id` to
@@ -228,7 +243,9 @@ preserves native carrier order; no ordering is a signature preimage component.
 Implementation MUST use the checked native `BlockSignatureSet::fetch_lite_checked`
 conversion (or its PQ-specific checked helper), then native proof validation and
 `block::verify_pq_finality(context, signatures, FinalityRole::Final)`, including
-strict candidate parsing and limits. Do not
+strict candidate parsing and limits. The native proof adapter should expose the
+validated target-link context/result instead of repeating all PQ verification in
+the renderer; it must not bypass any native link validation. Do not
 use the unchecked legacy convenience fetch overload. For PQ, populate `PQFinalityVerificationContext.expected_session_id` from the
 trusted historical configuration using `derive_validator_session_identity`, as in
 `crypto/block/check-proof.cpp`. Its inputs include global blockchain ID, native
@@ -269,43 +286,38 @@ Any identity, key, proof or signature failure fails the whole response.
 1. Parse selector and flags; reserve admission/verification capacity.
 2. Resolve full N and N-1 IDs. Pin N to the supplied complete ID if present.
 3. Request `liteServer_getBlockProof` with explicit known/target and the existing
-   mode `0x1001`. Require complete outer endpoints N-1/N, continuity of all
-   validated links and exact final forward target N; its source is K as above.
-4. Require exactly one relevant final forward signature carrier. Reject null,
-   ambiguous, backward-only or wrong-target evidence.
+   mode `0x1001`. Match the complete outer endpoints to N-1/N; validate the full
+   native link sequence, including any backward link to a source key block.
+4. Require exactly one relevant final forward signature carrier whose full target
+   is N. Its source is the authenticated key block/zerostate used for configuration,
+   not necessarily N-1. Reject null, ambiguous, backward-only or wrong-target evidence.
 5. Decode the PQ carrier, validate its native bounds, obtain/verify its effective
    set, historical expected session and anchor chain, then verify signatures and quorum.
 6. Build one immutable verified DTO, including exact payload/proof bytes.
-7. Serialize with a growable bounded builder and settle the HTTP promise once.
-   A worker-owned permit and its live evidence accounting remain held until
-   actual worker completion, or acknowledged cancellation before execution.
-   Cleanup must cover every success/error path without double release.
+7. Serialize with a growable bounded builder and settle the response promise once.
+   Release request resources and worker resources according to their separate
+   ownership lifetimes below, including every error/cancellation path.
 
 Do not launch one actor task per signer without a cap. Proposed initial default:
-**two in-flight PQ finality verifications per process**, no unbounded queue; use
-existing 429 admission response when occupied. This limit is an operator tunable
-that MUST NOT change consensus limits. Slow-peer cancellation and the existing
-request deadline settle/detach the client response but do not release a running
-worker's permit or evidence memory. Native chain validation observes cancellation
-between links; an executing signature check may continue. Late callbacks cannot
-publish a second result. Before launch, an acknowledged cancellation may release
-its reservation. There is no uncharged background verification or evidence buffer.
+**two actual in-flight PQ verification jobs per process**, covering target and
+anchor-bridge validation, with no unbounded queue. Use the existing 429 admission
+response when occupied. This operator tunable MUST NOT change consensus limits.
 
-Use one absolute monotonic deadline (proposed default 10 seconds) from admission
-through target resolution, anchor bridging, proof acquisition and verification;
-retries and link transitions must not restart it. Stop scheduling new work after
-expiry. Proposed cumulative per-job limits are 32 MiB decoded proof bytes, 32
-upstream proof queries and 256 links across both target and anchor-bridge chains,
-including retries and rejected replies. Charge before retaining/decoding each
-reply and before scheduling each query; use checked counters. Existing per-reply
-limits still apply. These are proposed operator processing limits, not measured
-consensus limits; validate realistic native fixtures before implementation acceptance.
+The worker owns its verification permit from scheduling until actual completion
+(or acknowledged cancellation before execution). A client timeout/disconnect may
+settle or detach the response and request cancellation, but MUST NOT release a
+permit while native parsing/verification is still running. In the baseline,
+`BlockProofChain::validate` checks cancellation between links; that does not
+interrupt a signature check already executing inside a link. Keep its permit and
+live evidence memory charged until the worker exits. A late callback discards the
+result, cannot settle a response twice, and releases its resources exactly once.
+Reserved work proven never to have started may release immediately. Use bounded
+worker execution rather than blocking the HTTP/consensus actor with PQ work.
 
-A required runtime sensitivity test blocks two native workers, expires both HTTP
-clients, and asserts that a third job receives admission rejection until a worker
-actually exits. Then assert admission resumes and memory/permit accounting returns
-to zero. Cover cancellation before execution, between links, and during signature
-verification, plus late completion and cumulative-budget exhaustion.
+All subqueries share one absolute request deadline; a continuation cannot reset
+it. Check cancellation before scheduling further fetching/verification. Enforce
+cumulative proof bytes, query count and link count across the entire request,
+including the anchor bridge; per-reply limits alone do not bound unpaid work.
 
 | Bound | Requirement |
 | --- | --- |
@@ -314,7 +326,8 @@ verification, plus late completion and cumulative-budget exhaustion.
 | Candidate | Native maximum 1024 decoded bytes |
 | Signing payload | Proposed maximum 3072 decoded bytes; exact native bytes, never truncate |
 | Native PQ signature carrier | Preserve native 1 MiB hard limit; do not apply it to an entire multi-link proof |
-| Raw proof bytes in R1 | Proposed 8 MiB per reply, checked before JSON encoding |
+| Raw proof bytes in R1 | Proposed 8 MiB per reply, checked before parsing/JSON encoding |
+| Cumulative R1 proof work | Proposed 32 MiB raw evidence, 16 proof queries and 64 native links across target and anchor bridge; checked counters; overflow/budget exhaustion is `RESOURCE_LIMIT` |
 | Complete R1 JSON result | Proposed 16 MiB; proof expansion, metadata and envelope counted with checked arithmetic |
 
 Cache only successfully verified immutable results, keyed by full block ID and
@@ -582,19 +595,21 @@ particular deployed controller's accepted authority.
 
 `SizeLimits` uses `kind:"size_limits"` and includes `wire_version:1|2|3|null`,
 `configured` (null if absent), `effective`, and `defaulted_fields:string[]`.
-`configured` includes **all and only** fields present in that wire version:
-exactly 6 fields for v1, 13 for v2, and 16 for v3. `defaulted_fields` is the
-unique, order-independent exact complement of those fields in `effective`.
-Present Config 43 requires a non-null wire version and configured object; absent
-Config 43 requires both null. A v3 `max_transaction_library_loads:null` means
-explicit unlimited and MUST NOT be listed as defaulted. Shape validation enforces
-these version/provenance rules; numerical effective values still require native
-decoding, including VM-dependent semantics.
+`configured` includes **only** fields actually present in that wire version.
 `effective` is the result of the existing native size-limits decoder, including its
 baseline defaults. Absence yields `presence:"absent"` with an effective size-limits
 value; do not label defaults as chain-committed fields. For absent Config 43, `wire_version` and `configured` are null and every effective
 field appears in `defaulted_fields`. This is the sole non-null value permitted
 with absent presence.
+
+The schema MUST enforce the complete wire-version field set, not merely allow a
+subset of possible names. V1 has exactly six configured fields, v2 has thirteen,
+and v3 has sixteen. `defaulted_fields` is exactly the complement of that set in
+`effective`, with no omissions, duplicates or configured names. A present Config
+43 cannot use null `wire_version`/`configured`. The v3 Maybe field is required in
+JSON even when its value is null (explicit unlimited); that null is configured,
+not a default. Native decoding still determines actual effective values; shape
+checks do not prove those values match the authenticated cell or native defaults.
 
 | Field | Wire availability | Type |
 | --- | --- | --- |
@@ -644,12 +659,12 @@ projection changes are a separate client rollout with their own compatibility te
 | --- | --- | --- |
 | Selector | Exact historic full ID on both transports | Same seqno, different root/file hash; conflicting seqno; zero-as-latest regression |
 | PQ finality | Actual native final certificate and quorum | Alter candidate/session/slot/preimage, signer/key/suite, duplicate ID, insufficient weight |
-| Proof binding | Verified effective set across a transition | Latest-set/current-session substitution, carried-session self-trust, wrong anchor/endpoint, missing/ambiguous forward carrier |
+| Proof binding | Ordinary predecessor with backward-to-key plus forward-to-target links; direct key/zerostate source; verified set transition | Assuming every predecessor is a key block, skipping a backward ancestor proof, incomplete target container, repeated/non-progressing anchor pages, latest-set/current-session substitution, wrong full endpoint or missing/ambiguous target carrier |
 | Account identity | Registered code with canonical live state | Unknown code with copied layout; recognized code with malformed/exotic/trailing state |
 | Quantum roles | Complete wallet/module/vault state | Nonzero inert legacy key, wrong module witness, wrong fee profile, counter truncation |
-| Config | All wire versions and permitted absence | Wrong tags/profile/refs, excessive allowlist, bad deadline/flags, VM 17+ missing policy |
+| Config | Complete Config 43 v1/v2/v3 and absent default projections; eight distinct controller codes | Missing/version-inappropriate configured fields, false default provenance, nine distinct codes versus two duplicate codes, wrong tags/profile/refs, contradictory retirement status, VM 17+ missing policy |
 | Proof route | Identical allowed query/reply bytes | Forbidden/nested query, extra TL bytes, oversized lists/query/reply |
-| Resource lifecycle | Maximum valid carrier, timed-out request releases permit | Maximum+1, base64 expansion overflow, late double settlement, unbounded queue/cache |
+| Resource lifecycle | Maximum valid carrier; two blocked workers retain permits after client timeout and release once on actual completion | A third job starts while canceled workers still run; cumulative byte/query/link overflow, deadline reset, late double settlement, unbounded queue/cache |
 | Compatibility | Frozen ordinary/simplex and old account/config responses | New opt-in disabled must not reclassify legacy requests |
 
 Run native decoder/renderer tests, real three-validator signature queries at pinned
@@ -684,20 +699,20 @@ uv run --no-project --with jsonschema==4.26.0 \
 git diff --check
 ```
 
-Design validation on 2026-10-14: 135 vectors passed (37 positive, 98 negative),
-including all six public account families, transport selectors, proof budgets,
-PQ carrier bounds, mandatory-policy absence, all Config 43 wire-field inventories,
-exact default provenance, AUTH consistency and independent controller boundaries.
-Eight targeted sensitivity controls passed: nonempty certificate, controller count,
-controller uniqueness, complete v1 fields, version-appropriate fields, default
-provenance, retired flag and retirement without a cause. Each removes one guard
-and requires the corresponding rejection assertion to fail.
+Revision 1's 40 vectors were rerun before the audit changes. Revision 2 adds
+version-complete Config 43 projections, independent cardinality/uniqueness controls
+and consistent retirement-state shapes. Exact counts, commands, source hashes and
+red/green outcomes are recorded in the [audit receipt](explorer-pq-rpc-audit.md).
 
-See [the audit receipt](explorer-pq-rpc-audit.md) for the restored-change baseline,
-commands and validation boundaries. The runner validates Draft 2020-12 shapes only:
-native crypto/proof checks, decoded U64 range, selector equality, canonical pad bits,
-effective-set transitions and policy deadlines remain implementation gates. Do not
-run this offline schema validator as the node's untrusted-request parser.
+The runner validates the Draft 2020-12 schema and synthetic request/result vectors.
+Targeted sensitivity controls remove individual guards and require the intended
+rejection assertion to fail, then pass again with the original guard restored.
+They cover nonempty certificates, the distinct-controller count, Config 43 version
+and presence constraints, and retirement status. Tests use no real keys or proofs.
+Native crypto/proof checks, worker cancellation, decoded U64 range, selector
+equality, canonical pad bits, effective values, set transitions and policy deadline
+comparisons remain implementation gates. Do not run this offline schema validator
+as the node's untrusted-request parser.
 
 Source definitions used to establish this design:
 

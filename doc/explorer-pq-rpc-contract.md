@@ -6,17 +6,25 @@ See [the detailed interface design](explorer-pq-rpc-design.md) for wire types,
 request/result schemas, error semantics, proof verification, resource budgets and
 review decisions.
 
-Source reviewed: `d41eae93dbbcb2af730b4ff5015458794ef04cb1`.
-Author-reported explorer integration (not independently verified): `b000d3ce99c19910585241779d226bcbd99ec9e7`.
-Author-reported observations: 2026-10-14, three-validator ML-DSA networks at VM 16 and VM 18. Receipts and deployment fixtures were unavailable for this audit; these are unverified historical reports, not reproduced evidence.
+Reproducible node source baseline:
+[`d41eae93dbbcb2af730b4ff5015458794ef04cb1`](https://github.com/tosnetwork/tos/tree/d41eae93dbbcb2af730b4ff5015458794ef04cb1).
+
+The author reported local three-validator ML-DSA observations on 2026-10-14 at VM
+16/18 and cited explorer commit `b000d3ce99c19910585241779d226bcbd99ec9e7`.
+No accessible explorer repository/artifact locator, retained response receipts or
+network/fixture manifest was supplied. These are **unverified author reports**, not
+independently reproducible evidence or live tests performed by this design audit.
+The source-backed gaps below do not depend on those reports. See the evidence
+procedure at the end and the [audit receipt](explorer-pq-rpc-audit.md).
 
 ## Problem and intended result
 
-The explorer can display blocks and PQ validator membership, but cannot retrieve
-PQ block signatures through the existing signature endpoint. PQ account capability
+The reported explorer integration needs block signatures and PQ validator membership.
+The node's existing signature endpoint rejects PQ carriers. PQ account capability
 responses also lack the public authorization metadata needed to distinguish daily,
-rescue and stateful fee authority. The frontend currently decodes a finite set of
-source-pinned contracts and raw configuration cells itself.
+rescue and stateful fee authority. The reported frontend workaround is to decode a
+finite set of source-pinned contracts and raw configuration cells itself; that
+separate frontend implementation has not been independently reproduced here.
 
 Complete the existing read-only RPC contracts so clients can query consensus
 signature evidence, account authorization and chain-committed policy at a specified
@@ -55,7 +63,8 @@ Likewise, a missing optional configuration parameter is not a missing endpoint.
 ### Evidence
 
 `validator-engine/json-rpc-server-parse.cpp`,
-`render_masterchain_block_signatures_json`, returns:
+`render_masterchain_block_signatures_json`, has an explicit PQ rejection. The
+following is a source-derived error-field excerpt, not a retained HTTP response:
 
 ```json
 {
@@ -65,10 +74,11 @@ Likewise, a missing optional configuration parameter is not a missing endpoint.
 }
 ```
 
-The author reported that the local VM 16 network returned HTTP 500 at masterchain seqno 7516; the VM 18
-candidate returned it at seqno 5591. These observations were not independently reproduced. Config 34 returned actual PQ members with
-`algorithm_id: 1`, non-null `validator_id`, `key_id`, `pq_public_key`, and
-`public_key: null`. The reported payload is not an independently retained live-RPC receipt.
+The author reported HTTP 500 at VM 16 seqno 7516 and VM 18 seqno 5591, alongside
+Config 34 PQ members (`algorithm_id:1`, `validator_id`, `key_id`, `pq_public_key`,
+`public_key:null`). These ephemeral heights are not reusable fixtures, and no raw
+receipts are retained in this PR. Reproduce on a pinned deployment before treating
+the report as live integration evidence; private keys are not needed for the queries.
 
 The native schema already carries the data in
 `tl/generate/scheme/lite_api.tl`:
@@ -139,30 +149,23 @@ stable unsupported response.
 
 ### Evidence
 
-Source-derived projections for an unclassified Quantum candidate are shown
-separately below. They describe selected fields, not a captured live response.
-The author's earlier HTTP 200 observation lacks retained receipts and remains
-unverified.
+The two methods have different result shapes. For unrecognized active wallet code,
+the following are separate source-derived field projections, not a combined response
+or retained live receipt. Omitted legacy fields remain present in the real methods.
 
-`getAccountCapability` projection:
-
-```json
-{
-  "account_model": "advanced.unknown",
-  "authorization_version": "unknown"
-}
-```
-
-`getWalletInformation` projection:
+`getAccountCapability` (`build_account_capability_json`):
 
 ```json
-{
-  "wallet_type": null,
-  "seqno": null
-}
+{"account_model":"advanced.unknown","authorization_version":"unknown"}
 ```
 
-This is an honest unknown result, but insufficient structured information for the
+`getWalletInformation` (`build_wallet_json`):
+
+```json
+{"wallet":false,"wallet_type":null,"seqno":null,"wallet_id":null}
+```
+
+These are honest unknown projections, but insufficient structured information for the
 explorer. `json-rpc-account-model.cpp` does not classify these PQ families.
 `detect_authorization_version` in `json-rpc-server-account-capability.cpp` assigns
 Ed25519 to every nonempty wallet type; extend that decision before registering a
@@ -271,12 +274,47 @@ boundaries. Do not mark a request complete merely because a renderer compiles.
 This document changes no executable code. Current node gaps remain until these
 implementation and validation requirements are fulfilled.
 
-## Reproducing evidence
+## Evidence procedure (not an executed live-test receipt)
 
-For each future live observation retain the source commit, executable hash,
-network/global ID, VM version, deployment code/state hashes, sanitized exact
-request, full block ID and response/status. Save bounded public fixtures with
-SHA-256 and an accessible artifact location. Run each endpoint independently;
-do not combine projections into a purported single reply. Never retain private
-keys or wallet secrets. Source-derived behavior and synthetic schema tests do
-not replace these runtime receipts.
+Source inspection is reproducible from the node pin above. For example, in an
+existing checkout containing that commit:
+
+```sh
+SOURCE=d41eae93dbbcb2af730b4ff5015458794ef04cb1
+git show "$SOURCE:validator-engine/json-rpc-server-parse.cpp" |
+  grep -n -A 12 -B 4 'post-quantum block signatures are not supported'
+git show "$SOURCE:validator-engine/json-rpc-server-account-capability.cpp" |
+  grep -n -A 40 -E 'build_wallet_json|build_account_capability_json|detect_authorization_version'
+```
+
+A live reproduction additionally requires a running node built from that source,
+its public network/genesis and Config 8/34 observations, a deployed canonical PQ
+wallet fixture and an available finalized height. The following is a request
+**template**; variables must come from the actual deployment, not the old ephemeral
+heights. Use its existing authentication configuration without retaining credentials.
+
+```sh
+: "${RPC_URL:?Set the existing node HTTP base URL}"
+: "${SEQNO:?Set an available finalized masterchain height}"
+: "${ADDRESS:?Set the canonical public PQ fixture address}"
+request=$(printf '{"seqno":%s}' "$SEQNO")
+curl --silent --show-error --max-time 30 -H 'Content-Type: application/json' \
+  --data "$request" --output signatures.json --write-out 'HTTP %{http_code}\n' \
+  "$RPC_URL/getMasterchainBlockSignatures"
+printf 'curl_exit=%s\n' "$?"
+for method in getAccountCapability getWalletInformation; do
+  request=$(printf '{"address":"%s","seqno":%s}' "$ADDRESS" "$SEQNO")
+  curl --silent --show-error --max-time 30 -H 'Content-Type: application/json' \
+    --data "$request" --output "$method.json" --write-out 'HTTP %{http_code}\n' \
+    "$RPC_URL/$method"
+  printf '%s curl_exit=%s\n' "$method" "$?"
+done
+sha256sum signatures.json getAccountCapability.json getWalletInformation.json
+```
+
+Before calling these reproducible live observations, retain the public deployment
+manifest, full observed block IDs, fixture source/compiler/code hash, exact request
+bodies, separate method replies, HTTP status and command exit status. Publish only
+bounded, reviewed public excerpts with an accessible artifact locator/hash/retention
+period. A successful curl exit alone does not establish an RPC success or a valid
+proof. No such live run is claimed by this documentation/schema change.
