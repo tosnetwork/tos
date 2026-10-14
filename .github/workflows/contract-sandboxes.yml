@@ -115,11 +115,13 @@ permissions:
   contents: read
 
 jobs:
-  sandboxes:
-    name: contract-sandboxes
+  # Native answers, generated vectors and the assertion-sensitivity mutation runs.
+  native:
+    name: contract-sandboxes (native)
     runs-on: ubuntu-24.04
-    # A cold native/vector build takes about 50 minutes before mutation tests.
-    # Leave time for both complete assertion-sensitivity suites.
+    # Each half rebuilds the native tools it needs from the shared compile
+    # cache and then runs its share of the checks. One job held both halves and
+    # sat close to its limit: on a slower runner it was cancelled at 90 minutes.
     timeout-minutes: 90
     outputs:
       executor_diagnostics: ${{ steps.executor.outputs.diagnostics }}
@@ -141,7 +143,7 @@ jobs:
         continue-on-error: true
         with:
           prefix-key: tos-rust-ci-v1
-          key: contract-sandboxes-${{ steps.native-cache.outputs.host-key }}
+          key: contract-sandboxes-${{ github.job }}-${{ steps.native-cache.outputs.host-key }}
           cache-bin: false
           workspaces: tosctl/src -> target
 
@@ -225,6 +227,118 @@ jobs:
           fi
           cmake --build build --target "${vector_generators[@]}" -j2
           ./scripts/check-vector-files.sh . build
+
+      - name: Build the post-quantum key tool
+        run: |
+          cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-key -j2
+
+      # The two programs the suites run rather than imitate: the node's vote producer
+      # and the operator's root-authorisation tool. The tests that use them panic when
+      # they are absent, which is the right behaviour and also means this step is not
+      # optional -- without it those suites cannot run at all, and a job that never runs
+      # a test reports nothing about it.
+      - name: Build the post-quantum producers the suites drive
+        run: cmake --build build --target tos-pq-vote tos-pq-controller -j2
+
+      # The sandbox charges storage as the node does. The node's own
+      # compute_storage_fees checks every row of the shared vector file, and the
+      # Rust helper and the executor are then held to the same rows. A cargo
+      # filter that matches nothing passes, so each run must report its tests.
+      - name: Storage fees agree with the node
+        run: |
+          cmake --build build --target test-storage-fee-vectors -j2
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-storage-fee-vectors$'
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p chain_block --lib storage_fee_tests \
+            2>&1 | tee "$RUNNER_TEMP/storage-fee-helper.log"
+          grep -Eq "test result: ok\. [1-9][0-9]* passed" "$RUNNER_TEMP/storage-fee-helper.log"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_storage_fees \
+            2>&1 | tee "$RUNNER_TEMP/storage-fee-executor.log"
+          grep -Eq "test result: ok\. [1-9][0-9]* passed" "$RUNNER_TEMP/storage-fee-executor.log"
+
+      # A guard nothing reaches is decoration. This removes each rule the validator
+      # controller work added and requires a test to go red for it; a mutation that
+      # survives fails the job.
+      - name: Every controller rule is held by a test
+        run: python3 test/pq-native/contract-guard-mutations.py --out mutations.json
+
+      - name: R3 accounting and return recovery sensitivity
+        run: python3 test/pq-native/elector-r3-accounting-mutations.py --out r3-mutations
+
+      - name: Retain R3 native assertion receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r3-accounting-${{ github.sha }}
+          path: |
+            r3-mutations
+            mutations.json
+            mutations-logs
+          if-no-files-found: warn
+          retention-days: 30
+
+      # The cutover deleted several validator-authority paths rather than refusing them
+      # by name, so nothing in the contracts announces their return. This fails if one
+      # comes back.
+      - name: No removed validator-authority path has returned
+        run: ./scripts/check-removed-validator-authority.sh .
+
+      # Escrow v1 was removed outright, and escrow v2 may be deployed only for
+      # non-production use. The tests first show both checks can fail (each kind
+      # of planted v1 fingerprint; a deploy script that stops applying the
+      # policy); the guard then holds the tree.
+      - name: Escrow v1 stays removed and escrow v2 stays non-production
+        run: |
+          python3 scripts/test_check_no_legacy_escrow.py
+          python3 scripts/test_tos_service_escrow_deploy_policy.py
+          python3 scripts/check-no-legacy-escrow.py .
+
+      - name: Frozen BOCs match their sources
+        run: git diff --exit-code
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats
+
+
+  # The contract sandbox suites and the proven-state guard controls.
+  suites:
+    name: contract-sandboxes (suites)
+    runs-on: ubuntu-24.04
+    # Each half rebuilds the native tools it needs from the shared compile
+    # cache and then runs its share of the checks. One job held both halves and
+    # sat close to its limit: on a slower runner it was cancelled at 90 minutes.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # Native upgrade/rollback tests compile the pinned classic elector.
+
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: contract-sandboxes-release
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: contract-sandboxes-${{ github.job }}-${{ steps.native-cache.outputs.host-key }}
+          cache-bin: false
+          workspaces: tosctl/src -> target
+
+      - name: Configure compiler toolchain
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      # The sandbox compiles FunC in-process through tos_sandbox, which shells
+      # out to these binaries via FUNC_PATH / FIFT_PATH. The elector suite also
+      # generates a real zerostate, which needs create-state and the compiled
+      # system contracts it deploys. Still far cheaper than a full build.
+      - name: Build FunC, Fift and the zerostate tooling
+        run: cmake --build build --target func fift create-state gen_fif -j2
 
       - name: Build the post-quantum key tool
         run: |
@@ -325,21 +439,6 @@ jobs:
       - name: Outbound message size limits hold on both sides
         run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_message_size_limits
 
-      # The sandbox charges storage as the node does. The node's own
-      # compute_storage_fees checks every row of the shared vector file, and the
-      # Rust helper and the executor are then held to the same rows. A cargo
-      # filter that matches nothing passes, so each run must report its tests.
-      - name: Storage fees agree with the node
-        run: |
-          cmake --build build --target test-storage-fee-vectors -j2
-          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-storage-fee-vectors$'
-          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p chain_block --lib storage_fee_tests \
-            2>&1 | tee "$RUNNER_TEMP/storage-fee-helper.log"
-          grep -Eq "test result: ok\. [1-9][0-9]* passed" "$RUNNER_TEMP/storage-fee-helper.log"
-          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_storage_fees \
-            2>&1 | tee "$RUNNER_TEMP/storage-fee-executor.log"
-          grep -Eq "test result: ok\. [1-9][0-9]* passed" "$RUNNER_TEMP/storage-fee-executor.log"
-
       # The token bridge's completion guarantees rest on fee arithmetic and on
       # how send modes 1, 2, 16 and 64 fail and bounce. The sandbox runs the Rust
       # executor; this records every transaction of its bridge suite and replays
@@ -367,57 +466,21 @@ jobs:
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
         run: python3 scripts/token-bridge-mutations.py --tvm-only --results token-bridge-mutations.json
 
-      # A guard nothing reaches is decoration. This removes each rule the validator
-      # controller work added and requires a test to go red for it; a mutation that
-      # survives fails the job.
-      - name: Every controller rule is held by a test
-        run: python3 test/pq-native/contract-guard-mutations.py --out mutations.json
-
-      - name: R3 accounting and return recovery sensitivity
-        run: python3 test/pq-native/elector-r3-accounting-mutations.py --out r3-mutations
-
-      - name: Retain R3 native assertion receipts
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: r3-accounting-${{ github.sha }}
-          path: |
-            r3-mutations
-            mutations.json
-            mutations-logs
-          if-no-files-found: warn
-          retention-days: 30
-
-      # The cutover deleted several validator-authority paths rather than refusing them
-      # by name, so nothing in the contracts announces their return. This fails if one
-      # comes back.
-      - name: No removed validator-authority path has returned
-        run: ./scripts/check-removed-validator-authority.sh .
-
-      # Escrow v1 was removed outright, and escrow v2 may be deployed only for
-      # non-production use. The tests first show both checks can fail (each kind
-      # of planted v1 fingerprint; a deploy script that stops applying the
-      # policy); the guard then holds the tree.
-      - name: Escrow v1 stays removed and escrow v2 stays non-production
-        run: |
-          python3 scripts/test_check_no_legacy_escrow.py
-          python3 scripts/test_tos_service_escrow_deploy_policy.py
-          python3 scripts/check-no-legacy-escrow.py .
-
       - name: Frozen BOCs match their sources
         run: git diff --exit-code
       - name: Compile cache statistics
         if: always()
         run: ccache --show-stats
 
-  # This only displays evidence; it never overrides the failing sandbox job.
+
+  # This only displays evidence; it never overrides the failing native job.
   executor_diagnostic:
-    needs: sandboxes
-    if: ${{ always() && needs.sandboxes.outputs.executor_diagnostics != '' }}
+    needs: native
+    if: ${{ always() && needs.native.outputs.executor_diagnostics != '' }}
     strategy:
       fail-fast: false
       matrix:
-        diagnostic: ${{ fromJSON(needs.sandboxes.outputs.executor_diagnostics) }}
+        diagnostic: ${{ fromJSON(needs.native.outputs.executor_diagnostics) }}
     name: "Executor diagnostic — ${{ matrix.diagnostic }}"
     runs-on: ubuntu-24.04
     steps:
