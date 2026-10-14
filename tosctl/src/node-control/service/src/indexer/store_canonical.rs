@@ -218,16 +218,8 @@ fn read_frontier(conn: &Connection, workchain: i32) -> anyhow::Result<Vec<BlockF
 /// pending, so everything above the published watermark belongs to it.
 fn delete_hidden_rows(tx: &Transaction<'_>) -> anyhow::Result<()> {
     let published = super::read_canonical_state(tx)?.map_or(0, |state| state.seqno);
-    tx.execute(
-        "DELETE FROM explorer_transactions WHERE EXISTS (
-            SELECT 1 FROM explorer_blocks b
-            WHERE b.workchain = explorer_transactions.workchain
-              AND b.shard = explorer_transactions.shard
-              AND b.seqno = explorer_transactions.seqno
-              AND b.observed_mc_seqno > ?1)",
-        params![published],
-    )?;
-    tx.execute("DELETE FROM explorer_blocks WHERE observed_mc_seqno > ?1", params![published])?;
+    tx.execute(super::DELETE_TRANSACTIONS_OBSERVED_ABOVE, params![published])?;
+    tx.execute(super::DELETE_BLOCKS_OBSERVED_ABOVE, params![published])?;
     Ok(())
 }
 

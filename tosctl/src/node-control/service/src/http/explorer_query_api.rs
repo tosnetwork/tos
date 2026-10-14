@@ -435,8 +435,8 @@ fn block_hash_candidates(raw: &str) -> Vec<String> {
 pub async fn status(
     State(state): State<AppState>,
 ) -> Result<axum::Json<ExplorerStatusResponse>, AppError> {
-    let stats = state.indexer_store.explorer_stats().map_err(index_error)?;
-    let checkpoints = state.indexer_store.checkpoints().map_err(index_error)?;
+    let stats = state.indexer()?.explorer_stats().map_err(index_error)?;
+    let checkpoints = state.indexer()?.checkpoints().map_err(index_error)?;
     let chain_head = state.runtime_cfg.chain_provider().get_masterchain_info().await.ok();
     let masterchain_head = chain_head.as_ref().map(|head| head.last.seqno);
     let masterchain_indexed = chain_head.as_ref().and_then(|head| {
@@ -473,6 +473,9 @@ pub async fn status(
 pub async fn staking(
     State(state): State<AppState>,
 ) -> Result<axum::Json<ExplorerStakingResponse>, AppError> {
+    // The pool summary needs the index; refuse before any chain call, so a
+    // disabled indexer answers at once instead of waiting on the RPC.
+    let index = state.indexer()?;
     let provider = contract_provider_from(state.runtime_cfg.chain_provider());
     let elector = ElectorWrapperImpl::new(provider);
     let (current_result, past_result) =
@@ -546,8 +549,7 @@ pub async fn staking(
         })
         .collect::<Vec<_>>();
 
-    let (pools, _) = state
-        .indexer_store
+    let (pools, _) = index
         .list("contract.pool.nominator", &ListFilters::default(), 0, 10_000)
         .map_err(index_error)?;
     let mut active_pools = 0usize;
@@ -665,7 +667,7 @@ pub async fn nominator_positions(
     State(state): State<AppState>,
     Path(address): Path<String>,
 ) -> Result<axum::Json<ExplorerNominatorPositionsResponse>, AppError> {
-    nominator_positions_response(&state.indexer_store, address).map(axum::Json)
+    nominator_positions_response(state.indexer()?, address).map(axum::Json)
 }
 
 /// The nominator endpoint's decision, separated from the HTTP plumbing.
@@ -757,12 +759,12 @@ pub async fn list_transactions(
     };
     let (rows, total) = if let Some((workchain, shard, seqno)) = block_filter {
         state
-            .indexer_store
+            .indexer()?
             .list_explorer_block_transactions(workchain, shard, seqno, offset, limit)
             .map_err(index_error)?
     } else {
         state
-            .indexer_store
+            .indexer()?
             .list_explorer_transactions(account.as_deref(), offset, limit)
             .map_err(index_error)?
     };
@@ -784,7 +786,7 @@ pub async fn list_blocks(
 ) -> Result<axum::Json<ExplorerBlockListResponse>, AppError> {
     let (offset, limit) = page(query.offset, query.limit)?;
     let (rows, total) =
-        state.indexer_store.list_explorer_blocks(offset, limit).map_err(index_error)?;
+        state.indexer()?.list_explorer_blocks(offset, limit).map_err(index_error)?;
     Ok(axum::Json(ExplorerBlockListResponse {
         ok: true,
         total,
@@ -802,7 +804,7 @@ pub async fn get_transaction(
     Query(query): Query<HashQuery>,
 ) -> Result<axum::Json<ExplorerTransactionResponse>, AppError> {
     let record = state
-        .indexer_store
+        .indexer()?
         .explorer_transaction(query.hash.trim())
         .map_err(index_error)?
         .ok_or_else(|| AppError::not_found("transaction hash is not indexed"))?;
@@ -818,7 +820,7 @@ pub async fn get_block(
 ) -> Result<axum::Json<ExplorerBlockResponse>, AppError> {
     let mut record = None;
     for candidate in block_hash_candidates(&query.hash) {
-        record = state.indexer_store.explorer_block_by_hash(&candidate).map_err(index_error)?;
+        record = state.indexer()?.explorer_block_by_hash(&candidate).map_err(index_error)?;
         if record.is_some() {
             break;
         }
@@ -841,7 +843,7 @@ pub async fn dns_history(
             .map_err(|_| AppError::bad_request("invalid DNS history cursor address"))?;
     }
     let rows = state
-        .indexer_store
+        .indexer()?
         .dns_domain_history(query.after_mc_seqno.unwrap_or(0), &after_address, limit)
         .map_err(index_error)?;
     let result =
@@ -876,7 +878,7 @@ pub async fn list_contracts(
         deadline_before: query.deadline_before,
     };
     let (rows, total) =
-        state.indexer_store.list(&kind, &filters, offset, limit).map_err(index_error)?;
+        state.indexer()?.list(&kind, &filters, offset, limit).map_err(index_error)?;
     Ok(axum::Json(ExplorerContractListResponse {
         ok: true,
         total,
@@ -899,7 +901,7 @@ pub async fn get_contract(
         .map_err(|_| AppError::bad_request("invalid TOS address"))?
         .to_string();
     let record = state
-        .indexer_store
+        .indexer()?
         .get(&address)
         .map_err(index_error)?
         .filter(|record| record.kind == kind)
@@ -918,7 +920,7 @@ pub async fn search(
     if q.is_empty() {
         return Err(AppError::bad_request("search query is required"));
     }
-    if let Some(record) = state.indexer_store.explorer_transaction(q).map_err(index_error)? {
+    if let Some(record) = state.indexer()?.explorer_transaction(q).map_err(index_error)? {
         return Ok(axum::Json(ExplorerSearchResponse {
             ok: true,
             result: Some(ExplorerSearchHit::Transaction(record.into())),
@@ -926,7 +928,7 @@ pub async fn search(
     }
     for candidate in block_hash_candidates(q) {
         if let Some(record) =
-            state.indexer_store.explorer_block_by_hash(&candidate).map_err(index_error)?
+            state.indexer()?.explorer_block_by_hash(&candidate).map_err(index_error)?
         {
             return Ok(axum::Json(ExplorerSearchResponse {
                 ok: true,
@@ -934,15 +936,14 @@ pub async fn search(
             }));
         }
     }
-    if let Ok(address) = MsgAddressInt::from_str(q) {
-        if let Some(record) = state.indexer_store.get(&address.to_string()).map_err(index_error)? {
-            if record.kind != "unclassified" {
-                return Ok(axum::Json(ExplorerSearchResponse {
-                    ok: true,
-                    result: Some(ExplorerSearchHit::Contract(record.into())),
-                }));
-            }
-        }
+    if let Ok(address) = MsgAddressInt::from_str(q)
+        && let Some(record) = state.indexer()?.get(&address.to_string()).map_err(index_error)?
+        && record.kind != "unclassified"
+    {
+        return Ok(axum::Json(ExplorerSearchResponse {
+            ok: true,
+            result: Some(ExplorerSearchHit::Contract(record.into())),
+        }));
     }
     Ok(axum::Json(ExplorerSearchResponse { ok: true, result: None }))
 }

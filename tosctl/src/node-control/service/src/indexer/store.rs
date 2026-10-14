@@ -44,7 +44,7 @@ pub use ledger::{
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 13;
+const CURRENT_SCHEMA_VERSION: i64 = 14;
 /// pool.fc state 0: the stake is in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i64 = 0;
 
@@ -150,6 +150,10 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     migrate_to_canonical_publication,
     migrate_address_refresh_key,
     ledger::repair_nominator_ledger_provenance,
+    // v14 indexes blocks by the masterchain height that observed them, so the
+    // per-height deletes of hidden, rewound and pruned rows are index range
+    // scans instead of full-table scans.
+    |conn| conn.execute_batch(EXPLORER_OBSERVATION_INDEX_SCHEMA),
 ];
 
 /// Columns of `indexer_address_refresh`, in declaration order. Every v11
@@ -369,6 +373,35 @@ const EXPLORER_ORDER_INDEX_SCHEMA: &str = "CREATE INDEX IF NOT EXISTS idx_explor
         ON explorer_blocks(gen_utime DESC, seqno DESC, workchain, shard);
     CREATE INDEX IF NOT EXISTS idx_explorer_transactions_order
         ON explorer_transactions(seqno DESC, length(lt) DESC, lt DESC, hash);";
+
+/// v14: blocks by the masterchain height that observed them. Every
+/// per-height delete selects blocks by `observed_mc_seqno` and reaches their
+/// transactions through `idx_explorer_transactions_block`.
+const EXPLORER_OBSERVATION_INDEX_SCHEMA: &str =
+    "CREATE INDEX IF NOT EXISTS idx_explorer_blocks_observed
+        ON explorer_blocks(observed_mc_seqno);";
+
+/// Explorer rows observed above a masterchain height (the hidden rows of an
+/// unpublished batch). Each pair deletes transactions first, reached through
+/// the blocks they belong to, then the blocks themselves; both statements are
+/// served by indexes, so their cost follows the rows removed, not the table.
+const DELETE_TRANSACTIONS_OBSERVED_ABOVE: &str = "DELETE FROM explorer_transactions
+    WHERE (workchain, shard, seqno) IN (
+        SELECT workchain, shard, seqno FROM explorer_blocks WHERE observed_mc_seqno > ?1)";
+const DELETE_BLOCKS_OBSERVED_ABOVE: &str =
+    "DELETE FROM explorer_blocks WHERE observed_mc_seqno > ?1";
+/// Explorer rows observed at or above a masterchain height (a rewound suffix).
+const DELETE_TRANSACTIONS_OBSERVED_FROM: &str = "DELETE FROM explorer_transactions
+    WHERE (workchain, shard, seqno) IN (
+        SELECT workchain, shard, seqno FROM explorer_blocks WHERE observed_mc_seqno >= ?1)";
+const DELETE_BLOCKS_OBSERVED_FROM: &str =
+    "DELETE FROM explorer_blocks WHERE observed_mc_seqno >= ?1";
+/// Explorer rows observed below a masterchain height (outside retention).
+const DELETE_TRANSACTIONS_OBSERVED_BELOW: &str = "DELETE FROM explorer_transactions
+    WHERE (workchain, shard, seqno) IN (
+        SELECT workchain, shard, seqno FROM explorer_blocks WHERE observed_mc_seqno < ?1)";
+const DELETE_BLOCKS_OBSERVED_BELOW: &str =
+    "DELETE FROM explorer_blocks WHERE observed_mc_seqno < ?1";
 
 /// v11: the canonical publication watermark and the views every public
 /// explorer read goes through.
@@ -616,8 +649,7 @@ impl IndexerStore {
         // no-op until a full VACUUM, in which case pruning still bounds row
         // growth, only the file does not shrink.
         conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
-        Self::init_schema(&conn)?;
-        Self::ensure_schema_version(&conn)?;
+        Self::prepare_schema(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -625,16 +657,26 @@ impl IndexerStore {
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
-        Self::init_schema(&conn)?;
-        Self::ensure_schema_version(&conn)?;
+        Self::prepare_schema(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
+    }
+
+    /// Creates the current layout, brings an older database forward, then
+    /// adds the indexes over columns that only a migration may have added: an
+    /// old explorer table gains `observed_mc_seqno` in the v4 to v5 step, so
+    /// an index on it cannot be created before the migrations have run.
+    fn prepare_schema(conn: &Connection) -> anyhow::Result<()> {
+        Self::init_schema(conn)?;
+        Self::ensure_schema_version(conn)?;
+        conn.execute_batch(EXPLORER_OBSERVATION_INDEX_SCHEMA)?;
+        Ok(())
     }
 
     /// Prune explorer/indexer history older than `keep_from_mc_seqno`
     /// (exclusive) to bound the append-only history tables. The DNS-history and
     /// explorer block tables are keyed by the masterchain seqno at which the row
     /// was observed; explorer transactions carry no such column and are pruned
-    /// referentially, by dropping rows whose block is no longer retained. The
+    /// referentially, through the blocks being pruned. The
     /// caller passes `published_mc_seqno - retention_window`: the watermark of
     /// what is actually published, never the remote chain tip, so an indexer
     /// far behind the tip cannot prune what it has only just scanned. A window
@@ -648,23 +690,17 @@ impl IndexerStore {
             "DELETE FROM dns_domain_history WHERE observed_mc_seqno < ?1",
             params![keep_from_mc_seqno],
         )?;
-        removed += conn.execute(
-            "DELETE FROM explorer_blocks WHERE observed_mc_seqno < ?1",
-            params![keep_from_mc_seqno],
-        )?;
-        // Explorer transactions have no observed_mc_seqno; drop the ones whose
-        // block has just been (or was previously) pruned so the two stay
-        // consistent and transactions cannot outlive their block.
-        removed += conn.execute(
-            "DELETE FROM explorer_transactions
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM explorer_blocks b
-                 WHERE b.workchain = explorer_transactions.workchain
-                   AND b.shard = explorer_transactions.shard
-                   AND b.seqno = explorer_transactions.seqno
-             )",
-            [],
-        )?;
+        // Explorer transactions have no observed_mc_seqno; they are dropped
+        // through the blocks about to be pruned, before those blocks go, so
+        // transactions cannot outlive their block. Every writer inserts and
+        // deletes a block's transactions in the same transaction as the block
+        // row, so no transaction exists without its block to be swept here.
+        removed = removed.saturating_add(
+            conn.execute(DELETE_TRANSACTIONS_OBSERVED_BELOW, params![keep_from_mc_seqno])?,
+        );
+        removed = removed.saturating_add(
+            conn.execute(DELETE_BLOCKS_OBSERVED_BELOW, params![keep_from_mc_seqno])?,
+        );
         if removed > 0 {
             // Return the freed pages to the OS (no-op unless auto_vacuum is
             // incremental for this database).
@@ -1009,20 +1045,8 @@ impl IndexerStore {
     pub fn rewind_masterchain_observations(&self, from_mc_seqno: u32) -> anyhow::Result<()> {
         let mut conn = self.lock()?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "DELETE FROM explorer_transactions WHERE EXISTS (
-                SELECT 1 FROM explorer_blocks b
-                WHERE b.workchain = explorer_transactions.workchain
-                  AND b.shard = explorer_transactions.shard
-                  AND b.seqno = explorer_transactions.seqno
-                  AND b.observed_mc_seqno >= ?1
-             )",
-            params![from_mc_seqno],
-        )?;
-        tx.execute(
-            "DELETE FROM explorer_blocks WHERE observed_mc_seqno >= ?1",
-            params![from_mc_seqno],
-        )?;
+        tx.execute(DELETE_TRANSACTIONS_OBSERVED_FROM, params![from_mc_seqno])?;
+        tx.execute(DELETE_BLOCKS_OBSERVED_FROM, params![from_mc_seqno])?;
         tx.commit()?;
         Ok(())
     }
@@ -2581,6 +2605,252 @@ mod tests {
         assert!(store.explorer_block_by_hash("root-2").unwrap().is_none());
         assert!(store.explorer_transaction("tx-3").unwrap().is_none());
         assert_eq!(store.explorer_stats().unwrap().blocks, 1);
+    }
+
+    /// Every statement that deletes explorer rows by observing height.
+    const PER_HEIGHT_DELETES: &[(&str, &str)] = &[
+        ("transactions above", DELETE_TRANSACTIONS_OBSERVED_ABOVE),
+        ("blocks above", DELETE_BLOCKS_OBSERVED_ABOVE),
+        ("transactions from", DELETE_TRANSACTIONS_OBSERVED_FROM),
+        ("blocks from", DELETE_BLOCKS_OBSERVED_FROM),
+        ("transactions below", DELETE_TRANSACTIONS_OBSERVED_BELOW),
+        ("blocks below", DELETE_BLOCKS_OBSERVED_BELOW),
+    ];
+
+    fn query_plan(conn: &Connection, sql: &str) -> Vec<String> {
+        let mut statement = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        statement
+            .query_map(params![1u32], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn full_scans(plan: &[String]) -> Vec<&String> {
+        plan.iter()
+            .filter(|detail| {
+                detail.contains("SCAN explorer_transactions")
+                    || detail.contains("SCAN explorer_blocks")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn per_height_deletes_are_served_by_indexes() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let conn = store.conn.lock().unwrap();
+        // The guard must be able to see a full scan: the correlated form
+        // these statements replaced walks every transaction row.
+        let correlated = query_plan(
+            &conn,
+            "DELETE FROM explorer_transactions WHERE EXISTS (
+                SELECT 1 FROM explorer_blocks b
+                WHERE b.workchain = explorer_transactions.workchain
+                  AND b.shard = explorer_transactions.shard
+                  AND b.seqno = explorer_transactions.seqno
+                  AND b.observed_mc_seqno > ?1)",
+        );
+        assert!(!full_scans(&correlated).is_empty(), "control plan: {correlated:?}");
+        for (name, sql) in PER_HEIGHT_DELETES {
+            let plan = query_plan(&conn, sql);
+            assert!(full_scans(&plan).is_empty(), "{name} scans a whole table: {plan:?}");
+            assert!(
+                plan.iter().any(|detail| detail.contains("idx_explorer_blocks_observed")),
+                "{name} does not select blocks by observing height: {plan:?}"
+            );
+            if sql.contains("DELETE FROM explorer_transactions") {
+                assert!(
+                    plan.iter().any(|detail| detail.contains("idx_explorer_transactions_block")),
+                    "{name} does not reach transactions through their block: {plan:?}"
+                );
+            }
+        }
+    }
+
+    fn has_index(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            params![name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            == 1
+    }
+
+    fn schema_version(conn: &Connection) -> String {
+        conn.query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_v13_database_gains_the_observation_index() {
+        let downgrade = "DROP INDEX idx_explorer_blocks_observed;
+             UPDATE indexer_meta SET value = '13' WHERE key = 'schema_version';";
+        // The migration step alone adds the index.
+        let store = IndexerStore::open_in_memory().unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(downgrade).unwrap();
+            assert!(!has_index(&conn, "idx_explorer_blocks_observed"));
+            IndexerStore::ensure_schema_version(&conn).unwrap();
+            assert!(has_index(&conn, "idx_explorer_blocks_observed"));
+            assert_eq!(schema_version(&conn), "14");
+        }
+        // A v13 file on disk is upgraded in place when it is opened, and keeps
+        // its rows.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tosctl-indexer.db");
+        {
+            let store = IndexerStore::open(&path).unwrap();
+            store.index_explorer_block(&explorer_block(7), &[]).unwrap();
+            store.conn.lock().unwrap().execute_batch(downgrade).unwrap();
+        }
+        let store = IndexerStore::open(&path).unwrap();
+        let conn = store.conn.lock().unwrap();
+        assert!(has_index(&conn, "idx_explorer_blocks_observed"));
+        assert_eq!(schema_version(&conn), CURRENT_SCHEMA_VERSION.to_string());
+        let blocks: i64 =
+            conn.query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get(0)).unwrap();
+        assert_eq!(blocks, 1);
+    }
+
+    /// A database from before the v4 to v5 step has explorer tables without
+    /// `observed_mc_seqno`, `fee` and `in_msg_hash`. Opening it must run the
+    /// migrations first and only then index the observation column; creating
+    /// that index up front fails on the missing column and the store never
+    /// opens.
+    #[test]
+    fn a_pre_v5_layout_reaches_the_current_schema_with_the_observation_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tosctl-indexer.db");
+        drop(IndexerStore::open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP VIEW IF EXISTS published_explorer_blocks;
+                 DROP VIEW IF EXISTS published_explorer_transactions;
+                 DROP INDEX idx_explorer_blocks_observed;
+                 ALTER TABLE explorer_blocks DROP COLUMN observed_mc_seqno;
+                 ALTER TABLE explorer_transactions DROP COLUMN fee;
+                 ALTER TABLE explorer_transactions DROP COLUMN in_msg_hash;
+                 UPDATE indexer_meta SET value = '4' WHERE key = 'schema_version';",
+            )
+            .unwrap();
+            let columns: Vec<String> = conn
+                .prepare("SELECT name FROM pragma_table_info('explorer_blocks')")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert!(!columns.iter().any(|c| c == "observed_mc_seqno"));
+        }
+        let store = IndexerStore::open(&path).unwrap();
+        let conn = store.conn.lock().unwrap();
+        assert_eq!(schema_version(&conn), CURRENT_SCHEMA_VERSION.to_string());
+        assert!(has_index(&conn, "idx_explorer_blocks_observed"));
+    }
+
+    /// Masterchain blocks 1..=5 observed at their own height, and a basechain
+    /// block at seqno 2 observed at height 5, so a coordinate that differs only
+    /// in workchain must not be confused with the masterchain block 2. Every
+    /// block carries two transactions.
+    fn store_with_observed_heights() -> IndexerStore {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let mut blocks: Vec<ExplorerBlockRecord> = (1..=5).map(explorer_block).collect();
+        let mut basechain = explorer_block(2);
+        basechain.workchain = 0;
+        basechain.root_hash = "root-basechain-2".into();
+        basechain.file_hash = "file-basechain-2".into();
+        basechain.observed_mc_seqno = 5;
+        blocks.push(basechain);
+        for block in &blocks {
+            let transactions: Vec<_> = (0..2u64)
+                .map(|index| {
+                    let mut tx = explorer_transaction(
+                        &format!("tx-{}-{}-{index}", block.workchain, block.seqno),
+                        "-1:account",
+                        index,
+                        block.seqno,
+                    );
+                    tx.workchain = block.workchain;
+                    tx
+                })
+                .collect();
+            store.index_explorer_block(block, &transactions).unwrap();
+        }
+        store
+    }
+
+    /// Remaining blocks as `(workchain, seqno)` and transaction hashes.
+    fn remaining_rows(store: &IndexerStore) -> (Vec<(i32, u32)>, Vec<String>) {
+        let conn = store.conn.lock().unwrap();
+        let blocks = conn
+            .prepare("SELECT workchain, seqno FROM explorer_blocks ORDER BY workchain, seqno")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let transactions = conn
+            .prepare("SELECT hash FROM explorer_transactions ORDER BY hash")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        (blocks, transactions)
+    }
+
+    fn expected_rows(blocks: &[(i32, u32)]) -> (Vec<(i32, u32)>, Vec<String>) {
+        let mut blocks = blocks.to_vec();
+        blocks.sort();
+        let mut transactions: Vec<String> = blocks
+            .iter()
+            .flat_map(|(workchain, seqno)| {
+                (0..2).map(move |index| format!("tx-{workchain}-{seqno}-{index}"))
+            })
+            .collect();
+        transactions.sort();
+        (blocks, transactions)
+    }
+
+    #[test]
+    fn per_height_deletes_remove_exactly_the_rows_on_their_side_of_the_height() {
+        let all = [(-1, 1), (-1, 2), (-1, 3), (-1, 4), (-1, 5), (0, 2)];
+        assert_eq!(remaining_rows(&store_with_observed_heights()), expected_rows(&all));
+        let at_or_below_three = [(-1, 1), (-1, 2), (-1, 3)];
+
+        // Hidden rows above the published height go when a batch is discarded.
+        let store = store_with_observed_heights();
+        store.publish_through_for_tests(3).unwrap();
+        store.discard_pending_batch().unwrap();
+        assert_eq!(remaining_rows(&store), expected_rows(&at_or_below_three));
+
+        // ... and when the next batch opens.
+        let store = store_with_observed_heights();
+        store.publish_through_for_tests(3).unwrap();
+        store
+            .begin_batch(&MasterchainCheckpoint {
+                seqno: 4,
+                root_hash: "00".repeat(32),
+                file_hash: "00".repeat(32),
+            })
+            .unwrap();
+        assert_eq!(remaining_rows(&store), expected_rows(&at_or_below_three));
+
+        // A rewind removes the observing height itself and everything above.
+        let store = store_with_observed_heights();
+        store.rewind_masterchain_observations(3).unwrap();
+        assert_eq!(remaining_rows(&store), expected_rows(&[(-1, 1), (-1, 2)]));
+
+        // Retention keeps the boundary height and everything above, and
+        // counts every removed block and transaction.
+        let store = store_with_observed_heights();
+        assert_eq!(store.prune_history(3).unwrap(), 6);
+        assert_eq!(remaining_rows(&store), expected_rows(&[(-1, 3), (-1, 4), (-1, 5), (0, 2)]));
     }
 }
 

@@ -504,6 +504,7 @@ mod tests {
             master_wallet: None,
             tick_interval: 40,
             indexer_retention_blocks: 0,
+            indexer_enabled: true,
             log: None,
             bookmarks: HashMap::new(),
             alerts: Default::default(),

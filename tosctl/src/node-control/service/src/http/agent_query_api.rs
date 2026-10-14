@@ -412,7 +412,8 @@ pub async fn list_tasks(
     // operator's local config does not (e.g. a Task Escrow some other
     // operator deployed). Local-config entries always win on address
     // collision, since they carry a human-assigned `name`; this only adds
-    // addresses not already present.
+    // addresses not already present. With the indexer disabled only the
+    // locally configured tasks are listed.
     let known_addrs: std::collections::HashSet<String> =
         result.iter().map(|item| item.address.clone()).collect();
     let creator_str = creator.as_ref().map(|a| a.to_string());
@@ -422,7 +423,9 @@ pub async fn list_tasks(
         deadline_after: query.deadline_after,
         deadline_before: query.deadline_before,
     };
-    if let Ok((indexed, _)) = state.indexer_store.list("task_escrow", &filters, 0, 10_000) {
+    if let Some(indexer) = state.indexer_store.as_deref()
+        && let Ok((indexed, _)) = indexer.list("task_escrow", &filters, 0, 10_000)
+    {
         for rec in indexed {
             if known_addrs.contains(&rec.address) {
                 continue;
@@ -562,7 +565,7 @@ pub async fn list_disputes(
     validate_indexed_query(&query)?;
     let (offset, limit) = indexed_page(&query)?;
     let (rows, total) = state
-        .indexer_store
+        .indexer()?
         .list("dispute", &indexed_list_filters(&query), offset, limit)
         .map_err(|e| AppError::internal(format!("{e:#}")))?;
     let result = rows
@@ -582,7 +585,7 @@ pub async fn get_dispute(
 ) -> Result<axum::Json<DisputeResponse>, AppError> {
     let address = parse_address(&raw)?;
     let rec = state
-        .indexer_store
+        .indexer()?
         .get(&address.to_string())
         .map_err(|e| AppError::internal(format!("{e:#}")))?
         .filter(|r| r.kind == "dispute")
@@ -663,7 +666,7 @@ pub async fn list_services(
     validate_indexed_query(&query)?;
     let (offset, limit) = indexed_page(&query)?;
     let (rows, total) = state
-        .indexer_store
+        .indexer()?
         .list("service_actor", &indexed_list_filters(&query), offset, limit)
         .map_err(|e| AppError::internal(format!("{e:#}")))?;
     let result = rows
@@ -683,7 +686,7 @@ pub async fn get_service(
 ) -> Result<axum::Json<ServiceActorResponse>, AppError> {
     let address = parse_address(&raw)?;
     let rec = state
-        .indexer_store
+        .indexer()?
         .get(&address.to_string())
         .map_err(|e| AppError::internal(format!("{e:#}")))?
         .filter(|r| r.kind == "service_actor")
@@ -715,7 +718,7 @@ pub async fn get_service_request(
 ) -> Result<axum::Json<ServiceRequestLifecycleResponse>, AppError> {
     let address = parse_address(&raw)?;
     if let Some(record) = state
-        .indexer_store
+        .indexer()?
         .service_request(&address.to_string(), request_id)
         .map_err(|e| AppError::internal(format!("{e:#}")))?
         .filter(|r| matches!(r.status.as_str(), "responded" | "refunded" | "swept"))
@@ -820,7 +823,7 @@ pub async fn list_registry(
     validate_indexed_query(&query)?;
     let (offset, limit) = indexed_page(&query)?;
     let (rows, total) = state
-        .indexer_store
+        .indexer()?
         .list("capability_registry", &indexed_list_filters(&query), offset, limit)
         .map_err(|e| AppError::internal(format!("{e:#}")))?;
     let result = rows
@@ -840,7 +843,7 @@ pub async fn get_registry(
 ) -> Result<axum::Json<RegistryResponse>, AppError> {
     let address = parse_address(&raw)?;
     let rec = state
-        .indexer_store
+        .indexer()?
         .get(&address.to_string())
         .map_err(|e| AppError::internal(format!("{e:#}")))?
         .filter(|r| r.kind == "capability_registry")
@@ -928,6 +931,7 @@ mod tests {
             master_wallet: None,
             tick_interval: 30,
             indexer_retention_blocks: 0,
+            indexer_enabled: true,
             log: None,
             bookmarks: Default::default(),
             alerts: Default::default(),
@@ -957,7 +961,7 @@ mod tests {
             jwt_auth,
             user_store,
             login_rate_limiter: Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default())),
-            indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+            indexer_store: Some(Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap())),
             unauthenticated_serving_allowed: true,
         }
     }
@@ -1570,5 +1574,19 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), 504);
         assert_eq!(json_body(response).await["error"]["kind"], "timeout");
+    }
+
+    /// The staking summary also reads Elector state over RPC, but with the
+    /// indexer disabled it must refuse before any chain call: a stuck RPC
+    /// would otherwise turn the documented 503 into the request timeout.
+    #[tokio::test(start_paused = true)]
+    async fn disabled_indexer_refuses_staking_without_waiting_on_the_chain() {
+        let provider: Arc<dyn ChainProvider> = Arc::new(FakeChainProvider(FakeBehavior::Hang));
+        let mut state = test_state_with_provider(test_app_config(), provider).await;
+        state.indexer_store = None;
+        let response =
+            routes(false, state).oneshot(get("/explorer/staking".to_owned())).await.unwrap();
+        assert_eq!(response.status(), 503);
+        assert_eq!(json_body(response).await["error"]["kind"], "indexer_disabled");
     }
 }

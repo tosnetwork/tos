@@ -1334,7 +1334,9 @@ Configuration is specified in JSON format.
     "level": "INFO",
     "output": "console"
   },
-  "tick_interval": 40
+  "tick_interval": 40,
+  // optional, default true
+  "indexer_enabled": true
 }
 ```
 
@@ -1447,6 +1449,15 @@ Logging configuration:
 - `level` — log level: `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE` (default: `INFO`)
 - `output` — log output target: `console`, `file`, or `all` (default: `console`)
 
+#### `indexer_enabled` (optional)
+
+Whether `tosctl service` runs the chain-wide explorer indexer (default: `true`).
+
+- `true` — the indexer task runs and keeps `tosctl-indexer.db` (next to the config file) up to date; the explorer and agent-query HTTP routes read from it.
+- `false` — for hosts that only need elections and voting, such as validator hosts. The indexer task is not started and `tosctl-indexer.db` is neither created nor opened. Elections, voting and the control API run as before. Every HTTP route that reads the index (`/explorer/*`, `/disputes`, `/services`, `/registry` and their per-address forms) answers `503` with error kind `indexer_disabled`; `/tasks` lists only the locally configured tasks.
+
+The key is read when the service starts; restart the service after changing it. `tosctl explorer` refuses to start with `indexer_enabled: false`, since the index is all it serves.
+
 ### Default Config Example
 
 ```json
@@ -1480,6 +1491,7 @@ Logging configuration:
     "workchain": 0
   },
   "tick_interval": 40,
+  "indexer_enabled": true,
   "log": {
     "max_size_mb": 50,
     "max_files": 10,

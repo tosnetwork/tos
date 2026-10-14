@@ -78,12 +78,46 @@ pub async fn run_with_config(
     run_with_profile(cancellation_ctx, app_cfg, config_path, ServiceProfile::Full).await
 }
 
+/// The tasks a profile enables at start, in start order.
+fn startup_tasks(
+    app_cfg: &AppConfig,
+    profile: ServiceProfile,
+) -> anyhow::Result<Vec<&'static str>> {
+    match profile {
+        ServiceProfile::Explorer => {
+            anyhow::ensure!(
+                app_cfg.indexer_enabled,
+                "the explorer profile serves the explorer index and cannot run with \
+                 indexer_enabled = false"
+            );
+            Ok(vec!["indexer"])
+        }
+        ServiceProfile::Full => {
+            let mut tasks = vec!["contracts"];
+            if app_cfg.elections.is_some() {
+                tasks.push("elections");
+            }
+            if app_cfg.voting.is_some() {
+                tasks.push("voting");
+            }
+            // Chain-wide contract discovery is a baseline read-only
+            // capability, on unless the configuration turns it off: a host
+            // that only takes part in elections does not need it.
+            if app_cfg.indexer_enabled {
+                tasks.push("indexer");
+            }
+            Ok(tasks)
+        }
+    }
+}
+
 async fn run_with_profile(
     cancellation_ctx: CancellationCtx,
     app_cfg: Arc<AppConfig>,
     config_path: String,
     profile: ServiceProfile,
 ) -> anyhow::Result<()> {
+    let startup = startup_tasks(&app_cfg, profile)?;
     let indexer_db_path = Path::new(&config_path).with_file_name("tosctl-indexer.db");
     let runtime_cfg = match profile {
         ServiceProfile::Full => RuntimeConfigStore::initialize(app_cfg.clone(), config_path).await,
@@ -94,8 +128,14 @@ async fn run_with_profile(
     .context("initialize runtime config store")?;
     let runtime_cfg = Arc::new(runtime_cfg);
     let store = Arc::new(SnapshotStore::new());
-    let indexer_store =
-        Arc::new(IndexerStore::open(&indexer_db_path).context("open indexer store")?);
+    // A disabled indexer leaves its database untouched: it is neither created
+    // nor opened, so it costs no disk reads and no file on a fresh host.
+    let indexer_store = if startup.contains(&"indexer") {
+        Some(Arc::new(IndexerStore::open(&indexer_db_path).context("open indexer store")?))
+    } else {
+        tracing::info!("explorer indexer disabled by configuration (indexer_enabled = false)");
+        None
+    };
 
     // Status callback: when the elections runner detects binding status changes,
     // update the runtime config and save to file.
@@ -139,27 +179,22 @@ async fn run_with_profile(
         )),
     );
 
-    tasks.insert(
-        "indexer",
-        Arc::new(TaskController::new(
+    if let Some(indexer_store) = &indexer_store {
+        tasks.insert(
             "indexer",
-            IndexerTask::new(runtime_cfg.clone(), indexer_store.clone()),
-            runtime_cfg.clone(),
-        )),
-    );
-
-    if profile == ServiceProfile::Full {
-        let _ = tasks.get("contracts").expect("contracts task").enable().await;
-        if app_cfg.elections.is_some() {
-            let _ = tasks.get("elections").expect("elections task").enable().await;
-        }
-        if app_cfg.voting.is_some() {
-            let _ = tasks.get("voting").expect("voting task").enable().await;
-        }
+            Arc::new(TaskController::new(
+                "indexer",
+                IndexerTask::new(runtime_cfg.clone(), indexer_store.clone()),
+                runtime_cfg.clone(),
+            )),
+        );
     }
-    // Always on: chain-wide contract discovery is a baseline read-only
-    // capability, not an opt-in participation feature like elections/voting.
-    let _ = tasks.get("indexer").expect("indexer task").enable().await;
+
+    for name in &startup {
+        let task =
+            tasks.get(name).with_context(|| format!("startup task '{name}' is not registered"))?;
+        let _ = task.enable().await;
+    }
 
     let http_task_handle = tokio::spawn(http_server_task::run(
         cancellation_ctx.clone(),
@@ -182,7 +217,9 @@ async fn run_with_profile(
                 // Reload config from file if changed
                 if runtime_cfg.reload_from_file().await {
                     if profile == ServiceProfile::Explorer {
-                        let _ = tasks.get("indexer").expect("indexer task").restart().await;
+                        if let Some(task) = tasks.get("indexer") {
+                            let _ = task.restart().await;
+                        }
                     } else {
                         for task in tasks.values() {
                             let _ = task.restart().await;
@@ -235,6 +272,43 @@ mod tests {
     fn closed_loopback_port() -> u16 {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         listener.local_addr().expect("addr").port()
+    }
+
+    fn config(extra: serde_json::Value) -> AppConfig {
+        let mut config = serde_json::json!({
+            "nodes": {},
+            "chain_rpc": {"urls": ["http://127.0.0.1:3301/"]},
+            "http": {},
+            "master_wallet": null,
+            "log": null,
+            "elections": {}
+        });
+        for (key, value) in extra.as_object().expect("object").clone() {
+            config[key] = value;
+        }
+        serde_json::from_value(config).expect("config")
+    }
+
+    #[test]
+    fn the_indexer_starts_by_default_beside_elections() {
+        let config = config(serde_json::json!({}));
+        assert_eq!(
+            startup_tasks(&config, ServiceProfile::Full).unwrap(),
+            vec!["contracts", "elections", "indexer"]
+        );
+        assert_eq!(startup_tasks(&config, ServiceProfile::Explorer).unwrap(), vec!["indexer"]);
+    }
+
+    #[test]
+    fn a_disabled_indexer_stays_off_while_elections_still_start() {
+        let config = config(serde_json::json!({"indexer_enabled": false}));
+        assert_eq!(
+            startup_tasks(&config, ServiceProfile::Full).unwrap(),
+            vec!["contracts", "elections"]
+        );
+        let error = startup_tasks(&config, ServiceProfile::Explorer)
+            .expect_err("the explorer profile has nothing to serve without the indexer");
+        assert!(error.to_string().contains("indexer_enabled = false"), "{error}");
     }
 
     #[tokio::test]
