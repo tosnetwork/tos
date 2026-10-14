@@ -3,14 +3,15 @@ name: Archive pruning regression
 on:
   push:
     branches: [fix/issue-190-archive-prune-lifecycle]
-  pull_request:
-    paths:
-      - 'validator/db/archive-*'
-      - 'test/test-archive-prune.cpp'
-      - '.github/workflows/archive-prune.yml'
 
+concurrency:
+  group: archive-prune-${{ github.ref }}
+  cancel-in-progress: true
+
+# This temporary diagnostic uploads verified Git blobs but never moves a ref.
+# The final workflow is restored to read-only before opening the pull request.
 permissions:
-  contents: read
+  contents: write
   packages: read
 
 jobs:
@@ -33,33 +34,58 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-archive-prune-
             ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-
-      - name: Configure targeted diagnostic
+      - name: Stage test access and configure
         shell: bash
         run: |
           set -euo pipefail
+          python3 test/stage-archive-prune.py setup
           cat >> CMakeLists.txt <<'CMAKE'
+
           add_executable(test-archive-prune test/test-archive-prune.cpp)
           target_include_directories(test-archive-prune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
           target_link_libraries(test-archive-prune PRIVATE validator full-node tos_block tos_crypto tos_mldsa44 tos_pq_consensus_signer tos_pq_consensus tl_lite_api tl_api tdactor tdutils tddb validator-common)
           target_compile_definitions(test-archive-prune PRIVATE MLD_CONFIG_FILE="consensus-signer-config.h")
+          add_dependencies(all-tests test-archive-prune)
+          add_test(NAME archive-prune COMMAND test-archive-prune)
+          add_test(NAME archive-prune-held-reader-shutdown COMMAND test-archive-prune --held-reader-shutdown)
+          set_tests_properties(archive-prune archive-prune-held-reader-shutdown PROPERTIES TIMEOUT 90)
           CMAKE
           cmake -S . -B build -G Ninja \
             -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
             -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH=x86-64 \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
             -DTOS_USE_JEMALLOC=ON -DTOS_PRODUCTION_BUILD=ON
-      - name: Compile and exercise production archive slice
+      - name: Compile the regression against the original manager
         shell: bash
         run: |
           set -euo pipefail
           cmake --build build --parallel 4 --target test-archive-prune 2>&1 | tee archive-prune-build.log
-          timeout 90s build/test-archive-prune 2>&1 | tee archive-prune-test.log
-      - name: Save compiled objects for diagnostic iterations
-        if: always()
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: /root/.ccache
-          key: ${{ runner.os }}-${{ runner.arch }}-archive-prune-${{ github.sha }}
-      - name: Preserve diagnostic evidence and exact source
+          timeout 90s build/test-archive-prune 2>&1 | tee archive-prune-baseline.log
+      - name: Require the original cancellation failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          timeout 90s build/test-archive-prune --held-reader-shutdown 2>&1 | tee archive-prune-red.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "original cancellation exit=$rc"
+          test "$rc" -eq 134
+          grep -qi 'lost promise' archive-prune-red.log
+      - name: Apply the focused error-propagation fix and verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 test/stage-archive-prune.py fix
+          cmake --build build --parallel 4 --target test-archive-prune 2>&1 | tee archive-prune-fixed-build.log
+          ctest --test-dir build --output-on-failure --repeat until-fail:3 -R '^archive-prune' 2>&1 | tee archive-prune-green.log
+          git diff --check
+          git diff -- CMakeLists.txt validator/db/archive-manager.cpp validator/db/archive-manager.hpp validator/db/archive-slice.hpp test/test-archive-prune.cpp > archive-prune-verified.patch
+      - name: Stage verified Git objects without modifying any branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 test/stage-archive-prune.py publish
+      - name: Preserve evidence and exact tested source
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -67,6 +93,8 @@ jobs:
           retention-days: 14
           path: |
             archive-prune-*.log
+            archive-prune-blobs.json
+            archive-prune-verified.patch
             build/test-archive-prune
             CMakeLists.txt
             validator/CMakeLists.txt
@@ -78,3 +106,9 @@ jobs:
             tddb/td/db/RocksDb.h
             tdactor/td/actor/core/Scheduler.cpp
             test/test-archive-prune.cpp
+      - name: Save compiled objects for diagnostic iterations
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: /root/.ccache
+          key: ${{ runner.os }}-${{ runner.arch }}-archive-prune-${{ github.sha }}
