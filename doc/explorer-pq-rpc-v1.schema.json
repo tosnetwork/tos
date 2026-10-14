@@ -1325,7 +1325,44 @@
         "policy_spec_hash",
         "primary_status"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "retired_flags": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "primary_status": {
+                "const": "retired"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "retired_flags": {
+                "const": 0
+              },
+              "primary_deadline": {
+                "const": null
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "primary_status": {
+                "const": "not_retired"
+              }
+            }
+          }
+        }
+      ]
     },
     "ConfiguredSizeLimits": {
       "type": "object",
@@ -1534,7 +1571,277 @@
         "effective",
         "defaulted_fields"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "wire_version": {
+              "const": null
+            },
+            "configured": {
+              "type": "null"
+            },
+            "defaulted_fields": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "max_msg_bits",
+                  "max_msg_cells",
+                  "max_library_cells",
+                  "max_ext_msg_size",
+                  "max_acc_state_cells",
+                  "max_mc_acc_state_cells",
+                  "max_acc_public_libraries",
+                  "defer_out_queue_size_limit",
+                  "max_msg_extra_currencies",
+                  "acc_state_cells_for_storage_dict",
+                  "max_total_msg_bits",
+                  "max_total_msg_cells",
+                  "max_vm_data_depth",
+                  "max_ext_msg_depth",
+                  "max_acc_fixed_prefix_length",
+                  "max_transaction_library_loads"
+                ]
+              },
+              "minItems": 16,
+              "maxItems": 16,
+              "uniqueItems": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "wire_version": {
+              "const": 1
+            },
+            "configured": {
+              "type": "object",
+              "properties": {
+                "max_msg_bits": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_msg_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_library_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_vm_data_depth": {
+                  "$ref": "#/$defs/U16"
+                },
+                "max_ext_msg_size": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_ext_msg_depth": {
+                  "$ref": "#/$defs/U16"
+                }
+              },
+              "required": [
+                "max_msg_bits",
+                "max_msg_cells",
+                "max_library_cells",
+                "max_vm_data_depth",
+                "max_ext_msg_size",
+                "max_ext_msg_depth"
+              ],
+              "additionalProperties": false
+            },
+            "defaulted_fields": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "max_acc_state_cells",
+                  "max_mc_acc_state_cells",
+                  "max_acc_public_libraries",
+                  "defer_out_queue_size_limit",
+                  "max_msg_extra_currencies",
+                  "acc_state_cells_for_storage_dict",
+                  "max_total_msg_bits",
+                  "max_total_msg_cells",
+                  "max_acc_fixed_prefix_length",
+                  "max_transaction_library_loads"
+                ]
+              },
+              "minItems": 10,
+              "maxItems": 10,
+              "uniqueItems": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "wire_version": {
+              "const": 2
+            },
+            "configured": {
+              "type": "object",
+              "properties": {
+                "max_msg_bits": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_msg_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_library_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_vm_data_depth": {
+                  "$ref": "#/$defs/U16"
+                },
+                "max_ext_msg_size": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_ext_msg_depth": {
+                  "$ref": "#/$defs/U16"
+                },
+                "max_acc_state_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_mc_acc_state_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_acc_public_libraries": {
+                  "$ref": "#/$defs/U32"
+                },
+                "defer_out_queue_size_limit": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_msg_extra_currencies": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_acc_fixed_prefix_length": {
+                  "$ref": "#/$defs/U8"
+                },
+                "acc_state_cells_for_storage_dict": {
+                  "$ref": "#/$defs/U32"
+                }
+              },
+              "required": [
+                "max_msg_bits",
+                "max_msg_cells",
+                "max_library_cells",
+                "max_vm_data_depth",
+                "max_ext_msg_size",
+                "max_ext_msg_depth",
+                "max_acc_state_cells",
+                "max_mc_acc_state_cells",
+                "max_acc_public_libraries",
+                "defer_out_queue_size_limit",
+                "max_msg_extra_currencies",
+                "max_acc_fixed_prefix_length",
+                "acc_state_cells_for_storage_dict"
+              ],
+              "additionalProperties": false
+            },
+            "defaulted_fields": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "max_total_msg_bits",
+                  "max_total_msg_cells",
+                  "max_transaction_library_loads"
+                ]
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "uniqueItems": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "wire_version": {
+              "const": 3
+            },
+            "configured": {
+              "type": "object",
+              "properties": {
+                "max_msg_bits": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_msg_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_library_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_ext_msg_size": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_acc_state_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_mc_acc_state_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_acc_public_libraries": {
+                  "$ref": "#/$defs/U32"
+                },
+                "defer_out_queue_size_limit": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_msg_extra_currencies": {
+                  "$ref": "#/$defs/U32"
+                },
+                "acc_state_cells_for_storage_dict": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_total_msg_bits": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_total_msg_cells": {
+                  "$ref": "#/$defs/U32"
+                },
+                "max_vm_data_depth": {
+                  "$ref": "#/$defs/U16"
+                },
+                "max_ext_msg_depth": {
+                  "$ref": "#/$defs/U16"
+                },
+                "max_acc_fixed_prefix_length": {
+                  "$ref": "#/$defs/U8"
+                },
+                "max_transaction_library_loads": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/U32"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "max_msg_bits",
+                "max_msg_cells",
+                "max_library_cells",
+                "max_ext_msg_size",
+                "max_acc_state_cells",
+                "max_mc_acc_state_cells",
+                "max_acc_public_libraries",
+                "defer_out_queue_size_limit",
+                "max_msg_extra_currencies",
+                "acc_state_cells_for_storage_dict",
+                "max_total_msg_bits",
+                "max_total_msg_cells",
+                "max_vm_data_depth",
+                "max_ext_msg_depth",
+                "max_acc_fixed_prefix_length",
+                "max_transaction_library_loads"
+              ],
+              "additionalProperties": false
+            },
+            "defaulted_fields": {
+              "type": "array",
+              "items": false,
+              "minItems": 0,
+              "maxItems": 0,
+              "uniqueItems": true
+            }
+          }
+        }
+      ]
     },
     "DecodedConfig": {
       "type": "object",
@@ -1625,7 +1932,25 @@
           "then": {
             "properties": {
               "value": {
-                "$ref": "#/$defs/SizeLimits"
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/SizeLimits"
+                  },
+                  {
+                    "properties": {
+                      "wire_version": {
+                        "enum": [
+                          1,
+                          2,
+                          3
+                        ]
+                      },
+                      "configured": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                ]
               }
             }
           }

@@ -7,8 +7,8 @@ request/result schemas, error semantics, proof verification, resource budgets an
 review decisions.
 
 Source reviewed: `d41eae93dbbcb2af730b4ff5015458794ef04cb1`.
-Explorer integration reviewed: `b000d3ce99c19910585241779d226bcbd99ec9e7`.
-Local observations: 2026-10-14, three-validator ML-DSA networks at VM 16 and VM 18.
+Author-reported explorer integration (not independently verified): `b000d3ce99c19910585241779d226bcbd99ec9e7`.
+Author-reported observations: 2026-10-14, three-validator ML-DSA networks at VM 16 and VM 18. Receipts and deployment fixtures were unavailable for this audit; these are unverified historical reports, not reproduced evidence.
 
 ## Problem and intended result
 
@@ -65,10 +65,10 @@ Likewise, a missing optional configuration parameter is not a missing endpoint.
 }
 ```
 
-The local VM 16 network reproduced HTTP 500 at masterchain seqno 7516; the VM 18
-candidate reproduced it at seqno 5591. Config 34 returned actual PQ members with
+The author reported that the local VM 16 network returned HTTP 500 at masterchain seqno 7516; the VM 18
+candidate returned it at seqno 5591. These observations were not independently reproduced. Config 34 returned actual PQ members with
 `algorithm_id: 1`, non-null `validator_id`, `key_id`, `pq_public_key`, and
-`public_key: null`. No private key or full account payload was needed to reproduce it.
+`public_key: null`. The reported payload is not an independently retained live-RPC receipt.
 
 The native schema already carries the data in
 `tl/generate/scheme/lite_api.tl`:
@@ -139,12 +139,24 @@ stable unsupported response.
 
 ### Evidence
 
-A live, source-pinned complete Quantum candidate wallet returned HTTP 200 with:
+Source-derived projections for an unclassified Quantum candidate are shown
+separately below. They describe selected fields, not a captured live response.
+The author's earlier HTTP 200 observation lacks retained receipts and remains
+unverified.
+
+`getAccountCapability` projection:
 
 ```json
 {
   "account_model": "advanced.unknown",
-  "authorization_version": "unknown",
+  "authorization_version": "unknown"
+}
+```
+
+`getWalletInformation` projection:
+
+```json
+{
   "wallet_type": null,
   "seqno": null
 }
@@ -258,3 +270,13 @@ boundaries. Do not mark a request complete merely because a renderer compiles.
 
 This document changes no executable code. Current node gaps remain until these
 implementation and validation requirements are fulfilled.
+
+## Reproducing evidence
+
+For each future live observation retain the source commit, executable hash,
+network/global ID, VM version, deployment code/state hashes, sanitized exact
+request, full block ID and response/status. Save bounded public fixtures with
+SHA-256 and an accessible artifact location. Run each endpoint independently;
+do not combine projections into a purported single reply. Never retain private
+keys or wallet secrets. Source-derived behavior and synthetic schema tests do
+not replace these runtime receipts.

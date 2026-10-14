@@ -132,7 +132,10 @@ def main():
         ),
         (
             "ControllerPolicy",
-            {"kind": "validator_controller_policy_v1", "controller_codes": [encoded(32)] * 9},
+            {
+                "kind": "validator_controller_policy_v1",
+                "controller_codes": [base64.b64encode(bytes([i]) * 32).decode() for i in range(9)],
+            },
             False,
         ),
         (
@@ -256,6 +259,213 @@ def main():
     )
     cases.append(("DecodedConfig", global_config, True))
     cases.append(("DecodedConfig", {**global_config, "param": 47}, False))
+    # Independent wire-field inventory from block.tlb, not from the schema under test.
+    fields_v1 = [
+        "max_msg_bits",
+        "max_msg_cells",
+        "max_library_cells",
+        "max_vm_data_depth",
+        "max_ext_msg_size",
+        "max_ext_msg_depth",
+    ]
+    fields_v2 = fields_v1 + [
+        "max_acc_state_cells",
+        "max_mc_acc_state_cells",
+        "max_acc_public_libraries",
+        "defer_out_queue_size_limit",
+        "max_msg_extra_currencies",
+        "max_acc_fixed_prefix_length",
+        "acc_state_cells_for_storage_dict",
+    ]
+    fields_v3 = fields_v2 + [
+        "max_transaction_library_loads",
+        "max_total_msg_bits",
+        "max_total_msg_cells",
+    ]
+    effective = dict.fromkeys(fields_v3, 1)
+    limits = []
+    for version, fields in [(None, []), (1, fields_v1), (2, fields_v2), (3, fields_v3)]:
+        value = dict(
+            kind="size_limits",
+            wire_version=version,
+            configured=dict.fromkeys(fields, 1) if version else None,
+            effective=effective,
+            defaulted_fields=[f for f in fields_v3 if f not in fields],
+        )
+        limits.append(value)
+        cases.append(("SizeLimits", value, True))
+        cases.append(
+            (
+                "SizeLimits",
+                {**value, "defaulted_fields": list(reversed(value["defaulted_fields"]))},
+                True,
+            )
+        )
+        wrapped = dict(
+            schema_version=1,
+            param=43,
+            presence="present" if version else "absent",
+            observation=observation,
+            value=value,
+        )
+        cases.append(("DecodedConfig", wrapped, True))
+        cases.append(
+            ("DecodedConfig", {**wrapped, "presence": "absent" if version else "present"}, False)
+        )
+        if version:
+            for field in fields:
+                bad = copy.deepcopy(value)
+                del bad["configured"][field]
+                cases.append(("SizeLimits", bad, False))
+            for field in fields_v3:
+                if field not in fields:
+                    bad = copy.deepcopy(value)
+                    bad["configured"][field] = 1
+                    cases.append(("SizeLimits", bad, False))
+            cases.append(("SizeLimits", {**value, "configured": None}, False))
+            cases.append(("SizeLimits", {**value, "configured": {}}, False))
+        else:
+            cases.append(("SizeLimits", {**value, "configured": {}}, False))
+        if value["defaulted_fields"]:
+            cases.append(
+                ("SizeLimits", {**value, "defaulted_fields": value["defaulted_fields"][1:]}, False)
+            )
+            cases.append(
+                (
+                    "SizeLimits",
+                    {
+                        **value,
+                        "defaulted_fields": value["defaulted_fields"]
+                        + [value["defaulted_fields"][0]],
+                    },
+                    False,
+                )
+            )
+        else:
+            cases.append(
+                (
+                    "SizeLimits",
+                    {**value, "defaulted_fields": ["max_transaction_library_loads"]},
+                    False,
+                )
+            )
+    unlimited = copy.deepcopy(limits[3])
+    unlimited["configured"]["max_transaction_library_loads"] = None
+    unlimited["effective"] = {**effective, "max_transaction_library_loads": None}
+    cases.append(("SizeLimits", unlimited, True))
+    cases.append(
+        ("SizeLimits", {**unlimited, "defaulted_fields": ["max_transaction_library_loads"]}, False)
+    )
+    for version in [0, 4, True, "1"]:
+        cases.append(("SizeLimits", {**limits[1], "wire_version": version}, False))
+    auth = dict(
+        kind="auth_policy_v1",
+        network_tag=encoded(32),
+        policy_sequence="0",
+        retired_flags=0,
+        primary_deadline=None,
+        policy_spec_hash=encoded(32),
+        primary_status="not_retired",
+    )
+    for flags in [0, 2]:
+        for deadline in [None, 1]:
+            for status in ["not_retired", "retired"]:
+                valid = (
+                    (status == "retired")
+                    if flags == 2
+                    else (deadline is not None or status == "not_retired")
+                )
+                cases.append(
+                    (
+                        "AuthPolicy",
+                        {
+                            **auth,
+                            "retired_flags": flags,
+                            "primary_deadline": deadline,
+                            "primary_status": status,
+                        },
+                        valid,
+                    )
+                )
+    codes = [base64.b64encode(bytes([i]) * 32).decode() for i in range(9)]
+    controller = dict(kind="validator_controller_policy_v1", controller_codes=codes[:8])
+    cases.extend(
+        [
+            ("ControllerPolicy", controller, True),
+            ("ControllerPolicy", {**controller, "controller_codes": codes}, False),
+            ("ControllerPolicy", {**controller, "controller_codes": codes[:1] * 2}, False),
+        ]
+    )
+
+    # Each mutation removes one guard and must make its particular negative
+    # assertion fail. Other guards and the positive boundary remain untouched.
+    controls = []
+
+    def sensitivity(label, name, value, mutate):
+        check(name, value, False)
+        changed = copy.deepcopy(SCHEMA)
+        mutate(changed["$defs"])
+        try:
+            check(name, value, False, changed)
+        except AssertionError as error:
+            if str(error) != f"{name}: expected valid=False, errors=[]":
+                raise
+        else:
+            raise AssertionError(f"Sensitivity did not go red: {label}")
+        controls.append(label)
+
+    sensitivity(
+        "controller count",
+        "ControllerPolicy",
+        {**controller, "controller_codes": codes},
+        lambda d: d["ControllerPolicy"]["properties"]["controller_codes"].pop("maxItems"),
+    )
+    sensitivity(
+        "controller uniqueness",
+        "ControllerPolicy",
+        {**controller, "controller_codes": codes[:1] * 2},
+        lambda d: d["ControllerPolicy"]["properties"]["controller_codes"].pop("uniqueItems"),
+    )
+    incomplete = copy.deepcopy(limits[1])
+    del incomplete["configured"]["max_msg_bits"]
+    sensitivity(
+        "complete v1 fields",
+        "SizeLimits",
+        incomplete,
+        lambda d: d["SizeLimits"]["oneOf"][1]["properties"]["configured"]["required"].remove(
+            "max_msg_bits"
+        ),
+    )
+    extra = copy.deepcopy(limits[1])
+    extra["configured"]["max_acc_state_cells"] = 1
+    sensitivity(
+        "version fields",
+        "SizeLimits",
+        extra,
+        lambda d: d["SizeLimits"]["oneOf"][1]["properties"]["configured"].update(
+            additionalProperties=True
+        ),
+    )
+    sensitivity(
+        "default provenance",
+        "SizeLimits",
+        {**limits[1], "defaulted_fields": []},
+        lambda d: d["SizeLimits"]["oneOf"][1]["properties"]["defaulted_fields"].pop("minItems"),
+    )
+    sensitivity(
+        "retired flag",
+        "AuthPolicy",
+        {**auth, "retired_flags": 2},
+        lambda d: d["AuthPolicy"]["allOf"].pop(0),
+    )
+    sensitivity(
+        "retired without cause",
+        "AuthPolicy",
+        {**auth, "primary_status": "retired"},
+        lambda d: d["AuthPolicy"]["allOf"].pop(1),
+    )
+    print(f"Additional sensitivity controls: {len(controls)} passed.")
+
     for name, value, valid in cases:
         check(name, value, valid)
 
