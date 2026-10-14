@@ -1,0 +1,65 @@
+name: Archive pruning regression
+
+on:
+  push:
+    branches: [fix/issue-190-archive-prune-lifecycle]
+  pull_request:
+    paths:
+      - 'validator/db/archive-*'
+      - 'test/test-archive-prune.cpp'
+      - '.github/workflows/archive-prune.yml'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  archive-prune:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container:
+      image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
+      credentials:
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      CCACHE_DIR: /root/.ccache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: /root/.ccache
+          key: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-
+      - name: Configure targeted diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat >> CMakeLists.txt <<'CMAKE'
+          add_executable(test-archive-prune test/test-archive-prune.cpp)
+          target_include_directories(test-archive-prune PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+          target_link_libraries(test-archive-prune PRIVATE validator tdactor tdutils tddb)
+          CMAKE
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+            -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH=x86-64 \
+            -DTOS_USE_JEMALLOC=ON -DTOS_PRODUCTION_BUILD=ON
+      - name: Compile and exercise production archive slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build --parallel 4 --target test-archive-prune 2>&1 | tee archive-prune-build.log
+          timeout 90s build/test-archive-prune 2>&1 | tee archive-prune-test.log
+      - name: Preserve diagnostic evidence and exact source
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: archive-prune-${{ github.sha }}
+          retention-days: 14
+          path: |
+            archive-prune-*.log
+            validator/db/archive-slice.cpp
+            validator/db/archive-slice.hpp
+            validator/db/archive-manager.cpp
+            validator/db/archive-manager.hpp
+            test/test-archive-prune.cpp
