@@ -784,6 +784,10 @@ fn default_tick_interval() -> u64 {
 pub fn default_indexer_retention_blocks() -> u32 {
     1_000_000
 }
+/// The explorer indexer runs unless a configuration turns it off.
+pub fn default_indexer_enabled() -> bool {
+    true
+}
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ElectionsConfig {
     #[serde(default)]
@@ -1206,6 +1210,13 @@ pub struct AppConfig {
     /// tables. 0 keeps all history (unbounded). See default_indexer_retention_blocks.
     #[serde(default = "default_indexer_retention_blocks")]
     pub indexer_retention_blocks: u32,
+    /// Whether `tosctl service` runs the explorer indexer. A host that only
+    /// needs elections and voting can turn it off: the indexer database is
+    /// then neither created nor opened, and every HTTP route that reads it
+    /// answers 503 with kind `indexer_disabled`. Read once at service start;
+    /// the `explorer` profile refuses to start with it off.
+    #[serde(default = "default_indexer_enabled")]
+    pub indexer_enabled: bool,
     pub log: Option<LogConfig>,
     #[serde(default)]
     pub bookmarks: HashMap<String, String>,
@@ -1417,6 +1428,26 @@ mod tests {
             "master_wallet": null,
             "log": null
         })
+    }
+
+    #[test]
+    fn the_indexer_is_enabled_unless_turned_off() {
+        let config: AppConfig = serde_json::from_value(minimal_config_json()).unwrap();
+        assert!(config.indexer_enabled, "an absent key keeps the indexer on");
+
+        let mut json = minimal_config_json();
+        json["indexer_enabled"] = serde_json::json!(false);
+        let config = AppConfig::parse(&json.to_string(), "json", "test").unwrap();
+        assert!(!config.indexer_enabled);
+        // The setting survives the save/load round trip the service performs
+        // when it writes its configuration back.
+        let saved = serde_json::to_value(&config).unwrap();
+        assert_eq!(saved["indexer_enabled"], false);
+
+        let yaml = "nodes: {}\nchain_rpc:\n  urls: ['http://127.0.0.1:3301/']\nhttp: {}\n\
+                    master_wallet: null\nlog: null\nindexer_enabled: false\n";
+        let config = AppConfig::parse(yaml, "yaml", "test").unwrap();
+        assert!(!config.indexer_enabled);
     }
 
     #[test]

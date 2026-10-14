@@ -446,6 +446,7 @@ mod tests {
             master_wallet: None,
             tick_interval: 30,
             indexer_retention_blocks: 0,
+            indexer_enabled: true,
             log: Some(Default::default()),
             bookmarks: HashMap::new(),
             agent_wallets: HashMap::new(),
