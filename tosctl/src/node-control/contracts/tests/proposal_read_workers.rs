@@ -1168,7 +1168,9 @@ fn cancellation_releases_the_permit_only_when_no_work_is_running() {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
         assert!(samples_while_working > 0, "the worker ended before the control could look");
-        assert_eq!(admission.idle_permits(), 1);
+        // The worker drops its live mark before its permit, so the permit can still be
+        // held for a moment after the live count reaches zero; wait for it to return.
+        wait_until("the cancelled read's permit to return", || admission.idle_permits() == 1).await;
         assert!(
             read_proposals_with(&quick_client, &address, ProposalRead::List, &admission)
                 .await
