@@ -22,7 +22,7 @@ concurrency:
 jobs:
   archive-prune:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     container:
       image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
       credentials:
@@ -40,6 +40,7 @@ jobs:
           key: ${{ runner.os }}-${{ runner.arch }}-archive-prune-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-archive-prune-
+            ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-
       - name: Configure native regression
         shell: bash
         run: |
@@ -171,7 +172,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/static-analysis.py --build-dir build --base-build-dir /tmp/tos-archive-base/build --codechecker "$(uv tool dir --bin)/CodeChecker" --jobs 4 2>&1 | tee archive-prune-analysis.log
+          python3 -u scripts/static-analysis.py --build-dir build --base-build-dir /tmp/tos-archive-base/build --codechecker "$(uv tool dir --bin)/CodeChecker" --jobs 4 2>&1 | tee archive-prune-analysis.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
