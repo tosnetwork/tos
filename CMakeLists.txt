@@ -1138,7 +1138,7 @@ add_executable(test-download-state-budget test/test-download-state-budget.cpp)
 # and verify that the BoC layer + root-hash compare reject every flavor of
 # tempfile corruption (mid-payload byte flip, CRC32C trailer wipe, content
 # swap with valid BoC envelope).
-target_link_libraries(test-download-state-budget PRIVATE validator-common full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
+target_link_libraries(test-download-state-budget PRIVATE validator full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
 # Codex review follow-up (2026-07-21): DownloadNextBlocks::validate_next_blocks_full
 # batch-shape regression -- pins the MAX_BLOCKS size cap and the empty-block
@@ -1208,11 +1208,11 @@ target_link_libraries(test-pq-signature-persistence PRIVATE tos_validator valida
 # CellDb-backed streaming importer (replacement-hash equality, no
 # full-DAG residency, crash/abort no partial state, lazy load, hash
 # mismatch). Links the same surfaces test-download-state-budget pulls
-# (validator-common drags in the streaming sink + parse helper;
-# tos_db drags in MemoryKeyValue + CellStorer; tos_crypto carries
+# (validator provides the production factories and database lifecycle;
+# tos_db provides MemoryKeyValue + CellStorer; tos_crypto carries
 # CellDbExtCell + DynamicBagOfCellsDb).
 add_executable(test-celldb-streaming-import test/test-celldb-streaming-import.cpp)
-target_link_libraries(test-celldb-streaming-import PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+target_link_libraries(test-celldb-streaming-import PRIVATE validator full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
 # A decrement of a never-stored cell must stop the in-memory cell database; the abort
 # runs in a re-executed child of the test (see the file).
@@ -1714,6 +1714,10 @@ tos_test(test-current-validator-adnl-ids)
 tos_test(test-overlay-plumtree-repair)
 tos_test(test-overlay-broadcast-capacity)
 tos_test(test-download-state-budget)
+if (NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
+  add_test(NAME streaming-boc-cell-bounds COMMAND test-download-state-budget --cell-bounds)
+  add_test(NAME streaming-boc-valid-ondisk COMMAND test-download-state-budget --cell-bounds-ondisk)
+endif()
 tos_test(test-pq-network-parser-resource)
 tos_test(test-pq-signature-persistence)
 tos_test(test-validator-transport-authority)

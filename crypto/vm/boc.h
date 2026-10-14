@@ -464,6 +464,9 @@ inline constexpr td::uint64 kDefaultStreamingBocMaxCells = 50'000'000;
 inline constexpr td::uint64 kDefaultStreamingBocMaxScaffoldingBytes = 512ULL << 20;
 inline constexpr td::uint64 kDefaultStreamingBocMaxTotalCellBytes = 16ULL << 30;
 
+// Fixed scratch allocation cap, independent of resident-cell/scaffolding budgets.
+inline constexpr std::size_t kStreamingBocScratchBytes = 4u << 20;
+
 // Deterministic work counters for one streaming import. Callers that need
 // observability may supply this through StreamingBocImportOptions; the
 // importer resets it at entry. Unlike wall time these counters remain useful
@@ -471,6 +474,9 @@ inline constexpr td::uint64 kDefaultStreamingBocMaxTotalCellBytes = 16ULL << 30;
 struct StreamingBocImportStats {
   td::uint64 file_read_calls{0};
   td::uint64 file_read_bytes{0};
+  td::uint64 peak_scratch_bytes{0};
+  // Full cell reads admitted after descriptor/span validation.
+  td::uint64 cell_read_calls{0};
 };
 
 struct StreamingBocImportOptions {
