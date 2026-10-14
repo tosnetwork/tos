@@ -1,6 +1,10 @@
 # Explorer post-quantum RPC parity contract
 
-Status: **implementation request, not an implemented API or release approval**.
+Status: **detailed design proposed for external review; not an implemented API or release approval**.
+
+See [the detailed interface design](explorer-pq-rpc-design.md) for wire types,
+request/result schemas, error semantics, proof verification, resource budgets and
+review decisions.
 
 Source reviewed: `d41eae93dbbcb2af730b4ff5015458794ef04cb1`.
 Explorer integration reviewed: `b000d3ce99c19910585241779d226bcbd99ec9e7`.
