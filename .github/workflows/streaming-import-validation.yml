@@ -1,0 +1,204 @@
+name: Streaming state import validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - 'crypto/vm/boc*'
+      - 'validator/net/download-state*'
+      - 'validator/downloaders/download-state*'
+      - 'validator/db/celldb*'
+      - 'validator/state-download-buffer*'
+      - 'test/test-state-download-recovery.cpp'
+      - 'test/test-download-state-budget.cpp'
+      - 'test/test-celldb-streaming-import.cpp'
+      - 'scripts/static-analysis.py'
+      - 'scripts/strict-build-targeted-tests.txt'
+      - 'CMakeLists.txt'
+      - '.github/workflows/streaming-import-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: streaming-import-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-validation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 3G
+      TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install analysis and native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build libjemalloc-dev ccache iproute2
+          sudo scripts/install-llvm-toolchain.sh 21 all
+          scripts/install-rust-toolchain.sh
+          python3 -m venv "$RUNNER_TEMP/codechecker"
+          "$RUNNER_TEMP/codechecker/bin/pip" install codechecker==6.29.1
+      - id: cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .ccache
+          key: streaming-import-clang21-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            streaming-import-clang21-${{ runner.arch }}-
+      - name: Configure exact head and clean merge base
+        run: |
+          mkdir -p validation
+          git rev-parse HEAD > validation/head.txt
+          base="$(git merge-base HEAD origin/main)"
+          printf '%s\n' "$base" > validation/base.txt
+          git worktree add --detach "$RUNNER_TEMP/streaming-base" "$base"
+          for source in "$GITHUB_WORKSPACE" "$RUNNER_TEMP/streaming-base"; do
+            cmake -S "$source" -B "$source/build" -G Ninja \
+              -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+              -DTOS_USE_JEMALLOC=ON -DTOS_ARCH=x86-64-v2 -DPORTABLE=x86-64-v2 \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          done
+          clang-21 --version > validation/tools.txt
+          "$RUNNER_TEMP/codechecker/bin/CodeChecker" version >> validation/tools.txt
+      - name: Build and run native import and recovery tests
+        env:
+          FUNC_BIN: ${{ github.workspace }}/build/crypto/func
+          FIFT_BIN: ${{ github.workspace }}/build/crypto/fift
+        run: |
+          set -o pipefail
+          cmake --build build --target test-state-download-recovery test-download-state-budget \
+            test-celldb-streaming-import -j2 2>&1 | tee validation/build.log
+          printf '%s\n' streaming-boc-cell-bounds streaming-boc-valid-ondisk \
+            test-state-download-recovery test-celldb-streaming-import > validation/import-inventory.txt
+          python3 scripts/check-ctest-inventory.py --build-dir build \
+            --expected-file validation/import-inventory.txt
+          ctest --test-dir build --output-on-failure --no-tests=error \
+            -R '^streaming-boc-|^test-celldb-streaming-import$' 2>&1 | tee validation/import-tests.log
+          TOS_FAST_TESTS=1 build/test-download-state-budget 2>&1 | tee validation/budget-tests.log
+          sudo unshare --net bash -c 'ip link set lo up; exec "$@"' test \
+            build/test-state-download-recovery test/pq-native/data/c04-pq-genesis.boc \
+            2>&1 | tee validation/recovery.log
+      - name: Prepare each side's generated analysis inputs
+        run: |
+          set -o pipefail
+          python3 - "$GITHUB_WORKSPACE/build" "$RUNNER_TEMP/streaming-base/build" <<'PY' 2>&1 | tee validation/generated.log
+          from pathlib import Path
+          import subprocess
+          import sys
+          for directory in sys.argv[1:]:
+              rows = subprocess.check_output(['ninja', '-C', directory, '-t', 'targets', 'all'], text=True)
+              targets = [line.rsplit(': ', 1)[0] for line in rows.splitlines()
+                         if Path(line.rsplit(': ', 1)[0]).suffix in {'.h', '.hpp', '.hh', '.cpp', '.cc', '.c', '.inc'}]
+              assert targets, 'no generated targets found'
+              print(directory, 'generated targets:', len(targets), flush=True)
+              subprocess.run(['ninja', '-C', directory, '-j2', *targets], check=True)
+          PY
+      - name: Differential C++ static analysis with positive controls
+        run: |
+          set -o pipefail
+          python3 -u scripts/static-analysis.py --build-dir build \
+            --base-build-dir "$RUNNER_TEMP/streaming-base/build" \
+            --codechecker "$RUNNER_TEMP/codechecker/bin/CodeChecker" --jobs 2 \
+            2>&1 | tee validation/static-analysis.log
+      - name: Prove failure cleanup assertions detect removed cleanup
+        env:
+          FUNC_BIN: ${{ github.workspace }}/build/crypto/func
+          FIFT_BIN: ${{ github.workspace }}/build/crypto/fift
+        run: |
+          set -o pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('validator/downloaders/download-state.cpp')
+          text = p.read_text()
+          begin = text.index('void DownloadShardState::on_streaming_import_done(')
+          end = text.index('  auto result = r_result.move_as_ok();', begin)
+          branch = text[begin:end]
+          for line in ['    data_file_ = fullnode::BudgetedStateFile{};\n',
+                       '    data_reservation_.reset();\n', '    state_processing_reservation_.reset();\n']:
+              assert branch.count(line) == 1, line
+              branch = branch.replace(line, '')
+          p.write_text(text[:begin] + branch + text[end:])
+          PY
+          cmake --build build --target test-state-download-recovery -j2 > validation/root-red-build.log 2>&1
+          set +e
+          sudo unshare --net bash -c 'ip link set lo up; exec "$@"' test \
+            build/test-state-download-recovery test/pq-native/data/c04-pq-genesis.boc --root-recovery \
+            > validation/root-red.log 2>&1
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -F 'STATE_DOWNLOAD_RECOVERY_FAILURE: download reservation leaked' validation/root-red.log
+          printf 'root cleanup removed: exit=%s\n' "$status" > validation/sensitivity.txt
+          git restore validator/downloaders/download-state.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('validator/net/download-state.cpp')
+          text = p.read_text()
+          begin = text.index('void DownloadState::abort_query(')
+          end = text.index('void DownloadState::alarm()', begin)
+          branch = text[begin:end]
+          assert branch.count('  cleanup_tempfile();\n') == 1
+          branch = branch.replace('  cleanup_tempfile();\n', '')
+          p.write_text(text[:begin] + branch + text[end:])
+          PY
+          cmake --build build --target test-state-download-recovery -j2 > validation/download-red-build.log 2>&1
+          set +e
+          sudo unshare --net bash -c 'ip link set lo up; exec "$@"' test \
+            build/test-state-download-recovery test/pq-native/data/c04-pq-genesis.boc --download-recovery \
+            > validation/download-red.log 2>&1
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -F 'STATE_DOWNLOAD_RECOVERY_FAILURE: failed import/download left temporary resources' validation/download-red.log
+          printf 'download cleanup removed: exit=%s\n' "$status" >> validation/sensitivity.txt
+          git restore validator/net/download-state.cpp
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('validator/db/celldb.cpp')
+          text = p.read_text()
+          line = '    worker_done->store(true, std::memory_order_release);\n'
+          assert text.count(line) == 1
+          p.write_text(text.replace(line, ''))
+          PY
+          cmake --build build --target test-state-download-recovery -j2 > validation/handoff-red-build.log 2>&1
+          set +e
+          sudo unshare --net bash -c 'ip link set lo up; exec "$@"' test \
+            build/test-state-download-recovery test/pq-native/data/c04-pq-genesis.boc --download-recovery \
+            > validation/handoff-red.log 2>&1
+          status=$?
+          set -e
+          test "$status" -ne 0
+          grep -F 'DELIVERY mode=OnDisk' validation/handoff-red.log
+          grep -F 'STATE_DOWNLOAD_RECOVERY_FAILURE: deadline: source recovery' validation/handoff-red.log
+          printf 'worker handoff removed: exit=%s\n' "$status" >> validation/sensitivity.txt
+          git restore validator/db/celldb.cpp
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: .ccache
+          key: streaming-import-clang21-${{ runner.arch }}-${{ github.sha }}
+      - name: Hash validation receipts
+        if: always()
+        run: |
+          if [ -d validation ]; then
+            find validation -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > validation/SHA256SUMS
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: streaming-import-validation-${{ github.event.pull_request.head.sha || github.sha }}
+          path: validation/
+          retention-days: 14

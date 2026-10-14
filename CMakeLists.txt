@@ -1132,6 +1132,11 @@ target_link_libraries(test-wallet-message-processor PRIVATE tos_validator smc-en
 add_executable(test-vm-exception-hardening test/test-td-main.cpp test/test-vm-exception-hardening.cpp)
 target_link_libraries(test-vm-exception-hardening PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
 
+if (UNIX AND NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
+  add_executable(test-state-download-recovery test/test-state-download-recovery.cpp)
+  target_link_libraries(test-state-download-recovery PRIVATE validator full-node tos_block tos_crypto tdutils tdactor adnl keyring)
+endif()
+
 add_executable(test-download-state-budget test/test-download-state-budget.cpp)
 # Link tos_crypto for vm::std_boc_serialize / std_boc_deserialize, used by
 # the OnDisk corruption regression to assemble a known-good shard-state BoC
@@ -1717,6 +1722,10 @@ tos_test(test-download-state-budget)
 if (NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_test(NAME streaming-boc-cell-bounds COMMAND test-download-state-budget --cell-bounds)
   add_test(NAME streaming-boc-valid-ondisk COMMAND test-download-state-budget --cell-bounds-ondisk)
+  if (TARGET test-state-download-recovery)
+    tos_test(test-state-download-recovery ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+    set_tests_properties(test-state-download-recovery PROPERTIES TIMEOUT 1200)
+  endif()
 endif()
 tos_test(test-pq-network-parser-resource)
 tos_test(test-pq-signature-persistence)
