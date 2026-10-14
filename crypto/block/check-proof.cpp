@@ -519,7 +519,7 @@ td::Status BlockProofLink::validate(td::uint32* save_utime, FinalityVerification
       }
       // check signatures
       td::Result<tos::ValidatorWeight> result;
-      tos::ValidatorSessionId expected_session;
+      tos::ValidatorSessionId expected_session{};
       if (sig_set->is_pq()) {
         auto selected = config->get_selected_new_consensus_config(to.id.workchain);
         if (!selected) {

@@ -89,10 +89,10 @@ port ranges. Fixture private keys, databases and verbose logs stay outside Git.
 The live receipts contain public responses only. A compact evidence index is in
 `test/pq-native/data/explorer-finality/validation-index.json`.
 
-Five sensitivity controls independently remove full block-ID checking, exact
-code identity, worker ownership, historical-session checking and backward-state
-proof validation. Each must fail at its intended assertion and pass after byte
-restoration. The frozen ordinary-predecessor proof and its manifest contain only
+Eight sensitivity controls cover full block-ID checking, exact code identity,
+worker ownership, historical-session checking, backward-state proofs, cell-depth
+limits, the policy retirement second and output admission. Each fails at its
+intended assertion or exact backend-access trap, then passes after byte restoration. The frozen ordinary-predecessor proof and its manifest contain only
 public TL proof material; the manifest pins its source and payload digests.
 
 ## Linux acceptance gates
@@ -110,3 +110,15 @@ actual response fragments against the reviewed schema. Public response receipts
 are retained as CI artifacts for 14 days. `JSON-RPC ASan` covers the added native
 explorer target. The normal strict native build also covers shared executor and
 proof-validator changes. Relevant CI must pass before merge.
+
+The local portable transport selection passes all 17 entries after excluding the
+three Linux-only source-address and `/proc` cases. A manual Python typecheck on
+the candidate reports 856 errors and 7,282 warnings. An independent clean
+merge-base run reproduces both counts exactly; the typechecked directories
+`test/integration` and `test/tostester`, their configuration and TL inputs are
+unchanged. This is a separate inherited check failure, not a passing CI job.
+
+The wrong-key transport fixture permits a client short write after header-level
+rejection, while still requiring HTTP 401, connection closure and zero body
+reservation. Requiring the client to finish a 1 MiB write after early closure
+was a timing-dependent test failure; authentication behavior is unchanged.

@@ -14,6 +14,36 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = (
+    # The HTTP saturation fixture deliberately owns no backend. Removing the
+    # admission guard must hit this exact backend-access trap, never an unrelated
+    # assertion, while the restored route must return 429 without reaching it.
+    (
+        "response-budget",
+        "validator-engine/json-rpc-server-explorer.cpp",
+        "if (!response_reservation)",
+        "if (false && !response_reservation)",
+        "test-json-rpc-transport",
+        "+explorer_output_saturation",
+        "[!explorer-query]\tCheck `!empty()` failed",
+    ),
+    (
+        "cell-depth",
+        "validator-engine/json-rpc-explorer.cpp",
+        "if (seen.size() > 2048 || cell->get_depth() > 128)",
+        "if (seen.size() > 2048)",
+        "test-json-rpc-explorer",
+        "+inspection_has_depth",
+        "result.is_error()",
+    ),
+    (
+        "policy-deadline",
+        "validator-engine/json-rpc-explorer.cpp",
+        "(policy.deadline && now >= policy.deadline)",
+        "(policy.deadline && now > policy.deadline)",
+        "test-json-rpc-explorer",
+        "+policy_deadline_uses",
+        "at_deadline_retired",
+    ),
     (
         "backward-state-proof",
         "crypto/block/check-proof.cpp",

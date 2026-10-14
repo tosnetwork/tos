@@ -44,6 +44,7 @@
 #include "tl-utils/lite-utils.hpp"
 
 #include "json-rpc-http-policy.h"
+#include "json-rpc-server-internal.h"
 #include "json-rpc-server.h"
 
 namespace {
@@ -734,7 +735,9 @@ TEST(JsonRpcTransport, a_wrong_key_never_reaches_the_body_or_the_body_reservatio
     // Headers and the first megabyte of the body in one write.
     Client together(port, 0);
     ASSERT_TRUE(together.connect());
-    ASSERT_TRUE(together.send_all(post_headers(declared, "wrong-key") + body.substr(0, 1 << 20)));
+    // Header rejection may close the socket before the client writes the whole
+    // body fragment. The 401 and zero-reservation checks below remain required.
+    (void)together.send_all(post_headers(declared, "wrong-key") + body.substr(0, 1 << 20));
     std::string status, reply;
     ASSERT_TRUE(together.read_response(5000, status, reply));
     ASSERT_EQ(status, std::string("HTTP/1.1 401 Unauthorized"));
@@ -1088,7 +1091,7 @@ TEST(JsonRpcTransport, explorer_rejects_invalid_selectors_before_backend_access)
   }
 }
 
-TEST(JsonRpcTransport, explorer_output_reservation_survives_batch_and_slow_writer) {
+TEST(JsonRpcTransport, explorer_output_ownership_holds_reservations_through_fan_in) {
   auto budget = std::make_shared<tos::http::BodyBudget>(100);
   auto reservation = budget->reserve(80);
   ASSERT_TRUE(reservation != nullptr);
@@ -1105,6 +1108,36 @@ TEST(JsonRpcTransport, explorer_output_reservation_survives_batch_and_slow_write
   slow_writer.reset();
   ASSERT_EQ(budget->reserved(), 0u);
   ASSERT_TRUE(budget->reserve(100) != nullptr);
+}
+
+TEST(JsonRpcTransport, explorer_output_saturation_refuses_before_backend_access) {
+  auto held = tos::reserve_explorer_response(tos::kExplorerResponseBudgetBytes);
+  ASSERT_TRUE(held != nullptr);
+  auto info = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  const std::vector<std::pair<std::string, std::string>> calls = {
+      {"getMasterchainBlockSignatures", "{\"seqno\":1}"},
+      {"getAccountCapability", "{\"address\":\"0:" + std::string(64, '0') + "\",\"include_pq\":true}"},
+      {"getWalletInformation", "{\"address\":\"0:" + std::string(64, '0') + "\",\"include_pq\":true}"},
+      {"getConfigParam", "{\"param\":8,\"include_decoded\":true}"},
+      {"getProofQuery", "{\"query\":\"" + td::base64_encode(info.as_slice()) + "\"}"}};
+  for (bool with_key : {false, true}) {
+    with_json_rpc(options_for(with_key), [with_key, &calls](int port) {
+      for (const auto &call : calls) {
+        for (bool rest : {false, true}) {
+          Client client(port, 0);
+          ASSERT_TRUE(client.connect());
+          auto body = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"" + call.first + "\",\"params\":" + call.second + "}";
+          ASSERT_TRUE(client.send_all(rest ? post_to("/" + call.first, call.second, with_key ? kApiKey : "")
+                                           : post(body, with_key)));
+          std::string status, reply;
+          ASSERT_TRUE(client.read_response(5000, status, reply));
+          ASSERT_EQ(status, std::string("HTTP/1.1 429 Too Many Requests"));
+        }
+      }
+    });
+  }
+  held.reset();
+  ASSERT_TRUE(tos::reserve_explorer_response(tos::kExplorerResponseBudgetBytes) != nullptr);
 }
 
 TEST(JsonRpcTransport, explorer_named_routes_require_the_configured_api_key) {

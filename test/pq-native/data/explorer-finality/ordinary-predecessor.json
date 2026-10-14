@@ -31,10 +31,17 @@
   "proof_sha256": "4a25264253a464cdf8439abab0232ec34cdabc7ba5081d66d64715852e5039d0",
   "signing_payload_sha256": "16ea2526eab2d65f72fb3db81b1d1f3735f173603b82bf56eab8f13b6ea88fcf",
   "generation": "scripts/test-explorer-pq-rpc.py; isolated three-validator v18/global-ID-1 genesis; current native build; public proof only",
-  "source_sha256": {
-    "crypto/block/check-proof.cpp": "b202a376601b3a4e517fca4a5d531d66cee44fdc158dd94a5636f6338fd8f65d",
+  "verification_source_sha256": {
+    "crypto/block/check-proof.cpp": "3707063b1231a2d1a542f844c1b55e135c2dbbb1badc70ff5363fe8dc434f933",
     "crypto/block/signature-set.cpp": "6dd95e5bb183d689444d7dc6ef3fe1099bf63b8ea60f53a11a645110d803e80c",
     "crypto/block/validator-session-id.cpp": "5ff464f7a2937c8807c59dd77e33785a6b5aba518658026a5a520f0faa66c395",
     "scripts/localnet-jsonrpc.py": "c74671cdf5cfea485ee4a9613ea4ac6eea4056c25afa384479a3cfd12eb61317"
-  }
+  },
+  "generation_source_sha256": {
+    "crypto/block/check-proof.cpp": "1e46252f05c48edd21e6588c22fcf8619e1cbb4ab063984df755f5cfe967a091",
+    "crypto/block/signature-set.cpp": "6dd95e5bb183d689444d7dc6ef3fe1099bf63b8ea60f53a11a645110d803e80c",
+    "crypto/block/validator-session-id.cpp": "5ff464f7a2937c8807c59dd77e33785a6b5aba518658026a5a520f0faa66c395",
+    "scripts/localnet-jsonrpc.py": "c74671cdf5cfea485ee4a9613ea4ac6eea4056c25afa384479a3cfd12eb61317"
+  },
+  "source_note": "Generation digests precede formatting normalization and explicit classical-session metadata initialization. Verification digests pin the final regression source; the public TL bytes are unchanged."
 }

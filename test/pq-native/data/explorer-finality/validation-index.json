@@ -12,7 +12,7 @@
     "ProofResult": 4,
     "PublicAuthorization": 16
   },
-  "sensitivity_source_note": "Controls measured before formatting-only normalization. Each receipt retains its exact source digest. Runner guard substitutions remain uniquely applicable to the final source.",
+  "sensitivity_source_note": "Each receipt pins its measured source. The first five precede formatting-only normalization; the deadline, depth and output-admission controls exercise the final code. The output control uses an exact missing-backend assertion as its deliberate backend-access trap.",
   "sensitivity_controls": [
     {
       "case": "full-block-identity",
@@ -68,62 +68,131 @@
       "failure_lines": [
         "\u001b[1;31m[ 0][t 0][2026-10-14 23:20:49.592599][test-json-rpc-explorer.cpp:366]\tExpectation failed: refused.is_error()!\u001b[0m"
       ]
+    },
+    {
+      "case": "policy-deadline",
+      "source": "validator-engine/json-rpc-explorer.cpp",
+      "source_sha256": "d41b733d09e88a807131c9464fad0ffea6d631cf0cb4cad004a989703515dd7a",
+      "expected_failure": "at_deadline_retired",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-14 23:45:40.975663][test-json-rpc-explorer.cpp:309]\tExpectation failed: at_deadline_retired!\u001b[0m"
+      ]
+    },
+    {
+      "case": "cell-depth",
+      "source": "validator-engine/json-rpc-explorer.cpp",
+      "source_sha256": "d41b733d09e88a807131c9464fad0ffea6d631cf0cb4cad004a989703515dd7a",
+      "expected_failure": "result.is_error()",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-14 23:46:08.972468][test-json-rpc-explorer.cpp:219]\tExpectation failed: result.is_error()!\u001b[0m"
+      ]
+    },
+    {
+      "case": "response-budget",
+      "source": "validator-engine/json-rpc-server-explorer.cpp",
+      "source_sha256": "cadbdc9c5057c48be7c79a2cf3b2a25d26e6e10f9c968aa985fa9b37d9e7229d",
+      "expected_failure": "[!explorer-query]\tCheck `!empty()` failed",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 2][2026-10-14 23:48:17.033027][ActorId.h:81][!explorer-query]\tCheck `!empty()` failed\u001b[0m"
+      ]
     }
   ],
   "artifacts": [
     {
-      "path": "/private/tmp/tos-explorer-pq-final-v18/attempt-1792020590584825000/rpc-evidence.json",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/00-rpc-evidence.json",
       "sha256": "4913a19bead5bbe01907805e1fb3a4984cc3736918f06db85dd3152aed6a5089",
       "bytes": 273857,
-      "retention": "Local task artifacts; preserve through 2026-11-14. Reproducible via committed runners; CI receipts have independent 14-day retention."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
     },
     {
-      "path": "/private/tmp/tos-explorer-pq-final-v16-retry/attempt-1792020776748814000/rpc-evidence.json",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/01-rpc-evidence.json",
       "sha256": "4e3829a4d79c0bbb9d86ec36c6e208486c84abd69a4d66bd0f7ba69cbb676e88",
       "bytes": 104388,
-      "retention": "Local task artifacts; preserve through 2026-11-14. Reproducible via committed runners; CI receipts have independent 14-day retention."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
     },
     {
-      "path": "/private/tmp/tos-explorer-pq-controls-20261015/controls.json",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/02-controls.json",
       "sha256": "aa03c5aa7ef8390d426cd923e8ef0154b189b894ca906eba8c1f05d48a474b0d",
       "bytes": 2624,
-      "retention": "Local task artifacts; preserve through 2026-11-14. Reproducible via committed runners; CI receipts have independent 14-day retention."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
     },
     {
-      "path": "/private/tmp/tos-explorer-pq-backward-control-20261015/controls.json",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/03-controls.json",
       "sha256": "f13d527a75e4346d3d37e97e454243f0d24edb588cde49a4ff614d1e397dbc7e",
       "bytes": 676,
-      "retention": "Local task artifacts; preserve through 2026-11-14. Reproducible via committed runners; CI receipts have independent 14-day retention."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
     },
     {
-      "path": "/Users/tomisetsu/.codex/.chatgpt-projects/g-p-6aa7ce62c58c81919c542a845f6eef4e/impl-explorer-pq/build/explorer-final-all-tests.log",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/04-explorer-final-all-tests.log",
       "sha256": "3dda85520ad623fb6eacb3347fbb2fc61c6d6dd2de0126cc1cb1a0d8423b58da",
       "bytes": 2003,
-      "retention": "Local task artifact; preserve through 2026-11-14."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
     },
     {
-      "path": "/Users/tomisetsu/.codex/.chatgpt-projects/g-p-6aa7ce62c58c81919c542a845f6eef4e/impl-explorer-pq/build/explorer-final-transport-explorer.log",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/05-explorer-final-transport-explorer.log",
       "sha256": "58943de4f0020ac578dcbfa77a6e42223093039c678596e935c43228497751d8",
       "bytes": 59768,
-      "retention": "Local task artifact; preserve through 2026-11-14."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
     },
     {
-      "path": "/Users/tomisetsu/.codex/.chatgpt-projects/g-p-6aa7ce62c58c81919c542a845f6eef4e/impl-explorer-pq/build/explorer-final-transport-relay.log",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/06-explorer-final-transport-relay.log",
       "sha256": "00ffba099c20f6a89ae14e527b3bdf92a10da0f33f6e3c668be8c478e7e42812",
       "bytes": 22762,
-      "retention": "Local task artifact; preserve through 2026-11-14."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
     },
     {
-      "path": "/Users/tomisetsu/.codex/.chatgpt-projects/g-p-6aa7ce62c58c81919c542a845f6eef4e/impl-explorer-pq/build/explorer-final-jobs1.log",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/07-explorer-final-jobs1.log",
       "sha256": "025dc78176bbe937fdd19294cd062a2c2f2eef609caa238b6e677d93529dc186",
       "bytes": 2720,
-      "retention": "Local task artifact; preserve through 2026-11-14."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
     },
     {
-      "path": "/Users/tomisetsu/.codex/.chatgpt-projects/g-p-6aa7ce62c58c81919c542a845f6eef4e/impl-explorer-pq/build/explorer-final-jobs8.log",
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/08-explorer-final-jobs8.log",
       "sha256": "ccbd7e678a015c8e4f8e43a8f49153afe8a73d5c2aaf0becf6d21e18820e7bfd",
       "bytes": 2719,
-      "retention": "Local task artifact; preserve through 2026-11-14."
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/explorer-final-transport-portable.log",
+      "sha256": "aa76e3f37d4e7f72bcf9bf6be4237883573d5eda2eaf0e401fd2c5bd15dc64c7",
+      "bytes": 310913,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/deadline-controls.json",
+      "sha256": "12198e8b9dccd62a5451a7b67ec6455f08ad14002eb14f222f645bbd00a51523",
+      "bytes": 683,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/depth-controls.json",
+      "sha256": "451d4fa989ff654da14ed6d50fea0c5930184dde4f40984c7d44b6b74cc2ae8a",
+      "bytes": 674,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/output-controls.json",
+      "sha256": "0bbc1464b1c3694300d9b1ed0675a63ec754479fcad149013039acb478ddcba6",
+      "bytes": 702,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/explorer-final-transport-portable-v3.log",
+      "sha256": "6063190c726bab094274ab5d9761055e732d7d1a1c2c937045d926a05e9eee07",
+      "bytes": 353413,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/explorer-finality-final-tests.log",
+      "sha256": "fa92da13e49f901c7778f4b16e9005fdc7c4fd999864e05e316180b50aa58108",
+      "bytes": 560,
+      "retention": "Retained local public artifact through 2026-11-14."
     }
   ],
   "linux_analysis": "pending; macOS attempt refused after 10 successful positive controls due to Linux-only headers",
@@ -134,9 +203,27 @@
     8
   ],
   "transport_tests_passed": {
-    "explorer": 3,
-    "proof_relay": 1
+    "explorer": 4,
+    "proof_relay": 1,
+    "portable_suite": 17
   },
   "wire_schema_checks": 130,
-  "wire_schema_sensitivity_controls": 8
+  "wire_schema_sensitivity_controls": 8,
+  "unrelated_python_typecheck": {
+    "baseline_commit": "018fc46b2",
+    "baseline_summary": {
+      "filesAnalyzed": 126,
+      "errorCount": 856,
+      "warningCount": 7282,
+      "informationCount": 0,
+      "timeInSec": 7.587
+    },
+    "candidate_ci_errors": 856,
+    "candidate_ci_warnings": 7282,
+    "ci_run": "https://github.com/tosnetwork/tos/actions/runs/38655132001",
+    "scope_note": "Only test/integration and test/tostester are typechecked. Neither tree, pyproject.toml, uv.lock nor the TL schema is changed by this implementation."
+  },
+  "native_explorer_cases": 8,
+  "transport_fixture_correction": "A previous full selection observed an early-close client short write in the existing wrong-key fixture. Client short writes are now allowed; 401, connection closure and zero body reservation remain required. The final 17-entry portable selection passes.",
+  "latest_changed_native_entries_passed": 2
 }
