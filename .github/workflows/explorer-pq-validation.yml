@@ -2,6 +2,7 @@ name: Explorer PQ two-build analysis
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

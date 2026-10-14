@@ -17,6 +17,10 @@ permissions:
   contents: read
 
 jobs:
+  explorer-two-build-analysis:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/explorer-pq-validation.yml
+
   # The whole tree, warnings as errors. This one gates: it passes today, so a failure
   # means the change under test introduced it.
   strict-build:
