@@ -128,12 +128,23 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release -DTOS_ARCH=x86-64 \
               -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
               -DTOS_USE_JEMALLOC=ON -DTOS_PRODUCTION_BUILD=ON
+            python3 - "$source/build" <<'PYGEN'
+          from pathlib import Path
+          import subprocess
+          import sys
+          build = sys.argv[1]
+          rows = subprocess.check_output(['ninja', '-C', build, '-t', 'targets', 'all'], text=True)
+          targets = [line.rsplit(': ', 1)[0] for line in rows.splitlines()
+                     if Path(line.rsplit(': ', 1)[0]).suffix in {'.h', '.hpp', '.hh', '.cpp', '.cc', '.c', '.inc'}]
+          assert targets, 'no generated targets found'
+          subprocess.run(['ninja', '-C', build, '-j4', *targets], check=True)
+          PYGEN
           done
       - name: Run differential C++ analysis
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/static-analysis.py --build-dir build --base-build-dir /tmp/tos-archive-base/build --jobs 4 2>&1 | tee archive-prune-analysis.log
+          python3 scripts/static-analysis.py --build-dir build --base-build-dir /tmp/tos-archive-base/build --codechecker "$(uv tool dir --bin)/CodeChecker" --jobs 4 2>&1 | tee archive-prune-analysis.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
