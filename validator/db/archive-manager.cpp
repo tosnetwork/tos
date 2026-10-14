@@ -697,7 +697,12 @@ void ArchiveManager::delete_package(PackageId id, td::Promise<td::Unit> promise)
   it->second.deleted = true;
   auto P = td::PromiseCreator::lambda(
       [SelfId = actor_id(this), id, promise = std::move(promise)](td::Result<td::Unit> R) mutable {
-        R.ensure();
+        // A pending index deletion can be cancelled during scheduler teardown.
+        // Do not acknowledge deletion or abort the process on cancellation.
+        if (R.is_error()) {
+          promise.set_error(R.move_as_error());
+          return;
+        }
         td::actor::send_closure(SelfId, &ArchiveManager::deleted_package, id, std::move(promise));
       });
   td::actor::send_closure(it->second.file_actor_id(), &ArchiveSlice::destroy, std::move(P));

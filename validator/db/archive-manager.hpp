@@ -100,6 +100,8 @@ class ArchiveManager : public td::actor::Actor {
   }
 
  private:
+  friend struct ArchivePruneTestAccess;
+
   struct FileDescription {
     struct Desc {
       BlockSeqno seqno;
