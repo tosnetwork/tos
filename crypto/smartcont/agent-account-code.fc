@@ -530,12 +530,13 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
   throw_unless(err::wrong_network, msg_global_id == get_global_id());
   int msg_controller_epoch = header~load_uint(64);
   throw_unless(err::stale_controller, msg_controller_epoch == controller_epoch);
-  if ((~ via_module) & (header_op == op::agent_checked_contract_call_v2)) {
-    require_strong_controller_key(controller_pubkey);
-  }
 
   (int wc, int addr) = my_address().parse_std_addr();
+  ;; Every raw controller operation relies on the stored key, including legacy
+  ;; sends and cancellation. Keep this out of state loading so owner recovery
+  ;; and module-only authorization do not depend on an unusable legacy key.
   ifnot (via_module) {
+    require_strong_controller_key(controller_pubkey);
     ;; Bind the signature to the protocol, actual chain, exact account and full
     ;; payload. Wrong-network requests fail before signature work and acceptance.
     int payload_hash = slice_hash(signed_body);

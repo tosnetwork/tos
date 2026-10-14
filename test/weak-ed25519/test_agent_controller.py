@@ -75,7 +75,8 @@ def weak_keys():
     keys = [bytes.fromhex(k) for k in canonical]
     keys.extend(
         bytes([first]) + bytes([255]) * 30 + bytes([last])
-        for first in range(237, 256) for last in (127, 255)
+        for first in range(237, 256)
+        for last in (127, 255)
     )
     assert len(keys) == len(set(keys)) == 48
     return keys
@@ -111,9 +112,20 @@ def no_account():
 
 def deployment(sender, address, init, value=FUNDING):
     return (
-        Cell().uint(4, 4).addr(sender).addr(address).coins(value).uint(0, 1)
-        .coins(0).coins(0).uint(0, 64).uint(NOW, 32)
-        .uint(3, 2).ref(init).uint(1, 1).ref(Cell())
+        Cell()
+        .uint(4, 4)
+        .addr(sender)
+        .addr(address)
+        .coins(value)
+        .uint(0, 1)
+        .coins(0)
+        .coins(0)
+        .uint(0, 64)
+        .uint(NOW, 32)
+        .uint(3, 2)
+        .ref(init)
+        .uint(1, 1)
+        .ref(Cell())
     )
 
 
@@ -145,8 +157,14 @@ def message_info(message):
     value = s.coins()
     assert s.maybe() is None
     extra_flags, fwd_fee = s.coins(), s.coins()
-    return {"sender": sender, "receiver": receiver, "value": value,
-            "fwd_fee": fwd_fee, "flags": flags, "extra_flags": extra_flags}
+    return {
+        "sender": sender,
+        "receiver": receiver,
+        "value": value,
+        "fwd_fee": fwd_fee,
+        "flags": flags,
+        "extra_flags": extra_flags,
+    }
 
 
 class Agent:
@@ -160,14 +178,25 @@ class Agent:
             policy.uint(metadata, 1)
             if metadata:
                 policy.uint(value, 256)
-        data = (Cell().addr(self.owner).raw(key).uint(5, 256).uint(0, 64)
-                .uint(0, 32).uint(0, 32).coins(0).ref(policy))
+        data = (
+            Cell()
+            .addr(self.owner)
+            .raw(key)
+            .uint(5, 256)
+            .uint(0, 64)
+            .uint(0, 32)
+            .uint(0, 32)
+            .coins(0)
+            .ref(policy)
+        )
         if mode is not None:
             data.ref(Cell().uint(mode, 2).uint(1, 64).uint(0, 64).uint(self.module[1], 256))
         init = state_init(code, data)
         self.address = (wc, int.from_bytes(init.hash, "big"))
         self.e = Emulator.from_config(gas_config())
-        self.shard = successful(self.e.send(no_account(), deployment(self.owner, self.address, init)))
+        self.shard = successful(
+            self.e.send(no_account(), deployment(self.owner, self.address, init))
+        )
         actual, balance = account_data(self.shard)
         assert actual.hash == data.hash and 0 < balance < FUNDING
         self.receiver = None
@@ -190,16 +219,33 @@ class Agent:
         policy = s.ref()
         auth = s.ref().slice() if s.refs else None
         s.end()
-        auth_tuple = (auth.uint(2), auth.uint(64), auth.uint(64), auth.uint(256)) if auth else (0, 0, 0, 0)
+        auth_tuple = (
+            (auth.uint(2), auth.uint(64), auth.uint(64), auth.uint(256)) if auth else (0, 0, 0, 0)
+        )
         if auth:
             auth.end()
-        return {"owner": owner, "key": key, "deployment_id": deployment_id, "epoch": epoch,
-                "seq": seq, "day": day, "spent": spent, "policy": policy.hash.hex(), "auth": auth_tuple}
+        return {
+            "owner": owner,
+            "key": key,
+            "deployment_id": deployment_id,
+            "epoch": epoch,
+            "seq": seq,
+            "day": day,
+            "spent": spent,
+            "policy": policy.hash.hex(),
+            "auth": auth_tuple,
+        }
 
     def payload(self, operation=NATIVE, value=VALUE, valid_until=NOW + 600):
         st = self.state()
-        p = (Cell().uint(operation, 32).sint(GLOBAL_ID, 32).uint(st["epoch"], 64)
-             .uint(st["seq"], 32).uint(valid_until, 32))
+        p = (
+            Cell()
+            .uint(operation, 32)
+            .sint(GLOBAL_ID, 32)
+            .uint(st["epoch"], 64)
+            .uint(st["seq"], 32)
+            .uint(valid_until, 32)
+        )
         if operation != CANCEL:
             p.addr(self.target).coins(value)
         if operation == DEPLOY:
@@ -211,8 +257,15 @@ class Agent:
         return p
 
     def digest(self, payload):
-        return (Cell().uint(DOMAIN, 256).sint(GLOBAL_ID, 32).sint(self.address[0], 8)
-                .uint(self.address[1], 256).raw(payload.hash).hash)
+        return (
+            Cell()
+            .uint(DOMAIN, 256)
+            .sint(GLOBAL_ID, 32)
+            .sint(self.address[0], 8)
+            .uint(self.address[1], 256)
+            .raw(payload.hash)
+            .hash
+        )
 
     def signed(self, payload, secret=SECRET, forged=False):
         signature = FORGED if forged else secret.sign(self.digest(payload))
@@ -220,10 +273,21 @@ class Agent:
 
     def module_body(self, payload, secret=None, kind=0, nonce=None):
         _, epoch, current_nonce, _ = self.state()["auth"]
-        req = (Cell().sint(GLOBAL_ID, 32).addr(self.address).uint(epoch, 64)
-               .uint(current_nonce if nonce is None else nonce, 64).uint(NOW + 600, 32)
-               .uint(kind, 8).ref(payload))
-        co = None if secret is None else Cell().raw(secret.sign(Cell().uint(0x544F532D41555448, 64).ref(req).hash))
+        req = (
+            Cell()
+            .sint(GLOBAL_ID, 32)
+            .addr(self.address)
+            .uint(epoch, 64)
+            .uint(current_nonce if nonce is None else nonce, 64)
+            .uint(NOW + 600, 32)
+            .uint(kind, 8)
+            .ref(payload)
+        )
+        co = (
+            None
+            if secret is None
+            else Cell().raw(secret.sign(Cell().uint(0x544F532D41555448, 64).ref(req).hash))
+        )
         return Cell().uint(0x41555448, 32).ref(req).maybe(co)
 
     def reject_external(self, body, exit_code):
@@ -249,7 +313,9 @@ class Agent:
         return result
 
     def prepare_receiver(self):
-        self.receiver = successful(self.e.send(no_account(), deployment(self.owner, self.target, self.receiver_init)))
+        self.receiver = successful(
+            self.e.send(no_account(), deployment(self.owner, self.target, self.receiver_init))
+        )
         assert account_data(self.receiver)[0].slice().uint(32) == 1
 
     def settle(self, result, sender_before, operation, inbound=0):
@@ -259,9 +325,14 @@ class Agent:
         fees, count = tx_fees(tx)
         emitted = outgoing(tx)
         assert len(emitted) == count == (0 if operation == CANCEL else 1)
-        summary = {"operation": OPERATIONS[operation], "sender_tx": tx.hash.hex(),
-                   "sender_gas": result["details"]["gas"], "sender_fees": fees,
-                   "sender_before": sender_before, "sender_after": self.balance}
+        summary = {
+            "operation": OPERATIONS[operation],
+            "sender_tx": tx.hash.hex(),
+            "sender_gas": result["details"]["gas"],
+            "sender_fees": fees,
+            "sender_before": sender_before,
+            "sender_after": self.balance,
+        }
         if operation == CANCEL:
             assert sender_before + inbound == self.balance + fees
             return summary
@@ -280,11 +351,22 @@ class Agent:
         assert received_data.slice().uint(32) == old_count + 1
         assert not outgoing(receipt_tx) and receipt_count == 0
         assert before + VALUE == after + receipt_fees
-        assert sender_before + before + inbound == self.balance + after + fees + receipt_fees + info["fwd_fee"]
-        summary.update({"recipient_tx": receipt_tx.hash.hex(), "message": message.hash.hex(),
-                        "recipient_before": before, "recipient_after": after,
-                        "recipient_fees": receipt_fees, "forward_fee": info["fwd_fee"],
-                        "transferred": VALUE, "conservation": True})
+        assert (
+            sender_before + before + inbound
+            == self.balance + after + fees + receipt_fees + info["fwd_fee"]
+        )
+        summary.update(
+            {
+                "recipient_tx": receipt_tx.hash.hex(),
+                "message": message.hash.hex(),
+                "recipient_before": before,
+                "recipient_after": after,
+                "recipient_fees": receipt_fees,
+                "forward_fee": info["fwd_fee"],
+                "transferred": VALUE,
+                "conservation": True,
+            }
+        )
         return summary
 
 
@@ -304,23 +386,33 @@ class AgentControllerTests(unittest.TestCase):
         source = (ROOT / "crypto/smartcont/agent-account-code.fc").read_text()
         guard = "  ifnot (via_module) {\n    require_strong_controller_key(controller_pubkey);\n"
         assert source.count(guard) == 1, "stored-key signature guard must be unique"
-        restored = ("  ifnot (via_module) {\n"
-                    "    if (header_op == op::agent_checked_contract_call_v2) {\n"
-                    "      require_strong_controller_key(controller_pubkey);\n    }\n")
+        restored = (
+            "  ifnot (via_module) {\n"
+            "    if (header_op == op::agent_checked_contract_call_v2) {\n"
+            "      require_strong_controller_key(controller_pubkey);\n    }\n"
+        )
         shutil.copy2(ROOT / "crypto/smartcont/auth-extension.fc", work)
         mutant = work / "agent-legacy-mutant.fc"
         mutant.write_text(source.replace(guard, restored))
         cls.mutant = compile_contract(str(mutant), work / "mutant.boc")
         receiver = work / "receiver.fc"
-        receiver.write_text("() recv_internal() impure { slice s = get_data().begin_parse(); "
-                            "int n = s~load_uint(32); s.end_parse(); "
-                            "set_data(begin_cell().store_uint(n + 1, 32).end_cell()); }\n")
+        receiver.write_text(
+            "() recv_internal() impure { slice s = get_data().begin_parse(); "
+            "int n = s~load_uint(32); s.end_parse(); "
+            "set_data(begin_cell().store_uint(n + 1, 32).end_cell()); }\n"
+        )
         cls.receiver = compile_contract(str(receiver), work / "receiver.boc")
-        EVIDENCE.update({"shipped_code_hash": cls.shipped.hash.hex(),
-                         "compiled_code_hash": cls.compiled.hash.hex(),
-                         "legacy_mutant_code_hash": cls.mutant.hash.hex(),
-                         "weak_encodings": len(WEAK_KEYS), "signature_checks_disabled": False,
-                         "global_version": GLOBAL_VERSION, "gas_credit": CREDIT})
+        EVIDENCE.update(
+            {
+                "shipped_code_hash": cls.shipped.hash.hex(),
+                "compiled_code_hash": cls.compiled.hash.hex(),
+                "legacy_mutant_code_hash": cls.mutant.hash.hex(),
+                "weak_encodings": len(WEAK_KEYS),
+                "signature_checks_disabled": False,
+                "global_version": GLOBAL_VERSION,
+                "gas_credit": CREDIT,
+            }
+        )
 
     @classmethod
     def tearDownClass(cls):
@@ -340,9 +432,16 @@ class AgentControllerTests(unittest.TestCase):
                         body = a.signed(a.payload(op), forged=True)
                         a.reject_external(body, 1720)
                         a.reject_external(body, 1720)
-                        EVIDENCE["cases"].append({"kind": "weak-rejection", "workchain": self.WORKCHAIN,
-                                                  "mode": mode or 0, "key": key.hex(),
-                                                  "operation": OPERATIONS[op], "exit": 1720})
+                        EVIDENCE["cases"].append(
+                            {
+                                "kind": "weak-rejection",
+                                "workchain": self.WORKCHAIN,
+                                "mode": mode or 0,
+                                "key": key.hex(),
+                                "operation": OPERATIONS[op],
+                                "exit": 1720,
+                            }
+                        )
 
     def test_legacy_forgery_has_a_real_red_green_transfer(self):
         # The native verifier already rejects some canonical torsion encodings.
@@ -351,15 +450,22 @@ class AgentControllerTests(unittest.TestCase):
             for mode in (None, 1):
                 for changed in (False, True):
                     with self.subTest(key=key.hex(), mode=mode, fixed=changed):
-                        a = self.agent(code=self.shipped if changed else self.mutant, key=key, mode=mode)
+                        a = self.agent(
+                            code=self.shipped if changed else self.mutant, key=key, mode=mode
+                        )
                         a.prepare_receiver()
                         payload = a.payload(NATIVE)
                         if key == ORDER2_ALIAS:
                             # Bind the reduced challenge to this deployed account.
                             for expiry in range(NOW + 600, NOW + 1200):
                                 payload = a.payload(NATIVE, valid_until=expiry)
-                                challenge = int.from_bytes(hashlib.sha512(
-                                    IDENTITY + key + a.digest(payload)).digest(), "little") % GROUP_ORDER
+                                challenge = (
+                                    int.from_bytes(
+                                        hashlib.sha512(IDENTITY + key + a.digest(payload)).digest(),
+                                        "little",
+                                    )
+                                    % GROUP_ORDER
+                                )
                                 if challenge % 2 == 0:
                                     break
                             else:
@@ -373,8 +479,14 @@ class AgentControllerTests(unittest.TestCase):
                             result = a.e.send(a.shard, external(a.address, body))
                             row = a.settle(result, before, NATIVE)
                             self.assertEqual((a.state()["seq"], a.state()["spent"]), (1, VALUE))
-                            row.update({"kind": "legacy-only-mutant", "workchain": self.WORKCHAIN,
-                                        "key": key.hex(), "mode": mode or 0})
+                            row.update(
+                                {
+                                    "kind": "legacy-only-mutant",
+                                    "workchain": self.WORKCHAIN,
+                                    "key": key.hex(),
+                                    "mode": mode or 0,
+                                }
+                            )
                             EVIDENCE["cases"].append(row)
 
     def test_strong_keys_signatures_replay_and_real_action_phase(self):
@@ -392,7 +504,9 @@ class AgentControllerTests(unittest.TestCase):
                     self.assertEqual(a.state()["seq"], 1)
                     self.assertEqual(a.state()["spent"], 0 if op == CANCEL else VALUE)
                     a.reject_external(body, 1705)
-                    row.update({"kind": "strong-action", "workchain": self.WORKCHAIN, "mode": mode or 0})
+                    row.update(
+                        {"kind": "strong-action", "workchain": self.WORKCHAIN, "mode": mode or 0}
+                    )
                     EVIDENCE["cases"].append(row)
 
     def test_owner_can_recover_every_weak_encoding_without_opening_rotation(self):
@@ -403,8 +517,11 @@ class AgentControllerTests(unittest.TestCase):
                     rotation = Cell().uint(0x41475002, 32).uint(0, 64).raw(PUBLIC)
                     a.send_internal(rotation, sender=a.other, expected=1702)
                     replacement = WEAK_KEYS[(WEAK_KEYS.index(key) + 1) % len(WEAK_KEYS)]
-                    a.send_internal(Cell().uint(0x41475002, 32).uint(0, 64).raw(replacement),
-                                    sender=a.owner, expected=1720)
+                    a.send_internal(
+                        Cell().uint(0x41475002, 32).uint(0, 64).raw(replacement),
+                        sender=a.owner,
+                        expected=1720,
+                    )
                     before = a.state()
                     a.send_internal(rotation, sender=a.owner)
                     after = a.state()
@@ -415,15 +532,25 @@ class AgentControllerTests(unittest.TestCase):
                     body = a.signed(a.payload(CANCEL))
                     a.shard = successful(a.e.send(a.shard, external(a.address, body)))
                     self.assertEqual(a.state()["seq"], 2)
-                    EVIDENCE["cases"].append({"kind": "owner-recovery", "workchain": self.WORKCHAIN,
-                                              "mode": mode or 0, "key": key.hex(), "epoch": 1, "seq": 2})
+                    EVIDENCE["cases"].append(
+                        {
+                            "kind": "owner-recovery",
+                            "workchain": self.WORKCHAIN,
+                            "mode": mode or 0,
+                            "key": key.hex(),
+                            "epoch": 1,
+                            "seq": 2,
+                        }
+                    )
 
     def test_modules_keep_their_authority_and_hybrid_still_needs_both(self):
         for mode in (1, 2):
             for op in OPERATIONS:
                 with self.subTest(mode=mode, operation=OPERATIONS[op]):
                     a = self.agent(key=IDENTITY, mode=mode)
-                    a.reject_external(a.signed(a.payload(op), forged=True), 1720 if mode == 1 else 1807)
+                    a.reject_external(
+                        a.signed(a.payload(op), forged=True), 1720 if mode == 1 else 1807
+                    )
                     if op not in (CANCEL, DEPLOY):
                         a.prepare_receiver()
                     body = a.module_body(a.payload(op))
@@ -461,12 +588,14 @@ class AgentControllerTests(unittest.TestCase):
                 with self.subTest(mode=mode, operation=OPERATIONS[op]):
                     a = self.agent(mode=mode, metadata=True)
                     message = external(a.address, a.signed(a.payload(op)))
+
                     def probe(credit):
                         e = Emulator.from_config(gas_config(credit))
                         try:
                             return e.send(a.shard, message)
                         finally:
                             e.close()
+
                     accepted = probe(CREDIT)
                     successful(accepted)
                     lo, hi = 0, CREDIT
@@ -481,9 +610,14 @@ class AgentControllerTests(unittest.TestCase):
                             lo = mid
                     successful(probe(hi))
                     self.assertFalse(probe(hi - 1)["success"])
-                    row = {"workchain": self.WORKCHAIN, "mode": mode or 0,
-                           "operation": OPERATIONS[op], "minimum_admission_credit": hi,
-                           "supported_credit": CREDIT, "total_compute_gas": accepted["details"]["gas"]}
+                    row = {
+                        "workchain": self.WORKCHAIN,
+                        "mode": mode or 0,
+                        "operation": OPERATIONS[op],
+                        "minimum_admission_credit": hi,
+                        "supported_credit": CREDIT,
+                        "total_compute_gas": accepted["details"]["gas"],
+                    }
                     EVIDENCE["admission"].append(row)
                     print("ADMISSION", json.dumps(row, sort_keys=True))
 
@@ -496,13 +630,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    suite = unittest.TestSuite([
-        unittest.defaultTestLoader.loadTestsFromTestCase(cls)
-        for cls in (AgentControllerTests, BasechainControllerTests)
-    ])
+    suite = unittest.TestSuite(
+        [
+            unittest.defaultTestLoader.loadTestsFromTestCase(cls)
+            for cls in (AgentControllerTests, BasechainControllerTests)
+        ]
+    )
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    EVIDENCE.update({"tests_run": result.testsRun, "failures": len(result.failures),
-                     "errors": len(result.errors), "success": result.wasSuccessful()})
+    EVIDENCE.update(
+        {
+            "tests_run": result.testsRun,
+            "failures": len(result.failures),
+            "errors": len(result.errors),
+            "success": result.wasSuccessful(),
+        }
+    )
     if args.output:
         args.output.mkdir(parents=True, exist_ok=True)
         (args.output / "results.json").write_text(json.dumps(EVIDENCE, indent=2) + "\n")
