@@ -10,7 +10,7 @@ or an approved production release.
 The frozen configuration uses the public test namespace `0x42` repeated 32
 times, global ID 1, version 18, basechain credit 20,000 and masterchain credit
 10,000. Its ConfigParams SHA-256 is
-`9e4cbbf2c23a3aa98189b571f3216a86d31ec3b0223ce4e9fc3c3170bdde9c93`.
+`4eb8fd3ceecd7d72f04c7098642a25557e9f4a51c9ba784ae641a65506182b25`.
 The wallet code embeds this namespace; a deployment under another namespace
 needs its own reviewed code/configuration identities.
 
