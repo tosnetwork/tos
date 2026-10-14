@@ -143,6 +143,8 @@ class ArchiveSlice : public td::actor::Actor {
   void get_temp_max_seqnos(td::Promise<std::map<ShardIdFull, BlockSeqno>> promise);
 
  private:
+  friend struct ArchivePruneTestAccess;
+
   void before_query();
   void do_close();
   template <typename T>
