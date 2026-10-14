@@ -1,0 +1,46 @@
+name: Agent controller key validation
+
+on:
+  push:
+    branches: ['fix/issue-191-agent-controller-key-validation']
+    paths:
+      - '.github/workflows/agent-controller-key-validation.yml'
+      - 'test/weak-ed25519/test_agent_controller.py'
+  pull_request:
+    paths:
+      - 'crypto/smartcont/agent-account-code.fc'
+      - 'test/weak-ed25519/test_agent_controller.py'
+      - '.github/workflows/agent-controller-key-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-controller-key-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build repository-native compiler and transaction emulator
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target func fift emulator -j2
+      - name: Package reproducible local regression tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent-controller-tools"
+          git archive --format=tar HEAD | gzip > "$RUNNER_TEMP/agent-controller-tools/source.tar.gz"
+          tar -C build -czf "$RUNNER_TEMP/agent-controller-tools/native-tools.tar.gz" crypto/func crypto/fift emulator/libemulator.so
+          git rev-parse HEAD > "$RUNNER_TEMP/agent-controller-tools/source-commit.txt"
+          ldd build/crypto/func build/crypto/fift build/emulator/libemulator.so > "$RUNNER_TEMP/agent-controller-tools/shared-libraries.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-controller-native-tools
+          path: ${{ runner.temp }}/agent-controller-tools/
+          retention-days: 3
+          if-no-files-found: error
