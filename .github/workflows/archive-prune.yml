@@ -29,8 +29,10 @@ jobs:
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /root/.ccache
-          key: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-
+          key: ${{ runner.os }}-${{ runner.arch }}-archive-prune-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-archive-prune-
+            ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-
       - name: Configure targeted diagnostic
         shell: bash
         run: |
@@ -50,6 +52,12 @@ jobs:
           set -euo pipefail
           cmake --build build --parallel 4 --target test-archive-prune 2>&1 | tee archive-prune-build.log
           timeout 90s build/test-archive-prune 2>&1 | tee archive-prune-test.log
+      - name: Save compiled objects for diagnostic iterations
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: /root/.ccache
+          key: ${{ runner.os }}-${{ runner.arch }}-archive-prune-${{ github.sha }}
       - name: Preserve diagnostic evidence and exact source
         if: always()
         uses: actions/upload-artifact@v4

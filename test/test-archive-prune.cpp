@@ -4,6 +4,7 @@
     SPDX-License-Identifier: LGPL-2.0-or-later
 */
 #include <atomic>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -74,10 +75,11 @@ void slice_prune(const std::string &root, bool key, bool temp, bool close_first)
     while (!done.load(std::memory_order_acquire) && !deadline.is_in_past()) {
       scheduler.run(0.001);
     }
-    if (!done.load(std::memory_order_acquire) || !ok) {
-      std::cerr << "destroy incomplete: " << prefix << " error=" << error << std::endl;
+    check(done.load(std::memory_order_acquire), "slice destroy must acknowledge within deadline");
+    if (!ok) {
+      std::cerr << "destroy failed: " << prefix << " error=" << error << std::endl;
     }
-    check(done.load(std::memory_order_acquire) && ok, "slice destroy must acknowledge within deadline");
+    check(ok, "slice destroy must succeed");
     check(!std::filesystem::exists(prefix + ".pack"), "package must disappear before acknowledgement");
     check(!std::filesystem::exists(prefix + ".index"), "index must disappear before acknowledgement");
     scheduler.run_in_context([&] { slice.reset(); });
@@ -88,7 +90,7 @@ void slice_prune(const std::string &root, bool key, bool temp, bool close_first)
 }  // namespace
 
 int main() {
-  auto root = td::mkdtemp().move_as_ok();
+  auto root = td::mkdtemp("", "archive-prune-").move_as_ok();
   retained_reader_control(root);
   for (bool close_first : {false, true}) {
     slice_prune(root, false, false, close_first);
