@@ -81,6 +81,7 @@ jobs:
         ninja -C build-asan \
           test-json-rpc-rate-gate \
           test-json-rpc-parse \
+          test-json-rpc-explorer \
           test-json-rpc-handler-guard \
           test-json-rpc-payload-waiter \
           test-json-rpc-signing-payload \
@@ -92,6 +93,7 @@ jobs:
       run: |
         ./build-asan/test-json-rpc-rate-gate
         ./build-asan/test-json-rpc-parse
+        ./build-asan/test-json-rpc-explorer
         ./build-asan/test-json-rpc-handler-guard
         ./build-asan/test-json-rpc-payload-waiter
         ./build-asan/test-json-rpc-signing-payload

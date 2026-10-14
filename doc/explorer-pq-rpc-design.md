@@ -1,7 +1,9 @@
 # Post-quantum explorer RPC detailed design
 
 **Revision:** 2, corrected after design audit; proposed for external design review.
-**Implementation status:** no executable RPC changes in this PR.
+**Implementation status:** native R1–R4 implementation added; see the
+[implementation and validation index](explorer-pq-rpc-implementation.md).
+The requirements below preserve the reviewed design; acceptance is recorded separately.
 **Source baseline:** `d41eae93dbbcb2af730b4ff5015458794ef04cb1`.
 
 This document specifies the implementation of R1–R4 in

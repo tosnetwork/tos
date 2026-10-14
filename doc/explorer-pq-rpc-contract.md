@@ -1,6 +1,8 @@
 # Explorer post-quantum RPC parity contract
 
-Status: **detailed design proposed for external review; not an implemented API or release approval**.
+Status: **design contract with a native implementation under validation**. See the
+[implementation and validation index](explorer-pq-rpc-implementation.md) for current
+behavior and acceptance evidence; this document preserves the design baseline.
 
 See [the detailed interface design](explorer-pq-rpc-design.md) for wire types,
 request/result schemas, error semantics, proof verification, resource budgets and
@@ -271,8 +273,8 @@ coverage. Run the repository's two-build static-analysis gate for C/C++ changes.
 Map relevant CI to the affected native codec, RPC transport and live integration
 boundaries. Do not mark a request complete merely because a renderer compiles.
 
-This document changes no executable code. Current node gaps remain until these
-implementation and validation requirements are fulfilled.
+The original design snapshot changed no executable code. The implementation and
+its validation status are tracked in the linked implementation index.
 
 ## Evidence procedure (not an executed live-test receipt)
 

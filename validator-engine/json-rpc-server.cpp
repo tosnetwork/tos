@@ -497,6 +497,8 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     else if (path == "/getWalletInformation")   rest_method = "getWalletInformation";
     else if (path == "/getTransactions")        rest_method = "getTransactions";
     else if (path == "/getConfigParam")         rest_method = "getConfigParam";
+    else if (path == "/getProofQuery")
+      rest_method = "getProofQuery";
     else if (path == "/packAddress")            rest_method = "packAddress";
     else if (path == "/unpackAddress")          rest_method = "unpackAddress";
     else if (path == "/detectAddress")          rest_method = "detectAddress";
@@ -604,28 +606,60 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
     // Match ANY known API method path for POST REST (body = params JSON, no envelope).
     // This matches HTTP API behavior where ALL methods accept POST.
     // /jsonRPC is NOT matched here — it uses the standard JSON-RPC envelope.
-    static const std::set<std::string> post_rest_paths = {
-        "/detectAddress", "/detectHash", "/packAddress", "/unpackAddress",
-        "/getAddressInformation", "/getExtendedAddressInformation",
-        "/getAccountCapability", "/getAccountDelegations", "/getAccountSessions", "/getAccountAgents",
-        "/getAccountJettons", "/getAccountNfts", "/getAccountEvents", "/getAccountEvent",
-        "/getWalletInformation", "/getAddressBalance", "/getAddressState",
-        "/getTokenData",
-        "/getMasterchainInfo", "/getConsensusBlock", "/lookupBlock",
-        "/shards", "/getShards", "/getBlockHeader",
-        "/getMasterchainBlockSignatures", "/getShardBlockProof", "/getOutMsgQueueSize",
-        "/getBlockTransactions", "/getBlockTransactionsExt",
-        "/getTransactions", "/getTransactionsStd",
-        "/tryLocateTx", "/tryLocateResultTx", "/tryLocateSourceTx",
-        "/getConfigParam", "/getConfigAll", "/getLibraries",
-        "/runGetMethod", "/runGetMethodStd",
-        "/sendBoc", "/sendBocReturnHash", "/sendBocReturnHashNoError",
-        "/sendQuery", "/estimateFee",
-        "/buildTransactionIntent", "/getSigningPayload", "/submitSignedTransaction",
-        "/grantAccountDelegation", "/revokeAccountDelegation",
-        "/grantAccountSession", "/revokeAccountSession",
-        "/grantAccountAgent", "/revokeAccountAgent"
-    };
+    static const std::set<std::string> post_rest_paths = {"/detectAddress",
+                                                          "/detectHash",
+                                                          "/packAddress",
+                                                          "/unpackAddress",
+                                                          "/getAddressInformation",
+                                                          "/getExtendedAddressInformation",
+                                                          "/getAccountCapability",
+                                                          "/getAccountDelegations",
+                                                          "/getAccountSessions",
+                                                          "/getAccountAgents",
+                                                          "/getAccountJettons",
+                                                          "/getAccountNfts",
+                                                          "/getAccountEvents",
+                                                          "/getAccountEvent",
+                                                          "/getWalletInformation",
+                                                          "/getAddressBalance",
+                                                          "/getAddressState",
+                                                          "/getTokenData",
+                                                          "/getMasterchainInfo",
+                                                          "/getConsensusBlock",
+                                                          "/lookupBlock",
+                                                          "/shards",
+                                                          "/getShards",
+                                                          "/getBlockHeader",
+                                                          "/getMasterchainBlockSignatures",
+                                                          "/getShardBlockProof",
+                                                          "/getOutMsgQueueSize",
+                                                          "/getBlockTransactions",
+                                                          "/getBlockTransactionsExt",
+                                                          "/getTransactions",
+                                                          "/getTransactionsStd",
+                                                          "/tryLocateTx",
+                                                          "/tryLocateResultTx",
+                                                          "/tryLocateSourceTx",
+                                                          "/getConfigParam",
+                                                          "/getConfigAll",
+                                                          "/getLibraries",
+                                                          "/getProofQuery",
+                                                          "/runGetMethod",
+                                                          "/runGetMethodStd",
+                                                          "/sendBoc",
+                                                          "/sendBocReturnHash",
+                                                          "/sendBocReturnHashNoError",
+                                                          "/sendQuery",
+                                                          "/estimateFee",
+                                                          "/buildTransactionIntent",
+                                                          "/getSigningPayload",
+                                                          "/submitSignedTransaction",
+                                                          "/grantAccountDelegation",
+                                                          "/revokeAccountDelegation",
+                                                          "/grantAccountSession",
+                                                          "/revokeAccountSession",
+                                                          "/grantAccountAgent",
+                                                          "/revokeAccountAgent"};
     if (post_rest_paths.count(post_path)) {
       std::string rest_method = post_path.substr(1);  // strip leading /
       // Read body and dispatch as REST (body = params JSON object)
@@ -920,6 +954,9 @@ struct JsonRpcServer::BatchState {
   td::BufferSlice body;
   std::vector<bool> is_notification;
   std::vector<std::string> responses;  // empty = notification, dropped
+  // Draining an element into the batch must not release its output reservation
+  // while the batch still owns the copied bytes.
+  std::vector<PayloadPtr> retained_payloads;
   std::size_t cursor{0};
   td::Promise<HttpReturn> final_promise;
   std::string cors;
@@ -1053,6 +1090,7 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
               state->responses[i] = "";  // dropped from output array
             } else {
               state->responses[i] = std::move(body);
+              state->retained_payloads.push_back(std::move(ret.second));
             }
           }
           state->cursor++;
@@ -1088,7 +1126,9 @@ void JsonRpcServer::finalize_batch(std::shared_ptr<BatchState> state) {
     state->final_promise.set_value(make_no_content(state->cors));
     return;
   }
-  state->final_promise.set_value(make_json_array_response(std::move(body), state->cors));
+  auto response = make_json_array_response(std::move(body), state->cors);
+  response.second = json_rpc::retain_lifetime(std::move(response.second), std::move(state->retained_payloads));
+  state->final_promise.set_value(std::move(response));
 }
 
 // ─── POST REST body processing (body = params JSON, no jsonrpc envelope) ──
@@ -1463,7 +1503,7 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_ok(std::string result_json, s
 }
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string message, std::string id,
-                                                         const std::string& cors_origin) {
+                                                         const std::string &cors_origin, std::string error_info) {
   if (id.empty()) id = "null";
   // TVM convention: `{ok: false, jsonrpc, id, error:<string>, code}` +
   // a mapped HTTP status code. The Python test suite
@@ -1473,9 +1513,11 @@ JsonRpcServer::HttpReturn JsonRpcServer::make_json_error(int code, std::string m
   // Growable: an error message can carry echoed request content, and a
   // fixed buffer would cut the escaped string mid-way.
   td::StringBuilder sb;
-  sb << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id
-     << ",\"error\":" << td::JsonString(td::Slice(message))
-     << ",\"code\":" << code << "}";
+  sb << "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":" << id << ",\"error\":" << td::JsonString(td::Slice(message))
+     << ",\"code\":" << code;
+  if (!error_info.empty())
+    sb << ",\"error_info\":" << error_info;
+  sb << "}";
   std::string body = sb.as_cslice().str();
 
   int http_status = 200;
@@ -1765,7 +1807,11 @@ void JsonRpcServer::cached_dispatch_method(std::string method, td::JsonObject &p
     return;
   }
 
-  bool is_cacheable = opts_.cache_ttl > 0 && cacheable_methods().count(method);
+  // New views bind immutable observations. The legacy cache flattens object
+  // parameters, so it must not key a full block ID or a typed view by height.
+  bool typed_view =
+      params.has_field("block_id") || params.has_field("include_pq") || params.has_field("include_decoded");
+  bool is_cacheable = !typed_view && opts_.cache_ttl > 0 && cacheable_methods().count(method);
 
   if (!is_cacheable) {
     dispatch_method(std::move(method), params, std::move(req_id),

@@ -1,9 +1,9 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-#include <array>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include "td/utils/logging.h"
 
@@ -22,10 +22,11 @@ struct Executor::Job {
 struct Executor::State {
   mutable std::mutex mutex;
   std::condition_variable ready;
-  std::array<std::shared_ptr<Job>, kControlGetterActiveJobs> active;
+  std::vector<std::shared_ptr<Job>> active;
   std::deque<std::shared_ptr<Job>> queued;
-  std::array<std::thread, kControlGetterActiveJobs> threads;
+  std::vector<std::thread> threads;
   bool stopped{false};
+  std::size_t max_queue{kControlGetterQueuedJobs};
 
   void serve(std::size_t lane) {
     for (;;) {
@@ -125,10 +126,15 @@ td::Status Executor::Admission::dispatch(Work work, Completion completion) {
 Executor::Executor() : state_(std::make_shared<State>()) {
 }
 
-td::Result<std::unique_ptr<Executor>> Executor::create() {
+td::Result<std::unique_ptr<Executor>> Executor::create(std::size_t max_queue, std::size_t max_active) {
+  if (max_active < 1 || max_active > 8)
+    return td::Status::Error("invalid worker count");
   std::unique_ptr<Executor> executor{new Executor};
+  executor->state_->active.resize(max_active);
+  executor->state_->threads.resize(max_active);
+  executor->state_->max_queue = max_queue;
   try {
-    for (std::size_t lane = 0; lane < kControlGetterActiveJobs; ++lane) {
+    for (std::size_t lane = 0; lane < max_active; ++lane) {
       executor->state_->threads[lane] = std::thread([state = executor->state_, lane] { state->serve(lane); });
     }
     return executor;
@@ -176,7 +182,7 @@ td::Result<std::unique_ptr<Executor::Admission>> Executor::admit() {
       return admission;
     }
   }
-  if (state_->queued.size() >= kControlGetterQueuedJobs) {
+  if (state_->queued.size() >= state_->max_queue) {
     return td::Status::Error("control getter executor busy");
   }
   auto job = std::make_shared<Job>();

@@ -1,0 +1,48 @@
+name: Explorer PQ two-build analysis
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  two-build-analysis:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Install native analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build build-essential python3-venv libjemalloc-dev
+          sudo scripts/install-llvm-toolchain.sh 21 all
+          python3 -m venv /tmp/explorer-codechecker
+          /tmp/explorer-codechecker/bin/pip install CodeChecker==6.29.1
+      - name: Prepare independent merge-base and candidate builds
+        run: |
+          git worktree add --detach ../explorer-base "$(git merge-base origin/main HEAD)"
+          for source in . ../explorer-base; do
+            cmake -S "$source" -B "$source/build" -G Ninja \
+              -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+              -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+              -DTOS_ARCH=x86-64 -DTOS_USE_JEMALLOC=ON
+            cmake --build "$source/build" --parallel 4 --target validator-engine func fift gen_fif
+          done
+      - name: Run the repository gate with its positive controls
+        run: |
+          set -o pipefail
+          python3 -u scripts/static-analysis.py --build-dir build \
+            --base-build-dir ../explorer-base/build --jobs 4 \
+            --codechecker /tmp/explorer-codechecker/bin/CodeChecker \
+            2>&1 | tee analysis-result.log
+      - name: Retain bounded analysis receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: explorer-analysis-${{ github.sha }}
+          path: analysis-result.log
+          if-no-files-found: warn
+          retention-days: 14

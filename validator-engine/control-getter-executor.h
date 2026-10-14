@@ -9,7 +9,7 @@
 namespace tos::control_getter {
 
 // Slots are reserved before a caller starts asynchronous state lookup. The first
-// two reservations belong to workers; only eight further reservations can queue.
+// two reservations belong to workers by default; eight further reservations can queue.
 // Snapshot acquisition and VM execution never hold the executor's bookkeeping lock.
 class Executor {
   struct State;
@@ -37,7 +37,8 @@ class Executor {
     std::size_t active;
     std::size_t queued;
   };
-  static td::Result<std::unique_ptr<Executor>> create();
+  static td::Result<std::unique_ptr<Executor>> create(std::size_t max_queue = kControlGetterQueuedJobs,
+                                                      std::size_t max_active = kControlGetterActiveJobs);
   ~Executor();
   Executor(const Executor&) = delete;
   Executor& operator=(const Executor&) = delete;
