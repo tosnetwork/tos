@@ -431,10 +431,10 @@ variable genesis-key-id
 "auto/validator-controller-v1-code.fif" include
 hashu config.validator_controller_code!
 
-// Two complete 65,536-second election intervals. This conservative initial
-// value must still pass the production bootstrap timing rehearsal before the
-// zerostate hashes are frozen.
-131072 =: orig_vset_valid_for
+// Six hours: the first election opens at genesis and closes 8,192 s before this
+// set expires. Retired consensus data is deleted only after a key block, so a
+// short first set bounds consensus/ growth under load before the first rotation.
+21600 =: orig_vset_valid_for
 now dup orig_vset_valid_for + 0 config.validators!
 
 /*
