@@ -121,6 +121,12 @@ class StreamingFileReader {
         }
       }
       auto dst = scratch_.as_slice().truncate(static_cast<std::size_t>(want));
+      // pread may overwrite a prefix of the scratch before it reports an error
+      // or a short read. Retire the old window first, so a later read cannot
+      // take those bytes for the previous offset; publish the new window only
+      // after a complete read.
+      cache_offset_ = 0;
+      cache_len_ = 0;
       auto status = file_->pread(dst, static_cast<td::int64>(chunk_start));
       if (status.is_error()) {
         return td::Status::Error(PSLICE() << "streaming BoC reader: pread failed at offset=" << chunk_start << ": "

@@ -3880,6 +3880,44 @@ void test_streaming_reader_hard_cap_and_offsets() {
   std::printf("  PASSED\n");
 }
 
+// A refill that fails after pread wrote part of the scratch must not leave the
+// previous window in place: a later read inside that window would otherwise
+// return bytes from the failed refill's offset.
+void test_streaming_reader_failed_refill_retires_window() {
+  std::printf("=== test_streaming_reader_failed_refill_retires_window ===\n");
+  auto path = std::string("/tmp/tos-test-reader-refill-") + std::to_string(::getpid());
+  auto fd = td::FileFd::open(path, td::FileFd::Write | td::FileFd::Read | td::FileFd::Create | td::FileFd::Truncate)
+                .move_as_ok();
+  // Every byte encodes its own offset, so a read from the wrong offset differs.
+  std::string bytes(2048, '\0');
+  for (std::size_t i = 0; i < bytes.size(); ++i) {
+    bytes[i] = static_cast<char>(i % 251);
+  }
+  fd.write_all(bytes).ensure();
+  vm::StreamingBocImportStats stats;
+  {
+    vm::detail::StreamingFileReader reader(fd, bytes.size(), 512, &stats);
+    auto first = reader.read(0, 16);
+    EXPECT_TRUE(first.is_ok());
+    EXPECT_TRUE(first.ok() == td::Slice(bytes).substr(0, 16));
+    // Shrink the file under the reader: the forward refill at 600 asks for 512
+    // bytes, gets 100 (offsets 600..699) written into the scratch prefix, and
+    // fails as a short read.
+    EXPECT_EQ(::truncate(path.c_str(), 700), 0);
+    auto failed = reader.read(600, 16);
+    EXPECT_TRUE(failed.is_error());
+    EXPECT_TRUE(failed.error().to_string().find("short pread") != std::string::npos);
+    // The window that held offset 0 is gone: this read refills from the file
+    // and returns offset 0's bytes, not the failed refill's.
+    auto again = reader.read(0, 16);
+    EXPECT_TRUE(again.is_ok());
+    EXPECT_TRUE(again.ok() == td::Slice(bytes).substr(0, 16));
+  }
+  fd.close();
+  td::unlink(path).ensure();
+  std::printf("  PASSED\n");
+}
+
 // Small fixtures exercise validation ordering without exhausting test memory.
 void test_streaming_cell_spans_validated_before_read() {
   std::printf("=== test_streaming_cell_spans_validated_before_read ===\n");
@@ -4019,6 +4057,7 @@ void test_streaming_valid_ondisk_control() {
 
 int main(int argc, char **argv) {
   test_streaming_reader_hard_cap_and_offsets();
+  test_streaming_reader_failed_refill_retires_window();
   test_streaming_cell_spans_validated_before_read();
   test_streaming_allocation_failure_aborts_sink();
   if (argc == 2 && std::string(argv[1]) == "--cell-bounds") {
