@@ -649,8 +649,7 @@ impl IndexerStore {
         // no-op until a full VACUUM, in which case pruning still bounds row
         // growth, only the file does not shrink.
         conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
-        Self::init_schema(&conn)?;
-        Self::ensure_schema_version(&conn)?;
+        Self::prepare_schema(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -658,9 +657,19 @@ impl IndexerStore {
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
-        Self::init_schema(&conn)?;
-        Self::ensure_schema_version(&conn)?;
+        Self::prepare_schema(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
+    }
+
+    /// Creates the current layout, brings an older database forward, then
+    /// adds the indexes over columns that only a migration may have added: an
+    /// old explorer table gains `observed_mc_seqno` in the v4 to v5 step, so
+    /// an index on it cannot be created before the migrations have run.
+    fn prepare_schema(conn: &Connection) -> anyhow::Result<()> {
+        Self::init_schema(conn)?;
+        Self::ensure_schema_version(conn)?;
+        conn.execute_batch(EXPLORER_OBSERVATION_INDEX_SCHEMA)?;
+        Ok(())
     }
 
     /// Prune explorer/indexer history older than `keep_from_mc_seqno`
@@ -732,7 +741,6 @@ impl IndexerStore {
         )?;
         conn.execute_batch(EXPLORER_SCHEMA)?;
         conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA)?;
-        conn.execute_batch(EXPLORER_OBSERVATION_INDEX_SCHEMA)?;
         conn.execute_batch(NOMINATOR_LEDGER_SCHEMA)?;
         conn.execute_batch(DNS_HISTORY_SCHEMA)?;
         conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
@@ -2706,6 +2714,43 @@ mod tests {
         let blocks: i64 =
             conn.query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get(0)).unwrap();
         assert_eq!(blocks, 1);
+    }
+
+    /// A database from before the v4 to v5 step has explorer tables without
+    /// `observed_mc_seqno`, `fee` and `in_msg_hash`. Opening it must run the
+    /// migrations first and only then index the observation column; creating
+    /// that index up front fails on the missing column and the store never
+    /// opens.
+    #[test]
+    fn a_pre_v5_layout_reaches_the_current_schema_with_the_observation_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tosctl-indexer.db");
+        drop(IndexerStore::open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP VIEW IF EXISTS published_explorer_blocks;
+                 DROP VIEW IF EXISTS published_explorer_transactions;
+                 DROP INDEX idx_explorer_blocks_observed;
+                 ALTER TABLE explorer_blocks DROP COLUMN observed_mc_seqno;
+                 ALTER TABLE explorer_transactions DROP COLUMN fee;
+                 ALTER TABLE explorer_transactions DROP COLUMN in_msg_hash;
+                 UPDATE indexer_meta SET value = '4' WHERE key = 'schema_version';",
+            )
+            .unwrap();
+            let columns: Vec<String> = conn
+                .prepare("SELECT name FROM pragma_table_info('explorer_blocks')")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert!(!columns.iter().any(|c| c == "observed_mc_seqno"));
+        }
+        let store = IndexerStore::open(&path).unwrap();
+        let conn = store.conn.lock().unwrap();
+        assert_eq!(schema_version(&conn), CURRENT_SCHEMA_VERSION.to_string());
+        assert!(has_index(&conn, "idx_explorer_blocks_observed"));
     }
 
     /// Masterchain blocks 1..=5 observed at their own height, and a basechain

@@ -473,6 +473,9 @@ pub async fn status(
 pub async fn staking(
     State(state): State<AppState>,
 ) -> Result<axum::Json<ExplorerStakingResponse>, AppError> {
+    // The pool summary needs the index; refuse before any chain call, so a
+    // disabled indexer answers at once instead of waiting on the RPC.
+    let index = state.indexer()?;
     let provider = contract_provider_from(state.runtime_cfg.chain_provider());
     let elector = ElectorWrapperImpl::new(provider);
     let (current_result, past_result) =
@@ -546,8 +549,7 @@ pub async fn staking(
         })
         .collect::<Vec<_>>();
 
-    let (pools, _) = state
-        .indexer()?
+    let (pools, _) = index
         .list("contract.pool.nominator", &ListFilters::default(), 0, 10_000)
         .map_err(index_error)?;
     let mut active_pools = 0usize;

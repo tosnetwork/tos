@@ -1575,4 +1575,18 @@ mod tests {
         assert_eq!(response.status(), 504);
         assert_eq!(json_body(response).await["error"]["kind"], "timeout");
     }
+
+    /// The staking summary also reads Elector state over RPC, but with the
+    /// indexer disabled it must refuse before any chain call: a stuck RPC
+    /// would otherwise turn the documented 503 into the request timeout.
+    #[tokio::test(start_paused = true)]
+    async fn disabled_indexer_refuses_staking_without_waiting_on_the_chain() {
+        let provider: Arc<dyn ChainProvider> = Arc::new(FakeChainProvider(FakeBehavior::Hang));
+        let mut state = test_state_with_provider(test_app_config(), provider).await;
+        state.indexer_store = None;
+        let response =
+            routes(false, state).oneshot(get("/explorer/staking".to_owned())).await.unwrap();
+        assert_eq!(response.status(), 503);
+        assert_eq!(json_body(response).await["error"]["kind"], "indexer_disabled");
+    }
 }
