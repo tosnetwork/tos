@@ -270,9 +270,15 @@
       "sha256": "bf9a0b99a4e7b6f6d34b8f1546b98c4b63e229ec476cf8994329bb1687926b07",
       "bytes": 209708,
       "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/linux-analysis-3b55d9c31-refused.log",
+      "sha256": "1a168ca3b2e9f1dae656b045b8f07488fa782047f97ecc16ec90225130799249",
+      "bytes": 3543158,
+      "retention": "Retained local public artifact through 2026-11-14."
     }
   ],
-  "linux_analysis": "Linux gate rerun required after preparing each checkout own vendored HTTP header; first Linux attempt refused with exit 2 before code analysis.",
+  "linux_analysis": "Fresh Linux gate required after preparing the complete default build graph on each side; two partial-target attempts refused with exit 2 before code analysis.",
   "pull_request_ci": "not yet updated",
   "native_ctest_entries_passed": 14,
   "operator_worker_limits_tested": [
@@ -341,6 +347,18 @@
         "both_generated_header_sha256": "265b0ad618c22d0a648326d751d1c08826399d67da13e471f4053bcdf7a9f579"
       },
       "scope_note": "The successful local single-compilation scan verifies header preparation only, not a passing Linux two-build gate."
+    },
+    {
+      "source_commit": "3b55d9c31220d686e5fff94963e20e1719071a6b",
+      "run": "https://github.com/tosnetwork/tos/actions/runs/38664610859/job/116193543078",
+      "exit": 2,
+      "positive_controls": 10,
+      "codechecker": "6.29.1",
+      "llvm": "21.1.8",
+      "rule_set": "73600cde7a576a01",
+      "stage": "dependency scan before code analysis",
+      "reason": "smartcont/provider-code.h was absent because the storage daemon was outside the prepared target subset.",
+      "correction": "Prepare the complete default build graph in both independent checkouts; preserve all gate coverage and controls."
     }
   ]
 }

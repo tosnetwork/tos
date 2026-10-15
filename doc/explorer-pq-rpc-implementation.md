@@ -136,3 +136,10 @@ omitted `mhd`. The corrected workflow builds that vendored target separately in
 both checkouts. Local preparation generated identical public headers on both
 sides, and the previously failing explorer compilation scanned its own header
 successfully. This preflight is not a passing Linux two-build analysis result.
+
+The second Linux attempt on `3b55d9c31` completed both preparation builds and
+all 10 positive controls, then refused with exit 2 because the storage daemon
+provider header was also outside the selected build targets. Preparation now
+builds the complete default target graph on each side, covering both optional
+services and their generated headers. The gate and its coverage checks remain
+unchanged; a fresh successful Linux result is still required.

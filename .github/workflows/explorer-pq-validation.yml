@@ -30,9 +30,10 @@ jobs:
               -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
               -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
               -DTOS_ARCH=x86-64 -DTOS_USE_JEMALLOC=ON
-            # The dependency scan also reads the optional explorer target,
-            # whose vendored HTTP header is installed by the mhd target.
-            cmake --build "$source/build" --parallel 4 --target validator-engine func fift gen_fif mhd
+            # Dependency scanning reads every configured compilation, including
+            # optional services and their generated headers. Prepare the complete
+            # default graph independently rather than a validator-only subset.
+            cmake --build "$source/build" --parallel 4
           done
       - name: Run the repository gate with its positive controls
         run: |
