@@ -5,6 +5,7 @@ receipts. A broadcast identifier alone never proves account execution. SQLite
 prevents duplicate submissions from this journal, not competition by other
 relayers. Unknown broadcasts remain reserved until reconciled from the chain.
 """
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -27,7 +28,13 @@ class FundingBudget:
 
     @property
     def total(self) -> int:
-        values = (self.module_compute, self.forwarding, self.account_execution, self.margin, self.cap)
+        values = (
+            self.module_compute,
+            self.forwarding,
+            self.account_execution,
+            self.margin,
+            self.cap,
+        )
         if any(type(v) is not int or not 0 < v <= MAX_COINS for v in values):
             raise ValueError("positive integral funding components required")
         total = sum(values[:4])
@@ -75,7 +82,9 @@ class RelayTransport(Protocol):
     async def snapshot(self, account: Address, module: Address) -> ChainSnapshot: ...
     async def estimate(self, request: AuthRequest, module: Address) -> FundingBudget: ...
     async def submit_internal(self, module: Address, body: Cell, value: int) -> str: ...
-    async def receipt(self, broadcast_id: str, request: AuthRequest, module: Address) -> AttemptReceipt: ...
+    async def receipt(
+        self, broadcast_id: str, request: AuthRequest, module: Address
+    ) -> AttemptReceipt: ...
 
 
 # A nonce that a finished attempt did not consume may be authorized again, but
@@ -88,7 +97,14 @@ RETIRABLE = ("module_rejected", "account_rejected")
 # answered by an ordinary pending receipt.
 TRANSITIONS = {
     "reserved": {"unknown", "broadcast"},
-    "unknown": {"unknown", "broadcast", "pending", "module_rejected", "account_rejected", "executed"},
+    "unknown": {
+        "unknown",
+        "broadcast",
+        "pending",
+        "module_rejected",
+        "account_rejected",
+        "executed",
+    },
     "broadcast": {"broadcast", "pending", "module_rejected", "account_rejected", "executed"},
     "pending": {"pending", "module_rejected", "account_rejected", "executed"},
     # Repeating an identical observation is harmless; changing a settled one is not.
@@ -103,19 +119,28 @@ class AttemptJournal:
     def __init__(self, path: Path):
         self.db = sqlite3.connect(path, timeout=10)
         self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.execute("CREATE TABLE IF NOT EXISTS attempts (network INTEGER, account TEXT, epoch TEXT,"
-                        " nonce TEXT, attempt INTEGER, digest TEXT, status TEXT, broadcast TEXT,"
-                        " PRIMARY KEY(network, account, epoch, nonce, attempt))")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS attempts (network INTEGER, account TEXT, epoch TEXT,"
+            " nonce TEXT, attempt INTEGER, digest TEXT, status TEXT, broadcast TEXT,"
+            " PRIMARY KEY(network, account, epoch, nonce, attempt))"
+        )
         self.db.commit()
 
     @staticmethod
     def identity(request: AuthRequest) -> tuple:
-        return (request.network, request.account.to_str(False), str(request.epoch), str(request.nonce))
+        return (
+            request.network,
+            request.account.to_str(False),
+            str(request.epoch),
+            str(request.nonce),
+        )
 
     def _latest(self, request: AuthRequest):
-        row = self.db.execute("SELECT attempt, digest, status, broadcast FROM attempts WHERE network=?"
-                              " AND account=? AND epoch=? AND nonce=? ORDER BY attempt DESC LIMIT 1",
-                              self.identity(request)).fetchone()
+        row = self.db.execute(
+            "SELECT attempt, digest, status, broadcast FROM attempts WHERE network=?"
+            " AND account=? AND epoch=? AND nonce=? ORDER BY attempt DESC LIMIT 1",
+            self.identity(request),
+        ).fetchone()
         return row
 
     def reserve(self, request: AuthRequest):
@@ -124,8 +149,10 @@ class AttemptJournal:
             raise ValueError("nonce already reserved; reconcile, then retire the finished attempt")
         attempt = 1 if row is None else row[0] + 1
         with self.db:
-            self.db.execute("INSERT INTO attempts VALUES (?, ?, ?, ?, ?, ?, 'reserved', NULL)",
-                            (*self.identity(request), attempt, request.commitment.hex()))
+            self.db.execute(
+                "INSERT INTO attempts VALUES (?, ?, ?, ?, ?, ?, 'reserved', NULL)",
+                (*self.identity(request), attempt, request.commitment.hex()),
+            )
 
     def update(self, request: AuthRequest, status: str, broadcast: str | None = None):
         if status not in TRANSITIONS or status == "retired":
@@ -141,9 +168,11 @@ class AttemptJournal:
         if broadcast is not None and recorded is not None and broadcast != recorded:
             raise ValueError("receipt belongs to a different broadcast")
         with self.db:
-            cursor = self.db.execute("UPDATE attempts SET status=?, broadcast=COALESCE(?,broadcast)"
-                                     " WHERE network=? AND account=? AND epoch=? AND nonce=? AND attempt=?",
-                                     (status, broadcast, *self.identity(request), attempt))
+            cursor = self.db.execute(
+                "UPDATE attempts SET status=?, broadcast=COALESCE(?,broadcast)"
+                " WHERE network=? AND account=? AND epoch=? AND nonce=? AND attempt=?",
+                (status, broadcast, *self.identity(request), attempt),
+            )
             if cursor.rowcount != 1:
                 raise ValueError("unreserved or mismatched request")
 
@@ -158,8 +187,11 @@ class AttemptJournal:
         if current not in RETIRABLE:
             raise ValueError(f"attempt is not finished: {current}")
         with self.db:
-            self.db.execute("UPDATE attempts SET status='retired' WHERE network=? AND account=?"
-                            " AND epoch=? AND nonce=? AND attempt=?", (*self.identity(request), attempt))
+            self.db.execute(
+                "UPDATE attempts SET status='retired' WHERE network=? AND account=?"
+                " AND epoch=? AND nonce=? AND attempt=?",
+                (*self.identity(request), attempt),
+            )
 
     def close(self):
         self.db.close()
@@ -173,8 +205,14 @@ class PqRelayer:
             raise ValueError("an explicit positive funding cap is required")
         self.transport, self.journal, self.funding_cap = transport, journal, funding_cap
 
-    async def submit(self, request: AuthRequest, module: Address, signer: PqSigner,
-                     loss_ack: str, classical_signature: bytes | None = None) -> str:
+    async def submit(
+        self,
+        request: AuthRequest,
+        module: Address,
+        signer: PqSigner,
+        loss_ack: str,
+        classical_signature: bytes | None = None,
+    ) -> str:
         if loss_ack != LOSS_ACK:
             raise ValueError("non-refundable funding loss model must be explicitly accepted")
         address(module)
@@ -190,7 +228,10 @@ class PqRelayer:
             raise ValueError("account is not registered with this strict authentication root")
         if (request.epoch, request.nonce) != (snapshot.auth.epoch, snapshot.auth.nonce):
             raise ValueError("stale epoch/nonce; rebuild and re-authorize")
-        if request.nonce == (1 << 64) - 1 or not 30 <= request.valid_until - snapshot.chain_time <= 3600:
+        if (
+            request.nonce == (1 << 64) - 1
+            or not 30 <= request.valid_until - snapshot.chain_time <= 3600
+        ):
             raise ValueError("nonce exhausted or insufficient expiry margin")
         if key_bytes(signer.public_key(), 1312) != snapshot.module_public_key:
             raise ValueError("signing key does not match deployed module")
@@ -200,7 +241,9 @@ class PqRelayer:
         value = budget.total
         if value > self.funding_cap:
             raise ValueError("estimate exceeds the owner-approved funding cap")
-        body = request.submission(signer.sign(request.commitment), classical_signature, secrets.randbits(64))
+        body = request.submission(
+            signer.sign(request.commitment), classical_signature, secrets.randbits(64)
+        )
         # Reserve before touching the transport. Do not release on an ambiguous timeout.
         self.journal.reserve(request)
         try:
@@ -213,7 +256,9 @@ class PqRelayer:
         self.journal.update(request, "broadcast", broadcast)
         return broadcast
 
-    async def retire(self, request: AuthRequest, module: Address, broadcast_id: str) -> AttemptReceipt:
+    async def retire(
+        self, request: AuthRequest, module: Address, broadcast_id: str
+    ) -> AttemptReceipt:
         """Free a nonce for re-authorization, on a fresh receipt, never on a timeout."""
         receipt = await self.reconcile(request, module, broadcast_id)
         if receipt.status not in ("module_rejected", "account_rejected"):
@@ -223,10 +268,15 @@ class PqRelayer:
         self.journal.retire(request)
         return receipt
 
-    async def reconcile(self, request: AuthRequest, module: Address, broadcast_id: str) -> AttemptReceipt:
+    async def reconcile(
+        self, request: AuthRequest, module: Address, broadcast_id: str
+    ) -> AttemptReceipt:
         receipt = await self.transport.receipt(broadcast_id, request, module)
-        if (receipt.request_hash != request.commitment.hex() or receipt.account != request.account
-                or receipt.module != module):
+        if (
+            receipt.request_hash != request.commitment.hex()
+            or receipt.account != request.account
+            or receipt.module != module
+        ):
             raise ValueError("receipt does not belong to this authorization attempt")
         self.journal.update(request, receipt.status, broadcast_id)
         return receipt

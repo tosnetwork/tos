@@ -7,7 +7,7 @@ from ..builder import Builder
 
 def pad(src: str, size: int) -> str:
     while len(src) < size:
-        src = '0' + src
+        src = "0" + src
     return src
 
 
@@ -25,7 +25,7 @@ def remove_prefix_map(src: dict, length: int) -> dict:
 def find_common_prefix(src: list) -> str:
     # Corner cases
     if len(src) == 0:
-        return ''
+        return ""
     if len(src) == 1:
         return src[0]
 
@@ -42,45 +42,33 @@ def find_common_prefix(src: list) -> str:
 
 
 def fork_map(src: dict) -> typing.Tuple[dict, dict]:
-    assert len(src) > 0, 'Internal inconsistency'
+    assert len(src) > 0, "Internal inconsistency"
     left = {}
     right = {}
     for k in src:
-        if k.find('0') == 0:
+        if k.find("0") == 0:
             left[k[1:]] = src[k]
         else:
             right[k[1:]] = src[k]
 
-    assert len(left) > 0, 'Internal inconsistency. Left empty.'
-    assert len(right) > 0, 'Internal inconsistency. Left empty.'
+    assert len(left) > 0, "Internal inconsistency. Left empty."
+    assert len(right) > 0, "Internal inconsistency. Left empty."
     return left, right
 
 
 def build_node(src: dict) -> dict:
-    assert len(src) > 0, 'Internal inconsistency'
+    assert len(src) > 0, "Internal inconsistency"
     if len(src) == 1:
-        return {
-            'type': 'leaf',
-            'value': list(src.values())[0]
-        }
+        return {"type": "leaf", "value": list(src.values())[0]}
 
     left, right = fork_map(src)
-    return {
-        'type': 'fork',
-        'left': build_edge(left),
-        'right': build_edge(right)
-    }
+    return {"type": "fork", "left": build_edge(left), "right": build_edge(right)}
 
 
 def build_edge(src: dict) -> dict:
-    assert len(src) > 0, 'Internal inconsistency'
+    assert len(src) > 0, "Internal inconsistency"
     label = find_common_prefix(list(src.keys()))
-    return {
-        'label': label,
-        'node': build_node(
-            remove_prefix_map(src, len(label))
-        )
-    }
+    return {"label": label, "node": build_node(remove_prefix_map(src, len(label)))}
 
 
 def build_tree(src: dict, key_size: int) -> dict:
@@ -106,7 +94,7 @@ def write_label_short(src: dict, to: Builder) -> Builder:
 
     # Value
     for e in src:
-        to.store_bit_int(e == '1')
+        to.store_bit_int(e == "1")
 
     return to
 
@@ -126,7 +114,7 @@ def write_label_long(src, key_length, to: Builder) -> Builder:
 
     # Value
     for e in src:
-        to.store_bit_int(e == '1')
+        to.store_bit_int(e == "1")
 
     return to
 
@@ -161,48 +149,48 @@ def is_same(src) -> bool:
 
 
 def detect_label_type(src: dict, key_size: int) -> str:
-    kind = 'short'
+    kind = "short"
     kind_length = label_short_length(src)
 
     long_length = label_long_length(src, key_size)
     if long_length < kind_length:
         kind_length = long_length
-        kind = 'long'
+        kind = "long"
 
     if is_same(src):
         same_length = label_same_length(key_size)
         if same_length < kind_length:
             kind_length = same_length
-            kind = 'same'
+            kind = "same"
     return kind
 
 
 def write_label(src: dict, key_size: int, to: Builder) -> None:
     type_ = detect_label_type(src, key_size)
-    if type_ == 'short':
+    if type_ == "short":
         write_label_short(src, to)
-    elif type_ == 'long':
+    elif type_ == "long":
         write_label_long(src, key_size, to)
-    elif type_ == 'same':
-        write_label_same(src[0] == '1', len(src), key_size, to)
+    elif type_ == "same":
+        write_label_same(src[0] == "1", len(src), key_size, to)
 
 
 def write_node(src: dict, key_size: int, serializer: typing.Callable, to: Builder) -> None:
-    if src['type'] == 'leaf':
-        serializer(src['value'], to)
+    if src["type"] == "leaf":
+        serializer(src["value"], to)
 
-    if src['type'] == 'fork':
+    if src["type"] == "fork":
         left_cell = Builder()
         right_cell = Builder()
-        write_edge(src['left'], key_size - 1, serializer, left_cell)
-        write_edge(src['right'], key_size - 1, serializer, right_cell)
+        write_edge(src["left"], key_size - 1, serializer, left_cell)
+        write_edge(src["right"], key_size - 1, serializer, right_cell)
         to.store_ref(left_cell.end_cell())
         to.store_ref(right_cell.end_cell())
 
 
 def write_edge(src: dict, key_size: int, serializer: typing.Callable, to: Builder) -> None:
-    write_label(src['label'], key_size, to)
-    write_node(src['node'], key_size - len(src['label']), serializer, to)
+    write_label(src["label"], key_size, to)
+    write_node(src["node"], key_size - len(src["label"]), serializer, to)
 
 
 def serialize_dict(src: dict, key_size: int, serializer: typing.Callable) -> Builder:

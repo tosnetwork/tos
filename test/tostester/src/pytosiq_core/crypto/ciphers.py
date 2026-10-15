@@ -11,8 +11,8 @@ from Cryptodome.Cipher import AES
 
 
 class Crypto:
-    magic = b'\xc6\xb4\x13\x48'
-    magic_aes = b'\xd4\xad\xbc-'
+    magic = b"\xc6\xb4\x13\x48"
+    magic_aes = b"\xd4\xad\xbc-"
 
     def __init__(self):
         raise NotImplementedError
@@ -25,7 +25,6 @@ class Crypto:
 
 
 class Server(Crypto):
-
     def __init__(self, host: str, port: int, pub_key: bytes):
         self.host = host
         self.port = port
@@ -56,7 +55,9 @@ class AdnlChannel:
     def __init__(self, client: Client, server: Server, local_id: bytes, peer_id: bytes):
         self.client_channel = client
         self.server_channel = server
-        self.channel_shared = get_shared_key(self.client_channel.x25519_private.encode(), self.server_channel.x25519_public.encode())
+        self.channel_shared = get_shared_key(
+            self.client_channel.x25519_private.encode(), self.server_channel.x25519_public.encode()
+        )
         if local_id > peer_id:
             self.enc_key = self.channel_shared
             self.dec_key = self.channel_shared[::-1]
@@ -90,16 +91,16 @@ def create_aes_ctr_sipher_from_key_n_data(key: bytes, data: bytes):
 
 def create_aes_ctr_cipher(key: bytes, iv: bytes):
     if len(key) != 32:
-        raise Exception('key should be 32 bytes exactly!')
+        raise Exception("key should be 32 bytes exactly!")
 
-    cipher = AES.new(key, AES.MODE_CTR, initial_value=iv, nonce=b'')
+    cipher = AES.new(key, AES.MODE_CTR, initial_value=iv, nonce=b"")
     # cipher = Cipher(algorithms.AES(key), modes.CTR(iv)).encryptor()
 
     return cipher
 
 
 def get_key_aes_id(key: bytes):
-    return hashlib.sha256(b'\xd4\xad\xbc-' + key).digest()
+    return hashlib.sha256(b"\xd4\xad\xbc-" + key).digest()
 
 
 def aes_ctr_encrypt(cipher, data: bytes) -> bytes:

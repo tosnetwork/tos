@@ -5,7 +5,7 @@ import typing
 import os
 
 
-logger = logging.getLogger(name='TL')
+logger = logging.getLogger(name="TL")
 
 
 class TlError(Exception):
@@ -13,8 +13,13 @@ class TlError(Exception):
 
 
 class TlSchema:
-
-    def __init__(self, id: typing.Optional[bytes], name: typing.Optional[str], class_name: typing.Optional[str], args: dict) -> None:
+    def __init__(
+        self,
+        id: typing.Optional[bytes],
+        name: typing.Optional[str],
+        class_name: typing.Optional[str],
+        args: dict,
+    ) -> None:
         self._id: bytes = id
         self._name: str = name
         self._class_name: str = class_name
@@ -55,22 +60,21 @@ class TlSchema:
         return cls(None, None, None, {})
 
     def __repr__(self) -> str:
-        return f'TL Schema {self._name} №{self._id.hex()} with args {self._args}'
+        return f"TL Schema {self._name} №{self._id.hex()} with args {self._args}"
         # return f'TL Schema {self._name} №{self._id.hex()}'
 
 
 class TlSchemas:
-
     base_types = {  # bytes len
-        'Bool': 4,
-        '#': 4,
-        'int': 4,
-        'long': 8,
-        'int128': 16,
-        'int256': 32,
-        'string': None,
-        'bytes': None,
-        'vector': None,
+        "Bool": 4,
+        "#": 4,
+        "int": 4,
+        "long": 8,
+        "int128": 16,
+        "int256": 32,
+        "string": None,
+        "bytes": None,
+        "vector": None,
     }
 
     def __init__(self, schemas: typing.List[TlSchema], auto_deserialize: bool = True):
@@ -92,14 +96,16 @@ class TlSchemas:
         #  schemas and their fields not to auto deserialize. In ADNL some schemes (like adnl.message.part or rldp ones)
         #  are not supposed to be auto deserialized, because it may cause some errors.
 
-    def get_by_id(self, tl_id: typing.Union[bytes, int], byteorder: typing.Literal['little', 'big'] = 'big') -> TlSchema:
+    def get_by_id(
+        self, tl_id: typing.Union[bytes, int], byteorder: typing.Literal["little", "big"] = "big"
+    ) -> TlSchema:
         """
         :param tl_id: id of TL schema
         :param byteorder: provided bytes or int order. if big nothing will happen, if little no matter int or bytes they will be converted
         :return: TlSchema or None
         """
         if isinstance(tl_id, bytes):
-            if byteorder == 'little':
+            if byteorder == "little":
                 tl_id = tl_id[::-1]
         if isinstance(tl_id, int):
             tl_id = tl_id.to_bytes(4, byteorder)
@@ -126,43 +132,47 @@ class TlSchemas:
                 continue
             self.id_map[schema.id] = schema
             self.name_map[schema.name] = schema
-            self.class_name_map[schema.class_name] = self.class_name_map.get(schema.class_name, []) + [schema]
+            self.class_name_map[schema.class_name] = self.class_name_map.get(
+                schema.class_name, []
+            ) + [schema]
 
     def set_default_untouchables(self):
-        self.untouchables['adnl.message.part'] = {'data'}
-        self.untouchables['overlay.broadcastFec'] = {'data'}
+        self.untouchables["adnl.message.part"] = {"data"}
+        self.untouchables["overlay.broadcastFec"] = {"data"}
 
     def serialize_field(self, type_: str, value):
-        logger.log(level=5, msg=f'serializing {type_} with value {value}')
-        result = b''
+        logger.log(level=5, msg=f"serializing {type_} with value {value}")
+        result = b""
         if type_ in self.base_types:
             byte_len = self.base_types.get(type_)
             if byte_len:
                 if isinstance(value, bool):
                     if value:
-                        result += b'\xb5ur\x99'  # booltrue
+                        result += b"\xb5ur\x99"  # booltrue
                     else:
-                        result += b'7\x97y\xbc'  # boolfalse
+                        result += b"7\x97y\xbc"  # boolfalse
                 elif isinstance(value, bytes):
-                    result += value[:byte_len][::-1] + b'\x00' * max(0, byte_len - len(value))
+                    result += value[:byte_len][::-1] + b"\x00" * max(0, byte_len - len(value))
                 elif isinstance(value, int):
-                    result += value.to_bytes(length=byte_len, byteorder='little', signed=True)
+                    result += value.to_bytes(length=byte_len, byteorder="little", signed=True)
                 elif isinstance(value, str):
                     result += bytes.fromhex(value)
             else:
-                if type_ == 'bytes':
-                    if isinstance(value, dict) and '@type' in value:
-                        value = self.serialize(schema=self.get_by_name(value['@type']), data=value, boxed=True)
+                if type_ == "bytes":
+                    if isinstance(value, dict) and "@type" in value:
+                        value = self.serialize(
+                            schema=self.get_by_name(value["@type"]), data=value, boxed=True
+                        )
                     if isinstance(value, bytes):
-                        temp = b''
+                        temp = b""
                         bytes_len = len(value)
                         if bytes_len <= 253:
-                            temp += bytes_len.to_bytes(length=1, byteorder='little')
+                            temp += bytes_len.to_bytes(length=1, byteorder="little")
                         else:
-                            temp += b'\xFE' + bytes_len.to_bytes(length=3, byteorder='little')
+                            temp += b"\xfe" + bytes_len.to_bytes(length=3, byteorder="little")
                         temp += value
                         if len(temp) % 4:
-                            temp += (4 - len(temp) % 4) * b'\x00'
+                            temp += (4 - len(temp) % 4) * b"\x00"
                         result += temp
         else:
             schemas = self.get_by_class_name(type_)
@@ -172,15 +182,19 @@ class TlSchemas:
                 else:
                     if isinstance(value, bytes):
                         result += value  # can specify implicit scheme value already serialized
-                    elif isinstance(value, dict) and '@type' in value:
-                        result += self.serialize(schema=self.get_by_name(value['@type']), data=value, boxed=True)
+                    elif isinstance(value, dict) and "@type" in value:
+                        result += self.serialize(
+                            schema=self.get_by_name(value["@type"]), data=value, boxed=True
+                        )
                     else:
-                        raise TlError(f'Unknown value provided for implicit schemes {schemas}: {value}')
+                        raise TlError(
+                            f"Unknown value provided for implicit schemes {schemas}: {value}"
+                        )
             else:  # explicit
-                if type_.startswith('('):
+                if type_.startswith("("):
                     subtype = type_.split()[1][:-1]
-                    if 'vector' in type_:
-                        temp = len(value).to_bytes(4, 'little', signed=False)
+                    if "vector" in type_:
+                        temp = len(value).to_bytes(4, "little", signed=False)
                         for v in value:
                             temp += self.serialize_field(subtype, v)
                         result += temp
@@ -188,8 +202,10 @@ class TlSchemas:
                     result += self.serialize(self.get_by_name(type_), value, boxed=False)
         return result
 
-    def serialize(self, schema: typing.Union[TlSchema, str], data: dict, boxed: bool = True) -> bytes:
-        logger.log(level=5, msg=f'serializing schema {schema}')
+    def serialize(
+        self, schema: typing.Union[TlSchema, str], data: dict, boxed: bool = True
+    ) -> bytes:
+        logger.log(level=5, msg=f"serializing schema {schema}")
         # https://core.telegram.org/mtproto/serialize
         """
         :param schema: TlSchema object
@@ -202,79 +218,84 @@ class TlSchemas:
         if boxed:
             result = schema.little_id()
         else:
-            result = b''
+            result = b""
         for field, type_ in schema.args.items():
-            if 'mode' in type_ or 'flags' in type_:
-                type_ = type_.split('?')[1]
+            if "mode" in type_ or "flags" in type_:
+                type_ = type_.split("?")[1]
                 if data.get(field) is None:
                     continue
             value = data[field]
             result += self.serialize_field(type_, value)
-        logger.log(level=5, msg=f'serialization result for schema {schema} is {result.hex()}')
+        logger.log(level=5, msg=f"serialization result for schema {schema} is {result.hex()}")
         return result
 
-    def deserialize(self, data: bytes, boxed: bool = True, args=None) -> typing.Tuple[typing.Union[dict, bytes], int]:
+    def deserialize(
+        self, data: bytes, boxed: bool = True, args=None
+    ) -> typing.Tuple[typing.Union[dict, bytes], int]:
         i = 0
         result = {}
         schema = None
         if boxed:
-            schema = self.get_by_id(data[i:i + 4], 'little')
+            schema = self.get_by_id(data[i : i + 4], "little")
             if not schema:  # is None
                 return data, len(data)
-            result['@type'] = schema.name
-                # return {'bytes': data}, len(data)
+            result["@type"] = schema.name
+            # return {'bytes': data}, len(data)
             i += 4
             args = schema.args
-        logger.log(level=5, msg=f'deserializing schema with args {args}')
+        logger.log(level=5, msg=f"deserializing schema with args {args}")
         for field, type_ in args.items():
-            if '?' in type_:
-                index = int(type_[type_.find('.') + 1: type_.find('?')])
-                mask = bin(result.get('mode', result.get('flags'))).replace('0b', '')[::-1]
+            if "?" in type_:
+                index = int(type_[type_.find(".") + 1 : type_.find("?")])
+                mask = bin(result.get("mode", result.get("flags"))).replace("0b", "")[::-1]
                 if index >= len(mask):
                     continue
-                if mask[index] == '0':
+                if mask[index] == "0":
                     continue
-                type_ = type_.split('?')[-1]
+                type_ = type_.split("?")[-1]
 
             if type_ in self.base_types:
                 byte_len = self.base_types.get(type_)
                 if byte_len:  # is not None
-                    if type_ == 'Bool':
-                        if data[i:i + byte_len] == b'\xb5ur\x99':
+                    if type_ == "Bool":
+                        if data[i : i + byte_len] == b"\xb5ur\x99":
                             result[field] = True
-                        elif data[i:i + byte_len] == b'7\x97y\xbc':
+                        elif data[i : i + byte_len] == b"7\x97y\xbc":
                             result[field] = False
-                    elif type_ in ('int128', 'int256'):
-                        result[field] = data[i:i + byte_len].hex()
+                    elif type_ in ("int128", "int256"):
+                        result[field] = data[i : i + byte_len].hex()
                     else:
-                        result[field] = int.from_bytes(data[i:i + byte_len], 'little', signed=True)
+                        result[field] = int.from_bytes(
+                            data[i : i + byte_len], "little", signed=True
+                        )
                     i += byte_len
                 else:
-                    if type_ in ('bytes', 'string'):
-                        if data[i:i+1] == b'\xFE':
+                    if type_ in ("bytes", "string"):
+                        if data[i : i + 1] == b"\xfe":
                             # b'\xFE' means data len took more than one byte
-                            byte_len = int.from_bytes(data[i+1:i+4], 'little')
+                            byte_len = int.from_bytes(data[i + 1 : i + 4], "little")
                             attach_len = 4
                             i += 4
                         else:
                             attach_len = 1
-                            byte_len = int.from_bytes(data[i:i+1], 'little')
+                            byte_len = int.from_bytes(data[i : i + 1], "little")
                             i += 1
-                        if ((not self._auto_deserialize) or
-                                (schema is not None and
-                                 schema.name in self.untouchables
-                                 and field in self.untouchables[schema.name])):
-                            result[field] = data[i:i + byte_len]
+                        if (not self._auto_deserialize) or (
+                            schema is not None
+                            and schema.name in self.untouchables
+                            and field in self.untouchables[schema.name]
+                        ):
+                            result[field] = data[i : i + byte_len]
                         else:
-                            temp, j = self.deserialize(data[i:i+byte_len])
+                            temp, j = self.deserialize(data[i : i + byte_len])
                             if j < byte_len:
                                 while j < byte_len:
                                     if field not in result:
                                         result[field] = [temp]
-                                    temp, jj = self.deserialize(data[i + j:i + byte_len])
+                                    temp, jj = self.deserialize(data[i + j : i + byte_len])
                                     j += jj
                                     if jj == 0:
-                                        result[field] = data[i:i+byte_len]
+                                        result[field] = data[i : i + byte_len]
                                         break
                                     result[field].append(temp)
                             else:
@@ -282,15 +303,15 @@ class TlSchemas:
                         i += byte_len
                         if (byte_len + attach_len) % 4:
                             i += 4 - (byte_len + attach_len) % 4
-                        if type_ == 'string':
+                        if type_ == "string":
                             result[field] = result[field].decode()
             else:
                 # stucks when errors # TODO
-                if type_.startswith('('):
+                if type_.startswith("("):
                     subtype = type_.split()[1][:-1]
                     sch = self.get_by_name(subtype)
-                    if 'vector' in type_:
-                        length = int.from_bytes(data[i:i + 4], 'little', signed=False)
+                    if "vector" in type_:
+                        length = int.from_bytes(data[i : i + 4], "little", signed=False)
                         i += 4
                         result[field] = []
                         for _ in range(length):
@@ -305,7 +326,7 @@ class TlSchemas:
                     sch = self.get_by_name(type_)
                     if sch:
                         result[field], j = self.deserialize(data[i:], False, sch.args)
-                        result[field]['@type'] = sch.name
+                        result[field]["@type"] = sch.name
                     else:
                         result[field], j = self.deserialize(data[i:], True)
                     # result[field], j = self.deserialize(data[i:], False, sch.args)
@@ -313,33 +334,33 @@ class TlSchemas:
         return result, i
 
     def __repr__(self):
-        return '[' + '\n'.join([i.__repr__() for i in self.list]) + ']'
+        return "[" + "\n".join([i.__repr__() for i in self.list]) + "]"
 
 
 def split(fields: str):
     result = {}
-    temp = ''
-    temp_key = ''
+    temp = ""
+    temp_key = ""
     br = 0
     for l in fields:
-        if l == '(':
+        if l == "(":
             temp += l
             br += 1
             continue
-        if l == ')':
+        if l == ")":
             temp += l
             br -= 1
             continue
-        if l == ':':
+        if l == ":":
             temp_key = temp
-            temp = ''
+            temp = ""
             continue
-        if l == ' ':
+        if l == " ":
             if br == 0:
                 if temp_key:
                     result[temp_key] = temp
-                temp_key = ''
-                temp = ''
+                temp_key = ""
+                temp = ""
             else:
                 temp += l
             continue
@@ -348,7 +369,6 @@ def split(fields: str):
 
 
 class TlRegistrator:
-
     def __init__(self):
         self._re = re.compile(r"\s([^:]+):(\(.+\)|\S+)")
         self._base_types = TlSchemas.base_types
@@ -365,29 +385,29 @@ class TlRegistrator:
         return False
 
     def register(self, schema: str) -> TlSchema:
-        schema = schema.split('//')[0]
-        name = schema.split(' ')[0]
-        if '#' in name:
-            split_name = name.split('#')
+        schema = schema.split("//")[0]
+        name = schema.split(" ")[0]
+        if "#" in name:
+            split_name = name.split("#")
             tl_id = bytes.fromhex(split_name[1])
             name = split_name[0]
         else:
             tl_id = self.get_id(schema.strip())
         # args = {i: j for i, j in self._re.findall(schema)}
-        args = split(' '.join(schema.split()[1:-1]))
-        class_name = schema.split(' ')[-1].replace(';', '')
+        args = split(" ".join(schema.split()[1:-1]))
+        class_name = schema.split(" ")[-1].replace(";", "")
         return TlSchema(tl_id, name, class_name, args)
 
     @staticmethod
     def clear(schema: str) -> str:
-        return schema.replace(';', '').replace('(', '').replace(')', '')
+        return schema.replace(";", "").replace("(", "").replace(")", "")
 
     @staticmethod
     def crc32(schema: str) -> int:
         return zlib.crc32(schema.encode())
 
     def get_id(self, schema: str) -> bytes:
-        return self.crc32(self.clear(schema)).to_bytes(4, 'big')
+        return self.crc32(self.clear(schema)).to_bytes(4, "big")
 
     def get_params(self, schema: str) -> dict:
         pass
@@ -402,7 +422,7 @@ class TlGenerator:
 
     @classmethod
     def with_default_schemas(cls) -> "TlGenerator":
-        path = os.path.join(os.path.dirname(__file__), './schemas')
+        path = os.path.join(os.path.dirname(__file__), "./schemas")
         return cls(path)
 
     def generate(self):
@@ -416,19 +436,18 @@ class TlGenerator:
 
     def from_file(self, file_path: str):
         result = []
-        with open(file_path, 'r') as f:
-            temp = ''
+        with open(file_path, "r") as f:
+            temp = ""
             for line in f:
                 stripped = line.strip()
 
-                if not stripped or stripped.startswith('//') or stripped.startswith('---'):
+                if not stripped or stripped.startswith("//") or stripped.startswith("---"):
                     continue
-                if ';' not in stripped:
-                    temp += stripped + ' '
+                if ";" not in stripped:
+                    temp += stripped + " "
                     continue
                 else:
                     stripped = temp + stripped
-                    temp = ''
+                    temp = ""
                 result.append(self._registrator.register(stripped))
         return result
-

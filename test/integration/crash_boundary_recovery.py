@@ -40,7 +40,9 @@ from pathlib import Path
 
 from restart_recovery_negative import ENGINE, INJECT, _latest_node, _zerostate_hashes
 
-FATAL = re.compile(r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b")
+FATAL = re.compile(
+    r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b"
+)
 DELETE_DONE = re.compile(r"VALCLEANUP delete_done session=(?P<s>\S+).* confirmed_gone=(?P<g>[01])")
 CRASH_MARK = re.compile(r"VALCLEANUP test_crash_before_erase session=(?P<s>\S+)")
 ERASE_ACK = re.compile(r"VALCLEANUP erase_ack session=(?P<s>\S+)")
@@ -53,7 +55,8 @@ def _inject_eligible(node: Path, root_b64: str, file_b64: str) -> str:
     # workchain, obsolete catchain seqno 0. No predelete -- the real deleter runs live.
     r = subprocess.run(
         [str(INJECT), "write", str(node), str(SEED), "0", root_b64, file_b64, "-1", "0"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if r.returncode != 0:
         raise SystemExit(f"injection failed: {r.stdout}{r.stderr}")
@@ -80,10 +83,25 @@ def _check(node: Path) -> tuple[str, int]:
     return ("UNKNOWN", dirp)
 
 
-def _launch(node: Path, log_name: str, extra_args: list[str], seconds: float, expect_self_exit: bool):
+def _launch(
+    node: Path, log_name: str, extra_args: list[str], seconds: float, expect_self_exit: bool
+):
     log = node / log_name
-    cmd = [str(ENGINE), "--global-config", "config.global.json", "--local-config", "config.json",
-           "--db", ".", "-v", "3", "--enable-validator-consensus-cleanup", "--initial-sync-delay", "2", *extra_args]
+    cmd = [
+        str(ENGINE),
+        "--global-config",
+        "config.global.json",
+        "--local-config",
+        "config.json",
+        "--db",
+        ".",
+        "-v",
+        "3",
+        "--enable-validator-consensus-cleanup",
+        "--initial-sync-delay",
+        "2",
+        *extra_args,
+    ]
     self_exited = False
     with log.open("w") as lf:
         proc = subprocess.Popen(cmd, cwd=str(node), stdout=lf, stderr=subprocess.STDOUT)
@@ -112,7 +130,7 @@ def main() -> int:
     ap.add_argument("--reconcile-seconds", type=float, default=60.0)
     args = ap.parse_args()
 
-    node = (args.node_dir or _latest_node())
+    node = args.node_dir or _latest_node()
     if node is None or not (node / "state").is_dir():
         print("ERROR: no completed node dir found", file=sys.stderr)
         return 2
@@ -129,8 +147,11 @@ def main() -> int:
 
     # Phase 1: crash at the boundary.
     crash_text, self_exited, code = _launch(
-        node, "crash-boundary-crash.log", ["--test-consensus-cleanup-crash-before-erase"],
-        args.seconds, expect_self_exit=True,
+        node,
+        "crash-boundary-crash.log",
+        ["--test-consensus-cleanup-crash-before-erase"],
+        args.seconds,
+        expect_self_exit=True,
     )
     crash_marks = {m.group("s") for m in CRASH_MARK.finditer(crash_text)}
     crash_done = {m.group("s"): m.group("g") for m in DELETE_DONE.finditer(crash_text)}
@@ -142,7 +163,11 @@ def main() -> int:
 
     # Phase 3: reconcile on a clean restart (crash disarmed).
     recon_text, recon_exited, recon_code = _launch(
-        node, "crash-boundary-reconcile.log", [], args.reconcile_seconds, expect_self_exit=False,
+        node,
+        "crash-boundary-reconcile.log",
+        [],
+        args.reconcile_seconds,
+        expect_self_exit=False,
     )
     recon_reserves = {m.group("s") for m in RESERVE.finditer(recon_text)}
     recon_done = {m.group("s"): m.group("g") for m in DELETE_DONE.finditer(recon_text)}
@@ -157,13 +182,21 @@ def main() -> int:
     elif code == 0:
         failures.append("crash launch exited 0 (expected abrupt non-zero exit at the fault)")
     if session not in crash_marks:
-        failures.append(f"no test_crash_before_erase marker for injected session (marks={sorted(crash_marks)})")
+        failures.append(
+            f"no test_crash_before_erase marker for injected session (marks={sorted(crash_marks)})"
+        )
     if crash_done.get(session) != "1":
-        failures.append(f"injected session not delete_done confirmed_gone=1 in crash log (got {crash_done.get(session)})")
+        failures.append(
+            f"injected session not delete_done confirmed_gone=1 in crash log (got {crash_done.get(session)})"
+        )
     if session in crash_erase_acks:
-        failures.append("injected session was erase-acked before the crash (erase should NOT have run)")
+        failures.append(
+            "injected session was erase-acked before the crash (erase should NOT have run)"
+        )
     if crash_fatals:
-        failures.append(f"{len(crash_fatals)} fatal diagnostics in crash log (expected only the abrupt exit)")
+        failures.append(
+            f"{len(crash_fatals)} fatal diagnostics in crash log (expected only the abrupt exit)"
+        )
     # Mid-flight state.
     if mid_state != "PRESENT":
         failures.append(f"mid-flight durable record not PRESENT (got {mid_state})")
@@ -173,11 +206,15 @@ def main() -> int:
     if not recon_exited and recon_code not in (None, -15, 0):
         pass  # terminated by us at shutdown is expected; nothing to assert on the code
     if recon_exited:
-        failures.append(f"reconcile launch exited on its own (code {recon_code}) -- crash/early-exit")
+        failures.append(
+            f"reconcile launch exited on its own (code {recon_code}) -- crash/early-exit"
+        )
     if session not in recon_reserves:
         failures.append("orphan record was NOT reserved on restart")
     if recon_done.get(session) != "1":
-        failures.append(f"reconcile delete_done confirmed_gone!=1 for session (got {recon_done.get(session)})")
+        failures.append(
+            f"reconcile delete_done confirmed_gone!=1 for session (got {recon_done.get(session)})"
+        )
     if session not in recon_erase_acks:
         failures.append("orphan record erase was not acked on restart")
     if recon_state != "ABSENT":
@@ -215,7 +252,9 @@ def main() -> int:
             "operation ordering under an abrupt exit, not a fixture reconstruction."
         ),
     }
-    (node / "crash-boundary-recovery-analysis.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (node / "crash-boundary-recovery-analysis.json").write_text(
+        json.dumps(summary, indent=2) + "\n"
+    )
     print(json.dumps(summary, indent=2))
     return 0 if not failures else 1
 

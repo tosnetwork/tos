@@ -20,23 +20,22 @@ class TvmBitarrayUnderflowException(TvmBitarrayException):
 
 
 class TvmBitarray(bitarray):
-
     def __new__(cls, size: int = 1023, *args, **kwargs):
         return super().__new__(cls, *args, **kwargs)
 
     def __init__(self, size: int = 1023, *args, **kwargs):
         if size > 1023:
-            raise TvmBitarrayException('bitarray size must be <= 1023')
+            raise TvmBitarrayException("bitarray size must be <= 1023")
         self._size = size
         super().__init__()
 
     def check_overflow(self, length: int) -> None:
         if len(self) + length > 1023:
-            raise TvmBitarrayOverflowException('bitstring overflow')
+            raise TvmBitarrayOverflowException("bitstring overflow")
 
     def check_underflow(self, length: int) -> None:
         if len(self) < length:
-            raise TvmBitarrayUnderflowException('bitstring underflow')
+            raise TvmBitarrayUnderflowException("bitstring underflow")
 
     def extend(self, x: Union[str, Iterable[int]]) -> None:
         self.check_overflow(len(x))

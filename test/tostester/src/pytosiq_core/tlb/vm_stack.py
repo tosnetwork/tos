@@ -15,6 +15,7 @@ class VmStack(TlbScheme):
     """
     vm_stack#_ depth:(## 24) stack:(VmStackList depth) = VmStack;
     """
+
     @classmethod
     def serialize(cls, data: list) -> "Cell":
         result = Builder()
@@ -32,6 +33,7 @@ class VmStackList(TlbScheme):
     vm_stk_cons#_ {n:#} rest:^(VmStackList n) tos:VmStackValue = VmStackList (n + 1);
     vm_stk_nil#_ = VmStackList 0;
     """
+
     @classmethod
     def serialize(cls, data: list) -> Cell:
         builder = Builder()
@@ -66,33 +68,33 @@ class VmStackValue(TlbScheme):
     def serialize(cls, value) -> Cell:
         builder = Builder()
         if value is None:
-            builder.store_bytes(b'\x00')
+            builder.store_bytes(b"\x00")
         elif isinstance(value, int):
             if value.bit_length() < 64:
-                builder.store_bytes(b'\x01')
+                builder.store_bytes(b"\x01")
                 builder.store_int(value, 64)
             else:
-                builder.store_bits('000000100000000')  # 0201_
+                builder.store_bits("000000100000000")  # 0201_
                 # builder.store_bytes(b'\x02\x01')
                 builder.store_int(value, 257)
         elif isinstance(value, bytes):
-            builder.store_bits('0000001000000000')  # 0200
-            assert len(value) <= 32, 'bytes length should be less than 32'
+            builder.store_bits("0000001000000000")  # 0200
+            assert len(value) <= 32, "bytes length should be less than 32"
             builder.store_bytes(value)
         elif isinstance(value, Cell):
-            builder.store_bytes(b'\x03')
+            builder.store_bytes(b"\x03")
             builder.store_ref(value)
         elif isinstance(value, Slice):
-            builder.store_bytes(b'\x04')
+            builder.store_bytes(b"\x04")
             builder.store_cell(VmCellSlice.serialize(value))
         elif isinstance(value, Builder):
-            builder.store_bytes(b'\x05')
+            builder.store_bytes(b"\x05")
             builder.store_ref(value.end_cell())
         elif isinstance(value, VmCont):
-            builder.store_bytes(b'\x06')
+            builder.store_bytes(b"\x06")
             builder.store_cell(VmCont.serialize(value))
         elif isinstance(value, VmTuple):
-            builder.store_bytes(b'\x07')
+            builder.store_bytes(b"\x07")
             builder.store_uint(len(value), 16)
             builder.store_cell(VmTuple.serialize(value))
         return builder.end_cell()
@@ -100,33 +102,33 @@ class VmStackValue(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.preload_bits(15).to01()
-        if tag == '000000100000000':  # #0201_
+        if tag == "000000100000000":  # #0201_
             cell_slice.load_bits(15)
             return cell_slice.load_int(257)
 
         tag = cell_slice.preload_bytes(2)
-        if tag[:1] == b'\x00':
+        if tag[:1] == b"\x00":
             cell_slice.load_bytes(1)
             return None
-        elif tag[:1] == b'\x01':
+        elif tag[:1] == b"\x01":
             cell_slice.load_bytes(1)
             return cell_slice.load_int(64)
-        elif tag == b'\x02\xff':
+        elif tag == b"\x02\xff":
             cell_slice.load_bytes(2)
             return None
-        elif tag[:1] == b'\x03':
+        elif tag[:1] == b"\x03":
             cell_slice.load_bytes(1)
             return cell_slice.load_ref()
-        elif tag[:1] == b'\x05':
+        elif tag[:1] == b"\x05":
             cell_slice.load_bytes(1)
             return cell_slice.load_ref().to_builder()
-        elif tag[:1] == b'\x04':
+        elif tag[:1] == b"\x04":
             cell_slice.load_bytes(1)
             return VmCellSlice.deserialize(cell_slice)
-        elif tag[:1] == b'\x06':
+        elif tag[:1] == b"\x06":
             cell_slice.load_bytes(1)
             return VmCont.deserialize(cell_slice)
-        elif tag[:1] == b'\x07':
+        elif tag[:1] == b"\x07":
             cell_slice.load_bytes(1)
             tuple_len = cell_slice.load_uint(16)
             return VmTuple.deserialize(cell_slice, tuple_len)
@@ -137,6 +139,7 @@ class VmTuple(TlbScheme):
     vm_tuple_nil$_ = VmTuple 0;
     vm_tuple_tcons$_ {n:#} head:(VmTupleRef n) tail:^VmStackValue = VmTuple (n + 1);
     """
+
     """
     Usage:
         tuple = VmTuple([1, 2, <Slice 32[00000203] -> 2 refs>])
@@ -161,7 +164,7 @@ class VmTuple(TlbScheme):
         return len(self.list)
 
     def __repr__(self):
-        return f'<VmTuple {self.list} >'
+        return f"<VmTuple {self.list} >"
 
     def append(self, item):
         self.list.append(item)
@@ -185,7 +188,9 @@ class VmTuple(TlbScheme):
         if length == 0:
             return VmTuple([])
 
-        return VmTupleRef.deserialize(cell_slice, length - 1).append(VmStackValue.deserialize(cell_slice.load_ref().begin_parse()))
+        return VmTupleRef.deserialize(cell_slice, length - 1).append(
+            VmStackValue.deserialize(cell_slice.load_ref().begin_parse())
+        )
 
 
 class VmTupleRef(TlbScheme):
@@ -234,17 +239,21 @@ class VmCellSlice(TlbScheme):
         st_bits = cell_slice.load_uint(10)
         end_bits = cell_slice.load_uint(10)
         if not st_bits <= end_bits:
-            raise VmError(f'{cls.__name__} deserialization error: st_bits {st_bits}, end_bits {end_bits}')
+            raise VmError(
+                f"{cls.__name__} deserialization error: st_bits {st_bits}, end_bits {end_bits}"
+            )
 
         st_ref = cell_slice.load_uint(3)
         end_ref = cell_slice.load_uint(3)
 
         if not st_ref <= end_ref:
-            raise VmError(f'{cls.__name__} deserialization error: st_ref {st_ref}, end_ref {end_ref}')
+            raise VmError(
+                f"{cls.__name__} deserialization error: st_ref {st_ref}, end_ref {end_ref}"
+            )
 
         result = Slice.from_cell(cell)
-        result.refs = result.refs[st_ref: end_ref]
-        result.bits = result.bits[st_bits: end_bits]
+        result.refs = result.refs[st_ref:end_ref]
+        result.bits = result.bits[st_bits:end_bits]
 
         return result
 
@@ -272,43 +281,43 @@ class VmCont(TlbScheme):
     def serialize(cls, value: "VmCont") -> "Cell":
         builder = Builder()
 
-        if value.type_ == 'vmc_std':
-            builder.store_bits('00')
+        if value.type_ == "vmc_std":
+            builder.store_bits("00")
             builder.store_cell(VmControlData.serialize(value.cdata))  # cdata:VmControlData
             builder.store_cell(VmCellSlice.serialize(value.code))  # code:VmCellSlice
-        elif value.type_ == 'vmc_envelope':
-            builder.store_bits('01')
+        elif value.type_ == "vmc_envelope":
+            builder.store_bits("01")
             builder.store_cell(VmControlData.serialize(value.cdata))  # cdata:VmControlData
             builder.store_ref(cls.serialize(value.next))  # next:^VmCont
-        elif value.type_ == 'vmc_quit':
-            builder.store_bits('1000')
+        elif value.type_ == "vmc_quit":
+            builder.store_bits("1000")
             builder.store_int(value.exit_code, 32)  # exit_code:int32
-        elif value.type_ == 'vmc_quit_exc':
-            builder.store_bits('1001')
-        elif value.type_ == 'vmc_repeat':
-            builder.store_bits('10100')
+        elif value.type_ == "vmc_quit_exc":
+            builder.store_bits("1001")
+        elif value.type_ == "vmc_repeat":
+            builder.store_bits("10100")
             builder.store_uint(value.count, 63)  # count:uint63
             builder.store_ref(cls.serialize(value.body))  # body:^VmCont
             builder.store_ref(cls.serialize(value.after))  # after:^VmCont
-        elif value.type_ == 'vmc_until':
-            builder.store_bits('110000')
+        elif value.type_ == "vmc_until":
+            builder.store_bits("110000")
             builder.store_ref(cls.serialize(value.body))  # body:^VmCont
             builder.store_ref(cls.serialize(value.after))  # after:^VmCont
-        elif value.type_ == 'vmc_again':
-            builder.store_bits('110001')
+        elif value.type_ == "vmc_again":
+            builder.store_bits("110001")
             builder.store_ref(cls.serialize(value.body))  # body:^VmCont
-        elif value.type_ == 'vmc_while_cond':
-            builder.store_bits('110010')
+        elif value.type_ == "vmc_while_cond":
+            builder.store_bits("110010")
             builder.store_ref(cls.serialize(value.cond))  # cond:^VmCont
             builder.store_ref(cls.serialize(value.body))  # body:^VmCont
             builder.store_ref(cls.serialize(value.after))  # after:^VmCont
-        elif value.type_ == 'vmc_while_body':
-            builder.store_bits('110011')
+        elif value.type_ == "vmc_while_body":
+            builder.store_bits("110011")
             builder.store_ref(cls.serialize(value.cond))  # cond:^VmCont
             builder.store_ref(cls.serialize(value.body))  # body:^VmCont
             builder.store_ref(cls.serialize(value.after))  # after:^VmCont
-        elif value.type_ == 'vmc_pushint':
-            builder.store_bits('1111')
+        elif value.type_ == "vmc_pushint":
+            builder.store_bits("1111")
             builder.store_int(value.value, 32)  # value:int32
             builder.store_ref(cls.serialize(value.next))  # next:^VmCont
         return builder.end_cell()
@@ -316,26 +325,57 @@ class VmCont(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice) -> "VmCont":
         tag = cell_slice.preload_bits(6).to01()
-        if tag[:2] == '00':
-            return cls('vmc_std', cdata=VmControlData.deserialize(cell_slice), code=VmCellSlice.deserialize(cell_slice))
-        elif tag[:2] == '01':
-            return cls('vmc_envelope', cdata=VmControlData.deserialize(cell_slice), next=cls.deserialize(cell_slice.load_ref().begin_parse()))
-        elif tag[:4] == '1000':
-            return cls('vmc_quit', exit_code=cell_slice.load_int(32))
-        elif tag[:4] == '1001':
-            return cls('vmc_quit_exc')
-        elif tag[:5] == '10100':
-            return cls('vmc_repeat', count=cell_slice.load_uint(63), body=cls.deserialize(cell_slice.load_ref().begin_parse()), after=cls.deserialize(cell_slice.load_ref().begin_parse()))
-        elif tag[:6] == '110000':
-            return cls('vmc_until', body=cls.deserialize(cell_slice.load_ref().begin_parse()), after=cls.deserialize(cell_slice.load_ref().begin_parse()))
-        elif tag[:6] == '110001':
-            return cls('vmc_again', body=cls.deserialize(cell_slice.load_ref().begin_parse()))
-        elif tag[:6] == '110010':
-            return cls('vmc_while_cond', cond=cls.deserialize(cell_slice.load_ref().begin_parse()), body=cls.deserialize(cell_slice.load_ref().begin_parse()), after=cls.deserialize(cell_slice.load_ref().begin_parse()))
-        elif tag[:6] == '110011':
-            return cls('vmc_while_body', cond=cls.deserialize(cell_slice.load_ref().begin_parse()), body=cls.deserialize(cell_slice.load_ref().begin_parse()), after=cls.deserialize(cell_slice.load_ref().begin_parse()))
-        elif tag[:4] == '1111':
-            return cls('vmc_pushint', value=cell_slice.load_int(32), next=cls.deserialize(cell_slice.load_ref().begin_parse()))
+        if tag[:2] == "00":
+            return cls(
+                "vmc_std",
+                cdata=VmControlData.deserialize(cell_slice),
+                code=VmCellSlice.deserialize(cell_slice),
+            )
+        elif tag[:2] == "01":
+            return cls(
+                "vmc_envelope",
+                cdata=VmControlData.deserialize(cell_slice),
+                next=cls.deserialize(cell_slice.load_ref().begin_parse()),
+            )
+        elif tag[:4] == "1000":
+            return cls("vmc_quit", exit_code=cell_slice.load_int(32))
+        elif tag[:4] == "1001":
+            return cls("vmc_quit_exc")
+        elif tag[:5] == "10100":
+            return cls(
+                "vmc_repeat",
+                count=cell_slice.load_uint(63),
+                body=cls.deserialize(cell_slice.load_ref().begin_parse()),
+                after=cls.deserialize(cell_slice.load_ref().begin_parse()),
+            )
+        elif tag[:6] == "110000":
+            return cls(
+                "vmc_until",
+                body=cls.deserialize(cell_slice.load_ref().begin_parse()),
+                after=cls.deserialize(cell_slice.load_ref().begin_parse()),
+            )
+        elif tag[:6] == "110001":
+            return cls("vmc_again", body=cls.deserialize(cell_slice.load_ref().begin_parse()))
+        elif tag[:6] == "110010":
+            return cls(
+                "vmc_while_cond",
+                cond=cls.deserialize(cell_slice.load_ref().begin_parse()),
+                body=cls.deserialize(cell_slice.load_ref().begin_parse()),
+                after=cls.deserialize(cell_slice.load_ref().begin_parse()),
+            )
+        elif tag[:6] == "110011":
+            return cls(
+                "vmc_while_body",
+                cond=cls.deserialize(cell_slice.load_ref().begin_parse()),
+                body=cls.deserialize(cell_slice.load_ref().begin_parse()),
+                after=cls.deserialize(cell_slice.load_ref().begin_parse()),
+            )
+        elif tag[:4] == "1111":
+            return cls(
+                "vmc_pushint",
+                value=cell_slice.load_int(32),
+                next=cls.deserialize(cell_slice.load_ref().begin_parse()),
+            )
 
 
 class VmControlData(TlbScheme):
@@ -343,6 +383,7 @@ class VmControlData(TlbScheme):
     vm_ctl_data$_ nargs:(Maybe uint13) stack:(Maybe VmStack) save:VmSaveList
     cp:(Maybe int16) = VmControlData;
     """
+
     def __init__(self, type_, **kwargs):
         self.type_ = type_
         for k, v in kwargs.items():
@@ -379,21 +420,22 @@ class VmControlData(TlbScheme):
         kwargs = {}
         is_nargs = cell_slice.load_bit()
         if is_nargs:
-            kwargs['nargs'] = cell_slice.load_uint(13)
+            kwargs["nargs"] = cell_slice.load_uint(13)
         is_stack = cell_slice.load_bit()
         if is_stack:
-            kwargs['stack'] = VmStack.deserialize(cell_slice)
-        kwargs['save'] = VmSaveList.deserialize(cell_slice)
+            kwargs["stack"] = VmStack.deserialize(cell_slice)
+        kwargs["save"] = VmSaveList.deserialize(cell_slice)
         is_cp = cell_slice.load_bit()
         if is_cp:
-            kwargs['cp'] = cell_slice.load_int(16)
-        return cls('vm_ctl_data', **kwargs)
+            kwargs["cp"] = cell_slice.load_int(16)
+        return cls("vm_ctl_data", **kwargs)
 
 
 class VmSaveList(TlbScheme):
     """
     _ cregs:(HashmapE 4 VmStackValue) = VmSaveList;
     """
+
     @classmethod
     def serialize(cls, value: "HashMap") -> Cell:
         return Builder().store_dict(value).end_cell()

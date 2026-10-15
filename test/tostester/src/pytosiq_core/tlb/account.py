@@ -18,40 +18,44 @@ class SimpleAccount(TlbScheme):
     account_none$0 = SimpleAccount;
     account$1 addr:Address balance:Tomis state:SimpleAccountState = SimpleAccount;
     """
+
     """
     this schema is needed for user-friendly and familiar account representation,
     but not used anywhere outside of this library
     """
+
     def __init__(self, address: Address, balance: int, state: "SimpleAccountState"):
         self.address = address
         self.balance = balance
         self.state = state
 
     @classmethod
-    def serialize(cls, *args):
-        ...
+    def serialize(cls, *args): ...
 
     @classmethod
-    def deserialize(cls, *args):
-        ...
+    def deserialize(cls, *args): ...
 
     @classmethod
     def from_raw(cls, account: "Account", address: typing.Optional[Address] = None):
         if account is None:
             return cls(address=address, balance=0, state=SimpleAccountState.from_raw(None))
-        return cls(address=account.addr, balance=account.storage.balance.tomis, state=SimpleAccountState.from_raw(account.storage.state))
+        return cls(
+            address=account.addr,
+            balance=account.storage.balance.tomis,
+            state=SimpleAccountState.from_raw(account.storage.state),
+        )
 
     def is_uninitialized(self):
-        return self.state.type_ == 'uninitialized'
+        return self.state.type_ == "uninitialized"
 
     def is_frozen(self):
-        return self.state.type_ == 'frozen'
+        return self.state.type_ == "frozen"
 
     def is_active(self):
-        return self.state.type_ == 'active'
+        return self.state.type_ == "active"
 
     def __repr__(self):
-        return f'<SimpleAccount {self.address}: state={self.state.type_}, balance={self.balance}>'
+        return f"<SimpleAccount {self.address}: state={self.state.type_}, balance={self.balance}>"
 
 
 class SimpleAccountState(TlbScheme):
@@ -60,34 +64,35 @@ class SimpleAccountState(TlbScheme):
     frozen$01 state_hash:bits256 = SimpleAccountState;
     active$10 state_init:StateInit = SimpleAccountState;
     """
+
     """
     this schema is needed for user-friendly and familiar account state representation,
     but not used anywhere outside of this library
     """
 
-    def __init__(self, type_: typing.Literal["uninitialized", "frozen", "active"],
-                 state_hash: typing.Optional[bytes] = None,
-                 state_init: typing.Optional["StateInit"] = None,
-                 ):
+    def __init__(
+        self,
+        type_: typing.Literal["uninitialized", "frozen", "active"],
+        state_hash: typing.Optional[bytes] = None,
+        state_init: typing.Optional["StateInit"] = None,
+    ):
         self.type_ = type_
         self.state_hash = state_hash
         self.state_init = state_init
 
     @classmethod
-    def serialize(cls, *args):
-        ...
+    def serialize(cls, *args): ...
 
     @classmethod
-    def deserialize(cls, *args):
-        ...
+    def deserialize(cls, *args): ...
 
     @classmethod
     def from_raw(cls, account_state: typing.Optional["AccountState"]):
-        if account_state is None or account_state.type_ == 'account_uninit':
-            return cls('uninitialized')
-        if account_state.type_ == 'account_frozen':
-            return cls('frozen', state_hash=account_state.state_hash)
-        return cls('active', state_init=account_state.state_init)
+        if account_state is None or account_state.type_ == "account_uninit":
+            return cls("uninitialized")
+        if account_state.type_ == "account_frozen":
+            return cls("frozen", state_hash=account_state.state_hash)
+        return cls("active", state_init=account_state.state_init)
 
 
 class Account(TlbScheme):
@@ -111,7 +116,11 @@ class Account(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         if cell_slice.load_bit():
-            return cls(cell_slice.load_address(), StorageInfo.deserialize(cell_slice), AccountStorage.deserialize(cell_slice))
+            return cls(
+                cell_slice.load_address(),
+                StorageInfo.deserialize(cell_slice),
+                AccountStorage.deserialize(cell_slice),
+            )
         else:
             return None
 
@@ -122,17 +131,25 @@ class StorageInfo(TlbScheme):
               due_payment:(Maybe Tomis) = StorageInfo;
     """
 
-    def __init__(self, used: "StorageUsed", storage_extra: "StorageExtraInfo", last_paid: int, due_payment: typing.Optional[int]):
+    def __init__(
+        self,
+        used: "StorageUsed",
+        storage_extra: "StorageExtraInfo",
+        last_paid: int,
+        due_payment: typing.Optional[int],
+    ):
         self.used = used
         self.last_paid = last_paid
         self.storage_extra = storage_extra
         self.due_payment = due_payment
 
     def serialize(self) -> Cell:
-        builder = Builder() \
-            .store_cell(self.used.serialize()) \
-            .store_cell(self.storage_extra.serialize()) \
+        builder = (
+            Builder()
+            .store_cell(self.used.serialize())
+            .store_cell(self.storage_extra.serialize())
             .store_uint(self.last_paid, 32)
+        )
         if self.due_payment is not None:
             builder.store_bit(1)
             builder.store_coins(self.due_payment)
@@ -142,7 +159,12 @@ class StorageInfo(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        return cls(StorageUsed.deserialize(cell_slice), StorageExtraInfo.deserialize(cell_slice), cell_slice.load_uint(32), cell_slice.load_coins() if cell_slice.load_bit() else None)
+        return cls(
+            StorageUsed.deserialize(cell_slice),
+            StorageExtraInfo.deserialize(cell_slice),
+            cell_slice.load_uint(32),
+            cell_slice.load_coins() if cell_slice.load_bit() else None,
+        )
 
 
 class StorageExtraInfo(TlbScheme):
@@ -151,7 +173,11 @@ class StorageExtraInfo(TlbScheme):
     storage_extra_info$001 dict_hash:uint256 = StorageExtraInfo;
     """
 
-    def __init__(self, type_: typing.Literal["storage_extra_none", "storage_extra_info"], dict_hash: bytes = None):
+    def __init__(
+        self,
+        type_: typing.Literal["storage_extra_none", "storage_extra_info"],
+        dict_hash: bytes = None,
+    ):
         self.type_ = type_
         self.dict_hash = dict_hash
 
@@ -189,9 +215,7 @@ class StorageUsed(TlbScheme):
         self.public_cells = None  # for backward compatibility
 
     def serialize(self) -> Cell:
-        builder = Builder() \
-            .store_var_uint(self.cells, 3) \
-            .store_var_uint(self.bits, 3)
+        builder = Builder().store_var_uint(self.cells, 3).store_var_uint(self.bits, 3)
         return builder.end_cell()
 
     @classmethod
@@ -228,25 +252,29 @@ class AccountStorage(TlbScheme):
 
     def __init__(self, last_trans_lt: int, balance, state: "AccountState"):
         from .transaction import CurrencyCollection
+
         self.last_trans_lt = last_trans_lt
         self.balance: CurrencyCollection = balance
         self.state = state
 
     def serialize(self) -> Cell:
-        builder = Builder() \
-            .store_uint(self.last_trans_lt, 64) \
-            .store_cell(self.balance.serialize()) \
+        builder = (
+            Builder()
+            .store_uint(self.last_trans_lt, 64)
+            .store_cell(self.balance.serialize())
             .store_cell(self.state.serialize())
+        )
 
-        return builder.end_cell() 
+        return builder.end_cell()
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         from .block import CurrencyCollection
+
         return cls(
             cell_slice.load_uint(64),
             CurrencyCollection.deserialize(cell_slice),
-            AccountState.deserialize(cell_slice)
+            AccountState.deserialize(cell_slice),
         )
 
 
@@ -273,7 +301,7 @@ class AccountState(TlbScheme):
             builder.store_uint(1, 1)
             builder.store_cell(self.state_init.serialize())
         elif self.type_ == "account_frozen":
-            assert len(self.state_hash) == 64 # bytes are stored in hex ...
+            assert len(self.state_hash) == 64  # bytes are stored in hex ...
             builder.store_uint(1, 2)
             builder.store_bytes(bytes.fromhex(self.state_hash))
 
@@ -284,15 +312,15 @@ class AccountState(TlbScheme):
         b = cell_slice.load_bit()
         kwargs = {}
         if b:  # $1
-            type_ = 'account_active'
-            kwargs['state_init'] = StateInit.deserialize(cell_slice)
+            type_ = "account_active"
+            kwargs["state_init"] = StateInit.deserialize(cell_slice)
         else:
             b = cell_slice.load_bit()
             if b:  # $01
-                type_ = 'account_frozen'
-                kwargs['state_hash'] = cell_slice.load_bytes(32).hex()
+                type_ = "account_frozen"
+                kwargs["state_hash"] = cell_slice.load_bytes(32).hex()
             else:  # $00
-                type_ = 'account_uninit'
+                type_ = "account_uninit"
         return cls(type_, **kwargs)
 
 
@@ -303,12 +331,14 @@ class StateInit(TlbScheme):
     library:(Maybe ^Cell) = StateInit;
     """
 
-    def __init__(self,
-                 split_depth: typing.Optional[int] = None,
-                 special: typing.Optional["TickTock"] = None,
-                 code: typing.Optional[Cell] = None,
-                 data: typing.Optional[Cell] = None,
-                 library: typing.Optional[Cell] = None):
+    def __init__(
+        self,
+        split_depth: typing.Optional[int] = None,
+        special: typing.Optional["TickTock"] = None,
+        code: typing.Optional[Cell] = None,
+        data: typing.Optional[Cell] = None,
+        library: typing.Optional[Cell] = None,
+    ):
         self.split_depth = split_depth
         self.special = special
         self.code = code
@@ -317,8 +347,12 @@ class StateInit(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder.store_bit(1).store_uint(self.split_depth, 5) if self.split_depth is not None else builder.store_bit(0)
-        builder.store_bit(1).store_cell(self.special.serialize()) if self.special is not None else builder.store_bit(0)
+        builder.store_bit(1).store_uint(
+            self.split_depth, 5
+        ) if self.split_depth is not None else builder.store_bit(0)
+        builder.store_bit(1).store_cell(
+            self.special.serialize()
+        ) if self.special is not None else builder.store_bit(0)
         builder.store_maybe_ref(self.code)
         builder.store_maybe_ref(self.data)
         builder.store_maybe_ref(self.library)
@@ -339,6 +373,7 @@ class TickTock(TlbScheme):
     """
     tick_tock$_ tick:Bool tock:Bool = TickTock;
     """
+
     def __init__(self, tick: bool, tock: bool):
         self.tick = tick
         self.tock = tock
@@ -356,7 +391,14 @@ class ShardAccount(TlbScheme):
     account_descr$_ account:^Account last_trans_hash:bits256
     last_trans_lt:uint64 = ShardAccount;
     """
-    def __init__(self, account: typing.Optional[Account], last_trans_hash: bytes, last_trans_lt: int, cell: typing.Optional[Cell] = None):
+
+    def __init__(
+        self,
+        account: typing.Optional[Account],
+        last_trans_hash: bytes,
+        last_trans_lt: int,
+        cell: typing.Optional[Cell] = None,
+    ):
         self.account = account
         self.last_trans_hash = last_trans_hash
         self.last_trans_lt = last_trans_lt
@@ -371,17 +413,19 @@ class ShardAccount(TlbScheme):
         else:
             builder.store_ref(self.account.serialize())
 
-        builder.store_bytes(self.last_trans_hash) \
-               .store_uint(self.last_trans_lt, 64)
+        builder.store_bytes(self.last_trans_hash).store_uint(self.last_trans_lt, 64)
 
         return builder.end_cell()
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         cell_copy = cell_slice.copy()  # TODO optimize
-        return cls(account=Account.deserialize(cell_slice.load_ref().begin_parse()),
-                   last_trans_hash=cell_slice.load_bytes(32),
-                   last_trans_lt=cell_slice.load_uint(64), cell=cell_copy.to_cell())
+        return cls(
+            account=Account.deserialize(cell_slice.load_ref().begin_parse()),
+            last_trans_hash=cell_slice.load_bytes(32),
+            last_trans_lt=cell_slice.load_uint(64),
+            cell=cell_copy.to_cell(),
+        )
 
 
 class AccountStatus(TlbScheme):
@@ -391,17 +435,18 @@ class AccountStatus(TlbScheme):
     acc_state_active$10 = AccountStatus;
     acc_state_nonexist$11 = AccountStatus;
     """
+
     def __init__(self, type_: typing.Literal["uninitialized", "frozen", "active", "nonexist"]):
         self.type_ = type_
 
     def serialize(self) -> Cell:
-        if self.type_ == 'uninitialized':
+        if self.type_ == "uninitialized":
             return Builder().store_uint(0, 2).end_cell()
-        if self.type_ == 'frozen':
+        if self.type_ == "frozen":
             return Builder().store_uint(1, 2).end_cell()
-        if self.type_ == 'active':
+        if self.type_ == "active":
             return Builder().store_uint(2, 2).end_cell()
-        if self.type_ == 'nonexist':
+        if self.type_ == "nonexist":
             return Builder().store_uint(3, 2).end_cell()
 
     @classmethod
@@ -410,15 +455,15 @@ class AccountStatus(TlbScheme):
         if tag:
             tag2 = cell_slice.load_bit()
             if tag2:  # 11
-                return cls(type_='nonexist')
+                return cls(type_="nonexist")
             else:  # 10
-                return cls(type_='active')
+                return cls(type_="active")
         else:
             tag2 = cell_slice.load_bit()
             if tag2:  # 01
-                return cls(type_='frozen')
+                return cls(type_="frozen")
             else:  # 00
-                return cls(type_='uninitialized')
+                return cls(type_="uninitialized")
 
 
 class AccountBlock(TlbScheme):
@@ -428,10 +473,10 @@ class AccountBlock(TlbScheme):
     state_update:^(HASH_UPDATE Account)
     = AccountBlock;
     """
-    def __init__(self,
-                 account_addr: str,
-                 transactions: typing.Tuple[dict, list],
-                 state_update: HashUpdate):
+
+    def __init__(
+        self, account_addr: str, transactions: typing.Tuple[dict, list], state_update: HashUpdate
+    ):
         self.account_addr = account_addr
         self.transactions = transactions
         self.state_update = state_update
@@ -443,11 +488,16 @@ class AccountBlock(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         from .transaction import Transaction, CurrencyCollection
+
         tag = cell_slice.load_uint(4)
         if tag != 5:
-            raise AccountError(f'AccountBlock deserialization error: unknown prefix tag {tag}')
+            raise AccountError(f"AccountBlock deserialization error: unknown prefix tag {tag}")
         return cls(
             account_addr=cell_slice.load_bytes(32).hex(),
-            transactions=cell_slice.load_hashmap_aug(64, x_deserializer=lambda src: Transaction.deserialize(src.load_ref().begin_parse()), y_deserializer=CurrencyCollection.deserialize),
-            state_update=HashUpdate.deserialize(cell_slice.load_ref().begin_parse())
+            transactions=cell_slice.load_hashmap_aug(
+                64,
+                x_deserializer=lambda src: Transaction.deserialize(src.load_ref().begin_parse()),
+                y_deserializer=CurrencyCollection.deserialize,
+            ),
+            state_update=HashUpdate.deserialize(cell_slice.load_ref().begin_parse()),
         )
