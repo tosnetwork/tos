@@ -160,9 +160,10 @@ static std::string strip_api_key_param(const std::string &qs) {
 }
 
 // Convert "key1=val1&key2=val2" into a JSON object string: {"key1":"val1","key2":"val2"}
-// All values are encoded as JSON strings; numeric coercion is handled by
-// get_required_int_field / get_optional_int_field which parse from string values.
-static std::string query_string_to_json(const std::string &qs) {
+// Most legacy handlers coerce strings themselves. Explorer handlers require
+// strict JSON types, so normalize only their known URL scalar parameters here.
+// JSON request bodies never pass through this transport adapter.
+static std::string query_string_to_json(const std::string &qs, bool explorer_types) {
   if (qs.empty()) return "{}";
   td::StringBuilder sb;
   sb << "{";
@@ -186,7 +187,21 @@ static std::string query_string_to_json(const std::string &qs) {
 
     if (!first) sb << ",";
     first = false;
-    sb << td::JsonString(td::Slice(key)) << ":" << td::JsonString(td::Slice(value));
+    sb << td::JsonString(td::Slice(key)) << ":";
+    if (explorer_types && (key == "seqno" || key == "param" || key == "config_id")) {
+      auto number = td::to_integer_safe<td::int32>(td::Slice(value));
+      if (number.is_ok()) {
+        sb << number.ok();
+        continue;
+      }
+    }
+    if (explorer_types &&
+        (key == "include_pq" || key == "include_decoded" || key == "with_proof" || key == "include_experimental") &&
+        (value == "true" || value == "false")) {
+      sb << value;
+      continue;
+    }
+    sb << td::JsonString(td::Slice(value));
   }
   sb << "}";
   return sb.as_cslice().str();
@@ -524,7 +539,10 @@ void JsonRpcServer::on_request(RequestPtr request, PayloadPtr payload,
 
     if (!rest_method.empty()) {
       // Build a JSON object from query parameters, parse it, and dispatch
-      auto json_str = query_string_to_json(strip_api_key_param(query_string));
+      const bool explorer_types = rest_method == "getMasterchainBlockSignatures" ||
+                                  rest_method == "getAccountCapability" || rest_method == "getWalletInformation" ||
+                                  rest_method == "getConfigParam";
+      auto json_str = query_string_to_json(strip_api_key_param(query_string), explorer_types);
       auto buf = td::BufferSlice(json_str);
       auto json_r = td::json_decode(buf.as_slice());
       if (json_r.is_error()) {

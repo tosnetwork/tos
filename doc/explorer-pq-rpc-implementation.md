@@ -16,7 +16,7 @@ not implied by local results.
 | R4 `getConfigParam` | `include_decoded: true` adds native Config8/43/47/48 projection and explicit authenticated absence | Native wire-version/default/retirement tests; VM18 and VM16 networks |
 
 R2/R4 default calls retain their legacy builders and missing-config behavior.
-Classical signature rendering retains its existing result shape. Typed calls
+Classical signature rendering retains its existing result shape. Existing GET height selectors remain supported: the GET transport adapter converts only known canonical integer and boolean URL scalars for these four explorer methods. JSON `seqno` and new boolean flags retain their strict types; unsupported URL values stay invalid. Typed calls
 bypass the legacy height-oriented response cache. A selected block is resolved
 once; replies and optional proofs must match the complete immutable ID.
 
@@ -89,9 +89,9 @@ port ranges. Fixture private keys, databases and verbose logs stay outside Git.
 The live receipts contain public responses only. A compact evidence index is in
 `test/pq-native/data/explorer-finality/validation-index.json`.
 
-Eight sensitivity controls cover full block-ID checking, exact code identity,
+Nine sensitivity controls cover full block-ID checking, exact code identity,
 worker ownership, historical-session checking, backward-state proofs, cell-depth
-limits, the policy retirement second and output admission. Each fails at its
+limits, the policy retirement second, output admission and GET numeric normalization. Each fails at its
 intended assertion or exact backend-access trap, then passes after byte restoration. The frozen ordinary-predecessor proof and its manifest contain only
 public TL proof material; the manifest pins its source and payload digests.
 
@@ -111,7 +111,7 @@ are retained as CI artifacts for 14 days. `JSON-RPC ASan` covers the added nativ
 explorer target. The normal strict native build also covers shared executor and
 proof-validator changes. Relevant CI must pass before merge.
 
-The local portable transport selection passes all 17 entries after excluding the
+The local portable transport selection passes all 18 entries after excluding the
 three Linux-only source-address and `/proc` cases. A manual Python typecheck on
 the candidate reports 856 errors and 7,282 warnings. An independent clean
 merge-base run reproduces both counts exactly; the typechecked directories
@@ -122,3 +122,10 @@ The wrong-key transport fixture permits a client short write after header-level
 rejection, while still requiring HTTP 401, connection closure and zero body
 reservation. Requiring the client to finish a 1 MiB write after early closure
 was a timing-dependent test failure; authentication behavior is unchanged.
+
+The GET compatibility follow-up was reproduced as HTTP 422 on the reviewed
+implementation, then corrected at the URL adapter. The live runner now verifies
+GET signature proof output, account metadata and Config8 proof output on both
+VM18 and VM16 networks: 104 requests and 54 typed fragments pass. A targeted
+control disables numeric URL normalization and requires the actual GET test to
+report 422 instead of reaching bounded admission; restoring it passes.

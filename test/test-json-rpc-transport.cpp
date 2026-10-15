@@ -1140,6 +1140,39 @@ TEST(JsonRpcTransport, explorer_output_saturation_refuses_before_backend_access)
   ASSERT_TRUE(tos::reserve_explorer_response(tos::kExplorerResponseBudgetBytes) != nullptr);
 }
 
+TEST(JsonRpcTransport, explorer_get_normalizes_url_types_without_weakening_json) {
+  auto held = tos::reserve_explorer_response(tos::kExplorerResponseBudgetBytes);
+  ASSERT_TRUE(held != nullptr);
+  const std::string account = "address=0:" + std::string(64, '0');
+  const std::vector<std::pair<std::string, bool>> paths = {
+      {"/getMasterchainBlockSignatures?seqno=1", true},
+      {"/getMasterchainBlockSignatures?seqno=1&with_proof=true", true},
+      {"/getAccountCapability?" + account + "&seqno=1&include_pq=true&with_proof=false", true},
+      {"/getWalletInformation?" + account + "&seqno=1&include_pq=true&include_experimental=false", true},
+      {"/getConfigParam?param=8&seqno=1&include_decoded=true&with_proof=true", true},
+      {"/getMasterchainBlockSignatures?seqno=1.5", false},
+      {"/getMasterchainBlockSignatures?seqno=0001", false},
+      {"/getMasterchainBlockSignatures?seqno=true", false},
+      {"/getMasterchainBlockSignatures?seqno=2147483648", false},
+      {"/getMasterchainBlockSignatures?seqno=1&with_proof=1", false}};
+  for (bool with_key : {false, true}) {
+    with_json_rpc(options_for(with_key), [with_key, &paths](int port) {
+      for (const auto &path : paths) {
+        Client client(port, 0);
+        ASSERT_TRUE(client.connect());
+        auto request = "GET " + path.first + " HTTP/1.1\r\nHost: localhost\r\n";
+        if (with_key)
+          request += std::string("X-API-Key: ") + kApiKey + "\r\n";
+        ASSERT_TRUE(client.send_all(request + "\r\n"));
+        std::string status, body;
+        ASSERT_TRUE(client.read_response(5000, status, body));
+        ASSERT_EQ(status,
+                  std::string(path.second ? "HTTP/1.1 429 Too Many Requests" : "HTTP/1.1 422 Unprocessable Entity"));
+      }
+    });
+  }
+}
+
 TEST(JsonRpcTransport, explorer_named_routes_require_the_configured_api_key) {
   for (const std::string route : {"/getProofQuery", "/getMasterchainBlockSignatures", "/getAccountCapability",
                                   "/getWalletInformation", "/getConfigParam"}) {

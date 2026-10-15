@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -186,10 +187,17 @@ def main():
     (out / "addresses.json").write_text(json.dumps(addresses, indent=2) + "\n")
     records = []
 
-    def request(method, params, *, rest=False, node=0, expected=200):
+    def request(method, params, *, rest=False, get=False, node=0, expected=200):
         body = params if rest else {"jsonrpc": "2.0", "id": 7, "method": method, "params": params}
-        data = json.dumps(body).encode()
-        url = f"http://127.0.0.1:{args.rpc_port + node}/" + (method if rest else "jsonRPC")
+        data = None if get else json.dumps(body).encode()
+        url = f"http://127.0.0.1:{args.rpc_port + node}/" + (method if rest or get else "jsonRPC")
+        if get:
+            url += "?" + urllib.parse.urlencode(
+                {
+                    key: str(value).lower() if isinstance(value, bool) else value
+                    for key, value in params.items()
+                }
+            )
         try:
             with urllib.request.urlopen(
                 urllib.request.Request(
@@ -206,6 +214,7 @@ def main():
                 "method": method,
                 "params": params,
                 "rest": rest,
+                "get": get,
                 "node": node,
                 "http_status": status,
                 "response_bytes": len(raw),
@@ -274,6 +283,13 @@ def main():
             assert int(signature["verification"]["verified_weight"]) >= int(
                 signature["verification"]["quorum_threshold"]
             )
+            by_get = request(
+                "getMasterchainBlockSignatures", {"seqno": seqno, "with_proof": True}, get=True
+            )["result"]
+            assert (
+                by_get["id"] == block and by_get["signing_payload"] == signature["signing_payload"]
+            )
+            assert "proof" in by_get
             for node in range(3):
                 same = request(
                     "getMasterchainBlockSignatures", {"block_id": block}, rest=True, node=node
@@ -320,6 +336,24 @@ def main():
                 absent_account["recognition"] == "no_active_code"
                 and absent_account["public_state"] is None
             )
+            by_get = request(
+                "getAccountCapability",
+                {"address": "0:" + "0" * 64, "seqno": observation["seqno"], "include_pq": True},
+                get=True,
+            )["result"]["pq_authorization"]
+            assert by_get == absent_account
+            by_get = request(
+                "getConfigParam",
+                {
+                    "param": 8,
+                    "seqno": observation["seqno"],
+                    "include_decoded": True,
+                    "with_proof": True,
+                },
+                get=True,
+            )["result"]
+            assert by_get["decoded"]["observation"]["block_id"] == observation
+            assert "config_proof" in by_get
             for param in (8, 43, 47, 48):
                 typed = request(
                     "getConfigParam",

@@ -14,6 +14,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = (
+    (
+        "get-url-scalars",
+        "validator-engine/json-rpc-server.cpp",
+        'if (explorer_types && (key == "seqno" || key == "param" || key == "config_id"))',
+        'if (false && explorer_types && (key == "seqno" || key == "param" || key == "config_id"))',
+        "test-json-rpc-transport",
+        "+explorer_get_normalizes",
+        "HTTP/1.1 422 Unprocessable Entity != HTTP/1.1 429 Too Many Requests",
+    ),
     # The HTTP saturation fixture deliberately owns no backend. Removing the
     # admission guard must hit this exact backend-access trap, never an unrelated
     # assertion, while the restored route must return 429 without reaching it.

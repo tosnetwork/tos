@@ -2,15 +2,15 @@
   "merge_base": "018fc46b2",
   "platform": "macOS arm64; AppleClang 21 Release",
   "live_requests": {
-    "vm18": 59,
-    "vm16": 39
+    "vm18": 62,
+    "vm16": 42
   },
   "schema_fragments": {
-    "DecodedConfig": 17,
+    "DecodedConfig": 19,
     "ErrorInfo": 3,
-    "PqSignaturesResult": 8,
+    "PqSignaturesResult": 10,
     "ProofResult": 4,
-    "PublicAuthorization": 16
+    "PublicAuthorization": 18
   },
   "sensitivity_source_note": "Each receipt pins its measured source. The first five precede formatting-only normalization; the deadline, depth and output-admission controls exercise the final code. The output control uses an exact missing-backend assertion as its deliberate backend-access trap.",
   "sensitivity_controls": [
@@ -100,6 +100,17 @@
       "green_exit": 0,
       "failure_lines": [
         "\u001b[1;31m[ 0][t 2][2026-10-14 23:48:17.033027][ActorId.h:81][!explorer-query]\tCheck `!empty()` failed\u001b[0m"
+      ]
+    },
+    {
+      "case": "get-url-scalars",
+      "source": "validator-engine/json-rpc-server.cpp",
+      "source_sha256": "c559c953adbcfc7d8db733fb405f574bd7b13dfb3de1ae77919125356e074855",
+      "expected_failure": "HTTP/1.1 422 Unprocessable Entity != HTTP/1.1 429 Too Many Requests",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-15 00:12:31.885484][test-json-rpc-transport.cpp:1170]\tExpectation failed: status is not equal to std::string(path.second ? \"HTTP/1.1 429 Too Many Requests\" : \"HTTP/1.1 422 Unprocessable Entity\") (HTTP/1.1 422 Unprocessable Entity != HTTP/1.1 429 Too Many Requests)\u001b[0m"
       ]
     }
   ],
@@ -193,6 +204,48 @@
       "sha256": "fa92da13e49f901c7778f4b16e9005fdc7c4fd999864e05e316180b50aa58108",
       "bytes": 560,
       "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-v18-rpc-evidence.json",
+      "sha256": "df7c134d4d61f032f280ce5ec8556c126bed35c8b2f5846cb0251e4da29a4fc4",
+      "bytes": 307046,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-v16-rpc-evidence.json",
+      "sha256": "5d543426bce5e45341b3edb169842704a987b456294a6313f5f82171e4637794",
+      "bytes": 136877,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-url-controls.json",
+      "sha256": "02e4b94ebb09b5b553c4b0ae87ca9b650118cb253cbecd854f7545c9791bf46f",
+      "bytes": 909,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-regression-before-fix.log",
+      "sha256": "7a7aa21811d0811049d9ffd489c1cc76363ee8f1b754ee293f2367fb1ff7acb2",
+      "bytes": 4783,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-regression-after-fix.log",
+      "sha256": "e132f5867e89b02834bbb90ccb240ca0d956fc7140b189093f46f087b280667c",
+      "bytes": 36553,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-final-portable-http.log",
+      "sha256": "f670395911c1d6a3303eddfbe3b5133066a7a76ce7b3fe41213577220370ef30",
+      "bytes": 390041,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-final-14-ctest.log",
+      "sha256": "78208d128c98282d12424d736cfe99dddd5991ac7588f74e84828e4f031f47f0",
+      "bytes": 2003,
+      "retention": "Retained local public artifact through 2026-11-14."
     }
   ],
   "linux_analysis": "pending; macOS attempt refused after 10 successful positive controls due to Linux-only headers",
@@ -203,9 +256,9 @@
     8
   ],
   "transport_tests_passed": {
-    "explorer": 4,
+    "explorer": 5,
     "proof_relay": 1,
-    "portable_suite": 17
+    "portable_suite": 18
   },
   "wire_schema_checks": 130,
   "wire_schema_sensitivity_controls": 8,
@@ -225,5 +278,23 @@
   },
   "native_explorer_cases": 8,
   "transport_fixture_correction": "A previous full selection observed an early-close client short write in the existing wrong-key fixture. Client short writes are now allowed; 401, connection closure and zero body reservation remain required. The final 17-entry portable selection passes.",
-  "latest_changed_native_entries_passed": 2
+  "latest_changed_native_entries_passed": 14,
+  "get_compatibility_correction": {
+    "reviewed_commit": "64ca29b4ce34ee8a93d58c09f2ae8fa7f81bcf2f",
+    "review": "https://github.com/tosnetwork/tos/pull/207#issuecomment-6181275473",
+    "before": "Actual GET seqno=1 returned 422 before output admission.",
+    "after": "Known canonical numeric/boolean URL scalars normalized only at the four explorer GET adapters. JSON height selectors and opt-in flags stay strict.",
+    "http_fixture": "Ten GET cases with API-key authentication on/off; five valid cases reach the 429 output-admission gate and five malformed cases remain 422.",
+    "live_get_methods": [
+      "getMasterchainBlockSignatures",
+      "getAccountCapability",
+      "getConfigParam"
+    ],
+    "source_sha256": {
+      "validator-engine/json-rpc-server.cpp": "c559c953adbcfc7d8db733fb405f574bd7b13dfb3de1ae77919125356e074855",
+      "test/test-json-rpc-transport.cpp": "151b47174d2293f4f014bf3fa36698d1edacb89bfd1ea76e5e42c621ef472edb",
+      "scripts/test-explorer-pq-rpc.py": "8fc1040c6dc39d2fcc3eab1cf7456cbff7eedbe3898ecc7a1875012c85c4c59c",
+      "scripts/test-explorer-pq-controls.py": "33863945c9b018dedd964d7ef18d9d827b28663c2a8df57c944e682fc93d3329"
+    }
+  }
 }
