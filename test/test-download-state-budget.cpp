@@ -99,17 +99,20 @@ constexpr td::uint64 kGiB = 1ULL << 30;
 
 using tos::validator::fullnode::BudgetedBufferSlice;
 using tos::validator::fullnode::BudgetedStateFile;
-using tos::validator::fullnode::DownloadedPersistentState;
-using tos::validator::fullnode::PersistentStateDownloadReservation;
-using tos::validator::fullnode::PersistentStateProcessingReservation;
-using tos::validator::fullnode::PersistentStateSpoolReservation;
+using tos::validator::fullnode::check_persistent_state_spool_free_space;
 using tos::validator::fullnode::cleanup_persistent_state_tempfiles;
+using tos::validator::fullnode::DownloadedPersistentState;
 using tos::validator::fullnode::mmap_persistent_state_file;
 using tos::validator::fullnode::persistent_state_heap_threshold_bytes;
 using tos::validator::fullnode::persistent_state_max_file_bytes;
 using tos::validator::fullnode::persistent_state_max_spool_bytes_per_import;
+using tos::validator::fullnode::persistent_state_spool_free_bytes;
+using tos::validator::fullnode::persistent_state_spool_free_space_margin;
 using tos::validator::fullnode::persistent_state_total_download_budget_bytes;
 using tos::validator::fullnode::persistent_state_total_spool_budget_bytes;
+using tos::validator::fullnode::PersistentStateDownloadReservation;
+using tos::validator::fullnode::PersistentStateProcessingReservation;
+using tos::validator::fullnode::PersistentStateSpoolReservation;
 using tos::validator::fullnode::set_persistent_state_tempfile_dir;
 using tos::validator::fullnode::try_reserve_persistent_state_download_memory;
 using tos::validator::fullnode::validate_persistent_state_size;
@@ -3991,6 +3994,94 @@ void test_streaming_cell_spans_validated_before_read() {
   std::printf("  PASSED\n");
 }
 
+// The construction pass must gate its own reads: a cell that was valid during
+// the parent-reference pass and changed on disk before construction must be
+// rejected by the descriptor check, not read as an index-derived span. The
+// fixture exceeds the reader scratch, so the backward construction pass
+// refills the window holding the root instead of reusing parent-pass bytes.
+void test_streaming_construction_pass_rejects_changed_cell() {
+  std::printf("=== test_streaming_construction_pass_rejects_changed_cell ===\n");
+  auto tmp_dir = std::string("/tmp/tos-test-construction-pass-") + std::to_string(::getpid());
+  td::mkpath(tmp_dir + "/", 0700).ensure();
+  auto root = build_synthetic_cell_tree(200000);
+  auto bytes = vm::std_boc_serialize(root, vm::BagOfCells::WithIndex).move_as_ok();
+  EXPECT_TRUE(bytes.size() > 2 * vm::kStreamingBocScratchBytes);
+  vm::BagOfCells::Info info;
+  EXPECT_TRUE(info.parse_serialized_header(bytes.as_slice()) > 0);
+  // The root is cell 0 at the start of the data section: two references and
+  // a four-byte marker. Declaring three data bytes keeps the descriptor
+  // well-formed and makes it disagree with the indexed span.
+  const auto root_d2 = static_cast<td::uint64>(info.data_offset + 1);
+  EXPECT_EQ(static_cast<unsigned char>(bytes.as_slice()[static_cast<std::size_t>(root_d2)]), 8);
+  auto path = tmp_dir + "/changed.boc";
+  auto fd = td::FileFd::open(path, td::FileFd::Write | td::FileFd::Read | td::FileFd::Create | td::FileFd::Truncate)
+                .move_as_ok();
+  fd.write_all(bytes.as_slice()).ensure();
+
+  vm::StreamingBocImportStats stats;
+  vm::StreamingBocImportOptions opts;
+  opts.stats = &stats;
+  const auto baseline = td::BufferAllocator::get_buffer_mem();
+  td::uint64 peak = baseline;
+  bool changed = false;
+  td::uint64 parent_pass_reads = 0;
+  opts.is_cancelled = [&] {
+    peak = std::max<td::uint64>(peak, td::BufferAllocator::get_buffer_mem());
+    if (!changed && stats.cell_read_calls == static_cast<td::uint64>(info.cell_count)) {
+      parent_pass_reads = stats.cell_read_calls;
+      const char d2 = 6;
+      EXPECT_EQ(fd.pwrite(td::Slice(&d2, 1), static_cast<td::int64>(root_d2)).move_as_ok(), 1u);
+      changed = true;
+    }
+    return false;
+  };
+  tos::validator::fullnode::CellDbStreamingSink sink;
+  auto result = vm::std_boc_deserialize_from_file_bounded(fd, bytes.size(), opts, &sink);
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(parent_pass_reads, static_cast<td::uint64>(info.cell_count));
+  EXPECT_TRUE(result.is_error());
+  EXPECT_TRUE(result.error().to_string().find("cell span does not match descriptor") != std::string::npos);
+  // Every cell but the changed root was admitted again by the construction pass.
+  EXPECT_EQ(stats.cell_read_calls, 2 * static_cast<td::uint64>(info.cell_count) - 1);
+  EXPECT_TRUE(sink.begun());
+  EXPECT_TRUE(sink.aborted());
+  EXPECT_FALSE(sink.finished());
+  EXPECT_EQ(stats.peak_scratch_bytes, vm::kStreamingBocScratchBytes);
+  EXPECT_TRUE(peak - baseline <= vm::kStreamingBocScratchBytes + 4096);
+  EXPECT_EQ(td::BufferAllocator::get_buffer_mem(), baseline);
+  fd.close();
+  td::rmrf(tmp_dir).ensure();
+  std::printf("  cells=%d bytes=%zu PASSED\n", info.cell_count, bytes.size());
+}
+
+// The spool free-space gate admits exactly reservation + margin and names all
+// three quantities when it refuses.
+void test_spool_free_space_boundary() {
+  std::printf("=== test_spool_free_space_boundary ===\n");
+  constexpr td::uint64 kGiB = 1ULL << 30;
+  EXPECT_EQ(persistent_state_spool_free_space_margin(0), kGiB);
+  EXPECT_EQ(persistent_state_spool_free_space_margin(20 * kGiB), kGiB);
+  EXPECT_EQ(persistent_state_spool_free_space_margin(96 * kGiB), 96 * kGiB / 20);
+  const td::uint64 reservation = 96 * kGiB;
+  const td::uint64 needed = reservation + 96 * kGiB / 20;
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(needed);
+  EXPECT_TRUE(check_persistent_state_spool_free_space("/unused", reservation).is_ok());
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(needed - 1);
+  auto refused = check_persistent_state_spool_free_space("/unused", reservation);
+  EXPECT_TRUE(refused.is_error());
+  auto message = refused.error().to_string();
+  EXPECT_TRUE(message.find(PSTRING() << "free=" << (needed - 1)) != std::string::npos);
+  EXPECT_TRUE(message.find(PSTRING() << "reservation=" << reservation) != std::string::npos);
+  EXPECT_TRUE(message.find(PSTRING() << "margin=" << (96 * kGiB / 20)) != std::string::npos);
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(std::numeric_limits<td::uint64>::max());
+  EXPECT_TRUE(check_persistent_state_spool_free_space("/unused", std::numeric_limits<td::uint64>::max()).is_error());
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(std::nullopt);
+  // The real query answers for an existing directory and fails for a missing one.
+  EXPECT_TRUE(persistent_state_spool_free_bytes("/tmp").is_ok());
+  EXPECT_TRUE(persistent_state_spool_free_bytes("/nonexistent-spool-dir-for-test").is_error());
+  std::printf("  PASSED\n");
+}
+
 void test_streaming_allocation_failure_aborts_sink() {
   std::printf("=== test_streaming_allocation_failure_aborts_sink ===\n");
   auto tmp_dir = std::string("/tmp/tos-test-import-allocation-") + std::to_string(::getpid());
@@ -4059,6 +4150,8 @@ int main(int argc, char **argv) {
   test_streaming_reader_hard_cap_and_offsets();
   test_streaming_reader_failed_refill_retires_window();
   test_streaming_cell_spans_validated_before_read();
+  test_streaming_construction_pass_rejects_changed_cell();
+  test_spool_free_space_boundary();
   test_streaming_allocation_failure_aborts_sink();
   if (argc == 2 && std::string(argv[1]) == "--cell-bounds") {
     return 0;

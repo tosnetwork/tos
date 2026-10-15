@@ -16,31 +16,32 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "validator/state-download-buffer.h"
+#include <algorithm>
+#include <atomic>
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
 
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "td/utils/format.h"
 #include "td/utils/logging.h"
+#include "td/utils/memory-tracker.h"
 #include "td/utils/port/Clocks.h"
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
-#include "td/utils/memory-tracker.h"
 #include "td/utils/port/path.h"
+#include "validator/state-download-buffer.h"
 #include "vm/cells/CellTraits.h"
 #include "vm/cells/DataCell.h"
 #include "vm/db/CellDbExtCell.h"
 #include "vm/db/DynamicBagOfCellsDb.h"
-
-#include <atomic>
-#include <cstdlib>
-#include <string_view>
-#include <cerrno>
-#include <cstring>
-#include <limits>
-#include <mutex>
-#include <string>
-#include <utility>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -48,6 +49,7 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif
@@ -132,9 +134,9 @@ constexpr td::uint64 kHeapThreshold = 64ULL << 20;  // 64 MiB
 //   max_resident_bytes_per_parse     256 MiB
 //   max_returned_dag_bytes_per_parse 512 MiB (InMemory parse path only)
 //   max_total_cell_bytes_per_parse   16 GiB (true-streaming envelope)
-//   max_spool_bytes_per_import       48 GiB (3x 16 GiB file reservation)
-//   max_total_spool_bytes            96 GiB
-//   spool_reservation_ratio_percent  300
+//   max_spool_bytes_per_import       96 GiB (6x 16 GiB file reservation)
+//   max_total_spool_bytes            192 GiB (two such imports)
+//   spool_reservation_ratio_percent  600
 std::mutex g_budget_config_mu;
 PersistentStateBudgetConfig g_budget_config;
 
@@ -695,6 +697,55 @@ bool try_reserve_persistent_state_spool_disk(td::uint64 size) {
       return true;
     }
   }
+}
+
+namespace {
+std::mutex g_spool_free_bytes_override_mu;
+std::optional<td::uint64> g_spool_free_bytes_override;
+}  // namespace
+
+td::Result<td::uint64> persistent_state_spool_free_bytes(const std::string &dir) {
+  {
+    std::lock_guard<std::mutex> g(g_spool_free_bytes_override_mu);
+    if (g_spool_free_bytes_override.has_value()) {
+      return g_spool_free_bytes_override.value();
+    }
+  }
+#if defined(_WIN32)
+  return td::Status::Error(PSTRING() << "persistent-state spool free-space query is not supported: " << dir);
+#else
+  struct statvfs st{};
+  if (::statvfs(dir.c_str(), &st) != 0) {
+    return td::Status::PosixError(errno, PSLICE() << "statvfs(" << dir << ") failed");
+  }
+  const auto block = static_cast<td::uint64>(st.f_frsize);
+  const auto available = static_cast<td::uint64>(st.f_bavail);
+  if (block != 0 && available > std::numeric_limits<td::uint64>::max() / block) {
+    return std::numeric_limits<td::uint64>::max();
+  }
+  return available * block;
+#endif
+}
+
+td::uint64 persistent_state_spool_free_space_margin(td::uint64 reservation) {
+  // The reservation bounds only the two spool files. The margin is headroom
+  // for the node's other writers on that filesystem (blocks, logs, RocksDB
+  // flushes) so the spool alone cannot take it to zero: 1 GiB for small
+  // imports, 5% for large ones. It does not budget the CellDb copy of the
+  // imported cells, which is written while the spool drains.
+  constexpr td::uint64 kMinMargin = 1ULL << 30;
+  return std::max(kMinMargin, reservation / 20);
+}
+
+td::Status check_persistent_state_spool_free_space(const std::string &dir, td::uint64 reservation) {
+  TRY_RESULT(free_bytes, persistent_state_spool_free_bytes(dir));
+  const auto margin = persistent_state_spool_free_space_margin(reservation);
+  const bool overflow = reservation > std::numeric_limits<td::uint64>::max() - margin;
+  if (overflow || free_bytes < reservation + margin) {
+    return td::Status::Error(PSTRING() << "insufficient free space for streaming import spool in " << dir << ": free="
+                                       << free_bytes << " reservation=" << reservation << " margin=" << margin);
+  }
+  return td::Status::OK();
 }
 
 td::Status validate_persistent_state_size(td::uint64 size) {
@@ -1268,6 +1319,11 @@ td::uint64 test_get_persistent_state_spool_bytes() {
 
 bool test_try_reserve_persistent_state_spool_disk(td::uint64 size) {
   return try_reserve_persistent_state_spool_disk(size);
+}
+
+void test_set_spool_free_bytes_override(std::optional<td::uint64> free_bytes) {
+  std::lock_guard<std::mutex> g(g_spool_free_bytes_override_mu);
+  g_spool_free_bytes_override = free_bytes;
 }
 
 }  // namespace testing

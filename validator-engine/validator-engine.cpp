@@ -7586,7 +7586,7 @@ int main(int argc, char *argv[]) {
                        });
   p.add_checked_option('\0', "persistent-state-spool-per-import-cap",
                        "max temporary CellDb streaming-import spool bytes reserved per import "
-                       "(default 48 GiB)",
+                       "(default 96 GiB)",
                        [&](td::Slice arg) -> td::Status {
                          td::uint64 v = 0;
                          TRY_STATUS(parse_budget_bytes(arg, v));
@@ -7596,7 +7596,7 @@ int main(int argc, char *argv[]) {
                        });
   p.add_checked_option('\0', "persistent-state-spool-total-cap",
                        "process-wide temporary CellDb streaming-import spool budget in bytes "
-                       "(default 96 GiB)",
+                       "(default 192 GiB)",
                        [&](td::Slice arg) -> td::Status {
                          td::uint64 v = 0;
                          TRY_STATUS(parse_budget_bytes(arg, v));
@@ -7606,7 +7606,7 @@ int main(int argc, char *argv[]) {
                        });
   p.add_checked_option('\0', "persistent-state-spool-reservation-ratio-percent",
                        "percentage of the source persistent-state file size reserved for import spool "
-                       "plus rollback manifest (default 300)",
+                       "plus rollback manifest (default 600)",
                        [&](td::Slice arg) -> td::Status {
                          TRY_RESULT(v, td::to_integer_safe<td::uint32>(arg));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
