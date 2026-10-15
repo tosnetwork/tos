@@ -50,6 +50,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -85,6 +86,12 @@ namespace validator {
 class CellDbStreamingWriter;
 
 namespace fullnode {
+
+// Both import-spool and rollback-manifest records contain a cell hash and
+// a uint32 payload length before the CellStorer value. Share the format size
+// with the amplification regression so a format change changes its measurement.
+inline constexpr td::uint32 kPersistentStateSpoolRecordHeaderBytes =
+    static_cast<td::uint32>(vm::Cell::hash_bytes + sizeof(td::uint32));
 
 // Forward declaration of the platform-specific mmap holder. Owns the file
 // descriptor, the page-aligned mapped pointer, and the data offset within
@@ -336,15 +343,20 @@ struct PersistentStateBudgetConfig {
   // further at min(file.size, this value) so a small state cannot declare
   // more cell bytes than its envelope contains.
   td::uint64 max_total_cell_bytes_per_parse = 16ULL << 30;
-  // Phase B import-spool budget. A 16 GiB state can transiently need an
-  // import spool plus a rollback manifest with CellDb serialization
-  // overhead. Reserve a configurable ratio of the source file size
-  // (default 3x) and cap it by max_spool_bytes_per_import; the global
-  // default allows two such imports across the process before failing
-  // closed.
-  td::uint64 max_spool_bytes_per_import = 48ULL << 30;
-  td::uint64 max_total_spool_bytes = 96ULL << 30;
-  td::uint32 spool_reservation_ratio_percent = 300;
+  // Phase B import-spool budget. An OnDisk import writes two temporary
+  // files, the import spool and the rollback manifest. Each stores, per
+  // cell, a 36-byte record header plus the full CellDb value, whose child
+  // references carry a 32-byte hash and a depth where the BoC stores a
+  // 3-4 byte index. Measured spool/BoC ratios: 394% for a wide library
+  // DAG of 120-byte leaves, 441% for an account-like 256-bit dictionary,
+  // 548% for the PQ genesis state. The reservation is a ceiling on bytes
+  // written to those files, not a pre-allocation; 600% covers every
+  // measured shape. max_spool_bytes_per_import keeps a 16 GiB OnDisk state
+  // (the design target) importable at that ratio, and the process-wide
+  // default allows two such imports before failing closed.
+  td::uint64 max_spool_bytes_per_import = 96ULL << 30;
+  td::uint64 max_total_spool_bytes = 192ULL << 30;
+  td::uint32 spool_reservation_ratio_percent = 600;
   // H-02/tos30 long-term feature flag. When enabled, OnDisk catch-up may
   // parse a state whose `file.size` exceeds
   // max_returned_dag_bytes_per_parse because the actor-local importer no
@@ -406,6 +418,27 @@ td::uint64 persistent_state_total_download_budget_bytes();
 // Hard upper bounds for temporary CellDb streaming-import spool files.
 td::uint64 persistent_state_max_spool_bytes_per_import();
 td::uint64 persistent_state_total_spool_budget_bytes();
+
+// Bytes an unprivileged writer may still allocate on the filesystem that
+// holds `dir`.
+td::Result<td::uint64> persistent_state_spool_free_bytes(const std::string &dir);
+
+// Headroom kept beyond what an import writes: max(1 GiB, 5% of the
+// reservation).
+td::uint64 persistent_state_spool_free_space_margin(td::uint64 reservation);
+
+// Upper bound on the CellDb bytes an import adds while its spool drains:
+// half the spool reservation (derivation at the definition).
+td::uint64 persistent_state_import_celldb_growth_bytes(td::uint64 reservation);
+
+// Free space an import needs at peak: spool reservation + CellDb growth +
+// margin. Fails when the sum overflows.
+td::Result<td::uint64> persistent_state_import_required_free_bytes(td::uint64 reservation);
+
+// Refuse a streaming import whose peak writes could fill the filesystem
+// holding `dir`: OK only when free space covers the requirement above. The
+// error names the free space, the requirement and its three terms.
+td::Status check_persistent_state_spool_free_space(const std::string &dir, td::uint64 reservation);
 
 // Map an on-disk persistent-state tempfile (the file referenced by the
 // BudgetedStateFile produced by the streaming downloader) into the
@@ -726,6 +759,11 @@ bool test_try_reserve_persistent_state_processing_memory(td::uint64 size);
 // Test-only handle to the global persistent-state spool disk budget.
 td::uint64 test_get_persistent_state_spool_bytes();
 bool test_try_reserve_persistent_state_spool_disk(td::uint64 size);
+
+// Test-only replacement for the filesystem free-space query used by
+// check_persistent_state_spool_free_space. std::nullopt restores the real
+// query.
+void test_set_spool_free_bytes_override(std::optional<td::uint64> free_bytes);
 
 }  // namespace testing
 

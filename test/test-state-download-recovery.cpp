@@ -293,6 +293,9 @@ struct Evidence {
   std::string last_file;
   std::string archive_file;
   bool interrupt{false};
+  std::string expected_rejection{"root hash mismatch"};
+  // Free bytes the retry's import sees; std::nullopt queries the filesystem.
+  std::optional<td::uint64> retry_free_bytes;
   td::uint64 size{0};
   td::Bits256 wrong_root;
   td::Bits256 good_root;
@@ -340,6 +343,7 @@ class Manager final : public ValidatorManagerImpl {
       require(evidence_->last_file.empty() || !std::filesystem::exists(evidence_->last_file),
               "failed download file retained");
       require(evidence_->interrupt || evidence_->rejected.load() == 1, "retry before root rejection");
+      budget::testing::test_set_spool_free_bytes_override(evidence_->retry_free_bytes);
       evidence_->cleaned.store(true);
     }
     if (attempt == 1) {
@@ -399,8 +403,8 @@ class Manager final : public ValidatorManagerImpl {
     auto P = td::PromiseCreator::lambda(
         [evidence, promise = std::move(promise)](td::Result<PersistentStateImportResult> result) mutable {
           if (result.is_error()) {
-            require(result.error().to_string().find("root hash mismatch") != std::string::npos,
-                    "specific root rejection: " + result.error().to_string());
+            require(result.error().to_string().find(evidence->expected_rejection) != std::string::npos,
+                    "specific import rejection: " + result.error().to_string());
             evidence->rejected.fetch_add(1);
           }
           promise.set_result(std::move(result));
@@ -520,20 +524,53 @@ void verify_reopened(const std::string& path, const std::array<Fixture, 2>& fixt
   std::fflush(stdout);
 }
 
-void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, bool interrupt) {
+// Interrupted: the first source stops mid-download. RootRejected: the first
+// source serves a valid state with the wrong root. SpaceRefused: both sources
+// serve the trusted state, and the first import sees too little free space.
+enum class Case { Interrupted, RootRejected, SpaceRefused };
+
+const char* case_name(Case kind) {
+  switch (kind) {
+    case Case::Interrupted:
+      return "interrupted-download";
+    case Case::RootRejected:
+      return "root-rejected";
+    case Case::SpaceRefused:
+      return "space-refused";
+  }
+  return "unknown";
+}
+
+void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, Case kind) {
   const auto pid = ::getpid();
-  auto case_root = root + (interrupt ? "/interrupted" : "/rejected");
+  const bool interrupt = kind == Case::Interrupted;
+  const bool space_refused = kind == Case::SpaceRefused;
+  auto case_root = root + "/" + case_name(kind);
   auto tempfile_root = case_root + "/temp";
   auto evidence = std::make_shared<Evidence>();
   evidence->tempfile_dir = tempfile_root + "/persistent-state";
   evidence->archive_file = case_root + "/accepted.boc";
   evidence->interrupt = interrupt;
+  if (space_refused) {
+    evidence->expected_rejection = "insufficient free space for streaming import spool";
+  }
   evidence->size = fixture[1].size;
   evidence->wrong_root = fixture[0].root_hash;
   evidence->good_root = fixture[1].root_hash;
   must(td::mkpath(evidence->tempfile_dir + "/", 0700), "temporary directory");
   budget::set_persistent_state_tempfile_dir(tempfile_root);
   require_budgets_released();
+  if (space_refused) {
+    // One byte short of the peak requirement (spool reservation, CellDb copy
+    // and margin) for the first import; exactly the requirement for the retry.
+    const auto config = budget::persistent_state_budget_config();
+    const auto reservation = (fixture[1].size * config.spool_reservation_ratio_percent + 99) / 100;
+    const auto required = must(budget::persistent_state_import_required_free_bytes(reservation), "space requirement");
+    require(required > reservation + budget::persistent_state_spool_free_space_margin(reservation),
+            "requirement covers the CellDb copy");
+    evidence->retry_free_bytes = required;
+    budget::testing::test_set_spool_free_bytes_override(required - 1);
+  }
   td::actor::Scheduler scheduler({2});
   auto wait = [&](const auto& condition, const char* label) {
     auto deadline = td::Timestamp::in(180);
@@ -561,7 +598,7 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, bo
   });
   for (std::size_t i = 0; i < 2; ++i) {
     peers[i] = std::make_shared<Peer>();
-    peers[i]->fixture = fixture[i];
+    peers[i]->fixture = space_refused ? fixture[1] : fixture[i];
     peers[i]->interrupt = interrupt && i == 0;
     auto private_key = PrivateKey{privkeys::Ed25519::random()};
     auto public_id = adnl::AdnlNodeIdFull{private_key.compute_public_key()};
@@ -652,7 +689,7 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, bo
             };
             const auto inflight = value("streaming_import.inflight");
             idle.store(value("streaming_import.committed") == "1" &&
-                       value("streaming_import.failed") == (interrupt ? "0" : "1") &&
+                       value("streaming_import.failed") == (kind == Case::RootRejected ? "1" : "0") &&
                        value("streaming_import.gc_pause_count") == "0" &&
                        value("streaming_import.rollback_queue_size") == "0" &&
                        (inflight == "0" || inflight == "false"));
@@ -662,7 +699,12 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, bo
     wait([&] { return sampled.load(); }, "lifecycle stats sample");
     scheduler.run(0.05);
   }
-  for (int i = 0; i < evidence->imports.load(); ++i) {
+  if (space_refused) {
+    // The refused import never opened the file for parsing.
+    const auto& refused = evidence->reads[0];
+    require(refused.cell_read_calls == 0 && refused.peak_scratch_bytes == 0, "refused import parsed cells");
+  }
+  for (int i = space_refused ? 1 : 0; i < evidence->imports.load(); ++i) {
     const auto& read = evidence->reads[static_cast<std::size_t>(i)];
     require(read.cell_read_calls > 0 && read.peak_scratch_bytes == vm::kStreamingBocScratchBytes,
             "bounded native importer scratch and nonzero work");
@@ -671,8 +713,8 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, bo
   std::printf(
       "RECOVERY case=%s attempts=2 imports=%d rejected=%d canonical_stores=1 pid=%ld scratch_bytes=%zu budgets=0 "
       "tempfiles=0 gc_pause=0 rollback_queue=0\n",
-      interrupt ? "interrupted-download" : "root-rejected", evidence->imports.load(), evidence->rejected.load(),
-      static_cast<long>(pid), vm::kStreamingBocScratchBytes);
+      case_name(kind), evidence->imports.load(), evidence->rejected.load(), static_cast<long>(pid),
+      vm::kStreamingBocScratchBytes);
   std::fflush(stdout);
   outcome.reset();
   scheduler.run_in_context([&] {
@@ -691,6 +733,7 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, bo
     td::actor::SchedulerContext::get().stop();
   });
   scheduler.run();
+  budget::testing::test_set_spool_free_bytes_override(std::nullopt);
   require_budgets_released();
 }
 }  // namespace
@@ -698,31 +741,42 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, bo
 int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(verbosity_ERROR);
   require(argc >= 2 && argc <= 3,
-          "usage: test-state-download-recovery genesis.boc [--root-recovery|--download-recovery]");
-  require(argc == 2 || std::string(argv[2]) == "--root-recovery" || std::string(argv[2]) == "--download-recovery",
+          "usage: test-state-download-recovery genesis.boc [--root-recovery|--download-recovery|--space-recovery]");
+  require(argc == 2 || std::string(argv[2]) == "--root-recovery" || std::string(argv[2]) == "--download-recovery" ||
+              std::string(argv[2]) == "--space-recovery",
           "unknown case selector");
   auto root = std::string("/tmp/tos-state-download-recovery-") + std::to_string(::getpid());
   must(td::mkpath(root + "/", 0700), "test root");
   auto config = budget::persistent_state_budget_config();
   require(!config.enable_true_cell_db_streaming_import && config.max_returned_dag_bytes_per_parse == (512ULL << 20),
           "unmodified download/import defaults");
-  // This deliberately wide library has many tiny branch cells. Its CellDb
-  // spool plus rollback serialization exceeds the default source-size ratio.
-  // Supply an explicit test configuration for disk amplification while keeping
-  // the normal OnDisk, returned-DAG and absolute disk/memory caps unchanged.
-  config.spool_reservation_ratio_percent = 500;
-  must(budget::configure_persistent_state_budgets(config), "fixture disk amplification configuration");
-  std::printf("CONFIG spool_ratio_percent=500 true_streaming=0 returned_dag_limit=%llu\n",
-              static_cast<unsigned long long>(config.max_returned_dag_bytes_per_parse));
+  // Every case runs on the built-in budget defaults; nothing is configured.
+  const budget::PersistentStateBudgetConfig defaults{};
+  require(config.spool_reservation_ratio_percent == defaults.spool_reservation_ratio_percent &&
+              config.max_spool_bytes_per_import == defaults.max_spool_bytes_per_import &&
+              config.max_total_spool_bytes == defaults.max_total_spool_bytes,
+          "unmodified spool defaults");
+  std::printf(
+      "CONFIG spool_ratio_percent=%u spool_per_import=%llu spool_total=%llu true_streaming=%d "
+      "returned_dag_limit=%llu ondisk_threshold=%llu\n",
+      config.spool_reservation_ratio_percent, static_cast<unsigned long long>(config.max_spool_bytes_per_import),
+      static_cast<unsigned long long>(config.max_total_spool_bytes),
+      config.enable_true_cell_db_streaming_import ? 1 : 0,
+      static_cast<unsigned long long>(config.max_returned_dag_bytes_per_parse),
+      static_cast<unsigned long long>(budget::persistent_state_heap_threshold_bytes()));
   std::fflush(stdout);
   auto input = fixtures(root, argv[1]);
   if (argc == 2 || std::string(argv[2]) == "--download-recovery") {
-    run_case(root, input, true);
-    verify_reopened(root + "/interrupted/cells/", input);
+    run_case(root, input, Case::Interrupted);
+    verify_reopened(root + "/interrupted-download/cells/", input);
   }
   if (argc == 2 || std::string(argv[2]) == "--root-recovery") {
-    run_case(root, input, false);
-    verify_reopened(root + "/rejected/cells/", input);
+    run_case(root, input, Case::RootRejected);
+    verify_reopened(root + "/root-rejected/cells/", input);
+  }
+  if (argc == 2 || std::string(argv[2]) == "--space-recovery") {
+    run_case(root, input, Case::SpaceRefused);
+    verify_reopened(root + "/space-refused/cells/", input);
   }
   must(td::rmrf(root), "test cleanup");
   std::puts("STATE_DOWNLOAD_RECOVERY_PASSED");

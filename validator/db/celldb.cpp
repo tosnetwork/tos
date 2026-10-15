@@ -1783,8 +1783,7 @@ CellDbIn::~CellDbIn() {
 
 namespace {
 
-constexpr td::uint32 kStreamingImportSpoolRecordHeaderBytes =
-    static_cast<td::uint32>(vm::Cell::hash_bytes + sizeof(td::uint32));
+constexpr td::uint32 kStreamingImportSpoolRecordHeaderBytes = fullnode::kPersistentStateSpoolRecordHeaderBytes;
 constexpr td::uint32 kMaxStreamingImportSerializedCellBytes = 1U << 20;
 constexpr const char* kStreamingImportRollbackManifestMarker = ".celldb-rollback.";
 constexpr const char* kStreamingImportPartialSuffix = ".partial";
@@ -2654,6 +2653,21 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
     return;
   }
   auto spool_reservation_bytes = r_spool_reservation_bytes.move_as_ok();
+  // The spool files are created next to the source file. Refuse before any
+  // budget, spool file or GC pause exists, so the downloader's ordinary
+  // failure path retries without anything to clean up.
+  {
+    auto spool_dir = td::PathView{td::Slice(request.tempfile_path)}.parent_dir_noslash().str();
+    if (spool_dir.empty()) {
+      spool_dir = request.tempfile_path.front() == '/' ? "/" : ".";
+    }
+    auto space = fullnode::check_persistent_state_spool_free_space(spool_dir, spool_reservation_bytes);
+    if (space.is_error()) {
+      LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: refusing import: " << space;
+      promise.set_error(space.move_as_error_prefix("CellDbIn::import_persistent_state_streaming: "));
+      return;
+    }
+  }
   if (!fullnode::try_reserve_persistent_state_spool_disk(spool_reservation_bytes)) {
     auto cfg = fullnode::persistent_state_budget_config();
     promise.set_error(td::Status::Error(

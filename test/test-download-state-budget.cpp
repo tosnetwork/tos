@@ -35,6 +35,7 @@
 // before the manager/downstream had finished holding the buffer alive.
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,8 +47,10 @@
 #include <utility>
 #include <vector>
 
+#include "common/checksum.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/utils/Timer.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/misc.h"
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
@@ -59,6 +62,8 @@
 #include "vm/boc.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellBuilder.h"
+#include "vm/db/CellStorage.h"
+#include "vm/dict.h"
 
 #if !defined(_WIN32)
 #include <sys/time.h>
@@ -99,17 +104,22 @@ constexpr td::uint64 kGiB = 1ULL << 30;
 
 using tos::validator::fullnode::BudgetedBufferSlice;
 using tos::validator::fullnode::BudgetedStateFile;
+using tos::validator::fullnode::check_persistent_state_spool_free_space;
+using tos::validator::fullnode::cleanup_persistent_state_tempfiles;
 using tos::validator::fullnode::DownloadedPersistentState;
+using tos::validator::fullnode::mmap_persistent_state_file;
+using tos::validator::fullnode::persistent_state_heap_threshold_bytes;
+using tos::validator::fullnode::persistent_state_import_celldb_growth_bytes;
+using tos::validator::fullnode::persistent_state_import_required_free_bytes;
+using tos::validator::fullnode::persistent_state_max_file_bytes;
+using tos::validator::fullnode::persistent_state_max_spool_bytes_per_import;
+using tos::validator::fullnode::persistent_state_spool_free_bytes;
+using tos::validator::fullnode::persistent_state_spool_free_space_margin;
+using tos::validator::fullnode::persistent_state_total_download_budget_bytes;
+using tos::validator::fullnode::persistent_state_total_spool_budget_bytes;
 using tos::validator::fullnode::PersistentStateDownloadReservation;
 using tos::validator::fullnode::PersistentStateProcessingReservation;
 using tos::validator::fullnode::PersistentStateSpoolReservation;
-using tos::validator::fullnode::cleanup_persistent_state_tempfiles;
-using tos::validator::fullnode::mmap_persistent_state_file;
-using tos::validator::fullnode::persistent_state_heap_threshold_bytes;
-using tos::validator::fullnode::persistent_state_max_file_bytes;
-using tos::validator::fullnode::persistent_state_max_spool_bytes_per_import;
-using tos::validator::fullnode::persistent_state_total_download_budget_bytes;
-using tos::validator::fullnode::persistent_state_total_spool_budget_bytes;
 using tos::validator::fullnode::set_persistent_state_tempfile_dir;
 using tos::validator::fullnode::try_reserve_persistent_state_download_memory;
 using tos::validator::fullnode::validate_persistent_state_size;
@@ -3991,6 +4001,106 @@ void test_streaming_cell_spans_validated_before_read() {
   std::printf("  PASSED\n");
 }
 
+// The construction pass must gate its own reads: a cell that was valid during
+// the parent-reference pass and changed on disk before construction must be
+// rejected by the descriptor check, not read as an index-derived span. The
+// fixture exceeds the reader scratch, so the backward construction pass
+// refills the window holding the root instead of reusing parent-pass bytes.
+void test_streaming_construction_pass_rejects_changed_cell() {
+  std::printf("=== test_streaming_construction_pass_rejects_changed_cell ===\n");
+  auto tmp_dir = std::string("/tmp/tos-test-construction-pass-") + std::to_string(::getpid());
+  td::mkpath(tmp_dir + "/", 0700).ensure();
+  auto root = build_synthetic_cell_tree(200000);
+  auto bytes = vm::std_boc_serialize(root, vm::BagOfCells::WithIndex).move_as_ok();
+  EXPECT_TRUE(bytes.size() > 2 * vm::kStreamingBocScratchBytes);
+  vm::BagOfCells::Info info;
+  EXPECT_TRUE(info.parse_serialized_header(bytes.as_slice()) > 0);
+  // The root is cell 0 at the start of the data section: two references and
+  // a four-byte marker. Declaring three data bytes keeps the descriptor
+  // well-formed and makes it disagree with the indexed span.
+  const auto root_d2 = static_cast<td::uint64>(info.data_offset + 1);
+  EXPECT_EQ(static_cast<unsigned char>(bytes.as_slice()[static_cast<std::size_t>(root_d2)]), 8);
+  auto path = tmp_dir + "/changed.boc";
+  auto fd = td::FileFd::open(path, td::FileFd::Write | td::FileFd::Read | td::FileFd::Create | td::FileFd::Truncate)
+                .move_as_ok();
+  fd.write_all(bytes.as_slice()).ensure();
+
+  vm::StreamingBocImportStats stats;
+  vm::StreamingBocImportOptions opts;
+  opts.stats = &stats;
+  const auto baseline = td::BufferAllocator::get_buffer_mem();
+  td::uint64 peak = baseline;
+  bool changed = false;
+  td::uint64 parent_pass_reads = 0;
+  opts.is_cancelled = [&] {
+    peak = std::max<td::uint64>(peak, td::BufferAllocator::get_buffer_mem());
+    if (!changed && stats.cell_read_calls == static_cast<td::uint64>(info.cell_count)) {
+      parent_pass_reads = stats.cell_read_calls;
+      const char d2 = 6;
+      EXPECT_EQ(fd.pwrite(td::Slice(&d2, 1), static_cast<td::int64>(root_d2)).move_as_ok(), 1u);
+      changed = true;
+    }
+    return false;
+  };
+  tos::validator::fullnode::CellDbStreamingSink sink;
+  auto result = vm::std_boc_deserialize_from_file_bounded(fd, bytes.size(), opts, &sink);
+  EXPECT_TRUE(changed);
+  EXPECT_EQ(parent_pass_reads, static_cast<td::uint64>(info.cell_count));
+  EXPECT_TRUE(result.is_error());
+  EXPECT_TRUE(result.error().to_string().find("cell span does not match descriptor") != std::string::npos);
+  // Every cell but the changed root was admitted again by the construction pass.
+  EXPECT_EQ(stats.cell_read_calls, 2 * static_cast<td::uint64>(info.cell_count) - 1);
+  EXPECT_TRUE(sink.begun());
+  EXPECT_TRUE(sink.aborted());
+  EXPECT_FALSE(sink.finished());
+  EXPECT_EQ(stats.peak_scratch_bytes, vm::kStreamingBocScratchBytes);
+  EXPECT_TRUE(peak - baseline <= vm::kStreamingBocScratchBytes + 4096);
+  EXPECT_EQ(td::BufferAllocator::get_buffer_mem(), baseline);
+  fd.close();
+  td::rmrf(tmp_dir).ensure();
+  std::printf("  cells=%d bytes=%zu PASSED\n", info.cell_count, bytes.size());
+}
+
+// The spool free-space gate admits exactly reservation + margin and names all
+// three quantities when it refuses.
+void test_spool_free_space_boundary() {
+  std::printf("=== test_spool_free_space_boundary ===\n");
+  constexpr td::uint64 kGiB = 1ULL << 30;
+  EXPECT_EQ(persistent_state_spool_free_space_margin(0), kGiB);
+  EXPECT_EQ(persistent_state_spool_free_space_margin(20 * kGiB), kGiB);
+  EXPECT_EQ(persistent_state_spool_free_space_margin(96 * kGiB), 96 * kGiB / 20);
+  // A 16 GiB state at the default ratio: 96 GiB of spool, at most 48 GiB of
+  // CellDb copy, and a 5% margin.
+  const td::uint64 reservation = 96 * kGiB;
+  const td::uint64 needed = 96 * kGiB + 48 * kGiB + 96 * kGiB / 20;
+  EXPECT_EQ(persistent_state_import_celldb_growth_bytes(reservation), 48 * kGiB);
+  EXPECT_EQ(persistent_state_import_required_free_bytes(reservation).move_as_ok(), needed);
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(needed);
+  EXPECT_TRUE(check_persistent_state_spool_free_space("/unused", reservation).is_ok());
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(needed - 1);
+  auto refused = check_persistent_state_spool_free_space("/unused", reservation);
+  EXPECT_TRUE(refused.is_error());
+  auto message = refused.error().to_string();
+  EXPECT_TRUE(message.find(PSTRING() << "free=" << (needed - 1)) != std::string::npos);
+  EXPECT_TRUE(message.find(PSTRING() << "required=" << needed) != std::string::npos);
+  EXPECT_TRUE(message.find(PSTRING() << "reservation=" << reservation) != std::string::npos);
+  EXPECT_TRUE(message.find(PSTRING() << "celldb_growth=" << (48 * kGiB)) != std::string::npos);
+  EXPECT_TRUE(message.find(PSTRING() << "margin=" << (96 * kGiB / 20)) != std::string::npos);
+  // Space for the spool and margin alone is not enough.
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(reservation + 96 * kGiB / 20);
+  EXPECT_TRUE(check_persistent_state_spool_free_space("/unused", reservation).is_error());
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(std::numeric_limits<td::uint64>::max());
+  EXPECT_TRUE(persistent_state_import_required_free_bytes(std::numeric_limits<td::uint64>::max()).is_error());
+  EXPECT_TRUE(
+      persistent_state_import_required_free_bytes(std::numeric_limits<td::uint64>::max() / 3 * 2 + 3).is_error());
+  EXPECT_TRUE(check_persistent_state_spool_free_space("/unused", std::numeric_limits<td::uint64>::max()).is_error());
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(std::nullopt);
+  // The real query answers for an existing directory and fails for a missing one.
+  EXPECT_TRUE(persistent_state_spool_free_bytes("/tmp").is_ok());
+  EXPECT_TRUE(persistent_state_spool_free_bytes("/nonexistent-spool-dir-for-test").is_error());
+  std::printf("  PASSED\n");
+}
+
 void test_streaming_allocation_failure_aborts_sink() {
   std::printf("=== test_streaming_allocation_failure_aborts_sink ===\n");
   auto tmp_dir = std::string("/tmp/tos-test-import-allocation-") + std::to_string(::getpid());
@@ -4053,12 +4163,114 @@ void test_streaming_valid_ondisk_control() {
   td::rmrf(tmp_dir).ensure();
 }
 
+// Deterministic representatives for the default spool ceiling. Count each
+// unique cell once, just as the BoC importer does; a shared code reference
+// must not multiply either the cell count or the serialized spool size.
+void measure_spool_amplification(const char *shape, td::Ref<vm::Cell> root, td::uint64 expected_cells) {
+  EXPECT_TRUE(root.not_null());
+  auto boc = vm::std_boc_serialize(root, 31).move_as_ok();
+  vm::BagOfCells::Info info;
+  EXPECT_TRUE(info.parse_serialized_header(boc.as_slice()) > 0);
+  std::set<vm::Cell::Hash> seen;
+  std::vector<td::Ref<vm::Cell>> pending{root};
+  td::uint64 spool_bytes = 0;
+  while (!pending.empty()) {
+    auto cell = std::move(pending.back());
+    pending.pop_back();
+    if (!seen.insert(cell->get_hash()).second) {
+      continue;
+    }
+    auto loaded = cell->load_cell().move_as_ok();
+    auto value = vm::CellStorer::serialize_value(1, loaded.data_cell, false);
+    spool_bytes += tos::validator::fullnode::kPersistentStateSpoolRecordHeaderBytes + value.size();
+    for (unsigned i = 0; i < loaded.data_cell->get_refs_cnt(); ++i) {
+      pending.push_back(loaded.data_cell->get_ref(i));
+    }
+  }
+  // An empty CellDb needs the same records again in the rollback manifest.
+  const auto combined_bytes = 2 * spool_bytes;
+  const auto ratio = tos::validator::fullnode::PersistentStateBudgetConfig{}.spool_reservation_ratio_percent;
+  const auto reservation = (static_cast<td::uint64>(boc.size()) * ratio + 99) / 100;
+  EXPECT_EQ(seen.size(), expected_cells);
+  EXPECT_EQ(seen.size(), static_cast<std::size_t>(info.cell_count));
+  std::printf(
+      "SPOOL shape=%s cells=%zu boc_mode=31 boc_bytes=%zu spool_bytes=%llu rollback_bytes=%llu "
+      "ratio_percent=%.3f reservation=%llu default_ratio=%u\n",
+      shape, seen.size(), boc.size(), static_cast<unsigned long long>(spool_bytes),
+      static_cast<unsigned long long>(spool_bytes),
+      100.0 * static_cast<double>(combined_bytes) / static_cast<double>(boc.size()),
+      static_cast<unsigned long long>(reservation), ratio);
+  std::fflush(stdout);
+  EXPECT_TRUE(combined_bytes <= reservation);
+}
+
+void test_spool_amplification(const std::string &genesis_path) {
+  const tos::validator::fullnode::PersistentStateBudgetConfig defaults{};
+  constexpr td::uint64 design_file_bytes = 16ULL << 30;
+  const auto design_reservation = (design_file_bytes * defaults.spool_reservation_ratio_percent + 99) / 100;
+  EXPECT_TRUE(design_reservation <= defaults.max_spool_bytes_per_import);
+  EXPECT_TRUE(2 * design_reservation <= defaults.max_total_spool_bytes);
+  {
+    std::vector<td::Ref<vm::Cell>> level;
+    constexpr td::uint32 leaves = 524288;
+    level.reserve(leaves);
+    for (td::uint32 i = 0; i < leaves; ++i) {
+      std::array<char, 120> data{};
+      for (std::size_t j = 0; j < data.size(); ++j) {
+        data[j] = static_cast<char>((i >> ((j % 4) * 8)) ^ j);
+      }
+      vm::CellBuilder leaf;
+      EXPECT_TRUE(leaf.store_bytes_bool(data.data(), data.size()));
+      level.push_back(leaf.finalize_novm());
+    }
+    while (level.size() > 1) {
+      std::vector<td::Ref<vm::Cell>> next;
+      next.reserve(level.size() / 2);
+      for (std::size_t i = 0; i < level.size(); i += 2) {
+        next.push_back(vm::CellBuilder{}.store_ref(level[i]).store_ref(level[i + 1]).finalize_novm());
+      }
+      level = std::move(next);
+    }
+    measure_spool_amplification("library", level.front(), 1048575);
+  }
+  {
+    vm::Dictionary accounts(256);
+    auto code = vm::CellBuilder{}.store_long(0x42, 8).finalize_novm();
+    constexpr td::uint32 count = 200000;
+    for (td::uint32 i = 0; i < count; ++i) {
+      std::array<char, 64> value{};
+      for (std::size_t j = 0; j < value.size(); ++j) {
+        value[j] = static_cast<char>((i >> ((j % 4) * 8)) ^ j);
+      }
+      const auto key = td::sha256_bits256(td::Slice(value.data(), value.size()));
+      vm::CellBuilder data;
+      EXPECT_TRUE(data.store_bytes_bool(value.data(), value.size()));
+      vm::CellBuilder account;
+      EXPECT_TRUE(account.store_bytes_bool(value.data(), value.size()));
+      EXPECT_TRUE(account.store_ref_bool(data.finalize_novm()));
+      EXPECT_TRUE(account.store_ref_bool(code));
+      EXPECT_TRUE(accounts.set_builder(key.bits(), 256, account));
+    }
+    measure_spool_amplification("accounts", accounts.get_root_cell(), 600000);
+  }
+  auto genesis = td::read_file(genesis_path).move_as_ok();
+  auto root = vm::std_boc_deserialize(genesis.as_slice()).move_as_ok();
+  measure_spool_amplification("pq-genesis", std::move(root), 396);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
+  if (argc >= 2 && std::string(argv[1]) == "--spool-amplification") {
+    EXPECT_EQ(argc, 3);
+    test_spool_amplification(argv[2]);
+    return 0;
+  }
   test_streaming_reader_hard_cap_and_offsets();
   test_streaming_reader_failed_refill_retires_window();
   test_streaming_cell_spans_validated_before_read();
+  test_streaming_construction_pass_rejects_changed_cell();
+  test_spool_free_space_boundary();
   test_streaming_allocation_failure_aborts_sink();
   if (argc == 2 && std::string(argv[1]) == "--cell-bounds") {
     return 0;
