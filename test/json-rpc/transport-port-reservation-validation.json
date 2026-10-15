@@ -1,0 +1,89 @@
+{
+  "base_commit": "ea94c9e932e04c4efe5df85b59557371b73822ee",
+  "failed_run": "https://github.com/tosnetwork/tos/actions/runs/38730044377",
+  "failure": "test-json-rpc-transport: asynchronous listener bind EADDRINUSE, then clients.back()->connect() assertion",
+  "change": "Hold a bound, non-listening port reservation throughout each fixture, matching the real listener reuse flags; regression requires exclusive binds to fail and actual ServerSocketFd listener bind to succeed.",
+  "scope": "Test fixture only; production RPC and connection/body/response limits unchanged.",
+  "validation": {
+    "native_build_exit": 0,
+    "mac_transport": {
+      "exit": 0,
+      "passed": 18,
+      "command": "build/test-json-rpc-transport --filter -connections_of_one_source --filter -concurrent_headers --filter -a_non_reading_client --filter -a_trickle_reading_client --verbosity 0",
+      "excluded": "Four tests depend on Linux /proc or additional loopback source addresses; no full Linux transport claim"
+    },
+    "linux_reservation_regression": {
+      "cycles": 1000,
+      "exit": 0,
+      "scope": "Exact new helper and regression body, compiled against real td::ServerSocketFd from existing Linux tdutils build",
+      "ServerSocketFd_source_git_blob": "1622799379f297725694e2fb0074639ad18afcc0",
+      "source_blob_matches_candidate": true
+    },
+    "linux_guard_removal": {
+      "mutation": "Close the reservation socket immediately after selecting its port",
+      "exit": 134,
+      "failure": "Expected exclusive bind refusal assertion (result == -1)"
+    },
+    "format_and_diff_check": 0,
+    "static_analysis": {
+      "exit": 2,
+      "status": "No result: required pinned analyzer toolchain unavailable locally; see retained refusal log"
+    },
+    "pending": [
+      "Complete Linux transport and ASan CI",
+      "Pinned two-build differential static analysis"
+    ]
+  },
+  "source_sha256": "8d1f1b67b92021f9a588602c3f8a57b965be7089c0bc27bc8a2c2cee025ee1fa",
+  "artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-main-rpc-port-race-20261015",
+    "retain_through": "2026-11-14",
+    "files": [
+      {
+        "file": "ci-failed.log",
+        "bytes": 2466846,
+        "sha256": "6a2a3d3783e7418617c3c2946514c511c52663aaef8fa5da0c11278dfab23929"
+      },
+      {
+        "file": "build-initial.log",
+        "bytes": 81249,
+        "sha256": "9afea900390fe89c9064e8b5817e45b6f8d953b3e48e8aac58c4321f1ac09398"
+      },
+      {
+        "file": "build-final.log",
+        "bytes": 501,
+        "sha256": "d08f4e6a5327743870ac0d3dccf7f695880654355f7963635877af49b1b85384"
+      },
+      {
+        "file": "mac-transport.log",
+        "bytes": 1963,
+        "sha256": "e146d13674671df31e870fce0d7b12baf427154a51e903e95bebeb2fda7f73ca"
+      },
+      {
+        "file": "linux-regression.log",
+        "bytes": 56,
+        "sha256": "285d9ff42475ee889595c3e91f04fbfb2c3a409bad3632c9f644c7ed281f4d44"
+      },
+      {
+        "file": "linux-mutant.log",
+        "bytes": 201,
+        "sha256": "99f0ba61b74a6d919c0feaffa76fa9906bcd60dedc6d172faba76cb3a88a64e2"
+      },
+      {
+        "file": "static-gate.log",
+        "bytes": 66,
+        "sha256": "26224e8626f32a2793faa34666b2a5dad70f202795d4e67d5d50201bd15e26dd"
+      },
+      {
+        "file": "reservation-regression.cpp",
+        "bytes": 1892,
+        "sha256": "588766d926d9cb46831f264add55cd480c45b893ae78eeb4cbcbf9bd218a2dc3"
+      },
+      {
+        "file": "reservation-mutant.cpp",
+        "bytes": 1924,
+        "sha256": "6c566e07e617b9c51db57d151146c5d2371063f8ed46f965dc2a2d9d9904c716"
+      }
+    ]
+  }
+}
