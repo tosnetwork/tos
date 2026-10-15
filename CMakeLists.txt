@@ -1134,7 +1134,9 @@ target_link_libraries(test-vm-exception-hardening PRIVATE tos_validator tos_cryp
 
 if (UNIX AND NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
   add_executable(test-state-download-recovery test/test-state-download-recovery.cpp)
-  target_link_libraries(test-state-download-recovery PRIVATE validator full-node tos_block tos_crypto tdutils tdactor adnl keyring)
+  # GNU ld cannot revisit validator.a when fabric.cpp later needs BlockHandleImpl.
+  # Supply validator-common's production objects directly, as the catch-up tests do.
+  target_link_libraries(test-state-download-recovery PRIVATE validator validator-common full-node tos_block tos_crypto tdutils tdactor adnl keyring)
 endif()
 
 add_executable(test-download-state-budget test/test-download-state-budget.cpp)

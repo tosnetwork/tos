@@ -35,7 +35,6 @@ jobs:
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPILERCHECK: content
       CCACHE_MAXSIZE: 3G
-      TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -65,7 +64,8 @@ jobs:
           printf '%s\n' "$base" > validation/base.txt
           git worktree add --detach "$RUNNER_TEMP/streaming-base" "$base"
           for source in "$GITHUB_WORKSPACE" "$RUNNER_TEMP/streaming-base"; do
-            cmake -S "$source" -B "$source/build" -G Ninja \
+            TOL_STDLIB="$source/crypto/smartcont/tol-stdlib" CCACHE_BASEDIR="$source" \
+              cmake -S "$source" -B "$source/build" -G Ninja \
               -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
               -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
               -DTOS_USE_JEMALLOC=ON -DTOS_ARCH=x86-64-v2 -DPORTABLE=x86-64-v2 \
@@ -77,6 +77,7 @@ jobs:
         env:
           FUNC_BIN: ${{ github.workspace }}/build/crypto/func
           FIFT_BIN: ${{ github.workspace }}/build/crypto/fift
+          TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
         run: |
           set -o pipefail
           cmake --build build --target test-state-download-recovery test-download-state-budget \
@@ -96,6 +97,7 @@ jobs:
           set -o pipefail
           python3 - "$GITHUB_WORKSPACE/build" "$RUNNER_TEMP/streaming-base/build" <<'PY' 2>&1 | tee validation/generated.log
           from pathlib import Path
+          import os
           import subprocess
           import sys
           for directory in sys.argv[1:]:
@@ -104,7 +106,10 @@ jobs:
                          if Path(line.rsplit(': ', 1)[0]).suffix in {'.h', '.hpp', '.hh', '.cpp', '.cc', '.c', '.inc'}]
               assert targets, 'no generated targets found'
               print(directory, 'generated targets:', len(targets), flush=True)
-              subprocess.run(['ninja', '-C', directory, '-j2', *targets], check=True)
+              source = str(Path(directory).parent)
+              env = dict(os.environ, CCACHE_BASEDIR=source,
+                         TOL_STDLIB=str(Path(source) / 'crypto/smartcont/tol-stdlib'))
+              subprocess.run(['ninja', '-C', directory, '-j2', *targets], check=True, env=env)
           PY
       - name: Differential C++ static analysis with positive controls
         run: |
@@ -117,6 +122,7 @@ jobs:
         env:
           FUNC_BIN: ${{ github.workspace }}/build/crypto/func
           FIFT_BIN: ${{ github.workspace }}/build/crypto/fift
+          TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
         run: |
           set -o pipefail
           python3 - <<'PY'
