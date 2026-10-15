@@ -728,22 +728,48 @@ td::Result<td::uint64> persistent_state_spool_free_bytes(const std::string &dir)
 }
 
 td::uint64 persistent_state_spool_free_space_margin(td::uint64 reservation) {
-  // The reservation bounds only the two spool files. The margin is headroom
-  // for the node's other writers on that filesystem (blocks, logs, RocksDB
-  // flushes) so the spool alone cannot take it to zero: 1 GiB for small
-  // imports, 5% for large ones. It does not budget the CellDb copy of the
-  // imported cells, which is written while the spool drains.
+  // Headroom for the node's other writers on that filesystem (blocks, logs,
+  // the RocksDB write-ahead log and compaction): 1 GiB for small imports, 5%
+  // of the reservation for large ones.
   constexpr td::uint64 kMinMargin = 1ULL << 30;
   return std::max(kMinMargin, reservation / 20);
 }
 
-td::Status check_persistent_state_spool_free_space(const std::string &dir, td::uint64 reservation) {
-  TRY_RESULT(free_bytes, persistent_state_spool_free_bytes(dir));
+td::uint64 persistent_state_import_celldb_growth_bytes(td::uint64 reservation) {
+  // At peak an import holds both spool files and the CellDb copy of its new
+  // cells; the spool files are removed only after the import settles.
+  // - The import spool holds one record (36-byte header + CellDb value) per
+  //   imported cell. The rollback manifest holds the same record for each
+  //   cell that is new to CellDb. New cells are a subset of imported cells,
+  //   so the manifest is no larger than the import spool, and both are
+  //   charged to the one reservation: the manifest is at most half of it.
+  // - CellDb receives exactly the new cells, each as a 32-byte key plus the
+  //   same value, four bytes less than its manifest record.
+  // So the CellDb copy adds at most reservation / 2 logical bytes. The
+  // persistent-state temporary directory lives under the database root, so
+  // the spool and CellDb share the filesystem being checked.
+  return reservation / 2;
+}
+
+td::Result<td::uint64> persistent_state_import_required_free_bytes(td::uint64 reservation) {
+  const auto growth = persistent_state_import_celldb_growth_bytes(reservation);
   const auto margin = persistent_state_spool_free_space_margin(reservation);
-  const bool overflow = reservation > std::numeric_limits<td::uint64>::max() - margin;
-  if (overflow || free_bytes < reservation + margin) {
+  constexpr auto kMax = std::numeric_limits<td::uint64>::max();
+  if (reservation > kMax - growth || reservation + growth > kMax - margin) {
+    return td::Status::Error(PSTRING() << "streaming import free-space requirement overflows: reservation="
+                                       << reservation);
+  }
+  return reservation + growth + margin;
+}
+
+td::Status check_persistent_state_spool_free_space(const std::string &dir, td::uint64 reservation) {
+  TRY_RESULT(required, persistent_state_import_required_free_bytes(reservation));
+  TRY_RESULT(free_bytes, persistent_state_spool_free_bytes(dir));
+  if (free_bytes < required) {
     return td::Status::Error(PSTRING() << "insufficient free space for streaming import spool in " << dir << ": free="
-                                       << free_bytes << " reservation=" << reservation << " margin=" << margin);
+                                       << free_bytes << " required=" << required << " reservation=" << reservation
+                                       << " celldb_growth=" << persistent_state_import_celldb_growth_bytes(reservation)
+                                       << " margin=" << persistent_state_spool_free_space_margin(reservation));
   }
   return td::Status::OK();
 }

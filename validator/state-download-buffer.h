@@ -423,13 +423,21 @@ td::uint64 persistent_state_total_spool_budget_bytes();
 // holds `dir`.
 td::Result<td::uint64> persistent_state_spool_free_bytes(const std::string &dir);
 
-// Free space an import must leave beyond its spool reservation:
-// max(1 GiB, 5% of the reservation).
+// Headroom kept beyond what an import writes: max(1 GiB, 5% of the
+// reservation).
 td::uint64 persistent_state_spool_free_space_margin(td::uint64 reservation);
 
-// Refuse a streaming import whose spool files could fill the filesystem
-// holding `dir`: OK only when free space >= reservation + margin. The error
-// names the free space, the reservation and the margin.
+// Upper bound on the CellDb bytes an import adds while its spool drains:
+// half the spool reservation (derivation at the definition).
+td::uint64 persistent_state_import_celldb_growth_bytes(td::uint64 reservation);
+
+// Free space an import needs at peak: spool reservation + CellDb growth +
+// margin. Fails when the sum overflows.
+td::Result<td::uint64> persistent_state_import_required_free_bytes(td::uint64 reservation);
+
+// Refuse a streaming import whose peak writes could fill the filesystem
+// holding `dir`: OK only when free space covers the requirement above. The
+// error names the free space, the requirement and its three terms.
 td::Status check_persistent_state_spool_free_space(const std::string &dir, td::uint64 reservation);
 
 // Map an on-disk persistent-state tempfile (the file referenced by the

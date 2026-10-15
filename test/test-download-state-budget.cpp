@@ -109,6 +109,8 @@ using tos::validator::fullnode::cleanup_persistent_state_tempfiles;
 using tos::validator::fullnode::DownloadedPersistentState;
 using tos::validator::fullnode::mmap_persistent_state_file;
 using tos::validator::fullnode::persistent_state_heap_threshold_bytes;
+using tos::validator::fullnode::persistent_state_import_celldb_growth_bytes;
+using tos::validator::fullnode::persistent_state_import_required_free_bytes;
 using tos::validator::fullnode::persistent_state_max_file_bytes;
 using tos::validator::fullnode::persistent_state_max_spool_bytes_per_import;
 using tos::validator::fullnode::persistent_state_spool_free_bytes;
@@ -4067,8 +4069,12 @@ void test_spool_free_space_boundary() {
   EXPECT_EQ(persistent_state_spool_free_space_margin(0), kGiB);
   EXPECT_EQ(persistent_state_spool_free_space_margin(20 * kGiB), kGiB);
   EXPECT_EQ(persistent_state_spool_free_space_margin(96 * kGiB), 96 * kGiB / 20);
+  // A 16 GiB state at the default ratio: 96 GiB of spool, at most 48 GiB of
+  // CellDb copy, and a 5% margin.
   const td::uint64 reservation = 96 * kGiB;
-  const td::uint64 needed = reservation + 96 * kGiB / 20;
+  const td::uint64 needed = 96 * kGiB + 48 * kGiB + 96 * kGiB / 20;
+  EXPECT_EQ(persistent_state_import_celldb_growth_bytes(reservation), 48 * kGiB);
+  EXPECT_EQ(persistent_state_import_required_free_bytes(reservation).move_as_ok(), needed);
   tos::validator::fullnode::testing::test_set_spool_free_bytes_override(needed);
   EXPECT_TRUE(check_persistent_state_spool_free_space("/unused", reservation).is_ok());
   tos::validator::fullnode::testing::test_set_spool_free_bytes_override(needed - 1);
@@ -4076,9 +4082,17 @@ void test_spool_free_space_boundary() {
   EXPECT_TRUE(refused.is_error());
   auto message = refused.error().to_string();
   EXPECT_TRUE(message.find(PSTRING() << "free=" << (needed - 1)) != std::string::npos);
+  EXPECT_TRUE(message.find(PSTRING() << "required=" << needed) != std::string::npos);
   EXPECT_TRUE(message.find(PSTRING() << "reservation=" << reservation) != std::string::npos);
+  EXPECT_TRUE(message.find(PSTRING() << "celldb_growth=" << (48 * kGiB)) != std::string::npos);
   EXPECT_TRUE(message.find(PSTRING() << "margin=" << (96 * kGiB / 20)) != std::string::npos);
+  // Space for the spool and margin alone is not enough.
+  tos::validator::fullnode::testing::test_set_spool_free_bytes_override(reservation + 96 * kGiB / 20);
+  EXPECT_TRUE(check_persistent_state_spool_free_space("/unused", reservation).is_error());
   tos::validator::fullnode::testing::test_set_spool_free_bytes_override(std::numeric_limits<td::uint64>::max());
+  EXPECT_TRUE(persistent_state_import_required_free_bytes(std::numeric_limits<td::uint64>::max()).is_error());
+  EXPECT_TRUE(
+      persistent_state_import_required_free_bytes(std::numeric_limits<td::uint64>::max() / 3 * 2 + 3).is_error());
   EXPECT_TRUE(check_persistent_state_spool_free_space("/unused", std::numeric_limits<td::uint64>::max()).is_error());
   tos::validator::fullnode::testing::test_set_spool_free_bytes_override(std::nullopt);
   // The real query answers for an existing directory and fails for a missing one.

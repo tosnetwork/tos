@@ -294,6 +294,8 @@ struct Evidence {
   std::string archive_file;
   bool interrupt{false};
   std::string expected_rejection{"root hash mismatch"};
+  // Free bytes the retry's import sees; std::nullopt queries the filesystem.
+  std::optional<td::uint64> retry_free_bytes;
   td::uint64 size{0};
   td::Bits256 wrong_root;
   td::Bits256 good_root;
@@ -341,7 +343,7 @@ class Manager final : public ValidatorManagerImpl {
       require(evidence_->last_file.empty() || !std::filesystem::exists(evidence_->last_file),
               "failed download file retained");
       require(evidence_->interrupt || evidence_->rejected.load() == 1, "retry before root rejection");
-      budget::testing::test_set_spool_free_bytes_override(std::nullopt);
+      budget::testing::test_set_spool_free_bytes_override(evidence_->retry_free_bytes);
       evidence_->cleaned.store(true);
     }
     if (attempt == 1) {
@@ -559,7 +561,15 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, Ca
   budget::set_persistent_state_tempfile_dir(tempfile_root);
   require_budgets_released();
   if (space_refused) {
-    budget::testing::test_set_spool_free_bytes_override(td::uint64{0});
+    // One byte short of the peak requirement (spool reservation, CellDb copy
+    // and margin) for the first import; exactly the requirement for the retry.
+    const auto config = budget::persistent_state_budget_config();
+    const auto reservation = (fixture[1].size * config.spool_reservation_ratio_percent + 99) / 100;
+    const auto required = must(budget::persistent_state_import_required_free_bytes(reservation), "space requirement");
+    require(required > reservation + budget::persistent_state_spool_free_space_margin(reservation),
+            "requirement covers the CellDb copy");
+    evidence->retry_free_bytes = required;
+    budget::testing::test_set_spool_free_bytes_override(required - 1);
   }
   td::actor::Scheduler scheduler({2});
   auto wait = [&](const auto& condition, const char* label) {
@@ -723,6 +733,7 @@ void run_case(const std::string& root, const std::array<Fixture, 2>& fixture, Ca
     td::actor::SchedulerContext::get().stop();
   });
   scheduler.run();
+  budget::testing::test_set_spool_free_bytes_override(std::nullopt);
   require_budgets_released();
 }
 }  // namespace
