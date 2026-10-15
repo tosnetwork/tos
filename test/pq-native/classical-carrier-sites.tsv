@@ -23,22 +23,24 @@
 #
 # file	marker	sites	status	why
 crypto/block/check-proof.cpp	*	1	historical	lite proof-chain verification; classical carriers are admitted only with an explicitly classical trusted set
-crypto/block/signature-set.cpp	*	34	definition	the C++ factories, #11/#12 codecs, checked node/lite adapters and guarded classical verifier
+crypto/block/signature-set.cpp	*	35	definition	the C++ factories, #11/#12 codecs, checked node/lite adapters and guarded classical verifier
 crypto/block/signature-set.h	*	2	definition	the public classical verification boundary declarations
 lite-client/lite-client-common.cpp	*	1	reachable	the checked lite parser accepts classical history and PQ carriers; trusted carrier verification remains downstream
 sdk/js/packages/client/src/types.ts	*	2	reachable	the public client response model has only ordinary/simplex classical signature shapes; the API carrier unit owns it
 test/pq-native/c04-real-state-proof-test.cpp	cpp_fetch	2	historical	test-only proof fixture parses valid and wrong-set #13 PQ cells; generic fetch marker does not emit a classical carrier
 test/pq-native/custom-overlay-relay-dedup-test.cpp	cpp_factory	1	historical	relay dedup test builds an ordinary set only as opaque evidence content to key finality forwarding; nothing verifies or emits it
-test/pq-native/n6-microbench.cpp	cpp_fetch	2	historical	benchmark fixture parses #13 PQ cells to measure verification work; no production carrier selection
+test/pq-native/n6-microbench-smoke.cpp	cpp_fetch	1	historical	benchmark fixture parses a PQ lite carrier through the checked adapter; no production carrier selection
+test/pq-native/n6-microbench.cpp	cpp_fetch	3	historical	benchmark fixture parses #13 PQ cells to measure verification work; no production carrier selection
 test/pq-native/pending-finality-cache-test.cpp	cpp_fetch	2	historical	pending-finality negative fixtures parse wrong-set #13 PQ cells to exercise refusal paths
 test/pq-native/pq-block-signature-conformance-test.cpp	*	1	historical	crypto conformance exercises the explicitly test-only carried-session verifier
 test/pq-native/pq-block-signature-no-legacy-test.cpp	*	11	historical	negative fixtures prove classical carriers are refused under a post-quantum set
 test/pq-native/pq-block-signature-test-common.h	*	1	historical	shared persisted-carrier fixture parser
 test/pq-native/pq-block-signature-vectors-test.cpp	*	2	historical	shared #13 structural vectors retain classical parser coverage for reject cases
+test/pq-native/pq-carrier-capacity-test.cpp	cpp_fetch	2	historical	capacity controls parse PQ lite carriers and require oversized signer sets to be refused
 test/pq-native/pq-lite-forward-proof-test.cpp	carrier_io	1	historical	lite proof conformance serializes #13 through the production TL adapter
 test/pq-native/pq-lite-forward-proof-test.cpp	cpp_factory	1	historical	explicit empty #11 fixture proves the lite consumer rejects classical finality under a PQ validator set
 test/pq-native/pq-lite-forward-proof-test.cpp	raw_tag_write	1	historical	test-only synthetic block root uses the ordinary Block constructor tag, not a finality carrier tag
-test/pq-native/pq-network-parser-resource-test.cpp	cpp_fetch	1	historical	resource-gate fixture proves malformed PQ network carriers stop before crypto and decompression
+test/pq-native/pq-network-parser-resource-test.cpp	cpp_fetch	2	historical	resource-gate fixture proves malformed PQ network carriers stop before crypto and decompression
 test/pq-native/pq-network-parser-resource-test.cpp	cpp_node_tl	1	historical	one explicitly classical pair pins the corrected 100-byte signature-volume accounting
 test/pq-native/pq-signature-persistence-test.cpp	carrier_io	2	historical	persistence and proof-consumer gate serializes #13 and uses classical carriers only as explicit rejection inputs
 test/pq-native/pq-signature-persistence-test.cpp	cpp_factory	1	historical	explicit empty #11 fixture proves proof consumers reject classical finality under a PQ validator set
@@ -64,6 +66,7 @@ tosctl/src/tl/api/src/tos/tos_node/signature_set/signatureset.rs	*	4	definition	
 tosctl/src/tl/api/tl/lite_api.tl	*	2	definition	Rust generator copy of the classical lite signature-set schema
 tosctl/src/tl/api/tl/tos_api.tl	*	2	definition	Rust generator copy of the classical node signature-set schema
 toslib/toslib/ToslibClient.cpp	*	3	reachable	the generated PQ node variant exists, but client conversion remains owned by the parser/API wiring unit
+validator-engine/json-rpc-explorer-finality.cpp	carrier_io	1	historical	the anchored proof chain is validated before rendering; tl_lite runs only in the explicit non-PQ branch for classical history
 validator-engine/json-rpc-server-parse.cpp	cpp_lite_tl	4	reachable	the public API still emits classical history, while a PQ lite carrier is explicitly refused rather than rendered as an empty classical set
 validator/db/rootdb.cpp	*	1	historical	persisted cell parser supports #13; #11/#12 remain for historical and explicitly classical databases
 validator/downloaders/wait-block-data.cpp	*	1	historical	generic persisted serializer carries #13 too; classical output is limited to explicitly classical sets

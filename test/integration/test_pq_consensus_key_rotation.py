@@ -33,20 +33,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import calendar
+import importlib
 import json
 import re
 import subprocess
 import time
 from pathlib import Path
+from typing import Any, TypedDict
 
 import tostester.network as network_module
 from nacl.signing import SigningKey
-from test_manager_session_identity import (
-    FIXED_PQ_SEED,
-    FIXED_VALIDATOR_ID,
-    FIXED_VALIDATOR_SEED,
-)
-from test_pq_unsafe_rotation_refusal import GROUP_CREATED, successful_masterchain_stats
 from tosapi import tos_api
 from toslib.errors import RemoteError
 from tostester.install import Install
@@ -54,6 +50,23 @@ from tostester.key import Key
 from tostester.network import Network, StartOptions
 
 from toslib import EngineConsoleClient
+
+_script_module = (
+    importlib.import_module(".test_manager_session_identity", __package__)
+    if __package__
+    else importlib.import_module("test_manager_session_identity")
+)
+FIXED_PQ_SEED = _script_module.FIXED_PQ_SEED
+FIXED_VALIDATOR_ID = _script_module.FIXED_VALIDATOR_ID
+FIXED_VALIDATOR_SEED = _script_module.FIXED_VALIDATOR_SEED
+_script_module = (
+    importlib.import_module(".test_pq_unsafe_rotation_refusal", __package__)
+    if __package__
+    else importlib.import_module("test_pq_unsafe_rotation_refusal")
+)
+GROUP_CREATED = _script_module.GROUP_CREATED
+successful_masterchain_stats = _script_module.successful_masterchain_stats
+
 
 SUCCESSOR_SEED = bytes.fromhex("5e" * 32)
 THIRD_SEED = bytes.fromhex("7c" * 32)
@@ -119,12 +132,18 @@ def successful_stats(node) -> int:
 
 
 async def stake(node, election: int, key_id: bytes | None = None):
-    common = dict(
-        election_date=election,
-        max_factor=0x10000,
-        adnl_addr=node.validator_key.id,
-        stake_owner=bytes([0x77]) * 32,
-    )
+    class StakeArguments(TypedDict):
+        election_date: int
+        max_factor: int
+        adnl_addr: bytes
+        stake_owner: bytes
+
+    common: StakeArguments = {
+        "election_date": election,
+        "max_factor": 0x10000,
+        "adnl_addr": node.validator_key.id,
+        "stake_owner": bytes([0x77]) * 32,
+    }
     if key_id is None:
         request = tos_api.Engine_validator_createPqStakeAuthorizationRequest(**common)
     else:
@@ -144,7 +163,7 @@ async def refused(coroutine, phrase: str, why: str) -> None:
     raise Failure(f"{why} was not refused")
 
 
-async def list_keys(node) -> list:
+async def list_keys(node) -> list[Any]:
     request = tos_api.Engine_validator_getPqConsensusKeysRequest()
     result = request.parse_result(await node.engine_console.request(request))
     if result.validator_id != FIXED_VALIDATOR_ID:
@@ -152,7 +171,7 @@ async def list_keys(node) -> list:
     return result.keys
 
 
-def disk_keys(node) -> dict:
+def disk_keys(node) -> dict[Any, Any]:
     return json.loads((node.directory / "config.json").read_text())["extraconfig"]["pq_consensus"]
 
 
@@ -169,7 +188,7 @@ def set_keys(node, entries) -> None:
     pq.keys = entries
 
 
-def disk_entry(path, valid_from: int, expire_at: int = 0) -> dict:
+def disk_entry(path, valid_from: int, expire_at: int = 0) -> dict[Any, Any]:
     return {
         "@type": "engine.validator.pqConsensusKey",
         "consensus_key_file": str(path),
@@ -179,8 +198,8 @@ def disk_entry(path, valid_from: int, expire_at: int = 0) -> dict:
 
 
 async def boot(
-    install: Install, directory: Path, base_port: int, configure, env: dict | None = None
-) -> tuple:
+    install: Install, directory: Path, base_port: int, configure, env: dict[Any, Any] | None = None
+) -> tuple[Any, ...]:
     directory.mkdir()
     network = Network(install, directory, base_port=base_port)
     await network.__aenter__()
@@ -199,7 +218,7 @@ async def boot(
 
 async def rotation(
     install: Install, directory: Path, base_port: int, timeout: float, shim: Path
-) -> dict:
+) -> dict[Any, Any]:
     trigger = directory / "fail-directory-fsync"
 
     def configure(node):
@@ -372,7 +391,7 @@ async def rotation(
 
 async def without_a(
     install: Install, directory: Path, base_port: int, timeout: float, expired_a: bool
-) -> dict:
+) -> dict[Any, Any]:
     def configure(node):
         b_file = node.directory / "pq-consensus-next.seed"
         b_id, _ = place_key(install, b_file, SUCCESSOR_SEED)
@@ -406,7 +425,7 @@ async def without_a(
 
 async def expired_successor(
     install: Install, directory: Path, base_port: int, timeout: float
-) -> dict:
+) -> dict[Any, Any]:
     """A restart after the successor B expired: A must not sign in B's place."""
 
     def configure(node):
@@ -446,7 +465,9 @@ async def expired_successor(
         await network.__aexit__(None, None, None)
 
 
-async def concurrent(install: Install, directory: Path, base_port: int, timeout: float) -> dict:
+async def concurrent(
+    install: Install, directory: Path, base_port: int, timeout: float
+) -> dict[Any, Any]:
     """Two key changes at once cannot together break a limit either alone respects."""
     seeds = [bytes([0x30 + index]) * 32 for index in range(10)]
 
@@ -575,7 +596,9 @@ async def concurrent(install: Install, directory: Path, base_port: int, timeout:
         await network.__aexit__(None, None, None)
 
 
-async def hard_deadline(install: Install, directory: Path, base_port: int, timeout: float) -> dict:
+async def hard_deadline(
+    install: Install, directory: Path, base_port: int, timeout: float
+) -> dict[Any, Any]:
     """A, listed and signing, expires while its group runs: signing stops at the deadline."""
     expire_at = int(time.time()) + int(timeout * 0.8)
 
@@ -644,7 +667,9 @@ async def hard_deadline(install: Install, directory: Path, base_port: int, timeo
         await network.__aexit__(None, None, None)
 
 
-async def misspelt(install: Install, directory: Path, base_port: int, timeout: float) -> dict:
+async def misspelt(
+    install: Install, directory: Path, base_port: int, timeout: float
+) -> dict[Any, Any]:
     """A window field the engine does not know stops the node instead of being defaulted."""
     original = network_module._write_model
 

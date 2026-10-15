@@ -933,7 +933,7 @@ target_link_libraries(n6-microbench-smoke PRIVATE validator tos_block tos_crypto
 add_executable(test-pq-lite-forward-proof test/pq-native/pq-lite-forward-proof-test.cpp)
 target_include_directories(test-pq-lite-forward-proof PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
-target_link_libraries(test-pq-lite-forward-proof PRIVATE lite-client-common tos_block tos_pq_consensus_signer
+target_link_libraries(test-pq-lite-forward-proof PRIVATE json-rpc-explorer lite-client-common tos_block tos_pq_consensus_signer
                       tos_pq_consensus tos_crypto tl_api tl_lite_api tl-lite-utils tdutils tdactor adnl keys dht)
 
 add_executable(test-proof-verify test/pq-native/proof-verify-test.cpp)
@@ -1083,6 +1083,9 @@ target_include_directories(test-startup-orphan-reconcile PRIVATE ${CMAKE_CURRENT
 target_link_libraries(test-startup-orphan-reconcile PRIVATE tos_validator validator-common validator-db full-node
                       tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
+add_executable(test-json-rpc-explorer test/test-td-main.cpp test/test-json-rpc-explorer.cpp)
+target_link_libraries(test-json-rpc-explorer PRIVATE json-rpc-explorer control-getter)
+target_compile_definitions(test-json-rpc-explorer PRIVATE EXPLORER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/explorer-finality")
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
 add_executable(test-json-rpc-storage test/test-td-main.cpp test/test-json-rpc-storage.cpp)
@@ -2077,6 +2080,7 @@ tos_test(test-msg-envelope)
 tos_test(test-rate-limiter)
 tos_test(test-full-node-shard-admission)
 tos_test(test-config-transition)
+tos_test(test-json-rpc-explorer)
 tos_test(test-json-rpc-parse)
 tos_test(test-json-rpc-storage)
 tos_test(test-account-model-detection)

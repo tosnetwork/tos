@@ -27,7 +27,9 @@ class EngineConsoleClient:
         # Retain only public IDs; the private key bytes must never enter a receipt.
         prefix = b"\xc6\xb4\x13\x48"
         self._binding = None
-        if config.server_public_key is not None and config.client_private_key is not None:
+        if isinstance(config.server_public_key, tos_api.Pub_ed25519) and isinstance(
+            config.client_private_key, tos_api.Pk_ed25519
+        ):
             self._binding = {
                 "address": config.address,
                 "server_key_id_hex": hashlib.sha256(

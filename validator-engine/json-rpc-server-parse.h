@@ -83,10 +83,9 @@ td::Result<std::vector<std::string>> parse_multisig_public_keys(td::Ref<vm::Cell
 // cell is too short and fails when the root is exotic or null.
 td::Result<td::uint32> parse_restricted_wallet_start_at(td::Ref<vm::Cell> data_cell);
 
-// Renders the signature-set result returned by getMasterchainBlockSignatures.
-// The public JSON API has no post-quantum carrier yet, so a PQ lite carrier is
-// refused explicitly instead of being indistinguishable from an empty ordinary
-// set. id_json must already be a serialized JSON object.
+// Legacy classical signature renderer. PQ carriers must enter the checked
+// anchored-finality adapter and are refused here rather than being rendered
+// without verification. id_json must already be a serialized JSON object.
 td::Result<std::string> render_masterchain_block_signatures_json(const lite_api::liteServer_SignatureSet* signatures,
                                                                  td::Slice id_json);
 

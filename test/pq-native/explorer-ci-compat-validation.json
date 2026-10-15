@@ -1,0 +1,156 @@
+{
+  "parent": "c4ec38994a274b41288a0d6d2a13f3a8b5e57898",
+  "scope": "Restore harness wire-cell compatibility and narrowly permit the explorer receipt upload; add fast CI regression coverage.",
+  "checks": [
+    {
+      "name": "transport-restored",
+      "command": [
+        "uv",
+        "run",
+        "python",
+        "test/pq-readiness/test_lite_transport.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "guard-restored",
+      "command": [
+        "python3",
+        "scripts/check-branch-chain-python-ci.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "conditions-restored",
+      "command": [
+        "python3",
+        "scripts/test_branch_chain_conditions.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "boundaries-restored",
+      "command": [
+        "uv",
+        "run",
+        "pytest",
+        "test/tostester/tests/tostester/test_python_type_boundaries.py",
+        "-q"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "ctest-restored",
+      "command": [
+        "ctest",
+        "--test-dir",
+        "build",
+        "-R",
+        "^branch-chain-python-ci-source(-conditions)?$",
+        "--output-on-failure"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "python_suite": {
+    "passed": 332,
+    "skipped": 1,
+    "deselected": 1,
+    "deselection": "Linux /proc-dependent test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool"
+  },
+  "linux_type_mode": {
+    "errors": 0,
+    "warnings": 6987
+  },
+  "mutants": {
+    "wire-api": "assertion failure on actual returned codec type",
+    "wallet-boundary": "AttributeError on begin_parse",
+    "runtime-condition": "three expected negative assertions fail"
+  },
+  "source_guards": {
+    "passed": 53,
+    "failed_locally": 4,
+    "platform_limitations": [
+      "Linux OFD lock",
+      "Bash lowercase expansion",
+      "GNU grep -P",
+      "Linux /proc zombie state"
+    ],
+    "remote_all_four_passed_at_parent": true
+  },
+  "pending": [
+    "New-head Linux and ARM readiness CI",
+    "Two-build static analysis: old run 38673976357 cancelled at six hours; no passing result"
+  ],
+  "raw_evidence": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-pr215-compat-ci-20261015",
+    "retain_through": "2026-11-14",
+    "files": [
+      {
+        "file": "boundaries-restored.log",
+        "bytes": 99,
+        "sha256": "c0ab4aa2fd3a57d82a1ed81037cdc4e4071fe6f303f62389adf235ba5990d465"
+      },
+      {
+        "file": "conditions-restored.log",
+        "bytes": 103,
+        "sha256": "1f11b6e880045ee35de832b81b45d06257342e13b5c79bbf0034379d4ca220b9"
+      },
+      {
+        "file": "ctest-restored.log",
+        "bytes": 666,
+        "sha256": "7dd3d31a8e71b409b4aa83ad56ab806a2f5ea9d595adda01c2855680264c5c2d"
+      },
+      {
+        "file": "guard-restored.log",
+        "bytes": 722,
+        "sha256": "72ed50bf54e7b0bc8443530b13204b1dc89925fa5f5321d285e7e79ac8046443"
+      },
+      {
+        "file": "pr215-guard-before.log",
+        "bytes": 73,
+        "sha256": "08a727167d71a6ad84fd35fc5d77c32a46fabfaad180095c7f329e9c468e1839"
+      },
+      {
+        "file": "pr215-python-suite-after.log",
+        "bytes": 446,
+        "sha256": "cf01c6938396977deed435791344ca891515c1089f7de2d8807488cb7cfac92f"
+      },
+      {
+        "file": "pr215-readiness-before.log",
+        "bytes": 13199,
+        "sha256": "55cedff1e421bc9e74ea6fae95315794b94da0582c9d85542c200a3d1077cb72"
+      },
+      {
+        "file": "pr215-source-guards-after.log",
+        "bytes": 181457,
+        "sha256": "92e9b4c0a7ffd5672a14526f5c0c91f6b96ebe95fc8f0aa4f65a9171b1cbe428"
+      },
+      {
+        "file": "pr215-typecheck-linux-after.json",
+        "bytes": 4377834,
+        "sha256": "14be9cfcf08be7e38d0cbe1abc8a16c2c3b083a25f49e569c36056a2efc384fa"
+      },
+      {
+        "file": "runtime-condition-mutant.log",
+        "bytes": 2349,
+        "sha256": "f629a8472023a970b666be8e3fb28a3d156661711d5df4eb7b85ce5803f86c35"
+      },
+      {
+        "file": "transport-restored.log",
+        "bytes": 2080,
+        "sha256": "bb0ed0ad5b4caded224608e0f57ea307b26fea7cbd0804c39c14fc20eb4caebe"
+      },
+      {
+        "file": "wallet-boundary-mutant.log",
+        "bytes": 1691,
+        "sha256": "856dbd2bc6769f7eee1b2d79069c8b64d4d57db7ce5281dd5d49b41194035386"
+      },
+      {
+        "file": "wire-api-mutant.log",
+        "bytes": 2374,
+        "sha256": "85431cd0635e28364641b2f5bab90530d3073648540f2ca73808fb163e89d3a3"
+      }
+    ]
+  }
+}

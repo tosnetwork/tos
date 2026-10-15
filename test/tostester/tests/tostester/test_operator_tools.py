@@ -24,13 +24,13 @@ INSTALL = Install(ROOT / "build", ROOT)
 CONTROLLER_TOOL = INSTALL.build_dir / "crypto/tos-pq-controller"
 
 
-def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess:
+def _run(args: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(args, capture_output=True, text=True, check=False, **kwargs)
     assert result.returncode == 0, f"{args[:2]} failed: {result.stderr}"
     return result
 
 
-def _stderr_field(result: subprocess.CompletedProcess, name: str) -> str:
+def _stderr_field(result: subprocess.CompletedProcess[str], name: str) -> str:
     for line in result.stderr.splitlines():
         key, _, value = line.partition(" ")
         if key == name:
@@ -42,6 +42,7 @@ def test_controller_init_data_and_state_init_are_the_fixtures(tmp_path):
     code = compile_controller_code(INSTALL, tmp_path / "code")
     fixture = make_controller_fixture(INSTALL, tmp_path / "keys", code, 3)
     fixture_data = fixture.state_init.data
+    assert fixture_data is not None
     consensus_id = fixture.consensus.key_id.hex()
 
     # The fixture's root seed file, as the operator holds it offline.
@@ -147,7 +148,7 @@ def test_bind_node_writes_what_the_test_harness_writes(tmp_path):
     assert held.extraconfig.pq_consensus.consensus_key_file == str(key_file)
 
 
-def _start_engine(db: Path) -> subprocess.CompletedProcess:
+def _start_engine(db: Path) -> subprocess.CompletedProcess[str]:
     # No global configuration exists, so an engine that gets past the lock stops at once
     # on that, before it opens a database or a socket.
     return subprocess.run(

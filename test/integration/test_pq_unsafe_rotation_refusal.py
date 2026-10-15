@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import importlib
 import json
 import re
 import subprocess
@@ -19,14 +20,18 @@ import time
 from pathlib import Path
 
 from nacl.signing import SigningKey
-from test_manager_session_identity import (
-    FIXED_PQ_SEED,
-    FIXED_VALIDATOR_ID,
-    FIXED_VALIDATOR_SEED,
-)
 from tostester.install import Install
 from tostester.key import Key
 from tostester.network import Network, StartOptions
+
+_script_module = (
+    importlib.import_module(".test_manager_session_identity", __package__)
+    if __package__
+    else importlib.import_module("test_manager_session_identity")
+)
+FIXED_PQ_SEED = _script_module.FIXED_PQ_SEED
+FIXED_VALIDATOR_ID = _script_module.FIXED_VALIDATOR_ID
+FIXED_VALIDATOR_SEED = _script_module.FIXED_VALIDATOR_SEED
 
 GROUP_CREATED = re.compile(
     r"Created validator group \(-1,8000000000000000\)\.0:(?P<session>[A-Za-z0-9+/]{43}=)"

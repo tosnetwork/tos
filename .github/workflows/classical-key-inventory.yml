@@ -30,3 +30,5 @@ jobs:
         run: |
           scripts/check-descriptor-classical-key.sh .
           scripts/check-classical-carrier-sites.py .
+      - name: Verify inventory omission and stale-entry controls
+        run: python3 -m unittest discover -s test/pq-native -p test_classical_carrier_inventory.py -v

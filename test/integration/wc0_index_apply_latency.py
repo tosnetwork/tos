@@ -31,6 +31,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
+from typing import Any, TypedDict
 
 from contract import WalletV1Blueprint, tos
 from tostester.install import Install
@@ -112,7 +113,14 @@ def memory_kib(pid: int) -> dict[str, int]:
     return fields
 
 
-def read_log(path: Path) -> dict[str, object]:
+class LogSummary(TypedDict):
+    apply_wc0: list[float]
+    hook_wc0: list[float]
+    hooked_blocks_not_applied: int
+    saturation_warnings: int
+
+
+def read_log(path: Path) -> LogSummary:
     """Per wc0 block: how long it took to apply, and how long its hook call took.
 
     A block can be applied by more than one query; the later ones find it
@@ -219,7 +227,7 @@ async def main(args: argparse.Namespace) -> None:
     require(report.exists(), "the slow node never reported its syncs")
     slowed, passed = (int(x) for x in report.read_text().split())
 
-    result: dict[str, object] = {
+    result: dict[str, Any] = {
         "scenario": "wc0-index-apply-latency",
         "commit": subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"], capture_output=True, text=True

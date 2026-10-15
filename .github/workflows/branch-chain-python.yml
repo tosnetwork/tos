@@ -82,7 +82,7 @@ jobs:
             dht-server validator-engine-console validator-engine \
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
-            tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport \
+            tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport test-json-rpc-explorer \
             test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
             test-notarize-after-transient-resolve test-state-resolver-teardown test-late-candidate-window \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
@@ -168,7 +168,7 @@ jobs:
           ctest --test-dir build -L security-findings --no-tests=error --output-on-failure
 
       - name: Check read-only proof relay and real HTTP ingress
-        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(proof-readonly-query|test-json-rpc-transport)$'
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(proof-readonly-query|test-json-rpc-transport|test-json-rpc-explorer)$'
 
       - name: Remove and restore proof relay route control
         run: python3 scripts/test-proof-query-rpc-controls.py --build-dir build
@@ -278,6 +278,24 @@ jobs:
         run: |
           uv sync --no-dev
           uv run test/tostester/generate_tl.py
+
+      - name: Exercise explorer RPCs on PQ and legacy policy networks
+        timeout-minutes: 10
+        run: |
+          uv run python scripts/test-explorer-pq-rpc.py --out build/explorer-rpc-v18
+          uv run python scripts/test-explorer-pq-rpc.py --legacy-config --out build/explorer-rpc-v16
+          uv run --with jsonschema==4.26.0 python scripts/validate-explorer-pq-receipt.py build/explorer-rpc-v18/*/rpc-evidence.json build/explorer-rpc-v16/*/rpc-evidence.json
+
+      - name: Retain public explorer RPC response receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: explorer-rpc-${{ github.sha }}
+          path: |
+            build/explorer-rpc-v18/*/rpc-evidence.json
+            build/explorer-rpc-v16/*/rpc-evidence.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Run the complete Python suite
         run: uv run pytest

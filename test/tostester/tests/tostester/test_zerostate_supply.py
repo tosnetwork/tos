@@ -6,6 +6,7 @@ import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 import tostester.zerostate as zerostate_module
@@ -27,6 +28,7 @@ from pytosiq_core.tlb.config import (
     ConfigParam28,
     ConfigParam34,
 )
+from pytosiq_core.tlb.tlb import require
 from tostester.install import Install
 from tostester.key import Key
 from tostester.network import NetworkConfig
@@ -74,7 +76,7 @@ def test_controller_policy_uses_genesis_config_dictionary(tmp_path):
         [Key()],
     )
     state = _load_masterchain_state(zerostate.masterchain.file)
-    policy = state.custom.config.config[47].copy()
+    policy = _config_cells(state)[47].copy()
     admitted = policy.load_dict(256)
     assert admitted is not None
     assert set(admitted) == {int.from_bytes(code_hash, "big")}, (
@@ -118,10 +120,19 @@ def test_local_genesis_builds_21_validators_and_refuses_22_before_fift(tmp_path)
 
 def _load_masterchain_state(path: Path) -> ShardStateUnsplit:
     root_cell = Boc(path.read_bytes()).deserialize()[0]
-    return ShardStateUnsplit.deserialize(root_cell.begin_parse())
+    state = ShardStateUnsplit.deserialize(root_cell.begin_parse())
+    assert state is not None
+    return state
+
+
+def _config_cells(state: ShardStateUnsplit):
+    assert state.custom is not None
+    assert state.custom.config.config is not None
+    return state.custom.config.config
 
 
 def _positive_account_balances(state: ShardStateUnsplit) -> list[int]:
+    assert isinstance(state.accounts, tuple)
     accounts, _extras = state.accounts
     return sorted(
         shard_account.account.storage.balance.tomis
@@ -131,7 +142,7 @@ def _positive_account_balances(state: ShardStateUnsplit) -> list[int]:
 
 
 def _config(state: ShardStateUnsplit, param: int, scheme):
-    return scheme.deserialize(state.custom.config.config[param].copy())
+    return scheme.deserialize(_config_cells(state)[param].copy())
 
 
 def _create_state_command(script: Path) -> list[str]:
@@ -179,7 +190,7 @@ def test_local_genesis_total_supply_is_exactly_five_billion_tos(tmp_path):
 
     state = _load_masterchain_state(zerostate.masterchain.file)
 
-    total_nanotos = state.total_balance.tomis
+    total_nanotos = require(state.total_balance).tomis
     assert total_nanotos == EXPECTED_TOTAL_SUPPLY_TOS * NANOTOS_PER_TOS, (
         "genesis total supply must be exactly 5,000,000,000 TOS, got "
         f"{total_nanotos} nanotos ({total_nanotos / NANOTOS_PER_TOS} TOS)"
@@ -260,7 +271,10 @@ def test_validator_election_stage_a_profile_is_isolated_and_accelerated(tmp_path
     zerostate = create_zerostate(install, stage_a_dir, config, keys)
     state = _load_masterchain_state(zerostate.masterchain.file)
 
-    assert state.total_balance.tomis == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
+    assert (
+        require(state.total_balance).tomis
+        == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
+    )
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
@@ -474,7 +488,7 @@ def test_validator_election_experiment_faucet_override_is_stage_a_only(tmp_path)
     )
     state = _load_masterchain_state(zerostate.masterchain.file)
 
-    assert state.total_balance.tomis == experiment_balance + 1_000 * NANOTOS_PER_TOS
+    assert require(state.total_balance).tomis == experiment_balance + 1_000 * NANOTOS_PER_TOS
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
@@ -492,7 +506,10 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     zerostate = create_zerostate(install, tmp_path, config, keys)
     state = _load_masterchain_state(zerostate.masterchain.file)
 
-    assert state.total_balance.tomis == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
+    assert (
+        require(state.total_balance).tomis
+        == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
+    )
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
@@ -502,20 +519,20 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     config_address = _config(state, 0, ConfigParam0).config_addr
     minter_address = _config(state, 2, ConfigParam2).minter_addr
     assert minter_address == config_address
-    assert 3 not in state.custom.config.config
+    assert 3 not in _config_cells(state)
 
     param10 = _config(state, 10, ConfigParam10)
-    assert 3 in param10.critical_params
-    assert 4 in param10.critical_params
+    assert 3 in require(param10.critical_params)
+    assert 4 in require(param10.critical_params)
 
     # Every wallet contract compares the signed global_id against
     # ConfigParam 19 and fails closed when it is absent, so no configuration
     # without it may ever be installed (mandatory) and changing it must take
     # a critical-proposal vote.
     param9 = _config(state, 9, ConfigParam9)
-    assert 19 in param9.mandatory_params
-    assert 19 in param10.critical_params
-    assert 19 in state.custom.config.config
+    assert 19 in require(param9.mandatory_params)
+    assert 19 in require(param10.critical_params)
+    assert 19 in _config_cells(state)
 
     param14 = _config(state, 14, ConfigParam14)
     assert param14.masterchain_block_fee == 39_496_630
@@ -563,16 +580,16 @@ def test_validator_economics_profile_matches_bootstrap_spec(tmp_path):
     assert validator_set.utime_until - validator_set.utime_since == 131_072
     assert validator_set.total_weight == EXPECTED_VALIDATOR_COUNT * 17
     for index, key in enumerate(keys):
-        validator = validator_set.list[index]
+        validator = require(validator_set.list)[index]
         assert validator.type_ == "validator_addr"
         assert validator.public_key.pubkey == key.public_key.key
         assert validator.adnl_addr == key.id
         assert validator.weight == 17
 
 
-def _punishment_config(state) -> dict:
+def _punishment_config(state) -> dict[str, int]:
     """Decode ConfigParam 40, which the vendored TLB library does not model."""
-    cs = state.custom.config.config[40].copy()
+    cs = _config_cells(state)[40].copy()
     tag = cs.load_uint(8)
     assert tag == 0x01, f"unexpected MisbehaviourPunishmentConfig tag {tag:#x}"
     flat = cs.load_uint(cs.load_uint(4) * 8)
@@ -593,7 +610,7 @@ def _punishment_config(state) -> dict:
     return decoded
 
 
-def _punishment_tier(config: dict, severe: bool, interval: int) -> tuple[int, int]:
+def _punishment_tier(config: dict[str, int], severe: bool, interval: int) -> tuple[int, int]:
     """Mirror compute_punishment() in lite-client/lite-client.cpp."""
     flat = config["default_flat_fine"]
     part = config["default_proportional_fine"]
@@ -627,8 +644,11 @@ def _write_pq_manifest(directory):
             capture_output=True,
             check=True,
         )
-        public = bytes.fromhex(re.search(r"^public\s+([0-9a-f]+)$", proc.stdout, re.M)[1])
-        key_id = bytes.fromhex(re.search(r"^key_id\s+([0-9a-f]+)$", proc.stdout, re.M)[1])
+        public_match = re.search(r"^public\s+([0-9a-f]+)$", proc.stdout, re.M)
+        key_match = re.search(r"^key_id\s+([0-9a-f]+)$", proc.stdout, re.M)
+        assert public_match is not None and key_match is not None
+        public = bytes.fromhex(public_match[1])
+        key_id = bytes.fromhex(key_match[1])
         controller = hashlib.sha256(f"controller-{index}".encode()).digest()
         adnl = hashlib.sha256(f"adnl-{index}".encode()).digest()
         records.append((controller, adnl, public, key_id))
@@ -728,7 +748,10 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
 
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
     assert state.gen_utime == EXPECTED_MAINNET_GENESIS_UTIME
-    assert state.total_balance.tomis == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
+    assert (
+        require(state.total_balance).tomis
+        == EXPECTED_VALIDATOR_GENESIS_SUPPLY_TOS * NANOTOS_PER_TOS
+    )
     assert _positive_account_balances(state) == [
         500 * NANOTOS_PER_TOS,
         500 * NANOTOS_PER_TOS,
@@ -738,7 +761,7 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         _config(state, 2, ConfigParam2).minter_addr == _config(state, 0, ConfigParam0).config_addr
     )
     assert _config(state, 4, ConfigParam4).dns_root_addr_hex == EXPECTED_DNS_ROOT_ID
-    assert 3 not in state.custom.config.config
+    assert 3 not in _config_cells(state)
     canonical_rewards = _config(state, 14, ConfigParam14)
     assert canonical_rewards.masterchain_block_fee == 39_496_630
     assert canonical_rewards.basechain_block_fee == 23_233_312
@@ -756,12 +779,13 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     spec = importlib.util.spec_from_file_location(
         "genesis_config34", REPO / "scripts/x02_config34_proof.py"
     )
-    decoder = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    decoder: Any = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(decoder)
     decode_validator_set = decoder.decode_validator_set
 
     assert _config(state, 8, ConfigParam8).version == 16
-    validator_set = decode_validator_set(state.custom.config.config[34].copy().to_cell())
+    validator_set = decode_validator_set(_config_cells(state)[34].copy().to_cell())
     assert validator_set["total"] == EXPECTED_VALIDATOR_COUNT
     for actual, (controller, adnl, public, key_id) in zip(validator_set["validators"], keys):
         assert actual["public_key_sha256"] == hashlib.sha256(public).hexdigest()
@@ -770,8 +794,8 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
         assert actual["adnl_id_hex"] == adnl.hex()
         assert actual["consensus_key_id_hex"] == key_id.hex()
         assert actual["weight"] == 17
-    assert 47 in state.custom.config.config
-    admitted = state.custom.config.config[47].copy().load_dict(256)
+    assert 47 in _config_cells(state)
+    admitted = _config_cells(state)[47].copy().load_dict(256)
     # Independently compile the same admission artifact and compare its code hash.
     probe = tmp_path / "controller-hash.fif"
     probe.write_text('"PQ.fif" include "auto/validator-controller-v1-code.fif" include hashu . cr')
@@ -791,8 +815,8 @@ def test_canonical_genesis_script_accepts_only_four_validator_keys(tmp_path):
     )
     assert set(admitted) == {int(compiled.stdout.strip())}
     for parameter in (8, 47):
-        assert parameter in _config(state, 9, ConfigParam9).mandatory_params
-        assert parameter in _config(state, 10, ConfigParam10).critical_params
+        assert parameter in require(_config(state, 9, ConfigParam9).mandatory_params)
+        assert parameter in require(_config(state, 10, ConfigParam10).critical_params)
 
     (tmp_path / "validator-pq.pub").write_bytes(b"".join(c + a + p for c, a, p, _ in keys[:3]))
     failed = subprocess.run(
@@ -853,7 +877,7 @@ def test_validator_rewards_are_the_only_native_tos_issuance_path(tmp_path):
     rewards = _config(state, 14, ConfigParam14)
     assert rewards.masterchain_block_fee > 0
     assert rewards.basechain_block_fee > 0
-    assert all(param not in state.custom.config.config for param in (90, 91, 92, 93))
+    assert all(param not in _config_cells(state) for param in (90, 91, 92, 93))
 
     collator = (REPO / "validator/impl/collator.cpp").read_text()
     validator = (REPO / "validator/impl/validate-query.cpp").read_text()
@@ -881,9 +905,9 @@ def test_canonical_genesis_makes_global_id_mandatory_and_critical(tmp_path):
     )
 
     state = _load_masterchain_state(tmp_path / "zerostate.boc")
-    assert 19 in state.custom.config.config
-    assert 19 in _config(state, 9, ConfigParam9).mandatory_params
-    assert 19 in _config(state, 10, ConfigParam10).critical_params
+    assert 19 in _config_cells(state)
+    assert 19 in require(_config(state, 9, ConfigParam9).mandatory_params)
+    assert 19 in require(_config(state, 10, ConfigParam10).critical_params)
 
 
 def test_legacy_classical_key_helper_defaults_to_four_keys(tmp_path):
@@ -1000,12 +1024,13 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
             env=_mainnet_genesis_env(),
         )
         state = _load_masterchain_state(directory / "zerostate.boc")
-        cfg = state.custom.config.config
+        cfg = _config_cells(state)
         assert ConfigParam8.deserialize(cfg[8].copy()).version == (
             18 if admission else 17 if enabled else 16
         )
         mc_gas = ConfigParam20.deserialize(cfg[20].copy())
         wc_gas = ConfigParam21.deserialize(cfg[21].copy())
+        assert mc_gas.other is not None and wc_gas.other is not None
         assert mc_gas.other.gas_credit == 10000
         assert wc_gas.other.gas_credit == (20000 if admission else 10000)
         wc_fields = dict(vars(wc_gas.other))
@@ -1018,8 +1043,8 @@ def test_canonical_genesis_auth_policy_profile_is_explicit(tmp_path):
         assert wc_fields == baseline_wc, "candidate changed another basechain gas field"
         assert mc_fields == baseline_mc, "candidate changed a masterchain gas field"
         assert (48 in cfg) == enabled
-        assert (48 in ConfigParam9.deserialize(cfg[9].copy()).mandatory_params) == enabled
-        assert (48 in ConfigParam10.deserialize(cfg[10].copy()).critical_params) == enabled
+        assert (48 in require(ConfigParam9.deserialize(cfg[9].copy()).mandatory_params)) == enabled
+        assert (48 in require(ConfigParam10.deserialize(cfg[10].copy()).critical_params)) == enabled
         if enabled:
             record = cfg[48].copy()
             assert record.load_uint(8) == 0xA1
@@ -1054,13 +1079,17 @@ def _generate_admission_candidate(directory, source):
     (directory / "generation.stdout.raw").write_bytes(result.stdout)
     (directory / "generation.stderr.raw").write_bytes(result.stderr)
     result.check_returncode()
-    return _load_masterchain_state(directory / "zerostate.boc").custom.config.config
+    return require(_load_masterchain_state(directory / "zerostate.boc").custom).config.config
 
 
 def _assert_admission_candidate(cfg):
     assert ConfigParam8.deserialize(cfg[8].copy()).version == 18, "candidate version"
-    assert ConfigParam21.deserialize(cfg[21].copy()).other.gas_credit == 20000, "candidate credit"
-    assert ConfigParam20.deserialize(cfg[20].copy()).other.gas_credit == 10000, "masterchain credit"
+    assert require(ConfigParam21.deserialize(cfg[21].copy()).other).gas_credit == 20000, (
+        "candidate credit"
+    )
+    assert require(ConfigParam20.deserialize(cfg[20].copy()).other).gas_credit == 10000, (
+        "masterchain credit"
+    )
 
 
 @pytest.mark.parametrize("boundary", ["version", "credit"])
@@ -1136,10 +1165,10 @@ def test_admission_candidate_localnet_matches_generated_canonical_gas_fields(tmp
     def generate_and_compare(local_dir):
         local_dir.mkdir()
         local = create_zerostate(Install(BUILD_DIR, REPO), local_dir, config, [Key()])
-        cfg = _load_masterchain_state(local.masterchain.file).custom.config.config
+        cfg = require(_load_masterchain_state(local.masterchain.file).custom).config.config
         _assert_admission_candidate(cfg)
         for param in (20, 21):
-            assert cfg[param].to_cell().hash == canonical[param].to_cell().hash, (
+            assert require(cfg)[param].to_cell().hash == require(canonical)[param].to_cell().hash, (
                 f"ConfigParam {param} differs"
             )
 

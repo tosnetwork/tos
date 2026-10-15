@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -17,7 +18,8 @@ SCRIPT = REPO / "scripts/validator-election-stage-a.py"
 def _load_script():
     spec = importlib.util.spec_from_file_location("validator_election_stage_a", SCRIPT)
     assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    module: Any = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -859,7 +861,7 @@ def test_experiment_activation_joins_pq_controllers_by_adnl_not_zero_public_key(
         assert proofs == [], "a set with a swapped controller/ADNL association reached the proof"
     else:
         assert asyncio.run(rehearsal.observe_experiment_activation()) is True
-        allocation = rehearsal.election_allocations[100]
+        allocation: dict[str, Any] = rehearsal.election_allocations[100]
         assert allocation["selection_status"] == "selected"
         assert proofs == [100]
         assert allocation["config34_proof"] == {

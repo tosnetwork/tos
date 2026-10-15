@@ -1,10 +1,10 @@
-from typing import Union, Iterable, overload
+from collections.abc import Sized
+from itertools import islice
+from typing import Iterable, Sequence, Union
 
 from bitarray import bitarray
-from bitarray.util import int2ba
 
-
-BytesLike = Union[bytes, Iterable[int]]
+BytesLike = Union[bytes, bytearray]
 
 
 class TvmBitarrayException(Exception):
@@ -20,25 +20,26 @@ class TvmBitarrayUnderflowException(TvmBitarrayException):
 
 
 class TvmBitarray(bitarray):
-
     def __new__(cls, size: int = 1023, *args, **kwargs):
         return super().__new__(cls, *args, **kwargs)
 
     def __init__(self, size: int = 1023, *args, **kwargs):
         if size > 1023:
-            raise TvmBitarrayException('bitarray size must be <= 1023')
+            raise TvmBitarrayException("bitarray size must be <= 1023")
         self._size = size
         super().__init__()
 
     def check_overflow(self, length: int) -> None:
         if len(self) + length > 1023:
-            raise TvmBitarrayOverflowException('bitstring overflow')
+            raise TvmBitarrayOverflowException("bitstring overflow")
 
     def check_underflow(self, length: int) -> None:
         if len(self) < length:
-            raise TvmBitarrayUnderflowException('bitstring underflow')
+            raise TvmBitarrayUnderflowException("bitstring underflow")
 
     def extend(self, x: Union[str, Iterable[int]]) -> None:
+        if not isinstance(x, Sized):
+            x = list(islice(x, 1024))
         self.check_overflow(len(x))
         super().extend(x)
 
@@ -51,11 +52,9 @@ class TvmBitarray(bitarray):
         super().frombytes(a)
 
     def copy(self) -> "TvmBitarray":
-        res = self.__new__(TvmBitarray)
-        res.extend(self)
-        return res
+        return type(self)(self._size, self)
 
-    def __delitem__(self, item: Union[int, slice]):
+    def __delitem__(self, item: Union[int, slice, bitarray, Sequence[int]]):
         if isinstance(item, slice):
             start = item.start if item.start else 0
             stop = item.stop if item.stop else len(self)

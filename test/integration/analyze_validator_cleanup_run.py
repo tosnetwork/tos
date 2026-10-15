@@ -45,6 +45,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -89,7 +90,7 @@ def _latest_run() -> Path | None:
     return runs[0] if runs else None
 
 
-def _key(m: re.Match) -> tuple[str, str, str]:
+def _key(m: re.Match[str]) -> tuple[str, str, str]:
     return (m.group("session"), m.group("gen"), m.group("attempt"))
 
 
@@ -103,7 +104,7 @@ def _expected_validator_count(run_dir: Path) -> int | None:
         return None
 
 
-def _parse_node(text: str) -> dict:
+def _parse_node(text: str) -> dict[Any, Any]:
     # positions (byte offsets) give temporal order within a single node log.
     reserves = {}
     for m in RESERVE.finditer(text):
@@ -158,7 +159,7 @@ def _parse_node(text: str) -> dict:
     }
 
 
-def analyze(run_dir: Path) -> tuple[str, dict]:
+def analyze(run_dir: Path) -> tuple[str, dict[Any, Any]]:
     network = run_dir / "network"
     node_dirs = sorted(p for p in network.glob("node*") if p.is_dir())
     expected_validators = _expected_validator_count(run_dir)

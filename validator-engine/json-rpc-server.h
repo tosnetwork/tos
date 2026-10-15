@@ -403,6 +403,9 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // Method handlers — existing
   void handle_sendBoc(td::JsonObject &params, std::string req_id,
                       const std::string &source_ip, td::Promise<HttpReturn> promise);
+  class ExplorerQuery;
+  void handle_explorer(std::string method, td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise);
+  static HttpReturn make_explorer_error(const td::Status &error, std::string id, const std::string &cors);
   void handle_getProofQuery(td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise);
   void handle_getConfigParam(td::JsonObject &params, std::string req_id,
                              td::Promise<HttpReturn> promise);
@@ -594,8 +597,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   static HttpReturn make_json_ok(std::string result_json, std::string id,
                                  const std::string& cors_origin);
   HttpReturn make_json_error(int code, std::string message, std::string id) const;
-  static HttpReturn make_json_error(int code, std::string message, std::string id,
-                                    const std::string& cors_origin);
+  static HttpReturn make_json_error(int code, std::string message, std::string id, const std::string &cors_origin,
+                                    std::string error_info = {});
   // Standards-compliant JSON-RPC 2.0 error (nested `error:{code,message}`,
   // HTTP 200). `make_json_error` is retained for TVM JSON-RPC methods
   // whose existing tests depend on `{ok, error:<string>, code}` at

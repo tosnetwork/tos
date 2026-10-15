@@ -56,7 +56,7 @@ td::Result<std::unique_ptr<block::BlockProofChain>> deserialize_proof_chain(
                                            // dest_proof:bytes config_proof:bytes signatures:liteServer.SignatureSet
                                            dest_proof = std::move(s.dest_proof_);
                                            proof = std::move(s.config_proof_);
-                                           auto r_sig_set = block::BlockSignatureSet::fetch(s.signatures_);
+                                           auto r_sig_set = block::BlockSignatureSet::fetch_lite_checked(s.signatures_);
                                            if (r_sig_set.is_error()) {
                                              signature_error = r_sig_set.move_as_error();
                                              return;

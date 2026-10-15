@@ -22,7 +22,7 @@ class ProcessBackend(ABC):
         self,
         node_name: str,
         executable: Path | str,
-        args: Sequence[str],
+        args: Sequence[str | Path],
         cwd: Path,
         env: Mapping[str, str],
         capture_stdout: bool = False,
@@ -39,7 +39,7 @@ class LocalProcessBackend(ProcessBackend):
         self,
         node_name: str,
         executable: Path | str,
-        args: Sequence[str],
+        args: Sequence[str | Path],
         cwd: Path,
         env: Mapping[str, str],
         capture_stdout: bool = False,
@@ -77,7 +77,7 @@ class RemoteCommandBackend(ProcessBackend):
         self,
         node_name: str,
         executable: Path | str,
-        args: Sequence[str],
+        args: Sequence[str | Path],
         cwd: Path,
         env: Mapping[str, str],
         capture_stdout: bool = False,
@@ -88,7 +88,7 @@ class RemoteCommandBackend(ProcessBackend):
             raise ValueError(f"remote-command inventory has no entry for {node_name}") from error
         specification = {
             "executable": os.fspath(executable),
-            "args": list(args),
+            "args": [os.fspath(arg) for arg in args],
             "cwd": os.fspath(cwd),
             "env": dict(env),
         }

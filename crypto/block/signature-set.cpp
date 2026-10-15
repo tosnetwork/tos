@@ -776,7 +776,7 @@ class BlockSignatureSetSimplexPQ final : public BlockSignatureSet {
         return td::Status::Error("pq signatures: malformed verification input");
       }
       if (result == tos::pq::VerifyResult::backend_error) {
-        return td::Status::Error("pq signatures: verification backend failure");
+        return td::Status::Error(kPQVerificationBackendFailure, "pq signatures: verification backend failure");
       }
       if (result != tos::pq::VerifyResult::valid) {
         return td::Status::Error("pq signatures: invalid signature");

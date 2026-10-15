@@ -23,6 +23,29 @@ add_library(json-rpc-storage STATIC
 target_include_directories(json-rpc-storage PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(json-rpc-storage PUBLIC tos_block tos_crypto tdutils)
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(TOS_EXPLORER_QUANTUM_NETWORK_TAG "4242424242424242424242424242424242424242424242424242424242424242" CACHE STRING "Registered review Quantum wallet network tag")
+file(GLOB EXPLORER_REGISTRY_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/crypto/smartcont/*.fc")
+set(EXPLORER_REGISTRY "${CMAKE_BINARY_DIR}/generated/explorer-pq-registry.inc")
+add_custom_command(OUTPUT ${EXPLORER_REGISTRY}
+  BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/explorer-pq-registry.json
+    ${CMAKE_BINARY_DIR}/generated/pq_highload_mldsa44_v1.boc
+    ${CMAKE_BINARY_DIR}/generated/mldsa44_auth_module_v1.boc
+    ${CMAKE_BINARY_DIR}/generated/falcon512_padded_auth_module_v1.boc
+    ${CMAKE_BINARY_DIR}/generated/quantum_fee_vault_v3.boc
+    ${CMAKE_BINARY_DIR}/generated/quantum_module_v1.boc
+    ${CMAKE_BINARY_DIR}/generated/quantum_wallet_v4.boc
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/build-explorer-pq-registry.py
+    --func $<TARGET_FILE:func> --fift $<TARGET_FILE:fift> --output ${EXPLORER_REGISTRY}
+    --network-tag ${TOS_EXPLORER_QUANTUM_NETWORK_TAG}
+  DEPENDS func fift ${EXPLORER_REGISTRY_SOURCES} ${CMAKE_SOURCE_DIR}/scripts/build-explorer-pq-registry.py
+    ${CMAKE_SOURCE_DIR}/test/auth-extensions/native.py ${CMAKE_SOURCE_DIR}/test/auth-extensions/cells.py
+  VERBATIM)
+add_library(json-rpc-explorer STATIC json-rpc-explorer.cpp json-rpc-explorer.h json-rpc-explorer-account.cpp json-rpc-explorer-finality.cpp ${EXPLORER_REGISTRY})
+target_include_directories(json-rpc-explorer PRIVATE ${CMAKE_BINARY_DIR}/generated)
+target_link_libraries(json-rpc-explorer PUBLIC control-getter tos_block tos_crypto tdutils tl_lite_api json-rpc-parse lite-client-common)
+target_include_directories(json-rpc-explorer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server.h
   json-rpc-server-internal.h
@@ -34,6 +57,7 @@ set(VALIDATOR_ENGINE_JSON_RPC_SOURCE
   json-rpc-server-runmethod.cpp
   json-rpc-server-send.cpp
   json-rpc-server-config.cpp
+  json-rpc-server-explorer.cpp
   json-rpc-server-token.cpp
   json-rpc-server-utils.cpp
   json-rpc-server-shared.cpp
@@ -67,7 +91,7 @@ target_compile_options(validator-engine-json-rpc PRIVATE
 target_include_directories(validator-engine-json-rpc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(validator-engine-json-rpc PUBLIC metrics overlay tdutils tdactor adnl tl_api dht
   rldp2 quic full-node validator tos_validator validator toshttp
-  fift-lib smc-envelope json-rpc-parse json-rpc-account-model json-rpc-storage)
+  fift-lib smc-envelope json-rpc-parse json-rpc-account-model json-rpc-storage json-rpc-explorer control-getter lite-client-common)
 
 add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})
 target_compile_options(validator-engine PRIVATE

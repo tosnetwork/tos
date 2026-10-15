@@ -3,9 +3,11 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import TypedDict
 
 import pytest
 from pytosiq_core import Address, Builder, Cell
+from pytosiq_core.tlb.tlb import require
 from tosapi import tos_api, toslib_api
 from tostester.install import Install
 from tostester.pq_election_fixture import (
@@ -145,7 +147,7 @@ def test_controller_identity_and_pool_roles_are_bound_by_state_init(tmp_path):
 
     owner = Address((-1, bytes([0x55]) * 32))
     pool = make_pool_fixture(Cell.empty(), owner, controller.address)
-    roles = pool.state_init.data.begin_parse()
+    roles = require(pool.state_init.data).begin_parse()
     assert roles.load_address() == owner
     assert roles.load_address() == owner
     assert roles.load_address() == controller.address
@@ -212,16 +214,27 @@ def test_live_rehearsal_arguments_reach_the_production_builder_bridge(monkeypatc
 
     monkeypatch.setattr("tostester.pq_election_fixture.subprocess.run", fake_run)
     witness = Builder().store_uint(7, 32).end_cell()
-    args = dict(
-        query_id=3,
-        stake_amount=11_000_000_000_000,
-        stake_at=1_700_000_000,
-        max_factor=65_536,
-        adnl_addr=bytes([0x22]) * 32,
-        public_key=bytes([0x11]) * 1312,
-        signature=bytes([0x33]) * 2420,
-        witness=witness,
-    )
+
+    class StakeArguments(TypedDict):
+        query_id: int
+        stake_amount: int
+        stake_at: int
+        max_factor: int
+        adnl_addr: bytes
+        public_key: bytes
+        signature: bytes
+        witness: Cell
+
+    args: StakeArguments = {
+        "query_id": 3,
+        "stake_amount": 11000000000000,
+        "stake_at": 1700000000,
+        "max_factor": 65536,
+        "adnl_addr": bytes([34]) * 32,
+        "public_key": bytes([17]) * 1312,
+        "signature": bytes([51]) * 2420,
+        "witness": witness,
+    }
     result = build_production_pool_stake_order(
         Path("/diagnostic/pq_pool_stake_order"), algorithm_id=1, **args
     )

@@ -1,10 +1,11 @@
 import hashlib
 import typing
+from typing import Any
 
-from .deserialize import Boc, NullCell
-from .exotic import LevelMask, CellTypes
-from .tvm_bitarray import TvmBitarray, BitarrayLike
 from ..crypto.crc import crc32c
+from .deserialize import Boc, NullCell
+from .exotic import CellTypes, LevelMask
+from .tvm_bitarray import BitarrayLike, TvmBitarray
 
 
 class CellError(Exception):
@@ -17,9 +18,10 @@ class Cell(NullCell):
     If you want to read from cell use .begin_parse() method.
     If you want to write to cell use .to_builder() method.
     """
+
     def __init__(self, bits: BitarrayLike, refs: typing.List["Cell"], cell_type: int = -1) -> None:
         self.bits: BitarrayLike = bits
-        self.refs: list = refs
+        self.refs: list[Any] = refs
         self.type_: int = cell_type
         self.is_exotic: bool = cell_type != -1
         super().__init__(bits, refs, cell_type)
@@ -48,7 +50,7 @@ class Cell(NullCell):
         elif self.type_ == CellTypes.pruned_branch:
             # prunned branch doesn't have refs
             if self.refs:
-                raise CellError('Pruned branch must not has refs')
+                raise CellError("Pruned branch must not has refs")
             return LevelMask(int(self.bits[8:16].to01(), 2))
         elif self.type_ == CellTypes.merkle_proof:
             # merkle proof cell has exactly one ref
@@ -59,12 +61,13 @@ class Cell(NullCell):
         elif self.type_ == CellTypes.library_ref:
             return LevelMask(0)
         else:
-            raise CellError(f'Unknown cell type: {self.type_}')
+            raise CellError(f"Unknown cell type: {self.type_}")
 
     def to_builder(self):
         if self.is_exotic:
-            raise CellError('cant convert exotic cell to builder')
+            raise CellError("cant convert exotic cell to builder")
         from .builder import Builder
+
         return Builder().store_cell(self)
 
     def to_slice(self):
@@ -73,14 +76,14 @@ class Cell(NullCell):
     def get_refs_descriptor(self, lvl_mask: LevelMask) -> bytes:
         # d1 = r + 8s + 32l
         d1 = len(self.refs) + 8 * self.is_exotic + 32 * lvl_mask.mask
-        return d1.to_bytes(1, 'big')
+        return d1.to_bytes(1, "big")
 
     def get_bits_descriptor(self) -> bytes:
         # d2 = ceil(b/8) + floor(b/8)
         bit_len = len(self.bits)
         d2 = (bit_len // 8) * 2
         d2 += 1 if bit_len % 8 else 0
-        return d2.to_bytes(1, 'big')
+        return d2.to_bytes(1, "big")
 
     def get_descriptors(self, lvl_mask: LevelMask = LevelMask(0)) -> bytes:
         return self.get_refs_descriptor(lvl_mask) + self.get_bits_descriptor()
@@ -91,7 +94,7 @@ class Cell(NullCell):
             pruned_hash_index = self.level_mask.get_hash_index()
             if hash_index != pruned_hash_index:
                 off = 2 + 32 * pruned_hash_index + hash_index * 2
-                return int.from_bytes(self.get_data_bytes()[off: off + 2], 'big')
+                return int.from_bytes(self.get_data_bytes()[off : off + 2], "big")
             hash_index = 0
         return self._depths[hash_index]
 
@@ -111,10 +114,10 @@ class Cell(NullCell):
         descs = self._descriptors
         data = self._data_bytes
         result = descs + data
-        depths = b''
-        hashes = b''
+        depths = b""
+        hashes = b""
         for ref in self.refs:
-            depths += ref._max_depth.to_bytes(2, 'big')
+            depths += ref._max_depth.to_bytes(2, "big")
             hashes += ref.hash
         return result + depths + hashes
 
@@ -133,7 +136,7 @@ class Cell(NullCell):
             pruned_hash_index = self.level_mask.get_hash_index()
             if hash_index != pruned_hash_index:
                 # here we read and return hash of the deleted subtree
-                return self._data_bytes[2 + (hash_index * 32): 2 + ((hash_index + 1) * 32)]
+                return self._data_bytes[2 + (hash_index * 32) : 2 + ((hash_index + 1) * 32)]
             hash_index = 0
         return self._hashes[hash_index]
 
@@ -156,12 +159,12 @@ class Cell(NullCell):
             hash_ = hashlib.sha256(dsc)
             if hash_index == hash_index_offset:
                 if li != 0 and self.type_ != CellTypes.pruned_branch:
-                    raise CellError('not pruned or 0')
+                    raise CellError("not pruned or 0")
                 data = self.get_data_bytes()
                 hash_.update(data)
             else:
                 if li == 0 or self.type_ == CellTypes.pruned_branch:
-                    raise CellError('not pruned or 0')
+                    raise CellError("not pruned or 0")
                 off = hash_index - hash_index_offset - 1
                 hash_.update(self._hashes[off])
             depth = 0
@@ -170,14 +173,14 @@ class Cell(NullCell):
                     ref_depth = r.get_depth(li + 1)
                 else:
                     ref_depth = r.get_depth(li)
-                depth_bytes = ref_depth.to_bytes(2, 'big')
+                depth_bytes = ref_depth.to_bytes(2, "big")
                 hash_.update(depth_bytes)
                 if ref_depth > depth:
                     depth = ref_depth
             if len(self.refs) > 0:
                 depth += 1
                 if depth >= 1024:  # Cell max depth
-                    raise CellError('depth is more than max depth')
+                    raise CellError("depth is more than max depth")
             for r in self.refs:
                 if self.type_ in (CellTypes.merkle_proof, CellTypes.merkle_update):
                     hash_.update(r.get_hash(li + 1))
@@ -192,7 +195,7 @@ class Cell(NullCell):
         # Hash_repr(c) := sha256(CellRepr(c))
         return hashlib.sha256(self.get_representation()).digest()
 
-    def order(self, result: dict = {}) -> dict:
+    def order(self, result: dict[Any, Any] = {}) -> dict[Any, Any]:
         """
         :return: dict {<Cell>: <index>}
         """
@@ -203,25 +206,29 @@ class Cell(NullCell):
             ref.order(result)
         return result
 
-    def serialize(self, indexes: dict, byte_len: int) -> bytes:
+    def serialize(self, indexes: dict[Any, Any], byte_len: int) -> bytes:
         result = self._descriptors + self._data_bytes
         for ref in self.refs:
-            result += indexes[ref].to_bytes(byte_len, 'big')
+            result += indexes[ref].to_bytes(byte_len, "big")
         return result
 
     def to_boc(self, has_idx=False, hash_crc32=False, has_cache_bits=False, flags=0):
         indexed = {}
         self.order(indexed)
-        ordered_cells = {j: i for i, j in enumerate(indexed)}  # {root_cell: 0, cell1: 1, cell2: 2 ...}
+        ordered_cells = {
+            j: i for i, j in enumerate(indexed)
+        }  # {root_cell: 0, cell1: 1, cell2: 2 ...}
 
         cells_num = len(ordered_cells)
 
-        cells_len = (cells_num.bit_length() + 7) // 8  # equals to math.ceil(math.log2(cells_num + 1) / 8) but 3x faster
+        cells_len = (
+            cells_num.bit_length() + 7
+        ) // 8  # equals to math.ceil(math.log2(cells_num + 1) / 8) but 3x faster
 
         # flags = 0_0_0_00_000: has_idx 1bit, hash_crc32 1bit, has_cache_bits 1bit, flags 2bit, size_bytes 3 bit
-        flags = (has_idx * 128 + hash_crc32 * 64 + has_cache_bits * 32 + flags * 8 + cells_len)
+        flags = has_idx * 128 + hash_crc32 * 64 + has_cache_bits * 32 + flags * 8 + cells_len
         flags |= cells_len
-        flags = flags.to_bytes(1, 'big')
+        flags = flags.to_bytes(1, "big")
 
         payload = bytearray()
 
@@ -235,22 +242,24 @@ class Cell(NullCell):
         payload_len = (len(payload).bit_length() + 7) // 8
 
         root_num = 1  # currently 1
-        root_index = b'\00' * cells_len
+        root_index = b"\00" * cells_len
 
-        absent = b'\x00' * cells_len
+        absent = b"\x00" * cells_len
 
-        result = bytearray(b'\xb5\xee\x9cr') + \
-                 flags + \
-                 payload_len.to_bytes(1, 'big') + \
-                 cells_num.to_bytes(cells_len, 'big') + \
-                 root_num.to_bytes(cells_len, 'big') + \
-                 absent + \
-                 len(payload).to_bytes(payload_len, 'big') + \
-                 root_index
+        result = (
+            bytearray(b"\xb5\xee\x9cr")
+            + flags
+            + payload_len.to_bytes(1, "big")
+            + cells_num.to_bytes(cells_len, "big")
+            + root_num.to_bytes(cells_len, "big")
+            + absent
+            + len(payload).to_bytes(payload_len, "big")
+            + root_index
+        )
 
         if has_idx:
             for l in serialized_cells_len:
-                result += l.to_bytes(payload_len, 'big')
+                result += l.to_bytes(payload_len, "big")
         result += payload
         if hash_crc32:
             result += crc32c(result)
@@ -267,19 +276,20 @@ class Cell(NullCell):
         boc = Boc(data)
         cells = boc.deserialize(cls)
         if len(cells) > 1:
-            raise CellError('expected one root cell')
+            raise CellError("expected one root cell")
         root_cell = cells[0]
         return root_cell
 
     def begin_parse(self):
         from .slice import Slice
+
         return Slice(self.bits.copy(), self.refs.copy(), self.type_)
 
     def copy(self):
         return Cell(self.bits.copy(), self.refs.copy(), self.type_)
 
     def __hash__(self) -> int:  # for dicts
-        return int.from_bytes(self._hash, 'big')
+        return int.from_bytes(self._hash, "big")
 
     def __getitem__(self, ref_i: int) -> "Cell":
         """
@@ -289,8 +299,12 @@ class Cell(NullCell):
         """
         return self.refs[ref_i]
 
-    def __eq__(self, other: "Cell") -> bool:
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Cell):
+            return NotImplemented
         return self._hash == other.hash
 
     def __repr__(self) -> str:
-        return f'<Cell {len(self.bits)}[{self.bits.tobytes().hex().upper()}] -> {len(self.refs)} refs>'
+        return (
+            f"<Cell {len(self.bits)}[{self.bits.tobytes().hex().upper()}] -> {len(self.refs)} refs>"
+        )

@@ -6,6 +6,10 @@
 #include "td/utils/crypto.h"
 
 namespace tos {
+std::shared_ptr<http::BodyBudget::Reservation> reserve_explorer_response(std::size_t bytes) {
+  static auto budget = std::make_shared<http::BodyBudget>(kExplorerResponseBudgetBytes);
+  return budget->reserve(bytes);
+}
 
 td::Result<block::StdAddress> parse_address_param(td::JsonObject& params) {
   auto addr_r = params.get_required_string_field("address");

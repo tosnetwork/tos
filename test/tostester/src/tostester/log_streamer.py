@@ -60,7 +60,7 @@ class LogStreamer:
 
     def fd_binding(self) -> dict[str, int]:
         """Expose this streamer's exact pipe reader and raw-log writer FDs."""
-        transport = self._stream._transport
+        transport = getattr(self._stream, "_transport", None)
         if transport is None:
             raise RuntimeError("raw log input pipe is not attached")
         pipe = transport.get_extra_info("pipe")

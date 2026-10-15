@@ -34,6 +34,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 SOURCE = REPO / "scripts" / "validator-election-stage-a.py"
@@ -41,7 +42,8 @@ SOURCE = REPO / "scripts" / "validator-election-stage-a.py"
 
 def _load_real_module():
     spec = importlib.util.spec_from_file_location("vestage_under_test", SOURCE)
-    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    module: Any = importlib.util.module_from_spec(spec)
     # dataclass processing needs the module registered before exec.
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -80,6 +82,10 @@ class _Node:
 
 
 class Fixture:
+    verify_live_rejoin = REAL.verify_live_rejoin
+    _node_mc_seqno = REAL._node_mc_seqno
+    _node_mc_block_id = REAL._node_mc_block_id
+    record_f01_process = REAL.record_f01_process
     """A `self` for the real methods: real verify_live_rejoin / _node_mc_seqno bound
     below, everything they reach is a double."""
 
@@ -131,6 +137,7 @@ class Fixture:
             return {"result": {"last": {"seqno": self._target.next()}}}
         if method == "getBlockHeader":
             # Queried on BOTH the reference (node 0) and the target for same-height agreement.
+            assert params is not None
             seqno = params["seqno"]
             # fork: target diverges at every height. fork_after: target shares the canonical
             # prefix up to and including that height, then diverges above it (a fork after a
@@ -172,11 +179,7 @@ class Fixture:
 
 
 # Bind the REAL methods under test onto the fixture (identity from the source module).
-Fixture.verify_live_rejoin = REAL.verify_live_rejoin
-Fixture._node_mc_seqno = REAL._node_mc_seqno
-Fixture._node_mc_block_id = REAL._node_mc_block_id
 # Real, and a no-op outside the full PQ launch gate (pq_full is False above).
-Fixture.record_f01_process = REAL.record_f01_process
 
 
 async def _run(

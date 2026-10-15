@@ -106,28 +106,32 @@ def require(condition: bool, message: str) -> None:
 def validate_unconditional_steps(text: str) -> None:
     # Always-on evidence upload cannot skip a test. All jobs and runtime gates
     # retain the unconditional coverage rule, including any other upload step.
-    archive = re.search(
-        r"(?ms)^      - name: Retain Quantum candidate configuration and boot evidence\n"
-        r"(?P<body>.*?)(?=^      - |\Z)",
-        text,
-    )
-    if archive is not None:
-        body = archive.group("body")
-        require(
-            re.search(
-                r"(?m)^        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02(?: # v4)?$",
-                body,
+    for archive_name in (
+        "Retain Quantum candidate configuration and boot evidence",
+        "Retain public explorer RPC response receipts",
+    ):
+        archive = re.search(
+            rf"(?ms)^      - name: {re.escape(archive_name)}\n"
+            r"(?P<body>.*?)(?=^      - |\Z)",
+            text,
+        )
+        if archive is not None:
+            body = archive.group("body")
+            require(
+                re.search(
+                    r"(?m)^        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02(?: # v4)?$",
+                    body,
+                )
+                is not None,
+                "evidence archive is not the pinned upload action",
             )
-            is not None,
-            "evidence archive is not the pinned upload action",
-        )
-        require(
-            body.count("        if: always()\n") == 1 and "run:" not in body,
-            "evidence archive must run always and cannot execute tests",
-        )
-        text = text.replace(
-            archive.group(0), archive.group(0).replace("        if: always()\n", ""), 1
-        )
+            require(
+                body.count("        if: always()\n") == 1 and "run:" not in body,
+                "evidence archive must run always and cannot execute tests",
+            )
+            text = text.replace(
+                archive.group(0), archive.group(0).replace("        if: always()\n", ""), 1
+            )
     require("if:" not in text, "workflow makes a job or step conditional")
 
 

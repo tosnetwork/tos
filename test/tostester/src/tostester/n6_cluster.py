@@ -205,7 +205,8 @@ def analyze_consensus_milestones(
         timestamps = [event.get("wall_unix_ns") for event in events if event.get("stage") == stage]
         if not timestamps or any(not isinstance(value, int) for value in timestamps):
             raise RuntimeError(f"N6_SCALE_SWEEP_FAILURE: no {stage} milestone was observed")
-        result = min(timestamps) - measurement_started_wall_ns
+        valid_timestamps = [value for value in timestamps if isinstance(value, int)]
+        result = min(valid_timestamps) - measurement_started_wall_ns
         if result < 0:
             raise RuntimeError(
                 f"N6_SCALE_SWEEP_FAILURE: {stage} predates the recorded measurement start; "
@@ -605,7 +606,7 @@ async def _masterchain_heights(
         errors = [item for item in outcomes if isinstance(item, BaseException)]
         if errors:
             raise next((e for e in errors if not _is_lite_startup_not_synced(e)), errors[0])
-        infos = outcomes
+        infos = [item for item in outcomes if not isinstance(item, BaseException)]
     else:
         infos = await asyncio.gather(*(query(name, client) for name, client in clients.items()))
     return {name: info.last.seqno for name, info in zip(clients, infos, strict=True)}

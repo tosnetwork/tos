@@ -1,15 +1,14 @@
 import hashlib
-from bitarray import bitarray
 import typing
+from typing import Any, Optional
 
-from .. import Slice, CellTypes
 from ..address import Address
-from ..cell import Cell
 from ..builder import Builder
-from ..deserialize import NullCell
-
-from .utils import serialize_dict
+from ..cell import Cell
+from ..exotic import CellTypes
+from ..slice import Slice
 from .parse import parse_hashmap
+from .utils import serialize_dict
 
 Key = typing.Union[int, str, bytes, Address]
 Value = typing.Union
@@ -20,24 +19,24 @@ class DictError(Exception):
 
 
 class HashMap:
-
-    def __init__(self,
-                 key_size: int,
-                 key_serializer: typing.Optional[typing.Callable] = None,
-                 value_serializer: typing.Optional[typing.Callable] = None,
-                 map_: dict = None,
-                 ):
+    def __init__(
+        self,
+        key_size: int,
+        key_serializer: typing.Optional[typing.Callable[..., Any]] = None,
+        value_serializer: typing.Optional[typing.Callable[..., Any]] = None,
+        map_: Optional[dict[Any, Any]] = None,
+    ):
 
         self.size = key_size
         if map_ is None:
-            map_: dict = {}
+            map_: dict[Any, Any] = {}
         self.map = map_
-        self.key_serializer: typing.Callable = key_serializer
-        self.value_serializer: typing.Callable = value_serializer
+        self.key_serializer: Optional[typing.Callable[..., Any]] = key_serializer
+        self.value_serializer: Optional[typing.Callable[..., Any]] = value_serializer
 
     def set_int_key(self, int_key: int, value):
         if int_key.bit_length() > self.size:
-            raise DictError('Key sizes must be the same.')
+            raise DictError("Key sizes must be the same.")
         self.map[int_key] = value
         return self
 
@@ -58,13 +57,15 @@ class HashMap:
         if self.key_serializer:
             key = self.key_serializer(key)
             if not isinstance(key, int):
-                raise DictError('key serializer should return int')
+                raise DictError("key serializer should return int")
             return self.set_int_key(key, value)
 
         if hash_key:
+            if not isinstance(key, str):
+                raise DictError("hashed dictionary keys must be strings")
             key = hashlib.sha256(key.encode()).digest()
         if isinstance(key, bytes):
-            key = int.from_bytes(key, 'big', signed=False)
+            key = int.from_bytes(key, "big", signed=False)
         elif isinstance(key, str):
             key = int(key, 2)
         elif isinstance(key, Address):
@@ -72,7 +73,7 @@ class HashMap:
         if isinstance(key, int):
             return self.set_int_key(key, value)
         else:
-            raise DictError('unknown key type')
+            raise DictError("unknown key type")
 
     def with_address_values(self):
         self.value_serializer = lambda src, dest: dest.store_address(src)
@@ -107,23 +108,30 @@ class HashMap:
         return result
 
     @staticmethod
-    def parse(dict_cell: Slice,  # Slice
-              key_length: int,  # bitlength of keys
-              key_deserializer: typing.Callable = None,  # func to deserialize keys
-              value_deserializer: typing.Callable = None  # func to deserialize values
-              ) -> typing.Optional[dict]:
+    def parse(
+        dict_cell: Slice,  # Slice
+        key_length: int,  # bitlength of keys
+        key_deserializer: Optional[typing.Callable[..., Any]] = None,  # func to deserialize keys
+        value_deserializer: Optional[
+            typing.Callable[..., Any]
+        ] = None,  # func to deserialize values
+    ) -> typing.Optional[dict[Any, Any]]:
 
         if dict_cell.type_ != CellTypes.ordinary:
             return None
 
         if not key_deserializer:
-            key_deserializer = lambda i: int(i, 2)  # by default key_deserializer just converts bitstring to int
+
+            def key_deserializer(i: str) -> int:
+                return int(i, 2)
+
         dict_result = parse_hashmap(dict_cell, key_length)
         if value_deserializer:
             result = {key_deserializer(i): value_deserializer(j) for i, j in dict_result.items()}
         else:
-            result = {key_deserializer(i): j for i, j in
-                      dict_result.items()}  # if you do not provide value_deserializer the values are Slices
+            result = {
+                key_deserializer(i): j for i, j in dict_result.items()
+            }  # if you do not provide value_deserializer the values are Slices
         return result
 
     #
