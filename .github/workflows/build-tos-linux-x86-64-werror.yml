@@ -7,6 +7,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      streaming_validation:
+        description: Run one-time state import differential analysis and cleanup sensitivity checks
+        type: boolean
+        required: false
+        default: false
   workflow_call:
 
 concurrency:
@@ -68,6 +74,24 @@ jobs:
     - name: Install repository-pinned Rust toolchain
       run: scripts/install-rust-toolchain.sh
 
+    # Explicitly selected one-time evidence; ordinary PRs keep the existing gates.
+    - name: Prepare one-time Linux analysis tools and history
+      if: github.event_name == 'workflow_dispatch' && inputs.streaming_validation
+      run: |
+        sudo apt-get install -y iproute2
+        python3 -m venv "$RUNNER_TEMP/state-codechecker"
+        "$RUNNER_TEMP/state-codechecker/bin/pip" install codechecker==6.29.1
+        if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+          git fetch --no-tags --unshallow origin
+        fi
+        git fetch --no-tags origin main:refs/remotes/origin/main
+        mkdir -p validation
+        git rev-parse HEAD > validation/head.txt
+        git merge-base HEAD origin/main > validation/base.txt
+        git worktree add --detach "$RUNNER_TEMP/state-import-base" "$(cat validation/base.txt)"
+        clang-21 --version > validation/tools.txt
+        "$RUNNER_TEMP/state-codechecker/bin/CodeChecker" version >> validation/tools.txt
+
     - name: Build TOS
       run: |
         cmake -S . -B build -G Ninja \
@@ -102,6 +126,57 @@ jobs:
         regex="$(python3 scripts/check-ctest-inventory.py --build-dir build \
           --expected-file scripts/strict-build-targeted-tests.txt --print-regex)"
         ctest --test-dir build --output-on-failure --no-tests=error -R "$regex"
+
+    - name: Configure clean merge-base analysis build
+      if: github.event_name == 'workflow_dispatch' && inputs.streaming_validation
+      run: |
+        source="$RUNNER_TEMP/state-import-base"
+        TOL_STDLIB="$source/crypto/smartcont/tol-stdlib" CCACHE_BASEDIR="$source" \
+          cmake -S "$source" -B "$source/build" -G Ninja \
+          -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+          -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+          -DTOS_USE_JEMALLOC=ON -DTOS_USE_LLD=On -DTOS_WERROR_BUILD=On \
+          -DTOS_ARCH="$BUILD_ARCH" -DPORTABLE="$BUILD_ARCH" \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+    - name: One-time native state import evidence
+      if: github.event_name == 'workflow_dispatch' && inputs.streaming_validation
+      env:
+        FUNC_BIN: ${{ github.workspace }}/build/crypto/func
+        FIFT_BIN: ${{ github.workspace }}/build/crypto/fift
+        TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
+      run: bash scripts/validate-state-import.sh native build "$RUNNER_TEMP/state-import-base/build" validation "$RUNNER_TEMP/state-codechecker/bin/CodeChecker"
+
+    - name: Prepare each side's generated analysis dependencies
+      if: github.event_name == 'workflow_dispatch' && inputs.streaming_validation
+      run: bash scripts/validate-state-import.sh prepare build "$RUNNER_TEMP/state-import-base/build" validation "$RUNNER_TEMP/state-codechecker/bin/CodeChecker"
+
+    - name: One-time differential C++ static analysis
+      if: github.event_name == 'workflow_dispatch' && inputs.streaming_validation
+      run: bash scripts/validate-state-import.sh analyze build "$RUNNER_TEMP/state-import-base/build" validation "$RUNNER_TEMP/state-codechecker/bin/CodeChecker"
+
+    - name: One-time resource cleanup and handoff sensitivity
+      if: github.event_name == 'workflow_dispatch' && inputs.streaming_validation
+      env:
+        FUNC_BIN: ${{ github.workspace }}/build/crypto/func
+        FIFT_BIN: ${{ github.workspace }}/build/crypto/fift
+        TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
+      run: bash scripts/validate-state-import.sh sensitivity build "$RUNNER_TEMP/state-import-base/build" validation "$RUNNER_TEMP/state-codechecker/bin/CodeChecker"
+
+    - name: Hash one-time validation receipts
+      if: always() && github.event_name == 'workflow_dispatch' && inputs.streaming_validation
+      run: |
+        if [ -d validation ]; then
+          find validation -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > validation/SHA256SUMS
+        fi
+
+    - name: Retain one-time validation receipts
+      if: always() && github.event_name == 'workflow_dispatch' && inputs.streaming_validation
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: state-import-validation-${{ github.sha }}
+        path: validation/
+        retention-days: 14
 
     # The hit rate is the evidence that the cache works; a run that hits nothing is a cold
     # build, not a broken one.
@@ -228,7 +303,9 @@ jobs:
   # predate this workflow ever running, and a check nobody can satisfy is one everybody
   # learns to ignore. Run it by hand to measure that debt while it is being paid down.
   python-types:
-    if: github.event_name == 'workflow_dispatch'
+    # The explicit C++ evidence mode is separate from the existing manual
+    # whole-project Python debt measurement; the default dispatch keeps it.
+    if: github.event_name == 'workflow_dispatch' && !inputs.streaming_validation
     runs-on: ubuntu-24.04
 
     steps:
