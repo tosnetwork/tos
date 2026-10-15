@@ -34,12 +34,17 @@
 // drop the reservation in the lambda's local scope, releasing the budget
 // before the manager/downstream had finished holding the buffer alive.
 
-#include "validator/downloaders/download-state.hpp"
-#include "validator/net/download-state.hpp"
-#include "validator/state-download-buffer.h"
-#include "vm/boc.h"
-#include "vm/cells/Cell.h"
-#include "vm/cells/CellBuilder.h"
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <limits>
+#include <memory>
+#include <new>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "td/actor/PromiseFuture.h"
 #include "td/utils/Timer.h"
@@ -47,16 +52,13 @@
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
-
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <memory>
-#include <set>
-#include <string>
-#include <utility>
-#include <vector>
+#include "validator/downloaders/download-state.hpp"
+#include "validator/net/download-state.hpp"
+#include "validator/state-download-buffer.h"
+#include "vm/boc-streaming-reader.h"
+#include "vm/boc.h"
+#include "vm/cells/Cell.h"
+#include "vm/cells/CellBuilder.h"
 
 #if !defined(_WIN32)
 #include <sys/time.h>
@@ -3810,9 +3812,261 @@ void test_h02_h03_budget_config_round_trips_new_fields() {
   std::printf("  PASSED\n");
 }
 
+// Exercise the production reader with a tiny cache so even the growth
+// sensitivity control remains bounded to a few hundred bytes.
+void test_streaming_reader_hard_cap_and_offsets() {
+  std::printf("=== test_streaming_reader_hard_cap_and_offsets ===\n");
+  auto path = std::string("/tmp/tos-test-reader-cap-") + std::to_string(::getpid());
+  auto fd = td::FileFd::open(path, td::FileFd::Write | td::FileFd::Read | td::FileFd::Create | td::FileFd::Truncate)
+                .move_as_ok();
+  std::string bytes(1024, '\0');
+  fd.write_all(bytes).ensure();
+  vm::StreamingBocImportStats stats;
+  const auto baseline = td::BufferAllocator::get_buffer_mem();
+  {
+    vm::detail::StreamingFileReader reader(fd, bytes.size(), 512, &stats);
+    auto check_error = [&](td::Result<td::Slice> result, const std::string &message) {
+      EXPECT_TRUE(result.is_error());
+      EXPECT_TRUE(result.error().to_string().find(message) != std::string::npos);
+    };
+    check_error(reader.read(0, 513), "scratch limit");
+    EXPECT_EQ(stats.peak_scratch_bytes, 0ULL);
+    EXPECT_EQ(td::BufferAllocator::get_buffer_mem(), baseline);
+    check_error(reader.read_cell(0, 1024, 10, 9, 1), "corrupt cell offsets");
+    check_error(reader.read_cell(0, 1024, 0, 1025, 1), "corrupt cell offsets");
+    check_error(reader.read_cell(std::numeric_limits<td::uint64>::max(), 1024, 0, 2, 1), "outside file");
+    check_error(reader.read_cell(1, 1024, 0, 2, 1), "outside file");
+    check_error(reader.read_cell(0, 1024, 0, 1, 1), "truncated cell descriptor");
+    check_error(reader.read_cell(0, 1024, 0, 2, 5), "invalid reference width");
+    EXPECT_EQ(stats.file_read_calls, 0ULL);
+    check_error(reader.read_cell(0, 1024, 0, 512, 1), "cell span does not match descriptor");
+    EXPECT_EQ(stats.cell_read_calls, 0ULL);
+    EXPECT_EQ(stats.peak_scratch_bytes, 512ULL);
+    EXPECT_TRUE(td::BufferAllocator::get_buffer_mem() - baseline <= 512 + 4096);
+    EXPECT_TRUE(reader.read(0, 512).is_ok());
+    check_error(reader.read(0, 513), "scratch limit");
+    EXPECT_EQ(stats.peak_scratch_bytes, 512ULL);
+    // Exercise a valid descriptor and both forward and backward cache refills.
+    EXPECT_TRUE(reader.read_cell(0, 1024, 1022, 1024, 1).is_ok());
+    check_error(reader.read_cell(0, 1024, 0, 512, 1), "cell span does not match descriptor");
+    EXPECT_EQ(stats.cell_read_calls, 1ULL);
+    EXPECT_TRUE(reader.read_cell(0, 1024, 0, 2, 1).is_ok());
+    EXPECT_EQ(stats.cell_read_calls, 2ULL);
+  }
+  EXPECT_EQ(td::BufferAllocator::get_buffer_mem(), baseline);
+  // A descriptor/full-read pair must preserve backward refill direction.
+  // These are ordinary small serialized cells, independent of a BoC envelope.
+  constexpr std::size_t cell_bytes = 100;
+  constexpr std::size_t cell_count = 64;
+  std::string cells(cell_bytes * cell_count, '\0');
+  for (std::size_t i = 0; i < cell_count; ++i) {
+    cells[i * cell_bytes + 1] = static_cast<char>(196);  // 98 data bytes
+  }
+  auto written = fd.pwrite(cells, 0).move_as_ok();
+  EXPECT_EQ(written, cells.size());
+  stats = {};
+  {
+    vm::detail::StreamingFileReader reader(fd, cells.size(), 512, &stats);
+    for (std::size_t i = cell_count; i > 0; --i) {
+      auto start = (i - 1) * cell_bytes;
+      EXPECT_TRUE(reader.read_cell(0, cells.size(), start, start + cell_bytes, 1).is_ok());
+    }
+    EXPECT_EQ(stats.cell_read_calls, cell_count);
+    EXPECT_TRUE(stats.file_read_calls < cell_count / 2);
+  }
+  EXPECT_EQ(td::BufferAllocator::get_buffer_mem(), baseline);
+  fd.close();
+  td::unlink(path).ensure();
+  std::printf("  PASSED\n");
+}
+
+// A refill that fails after pread wrote part of the scratch must not leave the
+// previous window in place: a later read inside that window would otherwise
+// return bytes from the failed refill's offset.
+void test_streaming_reader_failed_refill_retires_window() {
+  std::printf("=== test_streaming_reader_failed_refill_retires_window ===\n");
+  auto path = std::string("/tmp/tos-test-reader-refill-") + std::to_string(::getpid());
+  auto fd = td::FileFd::open(path, td::FileFd::Write | td::FileFd::Read | td::FileFd::Create | td::FileFd::Truncate)
+                .move_as_ok();
+  // Every byte encodes its own offset, so a read from the wrong offset differs.
+  std::string bytes(2048, '\0');
+  for (std::size_t i = 0; i < bytes.size(); ++i) {
+    bytes[i] = static_cast<char>(i % 251);
+  }
+  fd.write_all(bytes).ensure();
+  vm::StreamingBocImportStats stats;
+  {
+    vm::detail::StreamingFileReader reader(fd, bytes.size(), 512, &stats);
+    auto first = reader.read(0, 16);
+    EXPECT_TRUE(first.is_ok());
+    EXPECT_TRUE(first.ok() == td::Slice(bytes).substr(0, 16));
+    // Shrink the file under the reader: the forward refill at 600 asks for 512
+    // bytes, gets 100 (offsets 600..699) written into the scratch prefix, and
+    // fails as a short read.
+    EXPECT_EQ(::truncate(path.c_str(), 700), 0);
+    auto failed = reader.read(600, 16);
+    EXPECT_TRUE(failed.is_error());
+    EXPECT_TRUE(failed.error().to_string().find("short pread") != std::string::npos);
+    // The window that held offset 0 is gone: this read refills from the file
+    // and returns offset 0's bytes, not the failed refill's.
+    auto again = reader.read(0, 16);
+    EXPECT_TRUE(again.is_ok());
+    EXPECT_TRUE(again.ok() == td::Slice(bytes).substr(0, 16));
+  }
+  fd.close();
+  td::unlink(path).ensure();
+  std::printf("  PASSED\n");
+}
+
+// Small fixtures exercise validation ordering without exhausting test memory.
+void test_streaming_cell_spans_validated_before_read() {
+  std::printf("=== test_streaming_cell_spans_validated_before_read ===\n");
+  auto tmp_dir = std::string("/tmp/tos-test-cell-spans-") + std::to_string(::getpid());
+  td::mkpath(tmp_dir + "/", 0700).ensure();
+  vm::CellBuilder builder;
+  builder.store_long(42, 8);
+  auto root = builder.finalize();
+  auto original = vm::std_boc_serialize(root, vm::BagOfCells::WithIndex).move_as_ok();
+  vm::BagOfCells::Info info;
+  EXPECT_TRUE(info.parse_serialized_header(original.as_slice()) > 0);
+  EXPECT_EQ(info.cell_count, 1);
+
+  auto run = [&](td::Slice bytes, bool valid, const std::string &expected_error, td::uint64 total_cap) {
+    auto path = tmp_dir + "/cell.boc";
+    auto fd = td::FileFd::open(path, td::FileFd::Write | td::FileFd::Read | td::FileFd::Create | td::FileFd::Truncate)
+                  .move_as_ok();
+    fd.write_all(bytes).ensure();
+    vm::StreamingBocImportStats stats;
+    vm::StreamingBocImportOptions opts;
+    opts.stats = &stats;
+    opts.max_total_cell_bytes = total_cap;
+    // Observe live allocator bytes at every cooperative checkpoint, including
+    // before sink begin. Stats alone must not stand in for allocation evidence.
+    const auto baseline = td::BufferAllocator::get_buffer_mem();
+    td::uint64 peak = baseline;
+    opts.is_cancelled = [&] {
+      peak = std::max<td::uint64>(peak, td::BufferAllocator::get_buffer_mem());
+      return false;
+    };
+    tos::validator::fullnode::CellDbStreamingSink sink;
+    auto result = vm::std_boc_deserialize_from_file_bounded(fd, bytes.size(), opts, &sink);
+    EXPECT_EQ(stats.peak_scratch_bytes, vm::kStreamingBocScratchBytes);
+    EXPECT_TRUE(peak > baseline);
+    EXPECT_TRUE(peak - baseline <= vm::kStreamingBocScratchBytes + 4096);
+    EXPECT_EQ(td::BufferAllocator::get_buffer_mem(), baseline);
+    if (valid) {
+      EXPECT_TRUE(result.is_ok());
+      EXPECT_TRUE(result.ok()->get_hash() == root->get_hash());
+      EXPECT_TRUE(sink.finished());
+      // One admitted read in each pass, including the reverse construction pass.
+      EXPECT_EQ(stats.cell_read_calls, 2ULL);
+    } else {
+      EXPECT_TRUE(result.is_error());
+      EXPECT_TRUE(result.error().to_string().find(expected_error) != std::string::npos);
+      EXPECT_EQ(stats.cell_read_calls, 0ULL);
+      EXPECT_FALSE(sink.begun());
+      EXPECT_FALSE(sink.finished());
+    }
+  };
+  for (auto cap : {vm::kDefaultStreamingBocMaxTotalCellBytes, td::uint64(4ULL << 30)}) {
+    run(original.as_slice(), true, "", cap);
+    for (char descriptor : {char(0), char(4)}) {
+      auto changed = original.copy();
+      changed.as_slice()[info.data_offset + 1] = descriptor;
+      run(changed.as_slice(), false, "cell span does not match descriptor", cap);
+    }
+    auto changed = original.copy();
+    changed.as_slice()[info.data_offset] = 5;
+    run(changed.as_slice(), false, "Invalid first byte", cap);
+    changed = original.copy();
+    changed.as_slice()[info.index_offset] = 1;
+    run(changed.as_slice(), false, "indexed last", cap);
+  }
+  for (int mode :
+       {0, vm::BagOfCells::WithIndex | vm::BagOfCells::WithCacheBits, static_cast<int>(vm::BagOfCells::max)}) {
+    auto valid = vm::std_boc_serialize(root, mode).move_as_ok();
+    run(valid.as_slice(), true, "", vm::kDefaultStreamingBocMaxTotalCellBytes);
+  }
+  td::rmrf(tmp_dir).ensure();
+  std::printf("  PASSED\n");
+}
+
+void test_streaming_allocation_failure_aborts_sink() {
+  std::printf("=== test_streaming_allocation_failure_aborts_sink ===\n");
+  auto tmp_dir = std::string("/tmp/tos-test-import-allocation-") + std::to_string(::getpid());
+  auto boc = make_synthetic_boc_file(tmp_dir, 32, "valid.boc");
+  class AllocationFailureSink final : public vm::StreamingCellSink {
+   public:
+    td::Status begin() override {
+      ++begins;
+      return td::Status::OK();
+    }
+    td::Status persist(td::Ref<vm::Cell>) override {
+      throw std::bad_alloc{};
+    }
+    void abort() override {
+      ++aborts;
+    }
+    int begins{0};
+    int aborts{0};
+  } sink;
+  auto fd = td::FileFd::open(boc.path, td::FileFd::Read).move_as_ok();
+  vm::StreamingBocImportOptions opts;
+  auto result = vm::std_boc_deserialize_from_file_bounded(fd, boc.size, opts, &sink);
+  EXPECT_TRUE(result.is_error());
+  EXPECT_TRUE(result.error().to_string().find("allocation failed during import") != std::string::npos);
+  EXPECT_EQ(sink.begins, 1);
+  EXPECT_EQ(sink.aborts, 1);
+  // Rejection releases the scratch and import state: the same fd can recover.
+  auto recovered = vm::std_boc_deserialize_from_file_bounded(fd, boc.size, opts, nullptr);
+  EXPECT_TRUE(recovered.is_ok());
+  EXPECT_TRUE(tos::Bits256{recovered.ok()->get_hash().bits()} == boc.root_hash);
+  fd.close();
+  td::rmrf(tmp_dir).ensure();
+  std::printf("  PASSED\n");
+}
+
+void test_streaming_valid_ondisk_control() {
+  std::printf("=== test_streaming_valid_ondisk_control ===\n");
+  auto tmp_dir = std::string("/tmp/tos-test-cell-bounds-ondisk-") + std::to_string(::getpid());
+  auto boc = make_realistic_density_boc_file(tmp_dir, 80 * kMiB, 120, "valid.boc");
+  // Assert the actual serialized size, not the generator's size estimate.
+  EXPECT_TRUE(boc.size > persistent_state_heap_threshold_bytes());
+  auto config = persistent_state_budget_config();
+  EXPECT_FALSE(config.enable_true_cell_db_streaming_import);
+  EXPECT_TRUE(boc.size <= config.max_returned_dag_bytes_per_parse);
+  auto reservation = try_reserve(boc.size);
+  EXPECT_TRUE(reservation != nullptr);
+  BudgetedStateFile file{boc.path, boc.size, reservation, false};
+  tos::validator::fullnode::CellDbStreamingSink sink;
+  auto result = tos::validator::parse_ondisk_state_streaming(file, tos::RootHash{boc.root_hash},
+                                                             config.max_resident_bytes_per_parse, &sink);
+  EXPECT_TRUE(result.is_ok());
+  EXPECT_TRUE(tos::Bits256{result.ok()->get_hash().bits()} == boc.root_hash);
+  EXPECT_TRUE(sink.finished());
+  EXPECT_FALSE(sink.aborted());
+  std::printf("  file_bytes=%llu mode=OnDisk returned_dag_cap=%llu streaming_flag=false PASSED\n",
+              static_cast<unsigned long long>(boc.size),
+              static_cast<unsigned long long>(config.max_returned_dag_bytes_per_parse));
+  file = BudgetedStateFile{};
+  reservation.reset();
+  td::rmrf(tmp_dir).ensure();
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  test_streaming_reader_hard_cap_and_offsets();
+  test_streaming_reader_failed_refill_retires_window();
+  test_streaming_cell_spans_validated_before_read();
+  test_streaming_allocation_failure_aborts_sink();
+  if (argc == 2 && std::string(argv[1]) == "--cell-bounds") {
+    return 0;
+  }
+  if (argc == 2 && std::string(argv[1]) == "--cell-bounds-ondisk") {
+    test_streaming_valid_ondisk_control();
+    return 0;
+  }
   std::printf("test-download-state-budget: persistent-state download RAII budget regression\n");
   test_budget_covers_downstream_lifetime();
   test_oversize_single_reservation_is_rejected();

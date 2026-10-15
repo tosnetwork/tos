@@ -1135,13 +1135,20 @@ target_link_libraries(test-wallet-message-processor PRIVATE tos_validator smc-en
 add_executable(test-vm-exception-hardening test/test-td-main.cpp test/test-vm-exception-hardening.cpp)
 target_link_libraries(test-vm-exception-hardening PRIVATE tos_validator tos_crypto common tdutils tos_block keys)
 
+if (UNIX AND NOT TOS_ONLY_TOSLIB AND NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
+  add_executable(test-state-download-recovery test/test-state-download-recovery.cpp)
+  # GNU ld cannot revisit validator.a when fabric.cpp later needs BlockHandleImpl.
+  # Supply validator-common's production objects directly, as the catch-up tests do.
+  target_link_libraries(test-state-download-recovery PRIVATE validator validator-common full-node tos_block tos_crypto tdutils tdactor adnl keyring)
+endif()
+
 add_executable(test-download-state-budget test/test-download-state-budget.cpp)
 # Link tos_crypto for vm::std_boc_serialize / std_boc_deserialize, used by
 # the OnDisk corruption regression to assemble a known-good shard-state BoC
 # and verify that the BoC layer + root-hash compare reject every flavor of
 # tempfile corruption (mid-payload byte flip, CRC32C trailer wipe, content
 # swap with valid BoC envelope).
-target_link_libraries(test-download-state-budget PRIVATE validator-common full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
+target_link_libraries(test-download-state-budget PRIVATE validator full-node tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
 # Codex review follow-up (2026-07-21): DownloadNextBlocks::validate_next_blocks_full
 # batch-shape regression -- pins the MAX_BLOCKS size cap and the empty-block
@@ -1211,11 +1218,11 @@ target_link_libraries(test-pq-signature-persistence PRIVATE tos_validator valida
 # CellDb-backed streaming importer (replacement-hash equality, no
 # full-DAG residency, crash/abort no partial state, lazy load, hash
 # mismatch). Links the same surfaces test-download-state-budget pulls
-# (validator-common drags in the streaming sink + parse helper;
-# tos_db drags in MemoryKeyValue + CellStorer; tos_crypto carries
+# (validator provides the production factories and database lifecycle;
+# tos_db provides MemoryKeyValue + CellStorer; tos_crypto carries
 # CellDbExtCell + DynamicBagOfCellsDb).
 add_executable(test-celldb-streaming-import test/test-celldb-streaming-import.cpp)
-target_link_libraries(test-celldb-streaming-import PRIVATE validator-common validator-db full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+target_link_libraries(test-celldb-streaming-import PRIVATE validator full-node tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
 
 # A decrement of a never-stored cell must stop the in-memory cell database; the abort
 # runs in a re-executed child of the test (see the file).
@@ -1717,6 +1724,14 @@ tos_test(test-current-validator-adnl-ids)
 tos_test(test-overlay-plumtree-repair)
 tos_test(test-overlay-broadcast-capacity)
 tos_test(test-download-state-budget)
+if (NOT USE_EMSCRIPTEN AND NOT EMSCRIPTEN)
+  add_test(NAME streaming-boc-cell-bounds COMMAND test-download-state-budget --cell-bounds)
+  add_test(NAME streaming-boc-valid-ondisk COMMAND test-download-state-budget --cell-bounds-ondisk)
+  if (TARGET test-state-download-recovery)
+    tos_test(test-state-download-recovery ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc)
+    set_tests_properties(test-state-download-recovery PROPERTIES TIMEOUT 1200)
+  endif()
+endif()
 tos_test(test-pq-network-parser-resource)
 tos_test(test-pq-signature-persistence)
 tos_test(test-validator-transport-authority)
