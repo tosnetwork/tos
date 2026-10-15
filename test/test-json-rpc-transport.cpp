@@ -40,6 +40,7 @@
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
 #include "td/utils/port/IPAddress.h"
+#include "td/utils/port/ServerSocketFd.h"
 #include "td/utils/tests.h"
 #include "tl-utils/lite-utils.hpp"
 
@@ -53,19 +54,42 @@ using Clock = std::chrono::steady_clock;
 
 const char *const kApiKey = "transport-test-key";
 
-int find_free_port() {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  CHECK(fd >= 0);
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  CHECK(::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
-  socklen_t len = sizeof(addr);
-  CHECK(::getsockname(fd, reinterpret_cast<sockaddr *>(&addr), &len) == 0);
-  int port = ntohs(addr.sin_port);
-  ::close(fd);
-  return port;
-}
+// Keep the address reserved until the fixture shuts down. Closing the probe
+// before the asynchronous listener binds lets a client's ephemeral source bind
+// claim the same port. Match the real listener's reuse options so it can
+// share this bound, non-listening socket. Ordinary client binds do not enable
+// reuse and cannot claim the reserved port.
+class PortReservation {
+ public:
+  PortReservation() {
+    fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+    CHECK(fd_ >= 0);
+    int reuse = 1;
+    CHECK(::setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == 0);
+#ifdef SO_REUSEPORT
+    CHECK(::setsockopt(fd_, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) == 0);
+#endif
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    CHECK(::bind(fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
+    socklen_t len = sizeof(addr);
+    CHECK(::getsockname(fd_, reinterpret_cast<sockaddr *>(&addr), &len) == 0);
+    port_ = ntohs(addr.sin_port);
+  }
+  PortReservation(const PortReservation &) = delete;
+  PortReservation &operator=(const PortReservation &) = delete;
+  ~PortReservation() {
+    ::close(fd_);
+  }
+  int port() const {
+    return port_;
+  }
+
+ private:
+  int fd_ = -1;
+  int port_ = 0;
+};
 
 size_t open_fd_count() {
   size_t count = 0;
@@ -277,7 +301,8 @@ std::string request_object(const std::string &id_literal) {
 // Runs `scenario` on a client thread against a JSON-RPC server, pumping the
 // actor scheduler on this thread until the scenario ends.
 void with_json_rpc(tos::JsonRpcServer::Options options, std::function<void(int port)> scenario) {
-  int port = find_free_port();
+  PortReservation reservation;
+  const int port = reservation.port();
   td::IPAddress addr;
   addr.init_ipv4_port("127.0.0.1", port).ensure();
   td::actor::Scheduler scheduler({2});
@@ -340,6 +365,24 @@ const std::string kLongestNumberId = "1" + std::string(255, '0');
 const std::string kNumberIdOverBound = "1" + std::string(256, '0');
 
 }  // namespace
+
+TEST(JsonRpcTransport, listener_port_stays_reserved_before_async_bind) {
+  PortReservation reservation;
+  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_TRUE(fd >= 0);
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(static_cast<uint16_t>(reservation.port()));
+  const int result = ::bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
+  const int error = errno;
+  ::close(fd);
+  ASSERT_EQ(result, -1);
+  ASSERT_EQ(error, EADDRINUSE);
+  // The production listener can bind while the reservation is still held.
+  auto listener = td::ServerSocketFd::open(reservation.port(), "127.0.0.1");
+  ASSERT_TRUE(listener.is_ok());
+}
 
 TEST(JsonRpcTransport, connections_of_one_source_leave_other_sources_capacity) {
   for (bool with_key : {false, true}) {
