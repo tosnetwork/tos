@@ -51,6 +51,12 @@ jobs:
           import subprocess
 
           for build in (Path("build"), Path("../signing-base/build")):
+              # The HTTP dependency installs headers as a build side effect;
+              # enumerating generated source/header targets does not build it.
+              subprocess.run(["cmake", "--build", str(build), "--target", "mhd", "--parallel", "4"], check=True)
+              header = build / "third-party/libmicrohttpd/include/microhttpd.h"
+              if not header.is_file():
+                  raise SystemExit(f"missing analysis input: {header}")
               rows = subprocess.check_output(["ninja", "-C", str(build), "-t", "targets", "all"], text=True)
               targets = sorted({line.rsplit(": ", 1)[0] for line in rows.splitlines()
                                 if Path(line.rsplit(": ", 1)[0]).suffix in {".h", ".hpp", ".hh", ".cpp", ".cc", ".c", ".inc"}})
