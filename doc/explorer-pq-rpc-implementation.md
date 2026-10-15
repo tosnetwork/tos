@@ -129,3 +129,10 @@ GET signature proof output, account metadata and Config8 proof output on both
 VM18 and VM16 networks: 104 requests and 54 typed fragments pass. A targeted
 control disables numeric URL normalization and requires the actual GET test to
 report 422 instead of reaching bounded admission; restoring it passes.
+
+The first Linux analyzer attempt on `549212a22` proved all 10 positive controls,
+then refused dependency scanning with exit 2 because the preparation target list
+omitted `mhd`. The corrected workflow builds that vendored target separately in
+both checkouts. Local preparation generated identical public headers on both
+sides, and the previously failing explorer compilation scanned its own header
+successfully. This preflight is not a passing Linux two-build analysis result.

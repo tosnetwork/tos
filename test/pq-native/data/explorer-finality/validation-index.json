@@ -246,9 +246,33 @@
       "sha256": "78208d128c98282d12424d736cfe99dddd5991ac7588f74e84828e4f031f47f0",
       "bytes": 2003,
       "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/linux-analysis-549212a22-refused.log",
+      "sha256": "290fe26dd46ba4a878f026f0d9f63d462d10917b450340bba0d320f422fe9ff4",
+      "bytes": 3271977,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/mhd-head-prepare.log",
+      "sha256": "6047f15772cb924c04857b9f95c027c46a24ce8c8b6cb9fd90efdff040f17ce4",
+      "bytes": 83927,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/mhd-base-prepare.log",
+      "sha256": "ab9cecd1f2003e0ec97dd25edab9c89627f75c56ae97e533d0645f3a56adbee8",
+      "bytes": 83927,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/mhd-dependency-scan.out",
+      "sha256": "bf9a0b99a4e7b6f6d34b8f1546b98c4b63e229ec476cf8994329bb1687926b07",
+      "bytes": 209708,
+      "retention": "Retained local public artifact through 2026-11-14."
     }
   ],
-  "linux_analysis": "pending; macOS attempt refused after 10 successful positive controls due to Linux-only headers",
+  "linux_analysis": "Linux gate rerun required after preparing each checkout own vendored HTTP header; first Linux attempt refused with exit 2 before code analysis.",
   "pull_request_ci": "not yet updated",
   "native_ctest_entries_passed": 14,
   "operator_worker_limits_tested": [
@@ -296,5 +320,27 @@
       "scripts/test-explorer-pq-rpc.py": "8fc1040c6dc39d2fcc3eab1cf7456cbff7eedbe3898ecc7a1875012c85c4c59c",
       "scripts/test-explorer-pq-controls.py": "33863945c9b018dedd964d7ef18d9d827b28663c2a8df57c944e682fc93d3329"
     }
-  }
+  },
+  "observation_scope": "Local validation and point-in-time CI observations before final PR update; not a live status feed.",
+  "linux_analysis_attempts": [
+    {
+      "source_commit": "549212a227323eb3d21f0e9b06aec4dc2663582f",
+      "run": "https://github.com/tosnetwork/tos/actions/runs/38659055692/job/116175694130",
+      "exit": 2,
+      "positive_controls": 10,
+      "codechecker": "6.29.1",
+      "llvm": "21.1.8",
+      "rule_set": "73600cde7a576a01",
+      "stage": "dependency scan before code analysis",
+      "reason": "Vendored microhttpd.h was not installed: the preparation target list omitted mhd.",
+      "correction": "Build mhd independently in both candidate and clean merge-base builds.",
+      "local_preflight": {
+        "candidate_mhd_build_exit": 0,
+        "base_mhd_build_exit": 0,
+        "previously_failing_compilation_scan_exit": 0,
+        "both_generated_header_sha256": "265b0ad618c22d0a648326d751d1c08826399d67da13e471f4053bcdf7a9f579"
+      },
+      "scope_note": "The successful local single-compilation scan verifies header preparation only, not a passing Linux two-build gate."
+    }
+  ]
 }
