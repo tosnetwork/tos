@@ -73,9 +73,8 @@ int main(int argc, char** argv) {
     // Validate every numeric field before accessing the consensus seed.
     const auto global_id = tos::pq::cli_integer<td::int32>(argv[3], "GLOBAL_ID");
     const auto idx = stake ? td::uint16{} : tos::pq::cli_integer<td::uint16>(argv[6], "IDX");
-    const auto election_id = complaint || stake
-                                 ? tos::pq::cli_integer<td::uint32>(argv[complaint ? 7 : 5], "ELECTION_ID")
-                                 : td::uint32{};
+    const auto election_id =
+        complaint || stake ? tos::pq::cli_integer<td::uint32>(argv[complaint ? 7 : 5], "ELECTION_ID") : td::uint32{};
     const auto max_factor = stake ? tos::pq::cli_integer<td::uint32>(argv[6], "MAX_FACTOR") : td::uint32{};
 
     auto loaded = tos::pq::load_consensus_key(argv[2]);
