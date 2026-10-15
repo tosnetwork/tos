@@ -1,10 +1,11 @@
-import copy
+import typing
+from typing import Any
 
-from .tlb import TlbScheme, TlbError
-from ..boc.slice import Slice
 from ..boc.builder import Builder
 from ..boc.cell import Cell
 from ..boc.hashmap import HashMap
+from ..boc.slice import Slice
+from .tlb import TlbError, TlbScheme
 
 
 class VmError(TlbError):
@@ -17,7 +18,7 @@ class VmStack(TlbScheme):
     """
 
     @classmethod
-    def serialize(cls, data: list) -> "Cell":
+    def serialize(cls, data: list[Any]) -> "Cell":
         result = Builder()
         result.store_uint(len(data), 24)  # depth
         return result.store_cell(VmStackList.serialize(data.copy())).end_cell()
@@ -35,7 +36,7 @@ class VmStackList(TlbScheme):
     """
 
     @classmethod
-    def serialize(cls, data: list) -> Cell:
+    def serialize(cls, data: list[Any]) -> Cell:
         builder = Builder()
         if len(data) == 0:
             return builder.end_cell()
@@ -148,8 +149,8 @@ class VmTuple(TlbScheme):
         tuple.list -> [1, 2, <Slice 32[00000203] -> 2 refs>]
     """
 
-    def __init__(self, list_: list):
-        self.list: list = list_
+    def __init__(self, list_: list[Any]):
+        self.list: list[Any] = list_
 
     def __add__(self, other: "VmTuple"):
         self.list += other.list
@@ -272,10 +273,17 @@ class VmCont(TlbScheme):
     vmc_pushint$1111 value:int32 next:^VmCont = VmCont;
     """
 
-    def __init__(self, type_, **kwargs):
+    def __init__(self, type_: str, **kwargs: Any):
         self.type_ = type_
+        self._fields = kwargs
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._fields[name]
+        except KeyError:
+            raise AttributeError(name) from None
 
     @classmethod
     def serialize(cls, value: "VmCont") -> "Cell":
@@ -376,6 +384,7 @@ class VmCont(TlbScheme):
                 value=cell_slice.load_int(32),
                 next=cls.deserialize(cell_slice.load_ref().begin_parse()),
             )
+        raise VmError("unknown continuation constructor")
 
 
 class VmControlData(TlbScheme):
@@ -384,10 +393,17 @@ class VmControlData(TlbScheme):
     cp:(Maybe int16) = VmControlData;
     """
 
-    def __init__(self, type_, **kwargs):
+    def __init__(self, type_: str, **kwargs: Any):
         self.type_ = type_
+        self._fields = kwargs
         for k, v in kwargs.items():
             setattr(self, k, v)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self._fields[name]
+        except KeyError:
+            raise AttributeError(name) from None
 
     @classmethod
     def serialize(cls, value: "VmControlData") -> Cell:
@@ -438,8 +454,8 @@ class VmSaveList(TlbScheme):
 
     @classmethod
     def serialize(cls, value: "HashMap") -> Cell:
-        return Builder().store_dict(value).end_cell()
+        return Builder().store_dict(value.serialize()).end_cell()
 
     @classmethod
-    def deserialize(cls, cell_slice: Slice) -> "HashMap":
+    def deserialize(cls, cell_slice: Slice) -> typing.Optional[dict[int, Slice]]:
         return cell_slice.load_dict(4)

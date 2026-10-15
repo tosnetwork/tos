@@ -73,12 +73,13 @@ class ContractView[S: ContractState](ABC):
 class Blueprint[S: ContractState](ABC):
     CODE_BOC: ClassVar[Cell]
 
-    def __init__(self, workchain: int, data_init: S):
-        self.state_init: StateInit = StateInit(code=self.CODE_BOC, data=data_init.serialize())
+    def __init__(self, workchain: int, data_init: S, *, code: Cell | None = None):
+        selected_code = self.CODE_BOC if code is None else code
+        self.state_init: StateInit = StateInit(code=selected_code, data=data_init.serialize())
         self.address: Address = Address((workchain, self.state_init.serialize().hash))
 
     @abstractmethod
-    def materialize(self, provider: Provider) -> ContractView[S]:
+    def materialize(self, provider: Provider) -> ContractView[S] | Address:
         pass
 
     async def deploy[T](self: ContractBlueprint[T], provider: Provider) -> T:

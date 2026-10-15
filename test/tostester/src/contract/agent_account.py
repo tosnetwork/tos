@@ -1,18 +1,20 @@
 """Agent Account funded deployment, policy state and controller/PQ signing."""
 
 from dataclasses import dataclass
+
 import nacl.signing
-from pytosiq_core import Address, Cell, Builder
+from pytosiq_core import Address, Builder, Cell
+
 from .contract import ContractView
 from .pq_auth import (
-    AuthState,
     AuthRequest,
+    AuthState,
     FundedBlueprint,
-    uint,
-    network_id,
-    key_bytes,
     address,
     exact_end,
+    key_bytes,
+    network_id,
+    uint,
 )
 
 CONTROLLER_DOMAIN = bytes.fromhex(
@@ -146,7 +148,7 @@ class AgentAccount(ContractView[AgentAccountState]):
         )
 
 
-class AgentAccountBlueprint(FundedBlueprint):
+class AgentAccountBlueprint(FundedBlueprint[AgentAccountState]):
     def __init__(
         self,
         code: Cell,
@@ -160,10 +162,11 @@ class AgentAccountBlueprint(FundedBlueprint):
         key: nacl.signing.SigningKey | None = None,
     ):
         address(Address((workchain, bytes(32))))
-        self.CODE_BOC, self.network, self.key = code, network_id(network), key
+        self.network, self.key = network_id(network), key
         super().__init__(
             workchain,
             AgentAccountState(owner, public_key, agent_id, 0, 0, 0, 0, policy.serialize(), auth),
+            code=code,
         )
 
     def materialize(self, provider):

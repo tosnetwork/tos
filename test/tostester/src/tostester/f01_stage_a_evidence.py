@@ -91,7 +91,13 @@ def extract_finalized_log(path: Path) -> dict[str, Any]:
     }
 
 
-def write_manifest(path: Path, *, source: dict, nodes: list[dict], transitions: list[dict]) -> None:
+def write_manifest(
+    path: Path,
+    *,
+    source: dict[Any, Any],
+    nodes: list[dict[Any, Any]],
+    transitions: list[dict[Any, Any]],
+) -> None:
     if len(nodes) != 4 or len({node["node_name"] for node in nodes}) != 4:
         raise ValueError("F01 capture requires four distinct validator node identities")
     for field in (

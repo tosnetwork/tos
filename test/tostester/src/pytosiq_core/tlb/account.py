@@ -1,10 +1,10 @@
 import typing
+from typing import Any, Optional
 
-from .tlb import TlbScheme, TlbError
-from .utils import MerkleUpdate, HashUpdate
-from .. import begin_cell
-from ..boc import Slice, Builder, Cell
+from ..boc import Builder, Cell, Slice
 from ..boc.address import Address
+from .tlb import TlbError, TlbScheme, require
+from .utils import HashUpdate
 
 
 class AccountError(TlbError):
@@ -117,7 +117,7 @@ class Account(TlbScheme):
     def deserialize(cls, cell_slice: Slice):
         if cell_slice.load_bit():
             return cls(
-                cell_slice.load_address(),
+                require(cell_slice.load_internal_address()),
                 StorageInfo.deserialize(cell_slice),
                 AccountStorage.deserialize(cell_slice),
             )
@@ -176,7 +176,7 @@ class StorageExtraInfo(TlbScheme):
     def __init__(
         self,
         type_: typing.Literal["storage_extra_none", "storage_extra_info"],
-        dict_hash: bytes = None,
+        dict_hash: Optional[bytes] = None,
     ):
         self.type_ = type_
         self.dict_hash = dict_hash
@@ -187,7 +187,7 @@ class StorageExtraInfo(TlbScheme):
             builder.store_uint(0, 3)
         elif self.type_ == "storage_extra_info":
             builder.store_uint(1, 3)
-            builder.store_bytes(self.dict_hash)
+            builder.store_bytes(require(self.dict_hash))
         else:
             raise TlbError(f"Unknown StorageExtraInfo type: {self.type_}")
         return builder.end_cell()
@@ -409,7 +409,7 @@ class ShardAccount(TlbScheme):
 
         builder = Builder()
         if self.account is None:
-            builder.store_ref(begin_cell().store_bit_int(0).end_cell())
+            builder.store_ref(Builder().store_bit_int(0).end_cell())
         else:
             builder.store_ref(self.account.serialize())
 
@@ -448,6 +448,7 @@ class AccountStatus(TlbScheme):
             return Builder().store_uint(2, 2).end_cell()
         if self.type_ == "nonexist":
             return Builder().store_uint(3, 2).end_cell()
+        raise TlbError("unknown account status")
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
@@ -475,7 +476,10 @@ class AccountBlock(TlbScheme):
     """
 
     def __init__(
-        self, account_addr: str, transactions: typing.Tuple[dict, list], state_update: HashUpdate
+        self,
+        account_addr: str,
+        transactions: typing.Optional[typing.Tuple[dict[Any, Any], list[Any]]],
+        state_update: HashUpdate,
     ):
         self.account_addr = account_addr
         self.transactions = transactions
@@ -487,7 +491,7 @@ class AccountBlock(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        from .transaction import Transaction, CurrencyCollection
+        from .transaction import CurrencyCollection, Transaction
 
         tag = cell_slice.load_uint(4)
         if tag != 5:

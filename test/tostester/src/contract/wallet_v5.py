@@ -1,19 +1,21 @@
 """Wallet V5 deployment, classic signing and PQ request construction."""
 
 from dataclasses import dataclass
-from pytosiq_core import Address, Cell, Builder, WalletMessage
+
 import nacl.signing
+from pytosiq_core import Address, Builder, Cell
+
 from .contract import ContractView
 from .pq_auth import (
-    AuthState,
     AuthRequest,
+    AuthState,
     FundedBlueprint,
-    uint,
-    network_id,
-    key_bytes,
-    exact_end,
     address,
+    exact_end,
+    key_bytes,
+    network_id,
     transfer_message,
+    uint,
 )
 
 
@@ -115,7 +117,7 @@ class WalletV5(ContractView[WalletV5State]):
         )
 
 
-class WalletV5Blueprint(FundedBlueprint):
+class WalletV5Blueprint(FundedBlueprint[WalletV5State]):
     def __init__(
         self,
         code: Cell,
@@ -127,9 +129,11 @@ class WalletV5Blueprint(FundedBlueprint):
         key: nacl.signing.SigningKey | None = None,
     ):
         address(Address((workchain, bytes(32))))
-        self.CODE_BOC, self.network, self.key = code, network_id(network), key
+        self.network, self.key = network_id(network), key
         # A strict root, when present, is authoritative regardless of the stored classical key.
-        super().__init__(workchain, WalletV5State(True, 0, wallet_id, public_key, auth=auth))
+        super().__init__(
+            workchain, WalletV5State(True, 0, wallet_id, public_key, auth=auth), code=code
+        )
 
     def materialize(self, provider):
         return WalletV5(provider, self.address, self.network, self.key)

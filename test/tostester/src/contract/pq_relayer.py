@@ -6,14 +6,15 @@ prevents duplicate submissions from this journal, not competition by other
 relayers. Unknown broadcasts remain reserved until reconciled from the chain.
 """
 
+import secrets
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
-import sqlite3
-import secrets
+from typing import Any, Protocol
 
 from pytosiq_core import Address, Cell
-from .pq_auth import AuthRequest, AuthState, PqSigner, MAX_COINS, address, key_bytes
+
+from .pq_auth import MAX_COINS, AuthRequest, AuthState, PqSigner, address, key_bytes
 
 LOSS_ACK = "I_ACCEPT_NONREFUNDABLE_AUTHORIZATION_ATTEMPTS"
 
@@ -127,7 +128,7 @@ class AttemptJournal:
         self.db.commit()
 
     @staticmethod
-    def identity(request: AuthRequest) -> tuple:
+    def identity(request: AuthRequest) -> tuple[Any, ...]:
         return (
             request.network,
             request.account.to_str(False),

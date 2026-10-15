@@ -82,7 +82,7 @@ def _inject(
     dir_wc: int,
     dir_cc: int,
     predelete: bool = False,
-) -> str:
+) -> tuple[str, str]:
     cmd = [
         str(INJECT),
         "write",

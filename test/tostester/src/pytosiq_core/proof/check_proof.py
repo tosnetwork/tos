@@ -1,15 +1,14 @@
 import hashlib
 import typing
+from typing import Any, Optional
 
-
-from ..tlb.block import Block, ShardStateUnsplit
-from ..tlb.config import ValidatorDescr, CatchainConfig, ValidatorSet
-from ..tl.block import BlockId, BlockIdExt
-from ..crypto.signature import verify_sign
-from ..boc.tvm_bitarray import TvmBitarray
-from ..boc.exotic import CellTypes
-from ..boc.cell import Cell
 from ..boc.address import Address
+from ..boc.cell import Cell
+from ..boc.exotic import CellTypes
+from ..crypto.signature import verify_sign
+from ..tl.block import BlockIdExt
+from ..tlb.block import Block, ShardStateUnsplit
+from ..tlb.config import CatchainConfig, ValidatorDescr, ValidatorSet
 
 
 class ProofError(Exception):
@@ -56,6 +55,8 @@ def check_shard_proof(shard_proof: bytes, blk: BlockIdExt, shrd_blk: BlockIdExt)
 
     block_info = Block.deserialize(mc_block_cell[0].begin_parse()).info
 
+    if block_info is None:
+        raise ProofError("block info is absent from the proof")
     if not (block_info.seqno == blk.seqno and block_info.shard.workchain_id == blk.workchain):
         raise ProofError("block info mismatch")
 
@@ -67,6 +68,8 @@ def check_shard_proof(shard_proof: bytes, blk: BlockIdExt, shrd_blk: BlockIdExt)
 
     shard = ShardStateUnsplit.deserialize(mc_state_root[0].begin_parse())
 
+    if shard is None or shard.custom is None or shard.custom.shard_hashes is None:
+        raise ProofError("masterchain shard hashes are absent from the proof")
     shard_dict = shard.custom.shard_hashes
 
     shard_descr = shard_dict.get(shrd_blk.workchain)
@@ -104,6 +107,8 @@ def check_account_proof(
 
     shard = ShardStateUnsplit.deserialize(state_cell[0].begin_parse())
 
+    if shard is None or not isinstance(shard.accounts, tuple):
+        raise ProofError("account dictionary is absent from the proof")
     shard_account = shard.accounts[0][int.from_bytes(address.hash_part, "big")]
 
     account_state_root_proved = shard_account.cell
@@ -122,9 +127,8 @@ def calculate_node_id_short(pub_key: bytes):
 
 
 def check_block_signatures(
-    nodes: typing.List[ValidatorDescr], signatures: typing.List[dict], blk: BlockIdExt
+    nodes: typing.List[ValidatorDescr], signatures: typing.List[dict[Any, Any]], blk: BlockIdExt
 ):
-    from ..tlb.config import ValidatorDescr
 
     node_map = {}
 
@@ -143,7 +147,6 @@ def check_block_signatures(
     i = 0
     for sig in signatures:
         node = node_map.get(bytes.fromhex(sig["node_id_short"]))
-        node: ValidatorDescr
         i += 1
 
         if node is None:
@@ -165,8 +168,10 @@ def check_block_signatures(
 
 
 def compute_validator_set(
-    ccv_conf: CatchainConfig, blk: BlockIdExt, vset: ValidatorSet, cc_seqno: int = None
+    ccv_conf: CatchainConfig, blk: BlockIdExt, vset: ValidatorSet, cc_seqno: Optional[int] = None
 ):
+    if vset.list is None:
+        raise ProofError("validator dictionary is absent")
     is_mc = blk.workchain == -1
 
     if is_mc:

@@ -19,6 +19,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from pytosiq_core import Address, Builder, Cell, CurrencyCollection, InternalMsgInfo, MessageAny
@@ -44,7 +45,8 @@ def _lifecycle_module():
     spec = importlib.util.spec_from_file_location(
         "nominator_pool_lifecycle_e2e", REPO / "scripts/nominator-pool-lifecycle-e2e.py"
     )
-    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    module: Any = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
@@ -57,7 +59,8 @@ def test_product_relay_adnl_reader_uses_the_bound_v2_reference(monkeypatch):
     spec = importlib.util.spec_from_file_location(
         "pq_config_wallet_first_stake_e2e", REPO / "scripts/pq-config-wallet-first-stake-e2e.py"
     )
-    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    module: Any = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     pool = Address((-1, bytes([0x31]) * 32))
@@ -347,7 +350,7 @@ async def test_support_recovery_requires_exact_elector_reply_and_pool_balance(
     baseline = toslib_api.Internal_transactionId(lt=10, hash=bytes([0x10]) * 32)
     before_balance = 20 * lifecycle.NANO
     credit = lifecycle.NETWORK_MIN_STAKE
-    state = {"sent": False, "query_id": None}
+    state: dict[str, Any] = {"sent": False, "query_id": None}
 
     class FakeClient:
         async def raw_get_account_state(self, address):
@@ -1470,7 +1473,7 @@ def test_integrated_working_config_rejects_manifest_target_mismatch(tmp_path):
 
 
 def test_integrated_action_id_binds_every_economic_and_network_field():
-    domain = {
+    domain: dict[str, Any] = {
         "network_id": lifecycle.INTEGRATED_NETWORK_ID,
         "global_id": lifecycle.integrated_network_global_id("round5-action-id-test", "c" * 64),
         "workchain_id": 0,
@@ -1629,7 +1632,7 @@ def _task_send_resolution_fixture():
         }
         for index in range(lifecycle.INTEGRATED_RPC_COUNT)
     ]
-    resolution = {
+    resolution: dict[str, Any] = {
         "schema": lifecycle.TASK_SEND_FINALIZED_SCHEMA,
         "wallet": "campaign-agent-0",
         "action_id": "8" * 64,
@@ -1659,7 +1662,7 @@ def _task_send_resolution_fixture():
         "observations": observations,
         "state": "resolved",
     }
-    finalized = {
+    finalized: dict[str, Any] = {
         "account": source,
         "transaction_lt": "1234",
         "transaction_cell_hash": "tvm-cell-sha256:" + "3" * 64,
@@ -1805,7 +1808,7 @@ async def test_integrated_deposit_journal_resolves_before_withdrawal_task_send(
         "root_hash": "sha256:" + "d" * 64,
         "file_hash": "sha256:" + "e" * 64,
     }
-    finalized = {
+    finalized: dict[str, Any] = {
         "account": binding.campaign_account_address,
         "transaction_lt": "1234",
         "transaction_cell_hash": "tvm-cell-sha256:" + "a" * 64,

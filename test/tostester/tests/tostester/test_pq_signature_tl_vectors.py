@@ -43,6 +43,7 @@ def test_pq_signature_tl_vectors_match_generated_schemas():
             continue
 
         assert consumed == len(wire), f"PYTHON_TL_VECTOR_TRAILING case={name}"
+        assert isinstance(parsed, dict), f"PYTHON_TL_VECTOR_OBJECT case={name}"
         expected_type = (
             "tosNode.signatureSet.simplexPq"
             if carrier == "node"

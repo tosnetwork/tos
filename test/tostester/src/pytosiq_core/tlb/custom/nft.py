@@ -1,7 +1,7 @@
 import typing
 
-from ..tlb import TlbScheme
-from ...boc import Cell, Builder, Slice, HashMap, Address
+from ...boc import Address, Builder, Cell, Slice
+from ..tlb import TlbScheme, require
 
 
 class NftItemData(TlbScheme):
@@ -27,17 +27,17 @@ class NftItemData(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder.store_uint(self.index, 64).store_address(self.collection_address).store_address(
-            self.owner_address
-        ).store_ref(self.content)
+        builder.store_uint(require(self.index), 64).store_address(
+            self.collection_address
+        ).store_address(self.owner_address).store_ref(require(self.content))
         return builder.end_cell()
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         return cls(
             index=cell_slice.load_uint(64),
-            collection_address=cell_slice.load_address(),
-            owner_address=cell_slice.load_address(),
+            collection_address=cell_slice.load_internal_address(),
+            owner_address=cell_slice.load_internal_address(),
             content=cell_slice.load_ref(),
         )
 
@@ -63,18 +63,18 @@ class NftItemSaleFees(TlbScheme):
         return (
             Builder()
             .store_address(self.marketplace_fee_address)
-            .store_coins(self.marketplace_fee)
+            .store_coins(require(self.marketplace_fee))
             .store_address(self.royalty_address)
-            .store_coins(self.royalty_amount)
+            .store_coins(require(self.royalty_amount))
             .end_cell()
         )
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         return cls(
-            marketplace_fee_address=cell_slice.load_address(),
+            marketplace_fee_address=cell_slice.load_internal_address(),
             marketplace_fee=cell_slice.load_coins(),
-            royalty_address=cell_slice.load_address(),
+            royalty_address=cell_slice.load_internal_address(),
             royalty_amount=cell_slice.load_coins(),
         )
 
@@ -112,11 +112,13 @@ class NftItemSaleData(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder.store_bool(self.is_complete).store_uint(self.created_at, 32).store_address(
-            self.marketplace_address
-        ).store_address(self.nft_address).store_address(self.nft_owner_address).store_coins(
-            self.full_price
-        ).store_ref(self.fees_cell.serialize()).store_bool(self.can_deploy_by_external)
+        builder.store_bool(require(self.is_complete)).store_uint(
+            require(self.created_at), 32
+        ).store_address(self.marketplace_address).store_address(self.nft_address).store_address(
+            self.nft_owner_address
+        ).store_coins(require(self.full_price)).store_ref(
+            require(self.fees_cell).serialize()
+        ).store_bool(require(self.can_deploy_by_external))
         return builder.end_cell()
 
     @classmethod
@@ -124,9 +126,9 @@ class NftItemSaleData(TlbScheme):
         return cls(
             is_complete=cell_slice.load_bool(),
             created_at=cell_slice.load_uint(32),
-            marketplace_address=cell_slice.load_address(),
-            nft_address=cell_slice.load_address(),
-            nft_owner_address=cell_slice.load_address(),
+            marketplace_address=cell_slice.load_internal_address(),
+            nft_address=cell_slice.load_internal_address(),
+            nft_owner_address=cell_slice.load_internal_address(),
             full_price=cell_slice.load_coins(),
             fees_cell=NftItemSaleFees.deserialize(cell_slice.load_ref().begin_parse()),
             can_deploy_by_external=cell_slice.load_bool(),

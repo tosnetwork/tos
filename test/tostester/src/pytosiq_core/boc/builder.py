@@ -1,14 +1,13 @@
 import math
+import typing
 
 # from bitarray import bitarray
 from bitarray.util import int2ba
 
-import typing
-
 from .address import Address, ExternalAddress
 from .cell import Cell
+from .deserialize import Boc, NullCell
 from .slice import Slice
-from .deserialize import NullCell, Boc
 from .tvm_bitarray import TvmBitarray
 
 
@@ -18,6 +17,7 @@ class Builder(NullCell):
         self._bits = TvmBitarray(size)
         self._refs = []
         self.type_ = type_
+        super().__init__(self._bits, self._refs, type_)
 
     @property
     def bits(self):
@@ -142,7 +142,7 @@ class Builder(NullCell):
 
     def store_string(self, value: str):
         assert len(value.encode()) <= 127, (
-            f"string byte length is more than 127, use .store_snake_string()"
+            "string byte length is more than 127, use .store_snake_string()"
         )
         self._bits.frombytes(value.encode())
         return self
@@ -158,10 +158,10 @@ class Builder(NullCell):
         )
 
     def store_snake_string(self, value: str, need_prefix: bool = False):
-        value = value.encode()
+        encoded = value.encode()
         if need_prefix:
-            value = b"\x00" + value
-        return self.store_snake_bytes(value)
+            encoded = b"\x00" + encoded
+        return self.store_snake_bytes(encoded)
 
     def store_address(self, address: typing.Union[Address, ExternalAddress, str, None]):
         """

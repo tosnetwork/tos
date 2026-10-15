@@ -1,10 +1,10 @@
-from typing import Union, Iterable, overload
+from collections.abc import Sized
+from itertools import islice
+from typing import Iterable, Sequence, Union
 
 from bitarray import bitarray
-from bitarray.util import int2ba
 
-
-BytesLike = Union[bytes, Iterable[int]]
+BytesLike = Union[bytes, bytearray]
 
 
 class TvmBitarrayException(Exception):
@@ -38,6 +38,8 @@ class TvmBitarray(bitarray):
             raise TvmBitarrayUnderflowException("bitstring underflow")
 
     def extend(self, x: Union[str, Iterable[int]]) -> None:
+        if not isinstance(x, Sized):
+            x = list(islice(x, 1024))
         self.check_overflow(len(x))
         super().extend(x)
 
@@ -50,11 +52,9 @@ class TvmBitarray(bitarray):
         super().frombytes(a)
 
     def copy(self) -> "TvmBitarray":
-        res = self.__new__(TvmBitarray)
-        res.extend(self)
-        return res
+        return type(self)(self._size, self)
 
-    def __delitem__(self, item: Union[int, slice]):
+    def __delitem__(self, item: Union[int, slice, bitarray, Sequence[int]]):
         if isinstance(item, slice):
             start = item.start if item.start else 0
             stop = item.stop if item.stop else len(self)

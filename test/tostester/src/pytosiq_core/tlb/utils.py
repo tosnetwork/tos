@@ -1,8 +1,9 @@
 import typing
+from typing import Any
 
-from .tlb import TlbScheme, TlbError
-from .. import Builder
-from ..boc import Slice, Cell, CellTypes
+from ..boc import Cell, CellTypes, Slice
+from ..boc.builder import Builder
+from .tlb import TlbError, TlbScheme
 
 
 class MerkleUpdate(TlbScheme):
@@ -22,13 +23,13 @@ class MerkleUpdate(TlbScheme):
 
     @classmethod
     def deserialize(
-        cls, cell: Cell, deserializer: typing.Callable
+        cls, cell: Cell, deserializer: typing.Callable[..., Any]
     ) -> typing.Optional["MerkleUpdate"]:
         if cell.type_ != CellTypes.merkle_update:
             return None
 
         cell_slice = cell.begin_parse()
-        tag = cell_slice.load_bytes(1)[:1]
+        cell_slice.load_bytes(1)
         # if tag != b'\x02':
         #     raise TlbError(f'MerkleUpdate deserialization error: unexpected tag {tag}')
         old_hash = cell_slice.load_bytes(32)
@@ -58,7 +59,7 @@ class HashUpdate(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        tag = cell_slice.load_bytes(1)[:1]
+        tag = cell_slice.load_bytes(1)
         if tag != b"r":
             raise TlbError(f"HashUpdate deserialization error: unexpected tag {tag}")
         old_hash = cell_slice.load_bytes(32)

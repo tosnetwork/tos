@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 import tostester.network as network_module
@@ -91,7 +92,7 @@ def test_network_zerostate_receives_four_pq_initial_validators_not_spare(
         SimpleNamespace(is_initial_validator=True, pq_initial_validator=index) for index in range(4)
     ]
     spare = SimpleNamespace(is_initial_validator=False, pq_initial_validator=4)
-    network = object.__new__(network_module.Network)
+    network: Any = object.__new__(network_module.Network)
     network._status = network_module._Status.INITED
     network._directory = tmp_path
     network._install = object()

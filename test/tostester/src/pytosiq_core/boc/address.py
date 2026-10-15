@@ -2,6 +2,7 @@ import base64
 import binascii
 import typing
 from dataclasses import dataclass
+from typing import Any, Optional
 
 from ..crypto.crc import crc16
 from .cell import Cell
@@ -22,8 +23,8 @@ class Address:
         """
         Note that initializing from hex form is 10 times faster than user-friendly bounceable form
         """
-        self.wc: int = None
-        self.hash_part: bytes = None
+        self.wc: int
+        self.hash_part: bytes
         self.is_bounceable = False
         self.is_test_only = False
         self.anycast = None
@@ -103,7 +104,7 @@ class Address:
 
         return result
 
-    def to_tl_account_id(self) -> dict:
+    def to_tl_account_id(self) -> dict[Any, Any]:
         return {"workchain": self.wc, "id": self.hash_part.hex()}
 
     def to_cell(self) -> Cell:
@@ -116,7 +117,9 @@ class Address:
     # def __str__(self):
     #     return self.to_str()
 
-    def __eq__(self, other: "Address"):
+    def __eq__(self, other: object):
+        if not isinstance(other, Address):
+            return NotImplemented
         return self.wc == other.wc and self.hash_part == other.hash_part
 
     def __repr__(self):
@@ -129,13 +132,13 @@ class Address:
 
 
 class ExternalAddress:
-    def __init__(self, address: typing.Union[int, str, bytes, None], length: int = None):
+    def __init__(self, address: typing.Union[int, str, bytes, None], length: Optional[int] = None):
         if isinstance(address, str):
             address = bytes.fromhex(address)
         if isinstance(address, bytes):
             address = int.from_bytes(address, "big")
         if length is None:
-            length = address.bit_length()
+            length = 0 if address is None else address.bit_length()
         self.external_address = address
         self.len = length
 
@@ -148,7 +151,7 @@ class ExternalAddress:
         return b.end_cell()
 
     def __repr__(self):
-        if self.len != 0:
+        if self.len != 0 and self.external_address is not None:
             return f"ExternalAddress<{hex(self.external_address)}>"
         return f"ExternalAddress<{self.external_address}>"
 

@@ -1,4 +1,5 @@
 import typing
+from typing import Any
 
 
 class BlockId:
@@ -17,11 +18,9 @@ class BlockId:
         return {"workchain": self.workchain, "shard": self.shard, "seqno": self.seqno}
 
     @classmethod
-    def from_dict(cls, block_id: dict):
+    def from_dict(cls, block_id: dict[Any, Any]):
         return cls(
-            workchain=block_id.get("workchain"),
-            shard=block_id.get("shard"),
-            seqno=block_id.get("seqno"),
+            workchain=block_id["workchain"], shard=block_id.get("shard"), seqno=block_id["seqno"]
         )
 
 
@@ -60,13 +59,13 @@ class BlockIdExt:
         }
 
     @classmethod
-    def from_dict(cls, block_id_ext: dict):
+    def from_dict(cls, block_id_ext: dict[Any, Any]):
         return cls(
-            workchain=block_id_ext.get("workchain"),
+            workchain=block_id_ext["workchain"],
             shard=block_id_ext.get("shard"),
-            seqno=block_id_ext.get("seqno"),
-            root_hash=block_id_ext.get("root_hash"),
-            file_hash=block_id_ext.get("file_hash"),
+            seqno=block_id_ext["seqno"],
+            root_hash=block_id_ext["root_hash"],
+            file_hash=block_id_ext["file_hash"],
         )
 
     def to_bytes(self) -> bytes:
@@ -90,7 +89,9 @@ class BlockIdExt:
     def __repr__(self):
         return f"<TL BlockIdExt [wc={self.workchain}, shard={self.shard}, seqno={self.seqno}, root_hash={self.root_hash.hex()}, file_hash={self.file_hash.hex()}] >"
 
-    def __eq__(self, other: "BlockIdExt"):
+    def __eq__(self, other: object):
+        if not isinstance(other, BlockIdExt):
+            return NotImplemented
         if (
             self.seqno != other.seqno
             or self.workchain != other.workchain
@@ -102,4 +103,4 @@ class BlockIdExt:
         return True
 
     def __hash__(self):
-        return self.root_hash
+        return hash((self.workchain, self.shard, self.seqno, self.root_hash, self.file_hash))

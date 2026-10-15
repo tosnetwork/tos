@@ -1,13 +1,35 @@
 import base64
 import binascii
-from abc import abstractmethod
 import typing
+from abc import abstractmethod
+from typing import Any, Optional
 
 from bitarray.util import ba2int
 
-from .tvm_bitarray import bitarray, TvmBitarray
-from .utils import bytes_to_uint
+if typing.TYPE_CHECKING:
+    from .builder import Builder
+    from .cell import Cell
+    from .slice import Slice
+
 from ..crypto.crc import crc32c
+from .tvm_bitarray import BitarrayLike, TvmBitarray, bitarray
+from .utils import bytes_to_uint
+
+
+class BocHeader(typing.TypedDict):
+    has_idx: int
+    hash_crc32: int
+    has_cache_bits: int
+    flags: int
+    size_bytes: int
+    offset_bytes: int
+    cells_num: int
+    roots_num: int
+    absent_num: int
+    tot_cells_size: int
+    root_list: list[int]
+    index: list[int] | None
+    cells_data: bytes
 
 
 class BocError(Exception):
@@ -26,26 +48,26 @@ class NullCell:
     This class needed to deserialize boc (bag of cells) and convert it into Cell, Builder or Slice
     """
 
-    def __init__(self, bits: TvmBitarray, refs: list, type_: int):
+    def __init__(self, bits: BitarrayLike, refs: list[Any], type_: int):
         self.bits = bits
         self.refs = refs
         self.type_ = type_
 
-    def to_cell(self):
+    def to_cell(self) -> "Cell":
         from .cell import Cell
 
         if isinstance(self, Cell):
             raise Exception("Cant convert Cell to Cell. Maybe you need .copy()?")
         raise NotImplementedError
 
-    def to_slice(self):
+    def to_slice(self) -> "Slice":
         from .slice import Slice
 
         if isinstance(self, Slice):
             raise Exception("Cant convert Slice to Slice. Maybe you need .copy()?")
         raise NotImplementedError
 
-    def to_builder(self):
+    def to_builder(self) -> "Builder":
         from .builder import Builder
 
         if isinstance(self, Builder):
@@ -53,7 +75,7 @@ class NullCell:
         raise NotImplementedError
 
     @abstractmethod
-    def copy(self): ...
+    def copy(self) -> "NullCell": ...
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} {len(self.bits)}[{self.bits.tobytes().hex().upper()}] -> {len(self.refs)} refs>"
@@ -67,7 +89,7 @@ class NullCell:
             "* " * (self.type_ != -1)
         ) + f"{len(self.bits)}[{self.bits.tobytes().hex().upper()}]"
         if self.refs:
-            text += f" -> {{\n"
+            text += " -> {\n"
             for index, ref in enumerate(self.refs):
                 next_comma = True if index != len(self.refs) - 1 else False
                 text += "\t" * t + ref.__str__(t + 1, next_comma) + "\n"
@@ -107,20 +129,20 @@ class Boc:
         data_len = len(data)
         if data_len < 4:
             raise BocError(f"not enough bytes to deserialize boc header: {data}")
-        result = {
+        result: BocHeader = {
             "has_idx": True,
-            "hash_crc32": None,
+            "hash_crc32": 0,
             "has_cache_bits": False,
             "flags": 0,
             "size_bytes": data[0],
-            "offset_bytes": None,
-            "cells_num": None,
-            "roots_num": None,
-            "absent_num": None,
-            "tot_cells_size": None,
-            "root_list": None,
+            "offset_bytes": 0,
+            "cells_num": 0,
+            "roots_num": 0,
+            "absent_num": 0,
+            "tot_cells_size": 0,
+            "root_list": [],
             "index": None,
-            "cells_data": None,
+            "cells_data": b"",
         }
         if data[:4] == SERIALIZED_BOC_PREFIX:
             flags_byte = data[4]
@@ -183,7 +205,7 @@ class Boc:
         return result
 
     @staticmethod
-    def deserialize_cell(data: bytes, ref_index_size: int) -> typing.Tuple[dict, int]:
+    def deserialize_cell(data: bytes, ref_index_size: int) -> typing.Tuple[dict[Any, Any], int]:
         data_len = len(data)
         refs_descriptor = data[0]
         level = refs_descriptor >> 5
@@ -234,7 +256,7 @@ class Boc:
 
         return cell, i
 
-    def deserialize(self, cls: type = None):
+    def deserialize(self, cls: Optional[type] = None):
         if not cls:
             from .cell import Cell
 

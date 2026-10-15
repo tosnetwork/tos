@@ -1,11 +1,12 @@
 import typing
+from typing import Any, Optional
 
-from .. import HashMap
 from ..boc import Builder, Cell, Slice
-from ..boc.address import Address
+from ..boc.address import Address, ExternalAddress
+from ..boc.hashmap.hashmap import HashMap
 from .account import AccountStatus, StateInit, StorageUsedShort
 from .block import CurrencyCollection
-from .tlb import TlbError, TlbScheme
+from .tlb import TlbError, TlbScheme, require
 from .utils import HashUpdate
 
 
@@ -42,7 +43,7 @@ class Transaction(TlbScheme):
         out_msgs: typing.List["MessageAny"],
         total_fees: CurrencyCollection,
         state_update: HashUpdate,
-        description: "TransactionDescr",
+        description: "TransactionTickTock | TransactionOrdinary | TransactionStorage | TransactionSplitPrepare | TransactionSplitInstall | TransactionMergePrepare | TransactionMergeInstall",
         cell: typing.Optional["Cell"] = None,
     ):
         self.account_addr = account_addr
@@ -58,9 +59,8 @@ class Transaction(TlbScheme):
         self.out_msgs = out_msgs
         self.total_fees = total_fees
         self.state_update = state_update
-        self.description: TransactionOrdinary = description
-        # the type hinting above is wrong, but it was made for better experience in IDE cause most time you work with ordinary trs
-        self.cell = cell.copy()
+        self.description = description
+        self.cell = cell.copy() if cell is not None else None
 
     def serialize(self) -> Cell:
         in_msg_cell = Builder()
@@ -84,7 +84,7 @@ class Transaction(TlbScheme):
         builder = Builder()
         builder.store_bits("0111").store_bytes(self.account_addr).store_uint(
             self.lt, 64
-        ).store_bytes(self.prev_trans_hash).store_uint(self.prev_trans_lt).store_uint(
+        ).store_bytes(self.prev_trans_hash).store_uint(self.prev_trans_lt, 64).store_uint(
             self.now, 32
         ).store_uint(self.outmsg_cnt, 15).store_cell(self.orig_status.serialize()).store_cell(
             self.end_status.serialize()
@@ -92,8 +92,8 @@ class Transaction(TlbScheme):
             Builder().store_cell(in_msg_cell.end_cell()).store_cell(out_msg_cell).end_cell()
         ).store_cell(self.total_fees.serialize()).store_ref(
             self.state_update.serialize()
-        ).store_ref(self.description.serialize())
-        # TODO description serialization
+        ).store_ref(require(self.description.serialize()))
+        return builder.end_cell()
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
@@ -245,9 +245,8 @@ class CommonMsgInfo(TlbScheme):
     def __init__(self):
         pass
 
-    @classmethod
-    def serialize(cls, *args):
-        pass
+    def serialize(self) -> Cell:
+        raise NotImplementedError("serialize a concrete message-info constructor")
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
@@ -274,7 +273,7 @@ class InternalMsgInfo(CommonMsgInfo):
         ihr_disabled: bool,
         bounce: bool,
         bounced: bool,
-        src: Address,
+        src: Address | None,
         dest: Address,
         value: CurrencyCollection,
         ihr_fee: int,
@@ -323,8 +322,8 @@ class InternalMsgInfo(CommonMsgInfo):
             ihr_disabled=cell_slice.load_bool(),
             bounce=cell_slice.load_bool(),
             bounced=cell_slice.load_bool(),
-            src=cell_slice.load_address(),
-            dest=cell_slice.load_address(),
+            src=cell_slice.load_internal_address(),
+            dest=require(cell_slice.load_internal_address()),
             value=CurrencyCollection.deserialize(cell_slice),
             ihr_fee=cell_slice.load_coins(),
             fwd_fee=cell_slice.load_coins(),
@@ -339,7 +338,7 @@ class ExternalMsgInfo(CommonMsgInfo):
     import_fee:Tomis = CommonMsgInfo;
     """
 
-    def __init__(self, src: Address, dest: Address, import_fee: int):
+    def __init__(self, src: ExternalAddress | None, dest: Address, import_fee: int):
         super().__init__()
         self.src = src
         self.dest = dest
@@ -363,8 +362,8 @@ class ExternalMsgInfo(CommonMsgInfo):
                 f"ExternalMsgInfo deserialization error unknown prefix tag: {tag}"
             )
         return cls(
-            src=cell_slice.load_address(),
-            dest=cell_slice.load_address(),
+            src=cell_slice.load_external_address(),
+            dest=require(cell_slice.load_internal_address()),
             import_fee=cell_slice.load_coins(),
         )
 
@@ -375,7 +374,9 @@ class ExternalOutMsgInfo(CommonMsgInfo):
     created_lt:uint64 created_at:uint32 = CommonMsgInfo;
     """
 
-    def __init__(self, src: Address, dest: Address, created_lt: int, created_at: int):
+    def __init__(
+        self, src: Address, dest: ExternalAddress | None, created_lt: int, created_at: int
+    ):
         super().__init__()
         self.src = src
         self.dest = dest
@@ -401,8 +402,8 @@ class ExternalOutMsgInfo(CommonMsgInfo):
                 f"ExternalOutMsgInfo deserialization error unknown prefix tag: {tag}"
             )
         return cls(
-            src=cell_slice.load_address(),
-            dest=cell_slice.load_address(),
+            src=require(cell_slice.load_internal_address()),
+            dest=cell_slice.load_external_address(),
             created_lt=cell_slice.load_uint(64),
             created_at=cell_slice.load_uint(32),
         )
@@ -545,19 +546,19 @@ class TrComputePhase(TlbScheme):
         self,
         type_: typing.Literal["skipped", "vm"],
         reason: typing.Optional[ComputeSkipReason] = None,
-        success: bool = None,
-        msg_state_used: bool = None,
-        account_activated: bool = None,
-        gas_fees: int = None,
-        gas_used: int = None,
-        gas_limit: int = None,
+        success: Optional[bool] = None,
+        msg_state_used: Optional[bool] = None,
+        account_activated: Optional[bool] = None,
+        gas_fees: Optional[int] = None,
+        gas_used: Optional[int] = None,
+        gas_limit: Optional[int] = None,
         gas_credit: typing.Optional[int] = None,
-        mode: int = None,
-        exit_code: int = None,
+        mode: Optional[int] = None,
+        exit_code: Optional[int] = None,
         exit_arg: typing.Optional[int] = None,
-        vm_steps: int = None,
-        vm_init_state_hash: bytes = None,
-        vm_final_state_hash: bytes = None,
+        vm_steps: Optional[int] = None,
+        vm_init_state_hash: Optional[bytes] = None,
+        vm_final_state_hash: Optional[bytes] = None,
     ):
         self.type_ = type_
         if type_ == "skipped":
@@ -1172,7 +1173,7 @@ class MsgMetadata(TlbScheme):
             raise TransactionError(f"MsgMetadata deserialization error tag: {tag}")
         return cls(
             depth=cell_slice.load_uint(32),
-            initiator_addr=cell_slice.load_address(),
+            initiator_addr=require(cell_slice.load_internal_address()),
             initiator_lt=cell_slice.load_uint(64),
         )
 
@@ -1506,8 +1507,8 @@ class LibRef(TlbScheme):
     def __init__(
         self,
         type_: typing.Literal["libref_hash", "libref_ref"],
-        lib_hash: bytes = None,
-        library: Cell = None,
+        lib_hash: Optional[bytes] = None,
+        library: Optional[Cell] = None,
     ):
         self.type_ = type_
         self.lib_hash = lib_hash
@@ -1540,11 +1541,11 @@ class OutAction(TlbScheme):
         type_: typing.Literal[
             "action_send_msg", "action_set_code", "action_reserve_currency", "action_change_library"
         ],
-        mode: int = None,
+        mode: Optional[int] = None,
         out_msg: typing.Optional[MessageAny] = None,
-        new_code: Cell = None,
-        currency: CurrencyCollection = None,
-        libref: LibRef = None,
+        new_code: Optional[Cell] = None,
+        currency: Optional[CurrencyCollection] = None,
+        libref: Optional[LibRef] = None,
     ):
         self.type_ = type_
         self.mode = mode
@@ -1591,7 +1592,7 @@ class OutList(TlbScheme):
     def __init__(
         self,
         type_: typing.Literal["out_list_empty", "out_list"],
-        actions: typing.List[OutAction] = None,
+        actions: Optional[typing.List[OutAction]] = None,
     ):
         if actions is None:
             actions = []
@@ -1601,7 +1602,7 @@ class OutList(TlbScheme):
     def serialize(self, *args): ...
 
     @classmethod
-    def deserialize(cls, cell_slice: Slice) -> list:
+    def deserialize(cls, cell_slice: Slice) -> list[Any]:
         if not cell_slice.remaining_bits:
             return []
         prev = OutList.deserialize(cell_slice.load_ref().begin_parse())

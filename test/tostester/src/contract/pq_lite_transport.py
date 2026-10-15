@@ -10,16 +10,18 @@ It exists so the relayer control flow is exercised against something that can
 refuse it. Every key it uses is public test material.
 """
 
-from dataclasses import dataclass
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
 
-from pytosiq_core import Address, Cell
+from pytosiq_core import Address, Cell, MessageAny, StateInit
 
-from .pq_relayer import AttemptReceipt, ChainSnapshot, FundingBudget
+from .contract import StateReader
 from .pq_auth import AuthRequest, AuthState
+from .pq_relayer import AttemptReceipt, ChainSnapshot, FundingBudget
 
 
 class LiteClientError(RuntimeError):
@@ -33,8 +35,8 @@ class WalletSigner:
     address: Address
     # callable(destination, body, value, seqno, valid_until, state_init) -> Cell,
     # returning a complete external message ready to be broadcast.
-    sign_body: object
-    read_seqno: object  # callable() -> int
+    sign_body: Callable[[Address, Cell, int, int, int, StateInit | None], Cell]
+    read_seqno: Callable[[], int]  # callable() -> int
 
 
 class LiteClientTransport:
@@ -114,7 +116,7 @@ class LiteClientTransport:
     def _get_method(self, address: Address, method: str) -> str:
         return self._run(f"runmethod {address.to_str(False)} {method}")
 
-    def gas_prices(self, workchain: int) -> dict:
+    def gas_prices(self, workchain: int) -> dict[Any, Any]:
         """Read compute-gas prices from the chain being addressed."""
         param = 20 if workchain == -1 else 21
         text = self._run(f"getconfig {param}")
@@ -131,7 +133,7 @@ class LiteClientTransport:
             "flat_gas_price": int(flat_price.group(1)),
         }
 
-    def forward_prices(self, workchain: int) -> dict:
+    def forward_prices(self, workchain: int) -> dict[Any, Any]:
         """Read message-forwarding prices instead of approximating them as gas."""
         param = 24 if workchain == -1 else 25
         text = self._run(f"getconfig {param}")
@@ -144,7 +146,7 @@ class LiteClientTransport:
         return values
 
     @staticmethod
-    def _gas_fee(gas_used: int, prices: dict) -> int:
+    def _gas_fee(gas_used: int, prices: dict[Any, Any]) -> int:
         """Mirror GETGASFEE / the production compute-phase flat-prefix formula."""
         if gas_used <= prices["flat_gas_limit"]:
             return prices["flat_gas_price"]
@@ -171,14 +173,13 @@ class LiteClientTransport:
         return cells, bits
 
     @staticmethod
-    def _forward_fee(cells: int, bits: int, prices: dict) -> int:
+    def _forward_fee(cells: int, bits: int, prices: dict[Any, Any]) -> int:
         variable = prices["bit_price"] * bits + prices["cell_price"] * cells
         return prices["lump_price"] + (variable + (1 << 16) - 1) // (1 << 16)
 
     def account_data(self, address: Address) -> Cell:
         """The account's data cell, read from the chain rather than reconstructed."""
         import tempfile
-        from cells import from_boc
 
         with tempfile.NamedTemporaryFile(suffix=".boc", delete=False) as handle:
             path = Path(handle.name)
@@ -186,7 +187,7 @@ class LiteClientTransport:
             self._run(f"saveaccountdata {path} {address.to_str(False)}")
             if not path.is_file() or path.stat().st_size == 0:
                 raise LiteClientError(f"no account data for {address.to_str(False)}")
-            return from_boc(path.read_bytes())
+            return Cell.one_from_boc(path.read_bytes())
         finally:
             path.unlink(missing_ok=True)
 
@@ -195,9 +196,9 @@ class LiteClientTransport:
         data = self.account_data(account)
         if not data.refs:
             raise LiteClientError("the account carries no authentication root")
-        auth = data.refs[-1].slice()
+        auth = data.refs[-1].begin_parse()
         return AuthState(
-            auth.uint(2), auth.uint(64), auth.uint(64), auth.uint(256).to_bytes(32, "big")
+            auth.load_uint(2), auth.load_uint(64), auth.load_uint(64), auth.load_bytes(32)
         )
 
     def read_module_key(self, module: Address) -> bytes:
@@ -379,6 +380,21 @@ class LiteClientTransport:
         )
 
 
+class _TransportProvider:
+    def __init__(self, transport: LiteClientTransport):
+        self.transport = transport
+
+    @property
+    def latest_state_reader(self) -> StateReader:
+        return self
+
+    async def fetch[T](self, address: Address, parser: Callable[[Cell], T]) -> T:
+        return parser(self.transport.account_data(address))
+
+    async def send_external(self, message: MessageAny) -> None:
+        self.transport.broadcast_external(message.serialize())
+
+
 class WalletV5Signer:
     """A real Wallet V5 paying for submissions on a live chain.
 
@@ -392,14 +408,13 @@ class WalletV5Signer:
         from .wallet_v5 import WalletV5
 
         self.transport, self.address, self.key = transport, address, key
-        self._view = WalletV5(None, address, transport.global_id(), key)
+        self._view = WalletV5(_TransportProvider(transport), address, transport.global_id(), key)
 
     def state(self):
-        from pytosiq_core import Cell as SDKCell
         from .wallet_v5 import WalletV5State
 
         data = self.transport.account_data(self.address)
-        return WalletV5State.parse(SDKCell.one_from_boc(data.boc()))
+        return WalletV5State.parse(data)
 
     def read_seqno(self) -> int:
         return self.state().seqno

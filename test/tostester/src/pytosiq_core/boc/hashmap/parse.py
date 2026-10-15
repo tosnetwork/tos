@@ -1,9 +1,10 @@
 import typing
-
-from .. import Slice, CellTypes
-from ..deserialize import NullCell
+from typing import Any
 
 from bitarray import bitarray
+
+from ..exotic import CellTypes
+from ..slice import Slice
 
 
 def read_arbitrary_uint(n: int, ser: bitarray) -> typing.Tuple[int, bitarray]:
@@ -50,7 +51,7 @@ def deserialize_hml(ser: Slice, m: int) -> typing.Tuple[int, bitarray]:
     return n, s
 
 
-def deserialize_hashmap_node(cs: Slice, m: int, ret_dict: dict, prefix: bitarray) -> None:
+def deserialize_hashmap_node(cs: Slice, m: int, ret_dict: dict[Any, Any], prefix: bitarray) -> None:
     if cs.type_ != CellTypes.ordinary:
         return None
     if m == 0:  # leaf
@@ -77,11 +78,11 @@ def deserialize_hashmap_node(cs: Slice, m: int, ret_dict: dict, prefix: bitarray
 def deserialize_hashmap_aug_node(
     cs: Slice,
     m: int,
-    ret_dict: dict,
-    extras: list,
+    ret_dict: dict[Any, Any],
+    extras: list[Any],
     prefix: bitarray,
-    x_deserializer: typing.Callable,
-    y_deserializer: typing.Callable,
+    x_deserializer: typing.Callable[..., Any],
+    y_deserializer: typing.Callable[..., Any],
 ) -> None:
     if m == 0:  # ahmn_leaf
         extras.append(y_deserializer(cs))
@@ -111,7 +112,7 @@ def deserialize_hashmap_aug_node(
         extras.append(y_deserializer(cs))
 
 
-def parse(slice: Slice, key_length: int, ret_dict: dict, prefix: bitarray) -> None:
+def parse(slice: Slice, key_length: int, ret_dict: dict[Any, Any], prefix: bitarray) -> None:
     l, suffix = deserialize_hml(slice, key_length)
     prefix.extend(suffix)
     m = key_length - l
@@ -121,11 +122,11 @@ def parse(slice: Slice, key_length: int, ret_dict: dict, prefix: bitarray) -> No
 def parse_aug(
     slice: Slice,
     key_length: int,
-    ret_dict: dict,
-    extras: list,
+    ret_dict: dict[Any, Any],
+    extras: list[Any],
     prefix: bitarray,
-    x_deserializer: typing.Callable,
-    y_deserializer: typing.Callable,
+    x_deserializer: typing.Callable[..., Any],
+    y_deserializer: typing.Callable[..., Any],
 ) -> None:
     if slice.type_ != CellTypes.ordinary:
         return None
@@ -137,15 +138,18 @@ def parse_aug(
     )
 
 
-def parse_hashmap(dict_cell: Slice, key_len: int) -> typing.Optional[dict]:
+def parse_hashmap(dict_cell: Slice, key_len: int) -> dict[str, Slice]:
     result = {}
     parse(dict_cell, key_len, result, bitarray(""))
     return result
 
 
 def parse_hashmap_aug(
-    dict_cell: Slice, key_len: int, x_deserializer: typing.Callable, y_deserializer: typing.Callable
-) -> typing.Optional[typing.Tuple[dict, list]]:
+    dict_cell: Slice,
+    key_len: int,
+    x_deserializer: typing.Callable[..., Any],
+    y_deserializer: typing.Callable[..., Any],
+) -> typing.Optional[typing.Tuple[dict[Any, Any], list[Any]]]:
     if dict_cell.type_ != CellTypes.ordinary:
         return None
     result = {}

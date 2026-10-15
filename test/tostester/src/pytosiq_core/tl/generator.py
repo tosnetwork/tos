@@ -1,9 +1,9 @@
 import logging
-import re
-import zlib
-import typing
 import os
-
+import re
+import typing
+import zlib
+from typing import Any
 
 logger = logging.getLogger(name="TL")
 
@@ -18,11 +18,12 @@ class TlSchema:
         id: typing.Optional[bytes],
         name: typing.Optional[str],
         class_name: typing.Optional[str],
-        args: dict,
+        args: dict[Any, Any],
     ) -> None:
-        self._id: bytes = id
-        self._name: str = name
-        self._class_name: str = class_name
+        self._id: bytes = b"" if id is None else id
+        self._name: str = "" if name is None else name
+        self._class_name: str = "" if class_name is None else class_name
+        self._boxed = False
         self._args: typing.Dict[str, str] = args  # {'param_name': 'param_type'}
 
     @property
@@ -82,7 +83,7 @@ class TlSchemas:
         :param schemas: TL Schemes
         :param auto_deserialize: if true will try to deserialize bytes fields with known TL schemes but skip it for schemes that are "untouchables"
         """
-        self.list: list = schemas
+        self.list: list[Any] = schemas
 
         self.id_map: typing.Dict[bytes, TlSchema] = {}
         self.name_map: typing.Dict[str, TlSchema] = {}
@@ -91,14 +92,14 @@ class TlSchemas:
 
         self._auto_deserialize = auto_deserialize
 
-        self.untouchables: typing.Dict[str, set] = {}  # {schema_name: {field1, field2}}
+        self.untouchables: typing.Dict[str, set[Any]] = {}  # {schema_name: {field1, field2}}
         self.set_default_untouchables()
         #  schemas and their fields not to auto deserialize. In ADNL some schemes (like adnl.message.part or rldp ones)
         #  are not supposed to be auto deserialized, because it may cause some errors.
 
     def get_by_id(
         self, tl_id: typing.Union[bytes, int], byteorder: typing.Literal["little", "big"] = "big"
-    ) -> TlSchema:
+    ) -> typing.Optional[TlSchema]:
         """
         :param tl_id: id of TL schema
         :param byteorder: provided bytes or int order. if big nothing will happen, if little no matter int or bytes they will be converted
@@ -111,14 +112,14 @@ class TlSchemas:
             tl_id = tl_id.to_bytes(4, byteorder)
         return self.id_map.get(tl_id, None)  # or TlSchema.empty()?
 
-    def get_by_name(self, name: str) -> TlSchema:
+    def get_by_name(self, name: str) -> typing.Optional[TlSchema]:
         """
         :param name: name of TL Schema
         :return: TlSchema or None
         """
         return self.name_map.get(name, None)  # or TlSchema.empty()?
 
-    def get_by_class_name(self, class_name: str) -> typing.List[TlSchema]:
+    def get_by_class_name(self, class_name: str) -> typing.Optional[typing.List[TlSchema]]:
         """
         :param class_name: boxed class_name of TL Schema
         :return: TlSchema or None
@@ -203,7 +204,7 @@ class TlSchemas:
         return result
 
     def serialize(
-        self, schema: typing.Union[TlSchema, str], data: dict, boxed: bool = True
+        self, schema: typing.Union[TlSchema, str, None], data: dict[Any, Any], boxed: bool = True
     ) -> bytes:
         logger.log(level=5, msg=f"serializing schema {schema}")
         # https://core.telegram.org/mtproto/serialize
@@ -215,6 +216,8 @@ class TlSchemas:
         """
         if isinstance(schema, str):
             schema = self.get_by_name(schema)
+        if schema is None:
+            raise TlError("cannot serialize an unknown schema")
         if boxed:
             result = schema.little_id()
         else:
@@ -231,9 +234,9 @@ class TlSchemas:
 
     def deserialize(
         self, data: bytes, boxed: bool = True, args=None
-    ) -> typing.Tuple[typing.Union[dict, bytes], int]:
+    ) -> typing.Tuple[typing.Union[dict[Any, Any], bytes], int]:
         i = 0
-        result = {}
+        result: dict[str, Any] = {}
         schema = None
         if boxed:
             schema = self.get_by_id(data[i : i + 4], "little")
@@ -243,11 +246,16 @@ class TlSchemas:
             # return {'bytes': data}, len(data)
             i += 4
             args = schema.args
+        if args is None:
+            raise TlError("unboxed deserialization requires schema arguments")
         logger.log(level=5, msg=f"deserializing schema with args {args}")
         for field, type_ in args.items():
             if "?" in type_:
                 index = int(type_[type_.find(".") + 1 : type_.find("?")])
-                mask = bin(result.get("mode", result.get("flags"))).replace("0b", "")[::-1]
+                flags = result.get("mode", result.get("flags"))
+                if not isinstance(flags, int):
+                    raise TlError("optional field requires an integer flags word")
+                mask = bin(flags).replace("0b", "")[::-1]
                 if index >= len(mask):
                     continue
                 if mask[index] == "0":
@@ -378,13 +386,13 @@ class TlRegistrator:
         #                             r'[\w]*[^\w\s]*\{[^\}]*\}|'
         #                             r'\S+')
 
-    def _is_boxed(self, args: dict) -> bool:
+    def _is_boxed(self, args: dict[Any, Any]) -> bool:
         for type_ in args.values():
             if type_ not in self._base_types:
                 return True
         return False
 
-    def register(self, schema: str) -> TlSchema:
+    def register(self, schema: str) -> typing.Optional[TlSchema]:
         schema = schema.split("//")[0]
         name = schema.split(" ")[0]
         if "#" in name:
@@ -409,8 +417,8 @@ class TlRegistrator:
     def get_id(self, schema: str) -> bytes:
         return self.crc32(self.clear(schema)).to_bytes(4, "big")
 
-    def get_params(self, schema: str) -> dict:
-        pass
+    def get_params(self, schema: str) -> dict[str, str]:
+        raise NotImplementedError("parse parameters through register")
 
 
 class TlGenerator:

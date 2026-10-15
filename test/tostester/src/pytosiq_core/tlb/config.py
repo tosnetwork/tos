@@ -1,11 +1,9 @@
 import typing
+from typing import Any
 
-from .block import CurrencyCollection, ExtraCurrencyCollection, GlobalVersion
-from .tlb import TlbScheme, TlbError
-from .account import AccountStatus, StateInit, StorageUsedShort
-from .utils import HashUpdate
-from ..boc import Slice, Builder, Cell
-from ..boc.address import Address
+from ..boc import Slice
+from .block import ExtraCurrencyCollection, GlobalVersion
+from .tlb import TlbError, TlbScheme, require
 
 
 class ConfigError(TlbError):
@@ -190,7 +188,7 @@ class ConfigParam9(TlbScheme):
     _ mandatory_params:(Hashmap 32 True) = ConfigParam 9;
     """
 
-    def __init__(self, mandatory_params: dict):
+    def __init__(self, mandatory_params: typing.Optional[dict[Any, Any]]):
         self.mandatory_params = mandatory_params
 
     @classmethod
@@ -206,7 +204,7 @@ class ConfigParam10(TlbScheme):
     _ critical_params:(Hashmap 32 True) = ConfigParam 10;
     """
 
-    def __init__(self, critical_params: dict):
+    def __init__(self, critical_params: typing.Optional[dict[Any, Any]]):
         self.critical_params = critical_params
 
     @classmethod
@@ -505,7 +503,7 @@ class ConfigParam12(TlbScheme):
     _ workchains:(HashmapE 32 WorkchainDescr) = ConfigParam 12;
     """
 
-    def __init__(self, workchains: typing.Dict[int, WorkchainDescr]):
+    def __init__(self, workchains: typing.Optional[typing.Dict[int, WorkchainDescr]]):
         self.workchains = workchains
 
     @classmethod
@@ -751,7 +749,7 @@ class ConfigParam18(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice) -> typing.Dict[int, StoragePrices]:
-        return cell_slice.load_hashmap(32, value_deserializer=StoragePrices.deserialize)
+        return require(cell_slice.load_hashmap(32, value_deserializer=StoragePrices.deserialize))
 
 
 class GasLimitsPrices(TlbScheme):
@@ -1165,7 +1163,15 @@ class ConsensusConfig(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.load_bytes(1)[:1]
-        types = {
+        types: dict[
+            bytes,
+            typing.Literal[
+                "consensus_config",
+                "consensus_config_new",
+                "consensus_config_v3",
+                "consensus_config_v4",
+            ],
+        ] = {
             b"\xd6": "consensus_config",
             b"\xd7": "consensus_config_new",
             b"\xd8": "consensus_config_v3",
@@ -1173,7 +1179,7 @@ class ConsensusConfig(TlbScheme):
         }
         if tag not in types:
             raise ConfigError(f"ConsensusConfig deserialization error: unexpected tag {tag}")
-        type_ = types.get(tag)
+        type_ = types[tag]
         flags = None
         new_catchain_ids = None
         if type_ != "consensus_config":
@@ -1235,7 +1241,7 @@ class ConfigParam31(TlbScheme):
     _ fundamental_smc_addr:(HashmapE 256 True) = ConfigParam 31;
     """
 
-    def __init__(self, fundamental_smc_addr: dict):
+    def __init__(self, fundamental_smc_addr: typing.Optional[dict[Any, Any]]):
         self.fundamental_smc_addr = fundamental_smc_addr
 
     @classmethod
@@ -1322,7 +1328,7 @@ class ValidatorSet(TlbScheme):
         total: int,
         main: int,
         total_weight: typing.Optional[int],
-        list: typing.Dict[int, "ValidatorDescr"],
+        list: typing.Optional[typing.Dict[int, "ValidatorDescr"]],
     ):
 
         self.type_ = type_
@@ -1469,7 +1475,7 @@ class SuspendedAddressList(TlbScheme):
     suspended_address_list#00 addresses:(HashmapE 288 Unit) suspended_until:uint32 = SuspendedAddressList;
     """
 
-    def __init__(self, addresses: dict, suspended_until: int):
+    def __init__(self, addresses: typing.Optional[dict[Any, Any]], suspended_until: int):
         self.addresses = addresses
         self.suspended_until = suspended_until
 
@@ -1514,7 +1520,7 @@ class OracleBridgeParams(TlbScheme):
         self,
         bridge_address: bytes,
         oracle_mutlisig_address: bytes,
-        oracles: dict,
+        oracles: typing.Optional[dict[Any, Any]],
         external_chain_address: bytes,
     ):
         self.bridge_address = bridge_address
@@ -1637,7 +1643,7 @@ class JettonBridgeParams(TlbScheme):
         type_: typing.Literal["jetton_bridge_params_v0", "jetton_bridge_params_v1"],
         bridge_address: bytes,
         oracles_address: bytes,
-        oracles: dict,
+        oracles: typing.Optional[dict[Any, Any]],
         state_flags: int,
         burn_bridge_fee: typing.Optional[int] = None,
         prices: typing.Optional[JettonBridgePrices] = None,

@@ -31,6 +31,7 @@ Usage: uv run python test/integration/crash_boundary_recovery.py [NODE_DIR] [--s
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import re
 import subprocess
@@ -38,7 +39,15 @@ import sys
 import time
 from pathlib import Path
 
-from restart_recovery_negative import ENGINE, INJECT, _latest_node, _zerostate_hashes
+_script_module = (
+    importlib.import_module(".restart_recovery_negative", __package__)
+    if __package__
+    else importlib.import_module("restart_recovery_negative")
+)
+ENGINE = _script_module.ENGINE
+INJECT = _script_module.INJECT
+_latest_node = _script_module._latest_node
+_zerostate_hashes = _script_module._zerostate_hashes
 
 FATAL = re.compile(
     r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|UndefinedBehaviorSanitizer|Aborted)\b"

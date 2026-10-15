@@ -1,8 +1,9 @@
 import typing
+from typing import Any, Optional
 
-from ..tlb import TlbScheme
+from ...boc import Builder, Cell, HashMap, Slice
+from ..tlb import TlbScheme, require
 from ..transaction import MessageAny
-from ...boc import Cell, Builder, Slice, HashMap
 
 
 class WalletV3Data(TlbScheme):
@@ -26,7 +27,7 @@ class WalletV3Data(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder.store_uint(self.seqno, 32).store_uint(self.wallet_id, 32).store_bytes(
+        builder.store_uint(require(self.seqno), 32).store_uint(self.wallet_id, 32).store_bytes(
             self.public_key
         )
         return builder.end_cell()
@@ -64,7 +65,7 @@ class WalletV4Data(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder.store_uint(self.seqno, 32).store_uint(self.wallet_id, 32).store_bytes(
+        builder.store_uint(require(self.seqno), 32).store_uint(self.wallet_id, 32).store_bytes(
             self.public_key
         ).store_dict(self.plugins)
         return builder.end_cell()
@@ -101,9 +102,11 @@ class WalletV5R1Data(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder.store_bool(self.is_signature_allowed).store_uint(self.seqno, 32).store_uint(
-            self.wallet_id, 32
-        ).store_bytes(self.public_key).store_dict(self.extensions)
+        builder.store_bool(self.is_signature_allowed).store_uint(
+            require(self.seqno), 32
+        ).store_uint(require(self.wallet_id), 32).store_bytes(require(self.public_key)).store_dict(
+            self.extensions
+        )
         return builder.end_cell()
 
     @classmethod
@@ -132,7 +135,7 @@ class HighloadWalletData(TlbScheme):
         wallet_id: typing.Optional[int] = None,
         last_cleaned: typing.Optional[int] = None,
         public_key: typing.Optional[bytes] = None,
-        old_queries: typing.Optional[dict] = None,
+        old_queries: typing.Optional[dict[Any, Any]] = None,
     ):
         if wallet_id is None:
             wallet_id = 698983191
@@ -153,9 +156,11 @@ class HighloadWalletData(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder.store_uint(self.wallet_id, 32).store_uint(self.last_cleaned, 64).store_bytes(
-            self.public_key
-        ).store_dict(HashMap(key_size=64, value_serializer=self.old_queries_serializer).serialize())
+        builder.store_uint(self.wallet_id, 32).store_uint(
+            require(self.last_cleaned), 64
+        ).store_bytes(self.public_key).store_dict(
+            HashMap(key_size=64, value_serializer=self.old_queries_serializer).serialize()
+        )
         return builder.end_cell()
 
     @classmethod
@@ -180,10 +185,10 @@ class HighloadWalletV3Data(TlbScheme):
         self,
         public_key: typing.Optional[bytes] = None,
         wallet_id: typing.Optional[int] = None,
-        old_queries: typing.Optional[dict] = None,
-        queries: typing.Optional[dict] = None,
+        old_queries: typing.Optional[dict[Any, Any]] = None,
+        queries: typing.Optional[dict[Any, Any]] = None,
         last_clean_time: typing.Optional[int] = None,
-        timeout: int = None,
+        timeout: Optional[int] = None,
     ) -> None:
         self.public_key = public_key
         if wallet_id is None:
@@ -196,11 +201,11 @@ class HighloadWalletV3Data(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder.store_bytes(self.public_key).store_uint(self.wallet_id, 32).store_dict(
+        builder.store_bytes(require(self.public_key)).store_uint(self.wallet_id, 32).store_dict(
             HashMap(key_size=13, map_=self.old_queries).serialize()
         ).store_dict(HashMap(key_size=13, map_=self.queries).serialize()).store_uint(
-            self.last_clean_time, 64
-        ).store_uint(self.timeout, 22)
+            require(self.last_clean_time), 64
+        ).store_uint(require(self.timeout), 22)
 
         return builder.end_cell()
 

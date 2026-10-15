@@ -66,13 +66,12 @@ class FalconModuleState:
         return state
 
 
-class Falcon512ModuleBlueprint(FundedBlueprint):
+class Falcon512ModuleBlueprint(FundedBlueprint[FalconModuleState]):
     def __init__(self, code, workchain, network, public_key, validate_key):
         address(Address((workchain, bytes(32))))
         if not validate_key(public_key):
             raise ValueError("noncanonical Falcon public key")
-        self.CODE_BOC = code
-        super().__init__(workchain, FalconModuleState(network, public_key))
+        super().__init__(workchain, FalconModuleState(network, public_key), code=code)
 
     def materialize(self, provider):
         return self.address

@@ -1,10 +1,12 @@
 import typing
+from typing import Any, Optional
+
 from bitarray.util import ba2int
 
-from .deserialize import Boc, NullCell
-from .cell import Cell
-from .tvm_bitarray import TvmBitarray, BitarrayLike
 from .address import Address, ExternalAddress
+from .cell import Cell
+from .deserialize import Boc, NullCell
+from .tvm_bitarray import BitarrayLike
 
 
 class SliceError(Exception):
@@ -12,11 +14,11 @@ class SliceError(Exception):
 
 
 class Slice(NullCell):
-    def __init__(self, bits: TvmBitarray, refs: typing.List[Cell], type_: int = -1):
+    def __init__(self, bits: BitarrayLike, refs: typing.List[Cell], type_: int = -1):
         self.bits = bits
         self.refs = refs
         self.type_ = type_
-        # super().__init__(bits, refs, type_)
+        super().__init__(bits, refs, type_)
         self.ref_offset = 0
 
     @property
@@ -116,22 +118,34 @@ class Slice(NullCell):
                 addr = self.load_uint(len_)
             return ExternalAddress(addr, len_)
         # todo: addr_var
-        is_anycast = False
+        anycast = None
         if self.load_bool():
-            is_anycast = True
             depth = self.load_uint(5)
             if depth < 1:
                 raise SliceError("Anycast depth must be greater than 0")
             pfx = self.load_uint(depth)
+            anycast = (depth, pfx)
         if tag == 2:
             wc = self.load_int(8)
             hash_part = self.load_bytes(32)
             addr = Address((wc, hash_part))
         else:
             raise SliceError("Unknown address type")  # todo: addr_var
-        if is_anycast:
-            addr.set_anycast(depth, pfx)
+        if anycast is not None:
+            addr.set_anycast(*anycast)
         return addr
+
+    def load_internal_address(self) -> Address | None:
+        value = self.load_address()
+        if value is not None and not isinstance(value, Address):
+            raise SliceError("expected an internal address")
+        return value
+
+    def load_external_address(self) -> ExternalAddress | None:
+        value = self.load_address()
+        if value is not None and not isinstance(value, ExternalAddress):
+            raise SliceError("expected an external address")
+        return value
 
     def preload_var_uint(self, bit_length: int) -> int:
         length = self.preload_uint(bit_length)
@@ -166,7 +180,7 @@ class Slice(NullCell):
         coins = self.preload_bits(4 + length * 8)[4:]
         return ba2int(coins, signed=False)
 
-    def load_coins(self) -> typing.Optional[int]:
+    def load_coins(self) -> int:
         length = self.load_uint(4)
         if not length:
             return 0
@@ -220,8 +234,8 @@ class Slice(NullCell):
     def load_hashmap(
         self,
         key_length: int,
-        key_deserializer: typing.Callable = None,
-        value_deserializer: typing.Callable = None,
+        key_deserializer: Optional[typing.Callable[..., Any]] = None,
+        value_deserializer: Optional[typing.Callable[..., Any]] = None,
     ):
         from .hashmap.hashmap import HashMap
 
@@ -230,9 +244,11 @@ class Slice(NullCell):
     def load_hashmap_aug(
         self,
         key_length: int,
-        x_deserializer: typing.Callable = None,
-        y_deserializer: typing.Callable = None,
+        x_deserializer: Optional[typing.Callable[..., Any]] = None,
+        y_deserializer: Optional[typing.Callable[..., Any]] = None,
     ):
+        if x_deserializer is None or y_deserializer is None:
+            raise SliceError("augmented hashmap requires both deserializers")
         from .hashmap.parse import parse_hashmap_aug
 
         return parse_hashmap_aug(self, key_length, x_deserializer, y_deserializer)
@@ -240,9 +256,11 @@ class Slice(NullCell):
     def load_hashmap_aug_e(
         self,
         key_length: int,
-        x_deserializer: typing.Callable = None,
-        y_deserializer: typing.Callable = None,
+        x_deserializer: Optional[typing.Callable[..., Any]] = None,
+        y_deserializer: Optional[typing.Callable[..., Any]] = None,
     ):
+        if x_deserializer is None or y_deserializer is None:
+            raise SliceError("augmented hashmap requires both deserializers")
         if self.is_special():
             return self.to_cell()
         if self.load_bit():
@@ -257,8 +275,8 @@ class Slice(NullCell):
     def preload_dict(
         self,
         key_length: int,
-        key_deserializer: typing.Callable = None,
-        value_deserializer: typing.Callable = None,
+        key_deserializer: Optional[typing.Callable[..., Any]] = None,
+        value_deserializer: Optional[typing.Callable[..., Any]] = None,
     ):
         from .hashmap.hashmap import HashMap
 
@@ -272,8 +290,8 @@ class Slice(NullCell):
     def load_dict(
         self,
         key_length: int,
-        key_deserializer: typing.Callable = None,
-        value_deserializer: typing.Callable = None,
+        key_deserializer: Optional[typing.Callable[..., Any]] = None,
+        value_deserializer: Optional[typing.Callable[..., Any]] = None,
     ):
         from .hashmap.hashmap import HashMap
 
@@ -319,7 +337,7 @@ class Slice(NullCell):
         """
         text = f"{len(self.bits)}[{self.bits.tobytes().hex().upper()}]"
         if self.refs:
-            text += f" -> {{\n"
+            text += " -> {\n"
             for index, ref in enumerate(self.refs[self.ref_offset :]):
                 next_comma = True if index != len(self.refs) - 1 else False
                 text += "\t" * t + ref.__str__(t + 1, next_comma) + "\n"

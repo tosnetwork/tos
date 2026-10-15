@@ -1,10 +1,11 @@
 import hashlib
 import typing
+from typing import Any
 
-from .deserialize import Boc, NullCell
-from .exotic import LevelMask, CellTypes
-from .tvm_bitarray import TvmBitarray, BitarrayLike
 from ..crypto.crc import crc32c
+from .deserialize import Boc, NullCell
+from .exotic import CellTypes, LevelMask
+from .tvm_bitarray import BitarrayLike, TvmBitarray
 
 
 class CellError(Exception):
@@ -20,7 +21,7 @@ class Cell(NullCell):
 
     def __init__(self, bits: BitarrayLike, refs: typing.List["Cell"], cell_type: int = -1) -> None:
         self.bits: BitarrayLike = bits
-        self.refs: list = refs
+        self.refs: list[Any] = refs
         self.type_: int = cell_type
         self.is_exotic: bool = cell_type != -1
         super().__init__(bits, refs, cell_type)
@@ -194,7 +195,7 @@ class Cell(NullCell):
         # Hash_repr(c) := sha256(CellRepr(c))
         return hashlib.sha256(self.get_representation()).digest()
 
-    def order(self, result: dict = {}) -> dict:
+    def order(self, result: dict[Any, Any] = {}) -> dict[Any, Any]:
         """
         :return: dict {<Cell>: <index>}
         """
@@ -205,7 +206,7 @@ class Cell(NullCell):
             ref.order(result)
         return result
 
-    def serialize(self, indexes: dict, byte_len: int) -> bytes:
+    def serialize(self, indexes: dict[Any, Any], byte_len: int) -> bytes:
         result = self._descriptors + self._data_bytes
         for ref in self.refs:
             result += indexes[ref].to_bytes(byte_len, "big")
@@ -298,7 +299,9 @@ class Cell(NullCell):
         """
         return self.refs[ref_i]
 
-    def __eq__(self, other: "Cell") -> bool:
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Cell):
+            return NotImplemented
         return self._hash == other.hash
 
     def __repr__(self) -> str:

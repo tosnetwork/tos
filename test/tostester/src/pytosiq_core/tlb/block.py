@@ -1,11 +1,11 @@
 import typing
+from typing import Any, Optional
 
-from .tlb import TlbScheme, TlbError
-from .account import ShardAccount, AccountBlock
-from .utils import MerkleUpdate, deserialize_shard_hashes, uint64_to_int64
-from ..boc import Slice, Cell, Builder
+from ..boc import Builder, Cell, Slice
 from ..boc.hashmap.hashmap import HashMap
-
+from .account import AccountBlock, ShardAccount
+from .tlb import TlbError, TlbScheme
+from .utils import MerkleUpdate, deserialize_shard_hashes, uint64_to_int64
 
 # TODO provide in each constructor already deserialized args, not slice
 
@@ -25,10 +25,10 @@ class Block(TlbScheme):
     def __init__(
         self,
         global_id: int,
-        info: "BlockInfo",
-        value_flow: "ValueFlow",
-        state_update: MerkleUpdate,
-        extra: "BlockExtra",
+        info: typing.Optional["BlockInfo"],
+        value_flow: typing.Optional["ValueFlow"],
+        state_update: typing.Optional[MerkleUpdate],
+        extra: typing.Optional["BlockExtra"],
     ):
         self.global_id = global_id
         self.info = info
@@ -325,7 +325,9 @@ class CurrencyCollection(TlbScheme):
 
     """
 
-    def __init__(self, tomis: int = 0, *, other: "ExtraCurrencyCollection" = None) -> None:
+    def __init__(
+        self, tomis: int = 0, *, other: Optional["ExtraCurrencyCollection"] = None
+    ) -> None:
         self.tomis = tomis
         if other is None:
             other = ExtraCurrencyCollection({})
@@ -349,7 +351,7 @@ class ExtraCurrencyCollection(TlbScheme):
     extra_currencies$_ dict:(HashmapE 32 (VarUInteger 32)) = ExtraCurrencyCollection
     """
 
-    def __init__(self, dict_: dict):
+    def __init__(self, dict_: typing.Optional[dict[Any, Any]]):
         self.dict = dict_
 
     def serialize(self) -> Cell:
@@ -419,12 +421,12 @@ class ShardStateUnsplit(TlbScheme):
         min_ref_mc_seqno: int,
         out_msg_queue_info: Cell,
         before_split: int,
-        accounts: "ShardAccounts",
-        overload_history: int,
-        underload_history: int,
-        total_balance: CurrencyCollection,
-        total_validator_fees: CurrencyCollection,
-        libraries: dict,
+        accounts: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+        overload_history: typing.Optional[int],
+        underload_history: typing.Optional[int],
+        total_balance: typing.Optional[CurrencyCollection],
+        total_validator_fees: typing.Optional[CurrencyCollection],
+        libraries: typing.Optional[dict[Any, Any]],
         master_ref: typing.Optional[BlkMasterInfo],
         custom: typing.Optional["McStateExtra"],
     ):
@@ -592,11 +594,11 @@ class McStateExtra(TlbScheme):
 
     def __init__(
         self,
-        shard_hashes: dict,
+        shard_hashes: typing.Optional[dict[Any, Any]],
         config: "ConfigParams",
         flags: int,
         validator_info: "ValidatorInfo",
-        prev_blocks: "OldMcBlocksInfo",
+        prev_blocks: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
         after_key_block: bool,
         last_key_block: typing.Optional[ExtBlkRef],
         block_create_stats: typing.Optional["BlockCreateStats"],
@@ -670,9 +672,9 @@ class McBlockExtra(TlbScheme):
     def __init__(
         self,
         key_block: int,
-        shard_hashes: dict,
-        shard_fees: Cell,
-        prev_blk_signatures: dict,
+        shard_hashes: typing.Optional[dict[Any, Any]],
+        shard_fees: typing.Optional[Cell],
+        prev_blk_signatures: typing.Optional[dict[Any, Any]],
         recover_create_msg: typing.Optional[Cell],
         mint_msg: typing.Optional[Cell],
         config: typing.Optional["ConfigParams"],
@@ -723,7 +725,7 @@ class ConfigParams(TlbScheme):
     _ config_addr:bits256 config:^(Hashmap 32 ^Cell) = ConfigParams;
     """
 
-    def __init__(self, config_addr: str, config: dict):
+    def __init__(self, config_addr: str, config: typing.Optional[dict[Any, Any]]):
         self.config_addr = config_addr
         self.config = config
 
@@ -827,7 +829,11 @@ class BlockCreateStats(TlbScheme):
     block_create_stats_ext#34 counters:(HashmapAugE 256 CreatorStats uint32) = BlockCreateStats;
     """
 
-    def __init__(self, type_: str, counters: dict):
+    def __init__(
+        self,
+        type_: str,
+        counters: typing.Union[dict[int, Any], Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+    ):
         self.type_ = type_
         self.counters = counters
 
@@ -917,9 +923,9 @@ class BlockExtra(TlbScheme):
 
     def __init__(
         self,
-        in_msg_descr: typing.Tuple[dict, list],
-        out_msg_descr: typing.Tuple[dict, list],
-        account_blocks: typing.Tuple[dict, list],
+        in_msg_descr: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+        out_msg_descr: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+        account_blocks: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
         rand_seed: bytes,
         created_by: bytes,
         custom: typing.Optional[McBlockExtra],
@@ -937,7 +943,7 @@ class BlockExtra(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        from .transaction import InMsg, OutMsg, ImportFees
+        from .transaction import ImportFees, InMsg, OutMsg
 
         if cell_slice.is_special():
             return None
@@ -986,7 +992,7 @@ class BinTree(TlbScheme):
     = BinTree X;
     """
 
-    def __init__(self, list_: list):
+    def __init__(self, list_: list[Any]):
         self.list = list_
 
     @classmethod
@@ -1052,7 +1058,7 @@ class ShardDescr(TlbScheme):
         next_validator_shard: int,
         min_ref_mc_seqno: int,
         gen_utime: int,
-        split_merge_at: "FutureSplitMerge",
+        split_merge_at: typing.Optional["FutureSplitMerge"],
         fees_collected: CurrencyCollection,
         funds_created: CurrencyCollection,
     ):

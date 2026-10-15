@@ -4,21 +4,23 @@ The signing interface accepts public commitment bytes only. Secret material stay
 in the caller's keystore adapter. A submitted message is not a delivery receipt.
 """
 
+import subprocess
+from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
-import subprocess
 
 from pytosiq_core import (
     Address,
-    Cell,
     Builder,
-    StateInit,
-    MessageAny,
-    InternalMsgInfo,
+    Cell,
     CurrencyCollection,
+    InternalMsgInfo,
+    MessageAny,
+    StateInit,
 )
-from .contract import Blueprint
+
+from .contract import Blueprint, ContractState
 
 CONTEXT = b"TOS-AUTH-ML-DSA-44-v1"
 MAX_COINS = (1 << 120) - 1
@@ -36,7 +38,7 @@ def network_id(value: int) -> int:
     return value
 
 
-def address(value: Address) -> Address:
+def address(value: object) -> Address:
     if not isinstance(value, Address) or value.anycast is not None:
         raise ValueError("canonical internal address required")
     if type(value.wc) is not int or not -128 <= value.wc < 128 or len(value.hash_part) != 32:
@@ -177,7 +179,7 @@ def transfer_message(
     )
 
 
-class FundedBlueprint(Blueprint):
+class FundedBlueprint[S: ContractState](Blueprint[S], ABC):
     """No free external deployment and no implicit acknowledgement of delivery."""
 
     async def deploy(self, provider):
@@ -205,11 +207,10 @@ class MldsaModuleState:
         )
 
 
-class Mldsa44ModuleBlueprint(FundedBlueprint):
+class Mldsa44ModuleBlueprint(FundedBlueprint[MldsaModuleState]):
     def __init__(self, code: Cell, workchain: int, network: int, public_key: bytes):
         address(Address((workchain, bytes(32))))
-        self.CODE_BOC = code
-        super().__init__(workchain, MldsaModuleState(network, public_key))
+        super().__init__(workchain, MldsaModuleState(network, public_key), code=code)
 
     def materialize(self, provider):
         # The module has no owner, withdrawal or mutation API.

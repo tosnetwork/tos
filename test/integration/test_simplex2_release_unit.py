@@ -1,14 +1,14 @@
 """Small controls for the observer-churn route's verdict, without a node network."""
+import importlib
 
 import ast
 import inspect
 import textwrap
 
-from test_simplex2_release import (
-    _observer_churn,
-    _observer_integrity_failures,
-    _observer_lifecycle,
-)
+_script_module = importlib.import_module(".test_simplex2_release", __package__) if __package__ else importlib.import_module("test_simplex2_release")
+_observer_churn = _script_module._observer_churn
+_observer_integrity_failures = _script_module._observer_integrity_failures
+_observer_lifecycle = _script_module._observer_lifecycle
 
 
 def test_observer_lifecycle_pairs_exact_shard_session_and_adnl_in_log_order():
