@@ -34,10 +34,10 @@
 
 namespace tos {
 
-static std::string build_wallet_json(bool is_wallet, td::int64 balance, const std::string& account_state,
-                                     const std::string& wallet_type, td::int32 seqno, td::uint64 last_lt,
-                                     const std::string& last_hash_b64, const std::string& observed_mc_block,
-                                     const std::string& observed_shard_block, td::int64 wallet_id = -1) {
+std::string build_wallet_json(bool is_wallet, td::int64 balance, const std::string& account_state,
+                              const std::string& wallet_type, td::int64 seqno, td::uint64 last_lt,
+                              const std::string& last_hash_b64, const std::string& observed_mc_block,
+                              const std::string& observed_shard_block, td::int64 wallet_id) {
   td::StringBuilder sb;
   sb << "{\"@type\":\"ext.accounts.walletInformation\""
      << ",\"wallet\":" << (is_wallet ? "true" : "false")
@@ -637,12 +637,9 @@ static std::string build_agent_capability_json(const std::string& account,
   return sb.as_cslice().str();
 }
 
-static std::string build_account_capability_json(const std::string& address,
-                                                 const ParsedAccountState& parsed,
-                                                 const std::string& account_model,
-                                                 const std::string& authorization_version,
-                                                 bool supports_sponsorship,
-                                                 bool include_sponsorship) {
+std::string build_account_capability_json(const std::string& address, const ParsedAccountState& parsed,
+                                          const std::string& account_model, const std::string& authorization_version,
+                                          bool supports_sponsorship, bool include_sponsorship) {
   bool supports_agents = supports_account_standard_agents(account_model);
   bool supports_delegation = supports_account_standard_delegations(account_model);
   bool supports_sessions = supports_account_standard_sessions(account_model);
@@ -670,6 +667,12 @@ static std::string build_account_capability_json(const std::string& address,
 
 void JsonRpcServer::handle_getAccountCapability(td::JsonObject &params, std::string req_id,
                                                 td::Promise<HttpReturn> promise) {
+  auto include_pq = params.get_optional_bool_field("include_pq", false);
+  auto proof = params.get_optional_bool_field("with_proof", false);
+  if (include_pq.is_error() || proof.is_error() || include_pq.ok() || params.has_field("block_id") || proof.ok()) {
+    handle_explorer("getAccountCapability", params, std::move(req_id), std::move(promise));
+    return;
+  }
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
     promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
@@ -1806,6 +1809,12 @@ void JsonRpcServer::handle_revokeAccountAgent(td::JsonObject &params, std::strin
 
 void JsonRpcServer::handle_getWalletInformation(td::JsonObject &params, std::string req_id,
                                                 td::Promise<HttpReturn> promise) {
+  auto include_pq = params.get_optional_bool_field("include_pq", false);
+  auto proof = params.get_optional_bool_field("with_proof", false);
+  if (include_pq.is_error() || proof.is_error() || include_pq.ok() || params.has_field("block_id") || proof.ok()) {
+    handle_explorer("getWalletInformation", params, std::move(req_id), std::move(promise));
+    return;
+  }
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
     promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));

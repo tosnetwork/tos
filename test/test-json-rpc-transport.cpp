@@ -44,6 +44,7 @@
 #include "tl-utils/lite-utils.hpp"
 
 #include "json-rpc-http-policy.h"
+#include "json-rpc-server-internal.h"
 #include "json-rpc-server.h"
 
 namespace {
@@ -734,7 +735,9 @@ TEST(JsonRpcTransport, a_wrong_key_never_reaches_the_body_or_the_body_reservatio
     // Headers and the first megabyte of the body in one write.
     Client together(port, 0);
     ASSERT_TRUE(together.connect());
-    ASSERT_TRUE(together.send_all(post_headers(declared, "wrong-key") + body.substr(0, 1 << 20)));
+    // Header rejection may close the socket before the client writes the whole
+    // body fragment. The 401 and zero-reservation checks below remain required.
+    (void)together.send_all(post_headers(declared, "wrong-key") + body.substr(0, 1 << 20));
     std::string status, reply;
     ASSERT_TRUE(together.read_response(5000, status, reply));
     ASSERT_EQ(status, std::string("HTTP/1.1 401 Unauthorized"));
@@ -1041,15 +1044,146 @@ TEST(JsonRpcTransport, proof_relay_refuses_send_and_nested_queries_without_backe
       Client client(port, 0);
       ASSERT_TRUE(client.connect());
       for (const auto &query : requests) {
-        const std::string request =
-            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"getProofQuery\",\"params\":{\"query\":\"" + query + "\"}}";
-        ASSERT_TRUE(client.send_all(post(request, with_key)));
+        for (bool rest : {false, true}) {
+          const std::string request =
+              "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"getProofQuery\",\"params\":{\"query\":\"" + query + "\"}}";
+          ASSERT_TRUE(
+              client.send_all(rest ? post_to("/getProofQuery", "{\"query\":\"" + query + "\"}", with_key ? kApiKey : "")
+                                   : post(request, with_key)));
+          std::string status, body;
+          ASSERT_TRUE(client.read_response(5000, status, body));
+          ASSERT_EQ(status, std::string("HTTP/1.1 422 Unprocessable Entity"));
+          ASSERT_TRUE(body.find("\"code\":-32602") != std::string::npos);
+          ASSERT_TRUE(body.find(id_field(rest ? "null" : "7")) != std::string::npos);
+        }
+      }
+    });
+  }
+}
+
+TEST(JsonRpcTransport, explorer_rejects_invalid_selectors_before_backend_access) {
+  const std::vector<std::pair<std::string, std::string>> cases = {
+      {"getMasterchainBlockSignatures", "{\"seqno\":0}"},
+      {"getMasterchainBlockSignatures", "{\"seqno\":2147483648}"},
+      {"getMasterchainBlockSignatures", "{\"seqno\":\"1\"}"},
+      {"getMasterchainBlockSignatures", "{\"seqno\":1,\"with_proof\":1}"},
+      {"getConfigParam", "{\"param\":48,\"block_id\":{}}"},
+      {"getAccountCapability", "{\"address\":\"0:" + std::string(64, '0') + "\",\"with_proof\":true}"},
+      {"getWalletInformation", "{\"include_pq\":true,\"address\":\"/tmp/key\"}"}};
+  for (bool with_key : {false, true}) {
+    with_json_rpc(options_for(with_key), [with_key, &cases](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      for (const auto &item : cases) {
+        for (bool rest : {false, true}) {
+          const auto request =
+              "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"" + item.first + "\",\"params\":" + item.second + "}";
+          ASSERT_TRUE(client.send_all(rest ? post_to("/" + item.first, item.second, with_key ? kApiKey : "")
+                                           : post(request, with_key)));
+          std::string status, body;
+          ASSERT_TRUE(client.read_response(5000, status, body));
+          ASSERT_EQ(status, std::string("HTTP/1.1 422 Unprocessable Entity"));
+          ASSERT_TRUE(body.find("\"schema_version\":1") != std::string::npos);
+          ASSERT_TRUE(body.find("\"retryable\":false") != std::string::npos);
+        }
+      }
+    });
+  }
+}
+
+TEST(JsonRpcTransport, explorer_output_ownership_holds_reservations_through_fan_in) {
+  auto budget = std::make_shared<tos::http::BodyBudget>(100);
+  auto reservation = budget->reserve(80);
+  ASSERT_TRUE(reservation != nullptr);
+  auto payload = tos::json_rpc::retain_lifetime(std::make_shared<int>(7), std::move(reservation));
+  ASSERT_EQ(budget->reserved(), 80u);
+  std::vector<std::shared_ptr<int>> batch;
+  batch.push_back(std::move(payload));
+  auto response = tos::json_rpc::retain_lifetime(std::make_shared<int>(8), std::move(batch));
+  ASSERT_TRUE(budget->reserve(21) == nullptr);
+  ASSERT_EQ(budget->reserved(), 80u);
+  auto slow_writer = response;
+  response.reset();
+  ASSERT_EQ(budget->reserved(), 80u);
+  slow_writer.reset();
+  ASSERT_EQ(budget->reserved(), 0u);
+  ASSERT_TRUE(budget->reserve(100) != nullptr);
+}
+
+TEST(JsonRpcTransport, explorer_output_saturation_refuses_before_backend_access) {
+  auto held = tos::reserve_explorer_response(tos::kExplorerResponseBudgetBytes);
+  ASSERT_TRUE(held != nullptr);
+  auto info = tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_getMasterchainInfo>(), true);
+  const std::vector<std::pair<std::string, std::string>> calls = {
+      {"getMasterchainBlockSignatures", "{\"seqno\":1}"},
+      {"getAccountCapability", "{\"address\":\"0:" + std::string(64, '0') + "\",\"include_pq\":true}"},
+      {"getWalletInformation", "{\"address\":\"0:" + std::string(64, '0') + "\",\"include_pq\":true}"},
+      {"getConfigParam", "{\"param\":8,\"include_decoded\":true}"},
+      {"getProofQuery", "{\"query\":\"" + td::base64_encode(info.as_slice()) + "\"}"}};
+  for (bool with_key : {false, true}) {
+    with_json_rpc(options_for(with_key), [with_key, &calls](int port) {
+      for (const auto &call : calls) {
+        for (bool rest : {false, true}) {
+          Client client(port, 0);
+          ASSERT_TRUE(client.connect());
+          auto body = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"" + call.first + "\",\"params\":" + call.second + "}";
+          ASSERT_TRUE(client.send_all(rest ? post_to("/" + call.first, call.second, with_key ? kApiKey : "")
+                                           : post(body, with_key)));
+          std::string status, reply;
+          ASSERT_TRUE(client.read_response(5000, status, reply));
+          ASSERT_EQ(status, std::string("HTTP/1.1 429 Too Many Requests"));
+        }
+      }
+    });
+  }
+  held.reset();
+  ASSERT_TRUE(tos::reserve_explorer_response(tos::kExplorerResponseBudgetBytes) != nullptr);
+}
+
+TEST(JsonRpcTransport, explorer_get_normalizes_url_types_without_weakening_json) {
+  auto held = tos::reserve_explorer_response(tos::kExplorerResponseBudgetBytes);
+  ASSERT_TRUE(held != nullptr);
+  const std::string account = "address=0:" + std::string(64, '0');
+  const std::vector<std::pair<std::string, bool>> paths = {
+      {"/getMasterchainBlockSignatures?seqno=1", true},
+      {"/getMasterchainBlockSignatures?seqno=1&with_proof=true", true},
+      {"/getAccountCapability?" + account + "&seqno=1&include_pq=true&with_proof=false", true},
+      {"/getWalletInformation?" + account + "&seqno=1&include_pq=true&include_experimental=false", true},
+      {"/getConfigParam?param=8&seqno=1&include_decoded=true&with_proof=true", true},
+      {"/getMasterchainBlockSignatures?seqno=1.5", false},
+      {"/getMasterchainBlockSignatures?seqno=0001", false},
+      {"/getMasterchainBlockSignatures?seqno=true", false},
+      {"/getMasterchainBlockSignatures?seqno=2147483648", false},
+      {"/getMasterchainBlockSignatures?seqno=1&with_proof=1", false}};
+  for (bool with_key : {false, true}) {
+    with_json_rpc(options_for(with_key), [with_key, &paths](int port) {
+      for (const auto &path : paths) {
+        Client client(port, 0);
+        ASSERT_TRUE(client.connect());
+        auto request = "GET " + path.first + " HTTP/1.1\r\nHost: localhost\r\n";
+        if (with_key)
+          request += std::string("X-API-Key: ") + kApiKey + "\r\n";
+        ASSERT_TRUE(client.send_all(request + "\r\n"));
         std::string status, body;
         ASSERT_TRUE(client.read_response(5000, status, body));
-        ASSERT_EQ(status, std::string("HTTP/1.1 422 Unprocessable Entity"));
-        ASSERT_TRUE(body.find("\"code\":-32602") != std::string::npos);
-        ASSERT_TRUE(body.find(id_field("7")) != std::string::npos);
+        ASSERT_EQ(status,
+                  std::string(path.second ? "HTTP/1.1 429 Too Many Requests" : "HTTP/1.1 422 Unprocessable Entity"));
       }
+    });
+  }
+}
+
+TEST(JsonRpcTransport, explorer_named_routes_require_the_configured_api_key) {
+  for (const std::string route : {"/getProofQuery", "/getMasterchainBlockSignatures", "/getAccountCapability",
+                                  "/getWalletInformation", "/getConfigParam"}) {
+    with_json_rpc(options_for(true), [route](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      ASSERT_TRUE(client.send_all(post_to(route, "{}", "")));
+      std::string status, body;
+      ASSERT_TRUE(client.read_response(5000, status, body));
+      ASSERT_EQ(status, std::string("HTTP/1.1 401 Unauthorized"));
+      ASSERT_TRUE(body.find("Unauthorized") != std::string::npos);
     });
   }
 }

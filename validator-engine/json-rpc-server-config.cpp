@@ -31,6 +31,50 @@
 
 namespace tos {
 
+std::string render_config_validator_set_json(int config_id, td::Ref<vm::Cell> param_cell) {
+  std::string validator_set_json;
+  if (config_id == 32 || config_id == 34 || config_id == 36) {
+    auto validators_r = block::Config::unpack_validator_set(param_cell);
+    if (validators_r.is_ok()) {
+      auto validators = validators_r.move_as_ok();
+      td::StringBuilder decoded;
+      decoded << ",\"validator_set\":{\"utime_since\":" << validators->utime_since
+              << ",\"utime_until\":" << validators->utime_until << ",\"total\":" << validators->total
+              << ",\"main\":" << validators->main << ",\"total_weight\":\"" << validators->total_weight
+              << "\",\"validators\":[";
+      bool first = true;
+      std::size_t validator_index = 0;
+      for (const auto &validator : validators->list) {
+        if (!first)
+          decoded << ",";
+        first = false;
+        // A PQ descriptor's Ed25519 field is a zero placeholder, not
+        // its consensus key. Never expose it as a public key: clients
+        // must be able to distinguish membership, current key, suite,
+        // and transport identity from this decoded view of the BOC.
+        decoded << "{\"index\":" << validator_index++ << ",\"public_key\":";
+        if (validator.is_pq()) {
+          decoded << "null,\"validator_id\":\"" << td::base64_encode(validator.validator_id.value.as_slice())
+                  << "\",\"key_id\":\"" << td::base64_encode(validator.key_id.value.as_slice())
+                  << "\",\"algorithm_id\":" << validator.algorithm_id << ",\"pq_public_key\":\""
+                  << td::base64_encode(td::Slice(validator.pq_public_key)) << "\"";
+        } else {
+          decoded << "\"" << td::base64_encode(validator.pubkey.as_bits256().as_slice()) << "\",\"validator_id\":\""
+                  << td::base64_encode(validator.validator_id.value.as_slice()) << "\",\"key_id\":\""
+                  << td::base64_encode(validator.key_id.value.as_slice())
+                  << "\",\"algorithm_id\":0,\"pq_public_key\":null";
+        }
+        decoded << ",\"adnl_address\":\"" << td::base64_encode(validator.adnl_addr.as_slice()) << "\",\"weight\":\""
+                << validator.weight << "\",\"cumulative_weight\":\"" << validator.cum_weight << "\"}";
+      }
+      decoded << "]}";
+      validator_set_json = decoded.as_cslice().str();
+    }
+  }
+
+  return validator_set_json;
+}
+
 void JsonRpcServer::handle_getProofQuery(td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise) {
   auto encoded = params.get_required_string_field("query");
   if (encoded.is_error() || encoded.ok().size() > 21848) {
@@ -47,12 +91,32 @@ void JsonRpcServer::handle_getProofQuery(td::JsonObject &params, std::string req
     promise.set_value(make_json_error(-32602, "Proof query refused", req_id));
     return;
   }
+  // Charge the maximum base64 reply and envelope before fetching evidence.
+  // The reservation follows a successful payload through batch accumulation
+  // and slow socket writes, instead of vanishing when the handler completes.
+  auto response_reservation = reserve_explorer_response((((64u << 20) + 2u) / 3u) * 4u + 512u);
+  if (!response_reservation) {
+    promise.set_value(json_rpc::rate_limited_response(opts_.cors_origin));
+    return;
+  }
+  auto permit = explorer::WorkPermit::acquire();
+  if (!permit) {
+    promise.set_value(json_rpc::rate_limited_response(opts_.cors_origin));
+    return;
+  }
   auto wrapped =
       tos::serialize_tl_object(tos::create_tl_object<tos::lite_api::liteServer_query>(checked.move_as_ok()), true);
-  send_liteserver_query(std::move(wrapped), [req_id = std::move(req_id), cors = opts_.cors_origin,
+  send_liteserver_query(std::move(wrapped), [response_reservation, permit = std::move(permit),
+                                             req_id = std::move(req_id), cors = opts_.cors_origin,
                                              promise = std::move(promise)](td::Result<td::BufferSlice> reply) mutable {
     if (reply.is_error() || reply.ok().size() > (64u << 20)) {
       promise.set_value(make_json_error(-32603, "Proof response unavailable", req_id, cors));
+      return;
+    }
+    response_reservation.reset();
+    response_reservation = reserve_explorer_response(((reply.ok().size() + 2u) / 3u) * 4u + 512u);
+    if (!response_reservation) {
+      promise.set_value(json_rpc::rate_limited_response(cors));
       return;
     }
     auto encoded = proofverify::readonly_reply_json(reply.ok().as_slice());
@@ -60,12 +124,19 @@ void JsonRpcServer::handle_getProofQuery(td::JsonObject &params, std::string req
       promise.set_value(make_json_error(-32603, "Proof response unavailable", req_id, cors));
       return;
     }
-    promise.set_value(make_json_ok(encoded.move_as_ok(), req_id, cors));
+    auto response = make_json_ok(encoded.move_as_ok(), req_id, cors);
+    response.second = json_rpc::retain_lifetime(std::move(response.second), std::move(response_reservation));
+    promise.set_value(std::move(response));
   });
 }
 
 void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string req_id,
                                           td::Promise<HttpReturn> promise) {
+  auto decoded = params.get_optional_bool_field("include_decoded", false);
+  if (decoded.is_error() || decoded.ok() || params.has_field("block_id")) {
+    handle_explorer("getConfigParam", params, std::move(req_id), std::move(promise));
+    return;
+  }
   auto config_id_r = params.get_required_int_field("param");
   if (config_id_r.is_error()) {
     config_id_r = params.get_required_int_field("config_id");
@@ -166,48 +237,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
           }
           auto b64 = td::base64_encode(boc_r.ok().as_slice());
 
-          std::string validator_set_json;
-          if (config_id == 32 || config_id == 34 || config_id == 36) {
-            auto validators_r = block::Config::unpack_validator_set(param_cell);
-            if (validators_r.is_ok()) {
-              auto validators = validators_r.move_as_ok();
-              td::StringBuilder decoded;
-              decoded << ",\"validator_set\":{\"utime_since\":" << validators->utime_since
-                      << ",\"utime_until\":" << validators->utime_until
-                      << ",\"total\":" << validators->total
-                      << ",\"main\":" << validators->main
-                      << ",\"total_weight\":\"" << validators->total_weight
-                      << "\",\"validators\":[";
-              bool first = true;
-              std::size_t validator_index = 0;
-              for (const auto& validator : validators->list) {
-                if (!first)
-                  decoded << ",";
-                first = false;
-                // A PQ descriptor's Ed25519 field is a zero placeholder, not
-                // its consensus key. Never expose it as a public key: clients
-                // must be able to distinguish membership, current key, suite,
-                // and transport identity from this decoded view of the BOC.
-                decoded << "{\"index\":" << validator_index++ << ",\"public_key\":";
-                if (validator.is_pq()) {
-                  decoded << "null,\"validator_id\":\"" << td::base64_encode(validator.validator_id.value.as_slice())
-                          << "\",\"key_id\":\"" << td::base64_encode(validator.key_id.value.as_slice())
-                          << "\",\"algorithm_id\":" << validator.algorithm_id << ",\"pq_public_key\":\""
-                          << td::base64_encode(td::Slice(validator.pq_public_key)) << "\"";
-                } else {
-                  decoded << "\"" << td::base64_encode(validator.pubkey.as_bits256().as_slice())
-                          << "\",\"validator_id\":\"" << td::base64_encode(validator.validator_id.value.as_slice())
-                          << "\",\"key_id\":\"" << td::base64_encode(validator.key_id.value.as_slice())
-                          << "\",\"algorithm_id\":0,\"pq_public_key\":null";
-                }
-                decoded << ",\"adnl_address\":\"" << td::base64_encode(validator.adnl_addr.as_slice())
-                        << "\",\"weight\":\"" << validator.weight << "\",\"cumulative_weight\":\""
-                        << validator.cum_weight << "\"}";
-              }
-              decoded << "]}";
-              validator_set_json = decoded.as_cslice().str();
-            }
-          }
+          auto validator_set_json = render_config_validator_set_json(config_id, param_cell);
 
           if (!slot->settled) {
             slot->settled = true;

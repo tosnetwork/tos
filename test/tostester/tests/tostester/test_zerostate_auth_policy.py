@@ -10,6 +10,7 @@ import tostester.zerostate as zerostate_module
 from pytosiq_core import ShardStateUnsplit
 from pytosiq_core.boc.deserialize import Boc
 from pytosiq_core.tlb.config import ConfigParam8, ConfigParam9, ConfigParam10
+from pytosiq_core.tlb.tlb import require
 from tostester.install import Install
 from tostester.key import Key
 from tostester.zerostate import NetworkConfig, create_zerostate
@@ -34,7 +35,7 @@ def generate(path, version, tag):
         [Key()],
     )
     cell = Boc(z.masterchain.file.read_bytes()).deserialize()[0]
-    return ShardStateUnsplit.deserialize(cell.begin_parse()).custom.config.config
+    return require(require(ShardStateUnsplit.deserialize(cell.begin_parse())).custom).config.config
 
 
 def assert_initial_policy(cfg):
@@ -47,8 +48,8 @@ def assert_initial_policy(cfg):
     assert p.load_dict(8) is None
     assert p.load_bytes(32) == hashlib.sha256(PROFILE).digest()
     assert p.remaining_bits == p.remaining_refs == 0
-    assert 48 in ConfigParam9.deserialize(cfg[9].copy()).mandatory_params
-    assert 48 in ConfigParam10.deserialize(cfg[10].copy()).critical_params
+    assert 48 in require(ConfigParam9.deserialize(cfg[9].copy()).mandatory_params)
+    assert 48 in require(ConfigParam10.deserialize(cfg[10].copy()).critical_params)
 
 
 def test_version17_genesis_installs_frozen_policy(tmp_path):
@@ -62,10 +63,11 @@ def test_initial_retirement_value_mutation_is_detected(tmp_path, monkeypatch):
     guard = "<b x{a1} s, swap 256 u, 0 64 u, 0 16 u, 0 1 u,"
     assert source.count(guard) == 1
     (override / "Config.fif").write_text(source.replace(guard, guard.replace("0 16 u,", "2 16 u,")))
-    original = Install.fift_include_dirs
+    original = Install.fift_include_dirs.fget
+    assert original is not None
     with monkeypatch.context() as context:
         context.setattr(
-            Install, "fift_include_dirs", property(lambda self: [override, *original.fget(self)])
+            Install, "fift_include_dirs", property(lambda self: [override, *original(self)])
         )
         cfg = generate(tmp_path / "mutated", 17, NETWORK)
         with pytest.raises(AssertionError, match="initial retirement bits"):
@@ -87,10 +89,10 @@ def test_missing_policy_mutation_is_rejected_by_node(tmp_path, monkeypatch):
 
 def test_version16_retains_legacy_genesis(tmp_path):
     cfg = generate(tmp_path / "v16", 16, None)
-    assert ConfigParam8.deserialize(cfg[8].copy()).version == 16
-    assert 48 not in cfg
-    assert 48 not in ConfigParam9.deserialize(cfg[9].copy()).mandatory_params
-    assert 48 not in ConfigParam10.deserialize(cfg[10].copy()).critical_params
+    assert ConfigParam8.deserialize(require(cfg)[8].copy()).version == 16
+    assert 48 not in require(cfg)
+    assert 48 not in require(ConfigParam9.deserialize(require(cfg)[9].copy()).mandatory_params)
+    assert 48 not in require(ConfigParam10.deserialize(require(cfg)[10].copy()).critical_params)
 
 
 @pytest.mark.parametrize(

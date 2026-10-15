@@ -18,6 +18,7 @@
 */
 #pragma once
 
+#include "json-rpc-explorer.h"
 #include "json-rpc-server-parse.h"
 #include "json-rpc-server-runresult.h"
 #include "json-rpc-server-storage.h"
@@ -33,6 +34,17 @@
 #include "td/utils/JsonBuilder.h"
 
 namespace tos {
+struct ParsedAccountState;
+inline constexpr std::size_t kExplorerResponseBudgetBytes = 192u << 20;
+std::shared_ptr<http::BodyBudget::Reservation> reserve_explorer_response(std::size_t bytes);
+std::string render_config_validator_set_json(int config_id, td::Ref<vm::Cell> param_cell);
+std::string build_account_capability_json(const std::string& address, const ParsedAccountState& parsed,
+                                          const std::string& account_model, const std::string& authorization_version,
+                                          bool supports_sponsorship, bool include_sponsorship);
+std::string build_wallet_json(bool is_wallet, td::int64 balance, const std::string& account_state,
+                              const std::string& wallet_type, td::int64 seqno, td::uint64 last_lt,
+                              const std::string& last_hash_b64, const std::string& observed_mc_block,
+                              const std::string& observed_shard_block, td::int64 wallet_id = -1);
 
 // ─── Shared: parse address parameter ────────────────────────────────────
 

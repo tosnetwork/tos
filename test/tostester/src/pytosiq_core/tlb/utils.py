@@ -1,8 +1,9 @@
 import typing
+from typing import Any
 
-from .tlb import TlbScheme, TlbError
-from .. import Builder
-from ..boc import Slice, Cell, CellTypes
+from ..boc import Cell, CellTypes, Slice
+from ..boc.builder import Builder
+from .tlb import TlbError, TlbScheme
 
 
 class MerkleUpdate(TlbScheme):
@@ -21,12 +22,14 @@ class MerkleUpdate(TlbScheme):
     def serialize(cls, *args): ...
 
     @classmethod
-    def deserialize(cls, cell: Cell, deserializer: typing.Callable) -> typing.Optional["MerkleUpdate"]:
+    def deserialize(
+        cls, cell: Cell, deserializer: typing.Callable[..., Any]
+    ) -> typing.Optional["MerkleUpdate"]:
         if cell.type_ != CellTypes.merkle_update:
             return None
 
         cell_slice = cell.begin_parse()
-        tag = cell_slice.load_bytes(1)[:1]
+        cell_slice.load_bytes(1)
         # if tag != b'\x02':
         #     raise TlbError(f'MerkleUpdate deserialization error: unexpected tag {tag}')
         old_hash = cell_slice.load_bytes(32)
@@ -46,17 +49,19 @@ class HashUpdate(TlbScheme):
         self.new_hash = new_hash
 
     def serialize(self):
-        return Builder()\
-                .store_bytes(b'\x72')\
-                .store_bytes(self.old_hash)\
-                .store_bytes(self.new_hash)\
-                .end_cell()
+        return (
+            Builder()
+            .store_bytes(b"\x72")
+            .store_bytes(self.old_hash)
+            .store_bytes(self.new_hash)
+            .end_cell()
+        )
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        tag = cell_slice.load_bytes(1)[:1]
-        if tag != b'r':
-            raise TlbError(f'HashUpdate deserialization error: unexpected tag {tag}')
+        tag = cell_slice.load_bytes(1)
+        if tag != b"r":
+            raise TlbError(f"HashUpdate deserialization error: unexpected tag {tag}")
         old_hash = cell_slice.load_bytes(32)
         new_hash = cell_slice.load_bytes(32)
         return cls(old_hash, new_hash)
@@ -64,8 +69,10 @@ class HashUpdate(TlbScheme):
 
 def deserialize_shard_hashes(cell_slice: Slice):
     from .block import BinTree, ShardDescr
-    shard_hashes = cell_slice.load_dict(32, value_deserializer=lambda src: BinTree.deserialize(
-        src.load_ref().begin_parse()))
+
+    shard_hashes = cell_slice.load_dict(
+        32, value_deserializer=lambda src: BinTree.deserialize(src.load_ref().begin_parse())
+    )
     if shard_hashes:
         for k in shard_hashes:
             for i in range(len(shard_hashes[k].list)):

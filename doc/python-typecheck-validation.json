@@ -1,0 +1,70 @@
+{
+  "source_commit": "95aa8197f91ba6b051cafec62bb42a3a947b6777",
+  "formatting_commit": "9d71a434e",
+  "before": {
+    "errors": 856,
+    "warnings": 7282
+  },
+  "local_typecheck": {
+    "darwin": {
+      "errors": 0,
+      "warnings": 6969,
+      "exit": 0
+    },
+    "linux_platform_analysis": {
+      "errors": 0,
+      "warnings": 6970,
+      "exit": 0
+    }
+  },
+  "policy": {
+    "type_errors": "blocking",
+    "gradual_typing_warnings": "advisory and retained",
+    "deferred_import_cycles": "advisory and retained",
+    "diagnostic_baseline": false,
+    "typecheck_exclusions_added": false
+  },
+  "tests": {
+    "local_complete_portable_suite": {
+      "passed": 331,
+      "skipped": 1,
+      "explicitly_deselected_linux_proc_case": 1
+    },
+    "typing_and_tl_controls": {
+      "passed": 39
+    },
+    "guard_removal_controls": {
+      "intended_failures": 7,
+      "restored_test_file_passed": 11
+    },
+    "linux_full_suite": "pending current-source CI"
+  },
+  "retained_through": "2026-11-14",
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-python-types-20261015/tos-python-types-generated.json",
+      "bytes": 5266376,
+      "sha256": "67219c204d4636239126fd6bbbdb6a9a228b0bd12403fdd46ca57c4371b1d3bc"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-python-types-20261015/tos-python-types-darwin-final.json",
+      "bytes": 4366537,
+      "sha256": "c5faf91322da3a0bb3ff77e43d5111ad10bfe0704be973b76872b5da391749a9"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-python-types-20261015/tos-python-types-linux-final.json",
+      "bytes": 4367101,
+      "sha256": "ddf9e44ed59ae3751590f59a9586102f96aaa7e0097d246b7f6113b30c468c73"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-python-types-20261015/controls.json",
+      "bytes": 2358,
+      "sha256": "3369c626c6ba87362a8d654a7569dd57dec542d470b08692bc19bb30c28b25b6"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-python-types-20261015/restored-tests.log",
+      "bytes": 99,
+      "sha256": "5f5c6e8c943dc96a6e007486acb5d4c5356ee579f78bbf71271a1e0bbe5f7c33"
+    }
+  ]
+}

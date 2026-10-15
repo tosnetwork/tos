@@ -14,6 +14,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from contract.pq_auth import byte_chain
 from pytosiq_core import Address, Builder, Cell, StateInit
@@ -218,7 +219,7 @@ def build_production_pool_stake_order(
 
 
 def elector_reply(
-    transactions: list, query_id: int, *, controller: Address | None = None
+    transactions: list[Any], query_id: int, *, controller: Address | None = None
 ) -> tuple[int, int] | None:
     """Find a bound business result, ignoring other sources and request IDs.
 
@@ -277,7 +278,7 @@ def elector_reply(
     return None
 
 
-def elector_return_reason(transactions: list, query_id: int) -> int | None:
+def elector_return_reason(transactions: list[Any], query_id: int) -> int | None:
     reply = elector_reply(transactions, query_id)
     return reply[1] if reply is not None and reply[0] == 0xEE6F454C else None
 

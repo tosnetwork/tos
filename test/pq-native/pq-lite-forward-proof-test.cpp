@@ -31,6 +31,7 @@
 #include "tl-utils/lite-utils.hpp"
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
+#include "validator-engine/json-rpc-explorer.h"
 #include "vm/boc.h"
 #include "vm/cells/CellUsageTree.h"
 #include "vm/cells/MerkleProof.h"
@@ -723,6 +724,30 @@ int main() {
               static_cast<unsigned long long>(calls));
   std::printf("PQ_LITE_TRUST_CHAIN_OK step2_validator_hash=%u source=step1_destination_key_block\n",
               set_b->get_validator_set_hash());
+
+  pq::reset_mldsa44_verification_calls_for_test();
+  auto rpc = require_ok(explorer::inspect_finality_reply(proof_link_wire(b, c, bc), b.id, c.id, true),
+                        "explorer verified DTO");
+  if (rpc.find("\"scope\":\"anchored_finality\"") == std::string::npos ||
+      rpc.find("\"expected_session_id\":\"" + td::base64_encode(session_bc.as_slice()) + "\"") == std::string::npos ||
+      pq::mldsa44_verification_calls_for_test() != 21)
+    fail("explorer context or single-pass verification mismatch");
+  auto rejected = explorer::inspect_finality_reply(proof_link_wire(b, c, bc), b.id, a.id, false);
+  if (rejected.is_ok() || rejected.error().code() != static_cast<int>(explorer::Failure::EvidenceInvalid))
+    fail("explorer full target mismatch accepted");
+  auto wrong_rpc_session = session_bc;
+  wrong_rpc_session.as_slice()[0] ^= 1;
+  auto wrong_rpc = sign(second, set_b, c, wrong_rpc_session, 2002);
+  rejected = explorer::inspect_finality_reply(proof_link_wire(b, c, wrong_rpc), b.id, c.id, false);
+  if (rejected.is_ok())
+    fail("explorer accepted self-declared session");
+  auto incomplete_object = require_ok(
+      fetch_tl_object<lite_api::liteServer_partialBlockProof>(proof_link_wire(b, c, bc), true), "incomplete setup");
+  incomplete_object->complete_ = false;
+  rejected = explorer::inspect_finality_reply(serialize_tl_object(incomplete_object, true), b.id, c.id, false);
+  if (rejected.is_ok() || rejected.error().code() != static_cast<int>(explorer::Failure::BlockUnavailable))
+    fail("explorer incomplete container accepted");
+  std::printf("PQ_EXPLORER_FINALITY_OK pinned_target=1 trusted_session=1 verification_passes=1 incomplete_refused=1\n");
 
   auto wrong_session = session_ab;
   wrong_session.as_slice()[0] ^= 1;

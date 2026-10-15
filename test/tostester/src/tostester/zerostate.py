@@ -791,7 +791,9 @@ def create_zerostate(
         if bootstrap_valid_for is not None:
             profile["original_vset_valid_for"] = bootstrap_valid_for
 
-    profile["punishment_params"] = _punishment_params(profile["election_params"])
+    election_params = profile["election_params"]
+    assert isinstance(election_params, str)
+    profile["punishment_params"] = _punishment_params(election_params)
 
     new_consensus_config = ""
     for consensus_config in (config.mc_consensus, config.shard_consensus):
@@ -853,8 +855,12 @@ def create_zerostate(
             '"basechain-fixture.boc" file>B B>boc dup isShardState? '
             'not abort"invalid basechain fixture"'
         )
-        profile["main_wallet_genesis_balance"] += f" {allocated} -"
-        profile["expected_genesis_supply"] += f" {allocated} -"
+        wallet_balance = profile["main_wallet_genesis_balance"]
+        assert isinstance(wallet_balance, str)
+        profile["main_wallet_genesis_balance"] = wallet_balance + f" {allocated} -"
+        genesis_supply = profile["expected_genesis_supply"]
+        assert isinstance(genesis_supply, str)
+        profile["expected_genesis_supply"] = genesis_supply + f" {allocated} -"
 
     if wallet_seed is not None:
         # Refuse existing custody files rather than replacing an old run's key.
@@ -885,11 +891,10 @@ def create_zerostate(
             **profile,
         ),
         state_dir,
-        **(
-            {"env": {**os.environ, "SOURCE_DATE_EPOCH": str(fixed_time)}, "retain_script": True}
-            if fixed_time is not None
-            else {}
-        ),
+        env={**os.environ, "SOURCE_DATE_EPOCH": str(fixed_time)}
+        if fixed_time is not None
+        else None,
+        retain_script=fixed_time is not None,
     )
 
     pk = (state_dir / "main-wallet.pk").read_bytes()

@@ -26,6 +26,7 @@
 #include "validator-set.h"
 
 namespace block {
+inline constexpr int kPQVerificationBackendFailure = -67001;
 
 struct PQBlockSignature {
   tos::ValidatorId validator_id;

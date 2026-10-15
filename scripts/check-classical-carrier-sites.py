@@ -22,7 +22,7 @@ MARKERS = {
     "cpp_factory": re.compile(
         r"\bBlockSignatureSet::create_(?:ordinary|simplex(?:_approve)?)\s*\("
     ),
-    "cpp_fetch": re.compile(r"\bBlockSignatureSet::fetch\s*\("),
+    "cpp_fetch": re.compile(r"\bBlockSignatureSet::fetch(?:_lite_checked)?\s*\("),
     "verify": re.compile(r"\bcheck_(?:approve_)?signatures\s*\("),
     "cpp_class": re.compile(r"\bBlockSignatureSet(?:Ordinary|Simplex)\b"),
     "tlb_tag": re.compile(r"\bblock_signatures(?:_simplex)?#1[12]\b"),

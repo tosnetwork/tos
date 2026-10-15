@@ -1,0 +1,47 @@
+{
+  "anchor": {
+    "block_id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 1,
+      "root_hash": "aeHXcOy9zvNO7+IUl9nxof7AIxdwfwcp263UmfSGRgk=",
+      "file_hash": "BLWTHL3E156tvBg13WCteCJHLBDf5H60D7JdV8cXgnY="
+    }
+  },
+  "target": {
+    "block_id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 2,
+      "root_hash": "7hgYJ6jo+xpuNFII5SrQKeFrIbgHiRBm+Nbzseuy488=",
+      "file_hash": "vvjScu9kbHp1JYN67yah41NshVDpmgxpTza/ji3KvLY="
+    }
+  },
+  "validator_set_source": {
+    "@type": "tos.blockIdExt",
+    "workchain": -1,
+    "shard": "-9223372036854775808",
+    "seqno": 0,
+    "root_hash": "caR+2z+R9SrgSbUjF0/xH1kkdYK7I8Wu9Ocp9DZE2ds=",
+    "file_hash": "wvJoq4nIdmfKDoGEE3NrIzAjFhd9vhJgG79yYululgo="
+  },
+  "expected_session_id": "9CMverPIw2D6bxfRVlm323BNZUiKy09hter3ACMmIrU=",
+  "proof_sha256": "4a25264253a464cdf8439abab0232ec34cdabc7ba5081d66d64715852e5039d0",
+  "signing_payload_sha256": "16ea2526eab2d65f72fb3db81b1d1f3735f173603b82bf56eab8f13b6ea88fcf",
+  "generation": "scripts/test-explorer-pq-rpc.py; isolated three-validator v18/global-ID-1 genesis; current native build; public proof only",
+  "verification_source_sha256": {
+    "crypto/block/check-proof.cpp": "3707063b1231a2d1a542f844c1b55e135c2dbbb1badc70ff5363fe8dc434f933",
+    "crypto/block/signature-set.cpp": "6dd95e5bb183d689444d7dc6ef3fe1099bf63b8ea60f53a11a645110d803e80c",
+    "crypto/block/validator-session-id.cpp": "5ff464f7a2937c8807c59dd77e33785a6b5aba518658026a5a520f0faa66c395",
+    "scripts/localnet-jsonrpc.py": "c74671cdf5cfea485ee4a9613ea4ac6eea4056c25afa384479a3cfd12eb61317"
+  },
+  "generation_source_sha256": {
+    "crypto/block/check-proof.cpp": "1e46252f05c48edd21e6588c22fcf8619e1cbb4ab063984df755f5cfe967a091",
+    "crypto/block/signature-set.cpp": "6dd95e5bb183d689444d7dc6ef3fe1099bf63b8ea60f53a11a645110d803e80c",
+    "crypto/block/validator-session-id.cpp": "5ff464f7a2937c8807c59dd77e33785a6b5aba518658026a5a520f0faa66c395",
+    "scripts/localnet-jsonrpc.py": "c74671cdf5cfea485ee4a9613ea4ac6eea4056c25afa384479a3cfd12eb61317"
+  },
+  "source_note": "Generation digests precede formatting normalization and explicit classical-session metadata initialization. Verification digests pin the final regression source; the public TL bytes are unchanged."
+}

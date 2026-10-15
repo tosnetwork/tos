@@ -3,6 +3,7 @@
 import importlib.util
 from fractions import Fraction
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -13,7 +14,8 @@ def _load_gate():
     spec = importlib.util.spec_from_file_location(
         "check_stake_factor_safety", REPO / "scripts/check-stake-factor-safety.py"
     )
-    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    module: Any = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 

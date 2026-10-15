@@ -410,7 +410,9 @@ td::Result<BlockTransactionList::Info> BlockTransactionList::validate(bool check
   return std::move(res);
 }
 
-td::Status BlockProofLink::validate(td::uint32* save_utime) const {
+td::Status BlockProofLink::validate(td::uint32* save_utime, FinalityVerificationInfo* finality) const {
+  if (finality)
+    *finality = {};
   if (save_utime) {
     *save_utime = 0;
   }
@@ -517,6 +519,7 @@ td::Status BlockProofLink::validate(td::uint32* save_utime) const {
       }
       // check signatures
       td::Result<tos::ValidatorWeight> result;
+      tos::ValidatorSessionId expected_session{};
       if (sig_set->is_pq()) {
         auto selected = config->get_selected_new_consensus_config(to.id.workchain);
         if (!selected) {
@@ -532,6 +535,7 @@ td::Status BlockProofLink::validate(td::uint32* save_utime) const {
             config->get_global_blockchain_id(), validator_session_options_hash(session_config),
             selected.value().cell_hash, to.shard_full(), vset->get_catchain_seqno(), vset->export_vector(),
             info.vert_seq_no, info.prev_key_block_seqno, session_config.new_catchain_ids);
+        expected_session = identity.session_id;
         result = verify_pq_finality(PQFinalityVerificationContext{vset, to, identity.session_id}, *sig_set,
                                     FinalityRole::Final);
       } else {
@@ -540,6 +544,11 @@ td::Status BlockProofLink::validate(td::uint32* save_utime) const {
       if (result.is_error()) {
         return result.move_as_error_prefix(PSTRING() << "error checking signatures for block " << to.to_str()
                                                      << " in a forward BlockProofLink: ");
+      }
+      if (finality) {
+        finality->expected_session_id = expected_session;
+        finality->verified_weight = result.ok();
+        finality->total_weight = vset->get_total_weight();
       }
       return td::Status::OK();
     }
@@ -552,7 +561,9 @@ td::Status BlockProofLink::validate(td::uint32* save_utime) const {
   }
 }
 
-td::Status BlockProofChain::validate(td::CancellationToken cancellation_token) {
+td::Status BlockProofChain::validate(td::CancellationToken cancellation_token, FinalityVerificationInfo* finality) {
+  if (finality)
+    *finality = {};
   valid = false;
   has_key_block = false;
   has_utime = false;
@@ -581,9 +592,9 @@ td::Status BlockProofChain::validate(td::CancellationToken cancellation_token) {
     if (cancellation_token) {
       return td::Status::Error("Cancelled");
     }
-    auto err = link.validate(&last_utime);
+    auto err = link.validate(&last_utime, finality && i == static_cast<int>(links.size()) ? finality : nullptr);
     if (err.is_error()) {
-      return td::Status::Error(PSTRING() << "link #" << i << " in BlockProofChain is invalid: " << err.to_string());
+      return err.move_as_error_prefix(PSTRING() << "link #" << i << " in BlockProofChain is invalid: ");
     }
     if (link.is_key && (!has_key_block || key_blkid.seqno() < link.to.seqno())) {
       key_blkid = link.to;

@@ -2,6 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 from tosapi import toslib_api
 from toslib.toslibjson import ToslibError
@@ -39,7 +40,7 @@ def test_stopping_full_node_discards_closed_clients_before_restart(monkeypatch):
         def close(self):
             closed.append("console")
 
-    node = object.__new__(FullNode)
+    node: Any = object.__new__(FullNode)
     node._client = FakeLite()
     node._engine_console = FakeConsole()
     node._blockchain_explorer = None

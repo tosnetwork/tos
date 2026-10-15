@@ -119,6 +119,7 @@ async def main(args: argparse.Namespace):
             wallet_state.seqno == 1, "wallet deployment did not advance the source wallet seqno"
         )
 
+        assert consensus is not None
         sustained = await observe_sustained_consensus(
             nodes,
             SustainedObservationConfig(

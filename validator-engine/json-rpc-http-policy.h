@@ -146,6 +146,18 @@ inline std::pair<std::unique_ptr<http::HttpResponse>, std::shared_ptr<http::Http
   return {std::move(response), std::move(payload)};
 }
 
+// Keep an admission reservation attached to a response while it is buffered
+// or written. Aliasing ownership avoids changing the HTTP payload interface.
+template <class T, class Keep>
+std::shared_ptr<T> retain_lifetime(std::shared_ptr<T> value, Keep keep) {
+  struct Owner {
+    std::shared_ptr<T> value;
+    Keep keep;
+  };
+  auto owner = std::make_shared<Owner>(Owner{std::move(value), std::move(keep)});
+  return std::shared_ptr<T>(owner, owner->value.get());
+}
+
 // Moves the listener's reservation for a request body from the payload onto
 // the request's answer: the copy of the body drained from the payload, and
 // anything parsed from it, stay charged to the listener until the request has

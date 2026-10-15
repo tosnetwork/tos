@@ -17,6 +17,10 @@ permissions:
   contents: read
 
 jobs:
+  explorer-two-build-analysis:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/explorer-pq-validation.yml
+
   # The whole tree, warnings as errors. This one gates: it passes today, so a failure
   # means the change under test introduced it.
   strict-build:
@@ -224,27 +228,8 @@ jobs:
         uv run ruff check "${files[@]}"
         uv run ruff format --check "${files[@]}"
 
-  # Not a gate. Whole-project type checking currently reports hundreds of errors that
-  # predate this workflow ever running, and a check nobody can satisfy is one everybody
-  # learns to ignore. Run it by hand to measure that debt while it is being paid down.
+  # The reusable Python check also runs on Python/schema changes independently
+  # of native builds. Manual native validation retains the same check here.
   python-types:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-
-    steps:
-    - name: Check out repository
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-    - name: Prepare Python environment
-      run: |
-        tool_dir="$(mktemp -d)"
-        trap 'rm -rf "$tool_dir"' EXIT
-        curl -fsSL https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-unknown-linux-gnu.tar.gz -o "$tool_dir/uv.tar.gz"
-        python3 scripts/verify-build-tool.py uv-x86_64 "$tool_dir/uv.tar.gz"
-        tar -xzf "$tool_dir/uv.tar.gz" -C "$tool_dir"
-        sudo install -m 0755 "$tool_dir/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
-        uv sync
-        uv run test/tostester/generate_tl.py
-
-    - name: Type-check Python
-      run: uv run basedpyright
+    uses: ./.github/workflows/python-types.yml

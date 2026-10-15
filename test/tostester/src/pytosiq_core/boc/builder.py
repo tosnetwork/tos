@@ -1,24 +1,23 @@
 import math
+import typing
 
 # from bitarray import bitarray
 from bitarray.util import int2ba
 
-import typing
-
 from .address import Address, ExternalAddress
 from .cell import Cell
+from .deserialize import Boc, NullCell
 from .slice import Slice
-from .deserialize import NullCell, Boc
 from .tvm_bitarray import TvmBitarray
 
 
 class Builder(NullCell):
-
     def __init__(self, size: int = 1023, type_: int = -1):
         self._size = size
         self._bits = TvmBitarray(size)
         self._refs = []
         self.type_ = type_
+        super().__init__(self._bits, self._refs, type_)
 
     @property
     def bits(self):
@@ -34,7 +33,7 @@ class Builder(NullCell):
 
     @size.setter
     def size(self, new_size: int):
-        assert new_size <= 1023, 'builder size cannot be more than 1023 bits'
+        assert new_size <= 1023, "builder size cannot be more than 1023 bits"
 
     @bits.setter
     def bits(self, new_bits: TvmBitarray):
@@ -65,14 +64,14 @@ class Builder(NullCell):
 
     def store_cell(self, cell: Cell):
         if len(self.refs) + len(cell.refs) > 4:
-            raise Exception('builder refs overflow')
+            raise Exception("builder refs overflow")
         self.store_bits(cell.bits)
         self._refs += cell.refs
         return self
 
     def store_slice(self, cell_slice: Slice):
         if len(self.refs) + len(cell_slice.refs) > 4:
-            raise Exception('builder refs overflow')
+            raise Exception("builder refs overflow")
         self.store_bits(cell_slice.bits)
         for i in range(cell_slice.ref_offset, len(cell_slice.refs)):
             self.store_ref(cell_slice.refs[i])
@@ -80,7 +79,7 @@ class Builder(NullCell):
 
     def store_ref(self, ref: Cell):
         if len(self.refs) >= 4:
-            raise Exception('builder refs overflow')
+            raise Exception("builder refs overflow")
         self._refs.append(ref)
         return self
 
@@ -142,7 +141,9 @@ class Builder(NullCell):
         return self
 
     def store_string(self, value: str):
-        assert len(value.encode()) <= 127, f'string byte length is more than 127, use .store_snake_string()'
+        assert len(value.encode()) <= 127, (
+            "string byte length is more than 127, use .store_snake_string()"
+        )
         self._bits.frombytes(value.encode())
         return self
 
@@ -152,13 +153,15 @@ class Builder(NullCell):
         i = self.available_bytes
         if len(value) <= i:
             return self.store_bytes(value)
-        return self.store_bytes(value[:i]).store_ref(Builder().store_snake_bytes(value[i:]).end_cell())
+        return self.store_bytes(value[:i]).store_ref(
+            Builder().store_snake_bytes(value[i:]).end_cell()
+        )
 
     def store_snake_string(self, value: str, need_prefix: bool = False):
-        value = value.encode()
+        encoded = value.encode()
         if need_prefix:
-            value = b'\x00' + value
-        return self.store_snake_bytes(value)
+            encoded = b"\x00" + encoded
+        return self.store_snake_bytes(encoded)
 
     def store_address(self, address: typing.Union[Address, ExternalAddress, str, None]):
         """
@@ -166,14 +169,14 @@ class Builder(NullCell):
         :return:
         """
         if address is None:
-            self.store_bits('00')
+            self.store_bits("00")
             return self
         if isinstance(address, ExternalAddress):
             return self.store_cell(address.to_cell())
         if isinstance(address, str):
             address = Address(address)
 
-        self.store_bits('100')  # addr_std$10 + maybe anycast = 0
+        self.store_bits("100")  # addr_std$10 + maybe anycast = 0
 
         return self.store_int(address.wc, 8).store_bytes(address.hash_part)
 
@@ -202,4 +205,4 @@ class Builder(NullCell):
         return cells[0].to_builder()
 
     def __repr__(self) -> str:
-        return f'<Builder {len(self.bits)}[{self.bits.tobytes().hex().upper()}] -> {len(self.refs)} refs>'
+        return f"<Builder {len(self.bits)}[{self.bits.tobytes().hex().upper()}] -> {len(self.refs)} refs>"
