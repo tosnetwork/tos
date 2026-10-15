@@ -106,6 +106,13 @@ ignore = [
 
 [tool.pyright]
 include = ["test/integration", "test/tostester"]
+# The cell codec deliberately imports its mutually recursive representations
+# inside methods. Keep cycle diagnostics visible; runtime import and codec tests
+# check these deferred edges. Type and nullability errors remain blocking.
+reportImportCycles = "warning"
+# Keep gradual-typing warnings visible without treating them as type errors.
+# The CLI still exits nonzero for every error diagnostic.
+failOnWarnings = false
 
 [tool.pytest]
 testpaths = ["test/tostester/tests"]

@@ -1,0 +1,77 @@
+name: Python types
+
+on:
+  push:
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'test/integration/**'
+      - 'test/tostester/**'
+      - 'tl/generate/scheme/**'
+      - '.github/workflows/python-types.yml'
+  pull_request:
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'test/integration/**'
+      - 'test/tostester/**'
+      - 'tl/generate/scheme/**'
+      - '.github/workflows/python-types.yml'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-types-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prepare pinned Python environment
+        run: |
+          tool_dir="$(mktemp -d)"
+          trap 'rm -rf "$tool_dir"' EXIT
+          curl -fsSL "$(python3 scripts/verify-build-tool.py --url uv-x86_64)" -o "$tool_dir/uv.tar.gz"
+          python3 scripts/verify-build-tool.py uv-x86_64 "$tool_dir/uv.tar.gz"
+          tar -xzf "$tool_dir/uv.tar.gz" -C "$tool_dir"
+          sudo install -m 0755 "$tool_dir/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
+          uv sync --locked
+          uv run test/tostester/generate_tl.py
+      - name: Type-check the complete Python scope
+        run: |
+          python3 - <<'PYCODE'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          result = subprocess.run(
+              ["uv", "run", "basedpyright", "--outputjson"],
+              capture_output=True, text=True,
+          )
+          pathlib.Path("python-typecheck.json").write_text(result.stdout)
+          if result.stderr:
+              print(result.stderr, file=sys.stderr)
+          report = json.loads(result.stdout)
+          print(json.dumps(report["summary"], sort_keys=True))
+          errors = [d for d in report["generalDiagnostics"] if d["severity"] == "error"]
+          for diagnostic in errors[:50]:
+              print(diagnostic["file"], diagnostic["message"][:2000])
+          sys.exit(result.returncode)
+          PYCODE
+      - name: Exercise typing and codec controls
+        run: uv run pytest test/tostester/tests/tl test/tostester/tests/tostester/test_python_type_boundaries.py -q
+      - name: Retain full diagnostics including advisory warnings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-types-${{ github.sha }}
+          path: python-typecheck.json
+          if-no-files-found: error
+          retention-days: 14
