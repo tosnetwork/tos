@@ -1783,8 +1783,7 @@ CellDbIn::~CellDbIn() {
 
 namespace {
 
-constexpr td::uint32 kStreamingImportSpoolRecordHeaderBytes =
-    static_cast<td::uint32>(vm::Cell::hash_bytes + sizeof(td::uint32));
+constexpr td::uint32 kStreamingImportSpoolRecordHeaderBytes = fullnode::kPersistentStateSpoolRecordHeaderBytes;
 constexpr td::uint32 kMaxStreamingImportSerializedCellBytes = 1U << 20;
 constexpr const char* kStreamingImportRollbackManifestMarker = ".celldb-rollback.";
 constexpr const char* kStreamingImportPartialSuffix = ".partial";

@@ -35,6 +35,7 @@
 // before the manager/downstream had finished holding the buffer alive.
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -46,8 +47,10 @@
 #include <utility>
 #include <vector>
 
+#include "common/checksum.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/utils/Timer.h"
+#include "td/utils/filesystem.h"
 #include "td/utils/misc.h"
 #include "td/utils/port/FileFd.h"
 #include "td/utils/port/Stat.h"
@@ -59,6 +62,8 @@
 #include "vm/boc.h"
 #include "vm/cells/Cell.h"
 #include "vm/cells/CellBuilder.h"
+#include "vm/db/CellStorage.h"
+#include "vm/dict.h"
 
 #if !defined(_WIN32)
 #include <sys/time.h>
@@ -4144,9 +4149,109 @@ void test_streaming_valid_ondisk_control() {
   td::rmrf(tmp_dir).ensure();
 }
 
+// Deterministic representatives for the default spool ceiling. Count each
+// unique cell once, just as the BoC importer does; a shared code reference
+// must not multiply either the cell count or the serialized spool size.
+void measure_spool_amplification(const char *shape, td::Ref<vm::Cell> root, td::uint64 expected_cells) {
+  EXPECT_TRUE(root.not_null());
+  auto boc = vm::std_boc_serialize(root, 31).move_as_ok();
+  vm::BagOfCells::Info info;
+  EXPECT_TRUE(info.parse_serialized_header(boc.as_slice()) > 0);
+  std::set<vm::Cell::Hash> seen;
+  std::vector<td::Ref<vm::Cell>> pending{root};
+  td::uint64 spool_bytes = 0;
+  while (!pending.empty()) {
+    auto cell = std::move(pending.back());
+    pending.pop_back();
+    if (!seen.insert(cell->get_hash()).second) {
+      continue;
+    }
+    auto loaded = cell->load_cell().move_as_ok();
+    auto value = vm::CellStorer::serialize_value(1, loaded.data_cell, false);
+    spool_bytes += tos::validator::fullnode::kPersistentStateSpoolRecordHeaderBytes + value.size();
+    for (unsigned i = 0; i < loaded.data_cell->get_refs_cnt(); ++i) {
+      pending.push_back(loaded.data_cell->get_ref(i));
+    }
+  }
+  // An empty CellDb needs the same records again in the rollback manifest.
+  const auto combined_bytes = 2 * spool_bytes;
+  const auto ratio = tos::validator::fullnode::PersistentStateBudgetConfig{}.spool_reservation_ratio_percent;
+  const auto reservation = (static_cast<td::uint64>(boc.size()) * ratio + 99) / 100;
+  EXPECT_EQ(seen.size(), expected_cells);
+  EXPECT_EQ(seen.size(), static_cast<std::size_t>(info.cell_count));
+  std::printf(
+      "SPOOL shape=%s cells=%zu boc_mode=31 boc_bytes=%zu spool_bytes=%llu rollback_bytes=%llu "
+      "ratio_percent=%.3f reservation=%llu default_ratio=%u\n",
+      shape, seen.size(), boc.size(), static_cast<unsigned long long>(spool_bytes),
+      static_cast<unsigned long long>(spool_bytes),
+      100.0 * static_cast<double>(combined_bytes) / static_cast<double>(boc.size()),
+      static_cast<unsigned long long>(reservation), ratio);
+  std::fflush(stdout);
+  EXPECT_TRUE(combined_bytes <= reservation);
+}
+
+void test_spool_amplification(const std::string &genesis_path) {
+  const tos::validator::fullnode::PersistentStateBudgetConfig defaults{};
+  constexpr td::uint64 design_file_bytes = 16ULL << 30;
+  const auto design_reservation = (design_file_bytes * defaults.spool_reservation_ratio_percent + 99) / 100;
+  EXPECT_TRUE(design_reservation <= defaults.max_spool_bytes_per_import);
+  EXPECT_TRUE(2 * design_reservation <= defaults.max_total_spool_bytes);
+  {
+    std::vector<td::Ref<vm::Cell>> level;
+    constexpr td::uint32 leaves = 524288;
+    level.reserve(leaves);
+    for (td::uint32 i = 0; i < leaves; ++i) {
+      std::array<char, 120> data{};
+      for (std::size_t j = 0; j < data.size(); ++j) {
+        data[j] = static_cast<char>((i >> ((j % 4) * 8)) ^ j);
+      }
+      vm::CellBuilder leaf;
+      EXPECT_TRUE(leaf.store_bytes_bool(data.data(), data.size()));
+      level.push_back(leaf.finalize_novm());
+    }
+    while (level.size() > 1) {
+      std::vector<td::Ref<vm::Cell>> next;
+      next.reserve(level.size() / 2);
+      for (std::size_t i = 0; i < level.size(); i += 2) {
+        next.push_back(vm::CellBuilder{}.store_ref(level[i]).store_ref(level[i + 1]).finalize_novm());
+      }
+      level = std::move(next);
+    }
+    measure_spool_amplification("library", level.front(), 1048575);
+  }
+  {
+    vm::Dictionary accounts(256);
+    auto code = vm::CellBuilder{}.store_long(0x42, 8).finalize_novm();
+    constexpr td::uint32 count = 200000;
+    for (td::uint32 i = 0; i < count; ++i) {
+      std::array<char, 64> value{};
+      for (std::size_t j = 0; j < value.size(); ++j) {
+        value[j] = static_cast<char>((i >> ((j % 4) * 8)) ^ j);
+      }
+      const auto key = td::sha256_bits256(td::Slice(value.data(), value.size()));
+      vm::CellBuilder data;
+      EXPECT_TRUE(data.store_bytes_bool(value.data(), value.size()));
+      vm::CellBuilder account;
+      EXPECT_TRUE(account.store_bytes_bool(value.data(), value.size()));
+      EXPECT_TRUE(account.store_ref_bool(data.finalize_novm()));
+      EXPECT_TRUE(account.store_ref_bool(code));
+      EXPECT_TRUE(accounts.set_builder(key.bits(), 256, account));
+    }
+    measure_spool_amplification("accounts", accounts.get_root_cell(), 600000);
+  }
+  auto genesis = td::read_file(genesis_path).move_as_ok();
+  auto root = vm::std_boc_deserialize(genesis.as_slice()).move_as_ok();
+  measure_spool_amplification("pq-genesis", std::move(root), 396);
+}
+
 }  // namespace
 
 int main(int argc, char **argv) {
+  if (argc >= 2 && std::string(argv[1]) == "--spool-amplification") {
+    EXPECT_EQ(argc, 3);
+    test_spool_amplification(argv[2]);
+    return 0;
+  }
   test_streaming_reader_hard_cap_and_offsets();
   test_streaming_reader_failed_refill_retires_window();
   test_streaming_cell_spans_validated_before_read();

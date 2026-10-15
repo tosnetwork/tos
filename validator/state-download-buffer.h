@@ -87,6 +87,12 @@ class CellDbStreamingWriter;
 
 namespace fullnode {
 
+// Both import-spool and rollback-manifest records contain a cell hash and
+// a uint32 payload length before the CellStorer value. Share the format size
+// with the amplification regression so a format change changes its measurement.
+inline constexpr td::uint32 kPersistentStateSpoolRecordHeaderBytes =
+    static_cast<td::uint32>(vm::Cell::hash_bytes + sizeof(td::uint32));
+
 // Forward declaration of the platform-specific mmap holder. Owns the file
 // descriptor, the page-aligned mapped pointer, and the data offset within
 // the mapping. Defined in state-download-buffer.cpp.

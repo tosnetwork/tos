@@ -12,5 +12,6 @@ archive-prune
 archive-prune-held-reader-shutdown
 streaming-boc-cell-bounds
 streaming-boc-valid-ondisk
+state-spool-amplification
 test-celldb-streaming-import
 test-state-download-recovery
