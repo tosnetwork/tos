@@ -21,6 +21,7 @@
 #include <string>
 
 #include "common/bitstring.h"
+#include "pq/cli-integer.h"
 #include "pq/controller-root-file.h"
 #include "pq/pq-bytes.h"
 #include "pq/pq-controller.h"
@@ -123,10 +124,6 @@ std::string root_public_key(const std::string& argument) {
   }
   auto root = open_key(argument.c_str());
   return root.root_key().public_key;
-}
-
-std::uint64_t to_u64(const char* text) {
-  return static_cast<std::uint64_t>(std::stoull(text));
 }
 
 // One authorisation, on the wire the contract reads it from.
@@ -300,12 +297,11 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    auto root = open_key(argv[2]);
-
     if (command == "show") {
       if (argc != 3) {
         usage();
       }
+      auto root = open_key(argv[2]);
       // What an operator puts into a controller's initial data, and what they check a
       // deployed controller against.
       const auto& key_id = root.root_key().key_id;
@@ -328,11 +324,15 @@ int main(int argc, char** argv) {
       usage();
     }
 
-    const auto global_id = static_cast<std::int32_t>(std::stol(argv[3]));
+    const auto global_id = tos::pq::cli_integer<std::int32_t>(argv[3], "GLOBAL_ID");
     const auto controller_id = bits256_from_hex(argv[4]);
-    const auto epoch = to_u64(argv[5]);
-    const auto nonce = to_u64(argv[6]);
-    const auto valid_until = static_cast<std::uint32_t>(to_u64(argv[7]));
+    const auto epoch = tos::pq::cli_integer<std::uint64_t>(argv[5], "EPOCH");
+    const auto nonce = tos::pq::cli_integer<std::uint64_t>(argv[6], "NONCE");
+    const auto valid_until = tos::pq::cli_integer<std::uint32_t>(argv[7], "VALID_UNTIL");
+    const auto mode = send ? tos::pq::cli_integer<std::uint8_t>(argv[8], "MODE") : std::uint8_t{};
+
+    // Refuse malformed numeric intent before accessing any signing key.
+    auto root = open_key(argv[2]);
 
     if (fund || withdraw) {
       // Deposits bind the funding wallet, amount, independent allowance, cap,
@@ -345,7 +345,6 @@ int main(int argc, char** argv) {
     }
 
     if (send) {
-      const auto mode = static_cast<std::uint8_t>(std::stoul(argv[8]));
       vm::CellBuilder payload;
       payload.store_long(mode, 8);
       payload.store_ref(cell_from_base64(argv[9]));

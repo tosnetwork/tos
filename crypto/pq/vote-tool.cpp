@@ -22,6 +22,7 @@
 
 #include "block/pq-vote.h"
 #include "common/bitstring.h"
+#include "pq/cli-integer.h"
 #include "pq/consensus-key-file.h"
 #include "pq/pq-elector.h"
 #include "pq/pq-stake-authorization.h"
@@ -69,6 +70,14 @@ int main(int argc, char** argv) {
       usage();
     }
 
+    // Validate every numeric field before accessing the consensus seed.
+    const auto global_id = tos::pq::cli_integer<td::int32>(argv[3], "GLOBAL_ID");
+    const auto idx = stake ? td::uint16{} : tos::pq::cli_integer<td::uint16>(argv[6], "IDX");
+    const auto election_id = complaint || stake
+                                 ? tos::pq::cli_integer<td::uint32>(argv[complaint ? 7 : 5], "ELECTION_ID")
+                                 : td::uint32{};
+    const auto max_factor = stake ? tos::pq::cli_integer<td::uint32>(argv[6], "MAX_FACTOR") : td::uint32{};
+
     auto loaded = tos::pq::load_consensus_key(argv[2]);
     if (std::holds_alternative<tos::pq::ConsensusKeyFileError>(loaded)) {
       throw std::runtime_error(tos::pq::describe(std::get<tos::pq::ConsensusKeyFileError>(loaded)));
@@ -79,10 +88,7 @@ int main(int argc, char** argv) {
       // The identity is the configured controller account and the key is whatever the
       // seed derives, exactly as the node resolves them for its own stake: nothing here
       // asks which set the validator is in, because the answer is meant to be none yet.
-      const auto global_id = static_cast<td::int32>(std::stol(argv[3]));
       const auto validator_id = bits256_from_hex(argv[4]);
-      const auto election = static_cast<td::uint32>(std::stoul(argv[5]));
-      const auto max_factor = static_cast<td::uint32>(std::stoul(argv[6]));
       const auto adnl = bits256_from_hex(argv[7]);
       const auto owner = bits256_from_hex(argv[8]);
       // The one routine that assembles and signs a stake, shared with the node's control
@@ -90,7 +96,7 @@ int main(int argc, char** argv) {
       // It derives the key identity from the seed store, rejects a zero address or owner and
       // a factor below one, and signs under the election domain.
       auto authorization =
-          tos::pq::sign_stake_authorization(store, global_id, election, max_factor, validator_id, adnl, owner);
+          tos::pq::sign_stake_authorization(store, global_id, election_id, max_factor, validator_id, adnl, owner);
       if (!authorization.has_value()) {
         throw std::runtime_error("the consensus key could not sign this stake, or its arguments were out of range");
       }
@@ -98,17 +104,14 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    const auto global_id = static_cast<td::int32>(std::stol(argv[3]));
     const auto set_id = bits256_from_hex(argv[4]);
     const auto validator_id = bits256_from_hex(argv[5]);
-    const auto idx = static_cast<td::uint16>(std::stoul(argv[6]));
 
     // The bytes the contract rebuilds. A field out of place here is a vote nobody can
     // verify, which is why these come from the one place every producer shares.
     std::string preimage;
     td::Result<td::Ref<vm::Cell>> body = td::Status::Error("unset");
     if (complaint) {
-      const auto election_id = static_cast<td::uint32>(std::stoul(argv[7]));
       const auto complaint_hash = bits256_from_hex(argv[8]);
       preimage = tos::pq::complaint_vote_preimage(global_id, set_id, validator_id, idx, election_id, complaint_hash);
       auto signature = store.sign_election(preimage);
