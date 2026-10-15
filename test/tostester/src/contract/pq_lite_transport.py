@@ -13,9 +13,11 @@ refuse it. Every key it uses is public test material.
 import re
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Protocol, cast
 
 from pytosiq_core import Address, Cell, MessageAny, StateInit
 
@@ -26,6 +28,21 @@ from .pq_relayer import AttemptReceipt, ChainSnapshot, FundingBudget
 
 class LiteClientError(RuntimeError):
     """The node could not answer, which is not the same as a negative answer."""
+
+
+class _WireCell(Protocol):
+    """The harness codec returned by account_data; SDK cells are a separate API."""
+
+    @property
+    def bits(self) -> str: ...
+
+    @property
+    def refs(self) -> Sequence["_WireCell"]: ...
+
+    @property
+    def hash(self) -> bytes: ...
+
+    def boc(self) -> bytes: ...
 
 
 @dataclass(frozen=True)
@@ -177,7 +194,7 @@ class LiteClientTransport:
         variable = prices["bit_price"] * bits + prices["cell_price"] * cells
         return prices["lump_price"] + (variable + (1 << 16) - 1) // (1 << 16)
 
-    def account_data(self, address: Address) -> Cell:
+    def account_data(self, address: Address) -> _WireCell:
         """The account's data cell, read from the chain rather than reconstructed."""
         import tempfile
 
@@ -187,13 +204,16 @@ class LiteClientTransport:
             self._run(f"saveaccountdata {path} {address.to_str(False)}")
             if not path.is_file() or path.stat().st_size == 0:
                 raise LiteClientError(f"no account data for {address.to_str(False)}")
-            return Cell.one_from_boc(path.read_bytes())
+            decoder = cast(
+                Callable[[bytes], _WireCell], getattr(import_module("cells"), "from_boc")
+            )
+            return decoder(path.read_bytes())
         finally:
             path.unlink(missing_ok=True)
 
     def read_auth(self, account: Address) -> AuthState:
         """The live epoch and nonce, which is what a stale request gets refused on."""
-        data = self.account_data(account)
+        data = Cell.one_from_boc(self.account_data(account).boc())
         if not data.refs:
             raise LiteClientError("the account carries no authentication root")
         auth = data.refs[-1].begin_parse()
@@ -389,7 +409,7 @@ class _TransportProvider:
         return self
 
     async def fetch[T](self, address: Address, parser: Callable[[Cell], T]) -> T:
-        return parser(self.transport.account_data(address))
+        return parser(Cell.one_from_boc(self.transport.account_data(address).boc()))
 
     async def send_external(self, message: MessageAny) -> None:
         self.transport.broadcast_external(message.serialize())
@@ -414,7 +434,7 @@ class WalletV5Signer:
         from .wallet_v5 import WalletV5State
 
         data = self.transport.account_data(self.address)
-        return WalletV5State.parse(data)
+        return WalletV5State.parse(Cell.one_from_boc(data.boc()))
 
     def read_seqno(self) -> int:
         return self.state().seqno

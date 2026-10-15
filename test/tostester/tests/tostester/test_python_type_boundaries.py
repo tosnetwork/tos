@@ -1,11 +1,15 @@
 """Runtime boundaries that accompany the Python type-check repair."""
 
 import asyncio
+import importlib.util
 import json
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+from contract.pq_auth import AuthState, byte_chain
 from contract.pq_lite_transport import LiteClientTransport, WalletV5Signer
 from contract.wallet_v5 import WalletV5State
 from nacl.public import PrivateKey
@@ -20,6 +24,16 @@ from pytosiq_core.tl.generator import TlError, TlGenerator, TlSchema
 from pytosiq_core.tlb.tlb import TlbError, require
 
 ROOT = Path(__file__).resolve().parents[4]
+
+
+@pytest.fixture
+def wire_codec(monkeypatch):
+    spec = importlib.util.spec_from_file_location("cells", ROOT / "test/auth-extensions/cells.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, "cells", module)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_type_checker_rejects_an_actual_assignment_error(tmp_path):
@@ -109,12 +123,44 @@ def test_crypto_uses_installed_dependencies_and_private_operation_is_explicit():
         server.get_aes_key_id()
 
 
-def test_wallet_signer_reads_sdk_cell_without_a_null_provider(monkeypatch):
+def test_wallet_signer_converts_wire_cell_without_a_null_provider(monkeypatch, wire_codec):
     transport = LiteClientTransport(Path("unused-client"), Path("unused-config"))
     key = SigningKey(bytes([4]) * 32)
     state = WalletV5State(True, 9, 11, key.verify_key.encode())
     monkeypatch.setattr(transport, "global_id", lambda: 42)
-    monkeypatch.setattr(transport, "account_data", lambda address: state.serialize())
+    wire_data = getattr(wire_codec, "from_boc")(state.serialize().to_boc())
+    monkeypatch.setattr(transport, "account_data", lambda address: wire_data)
     signer = WalletV5Signer(transport, Address((0, bytes([5]) * 32)), key)
     assert signer.read_seqno() == 9
     assert asyncio.run(signer._view.current) == state
+
+
+def test_account_data_preserves_wire_cell_auth_and_module_key(monkeypatch, wire_codec):
+    transport = LiteClientTransport(Path("unused-client"), Path("unused-config"))
+    wallet = Address((0, bytes([6]) * 32))
+    module = Address((0, bytes([7]) * 32))
+    auth = AuthState(2, 7, 8, bytes([9]) * 32)
+    state = WalletV5State(True, 9, 11, bytes([4]) * 32, auth=auth)
+    public_key = bytes([3]) * 1312
+    module_data = Builder().store_int(42, 32).store_ref(byte_chain(public_key)).end_cell()
+    blobs = {
+        wallet.to_str(False): state.serialize().to_boc(),
+        module.to_str(False): module_data.to_boc(),
+    }
+    saved_paths = []
+
+    def save_data(command: str) -> str:
+        verb, filename, address = shlex.split(command)
+        assert verb == "saveaccountdata"
+        path = Path(filename)
+        saved_paths.append(path)
+        path.write_bytes(blobs[address])
+        return ""
+
+    monkeypatch.setattr(transport, "_run", save_data)
+    data = transport.account_data(wallet)
+    assert isinstance(data, getattr(wire_codec, "Cell"))
+    assert Cell.one_from_boc(data.boc()).hash == state.serialize().hash
+    assert transport.read_auth(wallet) == auth
+    assert transport.read_module_key(module) == public_key
+    assert all(not path.exists() for path in saved_paths)

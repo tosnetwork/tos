@@ -1,6 +1,7 @@
 """The archive exception must not permit runtime gates to become conditional."""
 
 import importlib.util
+import re
 import unittest
 from pathlib import Path
 
@@ -39,6 +40,34 @@ class BranchConditionTests(unittest.TestCase):
         for index, workflow in enumerate(mutants):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
                 self.guard.validate_unconditional_steps(workflow)
+
+    def test_each_archive_exception_is_narrow(self):
+        for name in (
+            "Retain Quantum candidate configuration and boot evidence",
+            "Retain public explorer RPC response receipts",
+        ):
+            archive = re.search(
+                rf"(?ms)^      - name: {re.escape(name)}\n.*?(?=^      - |\Z)",
+                self.workflow,
+            )
+            self.assertIsNotNone(archive)
+            original = archive.group(0)
+            mutants = {
+                "wrong action pin": original.replace(
+                    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+                    "actions/upload-artifact@main",
+                ),
+                "skip condition": original.replace("if: always()", "if: false"),
+                "runtime command": original.replace(
+                    "        if: always()", "        if: always()\n        run: echo bypass"
+                ),
+                "unknown archive": original.replace(name, "Another evidence archive"),
+            }
+            for mutation, replacement in mutants.items():
+                with self.subTest(archive=name, mutation=mutation), self.assertRaises(RuntimeError):
+                    self.guard.validate_unconditional_steps(
+                        self.workflow.replace(original, replacement, 1)
+                    )
 
     def test_triggers_are_every_pull_request_and_pushes_to_main(self):
         self.guard.validate_triggers(self.workflow)

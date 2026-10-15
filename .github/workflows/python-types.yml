@@ -7,6 +7,8 @@ on:
       - 'uv.lock'
       - 'test/integration/**'
       - 'test/tostester/**'
+      - 'test/pq-readiness/**'
+      - 'test/auth-extensions/cells.py'
       - 'tl/generate/scheme/**'
       - '.github/workflows/python-types.yml'
   pull_request:
@@ -15,6 +17,8 @@ on:
       - 'uv.lock'
       - 'test/integration/**'
       - 'test/tostester/**'
+      - 'test/pq-readiness/**'
+      - 'test/auth-extensions/cells.py'
       - 'tl/generate/scheme/**'
       - '.github/workflows/python-types.yml'
   workflow_dispatch:
@@ -67,6 +71,8 @@ jobs:
           PYCODE
       - name: Exercise typing and codec controls
         run: uv run pytest test/tostester/tests/tl test/tostester/tests/tostester/test_python_type_boundaries.py -q
+      - name: Preserve lite transport signing and codec compatibility
+        run: uv run python test/pq-readiness/test_lite_transport.py
       - name: Retain full diagnostics including advisory warnings
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
