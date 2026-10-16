@@ -349,11 +349,22 @@ Not yet activated on any TOS network, same as version 14 above.
 
 ## Version 16: unified development baseline
 
-Every protocol feature this binary implements is enabled at version 16, the
+The execution features listed below are enabled at version 16, the
 genesis version: ML-DSA-44, Falcon-512 padded, the generic `PQCHECKSIG_SUITE`
 instruction (suites 1-4), `LMSCHECKFEEHASH`, all three Poseidon2 instructions,
 the `c7[18]` import-statistics element and the frozen-account recovery fix.
-There are no later version gates. This changes execution under version 16: existing development-chain history
+
+At version 16 and later, read-only getters expose `c7[18]` as `null` because
+they do not authenticate an external-message import. This applies to emulator,
+LiteServer, control and proof-verification getter contexts. Earlier versions
+retain their original tuple layout.
+
+Authorization-policy configuration retains a separate version-17 requirement:
+ConfigParam 48 must be present and valid, and must belong to both the mandatory
+and critical parameter lists (ConfigParams 9 and 10). A version-16 configuration
+must satisfy this requirement before upgrading to version 17.
+
+This changes execution under version 16: existing development-chain history
 requires the original binary, or a fresh genesis for the consolidated baseline.
 No running network is migrated by this source change.
 

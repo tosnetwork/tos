@@ -783,6 +783,10 @@ td::Result<td::Ref<vm::Tuple>> proven_c7(const block::ConfigInfo& config, const 
   if (version >= 11) {
     tuple.push_back(block::transaction::Transaction::prepare_in_msg_params_tuple(nullptr, {}, {}));
   }
+  if (version >= 16) {
+    // Proven getters have no authenticated external import statistics.
+    tuple.push_back(vm::StackEntry{});
+  }
   return vm::make_tuple_ref(td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple)));
 }
 

@@ -55,12 +55,26 @@ std::string serialize_context(const Ref<vm::Tuple>& c7) {
   return boc(builder.finalize_novm()).as_slice().str();
 }
 
+// Preserve the frozen historical oracle and extend only its version-16 layout.
+td::Ref<vm::Tuple> expected_context(tos::UnixTime now, tos::LogicalTime lt, td::Ref<vm::CellSlice> address,
+                                    const block::CurrencyCollection& balance, const block::ConfigInfo* config = nullptr,
+                                    td::Ref<vm::Cell> code = {}, td::RefInt256 due_payment = td::zero_refint()) {
+  auto result = getter_reference::prepare_vm_c7(now, lt, std::move(address), balance, config, std::move(code),
+                                                std::move(due_payment));
+  if (config && config->get_global_version() >= 16) {
+    auto info = result->at(0).as_tuple();
+    info.write().push_back(vm::StackEntry{});
+    result.write().at(0) = vm::StackEntry{std::move(info)};
+  }
+  return result;
+}
+
 void context_cases(const std::string& zero, const std::string& elector, const std::string& config_code) {
-  for (int version : {3, 4, 6, 9, 11, 14, 15, 17}) {
+  for (int version : {3, 4, 6, 9, 11, 14, 15, 16, 17, 18}) {
     auto state = build(zero, elector, config_code, version);
     const auto& getter = state.getters.back();
-    auto before = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
-                                                  state.config.get(), getter.code, getter.due_payment);
+    auto before = expected_context(state.now, state.lt, address_slice(getter.address), getter.balance,
+                                   state.config.get(), getter.code, getter.due_payment);
     auto after =
         block::prepare_get_method_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
                                      state.config.get(), getter.code, getter.due_payment, context_seed(before));
@@ -69,6 +83,12 @@ void context_cases(const std::string& zero, const std::string& elector, const st
     if (after.not_null()) {
       check(name, serialize_context(before) == serialize_context(after),
             "the full c7 differs from the independent oracle");
+    }
+    if (after.not_null() && version >= 11) {
+      auto actual = after->at(0).as_tuple();
+      check(name + "-import-stats",
+            actual->size() == (version >= 16 ? 19U : 18U) && (version < 16 || actual->at(18).is_null()),
+            "import statistics must be absent before version 16 and null afterward");
     }
     auto info = before->at(0).as_tuple();
     require(info->at(7).as_tuple()->at(0).as_int()->unsigned_fits_bits(101), "wide balance field");
@@ -85,7 +105,7 @@ void context_cases(const std::string& zero, const std::string& elector, const st
   }
   auto state = build(zero, elector, config_code);
   const auto& getter = state.getters.back();
-  auto before = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(getter.address), getter.balance);
+  auto before = expected_context(state.now, state.lt, address_slice(getter.address), getter.balance);
   auto after = block::prepare_get_method_c7(state.now, state.lt, address_slice(getter.address), getter.balance, nullptr,
                                             {}, td::zero_refint(), context_seed(before));
   check("context-no-config", after.not_null(), "the basic context is null");
@@ -101,8 +121,8 @@ struct Result {
 };
 
 Result run(const State& state, const Getter& getter, bool reference) {
-  auto c7 = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
-                                            state.config.get(), getter.code, getter.due_payment);
+  auto c7 = expected_context(state.now, state.lt, address_slice(getter.address), getter.balance, state.config.get(),
+                             getter.code, getter.due_payment);
   if (!reference) {
     c7 = block::prepare_get_method_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
                                       state.config.get(), getter.code, getter.due_payment, context_seed(c7));
@@ -126,11 +146,25 @@ Result run(const State& state, const Getter& getter, bool reference) {
 }
 
 void vm_cases(const std::string& zero, const std::string& elector, const std::string& config_code) {
+  for (int version : {15, 16, 17, 18}) {
+    auto boundary = build(zero, elector, config_code, version);
+    Getter probe = boundary.getters.back();
+    probe.code = must(fift::compile_asm("DROP c7 PUSH 0 INDEX 18 PUSHINT INDEXVAR ISNULL"), "import-statistics getter");
+    const auto result = run(boundary, probe, false);
+    auto expected_stack = td::make_ref<vm::Stack>();
+    expected_stack.write().push_smallint(-1);
+    vm::CellBuilder serialized;
+    require(expected_stack->serialize(serialized), "null result serialization");
+    check("vm-import-stats-v" + std::to_string(version),
+          version < 16 ? result.exit == static_cast<int>(vm::Excno::range_chk)
+                       : result.exit == 0 && result.stack == boc(serialized.finalize_novm()).as_slice().str(),
+          "production getter must return null from version 16, with a range error before it");
+  }
   auto state = build(zero, elector, config_code);
   Getter all = state.getters.back();
   all.code = must(fift::compile_asm("DROP c7 PUSH"), "all-context getter");
-  auto before = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(all.address), all.balance,
-                                                state.config.get(), all.code, all.due_payment);
+  auto before = expected_context(state.now, state.lt, address_slice(all.address), all.balance, state.config.get(),
+                                 all.code, all.due_payment);
   const auto seed = context_seed(before);
   auto after = block::prepare_get_method_c7(state.now, state.lt, address_slice(all.address), all.balance,
                                             state.config.get(), all.code, all.due_payment, seed);
@@ -316,10 +350,10 @@ void liteserver_cases(const std::string& zero, const std::string& elector, const
         vm::StackEntry received;
         require(received.deserialize(cell) && received.is_tuple(), "wire c7 tuple");
         auto actual = received.as_tuple();
-        auto expected_c7 = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(getter.address),
-                                                           getter.balance, mode & 32 ? state.config.get() : nullptr,
-                                                           mode & 32 ? getter.code : Ref<vm::Cell>{},
-                                                           mode & 32 ? getter.due_payment : td::zero_refint());
+        auto expected_c7 =
+            expected_context(state.now, state.lt, address_slice(getter.address), getter.balance,
+                             mode & 32 ? state.config.get() : nullptr, mode & 32 ? getter.code : Ref<vm::Cell>{},
+                             mode & 32 ? getter.due_payment : td::zero_refint());
         require(actual.not_null() && actual->size() == 1 && actual->at(0).is_tuple(), "wire c7 shape");
         auto actual_info = actual->at(0).as_tuple();
         require(actual_info->size() >= 10 && actual_info->at(6).is_int(), "wire c7 seed");

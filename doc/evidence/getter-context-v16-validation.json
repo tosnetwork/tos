@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "parent": "c6dcd874da3aca6119f7999ec1c86b0c4f87eb3a",
+  "merge_base": "87a711519aa9d9c4e5a8a1b5ee13b1c1ff942d31",
+  "platform": "macOS arm64",
+  "sources": {
+    "crypto/block/get-method-context.cpp": {
+      "bytes": 3899,
+      "sha256": "618b2ea72329d8d15548e8617cae9396232a9f47f689f95aa96a1012a6951a48"
+    },
+    "lite-client/proof-verify/proof-verify.cpp": {
+      "bytes": 60517,
+      "sha256": "a18c9c913fe7ecc4555f6ce8c4d332a78a4b1c8f45e43aa24fc2b20e38646ae9"
+    },
+    "test/validator/getter-context-test.cpp": {
+      "bytes": 19590,
+      "sha256": "6122ff6a2ae430d547eb33bc05dbbaa34b3e3a4f8298df561d119befb2ae435b"
+    },
+    "test/validator/getter-context-mutations.py": {
+      "bytes": 10866,
+      "sha256": "d9cfc5a314775abe80fd6b7b0bb1119cb4a3f2f8c4bdbb217863bfb11cda42ef"
+    },
+    "doc/GlobalVersions.md": {
+      "bytes": 32653,
+      "sha256": "fc30c895ce676b92f375cf3c2cddb19314da26bd1d6b9d752a8704736f10823b"
+    }
+  },
+  "native": {
+    "command": "ctest --test-dir build --output-on-failure --no-tests=error -R '^(getter-context-(context|vm|libraries|liteserver)|test-proof-verify)$'",
+    "exit": 0,
+    "passed": 6
+  },
+  "sensitivity": {
+    "command": "python3 test/validator/getter-context-mutations.py --build build --only import-statistics --jobs 1",
+    "exit": 0,
+    "mutation": "Change the production getter version threshold from 16 to 17",
+    "assertion": "GETTER_CONTEXT_FAIL vm-import-stats-v16",
+    "green_exit": 0,
+    "red_exit": 1,
+    "restored_exit": 0
+  },
+  "historical_oracle": "Unchanged; its frozen function SHA-256 is 4cc2b04ab23188d56d8c881e91a139ba2073970442b611d12581423a7aad34dc",
+  "static_analysis": {
+    "command": "python3 scripts/static-analysis.py --build-dir build --base-build-dir /Users/tomisetsu/tos/build --llvm-bin /private/tmp/issue-192-llvm/bin --codechecker /private/tmp/issue-192-codechecker/bin/CodeChecker --jobs 4",
+    "LLVM": "21.1.8",
+    "CodeChecker": "6.29.1",
+    "exit": 2,
+    "positive_controls": 10,
+    "result": "REFUSED: macOS clang-scan-deps dependency scan failed; this is not an analysis pass."
+  },
+  "pending": [
+    "Linux PR native getter/proof checks",
+    "Linux differential static analysis"
+  ],
+  "artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-pr226-getter-v16-20261016",
+    "retained_through": "2026-11-16",
+    "files": {
+      "analysis.log": {
+        "bytes": 600,
+        "sha256": "43b29465d63479382a62b4ec608c2f7ef3d2a4629c0a58b83588664f7117d46b"
+      },
+      "build.log": {
+        "bytes": 601,
+        "sha256": "fa4c5b0ec2ce7086e1c59bfe9380c6f39c7a7bb7bfee0c1fb5e78a54867eda21"
+      },
+      "native-tests.log": {
+        "bytes": 921,
+        "sha256": "36249582efc01fc1ff88eeb351d4dc5ea40f493c9132c1e8eeb4d1319f211c74"
+      },
+      "sensitivity.log": {
+        "bytes": 240,
+        "sha256": "f068e0643e91e36642684f9e218dade4977e337b9b5e44c38a9ba085a950a223"
+      }
+    }
+  }
+}

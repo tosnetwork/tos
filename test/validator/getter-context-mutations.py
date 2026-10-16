@@ -17,6 +17,13 @@ from pathlib import Path
 HELPER = "crypto/block/get-method-context.cpp"
 SERVER = "validator/impl/liteserver.cpp"
 CONTROLS = {
+    "import-statistics": (
+        HELPER,
+        "config->get_global_version() >= 16",
+        "config->get_global_version() >= 17",
+        "vm",
+        "vm-import-stats-v16",
+    ),
     "clock": (HELPER, "td::make_refint(now)", "td::make_refint(0)", "context", "context-v3"),
     "logical-time": (HELPER, "td::make_refint(lt)", "td::make_refint(0)", "context", "context-v3"),
     "seed": (HELPER, "std::move(rand_seed_int),", "td::zero_refint(),", "vm", "vm-context"),
