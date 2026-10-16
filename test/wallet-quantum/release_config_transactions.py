@@ -71,9 +71,8 @@ def main():
             result = emulator.send(shard, message)
             assert result["success"], (name, result)
             details = result["details"]
-            expected = (
-                6 if dedicated else 5 if suite == 2 else 901 if name.endswith("bitflip") else 0
-            )
+            # Every suite and the dedicated Falcon opcode are open from version 16.
+            expected = 901 if name.endswith("bitflip") else 0
             assert details["exit"] == expected, (name, expected, details)
             state, _ = native.account_data(from_boc(result["shard_account"]))
             if expected == 0:
