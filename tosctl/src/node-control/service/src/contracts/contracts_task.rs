@@ -559,7 +559,6 @@ mod tests {
 
         let response = match method {
             "getAddressInformation" => serde_json::json!({
-                "ok": true,
                 "result": {
                     "@type": "raw.fullAccountState",
                     "balance": state.account_balance,
@@ -589,16 +588,17 @@ mod tests {
             "sendBoc" => {
                 state.send_boc_calls.fetch_add(1, Ordering::Relaxed);
                 serde_json::json!({
-                    "ok": true,
                     "result": { "@type": "ok" },
                     "jsonrpc": "2.0",
                     "id": id
                 })
             }
             _ => serde_json::json!({
-                "ok": false,
-                "error": format!("unsupported method {method}"),
-                "code": 400,
+                "error": {
+                    "code": -32601,
+                    "message": format!("Method not found: {method}"),
+                    "data": {"schema_version": 1, "reason": "METHOD_NOT_FOUND", "retryable": false}
+                },
                 "jsonrpc": "2.0",
                 "id": id
             }),

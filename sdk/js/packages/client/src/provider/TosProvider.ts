@@ -78,7 +78,7 @@ export type TupleItemLike =
 
 /** Optional historic-block query hint. */
 export interface BlockQueryOpts {
-  /** Query at this masterchain seqno instead of latest. */
+  /** Query at this masterchain seqno instead of latest (absent = latest; 0 = block 0). */
   seqno?: number;
 }
 
@@ -105,7 +105,8 @@ export interface AccountActions {
 export interface BlockActions {
   getMasterchainInfo(): Promise<MasterchainInfo>;
   getConsensusBlock(): Promise<ConsensusBlock>;
-  lookupBlock(workchain: number, shard: string, seqno: number, opts?: { lt?: string; utime?: number }): Promise<BlockIdExt>;
+  /** Exactly one of `seqno`, `opts.lt` or `opts.utime` selects the block; `shard` is a signed decimal. */
+  lookupBlock(workchain: number, shard: string, seqno?: number | null, opts?: { lt?: string; utime?: number }): Promise<BlockIdExt>;
   getBlockHeader(workchain: number, shard: string, seqno: number): Promise<BlockHeader>;
   getShards(seqno: number): Promise<ShardInfo>;
   getMasterchainBlockSignatures(seqno: number): Promise<BlockSignatures>;

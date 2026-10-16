@@ -238,10 +238,6 @@ impl Json {
         }
     }
 
-    fn has(&self, key: &str) -> bool {
-        self.get(key).is_some()
-    }
-
     fn as_str(&self) -> Option<&str> {
         match self {
             Json::String(text) => Some(text),
@@ -359,11 +355,19 @@ fn parse_document(text: &str) -> Result<Json, String> {
 }
 
 /// The `result` of a JSON-RPC envelope, under the client's envelope rules: version
-/// 2.0, the request's own id, a boolean `ok`, and exactly one of `result` or an
-/// `error` with its `code`. An error envelope becomes a bounded error string.
+/// 2.0, the request's own id, no member besides `jsonrpc`, `id`, `result` and
+/// `error`, and exactly one of `result` (at HTTP 200) or an `error` object with an
+/// integer `code`, a string `message` and `data` carrying a string `reason` and a
+/// boolean `retryable`. An error envelope becomes a bounded error string.
 fn envelope_result(mut document: Json, status: u16, expected_id: &str) -> Result<Json, String> {
-    if !matches!(document, Json::Object(_)) {
+    let Json::Object(fields) = &document else {
         return Err(format!("the response is {}, not an object", document.kind()));
+    };
+    if let Some((name, _)) = fields
+        .iter()
+        .find(|(name, _)| !matches!(name.as_str(), "jsonrpc" | "id" | "result" | "error"))
+    {
+        return Err(bounded(format!("the response has an unexpected member {name:?}")));
     }
     if document.get("jsonrpc").and_then(Json::as_str) != Some("2.0") {
         return Err("jsonrpc must be exactly 2.0".to_string());
@@ -373,36 +377,57 @@ fn envelope_result(mut document: Json, status: u16, expected_id: &str) -> Result
         Some(_) => return Err("response id does not match the request".to_string()),
         None => return Err("response has no id".to_string()),
     }
-    let ok = match document.get("ok") {
-        Some(Json::Bool(ok)) => *ok,
-        _ => return Err("ok must be a boolean".to_string()),
-    };
-    let has_result = document.has("result");
-    let has_error = document.has("error") || document.has("code");
-    if ok {
-        if !has_result || has_error {
-            return Err("successful response must contain result and no error fields".into());
+    match (document.take("result"), document.take("error")) {
+        (Some(result), None) => {
+            if status != 200 {
+                return Err(format!("HTTP status {status} on a successful envelope"));
+            }
+            Ok(result)
         }
-        if !(200..300).contains(&status) {
-            return Err(format!("HTTP status {status} on a successful envelope"));
+        (None, Some(error)) => Err(error_message(&error)?),
+        (Some(_), Some(_)) => Err("response has both result and error".to_string()),
+        (None, None) => Err("response has neither result nor error".to_string()),
+    }
+}
+
+/// The bounded text of a well-formed JSON-RPC `error` object; a malformed one is
+/// refused with its own reason.
+fn error_message(error: &Json) -> Result<String, String> {
+    if !matches!(error, Json::Object(_)) {
+        return Err("error must be an object".to_string());
+    }
+    let code = match error.get("code") {
+        Some(Json::Number(code)) => {
+            code.as_i64().ok_or_else(|| "error code must be an integer".to_string())?
         }
-        return document.take("result").ok_or_else(|| "response has no result".to_string());
-    }
-    if has_result || !document.has("error") || !document.has("code") {
-        return Err("error response must contain error and code and no result".to_string());
-    }
-    let code = match document.get("code") {
-        Some(Json::Number(code)) => code
-            .as_u64()
-            .and_then(|code| u32::try_from(code).ok())
-            .ok_or_else(|| "error code must be an unsigned 32-bit integer".to_string())?,
-        _ => return Err("error code must be an unsigned 32-bit integer".to_string()),
+        _ => return Err("error code must be an integer".to_string()),
     };
-    let message = document
-        .get("error")
-        .and_then(Json::as_str)
-        .ok_or_else(|| "error must be a string".to_string())?;
-    Err(bounded(format!("the endpoint answered error {code}: {message}")))
+    let message =
+        error.get("message").and_then(Json::as_str).ok_or("error message must be a string")?;
+    let data = match error.get("data") {
+        Some(data @ Json::Object(_)) => data,
+        _ => return Err("error data must be an object".to_string()),
+    };
+    let reason =
+        data.get("reason").and_then(Json::as_str).ok_or("error reason must be a string")?;
+    let retryable = match data.get("retryable") {
+        Some(Json::Bool(retryable)) => *retryable,
+        _ => return Err("error retryable must be a boolean".to_string()),
+    };
+    Ok(bounded(format!(
+        "the endpoint answered error {code} {} (retryable: {retryable}): {message}",
+        bounded_reason(reason)
+    )))
+}
+
+/// A reason as an identifier of at most 64 characters, or a fixed placeholder.
+fn bounded_reason(reason: &str) -> &str {
+    let identifier = !reason.is_empty()
+        && reason.len() <= 64
+        && reason
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_');
+    if identifier { reason } else { "MALFORMED_REASON" }
 }
 
 fn block_id(value: &Json) -> Result<BlockIdExt, String> {

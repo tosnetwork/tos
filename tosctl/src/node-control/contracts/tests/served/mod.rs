@@ -58,7 +58,6 @@ pub fn as_served(item: &StackItem) -> serde_json::Value {
 pub fn served_response(stack: &[StackItem]) -> String {
     let served: Vec<serde_json::Value> = stack.iter().rev().map(as_served).collect();
     serde_json::json!({
-        "ok": true,
         "jsonrpc": "2.0",
         "id": 1,
         "result": {
@@ -158,8 +157,7 @@ impl Reply {
     /// A successful envelope around `result`.
     pub fn ok(result: serde_json::Value) -> Self {
         let body =
-            serde_json::json!({"ok": true, "jsonrpc": "2.0", "id": "@@ID@@", "result": result})
-                .to_string();
+            serde_json::json!({"jsonrpc": "2.0", "id": "@@ID@@", "result": result}).to_string();
         Self { status: 200, body, chunked: false }
     }
 

@@ -1,19 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
-pub struct ApiResponse<T> {
-    pub ok: bool,
-    #[serde(flatten)]
-    pub data: ApiResponseResult<T>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum ApiResponseResult<T> {
-    Success { result: T },
-    Error { result: Option<String>, error: Option<String>, code: u32 },
-}
-
 /// Represents `@type: raw.fullAccountState`.
 #[derive(Debug, Deserialize)]
 pub struct RawFullAccountState {
@@ -333,20 +319,4 @@ pub struct JsonRpcRequest {
     pub method: String,
     pub params: serde_json::Value,
     pub id: serde_json::Value,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct JsonRpcResponse<T> {
-    pub ok: bool,
-    pub jsonrpc: Option<String>,
-    #[serde(flatten)]
-    pub data: JsonRpcResult<T>,
-    pub id: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum JsonRpcResult<T> {
-    Success { result: T },
-    Error { result: Option<String>, error: Option<String>, code: u32 },
 }
