@@ -495,7 +495,7 @@ fn test_convert_stack_tuple_pair_with_inner_tuple() {
 #[test]
 fn incoming_storage_context_is_versioned_and_optional() {
     use chain_block::{ConfigParam8, ConfigParamEnum, GlobalVersion};
-    for version in [16, 17, 18, 19] {
+    for version in [15, 16, 17, 18, 19] {
         let mut sci = SmartContractInfo::default();
         sci.config_params
             .set_config(ConfigParamEnum::ConfigParam8(ConfigParam8 {
@@ -506,8 +506,8 @@ fn incoming_storage_context_is_versioned_and_optional() {
             sci.incoming_storage = present.then(|| ([0xabu8; 32].into(), 129, 131073));
             let item = sci.as_temp_data_item();
             let params = item.as_tuple().unwrap()[0].as_tuple().unwrap();
-            assert_eq!(params.len(), if version < 17 { 18 } else { 19 });
-            if version >= 17 {
+            assert_eq!(params.len(), if version < 16 { 18 } else { 19 });
+            if version >= 16 {
                 if present {
                     let stats = params[18].as_tuple().unwrap();
                     assert_eq!(stats.len(), 4);

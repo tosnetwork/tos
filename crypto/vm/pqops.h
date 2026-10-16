@@ -6,20 +6,20 @@ inline constexpr unsigned pq_mldsa44_opcode = 0xf93100;
 inline constexpr int pq_mldsa44_min_version = 16;
 inline constexpr long long pq_mldsa44_base_gas = 50000;
 inline constexpr long long pq_mldsa44_byte_gas = 1;
-// Candidate allocation for disposable development execution; no network activation.
+// Falcon-512 padded verification; enabled at the genesis version. Tariff is a prototype value.
 inline constexpr unsigned pq_falcon512_opcode = 0xf93101;
-inline constexpr int pq_falcon512_min_version = 19;
+inline constexpr int pq_falcon512_min_version = 16;
 inline constexpr long long pq_falcon512_base_gas = 20000;
 inline constexpr long long pq_falcon512_byte_gas = 1;
 // Generic instruction: message context signature public_key suite -> bool.
-// Suite 1 = ML-DSA-44 and suite 2 = Falcon-512 padded behave as F93100/F93101 (suite 2 keeps
+// Suite 1 = ML-DSA-44 and suite 2 = Falcon-512 padded behave as F93100/F93101 (suite 2 shares
 // F93101's version gate); suite 3 is the SLH-DSA rescue root; suite 4 is the rescue fee gate's
 // one-level HSS/LMS verifier. Enabled at the genesis version; tariffs are prototype values.
 inline constexpr unsigned pq_suite_opcode = 0xf93102;
-// Experimental version-17 fee admission: hash:uint256 leaf:uint20 signature key -> bool.
+// Fee admission: hash:uint256 leaf:uint20 signature key -> bool. Enabled at the genesis version.
 // Same H20/W4 compute tariff; implicit 32-byte message and empty context.
 inline constexpr unsigned pq_lms_fee_hash_opcode = 0xf93103;
-inline constexpr int pq_lms_fee_hash_min_version = 17;
+inline constexpr int pq_lms_fee_hash_min_version = 16;
 inline constexpr int pq_suite_min_version = 16;
 inline constexpr int pq_suite_mldsa44 = 1;
 inline constexpr int pq_suite_falcon512 = 2;
