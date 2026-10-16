@@ -1,0 +1,104 @@
+{
+  "baseline": "c253e9e9c7cd9c1aaa6f9a6ca6ee223621529efe",
+  "scope": "Ready-only identical-snapshot deduplication; bounded compatible native object caching; closed-PR cache maintenance; complete CTest scheduling with a five-unit parallel allowlist. No production C++, Rust or cryptographic fixture changes.",
+  "local_results": {
+    "new_test_methods": 20,
+    "snapshot_identity_removal": "nine intended changed-context assertion failures, no setup errors",
+    "ctest_failure_masking": "actual failing CTest fixture incorrectly returns success after mutation; intended assertion fails",
+    "closed_pr_guard_removal": "active PR cache enters deletion plan; intended assertion fails",
+    "golden_workflow_command_bodies": 41,
+    "actual_native_parallel_tests": "5/5 pass on macOS, 470.28 seconds; not Linux acceptance",
+    "native_registry_partition": {
+      "parallel": 5,
+      "serial": 403,
+      "total": 408
+    },
+    "native_source_reference": "Existing local build at c41fd1f54; audited native units and regression synchronization source blobs match current main",
+    "cache_cleanup_preview": {
+      "eligible_in_batch": 20,
+      "bytes_in_batch": 3201570585,
+      "deleted": 0,
+      "mode": "dry-run"
+    },
+    "rescue_coverage": "19 automatic dual-architecture workers, original 52 control groups retained",
+    "existing_rescue_methods": 8,
+    "existing_cache_identity_methods": 10,
+    "existing_cache_counter_methods": 11,
+    "actionlint": "v1.7.12, external shellcheck/pyflakes disabled; all seven changed workflows pass",
+    "ruff": "check and format pass",
+    "bash": "assembly build script passes bash -n",
+    "whitespace": "git diff --check passes"
+  },
+  "pending": [
+    "Hosted PR validation and both rescue parity gates",
+    "Full Linux x86/ARM native workflows on the exact branch commit",
+    "A Ready transition on an already-attested identical snapshot",
+    "Cold/warm timings; no sub-hour performance result claimed"
+  ],
+  "source_sha256": {
+    "scripts/ci-snapshot.py": "a08b889b2e86cdd9063e50568cd61a28fb8b61338201433093d170a880966eb8",
+    "scripts/ci-ctest.py": "8593cf39abb44b576f11c6b4e47b9f1b4993a62adcbaa3aa82c8656a1c3a16b7",
+    "scripts/clean-closed-pr-caches.py": "c70dca8a9971126ac84701b382f61559c53df3928cf4a14684ccf235fe065582",
+    "scripts/test_ci_snapshot.py": "660a173ef7d80fae323acd01c5d1d5a722f1ca5c383bc4a2d9aad498a436057d",
+    "scripts/test_ci_ctest.py": "bbae5b120b2e16b63dc2f0db6ff9175990109a31c4d14c74c05d8dcd3c54ccf3",
+    "scripts/test_ci_efficiency.py": "dfd70419672a2acfcf521c65a771763eb6f9182678e0e07de77894d6b7c36cec",
+    "scripts/test_clean_closed_pr_caches.py": "4fd1dbd4ecd12da00aa019c3b7df4931a72335498ddead4f57ae5bb1c66e497a",
+    "assembly/native/build-ubuntu-shared.sh": "079cc954a2a9d85ad16673154f2f5477feb75764b33283fb52ce23edfc23d048"
+  },
+  "artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-ci-free-tier-20261016",
+    "retain_through": "2026-11-16",
+    "files": [
+      {
+        "file": "cache-cleanup-tests.log",
+        "bytes": 103,
+        "sha256": "0f7e4b97443e54aca647179972594d13bb587afcbf151fab8228148587ea844a"
+      },
+      {
+        "file": "cache-preview.json",
+        "bytes": 99,
+        "sha256": "1eb6f8806303e68897d402df8956d23ffb30a0a1b71cdb7e4eb71932620058e3"
+      },
+      {
+        "file": "ctest-tests.log",
+        "bytes": 101,
+        "sha256": "d251a38b6d003c6d93beda0723860fd145eb1e38963d63313336a85c4c82b54b"
+      },
+      {
+        "file": "efficiency-tests.log",
+        "bytes": 101,
+        "sha256": "5e4e5e8b9596b3180b868074195b7c230164d5df3ba559ab7c1adf0d48d047eb"
+      },
+      {
+        "file": "native-build.log",
+        "bytes": 116639,
+        "sha256": "0304500ee20d7b5a18388ad5df9e61a9189e25a2802a7b8023fcea3ce6380c3b"
+      },
+      {
+        "file": "native-parallel.log",
+        "bytes": 666,
+        "sha256": "7a47d788be0a8fec67f9287004e18da14943e9d6ead8baeda86cc9adb70abf27"
+      },
+      {
+        "file": "native-registry.json",
+        "bytes": 218171,
+        "sha256": "0d8cd7c09b2fd9ef0fe46e334f57095e7c9d4078e2e0e19891234d5c3f51aaa2"
+      },
+      {
+        "file": "sensitivity.log",
+        "bytes": 7554,
+        "sha256": "03fabb795cb185fd342e10be0b0ce7125518963bbd4eafd6a5b7c400896457e6"
+      },
+      {
+        "file": "sensitivity.py",
+        "bytes": 2556,
+        "sha256": "0e02f713f396e42b2f12626fecf96f5f48b082df70cbc597fd6c71aa82a47482"
+      },
+      {
+        "file": "snapshot-tests.log",
+        "bytes": 338,
+        "sha256": "eab189a8e20b65539c5485371a2e52a2d373d8b7f2fe36d370682d34eb1db416"
+      }
+    ]
+  }
+}

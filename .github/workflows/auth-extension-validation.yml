@@ -3,6 +3,8 @@ name: Authentication extension validation
 on:
   pull_request:
     paths:
+      - 'scripts/ci-snapshot.py'
+      - 'scripts/test_ci_snapshot.py'
       - 'crypto/smartcont/**'
       - 'crypto/CMakeLists.txt'
       - 'crypto/block/auth-policy.*'
@@ -21,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: auth-extension-validation-${{ github.event.pull_request.number }}
@@ -34,13 +37,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      - name: Reuse only a proven identical Ready snapshot
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-snapshot.py --job 'authentication'
       - name: Configure and build native contract tools
+        if: steps.snapshot.outputs.run-tests == 'true'
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target func fift tol emulator test-config-transition -j2
       - name: Install deterministic-signature test dependency
+        if: steps.snapshot.outputs.run-tests == 'true'
         run: python3 -m pip install cryptography==46.0.4
       - name: Native action-phase authentication tests and mutation checks
+        if: steps.snapshot.outputs.run-tests == 'true'
         env:
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
@@ -69,6 +80,7 @@ jobs:
       # The SDK half of the wallet vectors: the committed messages the native
       # test above executes must still be exactly what the SDK produces.
       - name: SDK wallet tests and network-bound vectors
+        if: steps.snapshot.outputs.run-tests == 'true'
         working-directory: sdk/js
         run: |
           corepack enable
@@ -77,19 +89,19 @@ jobs:
           pnpm --filter @tos/wallets test
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: (always()) && steps.snapshot.outputs.run-tests == 'true'
         with:
           name: v5r1-action-baseline
           path: ${{ runner.temp }}/v5r1-baseline/results.json
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: (always()) && steps.snapshot.outputs.run-tests == 'true'
         with:
           name: agent-controller-validation
           path: ${{ runner.temp }}/agent-controller-validation/results.json
           retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: (always()) && steps.snapshot.outputs.run-tests == 'true'
         with:
           name: auth-policy-validation
           path: |
@@ -97,7 +109,7 @@ jobs:
             ${{ runner.temp }}/auth-policy-native/
           retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: (always()) && steps.snapshot.outputs.run-tests == 'true'
         with:
           name: quantum-receiver-identity-validation
           path: |
@@ -112,9 +124,22 @@ jobs:
           retention-days: 14
 
       - name: Run agent, multisig and legacy wallet authority transactions
+        if: steps.snapshot.outputs.run-tests == 'true'
         env:
           TOS_ROOT: ${{ github.workspace }}
         run: |
           scripts/install-rust-toolchain.sh
           cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --lib agent_account::tests
           cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --test agent_account_sandbox --test multisig_code_sandbox --test legacy_wallet_key_sandbox --test wallet_sandbox --test highload_wallet_v3_sandbox
+
+      - name: Record successful executed snapshot
+        if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+        run: python3 scripts/ci-snapshot.py --job 'authentication' --record
+      - name: Retain successful snapshot evidence
+        if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-snapshot-authentication-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-snapshot-authentication.json
+          if-no-files-found: error
+          retention-days: 14

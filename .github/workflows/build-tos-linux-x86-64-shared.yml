@@ -55,17 +55,11 @@ jobs:
         apt-get update
         apt-get install -y ripgrep
 
-    - name: Date Stamp
-      id: date-stamp
-      run: |
-        echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
-
-    - name: Restore cache TOS
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+    - name: Reuse compatible native compiler objects
+      uses: ./.github/actions/native-cache
       with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
-        restore-keys: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache
+        profile: main-shared
+        max-size: 1G
 
     # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install repository-pinned Rust toolchain
@@ -89,7 +83,7 @@ jobs:
     - name: Run unit tests
       run: |
         cd build
-        ctest --output-on-failure --timeout 1800
+        python3 ../scripts/ci-ctest.py --build-dir .
 
     - name: Prepare Python environment
       run: |
