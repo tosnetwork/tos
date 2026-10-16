@@ -2125,6 +2125,12 @@ if (Python3_Interpreter_FOUND)
            COMMAND ${Python3_EXECUTABLE}
                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-route-gating.py)
   set_tests_properties(jsonrpc-route-gating PROPERTIES LABELS "source-guard")
+  # The dispatcher method table, the typed error reasons and doc/openapi.yaml
+  # must describe the same API.
+  add_test(NAME jsonrpc-openapi-spec
+           COMMAND ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-spec.py)
+  set_tests_properties(jsonrpc-openapi-spec PROPERTIES LABELS "source-guard")
   # The real engine binary must refuse to start a write-enabled plaintext
   # JSON-RPC listener on a non-loopback address.
   add_test(NAME json-rpc-startup-refusal

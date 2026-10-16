@@ -29,6 +29,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "func-build-include-deps",
         "global-config-init-block-refresh",
         "image-digest-pinning",
+        "jsonrpc-openapi-spec",
         "jsonrpc-route-gating",
         "lite-query-error-response-source",
         "llvm-apt-key-pin",
