@@ -29,11 +29,11 @@ at their own source boundaries.
 | Selection | Version | Basechain credit | Masterchain credit | Meaning |
 | --- | --- | --- | --- | --- |
 | Existing canonical genesis and Rust defaults | 16 | 10,000 | 10,000 | Existing default profile |
-| Explicit generated admission candidate | 18 | 20,000 | 10,000 | Candidate selected with an explicit namespace; basechain transaction/block gas limits are 30,000,000/60,000,000 |
+| Explicit generated admission candidate | 16 | 20,000 | 10,000 | Candidate selected with an explicit namespace; basechain transaction/block gas limits are 30,000,000/60,000,000 |
 
 `BlockchainConfig::with_config` loads the actual generated cells.
-`default_with_global_version(18)` changes instruction availability, while keeping
-the existing default gas profile. The continuation repairs the default
+`default_with_global_version(16)` selects the unified instruction baseline while
+keeping the existing default gas profile. The continuation repairs the default
 basechain price cache's derived `max_gas_threshold`: it now matches the value
 decoded from the serialized fields. The new comparison first failed on the old
 cache value and passes after the repair. This does not activate 20,000 credit.
@@ -49,9 +49,10 @@ a BOC does not alter a running network.
 Every native and Rust introduction gate is at version 16, the genesis version:
 suite/ML-DSA, the fixed LMS fee-hash operation, the `c7[18]` import context and
 both dedicated and generic Falcon paths. Version controls prove refusal at 15 and
-acceptance at 16. The candidate configuration below still uses version 18 because
-it also requires the ConfigParam 48 AUTH policy, which is mandatory from
-version 17; that requirement is a configuration rule, not an instruction gate.
+acceptance at 16. New ordinary and Quantum candidate Genesis configurations
+also use version 16, including mandatory ConfigParam 48 and its explicit AUTH
+namespace. Historical version-18 measurements below remain evidence of the
+original measured configuration; they are not relabelled as version-16 results.
 
 ## Selected generated-config transaction evidence
 

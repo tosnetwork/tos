@@ -257,7 +257,7 @@ void vm_test() {
   auto code =
       must(fift::compile_asm("DROP c4 PUSH CTOS 32 LDU DROP DUP INC NEWC 32 STU ENDC c4 POP"), "mutable test code");
   auto data = vm::CellBuilder{}.store_long(7, 32).finalize_novm();
-  auto state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17, true,
+  auto state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16, true,
                                                  {}, {}, code, data);
   auto snapshot = must(cg::Snapshot::create(state.id, state.root), "VM snapshot");
   auto account = must(snapshot->account(filled(0x77)), "VM account");
@@ -293,7 +293,7 @@ void vm_test() {
   check("snapshot-other-height",
         other.is_error() && other.error().message() == "control getter snapshot block identity mismatch");
 
-  auto changed = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17, true,
+  auto changed = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16, true,
                                                    {}, {}, code, vm::CellBuilder{}.store_long(9, 32).finalize_novm());
   auto changed_snapshot = must(cg::Snapshot::create(changed.id, changed.root), "other snapshot");
   cg::GasBudget other_budget{cg::kElectorStateGasLimit};
@@ -305,7 +305,7 @@ void vm_test() {
   check("vm-mixed-snapshot-refused",
         mixed.is_error() && mixed.message() == "control getter account belongs to another snapshot" && !mixed_decoded);
   auto spin = must(fift::compile_asm("DROP <{ 0 PUSHINT DROP }> PUSHCONT AGAIN"), "gas exhaustion code");
-  auto spun = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17, true,
+  auto spun = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16, true,
                                                 {}, {}, spin, data);
   auto spun_snapshot = must(cg::Snapshot::create(spun.id, spun.root), "gas snapshot");
   auto spun_account = must(spun_snapshot->account(filled(0x77)), "gas account");
@@ -341,7 +341,7 @@ void context_test() {
   auto library = must(fift::compile_asm("DROP 17 PUSHINT"), "library code");
   auto referenced = library_reference(library);
   for (bool available : {false, true}) {
-    auto fixture = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17,
+    auto fixture = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16,
                                                      available, {}, {}, referenced);
     auto snap = must(cg::Snapshot::create(fixture.id, fixture.root), "library snapshot");
     auto guest = must(snap->account(filled(0x77)), "library account");
@@ -362,7 +362,7 @@ void context_test() {
                              "} PUSHSLICE "
                              "0xd75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a PUSHINT CHKSIGNU"),
            "signature test code");
-  auto fixture = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17, true,
+  auto fixture = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16, true,
                                                    {}, {}, signing);
   auto snap = must(cg::Snapshot::create(fixture.id, fixture.root), "signature snapshot");
   auto guest = must(snap->account(filled(0x77)), "signature account");
@@ -374,7 +374,7 @@ void context_test() {
   check("signature-run", status.is_ok());
 
   auto failing = must(fift::compile_asm("DROP 11 THROW"), "failed getter code");
-  auto failed = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17, true,
+  auto failed = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16, true,
                                                   {}, {}, failing);
   auto failed_snapshot = must(cg::Snapshot::create(failed.id, failed.root), "failed getter snapshot");
   auto failed_account = must(failed_snapshot->account(filled(0x77)), "failed getter account");
@@ -388,7 +388,7 @@ void context_test() {
   check("vm-exit-refused", status.is_error() && status.message() == "control getter VM exit 11" && !accepted);
   // Sending an action only changes the private VM's c5; it is never executed.
   auto sending = must(fift::compile_asm("DROP NEWC ENDC 0 PUSHINT SENDRAWMSG 7 PUSHINT"), "action test code");
-  auto sent = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17, true,
+  auto sent = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16, true,
                                                 {}, {}, sending);
   auto sent_snapshot = must(cg::Snapshot::create(sent.id, sent.root), "action snapshot");
   auto sent_account = must(sent_snapshot->account(filled(0x77)), "action account");

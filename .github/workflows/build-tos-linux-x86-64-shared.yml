@@ -14,6 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Explicit public namespace for disposable CI networks.
+  TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
   REGISTRY: ghcr.io
 
 permissions:

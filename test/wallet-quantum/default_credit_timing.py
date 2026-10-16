@@ -54,7 +54,7 @@ def main():
         str(args.driver.resolve()),
         str(fixtures / "config.boc"),
         str(fixtures / "scenarios.tsv"),
-        "17",
+        "16",
         "--details",
     ]
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)

@@ -91,7 +91,7 @@ def main():
                 == request["global_id"]
             )
             assert signed["route"]["network"] == genesis["input"]["network"] == request["network"]
-            assert request["vm_version"] == 18
+            assert request["vm_version"] == 16
     assert signature_count == 6, "missing persistent native signing evidence"
     assert args.config.read_bytes() == raw
     report = dict(

@@ -2,7 +2,7 @@
 
 ConfigParam 48 is the mandatory policy for Quantum PRIMARY authorization. This
 implementation now covers governance installation and the native node configuration
-validity/transition predicates. Explicit version-17 genesis construction and trusted-state admission are now
+validity/transition predicates. Explicit version-16 genesis construction and trusted-state admission are now
 implemented. Full receiver/module integration and shard-propagation evidence
 remain required before release.
 
@@ -39,7 +39,7 @@ view; a global instantaneous cutoff is not claimed.
 
 Native `valid_config_data` checks the record and membership; both collator and
 validator use `valid_config_transition` to enforce monotonic replacement. Version
-16 configurations may omit the record. Experimental version 17 requires it; once
+15 and earlier configurations may omit the record. Version 16 requires it; once
 present, the record and mandatory/critical memberships survive a version rollback.
 An unchanged policy is valid across blocks; governance replacement still requires
 a strictly increasing sequence. A newly installed record starts at sequence zero.
@@ -71,12 +71,19 @@ is a parser fixture; this test does not certify validator admission or launch.
 
 ## Genesis and trusted snapshots
 
-The default canonical mainnet template remains version 16. A candidate wrapper
-can define an explicit `quantum-network-tag` uint256 before including
-`gen-zerostate.fif`; this selects version 17 and installs the v1 record in both
-mandatory and critical parameter sets. The testing generator requires
-`NetworkConfig(global_version=17, auth_network_tag=<32 public bytes>)` and refuses
-missing, malformed or version-inappropriate tags before creating custody files.
+The canonical mainnet template and the admission candidate both use version 16.
+A wrapper must define an explicit `quantum-network-tag` uint256 before including
+`gen-zerostate.fif`; missing tags are rejected before any custody files are
+created. Every profile installs the v1 record in the mandatory and critical
+parameter sets. The testing generator requires
+`NetworkConfig(global_version=16, auth_network_tag=<32 public bytes>)`, or an
+explicit `TOS_AUTH_NETWORK_TAG` environment value (64 hexadecimal digits).
+The localnet launcher accepts `--auth-network-tag` or the same environment
+variable for fresh ordinary networks. No implicit namespace is assigned.
+Only `--quantum-admission-candidate` keeps its frozen `0x42` namespace.
+Existing saved networks are not rewritten; historical version-16 states without
+Param 48 require their original binary or regeneration under this baseline.
+
 The shared Fift builder emits sequence zero, no retired bit and no scheduled date.
 The namespace is an input, not a hash of the state being constructed.
 

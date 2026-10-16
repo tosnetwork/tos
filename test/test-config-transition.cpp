@@ -220,7 +220,7 @@ td::Ref<vm::Cell> auth_policy_cell(td::uint64 sequence = 0, int retired = 0, td:
   return cb.finalize();
 }
 
-td::Ref<vm::Cell> auth_config(td::Ref<vm::Cell> policy, int version = 17, bool mandatory = true, bool critical = true) {
+td::Ref<vm::Cell> auth_config(td::Ref<vm::Cell> policy, int version = 16, bool mandatory = true, bool critical = true) {
   vm::Dictionary cfg{make_config({WorkchainSpec{}}), 32};
   vm::CellBuilder ver;
   CHECK(ver.store_long_bool(0xc4, 8) && ver.store_long_bool(version, 32) && ver.store_long_bool(0, 64));
@@ -241,12 +241,12 @@ td::Ref<vm::Cell> auth_config(td::Ref<vm::Cell> policy, int version = 17, bool m
 }  // namespace
 
 TEST(AuthPolicy, mandatory_version_and_membership) {
-  ASSERT_TRUE(block::validate_auth_policy_config(auth_config({}, 16)).is_ok());
-  ASSERT_TRUE(block::validate_auth_policy_config(auth_config({}, 17)).is_error());
+  ASSERT_TRUE(block::validate_auth_policy_config(auth_config({}, 15)).is_ok());
+  ASSERT_TRUE(block::validate_auth_policy_config(auth_config({}, 16)).is_error());
   ASSERT_TRUE(block::validate_auth_policy_config(auth_config(auth_policy_cell())).is_ok());
-  ASSERT_TRUE(block::validate_auth_policy_config(auth_config(auth_policy_cell(), 17, false)).is_error());
   ASSERT_TRUE(block::validate_auth_policy_config(auth_config(auth_policy_cell(), 16, false)).is_error());
-  ASSERT_TRUE(block::validate_auth_policy_config(auth_config(auth_policy_cell(), 17, true, false)).is_error());
+  ASSERT_TRUE(block::validate_auth_policy_config(auth_config(auth_policy_cell(), 15, false)).is_error());
+  ASSERT_TRUE(block::validate_auth_policy_config(auth_config(auth_policy_cell(), 16, true, false)).is_error());
 }
 
 TEST(AuthPolicy, absorbing_retirement_and_sequence) {
@@ -258,7 +258,7 @@ TEST(AuthPolicy, absorbing_retirement_and_sequence) {
   ASSERT_TRUE(block::valid_config_transition(retired, auth_config(auth_policy_cell(1, 2, 100))).is_error());
   ASSERT_TRUE(block::valid_config_transition(retired, auth_config(auth_policy_cell(0, 2))).is_error());
   ASSERT_TRUE(block::valid_config_transition(retired, auth_config({})).is_error());
-  ASSERT_TRUE(block::valid_config_transition(retired, auth_config({}, 16)).is_error());
+  ASSERT_TRUE(block::valid_config_transition(retired, auth_config({}, 15)).is_error());
   ASSERT_TRUE(block::valid_config_transition(initial, auth_config(auth_policy_cell(1, 0, 0, 124))).is_error());
 }
 
@@ -276,7 +276,7 @@ TEST(AuthPolicy, deadlines_cannot_disappear_or_move_later) {
 TEST(AuthPolicy, strict_shape_and_initial_sequence) {
   ASSERT_TRUE(block::unpack_auth_policy(auth_policy_cell(0, 4)).is_error());
   ASSERT_TRUE(block::unpack_auth_policy(vm::CellBuilder{}.finalize()).is_error());
-  auto legacy = auth_config({}, 16);
+  auto legacy = auth_config({}, 15);
   expect_ok(block::valid_config_transition(legacy, auth_config(auth_policy_cell())));
   ASSERT_TRUE(block::valid_config_transition(legacy, auth_config(auth_policy_cell(1))).is_error());
   auto high = auth_config(auth_policy_cell(~td::uint64{0}, 2));

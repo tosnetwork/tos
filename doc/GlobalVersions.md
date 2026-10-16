@@ -359,10 +359,12 @@ they do not authenticate an external-message import. This applies to emulator,
 LiteServer, control and proof-verification getter contexts. Earlier versions
 retain their original tuple layout.
 
-Authorization-policy configuration retains a separate version-17 requirement:
+Authorization-policy configuration uses the same version-16 baseline:
 ConfigParam 48 must be present and valid, and must belong to both the mandatory
-and critical parameter lists (ConfigParams 9 and 10). A version-16 configuration
-must satisfy this requirement before upgrading to version 17.
+and critical parameter lists (ConfigParams 9 and 10). Fresh Genesis generation
+requires an explicit 32-byte AUTH namespace, including ordinary test networks.
+The Quantum admission candidate retains its explicit namespace and fee profile
+without raising the protocol version above 16.
 
 This changes execution under version 16: existing development-chain history
 requires the original binary, or a fresh genesis for the consolidated baseline.

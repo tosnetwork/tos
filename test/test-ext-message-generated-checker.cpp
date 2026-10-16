@@ -85,7 +85,7 @@ GeneratedStates generated_states() {
   auto initial_config = block::ConfigInfo::extract_config(masterchain_root, initial_id, 0xFFFF);
   ASSERT_TRUE(initial_config.is_ok());
   const td::Bits256 config_root{initial_config.ok()->get_root_cell()->get_hash().bits()};
-  EXPECT_EQ(initial_config.ok()->get_global_version(), 18);
+  EXPECT_EQ(initial_config.ok()->get_global_version(), 16);
   auto basechain_prices = initial_config.ok()->get_gas_limits_prices(false);
   auto masterchain_prices = initial_config.ok()->get_gas_limits_prices(true);
   ASSERT_TRUE(basechain_prices.is_ok() && masterchain_prices.is_ok());

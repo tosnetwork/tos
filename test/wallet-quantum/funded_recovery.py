@@ -64,7 +64,7 @@ def _run(
     migration_signer=None,
     network=123,
     global_id=42,
-    vm_version=17,
+    vm_version=16,
     auth_fee_amount=5_000_000_000,
     pop_fee_amount=5_000_000_000,
     prepare_fee_amount=50_000_000_000,

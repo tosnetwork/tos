@@ -38,7 +38,7 @@ def execute_lock(submission, report, codes, data, addresses, policy, output, lab
         return shared.make_dict(entries, 32)
 
     with patch.object(native, "config", config):
-        emu = native.Emulator(global_version=17)
+        emu = native.Emulator(global_version=16)
     try:
         module_before = native.active_account(addresses["module"], codes["module"], data["module"])
         incoming = native.internal((0, 987), addresses["module"], submission, value=10_000_000_000)

@@ -205,9 +205,10 @@
       "job": "native",
       "name": "Actual genesis construction and failure controls",
       "original_sha256": "a08fe16df4069c85423a3eab788da5e28226997d638e4ee4c861c26ba760e37c",
-      "run_sha256": "a08fe16df4069c85423a3eab788da5e28226997d638e4ee4c861c26ba760e37c",
+      "run_sha256": "f65cf24022044b8abe2e161df1d7e9927d6049d84e18850de0a8989c2d7d9c1a",
       "original_if": null,
-      "deduplicated": true
+      "deduplicated": true,
+      "change_reason": "Version-16 AUTH baseline: retain legacy version-15 coverage and include ordinary Genesis namespace controls."
     },
     {
       "workflow": "build-tos-linux-x86-64-shared.yml",

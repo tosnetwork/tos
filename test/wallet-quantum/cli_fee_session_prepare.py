@@ -219,7 +219,7 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
     original_config = native.config
 
     def config(credit):
-        entries = shared.read_dict(original_config(17), 32)
+        entries = shared.read_dict(original_config(16), 32)
         price = entries[21].refs[0]
         prefix = 136 if int(price.bits[:8], 2) == 0xD1 else 0
         offset = prefix + 8 + 64 * 3
@@ -239,9 +239,9 @@ def check_preparation(args, root, request, journal, payload, codes, data, addres
 
     message = from_boc((output / "message.boc").read_bytes())
     with patch.object(native, "config", lambda *a, **k: config(10000)):
-        limited = native.Emulator(global_version=17)
+        limited = native.Emulator(global_version=16)
     with patch.object(native, "config", lambda *a, **k: config(20000)):
-        emu = native.Emulator(global_version=17)
+        emu = native.Emulator(global_version=16)
     try:
         rejected = limited.send(observed("vault"), message)
         assert not rejected["success"] and rejected.get("vm_exit_code") == -14

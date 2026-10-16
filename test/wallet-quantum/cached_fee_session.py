@@ -19,7 +19,7 @@ class CachedFeeSession:
         successor=False,
         global_id=42,
         network=123,
-        vm_version=17,
+        vm_version=16,
     ):
         out.mkdir(parents=True, exist_ok=True)
         journal = out / "journal"

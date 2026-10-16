@@ -27,12 +27,12 @@
   },
   "compiler_binaries": {
     "FIFT_PATH": {
-      "bytes": 7483864,
-      "sha256": "4e2e3973bd8ac1f3b302743f344b8a2526f74d0235e0cf0f7d15718d119ae66d"
+      "bytes": 7484008,
+      "sha256": "e8f83ea7e1a44341f2473edf4842f299ab0459cd3e41a7f248974ef2c42e5ba0"
     },
     "FUNC_PATH": {
-      "bytes": 1717208,
-      "sha256": "17de335d53a3ff689ddd90a75e269eb91531e76ecc3b8d1243dca512a41db27c"
+      "bytes": 1717352,
+      "sha256": "c2e9bc585e7f42e160fbbe8f5b23dffd32979ed587a7b9f0669844e1a10368b0"
     }
   },
   "config": {
@@ -51,8 +51,8 @@
     },
     "global_id": 1,
     "network": "4242424242424242424242424242424242424242424242424242424242424242",
-    "sha256": "4eb8fd3ceecd7d72f04c7098642a25557e9f4a51c9ba784ae641a65506182b25",
-    "version": 18
+    "sha256": "4eb417375f201341b5d59ee7a0ed1d03364ed8c1047de6b75e3127851504fdf8",
+    "version": 16
   },
   "files": {
     "abi/contract-constants.json": {
@@ -73,7 +73,7 @@
     },
     "config.boc": {
       "bytes": 7475,
-      "sha256": "4eb8fd3ceecd7d72f04c7098642a25557e9f4a51c9ba784ae641a65506182b25"
+      "sha256": "4eb417375f201341b5d59ee7a0ed1d03364ed8c1047de6b75e3127851504fdf8"
     },
     "repository/LICENSE": {
       "bytes": 35149,
@@ -180,16 +180,16 @@
       "sha256": "ec278a2c0027c15a4d954b6c9e624b7a4fcc2531b53c76228fa0ace04cb55ccf"
     },
     "repository/doc/auth-policy-v1.md": {
-      "bytes": 5894,
-      "sha256": "c87c4f0e17e770271d803108ee7f557d57c4d6e12ad58b44bb964b1ff21e03af"
+      "bytes": 6321,
+      "sha256": "7ff42679049ae82911462d1cb8bfac2d925c6f5876d55c8e0a0ea78d8387003a"
     },
     "repository/doc/tvm-lms-fee-hash.md": {
       "bytes": 5962,
       "sha256": "f0c21393926e7d22b580df5db627a1ab6c84b109889c3db6c2b20b0da7824d2b"
     },
     "repository/scripts/build-wallet-quantum-bundle.py": {
-      "bytes": 13186,
-      "sha256": "b2ee8852332a803fb17a414ea8ed4ef6eed60aa5012dfe881ee6cb30882b4ab1"
+      "bytes": 13337,
+      "sha256": "023e7b92d31683f28dd4d18e237851880c87a8aa9e5ea9d44a0f8e92c338771f"
     },
     "repository/test/auth-extensions/cells.py": {
       "bytes": 7222,
@@ -365,7 +365,7 @@
     "final-head CI and activation approval"
   ],
   "scope": "Build or reproduce a reviewable Quantum candidate from an explicit chain config.\n\nThe bundle contains ordinary, self-contained code, its exact source and public\nwire/crypto/KDF vectors. It is not a reviewed release, a wallet enrollment, a\ncustody backup, or authorization to activate the candidate configuration.\n",
-  "source_revision": "0d2bce93eae0ab368a9e5a833c714abf0a3d1a00",
+  "source_revision": "97e7259c7e43abcc6a50d9ad0cdabc7de68ffbc0",
   "status": "unapproved-review-candidate",
   "tracked_working_tree_changes": true
 }

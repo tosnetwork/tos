@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the real checker on canonical version-18 configuration and funded probes.
+"""Run the real checker on canonical version-16 configuration and funded probes.
 
 Only --controls mutates sources. Run that mode after every other build has
 stopped; each production source is restored and rebuilt in finally.

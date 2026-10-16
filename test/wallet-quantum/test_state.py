@@ -78,7 +78,7 @@ def state(
 
 def run(code, pinned, candidate, expected):
     initial = Cell().uint(int.from_bytes(pinned.hash, "big"), 256)
-    e = Emulator(17)
+    e = Emulator(16)
     try:
         result = e.send(
             active_account((0, 100), code, initial),

@@ -413,7 +413,7 @@ def main():
         sources_restored=True,
         scope=(
             "Actual CLI and native full transactions with public mnemonic fixtures, mocked "
-            "authenticated account inputs, diagnostic gas credit 20000 at version 17 and "
+            "authenticated account inputs, diagnostic gas credit 20000 at version 16 and "
             "a process-local fixture clock. No live proof acquisition, broadcast/finality, "
             "cross-device journal revocation or unknown fee-key history claim."
         ),

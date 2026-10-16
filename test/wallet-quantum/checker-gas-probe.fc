@@ -15,7 +15,7 @@ int credit(int parameter) inline {
 () recv_external(slice body) impure {
   slice version = config_param(8).begin_parse();
   throw_unless(902, version~load_uint(8) == 0xc4);
-  throw_unless(903, version~load_uint(32) == 18);
+  throw_unless(903, version~load_uint(32) == 16);
   throw_unless(904, credit(21) == 20000);
   throw_unless(905, credit(20) == 10000);
 

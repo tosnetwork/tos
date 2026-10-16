@@ -55,8 +55,10 @@ fn repo_root() -> std::path::PathBuf {
 /// The zerostate is generated rather than fixtured, so the elector and the configuration
 /// these tests run against are the ones the chain would launch with.
 fn zerostate() -> ShardStateUnsplit {
-    generate_zerostate_state(repo_root().join("crypto/smartcont/gen-zerostate.fif"))
-        .expect("zerostate generation needs build/crypto/create-state and the fift libraries")
+    generate_zerostate_state(
+        repo_root().join("test/tostester/tests/tostester/genesis-with-test-auth.fif"),
+    )
+    .expect("zerostate generation needs build/crypto/create-state and the fift libraries")
 }
 
 fn configuration(state: &ShardStateUnsplit) -> ConfigParams {

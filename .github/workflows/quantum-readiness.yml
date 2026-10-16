@@ -40,6 +40,7 @@ jobs:
     env:
       TOS_ROOT: ${{ github.workspace }}
       TOS_BUILD_DIR: ${{ github.workspace }}/build
+      TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
       PYTHONPATH: ${{ github.workspace }}/test/tostester/src
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -86,7 +87,7 @@ jobs:
           uv run python -m pytest -q test/tostester/tests/tostester/test_zerostate_auth_policy.py \
             test/tostester/tests/tostester/test_zerostate_supply.py \
             test/tostester/tests/tostester/test_zerostate_fee_schedule.py \
-            -k 'auth_policy or initial_retirement or missing_policy or version16_retains or bad_namespace or admission_candidate or deployment_schedule or test_schedule' \
+            -k 'auth_policy or initial_retirement or missing_policy or version15_retains or environment_namespace or genesis_requires_namespace or bad_namespace or admission_candidate or deployment_schedule or test_schedule' \
             > "$RUNNER_TEMP/quantum-evidence/genesis.log" 2>&1
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

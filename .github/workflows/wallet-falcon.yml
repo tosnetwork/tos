@@ -135,6 +135,7 @@ jobs:
           falcon_network_dir="$RUNNER_TEMP/falcon-devnet"
           setsid env PYTHONUNBUFFERED=1 PYTHONPATH="$PWD/test/tostester/src" \
             TOS_BUILD_DIR="$PWD/build" TOS_GLOBAL_VERSION=16 \
+            TOS_AUTH_NETWORK_TAG="4646464646464646464646464646464646464646464646464646464646464646" \
             python scripts/localnet-jsonrpc.py --validators 1 --boot-timeout 180 \
             --rpc 127.0.0.1:28545 --control 127.0.0.1:28745 --base-port 29000 \
             --workdir "$falcon_network_dir" > "$RUNNER_TEMP/falcon-network.log" 2>&1 &

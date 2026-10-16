@@ -55,6 +55,15 @@ class SimplexConsensusConfig:
     use_quic: bool = True
 
 
+def _auth_namespace_from_environment() -> bytes | None:
+    value = os.environ.get("TOS_AUTH_NETWORK_TAG")
+    if value is None:
+        return None
+    if len(value) != 64 or any(c not in "0123456789abcdefABCDEF" for c in value):
+        raise ValueError("AUTH network tag must be exactly 64 hexadecimal digits")
+    return bytes.fromhex(value)
+
+
 @dataclass
 class NetworkConfig:
     # Explicit immutable inputs for reproducible Genesis generation. Both must
@@ -68,10 +77,10 @@ class NetworkConfig:
     monitor_min_split: int = 0
     split: int = 0
     global_version: int = 16
-    # Mandatory public namespace for the experimental Quantum activation profile.
-    # Deliberately no default: it must not depend on a generated genesis hash.
-    auth_network_tag: bytes | None = None
-    # Explicit version-18 admission candidate; requires the deployment fee table.
+    # Mandatory public namespace for every version-16 Genesis. No implicit tag;
+    # the test harness also accepts an explicitly supplied environment value.
+    auth_network_tag: bytes | None = field(default_factory=_auth_namespace_from_environment)
+    # Explicit version-16 admission candidate; requires the deployment fee table.
     quantum_admission_candidate: bool = False
     # Test-only funded basechain genesis; allocation is deducted from the faucet.
     basechain_fixture: bytes | None = field(default=None, repr=False)
@@ -524,13 +533,14 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
     if type(config.quantum_admission_candidate) is not bool:
         raise ValueError("Quantum admission candidate flag must be boolean")
     if config.quantum_admission_candidate and (
-        config.global_version != 18
+        config.global_version != 16
         or not config.deployment_fee_schedule
         or not isinstance(config.auth_network_tag, bytes)
         or len(config.auth_network_tag) != 32
+        or config.auth_network_tag != bytes.fromhex("42" * 32)
     ):
         raise ValueError(
-            "Quantum admission candidate requires version 18, deployment fees and a 32-byte AUTH network tag"
+            "Quantum admission candidate requires version 16, deployment fees and the frozen 0x42 AUTH network tag"
         )
     if config.deployment_fee_schedule:
         credit = 20000 if config.quantum_admission_candidate else 10000
@@ -610,14 +620,14 @@ def create_zerostate(
     pq_validators: list[PqInitialValidator] | None = None,
 ) -> Zerostate:
     fee_schedule = fee_schedule_for(config)
-    if config.global_version >= 17:
+    if config.global_version >= 16:
         if not isinstance(config.auth_network_tag, bytes) or len(config.auth_network_tag) != 32:
-            raise ValueError("version 17 Genesis requires an explicit 32-byte AUTH network tag")
+            raise ValueError("version 16 Genesis requires an explicit 32-byte AUTH network tag")
         auth_policy_param = f"0x{config.auth_network_tag.hex()} config.auth_policy!"
         auth_policy_membership = "48"
     else:
         if config.auth_network_tag is not None:
-            raise ValueError("AUTH network tag requires Genesis version 17 or newer")
+            raise ValueError("AUTH network tag requires Genesis version 16 or newer")
         auth_policy_param = ""
         auth_policy_membership = ""
     fixed_time = config.genesis_time

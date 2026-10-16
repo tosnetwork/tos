@@ -44,7 +44,7 @@ def main():
             str(build / "crypto/create-state"),
             "-I",
             include,
-            str(source / "crypto/smartcont/gen-zerostate.fif"),
+            str(source / "test/tostester/tests/tostester/genesis-with-test-auth.fif"),
         ],
         cwd=directory,
         env=environment,

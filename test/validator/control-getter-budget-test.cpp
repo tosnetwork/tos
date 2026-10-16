@@ -22,7 +22,7 @@ struct Execution {
 };
 
 Execution prepare(const Elector& data) {
-  auto state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17, true,
+  auto state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16, true,
                                                  join(data));
   auto snapshot = must(cg::Snapshot::create(state.id, state.root), "production snapshot");
   auto account = must(snapshot->account(filled(0x33)), "production elector account");
@@ -204,7 +204,7 @@ int main(int argc, char** argv) {
     for (int voters : {0, 21}) {
       for (int count : {0, 62, 63, 200, 512, 4096}) {
         auto data = config_proposals(count, deep, voters);
-        auto state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17,
+        auto state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16,
                                                        true, {}, data);
         auto snapshot = must(cg::Snapshot::create(state.id, state.root), "proposal snapshot");
         auto account = must(snapshot->account(getter_fixture::filled(0x55)), "proposal account");
@@ -269,7 +269,7 @@ int main(int argc, char** argv) {
 
   // A successful VM result above the count bound is still refused as a whole.
   auto over_data = config_proposals(4097, false, 0);
-  auto over_state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17,
+  auto over_state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16,
                                                       true, {}, over_data);
   auto over_snapshot = must(cg::Snapshot::create(over_state.id, over_state.root), "count boundary snapshot");
   auto over_account = must(over_snapshot->account(getter_fixture::filled(0x55)), "count boundary account");
@@ -296,7 +296,7 @@ int main(int argc, char** argv) {
   int high = 8192;
   auto gas_edge = [&](int count) {
     auto data = config_proposals(count, false, 0);
-    auto state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 17, true,
+    auto state = control_fixture::production_build(zero_path, fixture_path, fixture_path + "/config-code.boc", 16, true,
                                                    {}, data);
     auto snapshot = must(cg::Snapshot::create(state.id, state.root), "gas edge snapshot");
     auto account = must(snapshot->account(getter_fixture::filled(0x55)), "gas edge account");

@@ -77,7 +77,7 @@ def main():
             "native-fallback",
             "test/auth-extensions/native.py",
             "configuration.b64(), vm_log_verbosity",
-            "config(18).b64(), vm_log_verbosity",
+            "config(16).b64(), vm_log_verbosity",
             "synthesized configuration forbidden",
         ),
         (

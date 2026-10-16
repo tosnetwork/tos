@@ -59,7 +59,7 @@ cell fixture_special(builder b, int special) asm "ENDXC";
         for label, variant in variants.items():
             (work / "driver.fc").write_text(variant + driver)
             code = native.compile_contract(str(work / "driver.fc"), out / f"{label}.boc")
-            emulator = native.Emulator(17)
+            emulator = native.Emulator(16)
             try:
                 for name, fixture, candidate, output_bits, rejected_by in (
                     ("ordinary", 0, Cell().uint(123, 16), 16, None),

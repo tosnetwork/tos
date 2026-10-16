@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--driver", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
-        "--chain-config", type=Path, help="Use the unchanged generated version-18 ConfigParams"
+        "--chain-config", type=Path, help="Use the unchanged generated version-16 ConfigParams"
     )
     args = parser.parse_args()
     out = args.output.resolve()
@@ -72,7 +72,7 @@ def main():
         )
         module_results = json.loads((out / "native/results.json").read_text())
         assert module_results["chain_config_sha256"] == hashlib.sha256(raw).hexdigest()
-        assert module_results["chain_version"] == 18
+        assert module_results["chain_version"] == 16
     else:
         raw = None
         root = from_boc(
@@ -93,7 +93,7 @@ def main():
                 str(args.driver.resolve()),
                 str(folder / "config.boc"),
                 str(folder / "scenarios.tsv"),
-                "18" if args.chain_config else "17",
+                "16",
                 "--details",
             ],
             capture_output=True,

@@ -82,7 +82,7 @@ td::Status validate_auth_policy_config(td::Ref<vm::Cell> config) {
       if (version.size() != 104 || version.size_refs() != 0 || version.fetch_ulong(8) != 0xc4) {
         return invalid();
       }
-      required = version.fetch_ulong(32) >= 17;
+      required = version.fetch_ulong(32) >= 16;
     }
     if (value.is_null() && !required) {
       return td::Status::OK();

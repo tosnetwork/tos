@@ -50,7 +50,7 @@ class LocalnetAuthNamespaceTests(unittest.TestCase):
         self.localnet.configure_quantum_candidate(config, None)
         self.assertEqual(
             (config.global_version, config.global_id, config.auth_network_tag),
-            (18, 1, bytes.fromhex("42" * 32)),
+            (16, 1, bytes.fromhex("42" * 32)),
         )
         self.assertTrue(config.deployment_fee_schedule)
         self.assertTrue(config.quantum_admission_candidate)
@@ -76,7 +76,7 @@ class LocalnetAuthNamespaceTests(unittest.TestCase):
             self.assertRaises(ReachedNodeCreation),
         ):
             runpy.run_path(str(script), run_name="__main__")
-        self.assertEqual(network.config.global_version, 18)
+        self.assertEqual(network.config.global_version, 16)
         self.assertEqual(network.config.global_id, 1)
         self.assertEqual(network.config.auth_network_tag, bytes.fromhex("42" * 32))
         self.assertTrue(network.config.deployment_fee_schedule)
@@ -173,12 +173,35 @@ class LocalnetAuthNamespaceTests(unittest.TestCase):
                     "the launcher entrypoint must forward the explicit namespace",
                 )
 
-    def test_default_namespace_and_version_remain_unactivated(self):
-        args = self.parsed()
-        self.assertIsNone(args.auth_network_tag)
-        config = self.capture_config(args.auth_network_tag)
-        self.assertEqual(config.global_version, 16)
-        self.assertIsNone(config.auth_network_tag)
+    def test_default_missing_namespace_refused_before_node_creation(self):
+        self.assertIsNone(self.parsed().auth_network_tag)
+        with self.assertRaisesRegex(ValueError, "requires an explicit 32-byte AUTH network tag"):
+            self.capture_config(None)
+
+    def test_missing_namespace_guard_deletion_is_detected(self):
+        source = Path(self.localnet.__file__).read_text()
+        guard = "        and version >= 16\n"
+        self.assertEqual(source.count(guard), 1)
+
+        def check_boundary():
+            result = unittest.TestResult()
+            case = type(self)("test_default_missing_namespace_refused_before_node_creation")
+            case.run(result)
+            return result
+
+        self.assertTrue(check_boundary().wasSuccessful())
+        try:
+            # Keep module globals shared with the mock Network factory, so this
+            # control can never reach a real node even when the guard is gone.
+            mutant = source.replace(guard, "        and False\n")
+            exec(compile(mutant, self.localnet.__file__, "exec"), self.localnet.__dict__)
+            result = check_boundary()
+            self.assertFalse(result.errors)
+            self.assertEqual(len(result.failures), 1)
+            self.assertIn("ValueError not raised", result.failures[0][1])
+        finally:
+            exec(compile(source, self.localnet.__file__, "exec"), self.localnet.__dict__)
+        self.assertTrue(check_boundary().wasSuccessful())
 
     def test_cli_and_environment_reach_config_before_any_node_is_created(self):
         for argv, env in [
@@ -218,13 +241,12 @@ class LocalnetAuthNamespaceTests(unittest.TestCase):
                     )
 
     def test_version19_missing_namespace_still_fails_the_real_genesis_guard(self):
-        config = self.capture_config(self.parsed().auth_network_tag, 19)
         with self.assertRaisesRegex(ValueError, "requires an explicit 32-byte AUTH network tag"):
-            create_zerostate(None, Path("unused"), config, [])
+            self.capture_config(None, 19)
 
-    def test_version16_explicit_namespace_is_not_silently_activated(self):
-        config = self.capture_config(self.parsed(["--auth-network-tag", TAG]).auth_network_tag)
-        with self.assertRaisesRegex(ValueError, "requires Genesis version 17 or newer"):
+    def test_version15_explicit_namespace_is_rejected(self):
+        config = self.capture_config(self.parsed(["--auth-network-tag", TAG]).auth_network_tag, 15)
+        with self.assertRaisesRegex(ValueError, "requires Genesis version 16 or newer"):
             create_zerostate(None, Path("unused"), config, [])
 
     def test_reuse_refuses_to_imply_the_existing_namespace_was_changed(self):
