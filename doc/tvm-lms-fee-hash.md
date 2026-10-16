@@ -1,12 +1,12 @@
-# Experimental version-17 rescue-fee admission
+# Rescue-fee admission at version 16
 
-This branch adds an experimental executor/VM interface. Development genesis remains
-version 16. Neither this interface nor the contextual vault is production activated.
+The executor import context and `LMSCHECKFEEHASH` are enabled at global version 16,
+the genesis version. The contextual vault below remains an experimental contract.
 The existing suite-4 instruction and its price are unchanged.
 
 ## Authenticated import context
 
-For global version >=17, transaction execution appends `c7[18]`:
+For global version >=16, transaction execution appends `c7[18]`:
 
 ```
 null | [1, incoming_message_hash:uint256, cells:uint64, bits:uint64]
@@ -21,7 +21,7 @@ continue to exclude the root as before. The existing traversal supplies the coun
 no VM cell traversal is subsidized or bypassed.
 
 Internal messages, tick/tock, getters, and compute-only contexts have null here.
-Version <=16 does not append the field. Low-level callers that explicitly construct
+Versions <=15 do not append the field. Low-level callers that explicitly construct
 a custom c7 are responsible for its contents; they do not establish transaction
 admission evidence. Contracts cannot treat a simulated custom c7 as proof of import.
 
@@ -31,7 +31,7 @@ admission evidence. Contracts cannot treat a simulated custom c7 as proof of imp
 (hash:uint256 leaf:uint20 signature:Cell public_key:Cell -- valid:Bool)
 ```
 
-Version >=17 only. This fixes the existing suite-4 profile to one-level HSS,
+Version >=16 only. This fixes the existing suite-4 profile to one-level HSS,
 LMS_SHA256_M32_H20 / LMOTS_SHA256_N32_W4, a 32-byte big-endian message, and empty
 context. It accepts the same canonical ordinary byte chains as the generic verifier.
 It additionally requires the verified HSS signature's q to equal `leaf`.
@@ -44,7 +44,7 @@ q parsing are eliminated; cryptographic work and credit are not discounted.
 A well-formed cryptographic mismatch, including leaf mismatch, returns false.
 Malformed/unsupported profile or byte chain throws cell underflow (9). Bad operand
 type throws 7; invalid finite hash/leaf range throws 5; stack underflow throws 2.
-Non-finite integers retain ordinary VM integer-overflow handling. Before version 17
+Non-finite integers retain ordinary VM integer-overflow handling. Before version 16
 the instruction throws invalid opcode (6). Ordinary gas exhaustion remains -14.
 
 ## Contextual vault wire format

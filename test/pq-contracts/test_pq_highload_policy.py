@@ -119,7 +119,7 @@ def size_limits43(tag, count):
 def configured_limit(tag, count=2):
     original = native.config
 
-    def override(global_version=6, max_msg_cells=None):
+    def override(global_version=native.CURRENT_GLOBAL_VERSION, max_msg_cells=None):
         entries = pqtest.read_dict(original(global_version, max_msg_cells), 32)
         if tag is None:
             entries.pop(43, None)

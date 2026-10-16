@@ -25,6 +25,12 @@ def main():
     source = ROOT / "crypto/block/auth-policy.cpp"
     mutations = [
         (
+            "version16_required",
+            "required = version.fetch_ulong(32) >= 16;",
+            "required = version.fetch_ulong(32) >= 17;",
+            "Test_AuthPolicy_mandatory_version_and_membership",
+        ),
+        (
             "retired",
             "(next.retired & previous.retired) != previous.retired ||",
             "",

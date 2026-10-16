@@ -33,7 +33,7 @@ fn zerostate() -> ShardStateUnsplit {
             .expect("repository root above the contracts crate")
             .to_path_buf()
     });
-    generate_zerostate_state(root.join("crypto/smartcont/gen-zerostate.fif"))
+    generate_zerostate_state(root.join("test/tostester/tests/tostester/genesis-with-test-auth.fif"))
         .expect("zerostate generation needs build/crypto/create-state and the fift libraries")
 }
 

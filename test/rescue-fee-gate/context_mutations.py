@@ -38,9 +38,9 @@ def main():
         (
             "cpp_version",
             "crypto/vm/pqops.h",
-            "pq_lms_fee_hash_min_version = 17",
             "pq_lms_fee_hash_min_version = 16",
-            "version_16",
+            "pq_lms_fee_hash_min_version = 15",
+            "version_15",
         ),
         (
             "cpp_count",
@@ -59,9 +59,9 @@ def main():
         (
             "rust_version",
             "tosctl/src/vm/src/executor/pq.rs",
-            "engine.block_version() < 17",
-            "engine.block_version() < 16",
-            "version_16",
+            "const LMS_FEE_HASH_MIN_VERSION: u32 = 16;",
+            "const LMS_FEE_HASH_MIN_VERSION: u32 = 15;",
+            "version_15",
         ),
         (
             "rust_count",
@@ -118,7 +118,7 @@ from native import Emulator,from_boc,Cell
 from context_transactions import compare, normalized, replay_native
 from pathlib import Path
 p=Path(sys.argv[1]); row=next(l.split('\\t') for l in (p/'transactions.tsv').read_text().splitlines() if l.startswith('stats_ref\\t'))
-e=Emulator(17);e.lt=int(row[2])-1000000
+e=Emulator(16);e.lt=int(row[2])-1000000
 print(json.dumps(normalized(e.send(Cell().uint(0,256).uint(0,64).ref(from_boc(bytes.fromhex(row[3]))),from_boc(bytes.fromhex(row[4]))))))
 e.close()
 """
@@ -142,7 +142,7 @@ e.close()
                             str(rust_tx),
                             str(args.artifacts / "config.boc"),
                             str(args.artifacts / "transactions.tsv"),
-                            "17",
+                            "16",
                         ],
                         check=True,
                         capture_output=True,

@@ -57,7 +57,7 @@ fn admission_candidate_executor_loads_the_generated_chain_configuration() {
     let state =
         tos_sandbox::generate_zerostate_state(&wrapper).expect("generate candidate genesis");
     let config = state.read_custom().expect("masterchain extra").expect("masterchain").config;
-    assert_eq!(config.get_global_version().expect("version").version, 18);
+    assert_eq!(config.get_global_version().expect("version").version, 16);
     assert_eq!(config.gas_prices(false).expect("basechain prices").gas_credit, 20000);
     assert_eq!(config.gas_prices(true).expect("masterchain prices").gas_credit, 10000);
     if let Ok(path) = std::env::var("Quantum_ADMISSION_CONFIG_OUT") {
@@ -66,7 +66,7 @@ fn admission_candidate_executor_loads_the_generated_chain_configuration() {
     // No set_gas_credit, version replacement or fallback defaults on this path.
     let executor = tos_executor::BlockchainConfig::with_config(config.clone())
         .expect("load generated candidate configuration");
-    assert_eq!(executor.global_version(), 18);
+    assert_eq!(executor.global_version(), 16);
     for (masterchain, name) in [(false, "basechain"), (true, "masterchain")] {
         let expected = config.gas_prices(masterchain).expect("generated gas prices");
         let actual = executor.get_gas_config(masterchain);
@@ -78,9 +78,9 @@ fn admission_candidate_executor_loads_the_generated_chain_configuration() {
 /// The candidate must come from a generated, explicitly selected configuration.
 #[test]
 fn changing_the_vm_version_does_not_activate_the_candidate_credit() {
-    let default = tos_executor::BlockchainConfig::default_with_global_version(18)
+    let default = tos_executor::BlockchainConfig::default_with_global_version(16)
         .expect("explicit version with the default gas profile");
-    assert_eq!(default.global_version(), 18);
+    assert_eq!(default.global_version(), 16);
     for masterchain in [false, true] {
         let raw = default.raw_config().gas_prices(masterchain).expect("default raw gas prices");
         assert_eq!(raw.gas_credit, 10000, "version selection activated candidate credit");
@@ -104,8 +104,10 @@ fn default_execution_prices_match_the_serialized_configuration() {
 }
 
 fn zerostate_config() -> chain_block::ConfigParams {
-    let template =
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont/gen-zerostate.fif");
+    let template = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../../test/tostester/tests/tostester/genesis-with-test-auth.fif"
+    );
     let state = tos_sandbox::generate_zerostate_state(template)
         .expect("generate the zero state (needs build/crypto/create-state)");
     state

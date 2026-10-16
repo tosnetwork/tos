@@ -13,6 +13,9 @@
 //! the query id, and the same signed request replayed on another wallet and on another
 //! network.
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 use chain_block::{
     BuilderData, Cell, Coins, CurrencyCollection, IBitstring, InternalMessageHeader, Message,
     MsgAddressInt, Serializable, SliceData, StateInit,
@@ -196,7 +199,9 @@ impl Fixture {
     ) -> Self {
         // Genesis global version, with basechain admitted so the wallet can pay out to
         // basechain accounts.
-        let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
+        let mut bc =
+            Blockchain::with_global_version_and_base_workchain(current_network::global_version())
+                .expect("blockchain");
         let mut config = bc.config_params().clone();
         config
             .set_config(chain_block::ConfigParamEnum::ConfigParam19(global_id as u32))

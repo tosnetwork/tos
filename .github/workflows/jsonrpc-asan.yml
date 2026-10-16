@@ -169,6 +169,9 @@ jobs:
         .venv/bin/python test/tostester/generate_tl.py
 
     - name: Bring up an instrumented local chain
+      env:
+        # Explicit public namespace for the disposable ASan test network.
+        TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
       run: |
         chmod +x scripts/asan-jsonrpc-localnet.sh
         tmux new-session -d -s asan "./scripts/asan-jsonrpc-localnet.sh > /tmp/localnet.log 2>&1"

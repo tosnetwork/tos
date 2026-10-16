@@ -5,14 +5,17 @@ account authorization boundary. The separate relay test exercises an actual
 signed module transaction and delivers its emitted message to the account.
 """
 
+import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from cells import Cell, from_boc, make_dict
+from cells import Cell, from_boc, make_dict, read_dict
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from native import (
+    CURRENT_GLOBAL_VERSION,
     GLOBAL_ID,
     NOW,
     ROOT,
@@ -20,6 +23,7 @@ from native import (
     account_data,
     active_account,
     compile_contract,
+    config,
     external,
     internal,
     outgoing,
@@ -55,6 +59,7 @@ class Account:
         module=MODULE,
         extensions=False,
         pubkey=KEY,
+        global_version=CURRENT_GLOBAL_VERSION,
     ):
         self.impl, self.agent = impl, impl == "agent"
         if self.agent:
@@ -76,7 +81,7 @@ class Account:
             data.ref(auth_cell(mode, epoch, nonce, module))
         self.address = (-1, int.from_bytes(state_init(CODES[impl], data).hash, "big"))
         self.shard = active_account(self.address, CODES[impl], data)
-        self.e = Emulator(14 if impl == "wallet-tol" else 6)
+        self.e = Emulator(global_version)
 
     def close(self):
         self.e.close()
@@ -239,6 +244,25 @@ class AuthenticationTests(unittest.TestCase):
             self.addCleanup(a.close)
             yield a
 
+    def test_default_configuration_matches_genesis_within_the_vm_capability(self):
+        genesis = (ROOT / "crypto/smartcont/gen-zerostate.fif").read_text()
+        versions = re.findall(r"^(\d+) .+ config\.version!$", genesis, re.MULTILINE)
+        self.assertEqual(len(versions), 1, "Genesis global version must be unambiguous")
+        expected = int(versions[0])
+        header = (ROOT / "common/global-version.h").read_text()
+        self.assertGreaterEqual(int(re.search(r"SUPPORTED_VERSION = (\d+);", header)[1]), expected)
+        rust = (ROOT / "tosctl/src/block/src/config_params.rs").read_text()
+        self.assertGreaterEqual(
+            int(re.search(r"SUPPORTED_VERSION: u32 = (\d+);", rust)[1]), expected
+        )
+        self.assertEqual(CURRENT_GLOBAL_VERSION, expected)
+        with patch.object(Emulator, "_initialize") as initialize:
+            Emulator()
+        for configuration in (config(), initialize.call_args.args[0]):
+            version = read_dict(configuration, 32)[8].refs[0].slice()
+            self.assertEqual(version.uint(8), 0xC4)
+            self.assertEqual(version.uint(32), expected)
+
     def test_legacy_success_and_real_signatures(self):
         for a in self.accounts():
             result = a.send(a.legacy_body(), ext=True)
@@ -252,6 +276,16 @@ class AuthenticationTests(unittest.TestCase):
                 else bad.bits[:-1] + ("1" if bad.bits[-1] == "0" else "0")
             )
             a.send(bad, ext=True, expected=1704 if a.agent else 135)
+
+    def test_pre_genesis_authentication_remains_compatible(self):
+        # Keep minimum-version coverage explicit while the main suite runs at genesis.
+        for impl, version in [("agent", 6), ("wallet-func", 6), ("wallet-tol", 14)]:
+            with self.subTest(impl=impl, version=version):
+                account = Account(impl, global_version=version)
+                self.addCleanup(account.close)
+                result = account.send(account.legacy_body(), ext=True)
+                self.assertEqual(account.counters()[1], 1)
+                self.assertEqual(len(outgoing(from_boc(result["transaction"]))), 1)
 
     def test_stage_and_module_confirmed_cutover(self):
         for a in self.accounts():

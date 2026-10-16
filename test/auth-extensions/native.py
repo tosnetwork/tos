@@ -11,6 +11,7 @@ from cells import Cell, from_boc, make_dict, read_dict
 ROOT = Path(__file__).resolve().parents[2]
 NOW = 1_780_000_000
 GLOBAL_ID = 42
+CURRENT_GLOBAL_VERSION = 16
 
 
 def compile_contract(name, output):
@@ -73,7 +74,7 @@ def size_limits(max_msg_cells, max_msg_bits=1 << 21):
     )
 
 
-def config(global_version=6, max_msg_cells=None):
+def config(global_version=CURRENT_GLOBAL_VERSION, max_msg_cells=None):
     fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
     entries = read_dict(fixture.refs[0], 32)
     entries[0] = Cell().ref(Cell().uint(int(fixture.bits, 2), 256))
@@ -220,7 +221,9 @@ def outgoing(transaction):
 
 
 class Emulator:
-    def __init__(self, global_version=6, max_msg_cells=None, vm_log_verbosity=1):
+    def __init__(
+        self, global_version=CURRENT_GLOBAL_VERSION, max_msg_cells=None, vm_log_verbosity=1
+    ):
         self._initialize(config(global_version, max_msg_cells), vm_log_verbosity)
 
     @classmethod

@@ -21,6 +21,9 @@
 //! `cmake --build build --target tos-proof-verify`. Its absence fails these
 //! tests rather than skipping them.
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -725,6 +728,7 @@ fn pool_stacks() -> serde_json::Value {
 fn behaviour(mutation: &str) -> serde_json::Value {
     serde_json::json!({
         "stacks": pool_stacks(),
+        "global_version": current_network::global_version(),
         "mutation": mutation,
         "target": {"seqno": TARGET_SEQNO, "root_hash": TARGET_ROOT, "file_hash": TARGET_FILE},
         "gen_utime": TARGET_UTIME,

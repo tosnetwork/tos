@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 def signature(
-    driver, out, *, tree, key, vault, digest, now, epoch0, global_id=42, network=123, vm_version=17
+    driver, out, *, tree, key, vault, digest, now, epoch0, global_id=42, network=123, vm_version=16
 ):
     out.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sdk-cache-", dir=out) as tmp:

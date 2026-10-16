@@ -143,7 +143,7 @@ def main():
             str(options.driver.resolve()),
             str(out / "config.boc"),
             str(out / "scenarios.tsv"),
-            "18" if options.chain_config else "17",
+            "16",
             "--details",
         ],
         capture_output=True,

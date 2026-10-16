@@ -59,6 +59,43 @@ def main():
     run("build", build_flags)
     run("reproduce", ["--config", args.config.resolve(), "--check", folder])
     manifest = json.loads((folder / "manifest.json").read_text())
+    from cells import Cell, make_dict, read_dict
+
+    configuration = bundle_api.from_boc(args.config.read_bytes())
+    for label, parameter, value, message in (
+        ("version15", 8, 15, "version-16 candidate"),
+        ("version17", 8, 17, "version-16 candidate"),
+        ("version18", 8, 18, "version-16 candidate"),
+        ("candidate-namespace", 48, int("43" * 32, 16), "frozen 0x42 AUTH namespace"),
+        ("candidate-global-id", 19, 2, "global ID 1"),
+    ):
+        entries = read_dict(configuration.refs[0], 32)
+        cell = entries[parameter].refs[0]
+        if parameter == 8:
+            changed = Cell(bits=cell.bits[:8] + f"{value:032b}" + cell.bits[40:], refs=cell.refs)
+        elif parameter == 48:
+            changed = Cell(bits=cell.bits[:8] + f"{value:0256b}" + cell.bits[264:], refs=cell.refs)
+        else:
+            changed = Cell().sint(value, 32)
+        entries[parameter] = Cell().ref(changed)
+        raw = Cell(bits=configuration.bits, refs=[make_dict(entries, 32)]).boc()
+        try:
+            bundle_api.config_identity(raw)
+        except ValueError as error:
+            assert message in str(error), (label, str(error))
+        else:
+            raise AssertionError("candidate identity corruption survived: " + label)
+        results.append({"name": label, "refused": message})
+        if label == "candidate-namespace":
+            source = SCRIPT.read_text()
+            guard = 'if network_id != 1 or network != int("42" * 32, 16):'
+            assert source.count(guard) == 1
+            namespace = dict(bundle_api.__dict__)
+            exec(compile(source.replace(guard, "if False:"), str(SCRIPT), "exec"), namespace)
+            namespace["config_identity"](raw)
+            results.append(
+                {"name": "deleted-candidate-namespace-guard", "corruption_survived": True}
+            )
     # Exercise the CLI option, not only the comparison API. Native code must
     # exist before either expected-manifest refusal can count as semantic.
     wrong_namespace = None

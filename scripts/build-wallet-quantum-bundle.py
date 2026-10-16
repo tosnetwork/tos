@@ -70,8 +70,8 @@ def config_identity(raw):
         raise ValueError("a complete ConfigParams BOC is required")
     params = read_dict(root.refs[0], 32)
     version = params[8].refs[0].slice()
-    if version.uint(8) != 0xC4 or version.uint(32) != 18:
-        raise ValueError("bundle requires the explicit version-18 candidate")
+    if version.uint(8) != 0xC4 or version.uint(32) != 16:
+        raise ValueError("bundle requires the explicit version-16 candidate")
     version.uint(64)
     version.end()
     global_id = params[19].refs[0].slice()
@@ -81,6 +81,8 @@ def config_identity(raw):
     if policy.uint(8) != 0xA1:
         raise ValueError("candidate lacks the expected AUTH policy")
     network = policy.uint(256)
+    if network_id != 1 or network != int("42" * 32, 16):
+        raise ValueError("candidate requires global ID 1 and the frozen 0x42 AUTH namespace")
     gas = {}
     for parameter, expected_credit in ((20, 10000), (21, 20000)):
         prices = params[parameter].refs[0].slice()
@@ -108,7 +110,7 @@ def config_identity(raw):
             "gas_credit": credit,
         }
     return {
-        "version": 18,
+        "version": 16,
         "global_id": network_id,
         "network": f"{network:064x}",
         "gas": gas,

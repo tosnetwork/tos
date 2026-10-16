@@ -406,9 +406,9 @@ def configure_quantum_candidate(config, auth_network_tag, version_override=None)
     tag = bytes.fromhex("42" * 32)
     if auth_network_tag is not None and auth_network_tag != tag:
         raise ValueError("Quantum candidate requires the frozen 0x42 AUTH namespace")
-    if version_override is not None and int(version_override) != 18:
+    if version_override is not None and int(version_override) != 16:
         raise ValueError("Quantum candidate conflicts with TOS_GLOBAL_VERSION")
-    config.global_version = 18
+    config.global_version = 16
     config.global_id = 1
     config.auth_network_tag = tag
     config.deployment_fee_schedule = True
@@ -463,6 +463,14 @@ async def main(
             install, workdir, rpc_addr, control_addr, num_validators, boot_timeout
         )
         return
+
+    version = int(os.environ.get("TOS_GLOBAL_VERSION", "16"))
+    if (
+        not quantum_admission_candidate
+        and version >= 16
+        and (not isinstance(auth_network_tag, bytes) or len(auth_network_tag) != 32)
+    ):
+        raise ValueError("version 16 Genesis requires an explicit 32-byte AUTH network tag")
 
     shutil.rmtree(workdir, ignore_errors=True)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -601,7 +609,7 @@ def parse_args(argv=None):
         type=parse_auth_network_tag,
         default=os.environ.get("TOS_AUTH_NETWORK_TAG"),
         help=(
-            "explicit public 32-byte AUTH namespace for a fresh version >=17 genesis "
+            "explicit public 32-byte AUTH namespace for a fresh version >=16 genesis "
             "(64 hex digits; defaults to TOS_AUTH_NETWORK_TAG when set)"
         ),
     )

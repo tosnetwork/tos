@@ -32,7 +32,7 @@ def main():
         "--example",
         "pq-tx-parity",
     ]
-    replay = [str(driver), str(out / "config.boc"), str(out / "scenarios.tsv"), "17", "--details"]
+    replay = [str(driver), str(out / "config.boc"), str(out / "scenarios.tsv"), "16", "--details"]
     expected = (out / "native.tsv").read_text().splitlines()
     assert len(expected) >= 20
     try:

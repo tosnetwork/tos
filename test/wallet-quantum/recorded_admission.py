@@ -76,7 +76,7 @@ def configuration(root, amount):
 def require_release_config(raw, release_raw, profile):
     assert raw == release_raw, "recorded configuration differs from frozen release input"
     assert profile == {
-        "global_version": 18,
+        "global_version": 16,
         "basechain_credit": 20000,
         "masterchain_credit": 10000,
     }, "unexpected release admission profile"
@@ -90,7 +90,7 @@ def main():
     parser.add_argument(
         "--release-config",
         type=Path,
-        help="Require the exact frozen version-18 candidate ConfigParams BOC",
+        help="Require the exact frozen version-16 candidate ConfigParams BOC",
     )
     parser.add_argument("--minimum-fee-cases", type=int, default=6)
     args = parser.parse_args()

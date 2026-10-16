@@ -8,6 +8,9 @@
 //! Deployment, buyer acceptance, funding, execution and refund are deliberately
 //! separate transitions.  These tests exercise the frozen production BOC.
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 use chain_block::{
     BuilderData, Cell, Coins, CurrencyCollection, Deserializable, IBitstring, MsgAddressInt,
     Serializable, SliceData, StateInit, base64_decode, read_single_root_boc,
@@ -173,7 +176,9 @@ impl Fixture {
     /// deployed state: how a hand-built StateInit would carry a key the
     /// contract never admitted.
     fn new_full(endpoint: &[u8], amount: u128, authorization_key: Option<[u8; 32]>) -> Self {
-        let mut bc = Blockchain::with_global_version_and_base_workchain(14).unwrap();
+        let mut bc =
+            Blockchain::with_global_version_and_base_workchain(current_network::global_version())
+                .unwrap();
         bc.set_workchain(0);
         let relayer = bc.treasury("tos-service-v2-relayer", 1_000 * TOS).unwrap();
         let buyer = bc.treasury("tos-service-v2-buyer", 1_000 * TOS).unwrap();

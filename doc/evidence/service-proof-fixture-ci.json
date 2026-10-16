@@ -1,0 +1,54 @@
+{
+  "parent": "1653ea1a7b36c1f5e3490cf3e24cc3a5a4535746",
+  "platform": "macOS arm64",
+  "failed_ci": "https://github.com/tosnetwork/tos/actions/runs/38907698799/job/116995351908",
+  "cause": "The shared fake verifier requires an explicit global_version. Its service-test caller omitted the field, so fixture execution failed and the indexer correctly kept the ledger unavailable (HTTP 503).",
+  "fix": "Supply the current Genesis version through the shared test-only profile reader. Production verification and unavailable-ledger behavior remain unchanged.",
+  "sources_sha256": {
+    "tosctl/src/node-control/service/src/indexer/canonical_scan_tests.rs": "ab33de5dfcef9f315e58168fe8134dc8b38cb305cac83c11b55535df6aa9c4fa",
+    "tosctl/src/node-control/contracts/tests/fixtures/current_network.rs": "f74abd1c9a7375e156b074500a7eb095c706ba7f7df1e61816546e6a0f00dc27",
+    "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/fake_verifier.py": "ca45d261440917b2def41c7b9eae01296a55d560703410be67af50d3dcd12a63",
+    "tosctl/src/node-control/contracts/src/proven_getters.rs": "3e8542cab541a598aa093a73a01f7facf0fbfc0032c8282f0ee1db9d827926ba"
+  },
+  "validation": [
+    {
+      "command": "cargo test --manifest-path tosctl/src/node-control/service/Cargo.toml --lib --locked -j 4 the_indexer_takes_pool_snapshots_only_from_the_proof_verifier",
+      "stage": "before fix",
+      "exit": 101,
+      "assertion": "HTTP 503 instead of required 200; reproduced the CI failure after resolving local disk exhaustion."
+    },
+    {
+      "command": "cargo test --manifest-path tosctl/src/node-control/service/Cargo.toml --lib --locked -j 4 canonical_scan_tests",
+      "stage": "fixed",
+      "exit": 0,
+      "passed": 31,
+      "ignored": 1
+    },
+    {
+      "command": "python <artifact>/request-binding-control.py",
+      "stage": "temporary production-guard deletion",
+      "mutated_exit": 101,
+      "assertion": "HTTP 200 instead of required 503; source restored byte-for-byte."
+    },
+    {
+      "command": "cargo test --manifest-path tosctl/src/node-control/service/Cargo.toml --lib --locked -j 4",
+      "stage": "restored full suite",
+      "exit": 0,
+      "passed": 292,
+      "ignored": 2
+    },
+    {
+      "command": "cargo fmt --manifest-path tosctl/src/node-control/service/Cargo.toml --check; git diff --check",
+      "exit": 0
+    }
+  ],
+  "caller_audit": "Both executable users of fake_verifier.py were checked: contracts/proven_pool_snapshot.rs already supplies global_version; service/canonical_scan_tests.rs is fixed here.",
+  "local_environment_issue": "The first compilation ran out of disk space. Only rebuildable Rust incremental caches were removed; the subsequent red/green runs reached their behavioral assertions.",
+  "raw_artifact": {
+    "path": "/Users/tomisetsu/.codex/artifacts/tos-pr226-service-fixture-20261016-logs.tar.gz",
+    "bytes": 16090,
+    "sha256": "223869e3fd94d1adeafbf96f5a59bd92fd91ea377e90f8df68f01fa30f04aadd",
+    "retain_through": "2026-11-16"
+  },
+  "remaining": "New-head CI must validate this change. Existing live-testnet upgrade/consensus compatibility blockers remain unresolved; no deployment or merge is claimed."
+}

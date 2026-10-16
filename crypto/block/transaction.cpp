@@ -1769,7 +1769,7 @@ Ref<vm::Tuple> Transaction::prepare_vm_c7(const ComputePhaseConfig& cfg) const {
     tuple.push_back(prepare_in_msg_params_tuple(trans_type == tr_ord ? &in_msg_info : nullptr, in_msg_state,
                                                 msg_balance_remaining));
   }
-  if (cfg.global_version >= 17) {
+  if (cfg.global_version >= 16) {
     tuple.push_back(vm::StackEntry::maybe(incoming_storage_stats));
   }
   auto tuple_ref = td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple));

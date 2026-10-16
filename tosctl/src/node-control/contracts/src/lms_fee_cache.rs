@@ -344,7 +344,7 @@ mod tests {
                 Gas::test_with_limit(100_000),
                 vec![],
             )?;
-            vm.set_block_version(17);
+            vm.set_block_version(16);
             assert_eq!(vm.execute()?, 0);
             assert_eq!(vm.stack().depth(), 1);
             assert_eq!(

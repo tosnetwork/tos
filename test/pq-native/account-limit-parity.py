@@ -181,7 +181,11 @@ def main():
     left, right = [], []
     for version in (11, 12, 16):
         config_dict = configuration(version)
-        native.config = lambda global_version=6, max_msg_cells=None, _dict=config_dict: _dict
+        native.config = (
+            lambda global_version=native.CURRENT_GLOBAL_VERSION, max_msg_cells=None, _dict=config_dict: (
+                _dict
+            )
+        )
         rows, scenarios = [], []
         emulator = Emulator(version)
         try:

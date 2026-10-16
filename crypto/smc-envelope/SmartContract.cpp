@@ -255,7 +255,7 @@ td::Ref<vm::Tuple> prepare_vm_c7(SmartContract::Args args, td::Ref<vm::Cell> cod
   if (global_version >= 11) {
     tuple.push_back(prepare_emulator_in_msg_params_tuple(args));
   }
-  if (global_version >= 17) {
+  if (global_version >= 16) {
     // No authenticated external import occurs in a getter/compute-only context.
     tuple.push_back(vm::StackEntry{});
   }

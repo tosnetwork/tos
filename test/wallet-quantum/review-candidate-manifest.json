@@ -27,12 +27,12 @@
   },
   "compiler_binaries": {
     "FIFT_PATH": {
-      "bytes": 7483864,
-      "sha256": "4e2e3973bd8ac1f3b302743f344b8a2526f74d0235e0cf0f7d15718d119ae66d"
+      "bytes": 7484008,
+      "sha256": "e8f83ea7e1a44341f2473edf4842f299ab0459cd3e41a7f248974ef2c42e5ba0"
     },
     "FUNC_PATH": {
-      "bytes": 1717208,
-      "sha256": "17de335d53a3ff689ddd90a75e269eb91531e76ecc3b8d1243dca512a41db27c"
+      "bytes": 1717352,
+      "sha256": "c2e9bc585e7f42e160fbbe8f5b23dffd32979ed587a7b9f0669844e1a10368b0"
     }
   },
   "config": {
@@ -51,8 +51,8 @@
     },
     "global_id": 1,
     "network": "4242424242424242424242424242424242424242424242424242424242424242",
-    "sha256": "4eb8fd3ceecd7d72f04c7098642a25557e9f4a51c9ba784ae641a65506182b25",
-    "version": 18
+    "sha256": "59c6318f5136ba95ac62be988618b8e8ba4058e79c7b8ebd553783444af0930e",
+    "version": 16
   },
   "files": {
     "abi/contract-constants.json": {
@@ -73,7 +73,7 @@
     },
     "config.boc": {
       "bytes": 7475,
-      "sha256": "4eb8fd3ceecd7d72f04c7098642a25557e9f4a51c9ba784ae641a65506182b25"
+      "sha256": "59c6318f5136ba95ac62be988618b8e8ba4058e79c7b8ebd553783444af0930e"
     },
     "repository/LICENSE": {
       "bytes": 35149,
@@ -116,8 +116,8 @@
       "sha256": "0ef93769adb8db5c2665e9e9a78d239683a0a975e2ffc0034f9f58cb5f9fd011"
     },
     "repository/crypto/smartcont/pq.fc": {
-      "bytes": 857,
-      "sha256": "04c582149605adbeeb7d0ab0733ebcc2d3af15b44455162255541be6aebf3bf3"
+      "bytes": 844,
+      "sha256": "a0c96e263fcebd66f68bdd71a6cd5266678b588d2b851568729464980640f12d"
     },
     "repository/crypto/smartcont/stdlib.fc": {
       "bytes": 37585,
@@ -176,28 +176,28 @@
       "sha256": "86a9991fad0e8abbaf2f4ea3b2ba623ce0b976f6150ef3c04a49894f69c697ee"
     },
     "repository/crypto/vm/pqops.h": {
-      "bytes": 2493,
-      "sha256": "d4d4002761939a8ae7a909fa751e0e1ff76c8ebc9ce7044420e3fc4f8befb3d0"
+      "bytes": 2513,
+      "sha256": "ec278a2c0027c15a4d954b6c9e624b7a4fcc2531b53c76228fa0ace04cb55ccf"
     },
     "repository/doc/auth-policy-v1.md": {
-      "bytes": 5894,
-      "sha256": "c87c4f0e17e770271d803108ee7f557d57c4d6e12ad58b44bb964b1ff21e03af"
+      "bytes": 6321,
+      "sha256": "7ff42679049ae82911462d1cb8bfac2d925c6f5876d55c8e0a0ea78d8387003a"
     },
     "repository/doc/tvm-lms-fee-hash.md": {
-      "bytes": 5976,
-      "sha256": "e839b211e61ea7f981d184b30aa6a44abaa39644a9f5e760440852a2dffd3c42"
+      "bytes": 5962,
+      "sha256": "f0c21393926e7d22b580df5db627a1ab6c84b109889c3db6c2b20b0da7824d2b"
     },
     "repository/scripts/build-wallet-quantum-bundle.py": {
-      "bytes": 13186,
-      "sha256": "b2ee8852332a803fb17a414ea8ed4ef6eed60aa5012dfe881ee6cb30882b4ab1"
+      "bytes": 13337,
+      "sha256": "023e7b92d31683f28dd4d18e237851880c87a8aa9e5ea9d44a0f8e92c338771f"
     },
     "repository/test/auth-extensions/cells.py": {
       "bytes": 7222,
       "sha256": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281"
     },
     "repository/test/auth-extensions/native.py": {
-      "bytes": 8243,
-      "sha256": "aa6c3baa80129b1127e19bfe65c0f38e5e5ac72e2d6aa14d734dace3ad52f2ae"
+      "bytes": 8327,
+      "sha256": "b32dfb791ec13030bee78cb6ab89a8ff795ce38a6b7d5c9cdba90e5401dc0a82"
     },
     "repository/test/pq-falcon512/vectors.json": {
       "bytes": 129214,
@@ -212,12 +212,12 @@
       "sha256": "e521f4cbfd2a641a01ce87356fe45d316b62475176f93a291acdca90f4ff67fe"
     },
     "repository/test/rescue-fee-gate/suite-expected.tsv": {
-      "bytes": 1026,
-      "sha256": "407f5ff98cf4dd68b264ccb98efd6badb23ced01b8f9c51bd03e404528cafb5d"
+      "bytes": 1030,
+      "sha256": "b3a200c9d562b8b48faba5ae4cf3d19fe6724d72c363aa30af1310e26391b541"
     },
     "repository/test/rescue-fee-gate/suite-scenarios.tsv": {
-      "bytes": 316784,
-      "sha256": "820d8a08ab22b0bf794823e80ca11cd9295942cad31ca792936f76998dee3e03"
+      "bytes": 316788,
+      "sha256": "90e824f135bf83c88c0a1ab71015602a23d49b440659c0a4645ebb10dfb62592"
     },
     "repository/tosctl/src/node-control/contracts/src/wallet_quantum.rs": {
       "bytes": 15289,
@@ -328,8 +328,8 @@
       "sha256": "ff6ae2ffc152a193695c7f152be4a1063f958bc5e16a6f43be0262694f609f66"
     },
     "repository/tosctl/src/vm/src/executor/pq.rs": {
-      "bytes": 16734,
-      "sha256": "28836e293b23ddb10c2f3bab82ba3bf15767144e4016552b298fc83ee311762c"
+      "bytes": 16791,
+      "sha256": "6f04a42314eea721502c1194046f017cd4ff639343ff3ae72d01f053e87ec757"
     },
     "repository/tosctl/src/wallet-pq-signer/src/kdf.rs": {
       "bytes": 9772,
@@ -365,7 +365,7 @@
     "final-head CI and activation approval"
   ],
   "scope": "Build or reproduce a reviewable Quantum candidate from an explicit chain config.\n\nThe bundle contains ordinary, self-contained code, its exact source and public\nwire/crypto/KDF vectors. It is not a reviewed release, a wallet enrollment, a\ncustody backup, or authorization to activate the candidate configuration.\n",
-  "source_revision": "0d2bce93eae0ab368a9e5a833c714abf0a3d1a00",
+  "source_revision": "97e7259c7e43abcc6a50d9ad0cdabc7de68ffbc0",
   "status": "unapproved-review-candidate",
   "tracked_working_tree_changes": true
 }

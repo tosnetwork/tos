@@ -1,4 +1,7 @@
 //! Every independently deployable legacy wallet refuses a forged weak authority.
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 use chain_block::{
     BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
 };
@@ -139,8 +142,8 @@ fn packet(name: &str, body: &Cell, signature: &[u8; 64]) -> Cell {
         }
     })
 }
-fn deploy(name: &str, key: &[u8; 32], code: Cell) -> (Blockchain, MsgAddressInt) {
-    let mut bc = Blockchain::with_global_version_and_base_workchain(14).unwrap();
+fn deploy(name: &str, key: &[u8; 32], code: Cell, version: u32) -> (Blockchain, MsgAddressInt) {
+    let mut bc = Blockchain::with_global_version_and_base_workchain(version).unwrap();
     let mut config = bc.config_params().clone();
     config
         .set_config(chain_block::ConfigParamEnum::ConfigParam1(chain_block::ConfigParam1 {
@@ -169,55 +172,58 @@ fn deploy(name: &str, key: &[u8; 32], code: Cell) -> (Blockchain, MsgAddressInt)
 }
 #[test]
 fn twelve_wallet_families_refuse_forged_keys_with_strong_key_positive_controls() {
-    for name in [
-        "simple-wallet-code.fc",
-        "simple-wallet-ext-code.fc",
-        "wallet-code.fc",
-        "wallet3-code.fc",
-        "wallet-v4-code.fc",
-        "wallet-v5-code.fc",
-        "highload-wallet-code.fc",
-        "highload-wallet-v2-code.fc",
-        "highload-wallet-v3-code.fc",
-        "restricted-wallet-code.fc",
-        "restricted-wallet2-code.fc",
-        "restricted-wallet3-code.fc",
-    ] {
-        println!("wallet family: {name}");
-        let code = compile_func_with_stdlib(&[source(name)]).expect(name);
-        let strong = SigningKey::from_bytes(&[0x42; 32]);
-        let (mut bc, address) = deploy(name, &strong.verifying_key().to_bytes(), code.clone());
-        let body = signed_body(name, bc.now(), &address);
-        let signature = strong.sign(body.hash(0).as_slice()).to_bytes();
-        let msg = MessageBuilder::external(&address)
-            .body_slice(SliceData::load_cell(packet(name, &body, &signature)).unwrap())
-            .build();
-        let result = bc.send_message(msg).expect(name);
-        result.expect_success();
-        // The identity with its sign bit set admits a forgery for every message.
-        let weak = weak_ed25519::weak_keys()[12];
-        let (mut bc, address) = deploy(name, &weak, code);
-        let body = signed_body(name, bc.now(), &address);
-        let signature = weak_ed25519::forge(&weak, body.hash(0).as_slice())
-            .expect("forge sign-bit alias authority");
-        let message = MessageBuilder::external(&address)
-            .body_slice(SliceData::load_cell(packet(name, &body, &signature)).unwrap())
-            .build();
-        let error = match bc.send_message(message) {
-            Ok(_) => panic!("{name}: forged authority accepted"),
-            Err(error) => error.to_string(),
-        };
-        let expected = match name {
-            "wallet-v5-code.fc" => 135,
-            "highload-wallet-v3-code.fc" => 33,
-            "restricted-wallet3-code.fc" => 36,
-            "wallet-code.fc"
-            | "restricted-wallet-code.fc"
-            | "restricted-wallet2-code.fc"
-            | "simple-wallet-code.fc"
-            | "simple-wallet-ext-code.fc" => 34,
-            _ => 35,
-        };
-        assert!(error.contains(&format!("{expected}")), "{name}: {error}");
+    for version in [14, current_network::global_version()] {
+        for name in [
+            "simple-wallet-code.fc",
+            "simple-wallet-ext-code.fc",
+            "wallet-code.fc",
+            "wallet3-code.fc",
+            "wallet-v4-code.fc",
+            "wallet-v5-code.fc",
+            "highload-wallet-code.fc",
+            "highload-wallet-v2-code.fc",
+            "highload-wallet-v3-code.fc",
+            "restricted-wallet-code.fc",
+            "restricted-wallet2-code.fc",
+            "restricted-wallet3-code.fc",
+        ] {
+            println!("wallet family: {name}, global version: {version}");
+            let code = compile_func_with_stdlib(&[source(name)]).expect(name);
+            let strong = SigningKey::from_bytes(&[0x42; 32]);
+            let (mut bc, address) =
+                deploy(name, &strong.verifying_key().to_bytes(), code.clone(), version);
+            let body = signed_body(name, bc.now(), &address);
+            let signature = strong.sign(body.hash(0).as_slice()).to_bytes();
+            let msg = MessageBuilder::external(&address)
+                .body_slice(SliceData::load_cell(packet(name, &body, &signature)).unwrap())
+                .build();
+            let result = bc.send_message(msg).expect(name);
+            result.expect_success();
+            // The identity with its sign bit set admits a forgery for every message.
+            let weak = weak_ed25519::weak_keys()[12];
+            let (mut bc, address) = deploy(name, &weak, code, version);
+            let body = signed_body(name, bc.now(), &address);
+            let signature = weak_ed25519::forge(&weak, body.hash(0).as_slice())
+                .expect("forge sign-bit alias authority");
+            let message = MessageBuilder::external(&address)
+                .body_slice(SliceData::load_cell(packet(name, &body, &signature)).unwrap())
+                .build();
+            let error = match bc.send_message(message) {
+                Ok(_) => panic!("{name}: forged authority accepted"),
+                Err(error) => error.to_string(),
+            };
+            let expected = match name {
+                "wallet-v5-code.fc" => 135,
+                "highload-wallet-v3-code.fc" => 33,
+                "restricted-wallet3-code.fc" => 36,
+                "wallet-code.fc"
+                | "restricted-wallet-code.fc"
+                | "restricted-wallet2-code.fc"
+                | "simple-wallet-code.fc"
+                | "simple-wallet-ext-code.fc" => 34,
+                _ => 35,
+            };
+            assert!(error.contains(&format!("{expected}")), "{name}: {error}");
+        }
     }
 }

@@ -24,7 +24,7 @@ inline Ref<Cell> current_code(bool elector) {
 }
 
 inline State production_build(const std::string& zero, const std::string& fixtures, const std::string& config,
-                              int version = 17, bool libraries = true, Ref<Cell> elector = {}, Ref<Cell> proposals = {},
+                              int version = 16, bool libraries = true, Ref<Cell> elector = {}, Ref<Cell> proposals = {},
                               Ref<Cell> probe_code = {}, Ref<Cell> probe_data = {}) {
   return getter_fixture::build(zero, fixtures, config, version, libraries, elector, proposals, probe_code, probe_data,
                                current_code(true), current_code(false));

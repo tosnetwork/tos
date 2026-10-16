@@ -476,7 +476,10 @@ impl Net {
 
     /// A deployed bridge that no source generation has activated yet.
     pub fn unactivated(how: Deployment) -> Self {
-        let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("a chain");
+        let mut bc = Blockchain::with_global_version_and_base_workchain(
+            crate::current_network::global_version(),
+        )
+        .expect("a chain");
         bc.set_workchain(-1);
         let oracles = bc.treasury("token-bridge-oracles", 10_000 * TOS).expect("oracles");
         let deployer = bc.treasury("token-bridge-deployer", 10_000 * TOS).expect("deployer");

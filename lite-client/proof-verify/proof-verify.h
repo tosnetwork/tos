@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "block/block.h"
+#include "block/mc-config.h"
 #include "td/utils/Status.h"
 #include "td/utils/buffer.h"
 #include "tos/tos-types.h"
@@ -178,6 +179,13 @@ std::string block_id_json(const tos::BlockIdExt& id);
 // live mode the newest key block this verifier already authenticated from it.
 tos::BlockIdExt chain_start(const Anchor& anchor, std::optional<tos::BlockIdExt> target, const Request& request,
                             const std::optional<LiveState>& state);
+
+// SmartContractInfo (c7) for a get-method, built only from proven inputs with the
+// layout the transaction executor uses at the proven global version.
+td::Result<td::Ref<vm::Tuple>> proven_getter_c7(const block::ConfigInfo& config, td::Ref<vm::Cell> code,
+                                                const block::CurrencyCollection& balance,
+                                                td::Ref<vm::CellSlice> address, td::RefInt256 due_payment,
+                                                const ExecutionContext& context);
 
 // Library hashes referenced by the account's code and data that must be
 // supplied with proof before any get-method can run.

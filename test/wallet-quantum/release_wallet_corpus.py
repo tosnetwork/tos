@@ -80,7 +80,7 @@ def main():
         assert (folder / "config.boc").read_bytes() == raw
         deliveries = json.loads((folder / "native/results.json").read_text())
         assert deliveries["chain_config_sha256"] == hashlib.sha256(raw).hexdigest()
-        assert deliveries["chain_version"] == 18
+        assert deliveries["chain_version"] == 16
         if name == "auth":
             assert (
                 deliveries["recipient"]["compute_success"]

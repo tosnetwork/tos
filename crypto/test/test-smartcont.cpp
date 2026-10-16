@@ -289,6 +289,12 @@ std::string run_zerostate_regression(td::Slice script_name) {
 
   auto patched_script = replace_word_token(load_source(PSTRING() << "smartcont/" << script_name), "now",
                                            td::Slice(td::to_string(kDeterministicZerostateNow)));
+  // Keep the interpreter shebang first; supply a public test namespace explicitly.
+  auto header_end = patched_script.find('\n');
+  CHECK(header_end != std::string::npos);
+  patched_script.insert(header_end + 1,
+                        "0x4343434343434343434343434343434343434343434343434343434343434343 "
+                        "constant quantum-network-tag\n");
   auto script_path = temp_dir + TD_DIR_SLASH + script_name.str();
   td::write_file(script_path, patched_script).ensure();
 

@@ -241,7 +241,7 @@ td::Result<std::string> decode_config(int param, td::Ref<vm::Cell> cell, td::uin
       out << "{\"kind\":\"global_version\",\"version\":" << vm_version << ",\"capabilities\":\"" << caps << "\"}";
     } else if (param == 48) {
       if (cell.is_null()) {
-        if (version >= 17)
+        if (version >= 16)
           return error(Failure::StateInvalid);
         return std::string("null");
       }

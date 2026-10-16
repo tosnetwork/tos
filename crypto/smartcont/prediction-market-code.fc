@@ -232,7 +232,7 @@ int parse_global_version() impure inline {
   int version = parse_global_version();
   throw_if(err::bad_global_version, version < 14);
   if (risk_increasing) {
-    throw_unless(err::bad_global_version, (version == 14) | (version == 15));
+    throw_unless(err::bad_global_version, (version == 14) | (version == 15) | (version == 16));
   }
 }
 

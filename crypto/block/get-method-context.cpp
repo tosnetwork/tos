@@ -50,6 +50,10 @@ td::Ref<vm::Tuple> prepare_get_method_c7(tos::UnixTime now, tos::LogicalTime lt,
   if (config && config->get_global_version() >= 11) {
     tuple.push_back(block::transaction::Transaction::prepare_in_msg_params_tuple(nullptr, {}, {}));
   }
+  if (config && config->get_global_version() >= 16) {
+    // Getters have no authenticated external import statistics.
+    tuple.push_back(vm::StackEntry{});
+  }
   auto tuple_ref = td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple));
   LOG(DEBUG) << "SmartContractInfo initialized with " << vm::StackEntry(tuple_ref).to_string();
   return vm::make_tuple_ref(std::move(tuple_ref));

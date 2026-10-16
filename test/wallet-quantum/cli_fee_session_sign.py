@@ -280,7 +280,7 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
             return shared.make_dict(entries, 32)
 
         with patch.object(native, "config", lambda *a, **k: config_with_credit(10000)):
-            limited = native.Emulator(global_version=17)
+            limited = native.Emulator(global_version=16)
         vault_before = native.active_account(addresses["vault"], codes["vault"], data["vault"])
         try:
             rejected = limited.send(vault_before, root_message)
@@ -288,7 +288,7 @@ def check_signing_session(args, root, common, accounts, config, payload, codes, 
         finally:
             limited.close()
         with patch.object(native, "config", lambda *a, **k: config_with_credit(20000)):
-            emu = native.Emulator(global_version=17)
+            emu = native.Emulator(global_version=16)
         try:
             paid = emu.send(vault_before, root_message)
             fee_messages = shared.check_execution(paid, vault_before, root_message, "fee vault")

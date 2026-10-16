@@ -13,7 +13,7 @@ different ceiling from the same source is a second answer to "what does this
 binary implement", and the activation evidence then has to carry which one was
 built. One source commit, one ceiling.
 
-Instruction gates have separate activation boundaries. The
+The instruction gates share the version-16 activation boundary. The
 ceiling must equal the highest gate. Below that, the shipped tools cannot reach
 an instruction this build implements; above it, the binary claims a version it
 has nothing to show for. This source profile requires a fresh development
@@ -45,9 +45,9 @@ GATES = {
     "PQCHECKSIG_MLDSA44": 16,
     "POSEIDON2_PERM8/POSEIDON2_HASH7": 16,
     "POSEIDON2_PATH7": 16,
-    "PQCHECKSIG_FALCON512_PADDED": 19,
+    "PQCHECKSIG_FALCON512_PADDED": 16,
     "PQCHECKSIG_SUITE": 16,
-    "LMSCHECKFEEHASH": 17,
+    "LMSCHECKFEEHASH": 16,
 }
 
 

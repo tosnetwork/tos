@@ -81,7 +81,7 @@ fn verify(
     key: &[u8],
     version: u32,
 ) -> anyhow::Result<bool> {
-    anyhow::ensure!(version >= 17, "fee verification profile is not activated");
+    anyhow::ensure!(version >= 16, "fee verification profile is not activated");
     let mut stack = Stack::new();
     stack.push(StackItem::int(IntegerData::from_unsigned_bytes_be(digest)));
     stack.push(StackItem::int(IntegerData::from_i64(i64::from(leaf))));

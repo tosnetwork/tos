@@ -79,7 +79,7 @@ def compile_driver(work, output, mutation=None):
 
 
 def transact(code, current, next=None, operation=0, expected=0, parameter=48, memberships=True):
-    base_config = native.config(17)
+    base_config = native.config(16)
     entries = read_dict(base_config, 32)
     if current is not None:
         entries[48] = Cell().ref(current)
@@ -92,7 +92,7 @@ def transact(code, current, next=None, operation=0, expected=0, parameter=48, me
     if operation == 0:
         body.uint(parameter, 8).maybe(next)
     with patch.object(native, "config", return_value=cfg):
-        e = native.Emulator(global_version=17)
+        e = native.Emulator(global_version=16)
     try:
         r = e.send(
             native.active_account(ADDRESS, code, data), native.internal(SENDER, ADDRESS, body)

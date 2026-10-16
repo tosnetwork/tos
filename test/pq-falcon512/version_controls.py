@@ -49,7 +49,7 @@ def main():
         (
             "cpp",
             "crypto/vm/pqops.h",
-            "pq_falcon512_min_version = 19",
+            "pq_falcon512_min_version = 16",
             [
                 "cmake",
                 "--build",
@@ -63,7 +63,7 @@ def main():
         (
             "rust",
             "tosctl/src/vm/src/executor/pq.rs",
-            "FALCON512_MIN_VERSION: u32 = 19",
+            "FALCON512_MIN_VERSION: u32 = 16",
             [
                 "cargo",
                 "build",
@@ -85,16 +85,19 @@ def main():
         original = path.read_text()
         if original.count(anchor) != 1:
             raise RuntimeError("mutation anchor must occur exactly once")
-        for gate in (18, 20):
+        for gate in (15, 17):
             label = f"{vm}-gate-{gate}"
             try:
-                path.write_text(original.replace(anchor, anchor.replace("19", str(gate))))
+                path.write_text(original.replace(anchor, anchor.replace("16", str(gate))))
                 if run(build, label + "-build"):
                     raise RuntimeError("mutation did not compile")
                 code = check(label)
                 report = json.loads((out / label / "result.json").read_text())
-                boundary = 18 if gate == 18 else 19
-                for entry in ("dedicated", "generic"):
+                boundary = 15 if gate == 15 else 16
+                # The generic opcode has its own version-16 gate, so an early Falcon gate
+                # is observable only through the dedicated opcode.
+                entries = ("dedicated",) if gate == 15 else ("dedicated", "generic")
+                for entry in entries:
                     if not any(
                         item.get("vm") == vm
                         and item.get("entry") == entry
@@ -104,7 +107,7 @@ def main():
                         raise RuntimeError("missing targeted boundary failure")
                 if code != 1:
                     raise RuntimeError("mutation must produce a semantic test failure")
-                controls.append(dict(vm=vm, gate=gate, exit=code, both_entries_detected=True))
+                controls.append(dict(vm=vm, gate=gate, exit=code, entries_detected=list(entries)))
             finally:
                 path.write_text(original)
                 if run(build, label + "-restored-build"):

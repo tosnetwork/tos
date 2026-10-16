@@ -54,7 +54,7 @@ GROUP_ORDER = (1 << 252) + 27742317777372353535851937790883648493
 VALUE = 100_000_000
 FUNDING = 100_000_000_000
 CREDIT = 10_000
-GLOBAL_VERSION = 18
+GLOBAL_VERSION = 16
 EVIDENCE = {"schema": "tos.agent-controller-key-regression.v1", "cases": [], "admission": []}
 
 

@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn mainnet_genesis_total_supply_matches_validator_bootstrap_allocation() {
         let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
-        let fif_path = tos_root.join("crypto/smartcont/gen-zerostate.fif");
+        let fif_path = tos_root.join("test/tostester/tests/tostester/genesis-with-test-auth.fif");
         let balance = generate_zerostate_total_balance(&fif_path).expect("zerostate generation");
 
         const NANOTOS_PER_TOS: u128 = 1_000_000_000;
@@ -214,7 +214,7 @@ mod tests {
         const EXPECTED_BASECHAIN_FEE_NANOTOS: u128 = 23_233_312;
 
         let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
-        let fif_path = tos_root.join("crypto/smartcont/gen-zerostate.fif");
+        let fif_path = tos_root.join("test/tostester/tests/tostester/genesis-with-test-auth.fif");
         let state = generate_zerostate_state(&fif_path).expect("zerostate generation");
         let mc_extra = state
             .read_custom()

@@ -9,6 +9,7 @@
 #include "auto/tl/lite_api.h"
 #include "auto/tl/lite_api.hpp"
 #include "block/get-method-context.h"
+#include "smc-envelope/SmartContract.h"
 #include "td/actor/actor.h"
 #include "td/utils/Time.h"
 #include "td/utils/base64.h"
@@ -21,6 +22,7 @@
 
 #include "getter-context-fixture.h"
 #include "getter-context-reference.h"
+#include "proof-verify.h"
 
 namespace {
 
@@ -31,6 +33,7 @@ int checks = 0;
 std::string selected;
 std::string capture;
 std::string baseline;
+std::string c7_shape;
 
 void check(const std::string& name, bool ok, const std::string& detail) {
   ++checks;
@@ -55,12 +58,26 @@ std::string serialize_context(const Ref<vm::Tuple>& c7) {
   return boc(builder.finalize_novm()).as_slice().str();
 }
 
+// Preserve the frozen historical oracle and extend only its version-16 layout.
+td::Ref<vm::Tuple> expected_context(tos::UnixTime now, tos::LogicalTime lt, td::Ref<vm::CellSlice> address,
+                                    const block::CurrencyCollection& balance, const block::ConfigInfo* config = nullptr,
+                                    td::Ref<vm::Cell> code = {}, td::RefInt256 due_payment = td::zero_refint()) {
+  auto result = getter_reference::prepare_vm_c7(now, lt, std::move(address), balance, config, std::move(code),
+                                                std::move(due_payment));
+  if (config && config->get_global_version() >= 16) {
+    auto info = result->at(0).as_tuple();
+    info.write().push_back(vm::StackEntry{});
+    result.write().at(0) = vm::StackEntry{std::move(info)};
+  }
+  return result;
+}
+
 void context_cases(const std::string& zero, const std::string& elector, const std::string& config_code) {
-  for (int version : {3, 4, 6, 9, 11, 14, 15, 17}) {
+  for (int version : {3, 4, 6, 9, 11, 14, 15, 16, 17, 18}) {
     auto state = build(zero, elector, config_code, version);
     const auto& getter = state.getters.back();
-    auto before = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
-                                                  state.config.get(), getter.code, getter.due_payment);
+    auto before = expected_context(state.now, state.lt, address_slice(getter.address), getter.balance,
+                                   state.config.get(), getter.code, getter.due_payment);
     auto after =
         block::prepare_get_method_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
                                      state.config.get(), getter.code, getter.due_payment, context_seed(before));
@@ -69,6 +86,12 @@ void context_cases(const std::string& zero, const std::string& elector, const st
     if (after.not_null()) {
       check(name, serialize_context(before) == serialize_context(after),
             "the full c7 differs from the independent oracle");
+    }
+    if (after.not_null() && version >= 11) {
+      auto actual = after->at(0).as_tuple();
+      check(name + "-import-stats",
+            actual->size() == (version >= 16 ? 19U : 18U) && (version < 16 || actual->at(18).is_null()),
+            "import statistics must be absent before version 16 and null afterward");
     }
     auto info = before->at(0).as_tuple();
     require(info->at(7).as_tuple()->at(0).as_int()->unsigned_fits_bits(101), "wide balance field");
@@ -85,12 +108,75 @@ void context_cases(const std::string& zero, const std::string& elector, const st
   }
   auto state = build(zero, elector, config_code);
   const auto& getter = state.getters.back();
-  auto before = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(getter.address), getter.balance);
+  auto before = expected_context(state.now, state.lt, address_slice(getter.address), getter.balance);
   auto after = block::prepare_get_method_c7(state.now, state.lt, address_slice(getter.address), getter.balance, nullptr,
                                             {}, td::zero_refint(), context_seed(before));
   check("context-no-config", after.not_null(), "the basic context is null");
   if (after.not_null()) {
     check("context-no-config", serialize_context(before) == serialize_context(after), "the basic c7 differs");
+  }
+}
+
+// The shape of a getter's SmartContractInfo: its length and what c7[18] holds.
+std::string c7_shape_of(const Ref<vm::Tuple>& info) {
+  if (info.is_null()) {
+    return "missing";
+  }
+  std::string slot = info->size() <= 18 ? "absent" : info->at(18).empty() ? "null" : "value";
+  return std::to_string(info->size()) + "\t" + slot;
+}
+
+// Every C++ getter path (liteserver/control getter, proof verifier, emulator) must
+// build the same c7 shape at each version, and that shape must be the one in the
+// shared record that the Rust getter test checks too.
+void c7_parity_cases(const std::string& zero, const std::string& elector, const std::string& config_code) {
+  require(!c7_shape.empty(), "--c7-shape is required for the c7-parity case");
+  auto record = must(td::read_file_str(c7_shape), "c7 shape record");
+  std::map<int, std::string> expected;
+  std::istringstream lines(record);
+  for (std::string line; std::getline(lines, line);) {
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    auto tab = line.find('\t');
+    require(tab != std::string::npos, "c7 shape row");
+    expected[std::stoi(line.substr(0, tab))] = line.substr(tab + 1);
+  }
+  require(expected.count(15) && expected.count(16), "c7 shape record covers 15 and 16");
+  auto code = must(fift::compile_asm("DROP c7 PUSH FIRST"), "c7 getter");
+  for (const auto& [version, want] : expected) {
+    auto state = build(zero, elector, config_code, version);
+    const auto& getter = state.getters.back();
+    const auto name = "c7-parity-v" + std::to_string(version);
+    td::BitArray<256> seed;
+    seed.set_zero();
+
+    auto liteserver = block::prepare_get_method_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
+                                                   state.config.get(), getter.code, getter.due_payment, seed);
+    std::string liteserver_shape = liteserver.is_null() ? "missing" : c7_shape_of(liteserver->at(0).as_tuple());
+
+    tos::proofverify::ExecutionContext context;
+    context.unixtime = state.now;
+    context.block_lt = state.lt;
+    context.global_version = version;
+    auto proven = tos::proofverify::proven_getter_c7(*state.config, getter.code, getter.balance,
+                                                     address_slice(getter.address), getter.due_payment, context);
+    std::string proven_shape =
+        proven.is_ok() ? c7_shape_of(proven.ok()->at(0).as_tuple()) : "error: " + proven.error().message().str();
+
+    tos::SmartContract contract{tos::SmartContract::State{code, vm::CellBuilder{}.finalize_novm()}};
+    tos::SmartContract::Args args;
+    args.set_config(std::shared_ptr<const block::Config>(state.config.get(), [](const block::Config*) {}));
+    args.set_method_id(0);
+    args.set_limits(vm::GasLimits{1000000, 1000000});
+    auto answer = contract.run_get_method(std::move(args));
+    std::string emulator_shape = answer.success && answer.stack->depth() == 1 && answer.stack->tos().is_tuple()
+                                     ? c7_shape_of(answer.stack->tos().as_tuple())
+                                     : "getter failed with exit " + std::to_string(answer.code);
+
+    check(name + "-liteserver", liteserver_shape == want, liteserver_shape + " != " + want);
+    check(name + "-proof-verify", proven_shape == want, proven_shape + " != " + want);
+    check(name + "-emulator", emulator_shape == want, emulator_shape + " != " + want);
   }
 }
 
@@ -101,8 +187,8 @@ struct Result {
 };
 
 Result run(const State& state, const Getter& getter, bool reference) {
-  auto c7 = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
-                                            state.config.get(), getter.code, getter.due_payment);
+  auto c7 = expected_context(state.now, state.lt, address_slice(getter.address), getter.balance, state.config.get(),
+                             getter.code, getter.due_payment);
   if (!reference) {
     c7 = block::prepare_get_method_c7(state.now, state.lt, address_slice(getter.address), getter.balance,
                                       state.config.get(), getter.code, getter.due_payment, context_seed(c7));
@@ -126,11 +212,25 @@ Result run(const State& state, const Getter& getter, bool reference) {
 }
 
 void vm_cases(const std::string& zero, const std::string& elector, const std::string& config_code) {
+  for (int version : {15, 16, 17, 18}) {
+    auto boundary = build(zero, elector, config_code, version);
+    Getter probe = boundary.getters.back();
+    probe.code = must(fift::compile_asm("DROP c7 PUSH 0 INDEX 18 PUSHINT INDEXVAR ISNULL"), "import-statistics getter");
+    const auto result = run(boundary, probe, false);
+    auto expected_stack = td::make_ref<vm::Stack>();
+    expected_stack.write().push_smallint(-1);
+    vm::CellBuilder serialized;
+    require(expected_stack->serialize(serialized), "null result serialization");
+    check("vm-import-stats-v" + std::to_string(version),
+          version < 16 ? result.exit == static_cast<int>(vm::Excno::range_chk)
+                       : result.exit == 0 && result.stack == boc(serialized.finalize_novm()).as_slice().str(),
+          "production getter must return null from version 16, with a range error before it");
+  }
   auto state = build(zero, elector, config_code);
   Getter all = state.getters.back();
   all.code = must(fift::compile_asm("DROP c7 PUSH"), "all-context getter");
-  auto before = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(all.address), all.balance,
-                                                state.config.get(), all.code, all.due_payment);
+  auto before = expected_context(state.now, state.lt, address_slice(all.address), all.balance, state.config.get(),
+                                 all.code, all.due_payment);
   const auto seed = context_seed(before);
   auto after = block::prepare_get_method_c7(state.now, state.lt, address_slice(all.address), all.balance,
                                             state.config.get(), all.code, all.due_payment, seed);
@@ -316,10 +416,10 @@ void liteserver_cases(const std::string& zero, const std::string& elector, const
         vm::StackEntry received;
         require(received.deserialize(cell) && received.is_tuple(), "wire c7 tuple");
         auto actual = received.as_tuple();
-        auto expected_c7 = getter_reference::prepare_vm_c7(state.now, state.lt, address_slice(getter.address),
-                                                           getter.balance, mode & 32 ? state.config.get() : nullptr,
-                                                           mode & 32 ? getter.code : Ref<vm::Cell>{},
-                                                           mode & 32 ? getter.due_payment : td::zero_refint());
+        auto expected_c7 =
+            expected_context(state.now, state.lt, address_slice(getter.address), getter.balance,
+                             mode & 32 ? state.config.get() : nullptr, mode & 32 ? getter.code : Ref<vm::Cell>{},
+                             mode & 32 ? getter.due_payment : td::zero_refint());
         require(actual.not_null() && actual->size() == 1 && actual->at(0).is_tuple(), "wire c7 shape");
         auto actual_info = actual->at(0).as_tuple();
         require(actual_info->size() >= 10 && actual_info->at(6).is_int(), "wire c7 seed");
@@ -356,6 +456,8 @@ int main(int argc, char** argv) {
       capture = argv[index + 1];
     } else if (option == "--baseline") {
       baseline = argv[index + 1];
+    } else if (option == "--c7-shape") {
+      c7_shape = argv[index + 1];
     } else {
       setup_failed("unknown option");
     }
@@ -371,6 +473,9 @@ int main(int argc, char** argv) {
   }
   if (selected.empty() || selected == "liteserver") {
     liteserver_cases(argv[1], argv[2], argv[3]);
+  }
+  if (selected == "c7-parity") {
+    c7_parity_cases(argv[1], argv[2], argv[3]);
   }
   require(checks > 0, "at least one selected check ran");
   std::printf("GETTER_CONTEXT_RESULT checks=%d failures=%d\n", checks, failures);

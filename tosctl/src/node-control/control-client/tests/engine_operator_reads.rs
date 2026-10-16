@@ -150,7 +150,7 @@ impl Node {
             Command::new(build.join("crypto/create-state"))
                 .args(["-I"])
                 .arg(include)
-                .arg(source.join("crypto/smartcont/gen-zerostate.fif"))
+                .arg(source.join("test/tostester/tests/tostester/genesis-with-test-auth.fif"))
                 .env("SOURCE_DATE_EPOCH", "1789434000")
                 .current_dir(root),
         )?;

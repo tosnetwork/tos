@@ -1,0 +1,135 @@
+{
+  "parent": "2bc292a1695b389cd7c5caf5b7acebe21b9dd6b4",
+  "platform": "macOS arm64; this is not Linux ASan or x86_64 acceptance",
+  "changes": [
+    "Supply explicit public 0x43 test namespaces to native Genesis regression and ASan localnet startup.",
+    "Check version 16 in the generated-config transaction probe; add a real stale-version mutation control.",
+    "Refresh only the Genesis recorded answer from real execution; format the complete PR C++ diff."
+  ],
+  "sources": {
+    ".github/workflows/jsonrpc-asan.yml": {
+      "bytes": 8035,
+      "sha256": "81c121293e43f4da0b32b4c351bc6f10e70b949976b7fd1838fa53faf76d1fdd"
+    },
+    "crypto/test/test-smartcont.cpp": {
+      "bytes": 122814,
+      "sha256": "fa9089fb632f43da7129eb36d0c3682823def3f1f9c9f55407fd2c83e8d0330a"
+    },
+    "test/regression-tests.ans": {
+      "bytes": 8734,
+      "sha256": "8409d68a3cfedf43d1e4d6a11cc5a4e45c4c2992e50c6120995632fe39429676"
+    },
+    "test/validator/getter-context-test.cpp": {
+      "bytes": 23243,
+      "sha256": "95970d21c950ffb2bf84335a9f5f072c534b01595081c8e12bc276511ddb0439"
+    },
+    "test/wallet-quantum/release-config-probe.fc": {
+      "bytes": 1309,
+      "sha256": "491cd40e257ba3e7518b3a2a1471dcc887658b07252fb35da836cb3237a7aa16"
+    },
+    "test/wallet-quantum/release_config_controls.py": {
+      "bytes": 4821,
+      "sha256": "451ccccf2e1a146eb7d00c70a857967a466d9ac7e366be2077c14f3b93515d99"
+    }
+  },
+  "validation": [
+    {
+      "command": "bash scripts/check-regression-db.sh \"$PWD\" \"$PWD/build\"",
+      "exit": 0,
+      "result": "All recorded answers match and every answer has a verifying test."
+    },
+    {
+      "command": "uv run python -m unittest discover -s scripts -p test_localnet_auth_namespace.py -v",
+      "exit": 0,
+      "tests": 12
+    },
+    {
+      "command": "TOS_AUTH_NETWORK_TAG=<explicit public 0x43 tag> uv run pytest -q test/tostester/tests/tostester/test_zerostate_auth_policy.py",
+      "exit": 0,
+      "tests": 11
+    },
+    {
+      "command": "uv run python -m unittest discover -s scripts -p test_ci_efficiency.py -v",
+      "exit": 0,
+      "tests": 3
+    },
+    {
+      "command": "ctest --test-dir build --output-on-failure --no-tests=error -R '^getter-context-(context|vm|libraries|liteserver)$'",
+      "exit": 0,
+      "tests": 5,
+      "result": "Four getter cases and their automatic fixture preparation passed."
+    },
+    {
+      "command": "release_config_transactions.py --config <generated v16 ConfigParams> --driver <pq-tx-parity> --output <artifact directory>",
+      "exit": 0,
+      "cases": 10
+    },
+    {
+      "command": "release_config_controls.py with the same config and driver",
+      "exit": 0,
+      "result": "Four mutations failed at the intended assertion, and all restored baselines passed."
+    },
+    {
+      "command": "post_accept_transactions.py with the same config and driver",
+      "exit": 0,
+      "cases": 5
+    },
+    {
+      "command": "actionlint .github/workflows/jsonrpc-asan.yml; git clang-format (21.1.8) --diff origin/main; Ruff check and format --check on all changed Python",
+      "exit": 0
+    },
+    {
+      "command": "scripts/static-analysis.py --build-dir build --base-build-dir /Users/tomisetsu/tos/build --llvm-bin /private/tmp/issue-192-llvm/bin --codechecker /private/tmp/issue-192-codechecker/bin/CodeChecker --jobs 4",
+      "exit": 2,
+      "result": "REFUSED: macOS SDK clang-scan-deps failure; all 10 positive controls reported. No static-analysis pass claimed."
+    }
+  ],
+  "config_sha256": "4eb417375f201341b5d59ee7a0ed1d03364ed8c1047de6b75e3127851504fdf8",
+  "remaining": "Linux ASan corpus, x86_64/ARM64 release-wallet jobs and Linux differential static analysis must validate the pushed revision.",
+  "raw_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-pr226-ci-fix-20261016",
+    "retain_through": "2026-11-16",
+    "files": {
+      "recorded-answers.log": {
+        "bytes": 75,
+        "sha256": "96db7d96f9e379cd531b400f9dee34f3abca4a55365bca29c15372ff0c343e70"
+      },
+      "namespace.log": {
+        "bytes": 2235,
+        "sha256": "f09b1494bfa946ea2050d1a2e1dbbd97c17921c51ccfd1a0af35d281065b2881"
+      },
+      "genesis-auth.log": {
+        "bytes": 99,
+        "sha256": "628fa58eb8c32553b5761141c6b8c4d7865e98848ab91fea6482052902d51265"
+      },
+      "asan-namespace-wiring.log": {
+        "bytes": 173,
+        "sha256": "029d5fb9c160e764c654e16a9e44910aeda4c33f717cac59de044c28b7283189"
+      },
+      "ci-efficiency.log": {
+        "bytes": 560,
+        "sha256": "e5912ec2cc8e6976df324b973506b3272edb12086255f5d56ed0d8a6eb8e40bc"
+      },
+      "getter-context.log": {
+        "bytes": 807,
+        "sha256": "e9db6980e3b7669bf2f102dc1b2e0f75867212df7b9eaa3cc5d9af401eab4934"
+      },
+      "release-transactions/result.json": {
+        "bytes": 1898,
+        "sha256": "1b9ba92e7fb6d7f80c2a1c4c7467009e36f96ff1306930d788962ec2de1231ae"
+      },
+      "release-controls/result.json": {
+        "bytes": 340,
+        "sha256": "93ac5baf4814530b9375c829407723e99194a0b50ed5e7725bcdace0edae2df7"
+      },
+      "post-accept/result.json": {
+        "bytes": 1117,
+        "sha256": "c7f4393ac83ca4ff9bb56f0e608ffcf1de5c9b9c401a4ddaf1a4b5acbbc9b7fe"
+      },
+      "static-analysis.log": {
+        "bytes": 600,
+        "sha256": "43b29465d63479382a62b4ec608c2f7ef3d2a4629c0a58b83588664f7117d46b"
+      }
+    }
+  }
+}
