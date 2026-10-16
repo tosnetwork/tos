@@ -15,6 +15,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   explorer-two-build-analysis:
@@ -44,24 +45,33 @@ jobs:
     - name: Check out repository
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+    - name: Reuse only a proven identical Ready snapshot
+      id: snapshot
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 scripts/ci-snapshot.py --job 'strict-build'
     - name: Date Stamp
+      if: steps.snapshot.outputs.run-tests == 'true'
       shell: bash
       id: date-stamp
       run: |
         echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
 
     - name: Install system libraries
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache
 
     - name: Install Clang 21
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
         sudo scripts/install-llvm-toolchain.sh 21 all
 
     # Pull requests read the newest cache saved on main (or their own earlier runs); main
     # saves after every push, so the next pull request starts from it.
     - name: Restore compile cache
+      if: steps.snapshot.outputs.run-tests == 'true'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: .ccache
@@ -70,9 +80,11 @@ jobs:
 
     # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install repository-pinned Rust toolchain
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: scripts/install-rust-toolchain.sh
 
     - name: Build TOS
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
         cmake -S . -B build -G Ninja \
           -DCMAKE_C_COMPILER=clang-21 \
@@ -92,6 +104,7 @@ jobs:
     # see them. The guard is registered only where clang-tidy-21 exists, and this job
     # installs it, so a missing registration here is a failure, not a skip.
     - name: Static use-after-move guard
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
         python3 scripts/check-ctest-inventory.py --build-dir build \
           --label static-analysis --exact static-use-after-move
@@ -100,6 +113,7 @@ jobs:
     # The regression tests of the fixes the guard covers, plus their neighbours. The
     # inventory check refuses a selection that silently lost one of them.
     - name: Targeted regression tests
+      if: steps.snapshot.outputs.run-tests == 'true'
       env:
         TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
       run: |
@@ -110,11 +124,11 @@ jobs:
     # The hit rate is the evidence that the cache works; a run that hits nothing is a cold
     # build, not a broken one.
     - name: Compile cache statistics
-      if: always()
+      if: (always()) && steps.snapshot.outputs.run-tests == 'true'
       run: ccache --show-stats
 
     - name: Save compile cache
-      if: always()
+      if: (always()) && steps.snapshot.outputs.run-tests == 'true'
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: .ccache
@@ -126,6 +140,18 @@ jobs:
   # change, which teaches everyone to ignore the result. Judging only the changed lines
   # means this passes today and still refuses new deviations, and the backlog shrinks as
   # files are edited rather than in one reformatting commit.
+
+    - name: Record successful executed snapshot
+      if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+      run: python3 scripts/ci-snapshot.py --job 'strict-build' --record
+    - name: Retain successful snapshot evidence
+      if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: ci-snapshot-strict-build-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-snapshot-strict-build.json
+        if-no-files-found: error
+        retention-days: 14
   hygiene:
     runs-on: ubuntu-24.04
 
@@ -135,7 +161,13 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Reuse only a proven identical Ready snapshot
+      id: snapshot
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 scripts/ci-snapshot.py --job 'hygiene'
     - name: Determine what this change touches
+      if: steps.snapshot.outputs.run-tests == 'true'
       id: changed
       shell: bash
       run: |
@@ -160,6 +192,7 @@ jobs:
         echo "Files touched: $(wc -l < changed-files.txt)"
 
     - name: Install Clang 21 formatting tools
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
         sudo scripts/install-llvm-toolchain.sh 21
         sudo apt-get install -y clang-format-21
@@ -167,6 +200,7 @@ jobs:
     # Captured output under an evidence `raw/` directory is a byte-exact record whose
     # SHA-256 an evidence index pins; trimming it would break the pin and the record.
     - name: Check spaces at EOL on added lines
+      if: steps.snapshot.outputs.run-tests == 'true'
       shell: bash
       run: |
         if git diff -U0 "${{ steps.changed.outputs.base }}" HEAD -- :/ \
@@ -180,6 +214,7 @@ jobs:
         fi
 
     - name: Check C++ formatting of changed lines
+      if: steps.snapshot.outputs.run-tests == 'true'
       shell: bash
       run: |
         # The formatter exits non-zero when it has something to say, and this step runs
@@ -210,7 +245,7 @@ jobs:
         esac
 
     - name: Prepare Python environment
-      if: steps.changed.outputs.python_count != '0'
+      if: (steps.changed.outputs.python_count != '0') && steps.snapshot.outputs.run-tests == 'true'
       run: |
         tool_dir="$(mktemp -d)"
         trap 'rm -rf "$tool_dir"' EXIT
@@ -221,7 +256,7 @@ jobs:
         uv sync
 
     - name: Lint changed Python
-      if: steps.changed.outputs.python_count != '0'
+      if: (steps.changed.outputs.python_count != '0') && steps.snapshot.outputs.run-tests == 'true'
       shell: bash
       run: |
         mapfile -t files < <(grep -E '\.py$' changed-files.txt)
@@ -230,6 +265,18 @@ jobs:
 
   # The reusable Python check also runs on Python/schema changes independently
   # of native builds. Manual native validation retains the same check here.
+
+    - name: Record successful executed snapshot
+      if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+      run: python3 scripts/ci-snapshot.py --job 'hygiene' --record
+    - name: Retain successful snapshot evidence
+      if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: ci-snapshot-hygiene-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-snapshot-hygiene.json
+        if-no-files-found: error
+        retention-days: 14
   python-types:
     if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/python-types.yml

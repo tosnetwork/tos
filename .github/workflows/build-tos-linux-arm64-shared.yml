@@ -29,17 +29,10 @@ jobs:
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       with:
         fetch-depth: 0
-    - name: Date Stamp
-      shell: bash
-      id: date-stamp
-      run: |
-        echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
-
     - name: Install system libraries
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache ripgrep
-        mkdir ~/.ccache
 
     - if: matrix.os != 'ubuntu-24.04-arm'
       run: |
@@ -51,13 +44,11 @@ jobs:
         lsb_release -a
         sudo scripts/install-llvm-toolchain.sh 21
 
-    - name: Cache TOS test
-      id: cache-tos
-      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+    - name: Reuse compatible native compiler objects
+      uses: ./.github/actions/native-cache
       with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
-        restore-keys: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache
+        profile: main-shared
+        max-size: 1G
 
     # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install repository-pinned Rust toolchain
@@ -77,7 +68,7 @@ jobs:
     - name: Run Tests
       run: |
         cd build
-        ctest --output-on-failure --timeout 1800
+        python3 ../scripts/ci-ctest.py --build-dir .
 
     - name: Run toslib integration test
       run: |

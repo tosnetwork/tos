@@ -38,6 +38,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build ripgrep
 
+      - name: Verify CI snapshot reuse and complete test scheduling
+        run: |
+          python3 scripts/test_ci_snapshot.py
+          python3 scripts/test_ci_ctest.py
+          python3 scripts/test_ci_efficiency.py
+          python3 scripts/test_clean_closed_pr_caches.py
+
       - name: Configure the CTest registry
         run: cmake -S . -B build-source-guards -G Ninja -DCMAKE_BUILD_TYPE=Release
 

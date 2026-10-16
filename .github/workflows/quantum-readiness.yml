@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - 'scripts/ci-snapshot.py'
+      - 'scripts/test_ci_snapshot.py'
       - '.github/workflows/quantum-readiness.yml'
       - 'crypto/block/**'
       - 'crypto/fift/lib/Config.fif'
@@ -21,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: quantum-readiness-${{ github.event.pull_request.number || github.ref }}
@@ -43,12 +46,20 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Reuse only a proven identical Ready snapshot
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-snapshot.py --job 'native-${{ matrix.runner }}'
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        if: steps.snapshot.outputs.run-tests == 'true'
       - name: Install system crypto development dependencies
+        if: steps.snapshot.outputs.run-tests == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev
       - name: Build node and genesis configuration paths
+        if: steps.snapshot.outputs.run-tests == 'true'
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DUSE_QUIC=OFF \
             -DOPENSSL_CRYPTO_LIBRARY="$(pkg-config --variable=libdir openssl)/libcrypto.so" \
@@ -58,16 +69,19 @@ jobs:
             tos-pq-consensus-key gen_fif_smartcont_auto_config_code \
             gen_fif_smartcont_auto_elector_code gen_fif_smartcont_auto_validator_controller_v1_code -j2
       - name: Prepare repository Python environment
+        if: steps.snapshot.outputs.run-tests == 'true'
         run: |
           uv sync --locked --no-dev
           uv run test/tostester/generate_tl.py
       - name: Configuration transitions and sensitivity controls
+        if: steps.snapshot.outputs.run-tests == 'true'
         run: |
           mkdir -p "$RUNNER_TEMP/quantum-evidence"
           build/test-config-transition > "$RUNNER_TEMP/quantum-evidence/native.log" 2>&1
           uv run python test/wallet-quantum/policy_native_mutations.py --admission-only \
             --build build --output "$RUNNER_TEMP/quantum-evidence/admission-controls"
       - name: Actual genesis construction and failure controls
+        if: steps.snapshot.outputs.run-tests == 'true'
         run: |
           uv run python -m pytest -q test/tostester/tests/tostester/test_zerostate_auth_policy.py \
             test/tostester/tests/tostester/test_zerostate_supply.py \
@@ -76,8 +90,20 @@ jobs:
             > "$RUNNER_TEMP/quantum-evidence/genesis.log" 2>&1
           git diff --exit-code
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: (always()) && steps.snapshot.outputs.run-tests == 'true'
         with:
           name: quantum-readiness-${{ matrix.runner }}
           path: ${{ runner.temp }}/quantum-evidence/
+          retention-days: 14
+
+      - name: Record successful executed snapshot
+        if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+        run: python3 scripts/ci-snapshot.py --job 'native-${{ matrix.runner }}' --record
+      - name: Retain successful snapshot evidence
+        if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-snapshot-native-${{ matrix.runner }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-snapshot-native-${{ matrix.runner }}.json
+          if-no-files-found: error
           retention-days: 14
