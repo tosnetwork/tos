@@ -580,6 +580,38 @@ TEST(JsonRpcTransport, a_timed_out_batch_still_refuses_invalid_ids) {
   }
 }
 
+// After the deadline the remaining elements are still checked exactly as on
+// the dispatch path, envelope included: an object without an id whose
+// envelope is invalid is an invalid request, not a notification, and is
+// answered; a valid notification still gets no entry. The deadline here has
+// already passed when the first element is reached -- this test server has no
+// backend that could make an element slow -- so the request ahead of the two
+// is answered with the timeout, as a slow element would leave it.
+TEST(JsonRpcTransport, a_timed_out_batch_validates_envelopes_before_dropping_notifications) {
+  for (bool with_key : {false, true}) {
+    auto options = options_for(with_key);
+    options.request_timeout = 1e-9;
+    with_json_rpc(options, [with_key](int port) {
+      Client client(port, 0);
+      ASSERT_TRUE(client.connect());
+      std::string batch = R"([{"jsonrpc":"2.0","id":1,"method":"getMasterchainInfo"},)"
+                          R"({"jsonrpc":"1.0","method":"x"},)"
+                          R"({"jsonrpc":"2.0","method":"x"}])";
+      ASSERT_TRUE(client.send_all(post(batch, with_key)));
+      std::string status, body;
+      ASSERT_TRUE(client.read_response(5000, status, body));
+      ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+      ASSERT_EQ(count_of(body, "\"id\":1,\"error\":{\"code\":-32603,\"message\":\"Request batch timed out\""),
+                static_cast<size_t>(1));
+      // The malformed element: answered, -32600, naming the jsonrpc member.
+      ASSERT_EQ(count_of(body, "\"id\":null,\"error\":{\"code\":-32600,\"message\":\"Invalid Request: 'jsonrpc' must"),
+                static_cast<size_t>(1));
+      // Exactly those two entries: the valid notification has none.
+      ASSERT_EQ(count_of(body, "\"jsonrpc\":\"2.0\",\"id\":"), static_cast<size_t>(2));
+    });
+  }
+}
+
 TEST(JsonRpcTransport, a_listener_without_a_response_deadline_is_not_constructed) {
   for (double bad :
        {0.0, -1.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), 1e300}) {

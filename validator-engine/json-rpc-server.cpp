@@ -744,34 +744,21 @@ void JsonRpcServer::process_body(td::BufferSlice body, std::string req_id, std::
 void JsonRpcServer::process_single_object_request(td::JsonValue req,
                                                    std::string source_ip,
                                                    td::Promise<HttpReturn> promise) {
-  auto &obj = req.get_object();
-  auto envelope_r = json_rpc::check_envelope(obj);
-  const bool has_id = obj.has_field("id");
-
-  // Extract request ID — store as JSON literal to preserve type in response
-  // (JSON-RPC 2.0 requires echoing the id type exactly). An id that cannot be
-  // echoed -- not a string, number or null, a malformed number, or longer than
-  // kMaxReflectedIdBytes once serialized -- is answered as an invalid request
-  // with id null, so a client cannot make a reply carry a large id.
-  std::string req_id;
-  {
-    auto id_val = obj.extract_field("id");
-    auto id_r = reflected_request_id(id_val);
-    if (id_r.is_error()) {
-      promise.set_value(make_json_rpc_error(-32600, PSTRING() << "Invalid Request: " << id_r.error().message(), "null",
-                                            opts_.cors_origin));
-      return;
-    }
-    req_id = id_r.move_as_ok();
-  }
-  if (envelope_r.is_error() && envelope_r.error().code() == json_rpc::kInvalidRequest.code) {
+  // check_request decides validity, the id to echo (as a JSON literal, so
+  // its type is preserved; an id that cannot be echoed is an invalid request
+  // answered with id null) and whether this is a notification. The batch
+  // deadline path uses the same helper, so both answer a request alike.
+  auto checked = json_rpc::check_request(req);
+  std::string req_id = checked.id;
+  if (checked.invalid.is_error()) {
     promise.set_value(
-        make_json_rpc_error(json_rpc::kInvalidRequest, envelope_r.error().message().str(), req_id, opts_.cors_origin));
+        make_json_rpc_error(json_rpc::kInvalidRequest, checked.invalid.message().str(), req_id, opts_.cors_origin));
     return;
   }
+  auto &obj = req.get_object();
+  auto envelope_r = std::move(checked.envelope);
   // From here on a notification is answered with no content, after it ran.
-  const bool notification = !has_id;
-  if (notification) {
+  if (checked.notification()) {
     promise = td::PromiseCreator::lambda(
         [cors = opts_.cors_origin, inner = std::move(promise)](td::Result<HttpReturn>) mutable {
           inner.set_value(JsonRpcServer::make_no_content(cors));
@@ -825,7 +812,6 @@ struct JsonRpcServer::BatchState {
   // are reached from a later actor message, once the caller that owned
   // the buffer has already returned.
   td::BufferSlice body;
-  std::vector<bool> is_notification;
   std::vector<std::string> responses;  // empty = notification, dropped
   // Draining an element into the batch must not release its output reservation
   // while the batch still owns the copied bytes.
@@ -851,30 +837,12 @@ void JsonRpcServer::process_batch(std::vector<td::JsonValue> elements,
                                   td::BufferSlice body,
                                   std::string source_ip,
                                   td::Promise<HttpReturn> promise) {
-  // Per-element notification flag.  A request is a notification iff its
-  // `id` field is absent (NOT iff it's null — null is a valid id).  We
-  // detect this BEFORE process_single_object_request consumes the field.
-  std::vector<bool> is_notification;
-  is_notification.reserve(elements.size());
-  for (auto &el : elements) {
-    if (el.type() != td::JsonValue::Type::Object) {
-      // Spec: per-element invalid request → an error response with id null
-      // in the output array.  We synthesize one below in the loop.
-      is_notification.push_back(false);
-      continue;
-    }
-    auto &obj = el.get_object();
-    bool has_id = false;
-    for (auto &fv : obj.field_values_) {
-      if (fv.first == "id") { has_id = true; break; }
-    }
-    is_notification.push_back(!has_id);
-  }
-
+  // Whether an element is a notification is decided per element by
+  // json_rpc::check_request, after its envelope is validated, on both the
+  // dispatch and the deadline path; nothing is precomputed from the id alone.
   auto state = std::make_shared<BatchState>();
   state->elements = std::move(elements);
   state->body = std::move(body);
-  state->is_notification = std::move(is_notification);
   state->responses.resize(state->elements.size());
   state->final_promise = std::move(promise);
   state->cors = opts_.cors_origin;
@@ -902,36 +870,22 @@ void JsonRpcServer::process_batch_step(std::shared_ptr<BatchState> state) {
     if (state->deadline && state->deadline.is_in_past()) {
       while (state->cursor < state->elements.size()) {
         std::size_t j = state->cursor;
-        if (state->is_notification[j]) {
+        // The same checks as the dispatch path, through the same helper and
+        // in the same order: an invalid element (not an object, an id that
+        // cannot be echoed, an envelope refused with -32600) is answered as
+        // an invalid request whether or not the batch ran out of time, even
+        // when it has no id. Only a valid notification is dropped, and only
+        // a valid request is answered with the timeout, under its id.
+        auto checked = json_rpc::check_request(state->elements[j]);
+        if (checked.notification()) {
           state->responses[j] = "";
           state->cursor++;
           continue;
         }
-        // The same validation as the dispatch path comes first: an element
-        // that is not an object, or whose id cannot be echoed, is an invalid
-        // request (-32600, id null) whether or not the batch ran out of time.
-        // Only a valid element is answered with the timeout, under its id.
-        std::string elem_id = "null";
-        td::Status invalid;
-        if (state->elements[j].type() != td::JsonValue::Type::Object) {
-          invalid = td::Status::Error("batch element is not a JSON object");
-        } else {
-          auto &obj = state->elements[j].get_object();
-          for (auto &fv : obj.field_values_) {
-            if (fv.first != "id") continue;
-            auto id_r = reflected_request_id(fv.second);
-            if (id_r.is_ok()) {
-              elem_id = id_r.move_as_ok();
-            } else {
-              invalid = id_r.move_as_error();
-            }
-            break;
-          }
-        }
-        auto err = invalid.is_error()
-                       ? make_json_rpc_error(-32600, PSTRING() << "Invalid Request: " << invalid.message(), "null",
+        auto err = checked.invalid.is_error()
+                       ? make_json_rpc_error(json_rpc::kInvalidRequest, checked.invalid.message().str(), checked.id,
                                              state->cors)
-                       : make_json_rpc_error(-32603, "Request batch timed out", elem_id, state->cors);
+                       : make_json_rpc_error(-32603, "Request batch timed out", checked.id, state->cors);
         state->responses[j] = extract_response_body(err);
         state->cursor++;
       }

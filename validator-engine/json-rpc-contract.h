@@ -115,6 +115,25 @@ struct Envelope {
 // The id is validated separately (reflected_request_id), before this runs.
 td::Result<Envelope> check_envelope(const td::JsonObject &request);
 
+// Everything decided about one request (a single body or one batch element)
+// before it may run, so every path that answers requests -- including a batch
+// whose deadline has passed -- applies the same rules in the same order:
+//   1. not an object, or an id that cannot be echoed: invalid, id null;
+//   2. an envelope that check_envelope refuses with -32600: invalid, id echoed;
+//   3. otherwise `envelope` holds check_envelope's result, which may still be
+//      the -32602 positional-params refusal.
+// Only a request that is not invalid and has no id member is a notification.
+struct CheckedRequest {
+  std::string id{"null"};  // literal to echo in the answer
+  bool has_id{false};
+  td::Status invalid;  // set: answer -32600 under `id`, even without an id member
+  td::Result<Envelope> envelope{td::Status::Error(-32600, "Invalid Request")};
+  bool notification() const {
+    return invalid.is_ok() && !has_id;
+  }
+};
+CheckedRequest check_request(const td::JsonValue &request);
+
 // Strict block-selector parameters, shared by every method that takes them.
 // A present value must be the whole value of the right JSON type and range;
 // a wrong one is an error naming the parameter, never a default.

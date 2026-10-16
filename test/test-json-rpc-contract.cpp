@@ -163,6 +163,39 @@ TEST(JsonRpcContract, envelope_rules) {
               [](td::JsonObject &object) { ASSERT_TRUE(!rpc::check_envelope(object).ok().notification); });
 }
 
+// One decision per request, shared by the dispatch and batch-deadline paths:
+// an invalid envelope is never a notification, even without an id.
+TEST(JsonRpcContract, checked_request_validates_before_calling_anything_a_notification) {
+  struct Case {
+    std::string request;
+    bool invalid;
+    bool notification;
+    std::string id;
+  };
+  const std::vector<Case> cases = {
+      {R"({"jsonrpc":"1.0","method":"x"})", true, false, "null"},
+      {R"({"jsonrpc":"1.0","id":7,"method":"x"})", true, false, "7"},
+      {R"({"jsonrpc":"2.0","method":12})", true, false, "null"},
+      {R"({"jsonrpc":"2.0","id":{},"method":"x"})", true, false, "null"},
+      {R"(7)", true, false, "null"},
+      {R"({"jsonrpc":"2.0","method":"x"})", false, true, "null"},
+      {R"({"jsonrpc":"2.0","method":"x","params":[1]})", false, true, "null"},
+      {R"({"jsonrpc":"2.0","id":"a","method":"x"})", false, false, "\"a\""},
+      {R"({"jsonrpc":"2.0","id":null,"method":"x"})", false, false, "null"},
+  };
+  for (auto c : cases) {
+    auto value = td::json_decode(td::MutableSlice(c.request));
+    ASSERT_TRUE(value.is_ok());
+    auto checked = rpc::check_request(value.ok());
+    ASSERT_EQ(checked.invalid.is_error(), c.invalid);
+    if (c.invalid) {
+      ASSERT_EQ(checked.invalid.code(), -32600);
+    }
+    ASSERT_EQ(checked.notification(), c.notification);
+    ASSERT_EQ(checked.id, c.id);
+  }
+}
+
 TEST(JsonRpcContract, block_selectors_are_parsed_strictly) {
   with_object(R"({"workchain":-1,"shard":"-9223372036854775808","seqno":42})", [](td::JsonObject &object) {
     auto selector = rpc::parse_block_selector(object);

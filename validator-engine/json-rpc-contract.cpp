@@ -20,6 +20,7 @@
 #include "td/utils/misc.h"
 
 #include "json-rpc-contract.h"
+#include "json-rpc-server-parse.h"
 
 namespace tos::json_rpc {
 
@@ -164,6 +165,29 @@ td::Result<Envelope> check_envelope(const td::JsonObject &request) {
   }
   envelope.notification = find_field(request, "id") == nullptr;
   return envelope;
+}
+
+CheckedRequest check_request(const td::JsonValue &request) {
+  CheckedRequest checked;
+  if (request.type() != td::JsonValue::Type::Object) {
+    checked.invalid = td::Status::Error(-32600, "Invalid Request: request is not a JSON object");
+    return checked;
+  }
+  const auto &object = request.get_object();
+  if (const auto *id = find_field(object, "id")) {
+    checked.has_id = true;
+    auto literal = reflected_request_id(*id);
+    if (literal.is_error()) {
+      checked.invalid = td::Status::Error(-32600, PSLICE() << "Invalid Request: " << literal.error().message());
+      return checked;
+    }
+    checked.id = literal.move_as_ok();
+  }
+  checked.envelope = check_envelope(object);
+  if (checked.envelope.is_error() && checked.envelope.error().code() == kInvalidRequest.code) {
+    checked.invalid = checked.envelope.error().clone();
+  }
+  return checked;
 }
 
 td::Result<td::int32> parse_workchain_param(const td::JsonObject &params, td::Slice name) {
