@@ -33,7 +33,7 @@ def main():
     assert len(root.bits) == 256 and len(root.refs) == 1, "ConfigParams required"
     entries = read_dict(root.refs[0], 32)
     version = entries[8].refs[0].slice()
-    assert version.uint(8) == 0xC4 and version.uint(32) == 18
+    assert version.uint(8) == 0xC4 and version.uint(32) == 16
     policy = entries[48].refs[0].slice()
     assert policy.uint(8) == 0xA1
     namespace = policy.uint(256)
@@ -71,9 +71,8 @@ def main():
             result = emulator.send(shard, message)
             assert result["success"], (name, result)
             details = result["details"]
-            expected = (
-                6 if dedicated else 5 if suite == 2 else 901 if name.endswith("bitflip") else 0
-            )
+            # Every suite and the dedicated Falcon opcode are open from version 16.
+            expected = 901 if name.endswith("bitflip") else 0
             assert details["exit"] == expected, (name, expected, details)
             state, _ = native.account_data(from_boc(result["shard_account"]))
             if expected == 0:
@@ -111,7 +110,7 @@ def main():
         str(args.driver.resolve()),
         str(out / "config.boc"),
         str(out / "scenarios.tsv"),
-        "18",
+        "16",
         "--details",
     ]
     rust = subprocess.run(command, capture_output=True, text=True)
@@ -124,7 +123,7 @@ def main():
         passed=True,
         config_sha256=hashlib.sha256(raw).hexdigest(),
         config_root=root.refs[0].hash.hex(),
-        version=18,
+        version=16,
         namespace=f"{namespace:064x}",
         rust_command=command,
         cases=results,

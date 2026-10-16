@@ -46,7 +46,7 @@ def run(code, pinned, witness, expected, wallet=None, module=None, claimed=None)
     wallet = address(100) if wallet is None else wallet
     module = address(200) if module is None else module
     initial = Cell(bits=wallet.bits + module.bits, refs=[pinned, fee()])
-    e = Emulator(17)
+    e = Emulator(16)
     try:
         result = e.send(
             active_account((0, 1000), code, initial),

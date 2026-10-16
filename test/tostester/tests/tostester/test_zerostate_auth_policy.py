@@ -39,7 +39,7 @@ def generate(path, version, tag):
 
 
 def assert_initial_policy(cfg):
-    assert ConfigParam8.deserialize(cfg[8].copy()).version == 17
+    assert ConfigParam8.deserialize(cfg[8].copy()).version == 16
     p = cfg[48].copy()
     assert p.load_uint(8) == 0xA1
     assert p.load_bytes(32) == NETWORK
@@ -52,8 +52,8 @@ def assert_initial_policy(cfg):
     assert 48 in require(ConfigParam10.deserialize(cfg[10].copy()).critical_params)
 
 
-def test_version17_genesis_installs_frozen_policy(tmp_path):
-    assert_initial_policy(generate(tmp_path / "v17", 17, NETWORK))
+def test_version16_genesis_installs_frozen_policy(tmp_path):
+    assert_initial_policy(generate(tmp_path / "v16", 16, NETWORK))
 
 
 def test_initial_retirement_value_mutation_is_detected(tmp_path, monkeypatch):
@@ -69,10 +69,10 @@ def test_initial_retirement_value_mutation_is_detected(tmp_path, monkeypatch):
         context.setattr(
             Install, "fift_include_dirs", property(lambda self: [override, *original(self)])
         )
-        cfg = generate(tmp_path / "mutated", 17, NETWORK)
+        cfg = generate(tmp_path / "mutated", 16, NETWORK)
         with pytest.raises(AssertionError, match="initial retirement bits"):
             assert_initial_policy(cfg)
-    assert_initial_policy(generate(tmp_path / "restored", 17, NETWORK))
+    assert_initial_policy(generate(tmp_path / "restored", 16, NETWORK))
 
 
 def test_missing_policy_mutation_is_rejected_by_node(tmp_path, monkeypatch):
@@ -81,15 +81,15 @@ def test_missing_policy_mutation_is_rejected_by_node(tmp_path, monkeypatch):
     with monkeypatch.context() as context:
         context.setattr(zerostate_module, "_TEMPLATE", template.replace("{auth_policy_param}", ""))
         with pytest.raises(subprocess.CalledProcessError):
-            generate(tmp_path / "missing", 17, NETWORK)
+            generate(tmp_path / "missing", 16, NETWORK)
         error = (tmp_path / "missing" / "generation.stderr.raw").read_text()
         assert "set_config_smc:invalid smart contract configuration data" in error, error[-3000:]
-    assert_initial_policy(generate(tmp_path / "present", 17, NETWORK))
+    assert_initial_policy(generate(tmp_path / "present", 16, NETWORK))
 
 
-def test_version16_retains_legacy_genesis(tmp_path):
-    cfg = generate(tmp_path / "v16", 16, None)
-    assert ConfigParam8.deserialize(require(cfg)[8].copy()).version == 16
+def test_version15_retains_legacy_genesis(tmp_path):
+    cfg = generate(tmp_path / "v15", 15, None)
+    assert ConfigParam8.deserialize(require(cfg)[8].copy()).version == 15
     assert 48 not in require(cfg)
     assert 48 not in require(ConfigParam9.deserialize(require(cfg)[9].copy()).mandatory_params)
     assert 48 not in require(ConfigParam10.deserialize(require(cfg)[10].copy()).critical_params)
@@ -97,9 +97,20 @@ def test_version16_retains_legacy_genesis(tmp_path):
 
 @pytest.mark.parametrize(
     "version,tag",
-    [(17, None), (17, b""), (17, b"x" * 31), (17, b"x" * 33), (17, "x" * 32), (16, NETWORK)],
+    [(16, None), (16, b""), (16, b"x" * 31), (16, b"x" * 33), (16, "x" * 32), (15, NETWORK)],
 )
 def test_bad_namespace_refused_before_custody_files(tmp_path, version, tag):
     with pytest.raises(ValueError, match="AUTH network tag"):
         generate(tmp_path / "invalid", version, tag)
     assert not (tmp_path / "invalid" / "main-wallet.pk").exists()
+
+
+def test_environment_namespace_is_explicit_and_strict(monkeypatch):
+    monkeypatch.delenv("TOS_AUTH_NETWORK_TAG", raising=False)
+    assert NetworkConfig().auth_network_tag is None
+    monkeypatch.setenv("TOS_AUTH_NETWORK_TAG", NETWORK.hex())
+    assert NetworkConfig().auth_network_tag == NETWORK
+    for value in ("", "00" * 31, "00" * 33, "gg" * 32, "00 " * 32):
+        monkeypatch.setenv("TOS_AUTH_NETWORK_TAG", value)
+        with pytest.raises(ValueError, match="AUTH network tag"):
+            NetworkConfig()

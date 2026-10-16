@@ -49,7 +49,7 @@ def rpc(endpoint, index):
 def validate(cells):
     version = cells[8].begin_parse()
     require(
-        version.load_uint(8) == 0xC4 and version.load_uint(32) == 18,
+        version.load_uint(8) == 0xC4 and version.load_uint(32) == 16,
         "candidate VM version mismatch",
     )
     version.load_uint(64)

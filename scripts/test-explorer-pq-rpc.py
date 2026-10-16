@@ -176,7 +176,13 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--rpc-port", type=int, default=48545)
     parser.add_argument("--base-port", type=int, default=44000)
-    parser.add_argument("--legacy-config", action="store_true")
+    parser.add_argument(
+        "--ordinary-config",
+        "--legacy-config",
+        dest="legacy_config",
+        action="store_true",
+        help="Use an ordinary version-16 network with an explicit public test namespace",
+    )
     args = parser.parse_args()
     build, out = args.build_dir.resolve(), args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -244,7 +250,9 @@ def main():
         "--boot-timeout",
         "180",
     ]
-    if not args.legacy_config:
+    if args.legacy_config:
+        command.extend(["--auth-network-tag", "43" * 32])
+    else:
         command.extend(
             ["--quantum-admission-candidate", "--basechain-fixture", str(out / "basestate0.boc")]
         )
@@ -370,21 +378,16 @@ def main():
                     rest=True,
                 )["result"]
                 assert typed["decoded"] == same["decoded"]
-                assert typed["decoded"]["observation"]["vm_version"] == (
-                    16 if args.legacy_config else 18
-                )
+                assert typed["decoded"]["observation"]["vm_version"] == 16
                 assert typed["decoded"]["observation"]["block_id"] == observation
             if args.legacy_config:
-                absent_policy = request(
+                ordinary_policy = request(
                     "getConfigParam",
                     {"param": 48, "block_id": observation, "include_decoded": True},
                 )["result"]
                 assert (
-                    absent_policy["decoded"]["presence"] == "absent"
-                    and absent_policy["decoded"]["value"] is None
-                )
-                request(
-                    "getConfigParam", {"param": 48, "seqno": observation["seqno"]}, expected=500
+                    ordinary_policy["decoded"]["value"]["network_tag"]
+                    == base64.b64encode(bytes.fromhex("43" * 32)).decode()
                 )
             # The current generated TL store writes a bare blockIdExt and a
             # count-prefixed bare vector. Pin Config 8 to compare exact replies.

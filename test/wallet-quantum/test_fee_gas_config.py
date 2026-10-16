@@ -42,7 +42,7 @@ def main():
             code = native.compile_contract(str(work / "driver.fc"), out / f"{label}.boc")
             for encoding in ("flat_ext", "ext", "legacy"):
                 for cap in [65535] if mutant else [65535, 65536, 1000000]:
-                    entries = read_dict(native.config(17), 32)
+                    entries = read_dict(native.config(16), 32)
                     original = entries[21].refs[0]
                     assert int(original.bits[:8], 2) == 0xD1
                     extended = original.bits[136:]
@@ -56,7 +56,7 @@ def main():
                         bits = format(0xDD, "08b") + extended[8:136] + extended[200:]
                     entries[21] = Cell().ref(Cell(bits=bits))
                     with patch.object(native, "config", return_value=make_dict(entries, 32)):
-                        emulator = native.Emulator(17)
+                        emulator = native.Emulator(16)
                     try:
                         initial = Cell().uint(0, 64)
                         result = emulator.send(

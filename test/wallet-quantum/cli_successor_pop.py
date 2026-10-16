@@ -339,7 +339,7 @@ def check_successor_pops(
         original_config = native.config
 
         def diagnostic(*a, **k):
-            entries = shared.read_dict(original_config(17), 32)
+            entries = shared.read_dict(original_config(16), 32)
             price = entries[21].refs[0]
             prefix = 136 if int(price.bits[:8], 2) == 0xD1 else 0
             offset = prefix + 8 + 64 * 3
@@ -349,7 +349,7 @@ def check_successor_pops(
             return shared.make_dict(entries, 32)
 
         with patch.object(native, "config", diagnostic):
-            emu = native.Emulator(global_version=17)
+            emu = native.Emulator(global_version=16)
         receipts, challenges = [], set()
         roles = (
             ["primary", "rescue"]

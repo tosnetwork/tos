@@ -5,8 +5,11 @@
 "PQ.fif" include
 "Lists.fif" include
 
+def? quantum-network-tag not abort"Version 16 Genesis requires an explicit AUTH network tag"
+@' quantum-network-tag 256 ufits not abort"AUTH network tag must fit uint256"
 def? quantum-admission-candidate {
-  def? quantum-network-tag not abort"Quantum admission candidate requires an explicit AUTH network tag"
+  @' quantum-network-tag 0x4242424242424242424242424242424242424242424242424242424242424242 <>
+  abort"Quantum candidate requires the frozen 0x42 AUTH namespace"
 } if
 
 // =====================================================================
@@ -155,16 +158,8 @@ Masterchain swap
  */
 // Protocol version 16 enables the current PQ/VM and shielded-pool profile.
 16 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
-// Candidate-only Quantum profile: a wrapper may define quantum-network-tag before
-// including this template. Default version-16 genesis remains unchanged.
-def? quantum-network-tag {
-  17 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
-} if
-// Explicit candidate for admission measurements; activation still requires a
-// calibrated node work budget and the frozen release acceptance corpus.
-def? quantum-admission-candidate {
-  18 capCreateStats capBounceMsgBody or capReportVersion or capShortDequeue or capStoreOutMsgQueueSize or capMsgMetadata or capDeferMessages or config.version!
-} if
+// Explicit AUTH and admission profiles use the same version-16 baseline.
+// Admission still requires a calibrated node budget and release acceptance.
 // ConfigParam 19: global_id (must match setglobalid above)
 <b globalid@ 32 i, b> 19 config!
 // max-validators max-main-validators min-validators

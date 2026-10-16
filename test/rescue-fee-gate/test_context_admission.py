@@ -1,4 +1,4 @@
-"""Version-17 contextual admission: real normal-credit transactions and VM parity."""
+"""Contextual admission: real normal-credit transactions and VM parity."""
 
 import argparse
 import json
@@ -22,7 +22,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     loop.RescueLoopTests.setUpClass()
     test = None
-    em = Emulator(17)
+    em = Emulator(16)
     try:
         test = loop.RescueLoopTests("test_rescue_lock_through_the_fee_vault")
         test.setUp()
@@ -298,7 +298,7 @@ def main():
         test.assertTrue(test.h.admitted(exhausted), exhausted)
         data, _ = loop.slot.account_data(loop.from_boc(exhausted["shard_account"]))
         test.assertEqual(data.slice().uint(32), 1 << 20)
-        old = Emulator(16)
+        old = Emulator(15)
         try:
             original = rows[0].split("\t")
             shard = (
@@ -307,7 +307,7 @@ def main():
             rejected = old.send(shard, loop.from_boc(bytes.fromhex(original[4])))
             test.assertFalse(rejected["success"], rejected)
             test.assertEqual(rejected["vm_exit_code"], 5)
-            receipts["version_16_missing_context"] = 5
+            receipts["version_15_missing_context"] = 5
         finally:
             old.close()
 
@@ -315,7 +315,7 @@ def main():
         metadata_code = loop.compile_contract(
             str(Path(__file__).with_name("context-stats.fc").resolve()), args.output / "stats.boc"
         )
-        getter = check_getter_context(em.lib, metadata_code, config(17), loop.slot.VAULT)
+        getter = check_getter_context(em.lib, metadata_code, config(16), loop.slot.VAULT)
         (args.output / "getter.json").write_text(json.dumps(getter, indent=2) + "\n")
         receipts["native_getter_context_absent"] = True
         shared = loop.Cell().uint(123, 32)
@@ -382,7 +382,7 @@ def main():
             (args.output / f"{name}.json").write_text(json.dumps(result, indent=2) + "\n")
         (args.output / "transactions.tsv").write_text("\n".join(rows) + "\n")
         # ConfigParams wrapper used by the Rust whole-transaction driver.
-        (args.output / "config.boc").write_bytes(loop.Cell().uint(0, 256).ref(config(17)).boc())
+        (args.output / "config.boc").write_bytes(loop.Cell().uint(0, 256).ref(config(16)).boc())
 
         cases = []
         expected = {}
@@ -390,7 +390,7 @@ def main():
         sig = valid[0].refs[1].boc().hex()
         digest = "hash:" + valid[0].refs[0].hash.hex()
 
-        def case(name, stack, exit_code=0, value=-1, version=17, budget=10000):
+        def case(name, stack, exit_code=0, value=-1, version=16, budget=10000):
             cases.append("\t".join([name, str(version), str(budget), "f93103", *stack]))
             expected[name] = (exit_code, value)
 
@@ -399,8 +399,8 @@ def main():
             case(
                 f"version_{version}",
                 stack,
-                6 if version < 17 else 0,
-                99 if version < 17 else -1,
+                6 if version < 16 else 0,
+                99 if version < 16 else -1,
                 version,
             )
         case("wrong_leaf", [digest, f"int:{valid[1] + 1}", sig, key], value=0)
@@ -446,7 +446,7 @@ def main():
             test.assertEqual((cpp[name][0], cpp[name][2]), (exit_code, value), name)
         receipts["transaction_parity"] = compare(args.output, args.rust_tx)
         receipts["opcode_parity"] = len(cases)
-        receipts["opcode_valid_gas"] = cpp["version_17"][1]
+        receipts["opcode_valid_gas"] = cpp["version_16"][1]
         (args.output / "summary.json").write_text(json.dumps(receipts, indent=2) + "\n")
         print(json.dumps(receipts, indent=2))
     finally:

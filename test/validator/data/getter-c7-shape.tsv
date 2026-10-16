@@ -1,0 +1,6 @@
+# Getter SmartContractInfo (c7[0]) shape by global version: length, then c7[18].
+# Checked by test-get-method-context --case c7-parity (liteserver, proof-verify and
+# emulator getter paths) and by the Rust tos_vm getter test.
+15	18	absent
+16	19	null
+17	19	null

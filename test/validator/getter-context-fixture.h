@@ -161,7 +161,7 @@ struct State {
 };
 
 inline State build(const std::string& zero_path, const std::string& elector_dir, const std::string& config_code_path,
-                   int version = 17, bool global_library = true, Ref<vm::Cell> elector_override = {},
+                   int version = 16, bool global_library = true, Ref<vm::Cell> elector_override = {},
                    Ref<vm::Cell> proposal_override = {}, Ref<vm::Cell> probe_code = {}, Ref<vm::Cell> probe_data = {},
                    Ref<vm::Cell> elector_code_override = {}, Ref<vm::Cell> config_code_override = {}) {
   State fixture;

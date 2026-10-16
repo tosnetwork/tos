@@ -97,7 +97,7 @@ nonce, overflow and post-accept replay boundaries.
 
 ## Admission gas
 
-The regression fixes VM global version 18 and a 10,000 external gas credit in
+The regression fixes VM global version 16 and a 10,000 external gas credit in
 both ConfigParam 20 and 21, including on profiles that permit a larger basechain
 credit. This is an explicit test configuration, not a claim that a complete live
 network configuration was reproduced. Both metadata hashes and staged AUTH

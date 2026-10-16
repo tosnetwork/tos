@@ -1030,7 +1030,7 @@ add_executable(test-get-method-context test/validator/getter-context-test.cpp)
 target_include_directories(test-get-method-context PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
 target_link_libraries(test-get-method-context PRIVATE validator-disk validator-common validator-db
-                      tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht fift-lib)
+                      tos_validator smc-envelope proof-verify-engine tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht fift-lib)
 
 # Measurement tool, not a gate: apply completion when the wallet index must
 # read a block's data itself, against the same apply with no index.
@@ -1807,6 +1807,15 @@ foreach(context_case context vm libraries liteserver)
       --baseline ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/data/getter-context-before.tsv)
   set_tests_properties(getter-context-${context_case} PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 60)
 endforeach()
+# Every C++ getter path against the c7 shape the Rust getter test also checks.
+add_test(NAME getter-context-c7-parity
+  COMMAND test-get-method-context
+    ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc
+    ${CMAKE_CURRENT_SOURCE_DIR}/doc/evidence/getter-serialization-budget/elector-snapshot
+    ${CMAKE_CURRENT_SOURCE_DIR}/tosctl/src/node-control/contracts/tests/fixtures/list_proposals/config-code.boc
+    --case c7-parity
+    --c7-shape ${CMAKE_CURRENT_SOURCE_DIR}/test/validator/data/getter-c7-shape.tsv)
+set_tests_properties(getter-context-c7-parity PROPERTIES FIXTURES_REQUIRED getter-context-state TIMEOUT 60)
 foreach(core_case executor shutdown limits actor vm context delete)
   add_test(NAME control-getter-${core_case}
     COMMAND test-control-getter ${CMAKE_CURRENT_BINARY_DIR}/getter-context-data/zerostate.boc

@@ -22,7 +22,7 @@ class CandidateReadbackTests(unittest.TestCase):
 
     def cells(
         self,
-        version=18,
+        version=16,
         global_id=1,
         network=0x42,
         credit=20000,
@@ -69,6 +69,9 @@ class CandidateReadbackTests(unittest.TestCase):
 
     def test_wrong_versions_identity_namespace_credit_and_price_refuse(self):
         for kwargs in [
+            dict(version=15),
+            dict(version=17),
+            dict(version=18),
             dict(version=19),
             dict(global_id=3),
             dict(network=0x43),

@@ -429,7 +429,7 @@ def main():
                     return make_dict(entries, 32)
 
                 with patch.object(native, "config", config):
-                    emu = native.Emulator(global_version=17)
+                    emu = native.Emulator(global_version=16)
                 try:
                     shard = native.active_account(
                         addresses["module"], codes["module"], data["module"]

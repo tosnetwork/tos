@@ -1,0 +1,561 @@
+{
+  "schema": 1,
+  "parent": "97e7259c7e43abcc6a50d9ad0cdabc7de68ffbc0",
+  "platform": "macOS arm64",
+  "policy": "Version 16 requires Param48. Ordinary and production Genesis require an explicitly provided 32-byte tag. Only the Quantum candidate supplies a fixed 0x42 namespace.",
+  "sources": {
+    ".github/workflows/admission-work.yml": {
+      "bytes": 4008,
+      "sha256": "3c06d7f861f03ba50fe386b6d54361bd7b16c260cd6e594755125dea1554910a"
+    },
+    ".github/workflows/branch-chain-python.yml": {
+      "bytes": 23743,
+      "sha256": "44c769319f32bfa3ddb0ca7e34c3486a788f4d4129b50c6eff4d0f47fcc8add7"
+    },
+    ".github/workflows/build-tos-linux-x86-64-shared.yml": {
+      "bytes": 4219,
+      "sha256": "71be2fc70dabae111d49cc4890597481019201ba511f8e7e4866ff1903fce73a"
+    },
+    ".github/workflows/quantum-readiness.yml": {
+      "bytes": 5153,
+      "sha256": "e8be13b57c366623d3c08cca8e6d963c3c72136adb0fb767054d43546601c8fc"
+    },
+    ".github/workflows/tosctl-service.yml": {
+      "bytes": 6903,
+      "sha256": "439515d0e539a3c7c20fedc2b398a370ff53f207b69cbfc46398d27116e41140"
+    },
+    ".github/workflows/wallet-falcon.yml": {
+      "bytes": 12561,
+      "sha256": "ab0880ce0b8f41011ed5367c344db1557d3ab34a1f98b318ce15984a4de46620"
+    },
+    "crypto/block/auth-policy.cpp": {
+      "bytes": 4697,
+      "sha256": "0d05111bd693a684d471274bca7683cf4fdd32d0d1016351f0667181cf9c22e1"
+    },
+    "crypto/smartcont/gen-zerostate.fif": {
+      "bytes": 24188,
+      "sha256": "01dfef402a883fd5d8c684ce3e3c15bd466790c3453d62136bf98a17fa38ec2d"
+    },
+    "doc/GlobalVersions.md": {
+      "bytes": 32786,
+      "sha256": "046e7a82710e7d7c8f3f71d2d13af927e1efa1f6a9c7d0245e57d18d6c61b815"
+    },
+    "doc/agent-controller-key-validation.md": {
+      "bytes": 8899,
+      "sha256": "c3eafa5249f687acbad67a6b2e254cfe9646f84ec56d06f7c35391f00eef4562"
+    },
+    "doc/auth-policy-v1.md": {
+      "bytes": 6321,
+      "sha256": "7ff42679049ae82911462d1cb8bfac2d925c6f5876d55c8e0a0ea78d8387003a"
+    },
+    "doc/wallet-quantum-release-status.md": {
+      "bytes": 19534,
+      "sha256": "eee3b796a5a93852d3c87c0d0304b137225cc437f84ac2b31c025448dd3bd281"
+    },
+    "emulator/test/tos-genesis-config.h": {
+      "bytes": 2924,
+      "sha256": "7e0b803c8d3b9f7bf63bbc61b57e15ddabe4a1fffa53785de043fab0e2e2929a"
+    },
+    "scripts/build-wallet-quantum-bundle.py": {
+      "bytes": 13337,
+      "sha256": "023e7b92d31683f28dd4d18e237851880c87a8aa9e5ea9d44a0f8e92c338771f"
+    },
+    "scripts/check-ext-message-generated.py": {
+      "bytes": 11403,
+      "sha256": "e59c22b98ecce046df8c6a6a803e3fffbd2d2df1a87e58b6fed7e7dc4d1d488e"
+    },
+    "scripts/check-quantum-candidate-network.py": {
+      "bytes": 18659,
+      "sha256": "39ef8e7afbab16a062a0d9c1907db6cc5e765b169f565e304b8cf8aebdbe334e"
+    },
+    "scripts/localnet-jsonrpc.py": {
+      "bytes": 24637,
+      "sha256": "61e55bcbc0b08de33086f0af4d6f2f010437cb03fa043aee293d6bc20a6b814f"
+    },
+    "scripts/test-explorer-pq-rpc.py": {
+      "bytes": 16704,
+      "sha256": "e810d1661dcd468bc3b212972fdeb587013caa16701c10b3bfe0c9ec48888306"
+    },
+    "scripts/test_localnet_auth_namespace.py": {
+      "bytes": 11396,
+      "sha256": "eaf5897c137a09f50fcaaffc4871f73deb6aa6adf261855321e3a94c5c88526f"
+    },
+    "scripts/test_quantum_candidate_network.py": {
+      "bytes": 7825,
+      "sha256": "d6a5d6d8c17dfb2eadce4820f61a496f71f2af69a7be495e5b7efd318267ba65"
+    },
+    "test/ci/efficiency-contract.json": {
+      "bytes": 15851,
+      "sha256": "92c5e8dc38020ee715413f78bb581ef17d6ff044bccb9e91e4457b7f21d6a89a"
+    },
+    "test/test-config-transition.cpp": {
+      "bytes": 16227,
+      "sha256": "ecc717b2c9ab6732350160359c56e38e0855b43e6acc86a025256ddaa3a2ca86"
+    },
+    "test/test-ext-message-generated-checker.cpp": {
+      "bytes": 14486,
+      "sha256": "4249a235fbe57f33c41385202c65522d6c0ac2c3e7aa86a92f70cfd536aa056c"
+    },
+    "test/test-json-rpc-explorer.cpp": {
+      "bytes": 17797,
+      "sha256": "6b55d714aa9f90ee5d79eb18303d5c3be3b0b99d96bed68f5f1c74780b814a14"
+    },
+    "test/tostester/src/tostester/zerostate.py": {
+      "bytes": 39999,
+      "sha256": "0541eeb402635ca11f284e4472616edaa825f8d26c8c526776f1244025d4d302"
+    },
+    "test/tostester/tests/tostester/genesis-with-test-auth.fif": {
+      "bytes": 187,
+      "sha256": "657fe03688217fab5ae17eebbc513d9989afa470a1dd32f5023a40c09d59cb2a"
+    },
+    "test/tostester/tests/tostester/test_zerostate_auth_policy.py": {
+      "bytes": 4947,
+      "sha256": "433dbcea770a495fb7f304da1a587a6cbffa67eb054bbe423fcf3e65af23a6d1"
+    },
+    "test/tostester/tests/tostester/test_zerostate_supply.py": {
+      "bytes": 49775,
+      "sha256": "3c2279cab2958a1889898652568b260dd527ed0c7dad1896113a6ee2d862d79d"
+    },
+    "test/validator/control-getter-budget-test.cpp": {
+      "bytes": 17913,
+      "sha256": "0d832611710c6352efdca1cdf68eadfc86379cfb816d253df9448c345598c1bc"
+    },
+    "test/validator/control-getter-fixture.h": {
+      "bytes": 10148,
+      "sha256": "48b549a5e09269fd5ee2ef299d6dac1b60d4b32f8c428ac4fece30b0fbcba4b2"
+    },
+    "test/validator/control-getter-test.cpp": {
+      "bytes": 20004,
+      "sha256": "ea38ba9090f79e1b57df932d0bbe982f6714c0a2e8d579d66c05a883e83d0e55"
+    },
+    "test/validator/getter-context-fixture.h": {
+      "bytes": 15564,
+      "sha256": "e0b2e76d78ecfcd52aed26c2a4e29be0641bb2ada67d5668dbbf784ec7676690"
+    },
+    "test/validator/prepare-getter-context.py": {
+      "bytes": 2301,
+      "sha256": "ea512c5e0a2e708ec81ae739ab961c28eba02be7eb4d35dec3198a6e77869d64"
+    },
+    "test/wallet-quantum/REVIEW_BUNDLE.md": {
+      "bytes": 5665,
+      "sha256": "529918fc3aa84c9258a8dc005ce4b5a6e8f78cf9d57453bb4aeb093f52c9b5f4"
+    },
+    "test/wallet-quantum/admission_envelope_probe.py": {
+      "bytes": 9591,
+      "sha256": "b81adcc505ec12e1a21c38fca6e9667c61e089492ac0f8c82bfcf380090823c9"
+    },
+    "test/wallet-quantum/admission_forgery_timing.py": {
+      "bytes": 7799,
+      "sha256": "5243e6f6b1786adc096b25c72e7d92002fbdd564353118b3a3e1046b9f7ad52a"
+    },
+    "test/wallet-quantum/cached_fee_fixture.py": {
+      "bytes": 4823,
+      "sha256": "6097e0634803d7a4e5348be11c2b62a9fcd7bc11208760d7ad0da78274349ed7"
+    },
+    "test/wallet-quantum/cached_fee_session.py": {
+      "bytes": 3743,
+      "sha256": "6f4cff5931df744dea031d0f5155d1bd1b7ae32945ca62c639cad6210ccd352f"
+    },
+    "test/wallet-quantum/checker-gas-probe.fc": {
+      "bytes": 1037,
+      "sha256": "3b33828c67cc533d93d76a6902e84ea8264ef0093d48be0bf7f00bb7abda0805"
+    },
+    "test/wallet-quantum/cli_fee_session_pop.py": {
+      "bytes": 9994,
+      "sha256": "dc3eaf4ff380479932cdcf088fdb3bb4b85c336b2e09af306a40bdbfae634028"
+    },
+    "test/wallet-quantum/cli_fee_session_prepare.py": {
+      "bytes": 13338,
+      "sha256": "531a3fb45d29ed39470b5f77a5f778f25b8d3bfc9dba1f93656e7afd42c1c205"
+    },
+    "test/wallet-quantum/cli_fee_session_sign.py": {
+      "bytes": 15668,
+      "sha256": "f4f5b69e9e73f00cb863a52bbdb8e889a05b2fb6c71d77639bd99bbd44b8eb4f"
+    },
+    "test/wallet-quantum/cli_lock_primary.py": {
+      "bytes": 4012,
+      "sha256": "8b6276a4be08361de1a8ce8cee28097b7abbc36f4950b900a385150785400ad1"
+    },
+    "test/wallet-quantum/cli_rotation_controls.py": {
+      "bytes": 17187,
+      "sha256": "9a003ed75eefda9240c0b04f3f1d41b4faaa0b72ad602d2c4479c21f0edf3f3e"
+    },
+    "test/wallet-quantum/cli_rotation_session.py": {
+      "bytes": 30093,
+      "sha256": "94eed580b7cab2368e8f2273784676432ffd42e2280df73011f4d23fb8eee134"
+    },
+    "test/wallet-quantum/cli_sign_primary.py": {
+      "bytes": 25030,
+      "sha256": "be4da73496c557d52fe9db2e54bae4e34ac4ab9a0e0d47874dc0f9fc368d98ca"
+    },
+    "test/wallet-quantum/cli_successor_pop.py": {
+      "bytes": 18231,
+      "sha256": "8c4be7e83e8480eb188c2fa3e42e2f4637f9b2591096799b5c0e4b5602711f7e"
+    },
+    "test/wallet-quantum/default_credit_timing.py": {
+      "bytes": 3805,
+      "sha256": "c86398970dc24212089b3c0be2908225ee6e41898b07c9e45fe35f6618b56d99"
+    },
+    "test/wallet-quantum/fee_tx_mutation.py": {
+      "bytes": 2812,
+      "sha256": "c8f39bcd0e9002c7131796b386c3bdc27d641cb7660f7ba282d3de477d5d8eed"
+    },
+    "test/wallet-quantum/fee_tx_parity.py": {
+      "bytes": 7133,
+      "sha256": "37b2ed54faa7813f73fa1e9d9fdb3b1f6a4a6ceb65fee020b74e38f7ee85ee09"
+    },
+    "test/wallet-quantum/funded_recovery.py": {
+      "bytes": 14015,
+      "sha256": "4c65e36b195023dfedbd2976c87e6402fbd3162bc83f0c8085e05d5635558cec"
+    },
+    "test/wallet-quantum/module_tx_parity.py": {
+      "bytes": 6328,
+      "sha256": "f098ebed20415ddf1a8696be5846964f63bf1c041b520405bc1f817c3ce7749a"
+    },
+    "test/wallet-quantum/policy_native_mutations.py": {
+      "bytes": 4278,
+      "sha256": "c59215b10074dda6eaa88ac167e403f4a7fdf15154f8c7522fef1239447504ec"
+    },
+    "test/wallet-quantum/post_accept_transactions.py": {
+      "bytes": 5336,
+      "sha256": "c33cfb5371fc3f226bb8dbee219ef816b240f9a9b9681c9042ede35d69c7e9dd"
+    },
+    "test/wallet-quantum/recorded_admission.py": {
+      "bytes": 11178,
+      "sha256": "bd609a41b548bd0984d762f6167d2f33ac22b3680dfafd4d140266d8e2d07b98"
+    },
+    "test/wallet-quantum/release_bundle_controls.py": {
+      "bytes": 12267,
+      "sha256": "38b88e691a8478488051658e30134d09740bdcd0d4d56270f27271cb5a1d7b1e"
+    },
+    "test/wallet-quantum/release_config_controls.py": {
+      "bytes": 4537,
+      "sha256": "0564ae7dde25d79c6a4859c70c49b21b70501f7bfb2ace5bf145ea0074a0b2ef"
+    },
+    "test/wallet-quantum/release_config_transactions.py": {
+      "bytes": 5936,
+      "sha256": "507d06f525a7d35fee645c9f84ad4292c3603effa80db9e013e6c7e8ab2871c1"
+    },
+    "test/wallet-quantum/release_sdk_recovery.py": {
+      "bytes": 4519,
+      "sha256": "8b189b435b288db56a2b0f33c2addfe568d054402330fc959b7ce4f8fb6188d0"
+    },
+    "test/wallet-quantum/release_wallet_corpus.py": {
+      "bytes": 7246,
+      "sha256": "054ba92bbb2affa614692ae2a6d95d0f6b810d2c6dab6ca28b56ddc0af33bd2b"
+    },
+    "test/wallet-quantum/review-candidate-manifest.json": {
+      "bytes": 15568,
+      "sha256": "e99a42c7dd053ac0837fda212a09ea28e383faeacf3ff5eac554052e8a2bbcb1"
+    },
+    "test/wallet-quantum/test_auth_policy.py": {
+      "bytes": 10615,
+      "sha256": "390ebacc6d3880ab41b3eb5eabeb8614a2efa6be00d9ec3476edc13964948dd5"
+    },
+    "test/wallet-quantum/test_fee_bounds.py": {
+      "bytes": 4460,
+      "sha256": "9e336cf4b556f9698d002a3408e9967b8dd4a95bafe025f13c3117aaa920e53a"
+    },
+    "test/wallet-quantum/test_fee_cells.py": {
+      "bytes": 4655,
+      "sha256": "b9c62d2d7f4a91e0d48b269ccc82e1da3b47afdbe597fad5097b650050e9fa4f"
+    },
+    "test/wallet-quantum/test_fee_delivery.py": {
+      "bytes": 61095,
+      "sha256": "0bcad3dfc06f7a4743d5fa90c2d90ea76094189a7f0118f81b696f6b7cf91390"
+    },
+    "test/wallet-quantum/test_fee_gas_config.py": {
+      "bytes": 3815,
+      "sha256": "d9832014d5b388c3e667ec30c5d2741ec4a5ca0fe39dfb6da0cd81b12bde7f32"
+    },
+    "test/wallet-quantum/test_fee_identity.py": {
+      "bytes": 6149,
+      "sha256": "7fe54badc4acae68b75859f2181f18be6b9954a1b3c80dbc1877f26cc01c50c6"
+    },
+    "test/wallet-quantum/test_identity.py": {
+      "bytes": 8357,
+      "sha256": "10fed149a23d8491159dd355c995eb029aa4360f62aa4b94d31c905139eca473"
+    },
+    "test/wallet-quantum/test_module_delivery.py": {
+      "bytes": 20476,
+      "sha256": "076b2a9e4cebadaa73ad4fdb7fbc56093aa464e85a05e9cf2c6f8de9d77c4af8"
+    },
+    "test/wallet-quantum/test_pop.py": {
+      "bytes": 7802,
+      "sha256": "7f8ddef31d86d3026e529ef355f142817374e656d3840bb1676d423048798a3c"
+    },
+    "test/wallet-quantum/test_preparation.py": {
+      "bytes": 14129,
+      "sha256": "cd6a19b46d5dc32f089baa2b20bc28042350d5b9b1de0ccdb264397bb2dffd66"
+    },
+    "test/wallet-quantum/test_receiver_auth.py": {
+      "bytes": 13484,
+      "sha256": "66aaf2aa80d680ddcfce84df2fb59411a275e656249af6e8e58b64a4bb5aea90"
+    },
+    "test/wallet-quantum/test_recorded_admission.py": {
+      "bytes": 6087,
+      "sha256": "34c8f90d57ad90640edd645d7333ba0a20305e51d5d29898b9bac878efd2b938"
+    },
+    "test/wallet-quantum/test_state.py": {
+      "bytes": 7032,
+      "sha256": "cfeb666734648ec8d034e785b3f759a0263b0e5cf9985a837b0c52f03596a1fe"
+    },
+    "test/wallet-quantum/test_wallet.py": {
+      "bytes": 10016,
+      "sha256": "d6081b584bb30588836e8bbf073d1895132704018dc0038991e4c0e31c5d3158"
+    },
+    "test/weak-ed25519/test_agent_controller.py": {
+      "bytes": 26918,
+      "sha256": "8e72dbec3bc5ba02c361bef24f15c544a5fec11b98a60dbb21b9f5c039c439ad"
+    },
+    "tosctl/src/node-control/contracts/tests/chain_gas_envelope_sandbox.rs": {
+      "bytes": 11944,
+      "sha256": "ab0f8bff1076409414da80fbd5cd1100919b6d55fff91c4fcea42a05eb454082"
+    },
+    "tosctl/src/node-control/contracts/tests/config_list_proposals_sandbox.rs": {
+      "bytes": 34401,
+      "sha256": "d4c1b4ecf89bbf2ad0ff13e8e6b76345c9657968e85316523b91626161561506"
+    },
+    "tosctl/src/node-control/contracts/tests/elector_recovery_upgrade_sandbox.rs": {
+      "bytes": 20623,
+      "sha256": "de03a875166be21dfb6207249a8bbb551ecbb6c9413d9292cce6fc528ed56074"
+    },
+    "tosctl/src/node-control/contracts/tests/elector_sandbox.rs": {
+      "bytes": 365865,
+      "sha256": "772550ae1f78ca002e4a69010325b826b47821047e7a59c09660387fd3dfb8a3"
+    },
+    "tosctl/src/node-control/contracts/tests/liquid_staking_sandbox.rs": {
+      "bytes": 30053,
+      "sha256": "a796da7203adc4695556f7e01e723f0177dad3e8f7374890462b09f5f82eee74"
+    },
+    "tosctl/src/node-control/contracts/tests/nominator_pool_sandbox.rs": {
+      "bytes": 20904,
+      "sha256": "d48a125be0af5b9d0756c61bfa7139b7b52e7f9e2a51450fb26f0cc50adb6b91"
+    },
+    "tosctl/src/node-control/contracts/tests/single_nominator_sandbox.rs": {
+      "bytes": 18576,
+      "sha256": "33bf2f5bfb51efaa1f0148584531cab958f116b324ae0ca82b8a1725274d4cd6"
+    },
+    "tosctl/src/node-control/control-client/tests/engine_operator_reads.rs": {
+      "bytes": 23672,
+      "sha256": "5a440d620cdfc132da7fb75563829e3d057366f3ebe5676372dd64c1516860cc"
+    },
+    "tosctl/src/sandbox/src/genesis.rs": {
+      "bytes": 11311,
+      "sha256": "9c3f83baf975df5272a5e8b47a18e0648a2401cbc13537fc43b7b8c784194045"
+    },
+    "validator-engine/json-rpc-explorer.cpp": {
+      "bytes": 15637,
+      "sha256": "dce762b32f841fb20102534ae749ae5c3beaf97bbc57a870fd7154bdaa315657"
+    }
+  },
+  "checks": {
+    "namespace_genesis_and_fee_schedule": {
+      "passed": 68,
+      "exit": 0
+    },
+    "tostester_local_supported_suite": {
+      "passed": 288,
+      "skipped": 1,
+      "deselected": 2,
+      "exit": 0,
+      "excluded": [
+        "test_engine_will_not_start_while_the_configuration_lock_is_held: local USE_QUIC=OFF engine link unavailable",
+        "test_shared_pq_pool_order_binds_node_authorization_to_controller_and_pool: Linux /proc required"
+      ]
+    },
+    "native_config_rpc_getter_control": {
+      "passed": 14,
+      "exit": 0,
+      "command": "ctest --test-dir build --output-on-failure --no-tests=error -R '^(test-config-transition|test-json-rpc-explorer|getter-context-(context|vm|libraries|liteserver)|control-getter-(executor|shutdown|limits|actor|vm|context|delete))$'"
+    },
+    "rust_candidate_and_default_config": {
+      "passed": 6,
+      "exit": 0,
+      "command": "cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --test chain_gas_envelope_sandbox"
+    },
+    "rust_genesis": {
+      "passed": 2,
+      "exit": 0,
+      "command": "cargo test --locked --manifest-path tosctl/src/Cargo.toml -p tos_sandbox genesis::tests"
+    },
+    "namespace_launch_and_candidate": {
+      "passed": 16,
+      "exit": 0,
+      "commands": [
+        "uv run python scripts/test_localnet_auth_namespace.py",
+        "uv run python scripts/test_quantum_candidate_network.py"
+      ]
+    },
+    "source_guards_local": {
+      "passed": 53,
+      "failed": 4,
+      "exit": 8,
+      "unavailable": [
+        "snapshot-import-offline: macOS file locking",
+        "docker-validator-role: macOS file locking",
+        "pending-finality-retry-policy-source: BSD grep lacks -P",
+        "startup-catchup-loopback-runner: Linux zombie /proc assertions"
+      ]
+    },
+    "static_analysis": {
+      "exit": 2,
+      "positive_controls": 10,
+      "tools": {
+        "LLVM": "21.1.8",
+        "CodeChecker": "6.29.1"
+      },
+      "result": "REFUSED: macOS clang-scan-deps failed on SDK dependencies. This is not an analysis pass."
+    },
+    "generated_checker": {
+      "passed": 6,
+      "controls": true,
+      "exit": 0,
+      "command": "uv run python scripts/check-ext-message-generated.py --build-dir build --output-dir ARTIFACTS/generated-checker --controls"
+    },
+    "native_auth_sensitivity": {
+      "controls": 4,
+      "exit": 0,
+      "includes": "Version-16 Param48 requirement restored to 17 must fail Test_AuthPolicy_mandatory_version_and_membership"
+    },
+    "launcher_sensitivity": {
+      "green": 0,
+      "red_failures": 1,
+      "red_errors": 0,
+      "assertion": "ValueError not raised",
+      "restored": 0
+    },
+    "wallets": {
+      "exit": 0,
+      "scripts": [
+        "test_wallet.py",
+        "test_auth_policy.py",
+        "test_identity.py",
+        "test_state.py"
+      ],
+      "version": 16,
+      "emulator_rebuilt": true,
+      "emulator_library": {
+        "path": "/Users/tomisetsu/tos-worktrees/genesis-version-16-all-features/build/emulator/libemulator.dylib",
+        "bytes": 7236864,
+        "sha256": "d0fcada5f02f4c04bde99e8b929b21431839b904bd1e31289044a4cea7b490c2"
+      }
+    },
+    "bundle": {
+      "exit": 0,
+      "results_file": "/Users/tomisetsu/.codex/artifacts/tos-pr226-auth-v16-20261016/bundle-controls-final/results.json",
+      "source": "Freshly rendered canonical version-16 Quantum candidate",
+      "profile": {
+        "version": 16,
+        "global_id": 1,
+        "AUTH_namespace": "4242424242424242424242424242424242424242424242424242424242424242"
+      },
+      "controls": [
+        "Version 15/17/18 refusal",
+        "Wrong namespace and global ID refusal",
+        "Namespace guard deletion",
+        "Existing digest/file-set/status guard deletion controls"
+      ],
+      "old_manifest_preserved": "/Users/tomisetsu/.codex/artifacts/tos-pr226-auth-v16-20261016/previous-review-candidate-manifest.json"
+    },
+    "optional_direct_basedpyright": {
+      "errors": 3,
+      "scope": "Pre-existing unchanged localnet import, HTTPError attribute and log_message override lines; no pass claimed."
+    },
+    "format_and_ci_contracts": {
+      "ruff": 0,
+      "rustfmt_make_fmt_check": 0,
+      "actionlint": 0,
+      "workflow_supply_chain": 0,
+      "efficiency_contract": 0,
+      "branch_chain_ci_contract": 0
+    }
+  },
+  "artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-pr226-auth-v16-20261016",
+    "retained_through": "2026-11-16",
+    "files": {
+      "auth-bundle-final.log": {
+        "bytes": 5854,
+        "sha256": "ad2758d5a9987516d2da9eadde2bc8ee6090ec3cd41290fa5cdfbe0952d3b534"
+      },
+      "auth-core-final.log": {
+        "bytes": 99,
+        "sha256": "2869afc132b2cb4ff935ad6fe1886fc108e03101d3cf7f7f5a06073775c81a4f"
+      },
+      "auth-generated.log": {
+        "bytes": 264,
+        "sha256": "1eee6b996226f6f65bcdcb892452536291e2228a134235373f7b845e480b3d8a"
+      },
+      "auth-native-final.log": {
+        "bytes": 1848,
+        "sha256": "bf2c54629cdb5d17ef87e278a2ade2409574ca6b22916ca34ab76f9a0bf7c0d6"
+      },
+      "auth-policy-controls.log": {
+        "bytes": 803,
+        "sha256": "02e669261e01bb87495c4a282a13209863d10ed8a7e3b7ef4dfcb957a3fd90df"
+      },
+      "auth-python-final.log": {
+        "bytes": 446,
+        "sha256": "41dd9f74733039f8579ca5b15ce3b3274a29883517e1d61e157823b1efa0e957"
+      },
+      "auth-rust.log": {
+        "bytes": 9438,
+        "sha256": "d309f2b8ab52f0020707a1b3d20b3b19c952b06f8a65b6dea1f6a91ef5e83a3d"
+      },
+      "auth-rustfmt.log": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "auth-sandbox.log": {
+        "bytes": 9163,
+        "sha256": "fe373be78fe9cd16879bb7cac9755836fcf095af14fb9f5e5b727a1a89eb8b70"
+      },
+      "auth-source-guards.log": {
+        "bytes": 168333,
+        "sha256": "03da48bf7f11ab296ebfea588402fff18b61973d6d84d86ddd18dda15414eca1"
+      },
+      "auth-static-analysis.log": {
+        "bytes": 600,
+        "sha256": "43b29465d63479382a62b4ec608c2f7ef3d2a4629c0a58b83588664f7117d46b"
+      },
+      "auth-test_auth_policy.log": {
+        "bytes": 1149,
+        "sha256": "8bfe7c1111feefb6e58be9a8fa2fe661f3337e2bcd00345ea9b846f5fb301972"
+      },
+      "auth-test_identity.log": {
+        "bytes": 360,
+        "sha256": "fa0ba70014e2112bb22afeaa5b8b838c289fba5cb400d024d5866120c5792776"
+      },
+      "auth-test_state.log": {
+        "bytes": 37,
+        "sha256": "ef8fb4e5a60f02d7bc0cba77d0595f9d2844fb076f073a490e1f380f78e5f34d"
+      },
+      "auth-test_wallet.log": {
+        "bytes": 35,
+        "sha256": "0d7e52f4b6723747f6262fae0b440702db97ca1bcf063750b8575ee6aaa20b8e"
+      },
+      "auth-types.log": {
+        "bytes": 61391,
+        "sha256": "c8f9df3a7e92acd76ff1ef7fcf44378185683c273be8e179423e7ccb79dadc3b"
+      },
+      "emulator-build.log": {
+        "bytes": 408,
+        "sha256": "e33453d8850a81f3a586463eacaeac9e268afa1bfd5c96ec9379f89a707b5223"
+      },
+      "launcher-sensitivity.log": {
+        "bytes": 1070,
+        "sha256": "e83f6f6a8d8406891dd27d6d1dece5f02fb146faabe802b795d99b9c2c047b6c"
+      },
+      "launcher-tests.log": {
+        "bytes": 111,
+        "sha256": "d26765b14513aa017d7225eec227ccf9bf6a0901bafd2867e932d6b9a055315d"
+      }
+    }
+  },
+  "pending": [
+    "Linux PR checks on final commit",
+    "Linux differential two-build analysis",
+    "No merge or production activation performed"
+  ]
+}

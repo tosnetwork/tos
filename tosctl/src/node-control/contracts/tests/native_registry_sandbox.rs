@@ -11,6 +11,9 @@
 //! accepts generation resets with a live predecessor and that recovery is
 //! bound to the policy under which it was initiated.
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 use chain_block::{
     BuilderData, Cell, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
     TrComputePhase, TransactionDescr, base64_decode, read_single_root_boc,
@@ -310,10 +313,9 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        // The frozen Native Registry uses SHA256C, a version-14 opcode. The
-        // network has not activated v14 yet, so this sandbox opts into the
-        // pre-activation version explicitly instead of weakening opcode gates.
-        let mut bc = Blockchain::with_global_version(14).expect("blockchain");
+        // Execute the frozen registry on the current network version, including SHA256C.
+        let mut bc =
+            Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
         bc.set_workchain(-1);
         let relayer = bc.treasury("native-registry-relayer", 1_000 * TOS).expect("relayer");
         let old_key = SigningKey::from_bytes(&[0x31; 32]);

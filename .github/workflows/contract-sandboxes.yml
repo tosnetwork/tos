@@ -455,6 +455,18 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
           python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR"
 
+      # From version 15 a failed action phase also pays the fines of the
+      # messages it already sent; both executors must charge them identically.
+      - name: Failed-action fines agree between the executors
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+        run: |
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --example pq-tx-parity
+          python3 test/executor-parity/fail_action_fine.py \
+            --driver tosctl/src/target/debug/examples/pq-tx-parity --output "$RUNNER_TEMP/fail-action-fine"
+
       # Each guard of the settlement protocol is removed in a copy of the
       # sources and the test that names it must fail for its stated reason.
       # The runner first runs every named test unmutated. A guard no test

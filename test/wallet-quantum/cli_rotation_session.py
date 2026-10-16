@@ -233,7 +233,7 @@ def check_initial_lock(args, root, request, accounts, codes, data, addresses):
     original_config = native.config
 
     def diagnostic(*_args, **_kwargs):
-        entries = shared.read_dict(original_config(17), 32)
+        entries = shared.read_dict(original_config(16), 32)
         price = entries[21].refs[0]
         prefix = 136 if int(price.bits[:8], 2) == 0xD1 else 0
         offset = prefix + 8 + 64 * 3
@@ -243,7 +243,7 @@ def check_initial_lock(args, root, request, accounts, codes, data, addresses):
         return shared.make_dict(entries, 32)
 
     with patch.object(native, "config", diagnostic):
-        emu = native.Emulator(global_version=17)
+        emu = native.Emulator(global_version=16)
     try:
         incoming = from_boc((output / "message.boc").read_bytes())
         for name in ["vault", "module", "wallet"]:

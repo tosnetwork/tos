@@ -1,4 +1,4 @@
-;; EXPERIMENT ONLY: version-17 executor-context admission; not production activated.
+;; EXPERIMENT ONLY: executor-context admission (c7[18], version 16); not production activated.
 ;; Body: intent:^Cell signature:^Cell. Intent: FEE3:uint32 class:uint8 (=1),
 ;; vault:MsgAddressInt leaf:uint32 deadline:uint32 value:Coins payload:^Cell header:^Cell.
 ;; Data: next_leaf:uint32 measured_gas:uint32 epoch0:uint32 fixed_value:Coins header_hash:uint256
@@ -38,7 +38,7 @@ int gas_consumed() asm "GASCONSUMED";
 () recv_external(int balance, int msg_value, cell in_msg_full, slice body) impure {
   ;; Count the complete external message, including optional StateInit.
   ;; This entry receives the executor's original input, never a caller-selected cell.
-  ;; c7[18] is executor-owned. Its version-17 shape is fixed; null fails closed.
+  ;; c7[18] is executor-owned. Its shape is fixed from version 16; null fails closed.
   ;; Every ordinary cell has <=1023 bits, so the cell bound also bounds total bits.
   throw_unless(2015, incoming_cells() <= fee::max_in_cells);
   cell intent = body~load_ref();

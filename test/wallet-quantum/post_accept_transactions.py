@@ -29,7 +29,7 @@ def main():
     config = from_boc(raw).refs[0]
     assert credit(config) == 20000
     version = read_dict(config, 32)[8].refs[0].slice()
-    assert version.uint(8) == 0xC4 and version.uint(32) == 18
+    assert version.uint(8) == 0xC4 and version.uint(32) == 16
     # An exhausted transaction stops at the generated basechain gas_limit, read
     # from ConfigParam 21 rather than restated here.
     prices = read_dict(config, 32)[21].refs[0].slice()
@@ -108,7 +108,7 @@ def main():
         str(args.driver.resolve()),
         str(out / "config.boc"),
         str(out / "scenarios.tsv"),
-        "18",
+        "16",
         "--details",
     ]
     rust = subprocess.run(command, capture_output=True, text=True)

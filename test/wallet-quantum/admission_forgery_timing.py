@@ -146,7 +146,7 @@ def main():
                 str(args.driver.resolve()),
                 str(fixtures / "config.boc"),
                 str(fixtures / "scenarios.tsv"),
-                "17",
+                "16",
                 "--details",
             ],
             capture_output=True,

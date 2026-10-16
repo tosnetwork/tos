@@ -8,9 +8,9 @@ vectors currently included by the builder. This is not a complete ACVP inventory
 or an approved production release.
 
 The frozen configuration uses the public test namespace `0x42` repeated 32
-times, global ID 1, version 18, basechain credit 20,000 and masterchain credit
+times, global ID 1, version 16, basechain credit 20,000 and masterchain credit
 10,000. Its ConfigParams SHA-256 is
-`4eb8fd3ceecd7d72f04c7098642a25557e9f4a51c9ba784ae641a65506182b25`.
+`59c6318f5136ba95ac62be988618b8e8ba4058e79c7b8ebd553783444af0930e`.
 The wallet code embeds this namespace; a deployment under another namespace
 needs its own reviewed code/configuration identities.
 
@@ -87,3 +87,12 @@ independent comparison preserve all code/configuration identities and the other
 [The refresh record](review-format-refresh-20261006.json) retains both manifest
 identities and the exact commands. The earlier evidence index remains unchanged
 and continues to describe its original manifest, rather than the refreshed one.
+
+The version-16 baseline also requires ConfigParam 48 in ordinary and candidate
+Genesis configurations. The current manifest was rebuilt from a freshly generated
+version-16 candidate with the explicit `0x42` namespace. Its configuration and
+source identities changed; all three contract code identities remain unchanged.
+The prior version-18 receipts retain their original configuration and manifest
+identities. They are historical measurements, not acceptance of this new baseline.
+The new bundle reproduction and corruption controls are indexed in
+[`auth-v16-validation.json`](../../doc/evidence/auth-v16-validation.json).

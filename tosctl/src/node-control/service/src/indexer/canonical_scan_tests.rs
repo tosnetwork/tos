@@ -7,6 +7,9 @@
 //! Scenario tests for canonical traversal and publication, driven against a
 //! scripted chain and a real SQLite store.
 
+#[path = "../../../contracts/tests/fixtures/current_network.rs"]
+mod current_network;
+
 use super::*;
 use chain_rpc_client::v2::data_models::{AccountState, ShortTxId, TransactionId};
 use contracts::NominatorPoolSnapshot;
@@ -1503,6 +1506,7 @@ fn verifier_backed_provider(
     let nil = serde_json::json!({"type": "null"});
     let behaviour = serde_json::json!({
         "mutation": mutation,
+        "global_version": current_network::global_version(),
         "gen_utime": 1_000,
         "log": dir.join("requests.jsonl").display().to_string(),
         "stacks": {

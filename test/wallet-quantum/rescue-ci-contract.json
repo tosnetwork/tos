@@ -50,8 +50,8 @@
     {"name": "Recovery state transition deletion controls","run_sha256": "81f94f26b9f545d2d172177bd2b968d17cefce2e2225643fe91fd93f83549c44","suites": ["mutations"],"x86_only": true,"requires": ["Full R2 fee transaction parity at diagnostic credit"]},
     {"name": "Real cached signature verification deletion control","run_sha256": "0d615436a8ecffc9da1045708f4b8b1e2619ab27bc2f6d390342e6d50f29d27d","suites": ["mutations"],"x86_only": true,"requires": ["Full R2 fee transaction parity at diagnostic credit"]},
     {"name": "Full fee verification deletion control","run_sha256": "6c2969a90433164fd8c774f3942f73377311f1b53fa8204d3eea3475463c3607","suites": ["mutations"],"x86_only": true,"requires": ["Full R2 fee transaction parity at diagnostic credit"]},
-    {"name": "Falcon version-19 boundary in both VMs","run_sha256": "ec68a83bcdc8a6d904816f7f6ae5cbf8586314a5f9ab6882cb05ee2869302027","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
-    {"name": "Reject early and late Falcon activation mutations","run_sha256": "690fbb2626fd2fb435e64a545449d92d9d7d8305c2890c2c92fa8b583b6127db","suites": ["mutations"],"x86_only": true,"requires": ["Falcon version-19 boundary in both VMs"]},
+    {"name": "Falcon version-16 boundary in both VMs","run_sha256": "ec68a83bcdc8a6d904816f7f6ae5cbf8586314a5f9ab6882cb05ee2869302027","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
+    {"name": "Reject early and late Falcon activation mutations","run_sha256": "690fbb2626fd2fb435e64a545449d92d9d7d8305c2890c2c92fa8b583b6127db","suites": ["mutations"],"x86_only": true,"requires": ["Falcon version-16 boundary in both VMs"]},
     {"name": "Verify context, opcode, complete transactions and legacy pricing","run_sha256": "72f6cf08759691661be45bb63f31a17d4342a9b075175001788229f07fc727e2","suites": ["vm-ingress","mutations"],"x86_only": false,"requires": []},
     {"name": "Require meaningful mutation failures and restore binaries","run_sha256": "d4748e617ef988b5e37183884fec0fd3a755656973e86ac13594a58f382571c3","suites": ["mutations"],"x86_only": true,"requires": ["Verify context, opcode, complete transactions and legacy pricing"]}
   ]

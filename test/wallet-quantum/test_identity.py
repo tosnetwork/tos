@@ -56,7 +56,7 @@ def send_with_library_fixture(emulator, shard, message):
 def run(code, witness, expected, pinned=None, address=None):
     pinned = witness.refs[0] if pinned is None else pinned
     data = Cell().uint(int.from_bytes(pinned.hash, "big"), 256).uint(123, 256)
-    e = Emulator(17)
+    e = Emulator(16)
     try:
         result = send_with_library_fixture(
             e,

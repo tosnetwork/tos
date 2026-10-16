@@ -967,6 +967,7 @@ mod actions {
             &address,
             &Default::default(),
             &mut false,
+            &mut Coins::zero(),
         );
 
         let mut res_val = CurrencyCollection::with_coins(val);

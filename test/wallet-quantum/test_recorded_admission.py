@@ -18,7 +18,7 @@ def prices(credit, constructor=0xDE, flat=True):
     return result.uint(credit, 64).uint(20000000, 64).uint(100000000, 64).uint(1000000000, 64)
 
 
-def config(version=18, credit=20000, constructor=0xDE, flat=True):
+def config(version=16, credit=20000, constructor=0xDE, flat=True):
     entries = {
         8: Cell().ref(Cell().uint(0xC4, 8).uint(version, 32).uint(0x1EE, 64)),
         19: Cell().ref(Cell().sint(-239, 32)),
@@ -62,7 +62,7 @@ class RecordedAdmissionControls(unittest.TestCase):
             admission.configuration(config(credit=16000), 20000)
 
     def test_profile_reads_configuration_version(self):
-        for version in (17, 18, 19):
+        for version in (15, 16, 17, 18, 19):
             self.assertEqual(
                 admission.config_profile(config(version=version)),
                 {
@@ -80,7 +80,7 @@ class RecordedAdmissionControls(unittest.TestCase):
             admission.require_release_config(root.boc(), config(version=17).boc(), profile)
 
     def test_release_profile_refuses_legacy_or_relaxed_values(self):
-        for version, credit in ((17, 20000), (18, 10000), (18, 24000)):
+        for version, credit in ((15, 20000), (17, 20000), (18, 20000), (16, 10000), (16, 24000)):
             root = config(version=version, credit=credit)
             with self.assertRaisesRegex(AssertionError, "unexpected release admission profile"):
                 admission.require_release_config(

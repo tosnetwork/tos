@@ -1,4 +1,4 @@
-"""Execute both Falcon entry points across the frozen version-19 boundary.
+"""Execute both Falcon entry points across the version-16 activation boundary.
 
 The gate expectations are independent of production constants. Frozen public
 signatures exercise real verification after activation, including an invalid
@@ -39,7 +39,7 @@ def main():
                 name = f"{entry}-{version}-{label}"
                 message, context, signature, key = fixture[5:9]
                 verdict = -1 if label == "s2-valid" else 0
-                code = 0 if version >= 19 else 6 if entry == "dedicated" or version < 16 else 5
+                code = 0 if version >= 16 else 6
                 expected.append((name, code, verdict if code == 0 else 99))
                 if entry == "dedicated":
                     row = [name, version, 1000000, 0, 1, "?", message, "skip", signature, key]

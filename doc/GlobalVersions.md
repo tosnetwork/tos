@@ -8,6 +8,18 @@ the active version of a network is its on-chain ConfigParam 8.
 
 It enables protocol capability bits and gates behavior across validators, contracts, and VM execution.
 
+Current-network test fixtures use version 16, including the native authentication
+emulator. Minimum-version compatibility tests and future-version rejection tests
+select their versions explicitly. Recorded configuration BOCs and historical
+measurements retain the version actually observed; changing a fixture default
+never changes an existing network.
+
+PredictionMarket V1 permits risk-increasing operations only at versions 14, 15
+and 16. Its contract and CLI keep the same explicit allowlist. Later versions
+continue to reject new exposure while allowing withdrawals and other exit
+operations on already activated markets. The production-BOC sandbox exercises
+the current version and the future-version rejection/withdrawal boundary.
+
 AI actor protocol primitives that affect consensus-visible behavior, such as scheduled task timeouts, delivery failure records, supervision, or new execution semantics, must be gated through the same global-version and capability process.
 
 ## Why It Matters
@@ -349,9 +361,23 @@ Not yet activated on any TOS network, same as version 14 above.
 
 ## Version 16: unified development baseline
 
-ML-DSA-44, all three Poseidon2 instructions and the frozen-account recovery
-fix are enabled at version 16. Falcon retains a separate version-19 gate in
-the Quantum candidate profile; version 18 does not activate either Falcon entry point.
+The execution features listed below are enabled at version 16, the
+genesis version: ML-DSA-44, Falcon-512 padded, the generic `PQCHECKSIG_SUITE`
+instruction (suites 1-4), `LMSCHECKFEEHASH`, all three Poseidon2 instructions,
+the `c7[18]` import-statistics element and the frozen-account recovery fix.
+
+At version 16 and later, read-only getters expose `c7[18]` as `null` because
+they do not authenticate an external-message import. This applies to emulator,
+LiteServer, control and proof-verification getter contexts. Earlier versions
+retain their original tuple layout.
+
+Authorization-policy configuration uses the same version-16 baseline:
+ConfigParam 48 must be present and valid, and must belong to both the mandatory
+and critical parameter lists (ConfigParams 9 and 10). Fresh Genesis generation
+requires an explicit 32-byte AUTH namespace, including ordinary test networks.
+The Quantum admission candidate retains its explicit namespace and fee profile
+without raising the protocol version above 16.
+
 This changes execution under version 16: existing development-chain history
 requires the original binary, or a fresh genesis for the consolidated baseline.
 No running network is migrated by this source change.
@@ -443,29 +469,32 @@ Rejected as invalid (exit 6) at versions 0-15. `POSEIDON2_PERM8` and
 
 PATH7 adds no separate transaction-engine change.
 
-## Version 19: original Falcon wallet authorization
+### Falcon-512 padded, generic suite and fee verification
 
-`PQCHECKSIG_FALCON512_PADDED` has candidate codepage-0 allocation `F93101` and
-minimum global version 19. It consumes message/signature/public-key Cells,
-uses the fixed original Falcon-512 padded profile and returns a TVM boolean.
-The development proposal charges 20,000 base gas plus one gas per decoded byte
-and ordinary instruction/cell loads. Historical versions reject the opcode.
-See [the frozen profile](falcon512-profile-v1.json) and
-[implementation and remaining gates](wallet-falcon-fndsa.md).
+- `PQCHECKSIG_FALCON512_PADDED` (`F93101`) consumes message/signature/public-key
+  Cells, uses the fixed original Falcon-512 padded profile and returns a TVM
+  boolean. It charges 20,000 base gas plus one gas per decoded byte and ordinary
+  instruction/cell loads. See [the frozen profile](falcon512-profile-v1.json) and
+  [implementation and remaining gates](wallet-falcon-fndsa.md).
+- `PQCHECKSIG_SUITE` (`F93102`, `message context signature public_key suite - valid`)
+  dispatches suite 1 ML-DSA-44, suite 2 Falcon-512 padded, suite 3
+  SLH-DSA-SHA2-128s and suite 4 the one-level HSS/LMS fee verifier. Suite 2 shares
+  `F93101`'s version gate.
+- `LMSCHECKFEEHASH` (`F93103`, `hash leaf signature public_key - valid`) is the
+  fixed H20/W4 fee-admission profile. See [tvm-lms-fee-hash.md](tvm-lms-fee-hash.md).
 
-Generic `PQCHECKSIG_SUITE` suite 2 also requires version 19 and returns
-`range_chk` at versions 16 through 18. The dedicated opcode returns
-`inv_opcode` below 19.
+All three are rejected as invalid (exit 6) at versions 0-15. The Falcon,
+SLH-DSA and LMS tariffs are prototype values pending reference-hardware
+calibration and protocol approval; profile acceptance bytes cannot later be
+reinterpreted as formal FN-DSA.
 
-This candidate changes Falcon execution at versions 16 through 18 compared
-with the consolidated development profile. Existing development histories
-that executed Falcon at those versions require their original binary; use a
-fresh genesis to test this profile.
+### c7 tuple
 
-The binary capability ceiling is 19. This change does not alter a network's
-ConfigParam 8 or canonical genesis. The candidate allocation, version and gas
-must receive protocol approval before activation; profile acceptance bytes
-cannot later be reinterpreted as formal FN-DSA.
+**c7** tuple extended from 18 to 19 elements:
+* **18**: `null | [1, incoming_message_hash, cells, bits]` - complete import
+  statistics of the inbound external message of an ordinary, non-special
+  transaction; null for internal messages, tick/tock, getters and compute-only
+  contexts. See [tvm-lms-fee-hash.md](tvm-lms-fee-hash.md).
 
 ## Capability flags versus version bumps
 

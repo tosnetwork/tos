@@ -104,6 +104,7 @@ fn send(
         &addr(1),
         &Coins::zero(),
         &mut false,
+        &mut Coins::zero(),
     );
     (res, phase.action_fine, msg)
 }

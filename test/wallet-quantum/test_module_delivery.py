@@ -34,7 +34,7 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--native-signer", type=Path)
     p.add_argument(
-        "--chain-config", type=Path, help="Use the unchanged generated version-18 ConfigParams"
+        "--chain-config", type=Path, help="Use the unchanged generated version-16 ConfigParams"
     )
     p.add_argument(
         "--delete-recipient-update", action="store_true", help="Test-only delivery control"
@@ -61,7 +61,7 @@ def main():
 
 def run(out, delete_recipient_update=False, chain_config_path=None):
     out.mkdir(parents=True, exist_ok=True)
-    network, global_id, version = 123, 42, 17
+    network, global_id, version = 123, 42, 16
     chain_config = chain_bytes = None
     if chain_config_path:
         from recorded_admission import config_profile, require_release_config

@@ -5,6 +5,9 @@
 
 //! Production-BOC state-transition tests for PredictionMarket V1.
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 use chain_block::{
     BuilderData, Cell, Coins, IBitstring, MsgAddressInt, Serializable, SliceData, StateInit,
     TrComputePhase,
@@ -29,7 +32,7 @@ fn assert_success(label: &str, result: &SendResult) {
 }
 
 fn assert_state_init_activation_aborts(label: &str, data: Cell) {
-    let mut bc = Blockchain::with_global_version(14).unwrap();
+    let mut bc = Blockchain::with_global_version(current_network::global_version()).unwrap();
     bc.set_workchain(-1);
     let owner = bc.treasury(&format!("invalid-init-{label}"), 25_000 * TOS).unwrap();
     let state_init =
@@ -340,7 +343,7 @@ impl Fixture {
     }
 
     fn new_with(configure: impl FnOnce(&mut PredictionMarketInitV1)) -> Self {
-        Self::new_with_global_version(14, configure)
+        Self::new_with_global_version(current_network::global_version(), configure)
     }
 
     // A second normal reporter is test-only fixture identity. Keep it
@@ -349,7 +352,7 @@ impl Fixture {
     fn new_with_reporters(
         configure: impl FnOnce(&mut PredictionMarketInitV1, &MsgAddressInt, &MsgAddressInt),
     ) -> Self {
-        Self::new_with_global_version_and_reporters(14, configure)
+        Self::new_with_global_version_and_reporters(current_network::global_version(), configure)
     }
 
     fn new_with_global_version(
@@ -604,7 +607,7 @@ fn source_compiles_to_frozen_prediction_market_code() {
 }
 
 #[test]
-fn global_version_gate_rejects_v13_and_admits_v14_v15_activation() {
+fn global_version_gate_rejects_v13_and_future_versions_and_admits_v14_through_v16() {
     let mut v13 = Fixture::new_with_global_version(13, |_| {});
     let owner = v13.owner.address().clone();
     v13.send(
@@ -614,11 +617,57 @@ fn global_version_gate_rejects_v13_and_admits_v14_v15_activation() {
     )
     .expect_exit_code(2404);
 
-    for version in [14, 15] {
+    for version in [17, 18, 19] {
+        let mut fixture = Fixture::new_with_global_version(version, |_| {});
+        let owner = fixture.owner.address().clone();
+        fixture
+            .send(
+                &owner,
+                fixture.init.operating_reserve_floor + OPERATION_BUDGET,
+                PredictionMarketContractV1::activate(1).unwrap(),
+            )
+            .expect_exit_code(2404);
+    }
+
+    for version in [14, 15, 16] {
         let mut fixture = Fixture::new_with_global_version(version, |_| {});
         fixture.activate();
         assert_eq!(fixture.phase().0, 0, "v{version} activation must retain the trading phase");
     }
+}
+
+#[test]
+fn a_future_version_blocks_deposits_but_preserves_withdrawals() {
+    let mut fixture = Fixture::new();
+    fixture.activate();
+    let owner = fixture.owner.address().clone();
+    let key = SigningKey::from_bytes(&[0x51; 32]);
+    fixture.register(&owner, &key, 2);
+    let before = fixture.account(&owner);
+    let mut config = fixture.bc.config_params().clone();
+    config
+        .set_config(chain_block::ConfigParamEnum::ConfigParam8(chain_block::ConfigParam8 {
+            global_version: chain_block::GlobalVersion {
+                version: 17,
+                capabilities: config.capabilities(),
+            },
+        }))
+        .unwrap();
+    config
+        .set_config(chain_block::ConfigParamEnum::ConfigParam31(chain_block::ConfigParam31 {
+            fundamental_smc_addr: chain_block::FundamentalSmcAddresses::default(),
+        }))
+        .unwrap();
+    fixture.bc.set_config(config).unwrap();
+    fixture
+        .send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::deposit(3, TOS).unwrap())
+        .expect_exit_code(2404);
+    assert_eq!(fixture.account(&owner), before, "future-version deposit must preserve accounting");
+    fixture
+        .send(&owner, OPERATION_BUDGET, PredictionMarketContractV1::withdraw(4, TOS).unwrap())
+        .expect_success()
+        .expect_out_msgs(1);
+    assert_eq!(fixture.account(&owner)[0], before[0].checked_sub(i128::from(TOS)).unwrap());
 }
 
 #[test]
@@ -638,7 +687,7 @@ fn malformed_state_init_data_cannot_activate_the_production_contract() {
     for (label, data) in
         [("empty", Cell::default()), ("truncated", truncated), ("bad magic", bad_magic)]
     {
-        let mut bc = Blockchain::with_global_version(14).unwrap();
+        let mut bc = Blockchain::with_global_version(current_network::global_version()).unwrap();
         bc.set_workchain(-1);
         let owner = bc.treasury(&format!("malformed-init-{label}"), 25_000 * TOS).unwrap();
         let state_init = StateInit::with_code_and_data(code.clone(), data);
@@ -677,7 +726,7 @@ fn prepopulated_state_init_runtime_cannot_activate_the_production_contract() {
     decoded.get_next_bit().unwrap();
     assert_eq!(decoded.get_next_u64().unwrap(), 1, "test mutation must set activated_at");
 
-    let mut bc = Blockchain::with_global_version(14).unwrap();
+    let mut bc = Blockchain::with_global_version(current_network::global_version()).unwrap();
     bc.set_workchain(-1);
     let owner = bc.treasury("prepopulated-init-owner", 25_000 * TOS).unwrap();
     let state_init = StateInit::with_code_and_data(
@@ -729,7 +778,7 @@ fn prepopulated_state_init_liability_cannot_activate_the_production_contract() {
     root.replace_reference_cell(1, accounting.into_cell().unwrap());
     let prepopulated_data = root.into_cell().unwrap();
 
-    let mut bc = Blockchain::with_global_version(14).unwrap();
+    let mut bc = Blockchain::with_global_version(current_network::global_version()).unwrap();
     bc.set_workchain(-1);
     let owner = bc.treasury("prepopulated-liability-owner", 25_000 * TOS).unwrap();
     let state_init = StateInit::with_code_and_data(
@@ -863,7 +912,7 @@ fn rebound_derived_ids_allow_a_different_canonical_market_config() {
         config_builder.into_cell().unwrap(),
     );
 
-    let mut bc = Blockchain::with_global_version(14).unwrap();
+    let mut bc = Blockchain::with_global_version(current_network::global_version()).unwrap();
     bc.set_workchain(-1);
     let owner = bc.treasury("rebound-config-owner", 25_000 * TOS).unwrap();
     let state_init =
@@ -1089,7 +1138,8 @@ fn cancellation_tombstone_is_nonce_bound_and_prunes_cleanup_once() {
 
 #[test]
 fn bounceable_state_init_message_can_deploy_and_activate_atomically() {
-    let mut bc = Blockchain::with_global_version(14).expect("v14 blockchain");
+    let mut bc = Blockchain::with_global_version(current_network::global_version())
+        .expect("current-version blockchain");
     bc.set_workchain(-1);
     let owner = bc.treasury("atomic-deploy-owner", 100 * TOS).expect("owner");
     let normal = bc.treasury("atomic-deploy-normal", 10 * TOS).expect("normal");

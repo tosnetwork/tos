@@ -29,11 +29,11 @@ at their own source boundaries.
 | Selection | Version | Basechain credit | Masterchain credit | Meaning |
 | --- | --- | --- | --- | --- |
 | Existing canonical genesis and Rust defaults | 16 | 10,000 | 10,000 | Existing default profile |
-| Explicit generated admission candidate | 18 | 20,000 | 10,000 | Candidate selected with an explicit namespace; basechain transaction/block gas limits are 30,000,000/60,000,000 |
+| Explicit generated admission candidate | 16 | 20,000 | 10,000 | Candidate selected with an explicit namespace; basechain transaction/block gas limits are 30,000,000/60,000,000 |
 
 `BlockchainConfig::with_config` loads the actual generated cells.
-`default_with_global_version(18)` changes instruction availability, while keeping
-the existing default gas profile. The continuation repairs the default
+`default_with_global_version(16)` selects the unified instruction baseline while
+keeping the existing default gas profile. The continuation repairs the default
 basechain price cache's derived `max_gas_threshold`: it now matches the value
 decoded from the serialized fields. The new comparison first failed on the old
 cache value and passes after the repair. This does not activate 20,000 credit.
@@ -46,12 +46,13 @@ activation condition remains open: approved release configuration and published
 client defaults must be selected together after the required gates. Generating
 a BOC does not alter a running network.
 
-Current native and Rust introduction gates are suite/ML-DSA at version 16, the
-fixed LMS fee-hash operation at 17, and both dedicated and generic Falcon paths
-at 19. The candidate genesis is version 18. These are separate concepts; an
-opcode's introduction minimum need not equal the candidate genesis version.
-The older statement that current Falcon gates were 16 is obsolete. Final-head
-version controls must still prove Falcon refusal at 18 and acceptance at 19.
+Every native and Rust introduction gate is at version 16, the genesis version:
+suite/ML-DSA, the fixed LMS fee-hash operation, the `c7[18]` import context and
+both dedicated and generic Falcon paths. Version controls prove refusal at 15 and
+acceptance at 16. New ordinary and Quantum candidate Genesis configurations
+also use version 16, including mandatory ConfigParam 48 and its explicit AUTH
+namespace. Historical version-18 measurements below remain evidence of the
+original measured configuration; they are not relabelled as version-16 results.
 
 ## Selected generated-config transaction evidence
 

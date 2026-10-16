@@ -26,7 +26,7 @@ def normalized(result):
 
 def compare(output, driver):
     result = subprocess.run(
-        [str(driver), str(output / "config.boc"), str(output / "transactions.tsv"), "17"],
+        [str(driver), str(output / "config.boc"), str(output / "transactions.tsv"), "16"],
         capture_output=True,
         text=True,
         check=True,
@@ -51,7 +51,7 @@ def replay_native(output):
     """Re-run retained original inputs after mutation builds have restored the library."""
     from native import Cell, Emulator
 
-    emulator = Emulator(17)
+    emulator = Emulator(16)
     count = 0
     try:
         for line in (output / "transactions.tsv").read_text().splitlines():

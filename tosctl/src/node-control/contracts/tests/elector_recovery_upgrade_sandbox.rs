@@ -40,8 +40,10 @@ fn maybe_cell(cs: &mut SliceData) -> Option<Cell> {
 
 impl Fixture {
     fn new(label: &str) -> Self {
-        let state = generate_zerostate_state(root().join("crypto/smartcont/gen-zerostate.fif"))
-            .expect("real zerostate tooling is required");
+        let state = generate_zerostate_state(
+            root().join("test/tostester/tests/tostester/genesis-with-test-auth.fif"),
+        )
+        .expect("real zerostate tooling is required");
         let config = state.read_custom().expect("masterchain").expect("extra").config().clone();
         let elector = MsgAddressInt::with_standart(
             None,

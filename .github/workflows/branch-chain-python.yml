@@ -26,6 +26,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Explicit public namespace for disposable CI networks.
+  TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
   REGISTRY: ghcr.io
   CCACHE_DIR: /root/.ccache
 
@@ -279,12 +281,12 @@ jobs:
           uv sync --no-dev
           uv run test/tostester/generate_tl.py
 
-      - name: Exercise explorer RPCs on PQ and legacy policy networks
+      - name: Exercise explorer RPCs on candidate and ordinary version-16 networks
         timeout-minutes: 10
         run: |
-          uv run python scripts/test-explorer-pq-rpc.py --out build/explorer-rpc-v18
-          uv run python scripts/test-explorer-pq-rpc.py --legacy-config --out build/explorer-rpc-v16
-          uv run --with jsonschema==4.26.0 python scripts/validate-explorer-pq-receipt.py build/explorer-rpc-v18/*/rpc-evidence.json build/explorer-rpc-v16/*/rpc-evidence.json
+          uv run python scripts/test-explorer-pq-rpc.py --out build/explorer-rpc-candidate-v16
+          uv run python scripts/test-explorer-pq-rpc.py --ordinary-config --out build/explorer-rpc-ordinary-v16
+          uv run --with jsonschema==4.26.0 python scripts/validate-explorer-pq-receipt.py build/explorer-rpc-candidate-v16/*/rpc-evidence.json build/explorer-rpc-ordinary-v16/*/rpc-evidence.json
 
       - name: Retain public explorer RPC response receipts
         if: always()
@@ -292,8 +294,8 @@ jobs:
         with:
           name: explorer-rpc-${{ github.sha }}
           path: |
-            build/explorer-rpc-v18/*/rpc-evidence.json
-            build/explorer-rpc-v16/*/rpc-evidence.json
+            build/explorer-rpc-candidate-v16/*/rpc-evidence.json
+            build/explorer-rpc-ordinary-v16/*/rpc-evidence.json
           if-no-files-found: error
           retention-days: 14
 

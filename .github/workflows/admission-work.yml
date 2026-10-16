@@ -71,7 +71,7 @@ jobs:
       - name: Stop-on-accept execution-config control
         run: |
           python3 scripts/check-ext-message-stop-accept.py --build-dir build-admission --output-dir artifacts/admission/stop-accept-controls
-      - name: Generated version-18 checker and SETGASLIMIT controls
+      - name: Generated version-16 checker and SETGASLIMIT controls
         run: |
           python3 scripts/check-ext-message-generated.py --build-dir build-admission --output-dir artifacts/admission/generated-checker --controls
       - name: Record source identity

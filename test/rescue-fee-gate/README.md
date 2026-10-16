@@ -8,9 +8,8 @@ The experiments below validate individual boundaries and do not replace that gat
 Prototype of the wallet rescue design: an ML-DSA-44 daily root, an SLH-DSA-SHA2-128s rescue
 root, and a per-wallet fee vault that admits an external message only after a native one-level
 HSS/LMS signature over the complete fee intent verifies, inside the external gas credit (10,000
-gas, as in genesis). The original prototypes run at development genesis global version **16**.
-The contextual admission candidate below requires experimental version **17**, without
-changing genesis or activating a network.
+gas, as in genesis). All prototypes, including the contextual admission candidate below, run
+at genesis global version **16**.
 **Not for production merge.**
 
 Adopted parameters (2026-10-04 design, with the later development-version integration):
@@ -19,9 +18,8 @@ Adopted parameters (2026-10-04 design, with the later development-version integr
   time — 1-hour slots, 4 leaves per slot. A device restored from the mnemonic re-derives the key
   and waits for the next slot boundary. Safe operation still requires the design's trusted-time,
   single-writer and durable within-slot reservation rules; this is not a production signer.
-- `PQCHECKSIG_SUITE` = `F93102`, enabled at version 16. Suite 2 (Falcon) keeps `F93101`'s
-  version-16 gate. The original 18/19 allocation is superseded by the development baseline
-  integrated from `main` at `334be6e51`; this changes no running network.
+- `PQCHECKSIG_SUITE` = `F93102`, enabled at version 16. Suite 2 (Falcon) shares `F93101`'s
+  version-16 gate.
 - AUTH v2 PRIMARY context `TOS-AUTH-V2-ML-DSA-44-v1`; global AUTH policy in ConfigParam 48 (not
   implemented yet).
 
@@ -311,7 +309,7 @@ activated by this work. Reference CPU pricing, all worst-case invalid paths,
 successor/POP/funding completion and production activation remain open.
 
 
-## Version-17 contextual admission (2026-10-05)
+## Contextual admission (2026-10-05)
 
 The next experiment is implemented in `rescue-fee-vault-context.fc`, both executors,
 and both VMs. See [the interface and wire specification](../../doc/tvm-lms-fee-hash.md).
@@ -320,7 +318,7 @@ verifies a fixed 32-byte digest and explicit leaf with the existing H20/W4 tarif
 Neither the 10000 external credit nor the compression/cell prices are reduced.
 `.github/workflows/rescue-context.yml` wires these checks to Linux x86-64 and
 AArch64; it has not been run remotely for this local snapshot.
-Genesis remains version 16; the candidate is a new experimental layout.
+The context and opcode are enabled at genesis version 16; the vault is a new experimental layout.
 
 The strict fixture reaches ACCEPT at **9771 gas**, with **11866 total compute gas**.
 This includes complete-input bounds, exact domain/network/wallet/module/profile/tree
@@ -344,7 +342,7 @@ Local evidence (`context-admission-20261005.json`):
   final balance and data hash. Includes actual SLH/module/account lock and failure
   bounce, eligible kinds, final tree leaf, root counts, sharing, inline/reference
   bodies, StateInit and null internal context. Native getter null context and
-  version-16 refusal are separately asserted.
+  version-15 refusal are separately asserted.
 - Exactly 128 cells admitted; 129 rejected before ACCEPT. Removing the bound
   incorrectly admits an oversized signed message. C++ and Rust mutations of leaf
   binding, version gating and root counting must also fail at intended outcomes.

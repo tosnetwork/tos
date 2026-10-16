@@ -20,10 +20,10 @@ from test_state import fee, state  # noqa: E402
 
 
 def run(code, data, module, req, expected=0, signature=None, shard=None, sender=None):
-    entries = read_dict(native.config(17), 32)
+    entries = read_dict(native.config(16), 32)
     entries[48] = Cell().ref(global_policy())
     with patch.object(native, "config", return_value=make_dict(entries, 32)):
-        e = native.Emulator(17)
+        e = native.Emulator(16)
     try:
         initial = shard or native.active_account(ACCOUNT, code, data, balance=10**15)
         result = e.send(

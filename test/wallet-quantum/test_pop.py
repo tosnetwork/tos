@@ -128,7 +128,7 @@ def main():
         root = int.from_bytes(native.state_init(code, data).hash, "big")
         address = (0, root)
         pk = int.from_bytes(primary.hash, "big")
-        e = native.Emulator(17)
+        e = native.Emulator(16)
         cases = {}
         try:
             for role in (1, 2):

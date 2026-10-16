@@ -26,9 +26,9 @@ def check_pop_flow(args, root, request, journal, payload, codes, data, addresses
         return shared.make_dict(entries, 32)
 
     with patch.object(native, "config", lambda *a, **k: config_with_credit(20000)):
-        emu = native.Emulator(global_version=17)
+        emu = native.Emulator(global_version=16)
     with patch.object(native, "config", lambda *a, **k: config_with_credit(10000)):
-        limited = native.Emulator(global_version=17)
+        limited = native.Emulator(global_version=16)
     scenario = json.loads((root / "scenario.json").read_text())
 
     def observed_state(name):

@@ -540,6 +540,9 @@ pub trait TransactionExecutor {
         let mut acc_remaining_balance = acc_balance.clone();
         let mut phase = TrActionPhase::default();
         let mut total_reserved_value = Coins::default();
+        // From version 15 the fines of messages that were sent successfully are
+        // also collected when a later step fails the action phase.
+        let mut fail_action_fine = Coins::zero();
         let mut bounce = false;
         phase.action_list_hash = actions_cell.repr_hash();
         let action_slices =
@@ -595,6 +598,7 @@ pub trait TransactionExecutor {
                     return finish_action_phase_with_fine(
                         tr,
                         phase,
+                        &fail_action_fine,
                         Some(msg_remaining_balance),
                         acc_balance,
                         bounce,
@@ -627,6 +631,7 @@ pub trait TransactionExecutor {
                         my_addr,
                         &total_reserved_value,
                         &mut account_deleted,
+                        &mut fail_action_fine,
                     );
                     match result {
                         Ok(_) => {
@@ -724,6 +729,7 @@ pub trait TransactionExecutor {
                 return finish_action_phase_with_fine(
                     tr,
                     phase,
+                    &fail_action_fine,
                     Some(msg_remaining_balance),
                     acc_balance,
                     bounce,
@@ -762,7 +768,14 @@ pub trait TransactionExecutor {
         {
             log::debug!(target: "executor", "Account size limits exceeded. Taking fine and rolling back state");
             phase.result_code = RESULT_CODE_EXCEEDED_LIMITS;
-            return finish_action_phase_with_fine(tr, phase, None, acc_balance, true);
+            return finish_action_phase_with_fine(
+                tr,
+                phase,
+                &fail_action_fine,
+                None,
+                acc_balance,
+                true,
+            );
         }
 
         phase.add_action_fine();
@@ -1183,6 +1196,7 @@ fn outmsg_action_handler(
     my_addr: &MsgAddressInt,
     reserved_value: &Coins,
     account_deleted: &mut bool,
+    fail_action_fine: &mut Coins,
 ) -> std::result::Result<CurrencyCollection, i32> {
     if msg.is_inbound_external() {
         log::debug!(target: "executor", "outbound msg cannot be inbound external");
@@ -1546,6 +1560,12 @@ fn outmsg_action_handler(
         phase.add_action_fees(&fwd_mine_fee);
 
         phase.tot_msg_size.add_bits_and_cells(sstat.bits() + add_bits, sstat.cells() + 1);
+        if config.global_version() >= FAIL_ACTION_FINE_SINCE_VERSION
+            && !fail_action_fine.add_checked(&fine)
+        {
+            log::warn!(target: "executor", "failed-action fine overflow");
+            return Err(RESULT_CODE_INVALID_BALANCE);
+        }
 
         if mode.any(SENDMSG_ALL_BALANCE | SENDMSG_REMAINING_MSG_BALANCE) {
             *msg_balance = CurrencyCollection::default();
@@ -1868,13 +1888,28 @@ fn action_type(action: &OutAction) -> String {
     }
 }
 
+/// From this version a failed action phase also collects the fines of the
+/// messages that were sent before the failure, as the native engine does.
+const FAIL_ACTION_FINE_SINCE_VERSION: u32 = 15;
+
 fn finish_action_phase_with_fine(
     tr: &mut Transaction,
     mut phase: TrActionPhase,
+    fail_action_fine: &Coins,
     msg_remaining_balance: Option<&mut CurrencyCollection>,
     acc_balance: &mut CurrencyCollection,
     bounce: bool,
 ) -> Result<ActionPhaseResult> {
+    // The fine is the collected fines plus those of the sent messages, never
+    // more than the account holds.
+    let mut fine = phase.action_fine;
+    if !fine.add_checked(fail_action_fine) {
+        fail!("action fine overflow");
+    }
+    if fine > acc_balance.coins {
+        fine = acc_balance.coins;
+    }
+    phase.action_fine = fine;
     if let Some(msg_remaining_balance) = msg_remaining_balance {
         msg_remaining_balance.coins.sub_checked(&phase.action_fine);
     }

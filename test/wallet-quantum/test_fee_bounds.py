@@ -69,7 +69,7 @@ def main():
                     renamed + (driver.replace(guard, "") if mutant else driver)
                 )
                 code = native.compile_contract(str(work / "driver.fc"), out / f"{label}.boc")
-                emulator = native.Emulator(17)
+                emulator = native.Emulator(16)
                 try:
                     tested = [0] if mutant else values
                     for value in tested:

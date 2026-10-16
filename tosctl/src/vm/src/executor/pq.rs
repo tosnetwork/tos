@@ -230,7 +230,8 @@ fn push_outcome(engine: &mut Engine, valid: Option<bool>, name: &str) -> Status 
 }
 
 const SUITE_MIN_VERSION: u32 = 16;
-const FALCON512_MIN_VERSION: u32 = 19;
+const FALCON512_MIN_VERSION: u32 = 16;
+const LMS_FEE_HASH_MIN_VERSION: u32 = 16;
 
 pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
     if engine.block_version() < SUITE_MIN_VERSION {
@@ -365,10 +366,10 @@ pub(super) fn execute_pq_suite(engine: &mut Engine) -> Status {
     }
 }
 
-/// Version-17 fixed-profile verifier: hash, leaf, signature, key -> bool.
+/// Fixed-profile fee verifier: hash, leaf, signature, key -> bool.
 /// Eliminates caller-created digest/context cells, not verification work or tariff.
 pub(super) fn execute_lms_fee_hash(engine: &mut Engine) -> Status {
-    if engine.block_version() < 17 {
+    if engine.block_version() < LMS_FEE_HASH_MIN_VERSION {
         if engine.block_version() >= 4 {
             engine.try_use_gas(Gas::basic_gas_price(0, 0))?;
         } else {

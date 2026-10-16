@@ -132,7 +132,7 @@ def main():
 
         plan, successor, vi, vd = identities(code)
         root = int.from_bytes(native.state_init(code, current).hash, "big")
-        emulator = RecordingEmulator(17)
+        emulator = RecordingEmulator(16)
         cases = {}
 
         def run(
@@ -211,7 +211,7 @@ def main():
             module_cells, vault_cells = map(cell_count, messages)
             assert module_cells > vault_cells
             original_emulator = emulator
-            emulator = RecordingEmulator(17, max_msg_cells=vault_cells)
+            emulator = RecordingEmulator(16, max_msg_cells=vault_cells)
             try:
                 partial, surviving = run("partial_send_size_limit", req, expected_messages=1)
                 assert surviving[0].refs[0].hash == vi.hash, "unexpected surviving deployment"
@@ -300,7 +300,7 @@ def main():
         assert len(scenarios) >= 18
         fixture = from_boc((ROOT / "tosctl/src/executor/real_boc/default_config.boc").read_bytes())
         (out / "config.boc").write_bytes(
-            Cell().uint(int(fixture.bits, 2), 256).ref(native.config(17)).boc()
+            Cell().uint(int(fixture.bits, 2), 256).ref(native.config(16)).boc()
         )
         (out / "scenarios.tsv").write_text("\n".join(scenarios) + "\n")
         (out / "native.tsv").write_text("\n".join(expected_rows) + "\n")
@@ -309,7 +309,7 @@ def main():
                 str(options.rust_driver.resolve()),
                 str(out / "config.boc"),
                 str(out / "scenarios.tsv"),
-                "17",
+                "16",
                 "--details",
             ],
             capture_output=True,

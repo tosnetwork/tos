@@ -147,6 +147,8 @@ jobs:
         run: cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl --locked
       - name: Real-chain TOSCAN release gate
         env:
+          # Explicit public namespace for this disposable acceptance network.
+          TOS_AUTH_NETWORK_TAG: "4545454545454545454545454545454545454545454545454545454545454545"
           # This step starts immediately after compiling the node, on a runner
           # whose disk has just been saturated for the better part of an hour.
           # The waits inside are for a chain to produce blocks and an indexer to

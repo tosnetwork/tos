@@ -59,7 +59,9 @@ def generated_tariffs(parameters, now):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
-        "--chain-config", type=Path, help="Use unchanged generated version-18 ConfigParams"
+        "--chain-config",
+        type=Path,
+        help="Use unchanged generated ConfigParams (version 16 or newer)",
     )
     p.add_argument("--transaction-time", type=int, help="Explicit disposable-network signing time")
     p.add_argument(
@@ -127,6 +129,7 @@ def main():
     assert not options.delete_execute_actions or not (
         options.prepare or options.pop_role or options.recovery
     )
+    chain_version = 16  # Synthetic fixtures use the baseline; real chains use ConfigParam 8.
     chain_config = None
     chain_bytes = None
     network, global_id = 123, 42
@@ -139,7 +142,9 @@ def main():
         chain_config = configuration.refs[0]
         parameters = read_dict(chain_config, 32)
         version = parameters[8].refs[0].slice()
-        assert version.uint(8) == 0xC4 and version.uint(32) == 18
+        assert version.uint(8) == 0xC4
+        chain_version = version.uint(32)
+        assert chain_version >= 16
         identity = parameters[48].refs[0].slice()
         assert identity.uint(8) == 0xA1
         network = identity.uint(256)
@@ -554,7 +559,7 @@ def main():
                 epoch0=now - 2 * 3600 - 10,
                 global_id=global_id,
                 network=network,
-                vm_version=18 if chain_config is not None else 17,
+                vm_version=chain_version,
             )
             sig.write_bytes(cached_signature)
             body = (
@@ -600,7 +605,7 @@ def main():
                 + "\n"
             )
         if chain_config is None:
-            entries = read_dict(native.config(17), 32)
+            entries = read_dict(native.config(16), 32)
             entries[48] = Cell().ref(global_policy())
         else:
             entries = read_dict(chain_config, 32)
@@ -666,7 +671,7 @@ def main():
             offset = 336
             assert int(original.bits[offset : offset + 64], 2) == 10000
             with patch.object(native, "config", return_value=make_dict(entries, 32)):
-                baseline = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
+                baseline = native.Emulator(16, vm_log_verbosity=3 if options.gas_trace else 1)
             try:
                 default_result = baseline.send(initial, ext)
             finally:
@@ -685,7 +690,7 @@ def main():
                 )
                 entries[21] = Cell().ref(changed)
                 with patch.object(native, "config", return_value=make_dict(entries, 32)):
-                    probe = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
+                    probe = native.Emulator(16, vm_log_verbosity=3 if options.gas_trace else 1)
                 try:
                     result = probe.send(initial, ext)
                 finally:
@@ -719,7 +724,7 @@ def main():
             print(json.dumps(credit_probe), flush=True)
         if chain_config is None:
             with patch.object(native, "config", return_value=make_dict(entries, 32)):
-                e = native.Emulator(17, vm_log_verbosity=3 if options.gas_trace else 1)
+                e = native.Emulator(16, vm_log_verbosity=3 if options.gas_trace else 1)
         else:
             original_parameters = read_dict(chain_config, 32)
             assert {k: v.hash for k, v in entries.items()} == {
@@ -1089,7 +1094,7 @@ def main():
                         out / "recovery",
                         network=network,
                         global_id=global_id,
-                        vm_version=18 if chain_config is not None else 17,
+                        vm_version=chain_version,
                         auth_fee_amount=auth_fee_amount,
                         pop_fee_amount=pop_fee_amount,
                         prepare_fee_amount=amount,
@@ -1283,7 +1288,7 @@ def main():
                 "chain_config_sha256": hashlib.sha256(chain_bytes).hexdigest()
                 if chain_bytes
                 else None,
-                "chain_version": 18 if chain_config is not None else 17,
+                "chain_version": chain_version,
                 "network": f"{network:064x}",
                 "global_id": global_id,
                 "pop_role": options.pop_role,

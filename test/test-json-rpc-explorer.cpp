@@ -254,8 +254,8 @@ TEST(JsonRpcExplorer, config_absence_defaults_and_retirement_are_exact) {
       ASSERT_TRUE(decoded.ok().find("\"defaulted_fields\":[]") != std::string::npos);
   }
   ASSERT_TRUE(decode_config(8, {}, 16, 1000).is_error());
-  ASSERT_TRUE(decode_config(48, {}, 16, 1000).is_ok());
-  auto missing = decode_config(48, {}, 17, 1000);
+  ASSERT_TRUE(decode_config(48, {}, 15, 1000).is_ok());
+  auto missing = decode_config(48, {}, 16, 1000);
   ASSERT_TRUE(missing.is_error());
   ASSERT_EQ(missing.error().code(), static_cast<int>(Failure::StateInvalid));
   td::Bits256 profile;
@@ -268,7 +268,7 @@ TEST(JsonRpcExplorer, config_absence_defaults_and_retirement_are_exact) {
                     .store_long(0, 1)
                     .store_bits(profile.cbits(), 256)
                     .finalize();
-  auto decoded = decode_config(48, policy, 17, 1000);
+  auto decoded = decode_config(48, policy, 16, 1000);
   ASSERT_TRUE(decoded.is_ok());
   ASSERT_TRUE(decoded.ok().find("\"primary_status\":\"retired\"") != std::string::npos);
   vm::Dictionary controllers(256);
@@ -300,14 +300,14 @@ TEST(JsonRpcExplorer, policy_deadline_uses_authenticated_chain_time) {
                     .store_bits(profile.cbits(), 256)
                     .store_ref(deadlines.get_root_cell())
                     .finalize();
-  auto before = decode_config(48, policy, 18, 999);
+  auto before = decode_config(48, policy, 16, 999);
   ASSERT_TRUE(before.is_ok());
   ASSERT_TRUE(before.ok().find("\"primary_status\":\"not_retired\"") != std::string::npos);
-  auto at_deadline = decode_config(48, policy, 18, 1000);
+  auto at_deadline = decode_config(48, policy, 16, 1000);
   ASSERT_TRUE(at_deadline.is_ok());
   const bool at_deadline_retired = at_deadline.ok().find("\"primary_status\":\"retired\"") != std::string::npos;
   ASSERT_TRUE(at_deadline_retired);
-  auto after = decode_config(48, policy, 18, 1001);
+  auto after = decode_config(48, policy, 16, 1001);
   ASSERT_TRUE(after.is_ok());
   ASSERT_TRUE(after.ok().find("\"primary_status\":\"retired\"") != std::string::npos);
 }

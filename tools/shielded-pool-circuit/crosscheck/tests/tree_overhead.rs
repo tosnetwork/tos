@@ -26,7 +26,7 @@ use shielded_pool_circuit_crosscheck::imt_probe::ImtProbe;
 /// difference by a thousand. Pinned so a change to either tree makes the
 /// arithmetic below go red rather than quietly stale.
 ///
-/// Unchanged by global version 18: POSEIDON2_PATH7 does the same permutations
+/// POSEIDON2_PATH7 does the same permutations
 /// the FunC loop did. What it removed is everything around them.
 const IMT_PERMUTATIONS: i64 = 51;
 const APPEND_PERMUTATIONS: i64 = 12;
@@ -62,9 +62,8 @@ fn what_the_pools_trees_spend_on_hashing() {
     let root = probe.genesis_root().expect("the genesis root");
     let nullifier = Fr::from(0x7777_8888_9999_aaaau64);
     let (witness, _) = state.witness_for(&nullifier).expect("a witness");
-    let insert = probe
-        .insert_gas(&root, state.next_index, &dec(nullifier), &witness)
-        .expect("one insert");
+    let insert =
+        probe.insert_gas(&root, state.next_index, &dec(nullifier), &witness).expect("one insert");
 
     let frontier = FrontierProbe::deploy().expect("deploy the frontier probe");
     let append_fresh = frontier.append_gas(2).expect("an append near genesis");
@@ -93,10 +92,7 @@ fn what_the_pools_trees_spend_on_hashing() {
 
     eprintln!();
     eprintln!("a transact walks both trees: two inserts and three appends.");
-    eprintln!(
-        "  {tree_gas} gas, {}% of a whole withdrawal",
-        percent(tree_gas, WITHDRAWAL_GAS)
-    );
+    eprintln!("  {tree_gas} gas, {}% of a whole withdrawal", percent(tree_gas, WITHDRAWAL_GAS));
     eprintln!("  hashing      {}", tree_permutations * price);
     eprintln!(
         "  bookkeeping  {bookkeeping}, {}% of a whole withdrawal",
@@ -118,8 +114,8 @@ fn what_the_pools_trees_spend_on_hashing() {
     );
     // This assertion used to read the other way. It said that if bookkeeping
     // ever fell below a quarter of the tree work, the case for a native path
-    // instruction had weakened and should be re-argued. At global version 18
-    // it did fall, because the instruction landed: an insert went from 52%
+    // instruction had weakened and should be re-argued. In the original path-opcode
+    // measurement it did fall: an insert went from 52%
     // bookkeeping to 10%, and a withdrawal from 1,565,609 gas to 1,222,791.
     //
     // What is left is the commitment tree, whose overhead is dictionary work

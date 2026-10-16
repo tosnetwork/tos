@@ -743,47 +743,9 @@ td::Bits256 derive_rand_seed(const tos::BlockIdExt& target, const block::StdAddr
   return seed;
 }
 
-// SmartContractInfo for a get-method, built only from proven inputs. The field
-// layout follows the transaction executor for the proven global version.
 td::Result<td::Ref<vm::Tuple>> proven_c7(const block::ConfigInfo& config, const AccountRecord& account,
                                          const ExecutionContext& context) {
-  std::vector<vm::StackEntry> tuple = {
-      td::make_refint(0x076ef1ea),
-      td::make_refint(0),
-      td::make_refint(0),
-      td::make_refint(context.unixtime),
-      td::make_refint(context.block_lt),
-      td::make_refint(context.block_lt),
-      td::bits_to_refint(context.rand_seed.cbits(), 256, false),
-      account.balance.as_vm_tuple(),
-      account.address_slice,
-      config.get_root_cell(),
-  };
-  const int version = config.get_global_version();
-  if (version >= 4) {
-    tuple.push_back(vm::StackEntry::maybe(account.code));
-    tuple.push_back(block::CurrencyCollection::zero().as_vm_tuple());
-    tuple.push_back(td::zero_refint());
-    TRY_RESULT_PREFIX(previous, config.get_prev_blocks_info(), "previous block information is not proven: ");
-    tuple.push_back(std::move(previous));
-  }
-  if (version >= 6) {
-    auto unpacked = config.get_unpacked_config_tuple(context.unixtime);
-    if (unpacked.is_null()) {
-      return td::Status::Error("unpacked configuration is not available from the proof");
-    }
-    tuple.push_back(std::move(unpacked));
-    tuple.push_back(account.due_payment);
-    td::optional<block::PrecompiledContractsConfig::Contract> precompiled;
-    if (account.code.not_null()) {
-      precompiled = config.get_precompiled_contracts_config().get_contract(account.code->get_hash().bits());
-    }
-    tuple.push_back(precompiled ? td::make_refint(precompiled.value().gas_usage) : vm::StackEntry());
-  }
-  if (version >= 11) {
-    tuple.push_back(block::transaction::Transaction::prepare_in_msg_params_tuple(nullptr, {}, {}));
-  }
-  return vm::make_tuple_ref(td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple)));
+  return proven_getter_c7(config, account.code, account.balance, account.address_slice, account.due_payment, context);
 }
 
 td::Result<std::string> serialize_stack(const td::Ref<vm::Stack>& stack) {
@@ -1051,6 +1013,55 @@ td::Result<VerifiedBlock> parse_verified_block(const td::JsonValue& value) {
 }
 
 }  // namespace
+
+// SmartContractInfo for a get-method, built only from proven inputs. The field
+// layout follows the transaction executor for the proven global version.
+td::Result<td::Ref<vm::Tuple>> proven_getter_c7(const block::ConfigInfo& config, td::Ref<vm::Cell> code,
+                                                const block::CurrencyCollection& balance,
+                                                td::Ref<vm::CellSlice> address, td::RefInt256 due_payment,
+                                                const ExecutionContext& context) {
+  std::vector<vm::StackEntry> tuple = {
+      td::make_refint(0x076ef1ea),
+      td::make_refint(0),
+      td::make_refint(0),
+      td::make_refint(context.unixtime),
+      td::make_refint(context.block_lt),
+      td::make_refint(context.block_lt),
+      td::bits_to_refint(context.rand_seed.cbits(), 256, false),
+      balance.as_vm_tuple(),
+      std::move(address),
+      config.get_root_cell(),
+  };
+  const int version = config.get_global_version();
+  if (version >= 4) {
+    tuple.push_back(vm::StackEntry::maybe(code));
+    tuple.push_back(block::CurrencyCollection::zero().as_vm_tuple());
+    tuple.push_back(td::zero_refint());
+    TRY_RESULT_PREFIX(previous, config.get_prev_blocks_info(), "previous block information is not proven: ");
+    tuple.push_back(std::move(previous));
+  }
+  if (version >= 6) {
+    auto unpacked = config.get_unpacked_config_tuple(context.unixtime);
+    if (unpacked.is_null()) {
+      return td::Status::Error("unpacked configuration is not available from the proof");
+    }
+    tuple.push_back(std::move(unpacked));
+    tuple.push_back(std::move(due_payment));
+    td::optional<block::PrecompiledContractsConfig::Contract> precompiled;
+    if (code.not_null()) {
+      precompiled = config.get_precompiled_contracts_config().get_contract(code->get_hash().bits());
+    }
+    tuple.push_back(precompiled ? td::make_refint(precompiled.value().gas_usage) : vm::StackEntry());
+  }
+  if (version >= 11) {
+    tuple.push_back(block::transaction::Transaction::prepare_in_msg_params_tuple(nullptr, {}, {}));
+  }
+  if (version >= 16) {
+    // Proven getters have no authenticated external import statistics.
+    tuple.push_back(vm::StackEntry{});
+  }
+  return vm::make_tuple_ref(td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(tuple)));
+}
 
 std::string block_id_json(const tos::BlockIdExt& id) {
   return JsonObjectWriter{}

@@ -34,9 +34,9 @@ extern const char *config_boc;
 
 namespace fee_fixture {
 
-// TOS genesis runs global version 14 (crypto/smartcont/gen-zerostate.fif);
+// TOS genesis runs global version 16 (crypto/smartcont/gen-zerostate.fif);
 // the fee instructions the wallet uses need at least 6.
-constexpr td::uint32 kTosGlobalVersion = 14;
+constexpr td::uint32 kTosGlobalVersion = 16;
 
 // The shared fixture config, with ConfigParam 8 set to `global_version` (the TOS
 // genesis version by default). Price tables, capabilities and every other

@@ -128,11 +128,11 @@ def run(
     envelope=None,
     shard=None,
 ):
-    entries = read_dict(native.config(17), 32)
+    entries = read_dict(native.config(16), 32)
     if config is not None:
         entries[48] = Cell().ref(global_policy() if config == "valid" else config)
     with patch.object(native, "config", return_value=make_dict(entries, 32)):
-        e = native.Emulator(17)
+        e = native.Emulator(16)
     try:
         shard = shard or native.active_account(ACCOUNT, code, data, balance=1_000_000_000_000_000)
         result = e.send(
