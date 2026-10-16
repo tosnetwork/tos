@@ -21,6 +21,7 @@ SUITES = [
     "mutations",
 ]
 RUNNERS = ["ubuntu-24.04", "ubuntu-24.04-arm"]
+RUNNER_MATRIX = "runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\"]') }}"
 CONTRACT = ROOT / "test/wallet-quantum/rescue-ci-contract.json"
 WORKFLOW = ROOT / ".github/workflows/rescue-context.yml"
 UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
@@ -66,6 +67,7 @@ def validate(text, contract, source_guard):
         text.count("\n  suites:\n") == text.count("\n  parity:\n") == 1,
         "expected one suite matrix and one parity gate",
     )
+    require("  workflow_dispatch:\n" in text, "ARM must remain manually available")
     prefix, rest = text.split("\n  suites:\n", 1)
     suites_text, parity = rest.split("\n  parity:\n", 1)
     require("continue-on-error:" not in text, "suite failures must propagate")
@@ -78,7 +80,9 @@ def validate(text, contract, source_guard):
     require(
         matrix
         == """        suite: [signer-core, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        """
+        + RUNNER_MATRIX
+        + """
         exclude:
           # These controls were x86-only in the serial workflow.
           - suite: mutations
@@ -236,7 +240,7 @@ def validate(text, contract, source_guard):
     )
     require(re.search(r"(?m)^        if:", parity) is None, "parity steps must not be skipped")
     require(
-        "runner: [ubuntu-24.04, ubuntu-24.04-arm]\n" in parity,
+        RUNNER_MATRIX + "\n" in parity,
         "both original parity check names must remain",
     )
     require(
@@ -283,12 +287,24 @@ def validate(text, contract, source_guard):
     }
 
 
+def coverage_for_event(coverage, event):
+    require(event in {"pull_request", "workflow_dispatch"}, "unsupported workflow event")
+    return {
+        pair: names
+        for pair, names in coverage.items()
+        if event == "workflow_dispatch" or pair[1] == RUNNERS[0]
+    }
+
+
 def receipt(suite, runner, coverage):
-    require((suite, runner) in coverage, "unknown suite or architecture")
+    event = os.environ["GITHUB_EVENT_NAME"]
+    coverage = coverage_for_event(coverage, event)
+    require((suite, runner) in coverage, "suite not scheduled for this workflow event")
     return {
         "source": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
         ).strip(),
+        "event": event,
         "run_id": os.environ["GITHUB_RUN_ID"],
         "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
         "suite": suite,
@@ -298,7 +314,8 @@ def receipt(suite, runner, coverage):
     }
 
 
-def verify_receipts(directory, source, run_id, attempt, coverage):
+def verify_receipts(directory, source, run_id, attempt, coverage, event):
+    coverage = coverage_for_event(coverage, event)
     # Re-running failed jobs retains earlier successful workers. Bind all receipts
     # to this source/run, permit earlier successful attempts, and select the newest
     # receipt per worker. The separate matrix-result gate still rejects a failed
@@ -310,6 +327,7 @@ def verify_receipts(directory, source, run_id, attempt, coverage):
         r = json.loads(p.read_text())
         pair = (r["suite"], r["runner"])
         require(pair in coverage, "unexpected suite receipt")
+        require(r["event"] == event, "receipt belongs to another workflow event")
         require(
             r["source"] == source and r["run_id"] == run_id,
             "receipt belongs to another source or run",
@@ -358,6 +376,7 @@ def main():
             os.environ["GITHUB_RUN_ID"],
             os.environ["GITHUB_RUN_ATTEMPT"],
             coverage,
+            os.environ["GITHUB_EVENT_NAME"],
         )
     print(
         f"RESCUE_CI_COVERAGE_OK: {len(coverage)} isolated suites; all 52 original build/control steps retained"

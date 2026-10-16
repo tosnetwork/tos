@@ -17,7 +17,9 @@ pinned in `test/wallet-quantum/rescue-ci-contract.json`.
 | mutations | x86-64 | The formerly x86-only fee/VM deletion and mutation controls |
 
 Existing x86-only controls inside the other suites remain x86-only. There are
-15 workers, with a matrix parallelism limit of 16 so all can start together.
+eight automatic x86-64 workers on pull requests. ARM64 is manual-only in this
+workflow: `workflow_dispatch` runs all 15 workers (both architectures), with a
+matrix parallelism limit of 16 so all can start together.
 The longest suites are listed first if hosted capacity causes a queue.
 Every worker retains the original 180-minute timeout; tests, iteration counts,
 compiler flags, native `-j2` setting and failure behavior are unchanged.
@@ -38,12 +40,15 @@ so mutation controls do not reuse another worker's modified binaries.
 Public artifacts have unique architecture/suite names and retain the existing
 14-day retention and exclusions for test-only LMS trees. Small success receipts
 are uploaded separately. The two existing `parity (ubuntu-24.04, 180)` and
-`parity (ubuntu-24.04-arm, 180)` checks remain as final gates. Both require the
-entire matrix to succeed and all 15 receipts to match the source SHA, run ID,
-coverage contract and expected check list. Attempt-specific artifact names avoid
+`parity (ubuntu-24.04-arm, 180)` checks remain as final gates. The x86 gate runs on PRs; both gates run on manual
+dispatch. Each gate requires
+the entire scheduled matrix to succeed and all eight PR receipts or all 15
+manual-run receipts to match the event, source SHA, run ID, coverage contract and
+expected check list. An unscheduled ARM gate is absent on PRs; it is not reported
+as a passing ARM test. Attempt-specific artifact names avoid
 upload collisions on partial reruns. Successful workers from an earlier attempt
 of the same source/run remain valid, and the newest receipt per worker is used.
-Duplicates within one attempt, foreign/future receipts and incomplete coverage
+Duplicates within one attempt, foreign-event/future receipts and incomplete coverage
 fail the gate. The matrix-result check still rejects a failed or cancelled
 current worker, even if an older success receipt exists.
 
@@ -91,3 +96,19 @@ with its prerequisites and verify that its intended negative assertion can fail.
 Local checks catch wiring mistakes before using hosted runner time. They do not
 replace Linux x86/ARM execution, full receipt coverage, or mandatory checks.
 See `rescue-context-ci-validation.json` for local evidence and outstanding CI.
+
+## Manual ARM validation
+
+In Actions, select **Experimental rescue context parity**, choose **Run workflow**,
+and select the branch/tag to validate. This runs both x86-64 and ARM64 and checks
+all 15 receipts. The equivalent CLI is:
+
+```sh
+gh workflow run rescue-context.yml --ref <branch-or-tag>
+```
+
+Before a release, require a successful manual dual-architecture run on the exact
+release commit. Changes to cryptography, VM execution, serialization or
+architecture-dependent code also need this run before merging. These are review
+and release requirements; the ordinary PR gate itself proves only x86-64 coverage.
+Other ARM workflows are unchanged.

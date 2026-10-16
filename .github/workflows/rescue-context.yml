@@ -1,6 +1,7 @@
 name: Experimental rescue context parity
 
 on:
+  # Manual runs include ARM64; PRs automatically test x86-64 only.
   workflow_dispatch:
   pull_request:
     paths:
@@ -65,7 +66,7 @@ jobs:
       max-parallel: 16
       matrix:
         suite: [signer-core, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-24.04","ubuntu-24.04-arm"]' || '["ubuntu-24.04"]') }}
         exclude:
           # These controls were x86-only in the serial workflow.
           - suite: mutations
@@ -641,15 +642,15 @@ jobs:
           retention-days: 14
 
   parity:
-    # Retain the existing public check names. A skipped/cancelled matrix is a
-    # failed gate, and upload-only success cannot satisfy this check.
+    # PRs expose the x86 gate; manual runs expose both original gate names.
+    # A failed/cancelled matrix or incomplete event-specific receipts fail the gate.
     name: parity (${{ matrix.runner }}, 180)
     needs: suites
     if: always()
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-24.04","ubuntu-24.04-arm"]' || '["ubuntu-24.04"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

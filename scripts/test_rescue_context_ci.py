@@ -3,6 +3,8 @@
 import copy
 import importlib.util
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,6 +40,82 @@ class RescueCiTests(unittest.TestCase):
                 {runner for (_, runner), names in coverage.items() if row["name"] in names},
                 expected,
             )
+
+    def test_event_specific_scheduling_and_receipt_cli(self):
+        coverage = self.check()
+        for event, count in [("pull_request", 8), ("workflow_dispatch", 15)]:
+            scheduled = guard.coverage_for_event(coverage, event)
+            self.assertEqual(len(scheduled), count)
+            if event == "pull_request":
+                self.assertEqual({r for _, r in scheduled}, {guard.RUNNERS[0]})
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = dict(
+                    os.environ,
+                    GITHUB_EVENT_NAME=event,
+                    GITHUB_RUN_ID="123",
+                    GITHUB_RUN_ATTEMPT="1",
+                    SOURCE_SHA=subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"], cwd=guard.ROOT, text=True
+                    ).strip(),
+                )
+                for suite, runner in sorted(scheduled):
+                    subprocess.run(
+                        [
+                            "python3",
+                            str(guard.ROOT / "scripts/check-rescue-context-ci.py"),
+                            "--write-receipt",
+                            str(root / suite / runner / "suite-success.json"),
+                            "--suite",
+                            suite,
+                            "--runner",
+                            runner,
+                        ],
+                        env=env,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+                verify = [
+                    "python3",
+                    str(guard.ROOT / "scripts/check-rescue-context-ci.py"),
+                    "--verify-receipts",
+                    str(root),
+                ]
+                subprocess.run(verify, env=env, check=True, capture_output=True, text=True)
+                missing = next(root.rglob("suite-success.json"))
+                receipt = json.loads(missing.read_text())
+                receipt["event"] = (
+                    "pull_request" if event == "workflow_dispatch" else "workflow_dispatch"
+                )
+                missing.write_text(json.dumps(receipt))
+                failed = subprocess.run(verify, env=env, capture_output=True, text=True)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn("another workflow event", failed.stderr)
+                missing.unlink()
+                failed = subprocess.run(verify, env=env, capture_output=True, text=True)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn("missing success receipts", failed.stderr)
+                if event == "pull_request":
+                    failed = subprocess.run(
+                        [
+                            "python3",
+                            str(guard.ROOT / "scripts/check-rescue-context-ci.py"),
+                            "--write-receipt",
+                            str(root / "unexpected.json"),
+                            "--suite",
+                            "signer-core",
+                            "--runner",
+                            guard.RUNNERS[1],
+                        ],
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertIn("not scheduled", failed.stderr)
+        with self.assertRaisesRegex(ValueError, "unsupported workflow event"):
+            guard.coverage_for_event(coverage, "push")
 
     def test_each_original_step_cannot_disappear_change_or_be_skipped(self):
         for row in self.contract["steps"]:
@@ -100,9 +178,14 @@ class RescueCiTests(unittest.TestCase):
 
     def test_matrix_and_gate_cannot_hide_failures(self):
         mutants = {
-            "arm omitted": self.workflow.replace(
-                "runner: [ubuntu-24.04, ubuntu-24.04-arm]", "runner: [ubuntu-24.04]", 1
+            "manual trigger removed": self.workflow.replace("  workflow_dispatch:\n", "", 1),
+            "ARM scheduled automatically": self.workflow.replace(
+                "github.event_name == 'workflow_dispatch'", "github.event_name == 'pull_request'", 1
             ),
+            "gate schedule differs": self.workflow.replace(
+                guard.RUNNER_MATRIX, "runner: [ubuntu-24.04]"
+            ),
+            "arm omitted": self.workflow.replace(guard.RUNNER_MATRIX, "runner: [ubuntu-24.04]", 1),
             "fee CLI missing in new suites": self.workflow.replace(
                 'contains(fromJSON(\'["fee-lifecycle","fee-successor","fee-promotion"]\'), matrix.suite)',
                 "matrix.suite == 'fee-lifecycle'",
@@ -148,6 +231,7 @@ class RescueCiTests(unittest.TestCase):
         for (suite, runner), names in sorted(coverage.items()):
             original.append(
                 {
+                    "event": "workflow_dispatch",
                     "source": "a" * 40,
                     "run_id": "123",
                     "run_attempt": "1",
@@ -165,7 +249,7 @@ class RescueCiTests(unittest.TestCase):
                     p = root / str(i) / "suite-success.json"
                     p.parent.mkdir()
                     p.write_text(json.dumps(row))
-                guard.verify_receipts(root, "a" * 40, "123", attempt, coverage)
+                guard.verify_receipts(root, "a" * 40, "123", attempt, coverage, "workflow_dispatch")
 
         verify(original)
         retried = copy.deepcopy(original)
@@ -179,6 +263,7 @@ class RescueCiTests(unittest.TestCase):
             "missing",
             "duplicate",
             "source",
+            "event",
             "run_id",
             "run_attempt",
             "checks",

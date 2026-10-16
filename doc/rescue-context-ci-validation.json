@@ -2,8 +2,9 @@
   "base": "8bf39647d6cde0b00fc8c49e8ecb354be85d4897",
   "scope": "Workflow and Python CI controls only; no production C++, Rust, FunC or cryptographic fixture changes.",
   "pending": [
-    "Full hosted execution of all 15 workers and both parity gates",
-    "Measured refined wall time and queue delay; sub-hour timing is a projection"
+    "Hosted PR execution of eight x86 workers and x86 parity gate",
+    "Manual dual-architecture execution before release or architecture-sensitive merge; not automatically triggered",
+    "Actual PR wall time below one hour remains to be measured"
   ],
   "artifacts": {
     "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-split-20261016",
@@ -85,7 +86,7 @@
     "baseline_equivalence": "52 unchanged shell bodies and original architecture policies",
     "scheduled_workers": 15,
     "max_parallel": 16,
-    "guard_unit_methods_passed": 6,
+    "guard_unit_methods_passed": 7,
     "step_deletion_change_skip_mutants": 156,
     "additional_controls": "every consumer prerequisite, CLI in all three fee suites, parallel capacity, matrix failures and complete receipts",
     "guard_removal_controls": {
@@ -96,7 +97,10 @@
     "actionlint": "v1.7.12; passes with external shellcheck/pyflakes disabled",
     "bash_syntax": "every run block passes bash -n",
     "ruff": "check and format pass",
-    "diff_whitespace": "pass"
+    "diff_whitespace": "pass",
+    "event_policy": "PR: eight x86 workers; manual dispatch: 15 dual-architecture workers",
+    "receipt_cli": "actual CLI generation and complete/missing/wrong-event verification exercised for both events; ARM receipt issuance on PR rejected",
+    "event_sensitivity": "Removing event filtering fails at the intended PR worker-count assertion (15 != 8), without setup errors"
   },
   "refined_artifacts": {
     "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-subhour-20261016",
@@ -136,6 +140,37 @@
         "file": "source-jobs.json",
         "bytes": 183805,
         "sha256": "db7b478c8b93c67029dcc43532cd11b19328e501ff32cb9c1eecffece7fb25ad"
+      }
+    ]
+  },
+  "manual_arm_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-manual-arm-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "coverage.log",
+        "bytes": 88,
+        "sha256": "974f940d9e647203368ba2811b4ee7e1ce98d2dcb57cb67f8be7bedf38046a2a"
+      },
+      {
+        "file": "event-sensitivity.log",
+        "bytes": 756,
+        "sha256": "222426371b213d41460b731a59fb8e577a67fe5db0aa6f3ed7cd2a8a0deac145"
+      },
+      {
+        "file": "event-sensitivity.py",
+        "bytes": 650,
+        "sha256": "0971624a96ff10e9348060f1bc80596d727d5705efe97c8f048457f902bf3cec"
+      },
+      {
+        "file": "guard-sensitivity.log",
+        "bytes": 43163,
+        "sha256": "fa56f921c2d942c4443cc85be8d19b32ebb8fbed7d1755a93972a8d0ec5126ad"
+      },
+      {
+        "file": "tests.log",
+        "bytes": 105,
+        "sha256": "782c57c0e31414414e90184d8b7655c9b64135898b9219b40cf3963856c9b929"
       }
     ]
   }
