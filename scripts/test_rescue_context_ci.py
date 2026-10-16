@@ -43,11 +43,10 @@ class RescueCiTests(unittest.TestCase):
 
     def test_event_specific_scheduling_and_receipt_cli(self):
         coverage = self.check()
-        for event, count in [("pull_request", 10), ("workflow_dispatch", 19)]:
+        for event, count in [("pull_request", 19), ("workflow_dispatch", 19)]:
             scheduled = guard.coverage_for_event(coverage, event)
             self.assertEqual(len(scheduled), count)
-            if event == "pull_request":
-                self.assertEqual({r for _, r in scheduled}, {guard.RUNNERS[0]})
+            self.assertEqual({r for _, r in scheduled}, set(guard.RUNNERS))
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 env = dict(
@@ -96,24 +95,16 @@ class RescueCiTests(unittest.TestCase):
                 failed = subprocess.run(verify, env=env, capture_output=True, text=True)
                 self.assertNotEqual(failed.returncode, 0)
                 self.assertIn("missing success receipts", failed.stderr)
-                if event == "pull_request":
-                    failed = subprocess.run(
-                        [
-                            "python3",
-                            str(guard.ROOT / "scripts/check-rescue-context-ci.py"),
-                            "--write-receipt",
-                            str(root / "unexpected.json"),
-                            "--suite",
-                            "signer-fee",
-                            "--runner",
-                            guard.RUNNERS[1],
-                        ],
-                        env=env,
-                        capture_output=True,
-                        text=True,
-                    )
-                    self.assertNotEqual(failed.returncode, 0)
-                    self.assertIn("not scheduled", failed.stderr)
+                receipt["event"] = event
+                missing.write_text(json.dumps(receipt))
+                # Both events must reject complete x86 coverage with no ARM receipts.
+                for path in root.rglob("suite-success.json"):
+                    if json.loads(path.read_text())["runner"] == guard.RUNNERS[1]:
+                        path.unlink()
+                failed = subprocess.run(verify, env=env, capture_output=True, text=True)
+                self.assertNotEqual(failed.returncode, 0)
+                self.assertIn("missing success receipts", failed.stderr)
+                self.assertIn(guard.RUNNERS[1], failed.stderr)
         with self.assertRaisesRegex(ValueError, "unsupported workflow event"):
             guard.coverage_for_event(coverage, "push")
 
@@ -200,8 +191,10 @@ class RescueCiTests(unittest.TestCase):
     def test_matrix_and_gate_cannot_hide_failures(self):
         mutants = {
             "manual trigger removed": self.workflow.replace("  workflow_dispatch:\n", "", 1),
-            "ARM scheduled automatically": self.workflow.replace(
-                "github.event_name == 'workflow_dispatch'", "github.event_name == 'pull_request'", 1
+            "ARM made manual-only": self.workflow.replace(
+                guard.RUNNER_MATRIX,
+                "runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\"]') }}",
+                1,
             ),
             "gate schedule differs": self.workflow.replace(
                 guard.RUNNER_MATRIX, "runner: [ubuntu-24.04]"

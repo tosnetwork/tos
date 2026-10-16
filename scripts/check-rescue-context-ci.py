@@ -23,7 +23,7 @@ SUITES = [
     "mutations",
 ]
 RUNNERS = ["ubuntu-24.04", "ubuntu-24.04-arm"]
-RUNNER_MATRIX = "runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '[\"ubuntu-24.04\",\"ubuntu-24.04-arm\"]' || '[\"ubuntu-24.04\"]') }}"
+RUNNER_MATRIX = "runner: [ubuntu-24.04, ubuntu-24.04-arm]"
 CONTRACT = ROOT / "test/wallet-quantum/rescue-ci-contract.json"
 WORKFLOW = ROOT / ".github/workflows/rescue-context.yml"
 UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
@@ -310,11 +310,7 @@ def validate(text, contract, source_guard):
 
 def coverage_for_event(coverage, event):
     require(event in {"pull_request", "workflow_dispatch"}, "unsupported workflow event")
-    return {
-        pair: names
-        for pair, names in coverage.items()
-        if event == "workflow_dispatch" or pair[1] == RUNNERS[0]
-    }
+    return coverage
 
 
 def receipt(suite, runner, coverage):

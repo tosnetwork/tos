@@ -101,6 +101,9 @@
       "signer-vault"
     ],
     "status": "hosted measurement pending; signer shard timings are not yet measured",
-    "remaining_unmodified_x86_vm_ingress_projected_seconds": 2984
+    "remaining_unmodified_x86_vm_ingress_projected_seconds": 2984,
+    "automatic_arm_workers": 9,
+    "automatic_total_workers": 19,
+    "event_policy": "PR and manual dispatch both run all 19 workers"
   }
 }

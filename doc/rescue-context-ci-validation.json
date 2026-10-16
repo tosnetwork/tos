@@ -2,8 +2,7 @@
   "base": "8bf39647d6cde0b00fc8c49e8ecb354be85d4897",
   "scope": "Workflow and Python CI controls only; no production C++, Rust, FunC or cryptographic fixture changes.",
   "pending": [
-    "Hosted PR execution of ten x86 workers and x86 parity gate",
-    "Manual dual-architecture validation on exact release or architecture-sensitive commit",
+    "Hosted execution of all 19 automatic dual-architecture workers and both parity gates",
     "Measure signer shards and overall workflow wall time"
   ],
   "artifacts": {
@@ -99,9 +98,10 @@
     "bash_syntax": "every run block passes bash -n",
     "ruff": "check and format pass",
     "diff_whitespace": "pass",
-    "event_policy": "PR: ten x86 workers; manual dispatch: 19 dual-architecture workers",
-    "receipt_cli": "actual generation and complete/missing/wrong-event verification for both events; PR ARM issuance rejected",
-    "split_command_integrity": "changed command rejected even if the part hash is updated; reordering parts rejected"
+    "event_policy": "PR and manual dispatch: all 19 dual-architecture workers",
+    "receipt_cli": "actual generation and complete/missing/wrong-event rejection for both events; complete x86-only receipt sets rejected for both events",
+    "split_command_integrity": "changed command rejected even if the part hash is updated; reordering parts rejected",
+    "automatic_arm_sensitivity": "Restoring manual-only PR filtering fails at intended worker-count assertion (10 != 19), with no setup errors"
   },
   "refined_artifacts": {
     "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-subhour-20261016",
@@ -203,6 +203,27 @@
         "file": "tests.log",
         "bytes": 106,
         "sha256": "c404e7d8ddffa74e581b05c5824cdb7093037f3d0a9620a13e460e85427e415d"
+      }
+    ]
+  },
+  "restored_arm_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-restore-arm-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "event-sensitivity.log",
+        "bytes": 776,
+        "sha256": "e7933be7d7a94a83e12a8279a5aa1356d1a9eaaae1fb31feb252d3492a651080"
+      },
+      {
+        "file": "event-sensitivity.py",
+        "bytes": 787,
+        "sha256": "0fdc33644b6d9924790d08c2b8535aa8a8a9e8b04f9ba7fab2c19df5ff97ee2c"
+      },
+      {
+        "file": "tests.log",
+        "bytes": 106,
+        "sha256": "c4a8b8380ddf0724c2788ad84dd796431e93c2d4aea64046dc39435d7758a4b9"
       }
     ]
   }

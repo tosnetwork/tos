@@ -1,7 +1,7 @@
 name: Experimental rescue context parity
 
 on:
-  # Manual runs include ARM64; PRs automatically test x86-64 only.
+  # PRs and manual runs both validate x86-64 and ARM64.
   workflow_dispatch:
   pull_request:
     paths:
@@ -62,11 +62,11 @@ jobs:
     name: ${{ matrix.suite }} (${{ matrix.runner }})
     strategy:
       fail-fast: false
-      # Start all 19 manual workers (10 on PRs); long suites must not wait for short suites.
+      # Start all 19 isolated workers; long suites must not wait for short suites.
       max-parallel: 20
       matrix:
         suite: [signer-fee, signer-mnemonic, signer-vault, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
-        runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-24.04","ubuntu-24.04-arm"]' || '["ubuntu-24.04"]') }}
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
         exclude:
           # These controls were x86-only in the serial workflow.
           - suite: mutations
@@ -648,7 +648,7 @@ jobs:
           retention-days: 14
 
   parity:
-    # PRs expose the x86 gate; manual runs expose both original gate names.
+    # PRs and manual runs expose both original architecture gate names.
     # A failed/cancelled matrix or incomplete event-specific receipts fail the gate.
     name: parity (${{ matrix.runner }}, 180)
     needs: suites
@@ -656,7 +656,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-24.04","ubuntu-24.04-arm"]' || '["ubuntu-24.04"]') }}
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
