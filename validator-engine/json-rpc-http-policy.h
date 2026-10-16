@@ -128,9 +128,13 @@ inline td::Result<http::HttpServer::Limits> listener_limits(std::size_t max_conn
 // server wait for the rest of a body of up to the payload limit.
 inline std::pair<std::unique_ptr<http::HttpResponse>, std::shared_ptr<http::HttpPayload>> unauthorized_response(
     const std::string& cors_origin) {
+  // The same error object as every other answer (see json-rpc-contract.h);
+  // written out here because this refusal is built before any request body
+  // exists. test-json-rpc-transport pins it to the shared builder.
   std::string body =
-      "{\"ok\":false,\"jsonrpc\":\"2.0\",\"id\":null,"
-      "\"error\":\"Unauthorized: invalid or missing API key\",\"code\":-32000}";
+      "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32000,"
+      "\"message\":\"Unauthorized: invalid or missing API key\","
+      "\"data\":{\"schema_version\":1,\"reason\":\"UNAUTHORIZED\",\"retryable\":false}}}";
 
   auto response = http::HttpResponse::create("HTTP/1.1", 401, "Unauthorized", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
@@ -178,9 +182,12 @@ void hold_body_reservation_until_answered(const std::shared_ptr<http::HttpPayloa
 // read and the connection closes once it is written.
 inline std::pair<std::unique_ptr<http::HttpResponse>, std::shared_ptr<http::HttpPayload>> rate_limited_response(
     const std::string& cors_origin) {
+  // Same object as every other answer; pinned to the shared builder by
+  // test-json-rpc-transport.
   std::string body =
-      "{\"jsonrpc\":\"2.0\",\"id\":null,"
-      "\"error\":{\"code\":-32005,\"message\":\"Rate limit exceeded (per-IP)\"}}";
+      "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32005,"
+      "\"message\":\"Rate limit exceeded (per-IP)\","
+      "\"data\":{\"schema_version\":1,\"reason\":\"RATE_LIMITED\",\"retryable\":true}}}";
 
   auto response = http::HttpResponse::create("HTTP/1.1", 429, "Too Many Requests", false, false).move_as_ok();
   response->add_header({"Content-Type", "application/json"});

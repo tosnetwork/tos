@@ -34,6 +34,7 @@
 #include "td/utils/Time.h"
 #include "validator/validator.h"
 
+#include "json-rpc-contract.h"
 #include "json-rpc-http-policy.h"
 #include "json-rpc-listen-policy.h"
 #include "json-rpc-rate-gate.h"
@@ -312,12 +313,37 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
       td::actor::ActorId<validator::ValidatorManagerInterface> validator_manager,
       Options options);
 
- private:
   using RequestPtr = std::unique_ptr<http::HttpRequest>;
   using ResponsePtr = std::unique_ptr<http::HttpResponse>;
   using PayloadPtr = std::shared_ptr<http::HttpPayload>;
   using HttpReturn = std::pair<ResponsePtr, PayloadPtr>;
 
+  // The method table: every name the dispatcher answers and what each route
+  // may do with it. Dispatch, the REST routes, the read-only gate, the
+  // response cache and /api-info all read it, and
+  // scripts/check-jsonrpc-spec.py compares it with doc/openapi.yaml, so a
+  // method exists in exactly one place.
+  enum MethodFlag : unsigned {
+    kMethodWrite = 1u << 0,      // mutates chain state; refused in read-only mode
+    kMethodRestGet = 1u << 1,    // also served as GET /<name>?<params>
+    kMethodCacheable = 1u << 2,  // response may be served from the cache
+    kMethodAdmin = 1u << 3,      // answered only when the operator enabled it
+  };
+  struct MethodEntry {
+    const char *name;
+    unsigned flags;
+    void (*invoke)(JsonRpcServer &server, td::JsonObject &params, std::string req_id, const std::string &source_ip,
+                   td::Promise<HttpReturn> promise);
+  };
+  static const std::vector<MethodEntry> &method_table();
+  static const MethodEntry *find_method(td::Slice name);
+  // Whether this node answers `entry` at all (admin methods are hidden
+  // unless enabled).
+  bool serves(const MethodEntry &entry) const;
+  // /api-info body, derived from the method table.
+  std::string api_info_json() const;
+
+ private:
   class HttpCallback : public http::HttpServer::Callback {
    public:
     explicit HttpCallback(td::actor::ActorId<JsonRpcServer> server);
@@ -596,16 +622,20 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   HttpReturn make_json_ok(std::string result_json, std::string id) const;
   static HttpReturn make_json_ok(std::string result_json, std::string id,
                                  const std::string& cors_origin);
-  HttpReturn make_json_error(int code, std::string message, std::string id) const;
-  static HttpReturn make_json_error(int code, std::string message, std::string id, const std::string &cors_origin,
-                                    std::string error_info = {});
-  // Standards-compliant JSON-RPC 2.0 error (nested `error:{code,message}`,
-  // HTTP 200). `make_json_error` is retained for TVM JSON-RPC methods
-  // whose existing tests depend on `{ok, error:<string>, code}` at
-  // top level and on mapped HTTP status codes.
+  // The one error answer: a JSON-RPC 2.0 error object
+  // `{jsonrpc, id, error:{code, message, data:{schema_version, reason, retryable}}}`
+  // at HTTP 200, on every route. The reason comes from the explicit kind,
+  // from the failure that caused it (`cause`), or from the code.
   HttpReturn make_json_rpc_error(int code, std::string message, std::string id) const;
-  static HttpReturn make_json_rpc_error(int code, std::string message, std::string id,
-                                        const std::string& cors_origin);
+  HttpReturn make_json_rpc_error(const json_rpc::ErrorKind &kind, std::string message, std::string id) const;
+  static HttpReturn make_json_rpc_error(int code, std::string message, std::string id, const std::string &cors_origin,
+                                        const td::Status &cause = td::Status::OK());
+  static HttpReturn make_json_rpc_error(const json_rpc::ErrorKind &kind, std::string message, std::string id,
+                                        const std::string &cors_origin);
+  // The same body under a non-200 status, for refusals made before any
+  // method runs (unknown REST path, wrong HTTP method or media type).
+  static HttpReturn make_http_error(int status_code, std::string status_text, const json_rpc::ErrorKind &kind,
+                                    std::string message, const std::string &cors_origin);
   // HTTP 204 No Content with CORS — used for batch-of-only-notifications.
   HttpReturn make_no_content() const;
   static HttpReturn make_no_content(const std::string& cors_origin);
@@ -624,12 +654,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   // response — a preflight that answered "*" while the actual response
   // carried a restrictive origin would only mislead.
   HttpReturn make_cors_preflight() const;
-  static HttpReturn make_cors_preflight(const std::string& cors_origin);
-  HttpReturn make_text_response(int status_code, std::string status_text,
-                                std::string body) const;
-  static HttpReturn make_text_response(int status_code, std::string status_text,
-                                       std::string body,
-                                       const std::string& cors_origin);
+  static HttpReturn make_cors_preflight(const std::string &cors_origin);
   // Return HTTP 401 with JSON-RPC error body
   HttpReturn make_json_unauthorized() const;
   static HttpReturn make_json_unauthorized(const std::string& cors_origin);
@@ -639,9 +664,8 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
   bool check_api_key(const RequestPtr &request,
                      td::Promise<HttpReturn> &promise);
 
-  // Returns true iff `method` mutates chain state via this server. Centralized
-  // so `opts_.readonly` can be enforced once before fast-path dispatch.
-  // Adding a new write method? Add it here.
+  // Returns true iff `method` mutates chain state via this server, read from
+  // the method table, so `opts_.readonly` is enforced from one list.
   static bool is_write_method(const std::string &method);
 
   // Cache-aware dispatch: checks cache for read-only methods, delegates to
@@ -654,8 +678,6 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                               td::Promise<HttpReturn> promise);
 
   void alarm() override;
-
-  static const std::set<std::string> &cacheable_methods();
 
   // Sliding-window request budget per source address. Consulted once per
   // dispatched method, including each element of a batch, so a batch

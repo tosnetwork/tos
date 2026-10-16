@@ -117,24 +117,28 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                                         td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
 
-  auto seqno_r = params.get_optional_int_field("seqno");
-  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
-  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
+  }
+  bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   vm::CellBuilder cb;
   vm::Stack empty_stack;
   if (!empty_stack.serialize(cb)) {
-    promise.set_value(make_json_error(-32603, "stack serialize error", req_id));
+    promise.set_value(make_json_rpc_error(-32603, "stack serialize error", req_id));
     return;
   }
   auto params_boc_r = vm::std_boc_serialize(cb.finalize());
   if (params_boc_r.is_error()) {
-    promise.set_value(make_json_error(-32603, "params BOC error", req_id));
+    promise.set_value(make_json_rpc_error(-32603, "params BOC error", req_id));
     return;
   }
   auto params_boc = std::make_shared<td::BufferSlice>(params_boc_r.move_as_ok());
@@ -303,27 +307,27 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                        parse_address_from_slice, cell_to_b64](
                           td::Result<td::BufferSlice> R3) mutable {
                 if (R3.is_error()) {
-                  promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id, cors));
+                  promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
+                                                        "Smart contract is not a Jetton or NFT", req_id, cors));
                   return;
                 }
                 auto F3 = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
                     R3.move_as_ok(), true);
                 if (F3.is_error()) {
-                  promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id, cors));
+                  promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
+                                                        "Smart contract is not a Jetton or NFT", req_id, cors));
                   return;
                 }
                 auto f3 = F3.move_as_ok();
                 if (f3->exit_code_ != 0 || f3->result_.empty()) {
-                  promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id, cors));
+                  promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
+                                                        "Smart contract is not a Jetton or NFT", req_id, cors));
                   return;
                 }
                 auto stk_r = parse_get_method_result_stack(f3->result_.as_slice());
                 if (stk_r.is_error() || stk_r.ok()->depth() < 3) {
-                  promise.set_value(make_json_error(409,
-                      "Smart contract is not a Jetton or NFT", req_id, cors));
+                  promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
+                                                        "Smart contract is not a Jetton or NFT", req_id, cors));
                   return;
                 }
                 auto stk = stk_r.move_as_ok();
@@ -409,7 +413,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
     }
     auto promise = std::move(promise_slot->value());
     promise_slot->reset();
-    promise.set_value(make_json_error(-32603, message.str(), *req_id_slot, cors));
+    promise.set_value(make_json_rpc_error(-32603, message.str(), *req_id_slot, cors));
   };
 
   if (has_seqno) {

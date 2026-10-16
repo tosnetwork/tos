@@ -342,7 +342,7 @@ void RootDb::store_block_state_from_data_bulk(std::vector<td::Ref<BlockData>> bl
 void RootDb::get_block_state(ConstBlockHandle handle, td::Promise<td::Ref<ShardState>> promise) {
   if (handle->inited_state_boc()) {
     if (handle->deleted_state_boc()) {
-      promise.set_error(td::Status::Error(ErrorCode::error, "state already gc'd"));
+      promise.set_error(td::Status::Error(ErrorCode::error, td::Slice(kStateGarbageCollected)));
       return;
     }
     auto P =

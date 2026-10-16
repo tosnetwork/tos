@@ -31,4 +31,9 @@ enum ErrorCode : int {
   cancelled = 653
 };
 
+// Messages of the errors the databases return for data they have
+// garbage-collected. A reader that must tell "outside the retained history"
+// from a transient failure matches on them, so each is defined once.
+inline constexpr const char *kStateGarbageCollected = "state already gc'd";
+inline constexpr const char *kPackageGarbageCollected = "package already gc'd";
 }

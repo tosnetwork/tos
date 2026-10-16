@@ -47,7 +47,7 @@ td::Result<std::string> config_json(td::BufferSlice reply, BlockIdExt id, int pa
   auto cell = cfg.get_config_param(param);
   const bool typed = param == 8 || param == 43 || param == 47 || param == 48;
   if (cell.is_null() && !typed)
-    return explorer::error(Failure::StateInvalid);
+    return explorer::error(Failure::ConfigParamAbsent);
   // Dependency Config 8 is requested in the same proof and decoded exactly.
   auto version_cell = cfg.get_config_param(8);
   if (version_cell.is_null())
@@ -166,11 +166,8 @@ td::Result<std::string> account_json(td::BufferSlice reply, BlockIdExt id, block
 
 JsonRpcServer::HttpReturn JsonRpcServer::make_explorer_error(const td::Status& status, std::string id,
                                                              const std::string& cors) {
-  td::StringBuilder info;
-  info << "{\"schema_version\":1,\"reason\":\"" << explorer::reason(status)
-       << "\",\"retryable\":" << (explorer::retryable(status) ? "true" : "false") << "}";
-  return make_json_error(explorer::handler_code(status), explorer::reason(status), std::move(id), cors,
-                         info.as_cslice().str());
+  const auto& kind = explorer::error_kind(status);
+  return make_json_rpc_error(kind, kind.reason, std::move(id), cors);
 }
 
 class JsonRpcServer::ExplorerQuery final : public td::actor::Actor {
@@ -336,7 +333,8 @@ class JsonRpcServer::ExplorerQuery final : public td::actor::Actor {
     }
     auto reserved = workers()->admit();
     if (reserved.is_error()) {
-      promise_.set_value(json_rpc::rate_limited_response(cors_));
+      promise_.set_value(
+          make_json_rpc_error(json_rpc::kRateLimited, "Server busy: verified-view capacity exhausted", id_, cors_));
       stop();
       return;
     }
@@ -396,7 +394,8 @@ class JsonRpcServer::ExplorerQuery final : public td::actor::Actor {
     response_reservation_.reset();
     response_reservation_ = reserve_explorer_response(output_->json.size() + 512u);
     if (!response_reservation_) {
-      promise_.set_value(json_rpc::rate_limited_response(cors_));
+      promise_.set_value(
+          make_json_rpc_error(json_rpc::kRateLimited, "Server busy: verified-view capacity exhausted", id_, cors_));
       stop();
       return;
     }
@@ -535,12 +534,14 @@ void JsonRpcServer::handle_explorer(std::string method, td::JsonObject& params, 
   auto response_reservation =
       reserve_explorer_response(signatures ? explorer::kSignatureJsonBytes : explorer::kAccountJsonBytes);
   if (!response_reservation) {
-    promise.set_value(json_rpc::rate_limited_response(opts_.cors_origin));
+    promise.set_value(make_json_rpc_error(json_rpc::kRateLimited, "Server busy: verified-view capacity exhausted", id,
+                                          opts_.cors_origin));
     return;
   }
   auto permit = explorer::WorkPermit::acquire();
   if (!permit) {
-    promise.set_value(json_rpc::rate_limited_response(opts_.cors_origin));
+    promise.set_value(make_json_rpc_error(json_rpc::kRateLimited, "Server busy: verified-view capacity exhausted", id,
+                                          opts_.cors_origin));
     return;
   }
   // New inspection methods always have a finite absolute deadline, even when

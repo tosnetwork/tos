@@ -6,6 +6,8 @@ target_link_libraries(control-getter PUBLIC tos_crypto tdutils tl_api tdactor)
 # separate library so they can be unit tested with hostile inputs
 # (see test/test-json-rpc-parse.cpp).
 add_library(json-rpc-parse STATIC
+  json-rpc-contract.h
+  json-rpc-contract.cpp
   json-rpc-server-parse.h
   json-rpc-server-parse.cpp
   json-rpc-server-runresult.h

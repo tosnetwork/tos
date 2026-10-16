@@ -40,18 +40,18 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
                                         td::Promise<HttpReturn> promise) {
   auto addr_r = params.get_required_string_field("address");
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'address'", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'address'", req_id));
     return;
   }
   block::StdAddress addr;
   if (!addr.parse_addr(td::Slice(addr_r.ok()))) {
-    promise.set_value(make_json_error(-32602, "Invalid address", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Invalid address", req_id));
     return;
   }
 
   auto method_r = params.get_required_string_field("method");
   if (method_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'method'", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'method'", req_id));
     return;
   }
   auto method_name = method_r.move_as_ok();
@@ -63,8 +63,7 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
   if (stack_r.type() == td::JsonValue::Type::Array) {
     auto& arr = stack_r.get_array();
     if (arr.size() > kMaxRunMethodStackEntries) {
-      promise.set_value(make_json_error(
-          -32602, "too many stack entries", req_id));
+      promise.set_value(make_json_rpc_error(-32602, "too many stack entries", req_id));
       return;
     }
     for (auto& entry : arr) {
@@ -145,19 +144,23 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
   // Serialize stack as params
   vm::CellBuilder cb;
   if (!stack.serialize(cb)) {
-    promise.set_value(make_json_error(-32603, "stack serialize error", req_id));
+    promise.set_value(make_json_rpc_error(-32603, "stack serialize error", req_id));
     return;
   }
   auto params_boc_r = vm::std_boc_serialize(cb.finalize());
   if (params_boc_r.is_error()) {
-    promise.set_value(make_json_error(-32603, "params BOC error", req_id));
+    promise.set_value(make_json_rpc_error(-32603, "params BOC error", req_id));
     return;
   }
 
   // Optional seqno: query at a specific MC block
-  auto seqno_r = params.get_optional_int_field("seqno");
-  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
-  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
+  }
+  bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   auto params_boc = params_boc_r.move_as_ok();
 
@@ -172,10 +175,10 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
     std::string req_id;
     std::string cors;
     bool settled{false};
-    void settle_error(int code, const std::string& msg) {
+    void settle_error(int code, const std::string& msg, const td::Status& cause = td::Status::OK()) {
       if (settled) return;
       settled = true;
-      promise.set_value(make_json_error(code, msg, req_id, cors));
+      promise.set_value(make_json_rpc_error(code, msg, req_id, cors, cause));
     }
   };
   auto slot = std::make_shared<Slot>();
@@ -203,14 +206,14 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
             td::PromiseCreator::lambda(
                 [cors, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "runSmcMethod: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "runSmcMethod: " << R.error(), R.error());
             return;
           }
 
           auto F = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
               R.move_as_ok(), true);
           if (F.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "parse runMethodResult: " << F.error());
+            slot->settle_error(-32603, PSTRING() << "parse runMethodResult: " << F.error(), F.error());
             return;
           }
           auto f = F.move_as_ok();
@@ -240,14 +243,12 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
     send_liteserver_query(std::move(lookup_query),
         [do_run_method = std::move(do_run_method), slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603,
-                PSTRING() << "lookupBlock: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "lookupBlock: " << R.error(), R.error());
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
           if (lb_r.is_error()) {
-            slot->settle_error(-32603,
-                PSTRING() << "parse lookupBlock result: " << lb_r.error());
+            slot->settle_error(-32603, PSTRING() << "parse lookupBlock result: " << lb_r.error(), lb_r.error());
             return;
           }
           do_run_method(std::move(lb_r.move_as_ok()->id_));
@@ -260,14 +261,12 @@ void JsonRpcServer::handle_runGetMethod(td::JsonObject &params, std::string req_
     send_liteserver_query(std::move(mc_query),
         [do_run_method = std::move(do_run_method), slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603,
-                PSTRING() << "getMasterchainInfo: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error(), R.error());
             return;
           }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
           if (mc_r.is_error()) {
-            slot->settle_error(-32603,
-                PSTRING() << "parse getMasterchainInfo: " << mc_r.error());
+            slot->settle_error(-32603, PSTRING() << "parse getMasterchainInfo: " << mc_r.error(), mc_r.error());
             return;
           }
           do_run_method(std::move(mc_r.move_as_ok()->last_));
@@ -285,18 +284,18 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
                                            td::Promise<HttpReturn> promise) {
   auto addr_r = params.get_required_string_field("address");
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'address'", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'address'", req_id));
     return;
   }
   block::StdAddress addr;
   if (!addr.parse_addr(td::Slice(addr_r.ok()))) {
-    promise.set_value(make_json_error(-32602, "Invalid address", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Invalid address", req_id));
     return;
   }
 
   auto method_r = params.get_required_string_field("method");
   if (method_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'method'", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'method'", req_id));
     return;
   }
   auto method_name = method_r.move_as_ok();
@@ -308,8 +307,7 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
   if (stack_r.type() == td::JsonValue::Type::Array) {
     auto& arr = stack_r.get_array();
     if (arr.size() > kMaxRunMethodStackEntries) {
-      promise.set_value(make_json_error(
-          -32602, "too many stack entries", req_id));
+      promise.set_value(make_json_rpc_error(-32602, "too many stack entries", req_id));
       return;
     }
     for (auto& entry : arr) {
@@ -390,19 +388,23 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
   // Serialize stack as params
   vm::CellBuilder cb;
   if (!stack.serialize(cb)) {
-    promise.set_value(make_json_error(-32603, "stack serialize error", req_id));
+    promise.set_value(make_json_rpc_error(-32603, "stack serialize error", req_id));
     return;
   }
   auto params_boc_r = vm::std_boc_serialize(cb.finalize());
   if (params_boc_r.is_error()) {
-    promise.set_value(make_json_error(-32603, "params BOC error", req_id));
+    promise.set_value(make_json_rpc_error(-32603, "params BOC error", req_id));
     return;
   }
 
   // Optional seqno: query at a specific MC block
-  auto seqno_r = params.get_optional_int_field("seqno");
-  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
-  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
+  }
+  bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   auto params_boc = params_boc_r.move_as_ok();
 
@@ -412,10 +414,10 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
     std::string req_id;
     std::string cors;
     bool settled{false};
-    void settle_error(int code, const std::string& msg) {
+    void settle_error(int code, const std::string& msg, const td::Status& cause = td::Status::OK()) {
       if (settled) return;
       settled = true;
-      promise.set_value(make_json_error(code, msg, req_id, cors));
+      promise.set_value(make_json_rpc_error(code, msg, req_id, cors, cause));
     }
   };
   auto slot = std::make_shared<Slot>();
@@ -442,14 +444,14 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
             td::PromiseCreator::lambda(
                 [cors, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "runSmcMethod: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "runSmcMethod: " << R.error(), R.error());
             return;
           }
 
           auto F = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
               R.move_as_ok(), true);
           if (F.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "parse runMethodResult: " << F.error());
+            slot->settle_error(-32603, PSTRING() << "parse runMethodResult: " << F.error(), F.error());
             return;
           }
           auto f = F.move_as_ok();
@@ -479,14 +481,12 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
     send_liteserver_query(std::move(lookup_query),
         [do_run_method = std::move(do_run_method), slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603,
-                PSTRING() << "lookupBlock: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "lookupBlock: " << R.error(), R.error());
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
           if (lb_r.is_error()) {
-            slot->settle_error(-32603,
-                PSTRING() << "parse lookupBlock result: " << lb_r.error());
+            slot->settle_error(-32603, PSTRING() << "parse lookupBlock result: " << lb_r.error(), lb_r.error());
             return;
           }
           do_run_method(std::move(lb_r.move_as_ok()->id_));
@@ -499,14 +499,12 @@ void JsonRpcServer::handle_runGetMethodStd(td::JsonObject &params, std::string r
     send_liteserver_query(std::move(mc_query),
         [do_run_method = std::move(do_run_method), slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603,
-                PSTRING() << "getMasterchainInfo: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error(), R.error());
             return;
           }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
           if (mc_r.is_error()) {
-            slot->settle_error(-32603,
-                PSTRING() << "parse getMasterchainInfo: " << mc_r.error());
+            slot->settle_error(-32603, PSTRING() << "parse getMasterchainInfo: " << mc_r.error(), mc_r.error());
             return;
           }
           do_run_method(std::move(mc_r.move_as_ok()->last_));

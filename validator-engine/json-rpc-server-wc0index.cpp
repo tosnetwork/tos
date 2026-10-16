@@ -265,7 +265,7 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
                                              td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
@@ -277,20 +277,20 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
     // failure to open or arm it leaves it null). An explicit error beats silently empty
     // results that look like "this account holds nothing".
     auto [code, message] = wallet_index_absent();
-    promise.set_value(make_json_error(code, std::move(message), req_id));
+    promise.set_value(make_json_rpc_error(code, std::move(message), req_id));
     return;
   }
   // The state and the list come from one view of the index, so a block
   // committed in between cannot make them disagree.
   auto view_r = tos_wallet_index::WalletIndexSnapshot::of(*db);
   if (view_r.is_error()) {
-    promise.set_value(make_json_error(-32603, view_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32603, view_r.error().message().str(), req_id));
     return;
   }
   auto view = view_r.move_as_ok();
   auto index_state_r = token_index_state_json(view);
   if (index_state_r.is_error()) {
-    promise.set_value(make_json_error(-32603, index_state_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32603, index_state_r.error().message().str(), req_id));
     return;
   }
   td::StringBuilder sb;
@@ -320,7 +320,7 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
           return td::Status::OK();
         });
     if (status.is_error()) {
-      promise.set_value(make_json_error(-32603, status.message().str(), req_id));
+      promise.set_value(make_json_rpc_error(-32603, status.message().str(), req_id));
       return;
     }
   }
@@ -332,7 +332,7 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
                                             td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
@@ -344,7 +344,7 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
   if (before_r.is_ok() && !before_r.ok().empty()) {
     auto parsed = parse_uint64(before_r.ok(), "before_lt");
     if (parsed.is_error() || parsed.ok() == 0) {
-      promise.set_value(make_json_error(-32602, "Invalid 'before_lt' (expected positive uint64 string)", req_id));
+      promise.set_value(make_json_rpc_error(-32602, "Invalid 'before_lt' (expected positive uint64 string)", req_id));
       return;
     }
     before_lt = parsed.move_as_ok();
@@ -354,7 +354,7 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
     auto [code, message] = wallet_index_absent();
-    promise.set_value(make_json_error(code, std::move(message), req_id));
+    promise.set_value(make_json_rpc_error(code, std::move(message), req_id));
     return;
   }
   td::StringBuilder sb;
@@ -399,7 +399,7 @@ void JsonRpcServer::handle_getAccountEvents(td::JsonObject &params, std::string 
     auto status = has_before_lt ? db->for_each_event_before(addr.addr, before_lt, limit + 1, append)
                                 : db->for_each_event(addr.addr, limit + 1, append);
     if (status.is_error() && !budget_hit) {
-      promise.set_value(make_json_error(-32603, status.message().str(), req_id));
+      promise.set_value(make_json_rpc_error(-32603, status.message().str(), req_id));
       return;
     }
   }
@@ -419,29 +419,29 @@ void JsonRpcServer::handle_getAccountEvent(td::JsonObject &params, std::string r
   auto id_r = params.get_required_string_field("event_id");
   if (addr_r.is_error() || id_r.is_error()) {
     promise.set_value(
-        make_json_error(-32602, addr_r.is_error() ? addr_r.error().message().str() : "Missing 'event_id'", req_id));
+        make_json_rpc_error(-32602, addr_r.is_error() ? addr_r.error().message().str() : "Missing 'event_id'", req_id));
     return;
   }
   auto parsed_id = parse_event_id(id_r.ok());
   if (parsed_id.is_error()) {
-    promise.set_value(make_json_error(-32602, parsed_id.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, parsed_id.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
     auto [code, message] = wallet_index_absent();
-    promise.set_value(make_json_error(code, std::move(message), req_id));
+    promise.set_value(make_json_rpc_error(code, std::move(message), req_id));
     return;
   }
   if (!is_indexed_workchain(addr)) {
-    promise.set_value(make_json_error(-32004, "Account event not found", req_id));
+    promise.set_value(make_json_rpc_error(-32004, "Account event not found", req_id));
     return;
   }
   auto id = parsed_id.move_as_ok();
   auto event_r = db->get_event(addr.addr, id.lt);
   if (event_r.is_error() || event_r.ok()->get_hash(0).as_slice() != id.hash.as_slice()) {
-    promise.set_value(make_json_error(-32004, "Account event not found", req_id));
+    promise.set_value(make_json_rpc_error(-32004, "Account event not found", req_id));
     return;
   }
   promise.set_value(make_json_ok(format_account_event(id.lt, event_r.move_as_ok()), req_id));
@@ -450,7 +450,7 @@ void JsonRpcServer::handle_getAccountEvent(td::JsonObject &params, std::string r
 void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
@@ -459,20 +459,20 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
   auto *db = tos_wallet_index::wallet_index_db();
   if (db == nullptr) {
     auto [code, message] = wallet_index_absent();
-    promise.set_value(make_json_error(code, std::move(message), req_id));
+    promise.set_value(make_json_rpc_error(code, std::move(message), req_id));
     return;
   }
   // The state and the list come from one view of the index, so a block
   // committed in between cannot make them disagree.
   auto view_r = tos_wallet_index::WalletIndexSnapshot::of(*db);
   if (view_r.is_error()) {
-    promise.set_value(make_json_error(-32603, view_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32603, view_r.error().message().str(), req_id));
     return;
   }
   auto view = view_r.move_as_ok();
   auto index_state_r = token_index_state_json(view);
   if (index_state_r.is_error()) {
-    promise.set_value(make_json_error(-32603, index_state_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32603, index_state_r.error().message().str(), req_id));
     return;
   }
   td::StringBuilder sb;
@@ -510,7 +510,7 @@ void JsonRpcServer::handle_getAccountNfts(td::JsonObject &params, std::string re
           return td::Status::OK();
         });
     if (status.is_error()) {
-      promise.set_value(make_json_error(-32603, status.message().str(), req_id));
+      promise.set_value(make_json_rpc_error(-32603, status.message().str(), req_id));
       return;
     }
   }

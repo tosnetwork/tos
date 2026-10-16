@@ -1023,8 +1023,8 @@ TEST(JsonRpcTransport, a_drained_body_stays_charged_until_its_request_is_answere
       std::vector<Case> cases = {
           {"/jsonRPC", padded_request(max_body), false, "-32601"},
           {"/jsonRPC", padded_request(max_body), true, "-32601"},
-          {"/detectAddress", "{\"address\":\"" + std::string(max_body - 14, 'z') + "\"}", false, "\"ok\":false"},
-          {"/detectAddress", "{\"address\":\"" + std::string(max_body - 14, 'z') + "\"}", true, "\"ok\":false"},
+          {"/detectAddress", "{\"address\":\"" + std::string(max_body - 14, 'z') + "\"}", false, "\"code\":-32602"},
+          {"/detectAddress", "{\"address\":\"" + std::string(max_body - 14, 'z') + "\"}", true, "\"code\":-32602"},
           {"/jsonRPC", std::string(max_body, 'x'), false, "-32700"},
       };
       for (auto &c : cases) {
@@ -1095,8 +1095,9 @@ TEST(JsonRpcTransport, proof_relay_refuses_send_and_nested_queries_without_backe
                                    : post(request, with_key)));
           std::string status, body;
           ASSERT_TRUE(client.read_response(5000, status, body));
-          ASSERT_EQ(status, std::string("HTTP/1.1 422 Unprocessable Entity"));
+          ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
           ASSERT_TRUE(body.find("\"code\":-32602") != std::string::npos);
+          ASSERT_TRUE(body.find("\"reason\":\"INVALID_ARGUMENT\"") != std::string::npos);
           ASSERT_TRUE(body.find(id_field(rest ? "null" : "7")) != std::string::npos);
         }
       }
@@ -1125,7 +1126,8 @@ TEST(JsonRpcTransport, explorer_rejects_invalid_selectors_before_backend_access)
                                            : post(request, with_key)));
           std::string status, body;
           ASSERT_TRUE(client.read_response(5000, status, body));
-          ASSERT_EQ(status, std::string("HTTP/1.1 422 Unprocessable Entity"));
+          ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+          ASSERT_TRUE(body.find("\"code\":-32602") != std::string::npos);
           ASSERT_TRUE(body.find("\"schema_version\":1") != std::string::npos);
           ASSERT_TRUE(body.find("\"retryable\":false") != std::string::npos);
         }
@@ -1174,7 +1176,11 @@ TEST(JsonRpcTransport, explorer_output_saturation_refuses_before_backend_access)
                                            : post(body, with_key)));
           std::string status, reply;
           ASSERT_TRUE(client.read_response(5000, status, reply));
-          ASSERT_EQ(status, std::string("HTTP/1.1 429 Too Many Requests"));
+          // A method refused for capacity is answered like any other method
+          // error: HTTP 200, typed and retryable.
+          ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+          ASSERT_TRUE(reply.find("\"reason\":\"RATE_LIMITED\",\"retryable\":true") != std::string::npos);
+          ASSERT_TRUE(reply.find(id_field(rest ? "null" : "7")) != std::string::npos);
         }
       }
     });
@@ -1209,8 +1215,8 @@ TEST(JsonRpcTransport, explorer_get_normalizes_url_types_without_weakening_json)
         ASSERT_TRUE(client.send_all(request + "\r\n"));
         std::string status, body;
         ASSERT_TRUE(client.read_response(5000, status, body));
-        ASSERT_EQ(status,
-                  std::string(path.second ? "HTTP/1.1 429 Too Many Requests" : "HTTP/1.1 422 Unprocessable Entity"));
+        ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+        ASSERT_TRUE(body.find(path.second ? "\"reason\":\"RATE_LIMITED\"" : "\"code\":-32602") != std::string::npos);
       }
     });
   }
@@ -1229,4 +1235,84 @@ TEST(JsonRpcTransport, explorer_named_routes_require_the_configured_api_key) {
       ASSERT_TRUE(body.find("Unauthorized") != std::string::npos);
     });
   }
+}
+
+// The answers a client sees for the envelope rules, through the real listener:
+// each invalid envelope is a -32600 (or -32602 for positional params) JSON-RPC
+// error object at HTTP 200, a notification gets HTTP 204 with no body, and
+// every body is free of anything outside the JSON-RPC 2.0 response object.
+TEST(JsonRpcTransport, envelope_rules_are_enforced_on_the_wire) {
+  struct Case {
+    std::string request;
+    std::string expect;  // empty: no body
+  };
+  const std::vector<Case> cases = {
+      {R"({"id":1,"method":"noSuchMethod"})", "\"code\":-32600"},
+      {R"({"jsonrpc":"1.0","id":1,"method":"noSuchMethod"})", "\"code\":-32600"},
+      {R"({"jsonrpc":"2.0","id":1,"method":12})", "\"code\":-32600"},
+      {R"({"jsonrpc":"2.0","id":1,"method":"getMasterchainInfo","params":"x"})", "\"code\":-32600"},
+      {R"({"jsonrpc":"2.0","id":1,"method":"getAddressBalance","params":["x"]})", "\"code\":-32602"},
+      {R"({"jsonrpc":"2.0","id":1,"method":"noSuchMethod"})", "\"code\":-32601"},
+      {R"({"jsonrpc":"2.0","method":"noSuchMethod"})", ""},
+      {R"([{"jsonrpc":"2.0","method":"noSuchMethod"}])", ""},
+  };
+  for (bool with_key : {false, true}) {
+    with_json_rpc(options_for(with_key), [with_key, &cases](int port) {
+      for (const auto &c : cases) {
+        Client client(port, 0);
+        ASSERT_TRUE(client.connect());
+        ASSERT_TRUE(client.send_all(post(c.request, with_key)));
+        std::string status, body;
+        ASSERT_TRUE(client.read_response(5000, status, body));
+        if (c.expect.empty()) {
+          ASSERT_EQ(status, std::string("HTTP/1.1 204 No Content"));
+          ASSERT_TRUE(body.empty());
+          continue;
+        }
+        ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+        ASSERT_TRUE(body.find(c.expect) != std::string::npos);
+        ASSERT_TRUE(body.find("\"ok\"") == std::string::npos);
+        ASSERT_TRUE(body.find("\"data\":{\"schema_version\":1,\"reason\":") != std::string::npos);
+      }
+    });
+  }
+}
+
+// /api-info reads the method table, and the refusals built before a body
+// exists carry the same object the shared builder writes.
+TEST(JsonRpcTransport, api_info_and_early_refusals_follow_the_contract) {
+  with_json_rpc(options_for(true), [](int port) {
+    Client client(port, 0);
+    ASSERT_TRUE(client.connect());
+    ASSERT_TRUE(client.send_all("GET /api-info HTTP/1.1\r\nHost: localhost\r\n\r\n"));
+    std::string status, body;
+    ASSERT_TRUE(client.read_response(3000, status, body));
+    ASSERT_EQ(status, std::string("HTTP/1.1 200 OK"));
+    auto parsed = td::json_decode(td::MutableSlice(body));
+    ASSERT_TRUE(parsed.is_ok());
+    auto &info = parsed.ok_ref().get_object();
+    auto count = info.get_required_int_field("methods_count");
+    ASSERT_TRUE(count.is_ok());
+    // Every table entry but the admin method, which is off by default.
+    std::size_t served = 0;
+    for (const auto &entry : tos::JsonRpcServer::method_table()) {
+      served += (entry.flags & tos::JsonRpcServer::kMethodAdmin) == 0 ? 1 : 0;
+    }
+    ASSERT_EQ(static_cast<std::size_t>(count.ok()), served);
+  });
+  auto drain = [](auto &answer) {
+    std::string out;
+    for (auto chunk = answer.second->get_slice(1u << 20); !chunk.empty(); chunk = answer.second->get_slice(1u << 20)) {
+      out.append(chunk.as_slice().str());
+    }
+    return out;
+  };
+  auto unauthorized = tos::json_rpc::unauthorized_response("");
+  auto unauthorized_body = drain(unauthorized);
+  ASSERT_EQ(unauthorized_body, tos::json_rpc::error_body("null", tos::json_rpc::kUnauthorized,
+                                                         "Unauthorized: invalid or missing API key"));
+  auto limited = tos::json_rpc::rate_limited_response("");
+  auto limited_body = drain(limited);
+  ASSERT_EQ(limited_body,
+            tos::json_rpc::error_body("null", tos::json_rpc::kRateLimited, "Rate limit exceeded (per-IP)"));
 }

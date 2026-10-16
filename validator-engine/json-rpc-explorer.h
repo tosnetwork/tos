@@ -9,6 +9,7 @@
 #include "td/utils/Time.h"
 
 #include "control-getter-executor.h"
+#include "json-rpc-contract.h"
 
 namespace tos::explorer {
 enum class Failure {
@@ -21,11 +22,11 @@ enum class Failure {
   StateInvalid,
   ResourceLimit,
   UpstreamUnavailable,
-  BackendFailure
+  BackendFailure,
+  ConfigParamAbsent
 };
 td::Status error(Failure failure);
-const char* reason(const td::Status& status);
-int handler_code(const td::Status& status);
+const json_rpc::ErrorKind& error_kind(const td::Status& status);
 bool retryable(const td::Status& status);
 td::Status upstream_error(const td::Status& status);
 struct Selector {

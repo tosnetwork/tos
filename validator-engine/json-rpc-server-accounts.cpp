@@ -205,16 +205,20 @@ void JsonRpcServer::handle_getAddressInformation(td::JsonObject &params, std::st
                                                  td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
   auto addr_str = params.get_required_string_field("address").ok();
 
   // Optional seqno parameter — query account state at a specific masterchain block
-  auto seqno_r = params.get_optional_int_field("seqno");
-  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
-  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
+  }
+  bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   auto self_id = actor_id(this);
 
@@ -237,22 +241,22 @@ void JsonRpcServer::handle_getAddressInformation(td::JsonObject &params, std::st
             [cors, addr, addr_str = std::move(addr_str), req_id_inner = std::move(req_id_inner),
              promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
       if (R.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors));
+        promise_inner.set_value(
+            make_json_rpc_error(-32603, PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors, R.error()));
         return;
       }
       auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
           R.move_as_ok(), true);
       if (F.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse accountState: " << F.error(), req_id_inner, cors));
+        promise_inner.set_value(make_json_rpc_error(-32603, PSTRING() << "parse accountState: " << F.error(),
+                                                    req_id_inner, cors, F.error()));
         return;
       }
       auto f = F.move_as_ok();
       auto parsed = ParsedAccountState::parse(f, addr);
       if (parsed.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse account: " << parsed.error(), req_id_inner, cors));
+        promise_inner.set_value(make_json_rpc_error(-32603, PSTRING() << "parse account: " << parsed.error(),
+                                                    req_id_inner, cors, parsed.error()));
         return;
       }
       promise_inner.set_value(make_json_ok(parsed.ok().to_address_info_json(), req_id_inner, cors));
@@ -275,15 +279,15 @@ void JsonRpcServer::handle_getAddressInformation(td::JsonObject &params, std::st
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "lookupBlock: " << R.error(), req_id, cors, R.error()));
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
               R.move_as_ok(), true);
           if (lb_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
+            promise.set_value(make_json_rpc_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id,
+                                                  cors, lb_r.error()));
             return;
           }
           auto lb = lb_r.move_as_ok();
@@ -301,15 +305,15 @@ void JsonRpcServer::handle_getAddressInformation(td::JsonObject &params, std::st
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors, R.error()));
             return;
           }
           auto mc = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
               R.move_as_ok(), true);
           if (mc.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors, mc.error()));
             return;
           }
           do_get_account(std::move(mc.ok()->last_), std::move(req_id), std::move(promise));
@@ -321,16 +325,20 @@ void JsonRpcServer::handle_getExtendedAddressInformation(td::JsonObject &params,
                                                          td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
   auto addr_str = params.get_required_string_field("address").ok();
 
   // Optional seqno parameter — query account state at a specific masterchain block
-  auto seqno_r = params.get_optional_int_field("seqno");
-  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
-  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
+  }
+  bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   auto self_id = actor_id(this);
 
@@ -353,22 +361,22 @@ void JsonRpcServer::handle_getExtendedAddressInformation(td::JsonObject &params,
             [cors, addr, addr_str = std::move(addr_str), req_id_inner = std::move(req_id_inner),
              promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
       if (R.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors));
+        promise_inner.set_value(
+            make_json_rpc_error(-32603, PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors, R.error()));
         return;
       }
       auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
           R.move_as_ok(), true);
       if (F.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse accountState: " << F.error(), req_id_inner, cors));
+        promise_inner.set_value(make_json_rpc_error(-32603, PSTRING() << "parse accountState: " << F.error(),
+                                                    req_id_inner, cors, F.error()));
         return;
       }
       auto f = F.move_as_ok();
       auto parsed = ParsedAccountState::parse(f, addr);
       if (parsed.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse account: " << parsed.error(), req_id_inner, cors));
+        promise_inner.set_value(make_json_rpc_error(-32603, PSTRING() << "parse account: " << parsed.error(),
+                                                    req_id_inner, cors, parsed.error()));
         return;
       }
       promise_inner.set_value(make_json_ok(parsed.ok().to_extended_info_json(addr_str), req_id_inner, cors));
@@ -391,15 +399,15 @@ void JsonRpcServer::handle_getExtendedAddressInformation(td::JsonObject &params,
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "lookupBlock: " << R.error(), req_id, cors, R.error()));
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
               R.move_as_ok(), true);
           if (lb_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
+            promise.set_value(make_json_rpc_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id,
+                                                  cors, lb_r.error()));
             return;
           }
           auto lb = lb_r.move_as_ok();
@@ -417,15 +425,15 @@ void JsonRpcServer::handle_getExtendedAddressInformation(td::JsonObject &params,
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors, R.error()));
             return;
           }
           auto mc = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
               R.move_as_ok(), true);
           if (mc.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors, mc.error()));
             return;
           }
           do_get_account(std::move(mc.ok()->last_), std::move(req_id), std::move(promise));
@@ -439,15 +447,19 @@ void JsonRpcServer::handle_getAddressBalance(td::JsonObject &params, std::string
                                              td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
 
   // Optional seqno parameter — query account state at a specific masterchain block
-  auto seqno_r = params.get_optional_int_field("seqno");
-  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
-  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
+  }
+  bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   auto self_id = actor_id(this);
 
@@ -470,22 +482,22 @@ void JsonRpcServer::handle_getAddressBalance(td::JsonObject &params, std::string
             [cors, addr, req_id_inner = std::move(req_id_inner),
              promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
       if (R.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors));
+        promise_inner.set_value(
+            make_json_rpc_error(-32603, PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors, R.error()));
         return;
       }
       auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
           R.move_as_ok(), true);
       if (F.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse accountState: " << F.error(), req_id_inner, cors));
+        promise_inner.set_value(make_json_rpc_error(-32603, PSTRING() << "parse accountState: " << F.error(),
+                                                    req_id_inner, cors, F.error()));
         return;
       }
       auto f = F.move_as_ok();
       auto parsed = ParsedAccountState::parse(f, addr);
       if (parsed.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse account: " << parsed.error(), req_id_inner, cors));
+        promise_inner.set_value(make_json_rpc_error(-32603, PSTRING() << "parse account: " << parsed.error(),
+                                                    req_id_inner, cors, parsed.error()));
         return;
       }
       promise_inner.set_value(make_json_ok(
@@ -509,15 +521,15 @@ void JsonRpcServer::handle_getAddressBalance(td::JsonObject &params, std::string
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "lookupBlock: " << R.error(), req_id, cors, R.error()));
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
               R.move_as_ok(), true);
           if (lb_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
+            promise.set_value(make_json_rpc_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id,
+                                                  cors, lb_r.error()));
             return;
           }
           auto lb = lb_r.move_as_ok();
@@ -535,15 +547,15 @@ void JsonRpcServer::handle_getAddressBalance(td::JsonObject &params, std::string
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors, R.error()));
             return;
           }
           auto mc = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
               R.move_as_ok(), true);
           if (mc.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors, mc.error()));
             return;
           }
           do_get_account(std::move(mc.ok()->last_), std::move(req_id), std::move(promise));
@@ -557,15 +569,19 @@ void JsonRpcServer::handle_getAddressState(td::JsonObject &params, std::string r
                                            td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
-    promise.set_value(make_json_error(-32602, addr_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));
     return;
   }
   auto addr = addr_r.move_as_ok();
 
   // Optional seqno parameter — query account state at a specific masterchain block
-  auto seqno_r = params.get_optional_int_field("seqno");
-  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
-  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
+  }
+  bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   auto self_id = actor_id(this);
 
@@ -588,22 +604,22 @@ void JsonRpcServer::handle_getAddressState(td::JsonObject &params, std::string r
             [cors, addr, req_id_inner = std::move(req_id_inner),
              promise_inner = std::move(promise_inner)](td::Result<td::BufferSlice> R) mutable {
       if (R.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors));
+        promise_inner.set_value(
+            make_json_rpc_error(-32603, PSTRING() << "getAccountState: " << R.error(), req_id_inner, cors, R.error()));
         return;
       }
       auto F = tos::fetch_tl_object<tos::lite_api::liteServer_accountState>(
           R.move_as_ok(), true);
       if (F.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse accountState: " << F.error(), req_id_inner, cors));
+        promise_inner.set_value(make_json_rpc_error(-32603, PSTRING() << "parse accountState: " << F.error(),
+                                                    req_id_inner, cors, F.error()));
         return;
       }
       auto f = F.move_as_ok();
       auto parsed = ParsedAccountState::parse(f, addr);
       if (parsed.is_error()) {
-        promise_inner.set_value(make_json_error(-32603,
-            PSTRING() << "parse account: " << parsed.error(), req_id_inner, cors));
+        promise_inner.set_value(make_json_rpc_error(-32603, PSTRING() << "parse account: " << parsed.error(),
+                                                    req_id_inner, cors, parsed.error()));
         return;
       }
       auto state_json = PSTRING() << td::JsonString(td::Slice(parsed.ok().state_str));
@@ -627,15 +643,15 @@ void JsonRpcServer::handle_getAddressState(td::JsonObject &params, std::string r
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "lookupBlock: " << R.error(), req_id, cors, R.error()));
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
               R.move_as_ok(), true);
           if (lb_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
+            promise.set_value(make_json_rpc_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id,
+                                                  cors, lb_r.error()));
             return;
           }
           auto lb = lb_r.move_as_ok();
@@ -653,15 +669,15 @@ void JsonRpcServer::handle_getAddressState(td::JsonObject &params, std::string r
          do_get_account = std::move(do_get_account)](
             td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error(), req_id, cors, R.error()));
             return;
           }
           auto mc = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
               R.move_as_ok(), true);
           if (mc.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "parse mcInfo: " << mc.error(), req_id, cors, mc.error()));
             return;
           }
           do_get_account(std::move(mc.ok()->last_), std::move(req_id), std::move(promise));

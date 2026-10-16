@@ -19,45 +19,43 @@
 namespace tos::explorer {
 td::Status error(Failure failure) {
   return td::Status::Error(static_cast<int>(failure),
-                           td::Slice(reason(td::Status::Error(static_cast<int>(failure), ""))));
+                           td::Slice(error_kind(td::Status::Error(static_cast<int>(failure), "")).reason));
 }
-const char* reason(const td::Status& status) {
+const json_rpc::ErrorKind& error_kind(const td::Status& status) {
   switch (static_cast<Failure>(status.code())) {
     case Failure::InvalidArgument:
-      return "INVALID_ARGUMENT";
+      return json_rpc::kInvalidArgument;
     case Failure::UnsignedBlock:
-      return "UNSIGNED_BLOCK";
+      return json_rpc::kUnsignedBlock;
     case Failure::BlockIdMismatch:
-      return "BLOCK_ID_MISMATCH";
+      return json_rpc::kBlockIdMismatch;
     case Failure::BlockUnavailable:
-      return "BLOCK_UNAVAILABLE";
+      return json_rpc::kBlockUnavailable;
     case Failure::EvidenceInvalid:
-      return "EVIDENCE_INVALID";
+      return json_rpc::kEvidenceInvalid;
     case Failure::UnsupportedCarrier:
-      return "UNSUPPORTED_CARRIER";
+      return json_rpc::kUnsupportedCarrier;
     case Failure::StateInvalid:
-      return "STATE_INVALID";
+      return json_rpc::kStateInvalid;
     case Failure::ResourceLimit:
-      return "RESOURCE_LIMIT";
+      return json_rpc::kResourceLimit;
     case Failure::UpstreamUnavailable:
-      return "UPSTREAM_UNAVAILABLE";
+      return json_rpc::kUpstreamUnavailable;
     case Failure::BackendFailure:
-      return "VERIFICATION_BACKEND_FAILURE";
+      return json_rpc::kVerificationBackendFailure;
+    case Failure::ConfigParamAbsent:
+      return json_rpc::kConfigParamAbsent;
   }
-  return "EVIDENCE_INVALID";
-}
-int handler_code(const td::Status& status) {
-  if (status.code() == static_cast<int>(Failure::InvalidArgument) ||
-      status.code() == static_cast<int>(Failure::UnsignedBlock))
-    return -32602;
-  return status.code() == static_cast<int>(Failure::BlockIdMismatch) ? 409 : -32603;
+  return json_rpc::kEvidenceInvalid;
 }
 bool retryable(const td::Status& status) {
-  return status.code() == static_cast<int>(Failure::UpstreamUnavailable) ||
-         status.code() == static_cast<int>(Failure::BackendFailure);
+  return error_kind(status).retryable;
 }
 td::Status upstream_error(const td::Status& status) {
-  if (status.code() == ErrorCode::notready)
+  // The evidence for a block is built from that block's state and its
+  // predecessor's. Once the node has garbage-collected either, the request
+  // is outside the history this node serves, and repeating it cannot help.
+  if (status.code() == ErrorCode::notready || json_rpc::is_garbage_collected(status))
     return error(Failure::BlockUnavailable);
   if (status.code() == ErrorCode::protoviolation)
     return error(Failure::EvidenceInvalid);
@@ -82,23 +80,23 @@ const td::JsonValue* field(const td::JsonObject& object, td::Slice name) {
       return &item.second;
   return nullptr;
 }
+// The shared strict parsers decide what an integer parameter is; the
+// verified views only translate a refusal into their own reason.
 td::Result<td::int32> integer(const td::JsonObject& object, td::Slice name) {
-  auto value = field(object, name);
-  if (!value || value->type() != td::JsonValue::Type::Number)
-    return error(Failure::InvalidArgument);
-  auto result = object.get_required_int_field(name);
-  if (result.is_error() || std::to_string(result.ok()) != value->get_number())
+  auto result = json_rpc::parse_workchain_param(object, name);
+  if (result.is_error())
     return error(Failure::InvalidArgument);
   return result.move_as_ok();
 }
 }  // namespace
 td::Result<Selector> parse_selector(const td::JsonObject& params, bool required) {
   Selector result;
-  if (params.has_field("seqno")) {
-    TRY_RESULT(seqno, integer(params, "seqno"));
-    if (seqno < 0)
+  {
+    auto seqno = json_rpc::parse_optional_seqno_param(params);
+    if (seqno.is_error())
       return error(Failure::InvalidArgument);
-    result.seqno = seqno;
+    if (seqno.ok())
+      result.seqno = *seqno.ok();
   }
   if (params.has_field("block_id")) {
     auto value = field(params, "block_id");
