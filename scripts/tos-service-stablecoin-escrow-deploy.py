@@ -40,7 +40,7 @@ def rpc(endpoint, method, **params):
     )
     with urllib.request.urlopen(request, timeout=10) as response:
         value = json.loads(response.read().decode())
-    if not value.get("ok"):
+    if not isinstance(value, dict) or "error" in value or "result" not in value:
         raise RuntimeError(f"{endpoint} {method}: {value}")
     return value["result"]
 

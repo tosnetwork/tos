@@ -2,7 +2,6 @@
 
 import importlib.util
 import json
-import urllib.error
 from pathlib import Path
 
 import pytest
@@ -66,10 +65,16 @@ def test_negative_workchain_controller_is_one_cli_argument(monkeypatch):
     assert controller not in calls[0]
 
 
-def http_error(body):
-    error = urllib.error.HTTPError("http://127.0.0.1/jsonRPC", 500, "error", {}, None)
-    error.json_rpc_body = body.encode()
-    return error
+def rpc_error(localnet, message):
+    """The error answer a node gives for a failed read: HTTP 200, error object."""
+    return localnet.JsonRpcError(
+        "getAddressInformation",
+        {
+            "code": -32603,
+            "message": message,
+            "data": {"schema_version": 1, "reason": "UPSTREAM_UNAVAILABLE", "retryable": True},
+        },
+    )
 
 
 def test_wallet_balance_evidence_skips_retained_http_errors():
@@ -84,6 +89,22 @@ def test_wallet_balance_evidence_skips_retained_http_errors():
         }
         for status, response in [
             (500, {"error": "missing block"}),
+            (
+                200,
+                {
+                    "jsonrpc": "2.0",
+                    "id": "getAddressInformation",
+                    "error": {
+                        "code": -32603,
+                        "message": "missing block",
+                        "data": {
+                            "schema_version": 1,
+                            "reason": "UPSTREAM_UNAVAILABLE",
+                            "retryable": True,
+                        },
+                    },
+                },
+            ),
             (200, {"result": {"balance": "0"}}),
             (200, {"result": {"balance": "4999999000"}}),
         ]
@@ -99,8 +120,9 @@ async def test_missing_fresh_basechain_block_is_retried(monkeypatch):
     def balance(*_, **__):
         calls.append(1)
         if len(calls) == 1:
-            raise http_error(
-                "getAccountState: cannot load block (0,8000000000000000,0):abc : not in db"
+            raise rpc_error(
+                localnet,
+                "getAccountState: cannot load block (0,8000000000000000,0):abc : not in db",
             )
         return 0
 
@@ -110,16 +132,16 @@ async def test_missing_fresh_basechain_block_is_retried(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unrelated_json_rpc_500_is_not_retried(monkeypatch):
+async def test_unrelated_json_rpc_error_is_not_retried(monkeypatch):
     localnet = load_localnet()
     calls = []
 
     def balance(*_, **__):
         calls.append(1)
-        raise http_error("getAccountState: malformed account proof")
+        raise rpc_error(localnet, "getAccountState: malformed account proof")
 
     monkeypatch.setattr(localnet, "rpc_balance_nano", balance)
-    with pytest.raises(urllib.error.HTTPError):
+    with pytest.raises(localnet.JsonRpcError):
         await localnet.wait_initial_balance_readable("unused", "wallet")
     assert len(calls) == 1
 
@@ -131,7 +153,7 @@ async def test_missing_block_has_a_deadline(monkeypatch):
         localnet,
         "rpc_balance_nano",
         lambda *_, **__: (_ for _ in ()).throw(
-            http_error("cannot load block (0,8000000000000000,0):abc : not in db")
+            rpc_error(localnet, "cannot load block (0,8000000000000000,0):abc : not in db")
         ),
     )
     with pytest.raises(TimeoutError, match="not readable"):
@@ -152,9 +174,9 @@ async def test_other_missing_blocks_fail_immediately(monkeypatch, block):
 
     def balance(*_, **__):
         calls.append(1)
-        raise http_error(f"getAccountState: cannot load block {block}:abc : not in db")
+        raise rpc_error(localnet, f"getAccountState: cannot load block {block}:abc : not in db")
 
     monkeypatch.setattr(localnet, "rpc_balance_nano", balance)
-    with pytest.raises(urllib.error.HTTPError):
+    with pytest.raises(localnet.JsonRpcError):
         await localnet.wait_initial_balance_readable("unused", "wallet")
     assert len(calls) == 1

@@ -8,6 +8,7 @@ Run ``python -m deployer http://127.0.0.1:8011/`` first, or pass ``--deploy``.
 import json
 import pytest
 from pathlib import Path
+from rpc_contract import assert_success
 
 DEPLOYED_FILE = Path(__file__).parent / "deployed_addresses.json"
 
@@ -38,7 +39,7 @@ class TestWalletV1:
         resp = api_method_call_get("getWalletInformation", address=info["address"])
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "wallet v1 r1"
@@ -54,7 +55,7 @@ class TestWalletV3R2:
         resp = api_method_call_get("getWalletInformation", address=info["address"])
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "wallet v3 r2"
@@ -71,7 +72,7 @@ class TestWalletV4R2:
         resp = api_method_call_get("getWalletInformation", address=info["address"])
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "wallet v4 r2"
@@ -88,7 +89,7 @@ class TestWalletV5R1:
         resp = api_method_call_get("getWalletInformation", address=info["address"])
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "wallet v5 r1"
@@ -105,7 +106,7 @@ class TestHighloadV1:
         resp = api_method_call_get("getWalletInformation", address=info["address"])
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "highload v1"
@@ -121,7 +122,7 @@ class TestHighloadV2:
         resp = api_method_call_get("getWalletInformation", address=info["address"])
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "highload v2"

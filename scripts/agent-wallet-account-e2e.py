@@ -109,16 +109,37 @@ def exact_boc_hash(exact_boc_base64: str) -> str:
     return "sha256:" + Cell.one_from_boc(base64.b64decode(exact_boc_base64)).hash.hex()
 
 
+def internal_error_answer(response: dict) -> bool:
+    """A JSON-RPC error object with the internal-error code (a node refusal)."""
+    error = response.get("error")
+    return isinstance(error, dict) and error.get("code") == -32603
+
+
 def explicit_contract_refusal(response: dict, exit_code: int) -> bool:
-    """One named Agent Account VM refusal, not an arbitrary HTTP 500."""
-    if response.get("http_status") != 500:
+    """One named Agent Account VM refusal, not an arbitrary internal error.
+
+    A live answer is the JSON-RPC error object at HTTP 200. A submission
+    recorded from the earlier server keeps its {"http_status": 500, "body": ...}
+    form with a string error, and is still read as recorded.
+    """
+    if "http_status" in response:
+        if response.get("http_status") != 500:
+            return False
+        try:
+            error = json.loads(response["body"])
+        except (KeyError, ValueError, TypeError):
+            return False
+        if not isinstance(error, dict):
+            return False
+        code, text = error.get("code"), error.get("error", "")
+    else:
+        error = response.get("error")
+        if not isinstance(error, dict):
+            return False
+        code, text = error.get("code"), error.get("message", "")
+    if not isinstance(text, str):
         return False
-    try:
-        error = json.loads(response["body"])
-    except (KeyError, ValueError, TypeError):
-        return False
-    text = error.get("error", "")
-    return (error.get("code") == -32603
+    return (code == -32603
             and "cannot apply external message to current state" in text
             and re.search(rf"(?m)^exitcode={exit_code}(?:,|$)", text) is not None)
 
@@ -411,7 +432,7 @@ async def run_checks(faucet, node) -> None:
     duplicate_submit = broadcast_boc(exact_boc, may_fail=True)
     check("node accepts exact BOC submission path",
           "result" in first_submit and
-          ("result" in duplicate_submit or duplicate_submit.get("http_status") == 500),
+          ("result" in duplicate_submit or internal_error_answer(duplicate_submit)),
           f"first={first_submit} duplicate={duplicate_submit}")
     check("duplicate native Gift submission credits exactly once", await wait_balance_at_least(
         target, target_before + 500_000_000))

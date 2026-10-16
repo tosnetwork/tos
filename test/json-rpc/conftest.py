@@ -6,18 +6,15 @@ Usage:
     pytest test/json-rpc/ --endpoint http://127.0.0.1:8011/ --method get
     pytest test/json-rpc/ --endpoint http://127.0.0.1:8011/ --method post --method jsonrpc
 """
+
+import time
+from typing import Optional
+
 import pytest
 import requests
-from typing import Optional
-import time
-
+from rpc_contract import is_retryable_error
 
 API_CALL_MODES = ["get", "post", "jsonrpc"]
-TRANSIENT_ERROR_MARKERS = (
-    "Request timeout",
-    "is not applied",
-    "node not synced",
-)
 
 
 def _call_with_retry(method, *, retries: int = 8, delay_s: float = 0.5):
@@ -32,8 +29,7 @@ def _call_with_retry(method, *, retries: int = 8, delay_s: float = 0.5):
             data = last.json()
         except Exception:
             return last
-        error = str(data.get("error", ""))
-        if last.status_code == 500 and any(marker in error for marker in TRANSIENT_ERROR_MARKERS):
+        if is_retryable_error(data):
             time.sleep(delay_s)
             continue
         return last
@@ -59,13 +55,14 @@ def pytest_addoption(parser):
         choices=API_CALL_MODES + ["all"],
         default=[],
         help="Which API modes to run (may be repeated). "
-             "Examples: --method get  |  --method get --method post  |  --method all",
+        "Examples: --method get  |  --method get --method post  |  --method all",
     )
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def endpoint(request) -> str:
@@ -96,9 +93,9 @@ def wait_for_endpoint_ready(request):
                 continue
             probe = requests.get(endpoint + "getMasterchainInfo", timeout=5)
             data = probe.json()
-            if probe.status_code == 200 and data.get("ok") is True:
+            if probe.status_code == 200 and isinstance(data, dict) and "result" in data:
                 return
-            last_error = str(data.get("error", ""))
+            last_error = str(data.get("error", "") if isinstance(data, dict) else data)
         except Exception as exc:
             last_error = str(exc)
         time.sleep(1)
@@ -112,7 +109,9 @@ def api_key(request) -> Optional[str]:
 
 def _selected_modes(config) -> list:
     opts = config.getoption("--method") or []
-    return API_CALL_MODES if (not opts or "all" in opts) else [m for m in opts if m in API_CALL_MODES]
+    return (
+        API_CALL_MODES if (not opts or "all" in opts) else [m for m in opts if m in API_CALL_MODES]
+    )
 
 
 def pytest_generate_tests(metafunc):
@@ -142,6 +141,7 @@ def api_method_call(endpoint, headers, api_mode):
         POST /<method>  {json body}
         POST /jsonRPC   {jsonrpc: "2.0", method: ..., params: {...}, id: 1}
     """
+
     def _call(__method: str, **kwargs):
         url = endpoint  # already has trailing slash
         with requests.Session() as session:
@@ -154,13 +154,15 @@ def api_method_call(endpoint, headers, api_mode):
                     lambda: session.post(url + __method, json=kwargs, headers=headers, timeout=10)
                 )
             # jsonrpc
-            return _call_with_retry(lambda: session.post(
-                url + "jsonRPC",
-                json={"jsonrpc": "2.0", "method": __method, "params": kwargs, "id": 1},
-                headers=headers,
-                timeout=10,
+            return _call_with_retry(
+                lambda: session.post(
+                    url + "jsonRPC",
+                    json={"jsonrpc": "2.0", "method": __method, "params": kwargs, "id": 1},
+                    headers=headers,
+                    timeout=10,
+                )
             )
-            )
+
     return _call
 
 
@@ -170,6 +172,7 @@ def api_method_call_no_get(endpoint, headers, api_mode_no_get):
     Same as api_method_call but excludes GET mode.
     Use for POST-only methods (sendBoc, runGetMethod, etc.).
     """
+
     def _call(__method: str, **kwargs):
         url = endpoint
         with requests.Session() as session:
@@ -178,24 +181,28 @@ def api_method_call_no_get(endpoint, headers, api_mode_no_get):
                     lambda: session.post(url + __method, json=kwargs, headers=headers, timeout=10)
                 )
             # jsonrpc
-            return _call_with_retry(lambda: session.post(
-                url + "jsonRPC",
-                json={"jsonrpc": "2.0", "method": __method, "params": kwargs, "id": 1},
-                headers=headers,
-                timeout=10,
+            return _call_with_retry(
+                lambda: session.post(
+                    url + "jsonRPC",
+                    json={"jsonrpc": "2.0", "method": __method, "params": kwargs, "id": 1},
+                    headers=headers,
+                    timeout=10,
+                )
             )
-            )
+
     return _call
 
 
 @pytest.fixture(scope="module")
 def api_method_call_get(endpoint, headers):
     """Direct GET call, bypassing mode parameterisation."""
+
     def _call(__method: str, **kwargs):
         with requests.Session() as session:
             return _call_with_retry(
                 lambda: session.get(endpoint + __method, params=kwargs, headers=headers, timeout=10)
             )
+
     return _call
 
 
@@ -210,6 +217,7 @@ def last_mc_seqno(api_method_call_get):
 # ---------------------------------------------------------------------------
 # Header output
 # ---------------------------------------------------------------------------
+
 
 def pytest_report_header(config):
     return f"Selected API modes: {', '.join(_selected_modes(config))}"

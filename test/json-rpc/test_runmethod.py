@@ -9,10 +9,11 @@ import json
 import logging
 import pytest
 
+from rpc_contract import SHARD_ALL, assert_success, expect_error, expect_result
+
 logger = logging.getLogger(__name__)
 
 ELECTOR_ADDRESS = "-1:3333333333333333333333333333333333333333333333333333333333333333"
-SHARD_ALL = -9223372036854775808
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -31,9 +32,9 @@ class TestRunGetMethod:
             method="active_election_id",
             stack=[],
         )
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
 
         result = data["result"]
         assert result["@type"] in {"smc.runResult", "ext.smc.runResult"}
@@ -47,18 +48,18 @@ class TestRunGetMethod:
             method="participant_list",
             stack=[],
         )
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] in {"smc.runResult", "ext.smc.runResult"}
 
     def test_missing_address(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, method="seqno", stack=[])
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_missing_method(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, address=ELECTOR_ADDRESS, stack=[])
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_nonexistent_method(self, api_method_call_no_get):
         """Calling a method that does not exist in the contract should succeed
@@ -71,9 +72,9 @@ class TestRunGetMethod:
         )
         # The server should still return 200 (the query itself succeeded),
         # but the result should have a non-zero exit code.
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["exit_code"] != 0
 
     def test_with_stack_argument(self, api_method_call_no_get):
@@ -85,7 +86,7 @@ class TestRunGetMethod:
             stack=[],
         )
         assert response.status_code == 200
-        assert response.json()["ok"] is True
+        expect_result(response)
 
     def test_result_fields(self, api_method_call_no_get):
         """Result should contain gas_used, exit_code, stack, and block_id."""
@@ -97,7 +98,7 @@ class TestRunGetMethod:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert "gas_used" in result
         assert "exit_code" in result
@@ -122,9 +123,9 @@ class TestRunGetMethodStd:
             method="active_election_id",
             stack=[],
         )
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
 
     def test_checkpoint_identity_matches_lookup(
         self, api_method_call_no_get, last_mc_seqno
@@ -136,9 +137,9 @@ class TestRunGetMethodStd:
             shard=SHARD_ALL,
             seqno=last_mc_seqno,
         )
-        assert lookup.status_code == 200, lookup.json().get("error")
+        assert lookup.status_code == 200, lookup.text
         lookup_data = lookup.json()
-        assert lookup_data["ok"] is True
+        assert_success(lookup_data)
 
         response = api_method_call_no_get(
             self.METHOD,
@@ -147,9 +148,9 @@ class TestRunGetMethodStd:
             stack=[],
             seqno=last_mc_seqno,
         )
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
 
         expected = lookup_data["result"]
         actual = data["result"]["block_id"]
@@ -158,4 +159,4 @@ class TestRunGetMethodStd:
 
     def test_missing_address(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, method="seqno", stack=[])
-        assert response.json()["ok"] is False
+        expect_error(response)

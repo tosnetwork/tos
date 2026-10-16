@@ -70,7 +70,12 @@ def wallet_balances(transcript, wallet):
             and request["method"] == "getAddressInformation"
             and request["params"].get("address") == wallet
         ):
-            balances.append(int(json.loads(row["response_body"])["result"]["balance"]))
+            reply = json.loads(row["response_body"])
+            # Method errors are HTTP 200 with an error object; skip them like
+            # the non-200 failures retained from earlier transcripts.
+            if "error" in reply or "result" not in reply:
+                continue
+            balances.append(int(reply["result"]["balance"]))
     return balances
 
 
@@ -142,8 +147,8 @@ def demo(workdir, rpc_port, control_port, base_port):
             )
             masterchain_value = json.loads(masterchain["response_body"])
             address_value = json.loads(address_info["response_body"])
-            assert masterchain["status"] == 200 and masterchain_value.get("ok") is True
-            assert address_info["status"] == 200 and address_value.get("ok") is True
+            for reply, value in ((masterchain, masterchain_value), (address_info, address_value)):
+                assert reply["status"] == 200 and "error" not in value and "result" in value, value
             assert masterchain_value.get("result", {}).get("last", {}).get("seqno", 0) > 0
             assert int(address_value["result"]["balance"]) >= balances[-1]
             result = {

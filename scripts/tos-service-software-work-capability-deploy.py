@@ -28,7 +28,7 @@ def rpc(endpoint, method, **params):
     request = urllib.request.Request(endpoint, data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode(), headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(request, timeout=10) as response:
         value = json.loads(response.read().decode())
-    if not value.get("ok"):
+    if not isinstance(value, dict) or "error" in value or "result" not in value:
         raise RuntimeError(f"{endpoint} {method}: {value}")
     return value["result"]
 

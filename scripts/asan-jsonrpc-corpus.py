@@ -87,6 +87,31 @@ def main() -> int:
     case("empty body", lambda: post_raw(base, ""))
     case("array of arrays", lambda: post_raw(base, "[[],[],[]]"))
 
+    print("envelope rules (each answered locally, before any node query)")
+    for raw in ('{"id":1,"method":"noSuchMethod","params":{}}',
+                '{"jsonrpc":"1.0","id":1,"method":"noSuchMethod","params":{}}',
+                '{"jsonrpc":2.0,"id":1,"method":"noSuchMethod","params":{}}',
+                '{"jsonrpc":"2.0","id":1,"method":12,"params":{}}',
+                '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":"x"}',
+                '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":null}',
+                '{"jsonrpc":"2.0","id":1,"method":"getMasterchainInfo","params":[1,2]}',
+                '{"jsonrpc":"2.0","id":{"x":1},"method":"noSuchMethod","params":{}}',
+                '{"jsonrpc":"2.0","method":"noSuchMethod","params":{}}',
+                '[{"jsonrpc":"2.0","method":"noSuchMethod"},{"jsonrpc":"2.0","method":"x"}]',
+                '[{"jsonrpc":"1.0","method":"noSuchMethod"},{"jsonrpc":"2.0","id":2,"method":"x"}]',
+                '42', '"x"', 'true'):
+        case(f"envelope {raw[:40]!r}", lambda raw=raw: post_raw(base, raw))
+    for path, params in (("lookupBlock", {"workchain": "-1", "shard": "zz", "seqno": "abc"}),
+                         ("getBlockHeader", {"workchain": -1, "shard": "9223372036854775808",
+                                             "seqno": -3}),
+                         ("shards", {"seqno": "abc"}),
+                         ("getConfigAll", {"seqno": 1.5})):
+        case(f"strict params POST /{path}", lambda path=path, params=params: requests.post(
+            base + path, json=params, timeout=15))
+        case(f"strict params GET /{path}", lambda path=path, params=params: requests.get(
+            base + path, params=params, timeout=15))
+    case("api-info", lambda: requests.get(base + "api-info", timeout=15))
+
     print("malformed payloads on the write surface")
     for boc in ("", "!!!!", "AAAA", "A" * 200000):
         case(f"sendBoc {len(boc)} chars", lambda boc=boc: post_json(

@@ -16,8 +16,13 @@ def require(condition, message):
         raise ValueError(message)
 
 
+def answered(response):
+    """A JSON-RPC success answer: a result and no error object."""
+    return isinstance(response, dict) and "result" in response and "error" not in response
+
+
 def decode_rows(response, address):
-    require(response.get("ok") is True, "transaction query refused")
+    require(answered(response), "transaction query refused")
     rows = response.get("result")
     require(isinstance(rows, list) and len(rows) <= 16, "transaction history bounds")
     result = []

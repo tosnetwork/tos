@@ -61,6 +61,11 @@ def run_fift(script: str, working_dir: Optional[Path] = None) -> str:
     return result.stdout
 
 
+def rpc_succeeded(body: object) -> bool:
+    """True for a JSON-RPC success answer ({jsonrpc, id, result})."""
+    return isinstance(body, dict) and "result" in body and "error" not in body
+
+
 def get_seqno(endpoint: str, address: str) -> int:
     """Get a wallet's seqno via runGetMethod.
 
@@ -72,7 +77,7 @@ def get_seqno(endpoint: str, address: str) -> int:
         json={"address": address, "method": "seqno", "stack": []},
     )
     data = resp.json()
-    if data.get("ok") and data["result"]["exit_code"] == 0:
+    if rpc_succeeded(data) and data["result"]["exit_code"] == 0:
         stack = data["result"]["stack"]
         if stack:
             return int(stack[0][1])
@@ -91,7 +96,7 @@ def wait_active(endpoint: str, address: str, timeout: int = 30) -> bool:
     while time.time() < deadline:
         resp = requests.get(f"{endpoint}getAddressState", params={"address": address})
         data = resp.json()
-        if data.get("ok") and data.get("result") == "active":
+        if rpc_succeeded(data) and data["result"] == "active":
             return True
         time.sleep(0.5)
     return False
@@ -288,7 +293,7 @@ def _transfer_from_main_wallet(
     boc_b64 = base64.b64encode(boc_bytes).decode()
 
     result = send_boc(endpoint, boc_b64)
-    return result.get("ok", False)
+    return rpc_succeeded(result)
 
 
 # ── Wallet deployment ────────────────────────────────────────────────────
@@ -447,7 +452,7 @@ b>
     boc_b64 = base64.b64encode(boc_bytes).decode()
 
     result = send_boc(endpoint, boc_b64)
-    if not result.get("ok"):
+    if not rpc_succeeded(result):
         raise RuntimeError(f"sendBoc failed: {result}")
 
     full_addr = f"{addr_wc}:{addr_hex}"
@@ -679,7 +684,7 @@ b>
 
     boc_b64 = base64.b64encode(bytes.fromhex(boc_hex)).decode()
     result = send_boc(endpoint, boc_b64)
-    if not result.get("ok"):
+    if not rpc_succeeded(result):
         raise RuntimeError(f"sendBoc failed: {result}")
 
     full_addr = f"{addr_wc}:{addr_hex}"
@@ -721,7 +726,7 @@ dup hashu mw_pk ed25519_sign_uint constant signature
     if not boc_hex:
         raise RuntimeError(f"No BOC in internal transfer:\n{output}")
     result = send_boc(endpoint, base64.b64encode(bytes.fromhex(boc_hex)).decode())
-    if not result.get("ok"):
+    if not rpc_succeeded(result):
         raise RuntimeError(f"sendBoc failed: {result}")
 
 

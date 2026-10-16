@@ -14,6 +14,14 @@ from pathlib import Path
 
 import pytest
 import requests
+from rpc_contract import (
+    assert_error,
+    assert_success,
+    error_message,
+    expect_error,
+    expect_result,
+    is_retryable_error,
+)
 
 ELECTOR_ADDRESS = "-1:3333333333333333333333333333333333333333333333333333333333333333"
 UNINITIALIZED_ADDRESS = "-1:1111111111111111111111111111111111111111111111111111111111111111"
@@ -27,7 +35,13 @@ def _load_deployed() -> dict:
     return json.loads(DEPLOYED_FILE.read_text())
 
 
+def _succeeded(body: object) -> bool:
+    return isinstance(body, dict) and "result" in body and "error" not in body
+
+
 def _call_until_ok(call, *, retries: int = 12, delay_s: float = 1.0):
+    """Repeat a call while the server answers a retryable error (for example
+    a block that is not applied yet); return the first other answer."""
     last = None
     for _ in range(retries):
         last = call()
@@ -36,9 +50,7 @@ def _call_until_ok(call, *, retries: int = 12, delay_s: float = 1.0):
         except Exception:
             time.sleep(delay_s)
             continue
-        if last.status_code == 200 and data.get("ok") is True:
-            return last
-        if "block (" not in str(data.get("error", "")) or "is not applied" not in str(data.get("error", "")):
+        if not is_retryable_error(data):
             return last
         time.sleep(delay_s)
     return last
@@ -50,7 +62,7 @@ def _discover_first_permission_id(api_method_call, address: str, method: str = "
         data = resp.json()
     except Exception:
         return None
-    if not data.get("ok") or not data.get("result"):
+    if not _succeeded(data) or not data["result"]:
         return None
     return data["result"][0].get("permission_id")
 
@@ -66,9 +78,9 @@ class TestGetAccountCapability:
 
     def test_basic(self, api_method_call):
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "account.capability"
         assert result["address"] == ELECTOR_ADDRESS
@@ -86,16 +98,16 @@ class TestGetAccountCapability:
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_multisig_account_standard_support(self, api_method_call, wallets):
         info = wallets.get("multisig")
         if not info or not info.get("address"):
             pytest.skip("multisig not deployed")
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["account_model"] == "advanced.wallet.multisig"
         assert result["supports_agents"] is True
@@ -107,9 +119,9 @@ class TestGetAccountCapability:
         if not info or not info.get("address"):
             pytest.skip("restricted wallet not deployed")
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["account_model"] == "advanced.wallet.restricted"
         assert result["supports_delegation"] is True
@@ -126,9 +138,9 @@ class TestBuildTransactionIntent:
             address=ELECTOR_ADDRESS,
             body=VALID_EMPTY_CELL_BOC,
         )
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "transaction.intent"
         assert result["from"] == ELECTOR_ADDRESS
@@ -138,7 +150,7 @@ class TestBuildTransactionIntent:
 
     def test_missing_body(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, address=ELECTOR_ADDRESS)
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_delegation_reference_rejected(self, api_method_call_no_get):
         response = api_method_call_no_get(
@@ -148,8 +160,8 @@ class TestBuildTransactionIntent:
             delegation_ref="example",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "DELEGATION_UNAVAILABLE" in data["error"]
+        assert_error(data)
+        assert "DELEGATION_UNAVAILABLE" in error_message(data)
 
     def test_distinct_fee_payer_rejected(self, api_method_call_no_get):
         response = api_method_call_no_get(
@@ -160,8 +172,8 @@ class TestBuildTransactionIntent:
             fee_payer="-1:1111111111111111111111111111111111111111111111111111111111111111",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "FEATURE_DEFERRED" in data["error"]
+        assert_error(data)
+        assert "FEATURE_DEFERRED" in error_message(data)
 
 
 class TestGetSigningPayload:
@@ -173,9 +185,9 @@ class TestGetSigningPayload:
             address=ELECTOR_ADDRESS,
             body=VALID_EMPTY_CELL_BOC,
         )
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "transaction.signingPayload"
         assert result["payload_version"] == 1
@@ -204,8 +216,8 @@ class TestGetSigningPayload:
                 },
             },
         )
-        assert response.status_code == 200, response.json().get("error")
-        assert response.json()["ok"] is True
+        assert response.status_code == 200, response.text
+        expect_result(response)
 
     def test_permission_reference_rejected(self, api_method_call_no_get):
         response = api_method_call_no_get(
@@ -217,8 +229,8 @@ class TestGetSigningPayload:
             },
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "FEATURE_DEFERRED" in data["error"]
+        assert_error(data)
+        assert "FEATURE_DEFERRED" in error_message(data)
 
 
 class TestSubmitSignedTransaction:
@@ -226,7 +238,7 @@ class TestSubmitSignedTransaction:
 
     def test_missing_artifact(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD)
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_basic(self, api_method_call_no_get):
         payload_resp = api_method_call_no_get(
@@ -234,13 +246,13 @@ class TestSubmitSignedTransaction:
             address=ELECTOR_ADDRESS,
             body=VALID_EMPTY_CELL_BOC,
         )
-        assert payload_resp.status_code == 200, payload_resp.json().get("error")
+        assert payload_resp.status_code == 200, payload_resp.text
         payload = payload_resp.json()["result"]["payload"]
 
         response = api_method_call_no_get(self.METHOD, boc=payload, signer=ELECTOR_ADDRESS)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "transaction.submissionResult"
         assert "accepted" in result
@@ -250,7 +262,7 @@ class TestSubmitSignedTransaction:
 
     def test_invalid_boc(self, api_method_call_no_get):
         response = api_method_call_no_get(self.METHOD, boc="dGVzdA==")
-        assert response.json()["ok"] is False
+        expect_error(response)
 
 
 @pytest.mark.parametrize(
@@ -261,35 +273,59 @@ class TestDeferredPermissionInspection:
     def test_deferred_for_advanced_unknown(self, api_method_call, method_name):
         response = api_method_call(method_name, address=ELECTOR_ADDRESS)
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_DEFERRED" in data["error"]
+        assert_error(data, -32006, "PERMISSION_SOURCE_DEFERRED", retryable=False)
+        assert "PERMISSION_SOURCE_DEFERRED" in error_message(data)
 
     def test_unsupported_for_uninitialized_account(self, api_method_call, method_name):
         response = api_method_call(method_name, address=UNINITIALIZED_ADDRESS)
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"]
+        assert_error(data, -32006, "PERMISSION_SOURCE_UNSUPPORTED", retryable=False)
+        assert "PERMISSION_SOURCE_UNSUPPORTED" in error_message(data)
+
+    def test_unsupported_for_plain_v1_wallet(self, api_method_call, wallets, method_name):
+        """An account of the default.wallet.v1 model has no permission source:
+        the answer is a typed, final refusal, not an internal error."""
+        address = None
+        for key in ("wallet_v4r2", "wallet_v3r2", "wallet_v5r1"):
+            candidate = (wallets.get(key) or {}).get("address")
+            if not candidate:
+                continue
+            capability = _call_until_ok(
+                lambda: api_method_call("getAccountCapability", address=candidate)
+            ).json()
+            if _succeeded(capability) and (
+                capability["result"].get("account_model") == "default.wallet.v1"
+            ):
+                address = candidate
+                break
+        if address is None:
+            pytest.skip("no deployed default.wallet.v1 account")
+        response = _call_until_ok(lambda: api_method_call(method_name, address=address))
+        error = expect_error(
+            response, -32006, "PERMISSION_SOURCE_UNSUPPORTED", retryable=False
+        )
+        assert error["message"].startswith("PERMISSION_SOURCE_UNSUPPORTED:")
 
     def test_indexed_source_requires_fresh_index(self, api_method_call, method_name):
         response = api_method_call(method_name, address=ELECTOR_ADDRESS, source_tier="indexed")
         data = response.json()
-        assert data["ok"] is False
-        assert "INDEXED_STATE_STALE" in data["error"]
+        assert_error(data, -32006, "INDEXED_STATE_STALE", retryable=False)
+        assert "INDEXED_STATE_STALE" in error_message(data)
 
     def test_invalid_status_filter(self, api_method_call, method_name):
         response = api_method_call(method_name, address=ELECTOR_ADDRESS, status="bad")
         data = response.json()
-        assert data["ok"] is False
+        assert_error(data)
 
     def test_invalid_source_tier(self, api_method_call, method_name):
         response = api_method_call(method_name, address=ELECTOR_ADDRESS, source_tier="bogus")
         data = response.json()
-        assert data["ok"] is False
+        assert_error(data)
 
     def test_invalid_address(self, api_method_call, method_name):
         response = api_method_call(method_name, address="invalid")
         data = response.json()
-        assert data["ok"] is False
+        assert_error(data)
 
 
 class TestAccountStandardAgentInspection:
@@ -301,9 +337,9 @@ class TestAccountStandardAgentInspection:
             pytest.skip("multisig not deployed")
 
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert isinstance(result, list)
         assert len(result) == info.get("n", 3)
@@ -329,9 +365,9 @@ class TestAccountStandardAgentInspection:
             pytest.skip("multisig not deployed")
 
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
 
         for agent in data["result"]:
             # Verify frozen schema fields are present
@@ -352,9 +388,9 @@ class TestAccountStandardDelegationInspection:
             pytest.skip("restricted wallet not deployed")
 
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert isinstance(result, list)
         assert len(result) == 1
@@ -385,8 +421,8 @@ class TestAccountStandardDelegationInspection:
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
         data = response.json()
         # Multisig doesn't support delegations, should return deferred/unsupported
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE" in data["error"]
+        assert_error(data)
+        assert "PERMISSION_SOURCE" in error_message(data)
 
 
 class TestPermissionErrorCodeFormat:
@@ -397,22 +433,22 @@ class TestPermissionErrorCodeFormat:
         """PERMISSION_SOURCE_DEFERRED must appear as a prefix."""
         response = api_method_call("getAccountDelegations", address=ELECTOR_ADDRESS)
         data = response.json()
-        assert data["ok"] is False
-        assert data["error"].startswith("PERMISSION_SOURCE_DEFERRED:")
+        assert_error(data, -32006, "PERMISSION_SOURCE_DEFERRED", retryable=False)
+        assert error_message(data).startswith("PERMISSION_SOURCE_DEFERRED:")
 
     def test_unsupported_error_uses_prefix(self, api_method_call):
         """PERMISSION_SOURCE_UNSUPPORTED must appear as a prefix."""
         response = api_method_call("getAccountDelegations", address=UNINITIALIZED_ADDRESS)
         data = response.json()
-        assert data["ok"] is False
-        assert data["error"].startswith("PERMISSION_SOURCE_UNSUPPORTED:")
+        assert_error(data, -32006, "PERMISSION_SOURCE_UNSUPPORTED", retryable=False)
+        assert error_message(data).startswith("PERMISSION_SOURCE_UNSUPPORTED:")
 
     def test_indexed_stale_error_uses_prefix(self, api_method_call):
         """INDEXED_STATE_STALE must appear as a prefix."""
         response = api_method_call("getAccountDelegations", address=ELECTOR_ADDRESS, source_tier="indexed")
         data = response.json()
-        assert data["ok"] is False
-        assert data["error"].startswith("INDEXED_STATE_STALE:")
+        assert_error(data, -32006, "INDEXED_STATE_STALE", retryable=False)
+        assert error_message(data).startswith("INDEXED_STATE_STALE:")
 
     def test_delegation_unavailable_error_uses_prefix(self, api_method_call_no_get):
         """DELEGATION_UNAVAILABLE must appear as a structured prefix via getSigningPayload."""
@@ -423,15 +459,15 @@ class TestPermissionErrorCodeFormat:
             delegation_ref="example",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert data["error"].startswith("SIGNING_PAYLOAD_UNAVAILABLE: DELEGATION_UNAVAILABLE")
+        assert_error(data)
+        assert error_message(data).startswith("SIGNING_PAYLOAD_UNAVAILABLE: DELEGATION_UNAVAILABLE")
 
     def test_signed_artifact_invalid_prefix(self, api_method_call_no_get):
         """SIGNED_ARTIFACT_INVALID must appear for malformed submissions."""
         response = api_method_call_no_get("submitSignedTransaction", boc="dGVzdA==")
         data = response.json()
-        assert data["ok"] is False
-        assert "SIGNED_ARTIFACT_INVALID" in data["error"]
+        assert_error(data)
+        assert "SIGNED_ARTIFACT_INVALID" in error_message(data)
 
     def test_transaction_intent_unsupported_prefix(self, api_method_call_no_get):
         """TRANSACTION_INTENT_UNSUPPORTED must appear for invalid intents."""
@@ -442,8 +478,8 @@ class TestPermissionErrorCodeFormat:
             fee_payer=UNINITIALIZED_ADDRESS,
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "TRANSACTION_INTENT_UNSUPPORTED" in data["error"]
+        assert_error(data)
+        assert "TRANSACTION_INTENT_UNSUPPORTED" in error_message(data)
 
 
 class TestSecurityLimits:
@@ -458,8 +494,8 @@ class TestSecurityLimits:
             signer=ELECTOR_ADDRESS,
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "exceeds maximum allowed size" in data["error"]
+        assert_error(data)
+        assert "exceeds maximum allowed size" in error_message(data)
 
     def test_expires_at_overflow_rejected(self, api_method_call_no_get, wallets):
         """expires_at above UINT32_MAX must be rejected with INVALID_EXPIRES_AT."""
@@ -474,8 +510,8 @@ class TestSecurityLimits:
             expires_at=4294967296,
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "INVALID_EXPIRES_AT" in data["error"]
+        assert_error(data)
+        assert "INVALID_EXPIRES_AT" in error_message(data)
 
     def test_malformed_init_code_rejected(self, api_method_call_no_get):
         """init_code with invalid base64 must be rejected."""
@@ -486,8 +522,8 @@ class TestSecurityLimits:
             init_code="not-valid-base64!!!",
         )
         data = response.json()
-        assert data["ok"] is False
-        error_lower = data["error"].lower()
+        assert_error(data)
+        error_lower = error_message(data).lower()
         assert "invalid base64" in error_lower
 
 
@@ -501,8 +537,8 @@ class TestSourceTierOverride:
             pytest.skip("multisig not deployed")
         response = api_method_call("getAccountAgents", address=info["address"], source_tier="protocol")
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"]
+        assert_error(data, -32006, "PERMISSION_SOURCE_UNSUPPORTED", retryable=False)
+        assert "PERMISSION_SOURCE_UNSUPPORTED" in error_message(data)
 
     def test_multisig_agents_forced_indexed_rejected(self, api_method_call, wallets):
         """Forcing indexed source for multisig agents should return stale."""
@@ -511,8 +547,8 @@ class TestSourceTierOverride:
             pytest.skip("multisig not deployed")
         response = api_method_call("getAccountAgents", address=info["address"], source_tier="indexed")
         data = response.json()
-        assert data["ok"] is False
-        assert "INDEXED_STATE_STALE" in data["error"]
+        assert_error(data, -32006, "INDEXED_STATE_STALE", retryable=False)
+        assert "INDEXED_STATE_STALE" in error_message(data)
 
     def test_restricted_delegations_forced_protocol_rejected(self, api_method_call, wallets):
         """Forcing protocol source for restricted delegations should fail."""
@@ -521,8 +557,8 @@ class TestSourceTierOverride:
             pytest.skip("restricted wallet not deployed")
         response = api_method_call("getAccountDelegations", address=info["address"], source_tier="protocol")
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"]
+        assert_error(data, -32006, "PERMISSION_SOURCE_UNSUPPORTED", retryable=False)
+        assert "PERMISSION_SOURCE_UNSUPPORTED" in error_message(data)
 
     def test_restricted_delegations_forced_deferred_rejected(self, api_method_call, wallets):
         """Forcing deferred source for restricted delegations should fail."""
@@ -531,8 +567,8 @@ class TestSourceTierOverride:
             pytest.skip("restricted wallet not deployed")
         response = api_method_call("getAccountDelegations", address=info["address"], source_tier="deferred")
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_DEFERRED" in data["error"]
+        assert_error(data, -32006, "PERMISSION_SOURCE_DEFERRED", retryable=False)
+        assert "PERMISSION_SOURCE_DEFERRED" in error_message(data)
 
     def test_multisig_agents_account_standard_succeeds(self, api_method_call, wallets):
         """Forcing account_standard for multisig agents should work (it IS the source)."""
@@ -542,7 +578,7 @@ class TestSourceTierOverride:
         response = _call_until_ok(lambda: api_method_call("getAccountAgents", address=info["address"], source_tier="account_standard"))
         data = response.json()
         # account_standard is the real source, should succeed
-        assert data["ok"] is True
+        assert_success(data)
         assert isinstance(data["result"], list)
 
 
@@ -563,7 +599,7 @@ class TestStatusFilter:
             pytest.skip("multisig not deployed")
         response = _call_until_ok(lambda: api_method_call("getAccountAgents", address=info["address"], status="active"))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert len(data["result"]) == info.get("n", 3)
 
     def test_multisig_agents_non_active_filter_empty(self, api_method_call, wallets):
@@ -573,7 +609,7 @@ class TestStatusFilter:
             pytest.skip("multisig not deployed")
         response = _call_until_ok(lambda: api_method_call("getAccountAgents", address=info["address"], status="expired"))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"] == []
 
     def test_restricted_delegations_active_filter(self, api_method_call, wallets):
@@ -583,7 +619,7 @@ class TestStatusFilter:
             pytest.skip("restricted wallet not deployed")
         response = _call_until_ok(lambda: api_method_call("getAccountDelegations", address=info["address"], status="active"))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert len(data["result"]) == 1
 
     def test_restricted_delegations_non_active_filter_empty(self, api_method_call, wallets):
@@ -593,7 +629,7 @@ class TestStatusFilter:
             pytest.skip("restricted wallet not deployed")
         response = _call_until_ok(lambda: api_method_call("getAccountDelegations", address=info["address"], status="revoked"))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"] == []
 
 
@@ -605,9 +641,9 @@ class TestNominatorPoolCapability:
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
         response = _call_until_ok(lambda: api_method_call("getAccountCapability", address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["account_model"] == "contract.pool.nominator"
         assert result["supports_delegation"] is True
@@ -625,9 +661,9 @@ class TestNominatorPoolDelegationInspection:
         if not info or not info.get("address"):
             pytest.skip("nominator pool not deployed")
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert isinstance(result, list)
         # Pool may be empty (0 nominators) -- that is a valid empty list
@@ -647,8 +683,8 @@ class TestNominatorPoolDelegationInspection:
             pytest.skip("nominator pool not deployed")
         response = api_method_call(self.METHOD, address=info["address"], source_tier="protocol")
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"]
+        assert_error(data, -32006, "PERMISSION_SOURCE_UNSUPPORTED", retryable=False)
+        assert "PERMISSION_SOURCE_UNSUPPORTED" in error_message(data)
 
     def test_nominator_pool_revoked_status_positive(self, api_method_call, wallets):
         """A pool with a withdraw request must materialize status=revoked."""
@@ -658,9 +694,9 @@ class TestNominatorPoolDelegationInspection:
         response = _call_until_ok(
             lambda: api_method_call(self.METHOD, address=info["address"])
         )
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert isinstance(result, list)
         assert len(result) == 1
@@ -677,7 +713,7 @@ class TestNominatorPoolDelegationInspection:
             lambda: api_method_call(self.METHOD, address=info["address"], status="revoked")
         )
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert len(data["result"]) == 1
         assert data["result"][0]["status"] == "revoked"
 
@@ -690,7 +726,7 @@ class TestNominatorPoolDelegationInspection:
             lambda: api_method_call(self.METHOD, address=info["address"], status="active")
         )
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"] == []
 
 
@@ -703,9 +739,9 @@ class TestExpiredPermission:
             pytest.skip("restricted_expired wallet not deployed")
 
         response = _call_until_ok(lambda: api_method_call("getAccountDelegations", address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert isinstance(result, list)
         assert len(result) == 1
@@ -722,7 +758,7 @@ class TestExpiredPermission:
 
         response = _call_until_ok(lambda: api_method_call("getAccountDelegations", address=info["address"], status="active"))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"] == []
 
     def test_restricted_expired_expired_filter_returns(self, api_method_call, wallets):
@@ -733,7 +769,7 @@ class TestExpiredPermission:
 
         response = _call_until_ok(lambda: api_method_call("getAccountDelegations", address=info["address"], status="expired"))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert len(data["result"]) == 1
         assert data["result"][0]["status"] == "expired"
 
@@ -750,8 +786,9 @@ class TestLifecycleMutationRPCs:
             constraints="{}",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"] or "PERMISSION_SOURCE_DEFERRED" in data["error"]
+        error = assert_error(data, -32006, retryable=False)
+        assert error["data"]["reason"] in ("PERMISSION_SOURCE_UNSUPPORTED", "PERMISSION_SOURCE_DEFERRED")
+        assert error["message"].startswith(error["data"]["reason"] + ":")
 
     def test_grant_delegation_immutable_for_restricted(self, api_method_call_no_get, wallets):
         info = wallets.get("restricted")
@@ -765,8 +802,8 @@ class TestLifecycleMutationRPCs:
             constraints="{}",
         ))
         data = response.json()
-        assert data["ok"] is False
-        assert "LIFECYCLE_IMMUTABLE" in data["error"]
+        assert_error(data, -32006, "LIFECYCLE_IMMUTABLE", retryable=False)
+        assert "LIFECYCLE_IMMUTABLE" in error_message(data)
 
     def test_grant_delegation_nominator_pool_returns_mutation_result(self, api_method_call_no_get, wallets):
         info = wallets.get("nominator_pool")
@@ -780,7 +817,7 @@ class TestLifecycleMutationRPCs:
             constraints="{}",
         ))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "lifecycle.mutationResult"
         assert result["method"] == "grantAccountDelegation"
@@ -798,7 +835,7 @@ class TestLifecycleMutationRPCs:
             include_inactive=True,
         ))
         inspect_data = inspect_resp.json()
-        if not inspect_data.get("ok") or not inspect_data["result"]:
+        if not _succeeded(inspect_data) or not inspect_data["result"]:
             pytest.skip("no delegations found in nominator pool")
         real_permission_id = inspect_data["result"][0]["permission_id"]
         # Now revoke using the real ID
@@ -808,7 +845,7 @@ class TestLifecycleMutationRPCs:
             permission_id=real_permission_id,
         ))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "lifecycle.mutationResult"
         assert result["method"] == "revokeAccountDelegation"
@@ -827,8 +864,8 @@ class TestLifecycleMutationRPCs:
             constraints="{}",
         ))
         data = response.json()
-        assert data["ok"] is False
-        assert "LIFECYCLE_IMMUTABLE" in data["error"]
+        assert_error(data, -32006, "LIFECYCLE_IMMUTABLE", retryable=False)
+        assert "LIFECYCLE_IMMUTABLE" in error_message(data)
 
     def test_revoke_agent_deferred_for_elector(self, api_method_call_no_get):
         """revokeAccountAgent on elector should fail with deferred/unsupported."""
@@ -838,8 +875,9 @@ class TestLifecycleMutationRPCs:
             permission_id="dummy:agent:0",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_DEFERRED" in data["error"] or "PERMISSION_SOURCE_UNSUPPORTED" in data["error"]
+        error = assert_error(data, -32006, retryable=False)
+        assert error["data"]["reason"] in ("PERMISSION_SOURCE_DEFERRED", "PERMISSION_SOURCE_UNSUPPORTED")
+        assert error["message"].startswith(error["data"]["reason"] + ":")
 
     def test_revoke_agent_immutable_for_multisig(self, api_method_call_no_get, wallets):
         """revokeAccountAgent on multisig should fail with LIFECYCLE_IMMUTABLE."""
@@ -852,13 +890,13 @@ class TestLifecycleMutationRPCs:
             permission_id="dummy:agent:0",
         ))
         data = response.json()
-        assert data["ok"] is False
-        assert "LIFECYCLE_IMMUTABLE" in data["error"]
+        assert_error(data, -32006, "LIFECYCLE_IMMUTABLE", retryable=False)
+        assert "LIFECYCLE_IMMUTABLE" in error_message(data)
 
     def test_grant_session_unsupported(self, api_method_call_no_get):
         response = api_method_call_no_get("grantAccountSession", address=ELECTOR_ADDRESS)
         data = response.json()
-        assert data["ok"] is False
+        assert_error(data)
 
     def test_revoke_session_unsupported(self, api_method_call_no_get):
         """revokeAccountSession on elector should fail with unsupported/deferred error."""
@@ -868,8 +906,9 @@ class TestLifecycleMutationRPCs:
             permission_id="dummy:session:0",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "PERMISSION_SOURCE_UNSUPPORTED" in data["error"] or "PERMISSION_SOURCE_DEFERRED" in data["error"]
+        error = assert_error(data, -32006, retryable=False)
+        assert error["data"]["reason"] in ("PERMISSION_SOURCE_UNSUPPORTED", "PERMISSION_SOURCE_DEFERRED")
+        assert error["message"].startswith(error["data"]["reason"] + ":")
 
 
 class TestLifecycleRequestEnforcement:
@@ -886,8 +925,8 @@ class TestLifecycleRequestEnforcement:
             scope="bounded_transfer",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "MISSING_GRANTEE" in data["error"]
+        assert_error(data)
+        assert "MISSING_GRANTEE" in error_message(data)
 
     def test_grant_invalid_scope(self, api_method_call_no_get, wallets):
         """Grant with non-canonical scope must fail with INVALID_SCOPE."""
@@ -901,8 +940,8 @@ class TestLifecycleRequestEnforcement:
             scope="invalid_scope_value",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "INVALID_SCOPE" in data["error"]
+        assert_error(data)
+        assert "INVALID_SCOPE" in error_message(data)
 
     def test_grant_model_scope_violation(self, api_method_call_no_get, wallets):
         """Nominator lifecycle must reject canonical scopes outside bounded_transfer."""
@@ -916,8 +955,8 @@ class TestLifecycleRequestEnforcement:
             scope="agent_execution",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "DELEGATION_SCOPE_VIOLATION" in data["error"]
+        assert_error(data)
+        assert "DELEGATION_SCOPE_VIOLATION" in error_message(data)
 
     def test_grant_missing_scope(self, api_method_call_no_get, wallets):
         """Grant without scope must fail with INVALID_SCOPE."""
@@ -930,8 +969,8 @@ class TestLifecycleRequestEnforcement:
             grantee="0:1234",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "INVALID_SCOPE" in data["error"]
+        assert_error(data)
+        assert "INVALID_SCOPE" in error_message(data)
 
     def test_revoke_missing_permission_id(self, api_method_call_no_get, wallets):
         """Revoke without permission_id must fail with MISSING_PERMISSION_ID."""
@@ -943,8 +982,8 @@ class TestLifecycleRequestEnforcement:
             address=info["address"],
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "MISSING_PERMISSION_ID" in data["error"]
+        assert_error(data)
+        assert "MISSING_PERMISSION_ID" in error_message(data)
 
     def test_grant_rejects_structured_constraint_values(self, api_method_call_no_get, wallets):
         """Canonical constraint fields must not silently accept array/object payloads."""
@@ -959,8 +998,8 @@ class TestLifecycleRequestEnforcement:
             constraints={"target_allowlist": ["0:abcdef"]},
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "INVALID_CONSTRAINTS" in data["error"]
+        assert_error(data)
+        assert "INVALID_CONSTRAINTS" in error_message(data)
 
     def test_grant_canonical_scope_accepted(self, api_method_call_no_get, wallets):
         """Grant with valid canonical scope on supported model should succeed."""
@@ -974,7 +1013,7 @@ class TestLifecycleRequestEnforcement:
             scope="bounded_transfer",
         ))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
 
     def test_revoke_unknown_permission_id_rejected(self, api_method_call_no_get, wallets):
         """Revoke must fail if permission_id does not resolve to current pool state."""
@@ -987,8 +1026,8 @@ class TestLifecycleRequestEnforcement:
             permission_id=f"{info['address']}:nominator-stake:9999",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "DELEGATION_UNAVAILABLE" in data["error"]
+        assert_error(data)
+        assert "DELEGATION_UNAVAILABLE" in error_message(data)
 
     def test_revoke_with_permission_id_accepted(self, api_method_call_no_get, wallets):
         """Revoke with valid permission_id on supported model should succeed."""
@@ -1004,7 +1043,7 @@ class TestLifecycleRequestEnforcement:
             permission_id=permission_id,
         ))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
 
     def test_grant_session_validates_request_before_model(self, api_method_call_no_get):
         """Session grant should validate request fields even when model is unsupported."""
@@ -1014,9 +1053,9 @@ class TestLifecycleRequestEnforcement:
             # missing grantee and scope — should fail on request validation
         )
         data = response.json()
-        assert data["ok"] is False
+        assert_error(data)
         # Should get a request validation error, not just unsupported model
-        assert "MISSING_GRANTEE" in data["error"] or "INVALID_SCOPE" in data["error"]
+        assert "MISSING_GRANTEE" in error_message(data) or "INVALID_SCOPE" in error_message(data)
 
     def test_grant_agent_immutable_after_request_validation(self, api_method_call_no_get, wallets):
         """Agent grant on multisig should validate request, then report immutable."""
@@ -1031,8 +1070,8 @@ class TestLifecycleRequestEnforcement:
             scope="agent_execution",
         ))
         data = response.json()
-        assert data["ok"] is False
-        assert "LIFECYCLE_IMMUTABLE" in data["error"]
+        assert_error(data, -32006, "LIFECYCLE_IMMUTABLE", retryable=False)
+        assert "LIFECYCLE_IMMUTABLE" in error_message(data)
 
 
 class TestLifecycleResponseShape:
@@ -1050,7 +1089,7 @@ class TestLifecycleResponseShape:
             scope="bounded_transfer",
         ))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "lifecycle.mutationResult"
         assert result["method"] == "grantAccountDelegation"
@@ -1080,7 +1119,7 @@ class TestLifecycleResponseShape:
             permission_id=permission_id,
         ))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "lifecycle.mutationResult"
         assert result["method"] == "revokeAccountDelegation"
@@ -1099,7 +1138,7 @@ class TestLifecycleResponseShape:
         inspect_resp = _call_until_ok(
             lambda: api_method_call("getAccountDelegations", address=info["address"])
         )
-        if inspect_resp.json().get("ok") and inspect_resp.json()["result"]:
+        if _succeeded(inspect_resp.json()) and inspect_resp.json()["result"]:
             inspection_keys = set(inspect_resp.json()["result"][0].keys())
         else:
             pytest.skip("no delegation data available for comparison")
@@ -1111,7 +1150,7 @@ class TestLifecycleResponseShape:
             grantee="0:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
             scope="bounded_transfer",
         ))
-        if not grant_resp.json().get("ok"):
+        if not _succeeded(grant_resp.json()):
             pytest.skip("grant did not succeed")
         preview_keys = set(grant_resp.json()["result"]["affected_object_preview"].keys())
 
@@ -1141,7 +1180,7 @@ class TestDelegationScopeValidation:
             delegation_ref=delegation_id,
         ))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "transaction.intent"
         assert result["delegation_ref"] == delegation_id
@@ -1159,8 +1198,8 @@ class TestDelegationScopeValidation:
             delegation_ref=delegation_id,
         ))
         data = response.json()
-        assert data["ok"] is False
-        assert "DELEGATION_EXPIRED" in data["error"]
+        assert_error(data)
+        assert "DELEGATION_EXPIRED" in error_message(data)
 
     def test_revoked_delegation_ref_rejected(self, api_method_call_no_get, wallets):
         """A delegation_ref on a pool with withdrawn nominator should fail."""
@@ -1177,8 +1216,8 @@ class TestDelegationScopeValidation:
             delegation_ref=delegation_id,
         ))
         data = response.json()
-        assert data["ok"] is False
-        assert "DELEGATION_REVOKED" in data["error"]
+        assert_error(data)
+        assert "DELEGATION_REVOKED" in error_message(data)
 
     def test_delegation_ref_on_unsupported_model_rejected(self, api_method_call_no_get):
         """A delegation_ref on a model without delegation support should fail."""
@@ -1189,8 +1228,8 @@ class TestDelegationScopeValidation:
             delegation_ref="fake-delegation-id",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "DELEGATION_UNAVAILABLE" in data["error"]
+        assert_error(data)
+        assert "DELEGATION_UNAVAILABLE" in error_message(data)
 
     def test_nonexistent_delegation_ref_rejected(self, api_method_call_no_get, wallets):
         """A delegation_ref that doesn't match any real delegation should fail."""
@@ -1204,8 +1243,8 @@ class TestDelegationScopeValidation:
             delegation_ref="nonexistent-id",
         ))
         data = response.json()
-        assert data["ok"] is False
-        assert "DELEGATION_UNAVAILABLE" in data["error"]
+        assert_error(data)
+        assert "DELEGATION_UNAVAILABLE" in error_message(data)
 
     def test_restricted_wrong_delegation_ref_rejected(self, api_method_call_no_get, wallets):
         """Restricted wallets must reject delegation_ref values that do not match the real id."""
@@ -1219,8 +1258,8 @@ class TestDelegationScopeValidation:
             delegation_ref=f"{info['address']}:restricted-vesting:999",
         ))
         data = response.json()
-        assert data["ok"] is False
-        assert "DELEGATION_UNAVAILABLE" in data["error"]
+        assert_error(data)
+        assert "DELEGATION_UNAVAILABLE" in error_message(data)
 
     def test_session_ref_still_rejected(self, api_method_call_no_get):
         """session_ref should still be rejected with FEATURE_DEFERRED."""
@@ -1231,8 +1270,8 @@ class TestDelegationScopeValidation:
             session_ref="some-session",
         )
         data = response.json()
-        assert data["ok"] is False
-        assert "FEATURE_DEFERRED" in data["error"]
+        assert_error(data)
+        assert "FEATURE_DEFERRED" in error_message(data)
 
 
 class TestSessionWalletCapability:
@@ -1243,9 +1282,9 @@ class TestSessionWalletCapability:
         if not info or not info.get("address"):
             pytest.skip("session wallet not deployed")
         response = _call_until_ok(lambda: api_method_call("getAccountCapability", address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["account_model"] == "advanced.wallet.session"
         assert result["supports_sessions"] is True
@@ -1261,9 +1300,9 @@ class TestSessionWalletInspection:
         if not info or not info.get("address"):
             pytest.skip("session wallet not deployed")
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"]))
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert isinstance(result, list)
         assert len(result) == 2
@@ -1286,7 +1325,7 @@ class TestSessionWalletInspection:
             pytest.skip("session wallet not deployed")
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"], status="active"))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert len(data["result"]) == 1
         assert data["result"][0]["status"] == "active"
 
@@ -1296,7 +1335,7 @@ class TestSessionWalletInspection:
             pytest.skip("session wallet not deployed")
         response = _call_until_ok(lambda: api_method_call(self.METHOD, address=info["address"], status="revoked"))
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert len(data["result"]) == 1
         assert data["result"][0]["status"] == "revoked"
 

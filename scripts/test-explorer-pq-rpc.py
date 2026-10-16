@@ -187,7 +187,13 @@ def main():
     (out / "addresses.json").write_text(json.dumps(addresses, indent=2) + "\n")
     records = []
 
-    def request(method, params, *, rest=False, get=False, node=0, expected=200):
+    def request(method, params, *, rest=False, get=False, node=0, error=None):
+        """Call one method; ``error`` is the expected (code, reason) of a refusal.
+
+        Every method answer is HTTP 200 on every route: success carries
+        ``result``, a refusal carries an ``error`` object whose ``data`` holds
+        the stable reason and the retry hint.
+        """
         body = params if rest else {"jsonrpc": "2.0", "id": 7, "method": method, "params": params}
         data = None if get else json.dumps(body).encode()
         url = f"http://127.0.0.1:{args.rpc_port + node}/" + (method if rest or get else "jsonRPC")
@@ -222,7 +228,16 @@ def main():
                 "response": value,
             }
         )
-        assert status == expected, (method, status, value.get("error"), value.get("error_info"))
+        assert status == 200, (method, status, value)
+        assert "ok" not in value and "error_info" not in value, (method, value)
+        if error is None:
+            assert "result" in value and "error" not in value, (method, value)
+        else:
+            code, reason = error
+            failure = value.get("error")
+            assert isinstance(failure, dict), (method, value)
+            assert failure.get("code") == code, (method, value)
+            assert failure.get("data", {}).get("reason") == reason, (method, value)
         return value
 
     env = dict(os.environ, TOS_BUILD_DIR=str(build), PYTHONUNBUFFERED="1")
@@ -299,8 +314,12 @@ def main():
                 )
                 assert "proof" not in same
             fork = dict(block, file_hash=base64.b64encode(bytes(32)).decode())
-            wrong = request("getMasterchainBlockSignatures", {"block_id": fork}, expected=409)
-            assert wrong["error_info"]["reason"] == "BLOCK_ID_MISMATCH"
+            wrong = request(
+                "getMasterchainBlockSignatures",
+                {"block_id": fork},
+                error=(-32009, "BLOCK_ID_MISMATCH"),
+            )
+            assert wrong["error"]["data"]["retryable"] is False
             # Pin one newer observation so the basechain genesis is available everywhere.
             observation = request("getMasterchainInfo", {})["result"]["last"]
             for name, address in addresses.items():
@@ -311,8 +330,8 @@ def main():
                     "with_proof": True,
                 }
                 if name == "malformed_module":
-                    bad = request("getAccountCapability", params, expected=500)
-                    assert bad["error_info"]["reason"] == "STATE_INVALID"
+                    bad = request("getAccountCapability", params, error=(-32603, "STATE_INVALID"))
+                    assert bad["error"]["data"]["retryable"] is False
                     continue
                 first = request("getAccountCapability", params)["result"]
                 second = request("getWalletInformation", params, rest=True)["result"]
@@ -384,7 +403,9 @@ def main():
                     and absent_policy["decoded"]["value"] is None
                 )
                 request(
-                    "getConfigParam", {"param": 48, "seqno": observation["seqno"]}, expected=500
+                    "getConfigParam",
+                    {"param": 48, "seqno": observation["seqno"]},
+                    error=(-32004, "CONFIG_PARAM_ABSENT"),
                 )
             # The current generated TL store writes a bare blockIdExt and a
             # count-prefixed bare vector. Pin Config 8 to compare exact replies.

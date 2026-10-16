@@ -18,6 +18,8 @@ import json
 import pytest
 import requests
 
+from rpc_contract import assert_error, expect_error, expect_invalid_param
+
 
 # ── request buffer lifetime ────────────────────────────────────────────
 #
@@ -76,8 +78,8 @@ class TestLargeResponses:
     def test_large_response_is_parseable(self, endpoint, headers, last_mc_seqno, method, params):
         """A response assembled past a fixed buffer used to be cut mid-value.
 
-        The status was still 200 and `ok` was still true, so only parsing
-        the body catches it.
+        The status was still 200 and the answer still claimed success, so
+        only parsing the body catches it.
         """
         body = dict(params)
         if method == "getBlockTransactionsExt":
@@ -85,8 +87,9 @@ class TestLargeResponses:
         else:
             pytest.skip("needs a funded address fixture; covered by the unit test")
         r = requests.post(endpoint + method, json=body, headers=headers, timeout=30)
-        assert r.status_code in (200, 404, 422, 500), r.text
-        r.json()  # raises if the body was truncated
+        assert r.status_code == 200, r.text
+        answer = r.json()  # raises if the body was truncated
+        assert ("result" in answer) != ("error" in answer), answer
 
 
 # ── request id handling ────────────────────────────────────────────────
@@ -124,6 +127,168 @@ class TestRequestId:
         assert r.status_code == 200, r.text
         assert r.json()["id"] == json.loads(raw_id)
 
+
+
+# ── wire contract ──────────────────────────────────────────────────────
+#
+# One answer shape for every route: success is {jsonrpc, id, result}, failure
+# is {jsonrpc, id, error: {code, message, data: {schema_version, reason,
+# retryable}}} at HTTP 200. There is no `ok` flag and no HTTP status that
+# carries a method error.
+
+class TestErrorShape:
+
+    def test_method_error_has_one_shape_on_every_route(self, api_method_call):
+        response = api_method_call("detectAddress", address="not_an_address")
+        error = expect_error(response, -32602, "INVALID_ARGUMENT", retryable=False)
+        assert error["message"]
+        assert set(response.json()) == {"jsonrpc", "id", "error"}
+
+    def test_rest_routes_answer_null_id(self, endpoint, headers):
+        for r in (
+            requests.get(endpoint + "detectAddress", params={"address": "x"},
+                         headers=headers, timeout=10),
+            requests.post(endpoint + "detectAddress", json={"address": "x"},
+                          headers=headers, timeout=10),
+        ):
+            expect_error(r, -32602, "INVALID_ARGUMENT")
+            assert r.json()["id"] is None
+
+    def test_success_has_one_shape_on_every_route(self, api_method_call):
+        response = api_method_call("getMasterchainInfo")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert set(body) == {"jsonrpc", "id", "result"}
+        assert body["jsonrpc"] == "2.0"
+
+    def test_strict_param_error_names_the_parameter(self, api_method_call):
+        response = api_method_call(
+            "lookupBlock", workchain=-1, shard="zz", seqno=1
+        )
+        expect_invalid_param(response, "shard")
+
+
+class TestEnvelope:
+
+    @staticmethod
+    def _post(endpoint, headers, payload):
+        return requests.post(endpoint + "jsonRPC", json=payload, headers=headers, timeout=10)
+
+    @pytest.mark.parametrize("payload", [
+        {"method": "getMasterchainInfo", "params": {}, "id": 1},
+        {"jsonrpc": "1.0", "method": "getMasterchainInfo", "params": {}, "id": 1},
+        {"jsonrpc": 2.0, "method": "getMasterchainInfo", "params": {}, "id": 1},
+        {"jsonrpc": "2.0", "method": "getMasterchainInfo", "params": "x", "id": 1},
+        {"jsonrpc": "2.0", "method": "getMasterchainInfo", "params": None, "id": 1},
+        {"jsonrpc": "2.0", "method": 12, "params": {}, "id": 1},
+        {"jsonrpc": "2.0", "params": {}, "id": 1},
+    ], ids=["no-jsonrpc", "jsonrpc-1.0", "jsonrpc-number", "params-string",
+            "params-null", "method-number", "no-method"])
+    def test_invalid_envelope(self, endpoint, headers, payload):
+        r = self._post(endpoint, headers, payload)
+        expect_error(r, -32600, "INVALID_REQUEST", retryable=False)
+
+    def test_invalid_envelope_is_answered_even_without_id(self, endpoint, headers):
+        r = self._post(endpoint, headers, {"jsonrpc": "1.0", "method": "getMasterchainInfo"})
+        expect_error(r, -32600, "INVALID_REQUEST")
+
+    @pytest.mark.parametrize("body", [42, "x", True])
+    def test_top_level_not_object_or_array(self, endpoint, headers, body):
+        r = self._post(endpoint, headers, body)
+        expect_error(r, -32600, "INVALID_REQUEST")
+
+    def test_unparseable_body(self, endpoint, headers):
+        r = requests.post(
+            endpoint + "jsonRPC",
+            data=b"{not json",
+            headers={**headers, "Content-Type": "application/json"},
+            timeout=10,
+        )
+        expect_error(r, -32700, "PARSE_ERROR", retryable=False)
+        assert r.json()["id"] is None
+
+    def test_positional_params_refused(self, endpoint, headers):
+        r = self._post(endpoint, headers, {
+            "jsonrpc": "2.0", "method": "getMasterchainInfo", "params": [], "id": 5,
+        })
+        error = expect_error(r, -32602, "INVALID_ARGUMENT", retryable=False)
+        assert "positional" in error["message"]
+        assert r.json()["id"] == 5
+
+    def test_invalid_id_type_answers_null_id(self, endpoint, headers):
+        r = self._post(endpoint, headers, {
+            "jsonrpc": "2.0", "method": "getMasterchainInfo", "params": {}, "id": {"x": 1},
+        })
+        expect_error(r, -32600, "INVALID_REQUEST")
+        assert r.json()["id"] is None
+
+    def test_absent_params_is_empty_object(self, endpoint, headers):
+        r = self._post(endpoint, headers, {
+            "jsonrpc": "2.0", "method": "getMasterchainInfo", "id": "s",
+        })
+        assert r.status_code == 200, r.text
+        assert "result" in r.json() and r.json()["id"] == "s"
+
+    @pytest.mark.parametrize("method,params", [
+        ("getMasterchainInfo", {}),
+        ("detectAddress", {"address": "x"}),
+        ("noSuchMethod", {}),
+    ], ids=["success", "method-error", "unknown-method"])
+    def test_notification_gets_empty_204(self, endpoint, headers, method, params):
+        r = self._post(endpoint, headers, {"jsonrpc": "2.0", "method": method, "params": params})
+        assert r.status_code == 204, r.text
+        assert r.content == b""
+
+    def test_null_id_is_not_a_notification(self, endpoint, headers):
+        r = self._post(endpoint, headers, {
+            "jsonrpc": "2.0", "method": "getMasterchainInfo", "params": {}, "id": None,
+        })
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["id"] is None and "result" in body
+
+    def test_all_notification_batch_gets_empty_204(self, endpoint, headers):
+        r = self._post(endpoint, headers, [
+            {"jsonrpc": "2.0", "method": "getMasterchainInfo", "params": {}},
+            {"jsonrpc": "2.0", "method": "detectAddress", "params": {"address": "x"}},
+        ])
+        assert r.status_code == 204, r.text
+        assert r.content == b""
+
+    def test_batch_element_errors_are_objects(self, endpoint, headers):
+        r = self._post(endpoint, headers, [
+            {"jsonrpc": "2.0", "method": "getMasterchainInfo", "params": [], "id": 1},
+            {"jsonrpc": "2.0", "method": "getMasterchainInfo", "id": 2},
+            7,
+        ])
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert isinstance(body, list) and len(body) == 3
+        assert_error(body[0], -32602, "INVALID_ARGUMENT")
+        assert body[0]["id"] == 1
+        assert "result" in body[1] and body[1]["id"] == 2
+        assert_error(body[2], -32600, "INVALID_REQUEST")
+        assert body[2]["id"] is None
+
+
+class TestPreDispatchRefusals:
+
+    def test_unsupported_http_method(self, endpoint, headers):
+        r = requests.put(endpoint + "getMasterchainInfo", json={}, headers=headers, timeout=10)
+        expect_error(r, -32600, "INVALID_REQUEST", status=405)
+
+    def test_post_without_json_content_type(self, endpoint, headers):
+        r = requests.post(
+            endpoint + "jsonRPC",
+            data=b'{"jsonrpc":"2.0","method":"getMasterchainInfo","params":{},"id":1}',
+            headers={**headers, "Content-Type": "text/plain"},
+            timeout=10,
+        )
+        expect_error(r, -32600, "INVALID_REQUEST", status=415)
+
+    def test_unknown_get_path(self, endpoint, headers):
+        r = requests.get(endpoint + "noSuchMethod", headers=headers, timeout=10)
+        expect_error(r, -32601, "METHOD_NOT_FOUND", status=404)
 
 # ── per-source budget ──────────────────────────────────────────────────
 

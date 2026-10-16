@@ -37,9 +37,20 @@ def rpc(origin: str, method: str, **params):
     }
 
 
+def succeeded(body):
+    """A JSON-RPC success answer: a result and no error object. Replies retained
+    from earlier runs also carried an ok flag; it must not say false."""
+    return (
+        isinstance(body, dict)
+        and "result" in body
+        and "error" not in body
+        and body.get("ok", True) is True
+    )
+
+
 def result(exchange):
     parsed = json.loads(exchange["response"])
-    assert exchange["http_status"] == 200 and parsed.get("ok") is True, parsed
+    assert exchange["http_status"] == 200 and succeeded(parsed), parsed
     return parsed["result"]
 
 

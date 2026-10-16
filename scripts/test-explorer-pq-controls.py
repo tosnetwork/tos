@@ -14,14 +14,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = (
+    # Without the GET scalar conversion a canonical seqno stays a string, the
+    # strict parser refuses it with -32602 at HTTP 200, and the fixture's
+    # saturated-budget answer (RATE_LIMITED) is never reached.
     (
         "get-url-scalars",
         "validator-engine/json-rpc-server.cpp",
-        'if (explorer_types && (key == "seqno" || key == "param" || key == "config_id"))',
-        'if (false && explorer_types && (key == "seqno" || key == "param" || key == "config_id"))',
+        'if (key == "workchain" || key == "seqno" || key == "unixtime" || key == "param" || key == "config_id") {',
+        'if (false && (key == "workchain" || key == "seqno" || key == "unixtime" || key == "param" || key == "config_id")) {',
         "test-json-rpc-transport",
         "+explorer_get_normalizes",
-        "HTTP/1.1 422 Unprocessable Entity != HTTP/1.1 429 Too Many Requests",
+        "Expectation failed: body.find(path.second ?",
     ),
     # The HTTP saturation fixture deliberately owns no backend. Removing the
     # admission guard must hit this exact backend-access trap, never an unrelated
