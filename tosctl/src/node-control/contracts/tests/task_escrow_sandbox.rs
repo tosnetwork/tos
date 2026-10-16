@@ -11,6 +11,9 @@
 //! accept -> result -> settle flow, the cancel and timeout flows, and the
 //! unauthorized/illegal-transition rejections.
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 use chain_block::{
     BuilderData, Cell, Coins, CurrencyCollection, IBitstring, MsgAddressInt, Serializable,
     StateInit,
@@ -1739,7 +1742,9 @@ fn default_action_value(bc: &Blockchain, escrow: &MsgAddressInt) -> u64 {
 /// rest of the budget.
 #[test]
 fn a_basechain_fallback_paying_masterchain_accounts_keeps_both_shares_whole() {
-    let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
+    let mut bc =
+        Blockchain::with_global_version_and_base_workchain(current_network::global_version())
+            .expect("blockchain");
     let mut config = bc.config_params().clone();
     let mut masterchain = config.fwd_prices(true).expect("masterchain forwarding");
     let basechain = config.fwd_prices(false).expect("basechain forwarding");

@@ -8,6 +8,7 @@ import benchmark_transactions as bench
 from cells import make_dict
 from default_credit_timing import default_configuration
 from fee_tx_parity import Cell, credit, read_dict
+from native import CURRENT_GLOBAL_VERSION
 
 
 class BenchmarkControls(unittest.TestCase):
@@ -19,7 +20,17 @@ class BenchmarkControls(unittest.TestCase):
             root = (
                 Cell()
                 .uint(42, 256)
-                .ref(make_dict({21: Cell().ref(prices), 8: Cell().ref(Cell().uint(17, 32))}, 32))
+                .ref(
+                    make_dict(
+                        {
+                            21: Cell().ref(prices),
+                            8: Cell().ref(
+                                Cell().uint(0xC4, 8).uint(CURRENT_GLOBAL_VERSION, 32).uint(0, 64)
+                            ),
+                        },
+                        32,
+                    )
+                )
             )
             changed = default_configuration(root)
             self.assertEqual(changed.bits, root.bits)

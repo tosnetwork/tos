@@ -19,6 +19,7 @@ from pathlib import Path
 
 from cells import Cell, from_boc
 from native import (
+    CURRENT_GLOBAL_VERSION,
     GLOBAL_ID,
     NOW,
     ROOT,
@@ -114,10 +115,10 @@ class SdkWalletVectorTests(unittest.TestCase):
                 expected = int.from_bytes(state_init(code, boc(vector["data"])).hash, "big")
                 self.assertEqual(address[1], expected, "SDK address must be the StateInit hash")
 
-    def run_vector(self, vector):
+    def run_vector(self, vector, version=CURRENT_GLOBAL_VERSION):
         code, data = self.code[vector["wallet"]], boc(vector["data"])
         address = raw_address(vector["address"])
-        emulator = Emulator(6)
+        emulator = Emulator(version)
         self.addCleanup(emulator.close)
         shard = active_account(address, code, data)
         return emulator.send(shard, external(address, boc(vector["body"]))), data
@@ -145,6 +146,25 @@ class SdkWalletVectorTests(unittest.TestCase):
                 self.assertEqual(s.addr(), raw_address(vector["destination"]))
                 self.assertEqual(s.coins(), int(vector["value"]))
 
+    def test_pre_genesis_vectors_retain_signature_and_deploy_boundaries(self):
+        for vector in self.vectors["vectors"]:
+            for execute in (self.run_vector, self.deploy_vector):
+                with self.subTest(
+                    wallet=vector["wallet"], network=vector["network"], execute=execute.__name__
+                ):
+                    result, _ = execute(vector, version=6)
+                    if vector["network"] == GLOBAL_ID:
+                        self.assertTrue(result["success"], result)
+                        self.assertEqual(result["details"]["exit"], 0, result)
+                        self.assertFalse(result["details"]["aborted"], result)
+                    else:
+                        code = (
+                            result["details"]["exit"]
+                            if result["success"]
+                            else result.get("vm_exit_code")
+                        )
+                        self.assertEqual(code, 36, result)
+
     def test_a_message_signed_for_another_network_is_refused(self):
         for vector in self.vectors["vectors"]:
             if vector["network"] == GLOBAL_ID:
@@ -161,10 +181,10 @@ class SdkWalletVectorTests(unittest.TestCase):
                     "a refused external message must not commit",
                 )
 
-    def deploy_vector(self, vector):
+    def deploy_vector(self, vector, version=CURRENT_GLOBAL_VERSION):
         code, data = self.code[vector["wallet"]], boc(vector["data"])
         address = raw_address(vector["address"])
-        emulator = Emulator(6)
+        emulator = Emulator(version)
         self.addCleanup(emulator.close)
         message = external_with_init(address, state_init(code, data), boc(vector["deploy"]))
         return emulator.send(uninitialized_account(address), message), data

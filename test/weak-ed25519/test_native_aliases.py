@@ -24,6 +24,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from itertools import product
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,6 +33,7 @@ from cells import Cell, from_boc, make_dict
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from native import (
+    CURRENT_GLOBAL_VERSION,
     GLOBAL_ID,
     NOW,
     Emulator,
@@ -262,8 +264,10 @@ class ForgedAliasTests(unittest.TestCase):
         shipped = registry_code()
         mutant = compile_without("native-registry-code.fc", REGISTRY_GUARD)
         for alias in (IDENTITY_ALIAS, ORDER2_ALIAS):
-            for code, expected in ((shipped, REG_ERR_WEAK_KEY), (mutant, 0)):
-                with self.subTest(alias=alias.hex()[:4], guarded=expected != 0):
+            for (code, expected), version in product(
+                ((shipped, REG_ERR_WEAK_KEY), (mutant, 0)), (14, CURRENT_GLOBAL_VERSION)
+            ):
+                with self.subTest(alias=alias.hex()[:4], guarded=expected != 0, version=version):
                     agent = Registry(code, registry_policy([(strong, 1), (alias, 1)], 2))
                     for nonce in range(1, 64):
                         action = agent.delegate(nonce)
@@ -275,7 +279,7 @@ class ForgedAliasTests(unittest.TestCase):
                     authority = Registry.signatures(
                         [(strong, strong_key.sign(action.hash)), (alias, forged)]
                     )
-                    emulator = Emulator(global_version=14)
+                    emulator = Emulator(global_version=version)
                     try:
                         exit_code, result = send(
                             emulator, agent.shard, agent.submit(action, authority)

@@ -11,6 +11,9 @@
 //! execution, parameter updates that make older orders stale, expiry, and forged or
 //! malformed messages at every step.
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 use chain_block::{
     BuilderData, Cell, CurrencyCollection, Deserializable, IBitstring, InternalMessageHeader,
     Message, MsgAddressInt, Serializable, SliceData, StateInit,
@@ -142,7 +145,9 @@ impl Fixture {
 
     /// A wallet whose signers are alice, bob, carol and `extra_signers` more addresses.
     fn with_wallet(threshold: u8, extra_signers: u8) -> Self {
-        let mut bc = Blockchain::with_global_version_and_base_workchain(14).expect("blockchain");
+        let mut bc =
+            Blockchain::with_global_version_and_base_workchain(current_network::global_version())
+                .expect("blockchain");
         bc.set_now(NOW);
         let funder = bc.treasury("funder", 10_000 * TOS).expect("funder");
         let mut signers: Vec<Treasury> = ["alice", "bob", "carol"]

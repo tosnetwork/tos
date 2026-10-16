@@ -8,6 +8,18 @@ the active version of a network is its on-chain ConfigParam 8.
 
 It enables protocol capability bits and gates behavior across validators, contracts, and VM execution.
 
+Current-network test fixtures use version 16, including the native authentication
+emulator. Minimum-version compatibility tests and future-version rejection tests
+select their versions explicitly. Recorded configuration BOCs and historical
+measurements retain the version actually observed; changing a fixture default
+never changes an existing network.
+
+PredictionMarket V1 permits risk-increasing operations only at versions 14, 15
+and 16. Its contract and CLI keep the same explicit allowlist. Later versions
+continue to reject new exposure while allowing withdrawals and other exit
+operations on already activated markets. The production-BOC sandbox exercises
+the current version and the future-version rejection/withdrawal boundary.
+
 AI actor protocol primitives that affect consensus-visible behavior, such as scheduled task timeouts, delivery failure records, supervision, or new execution semantics, must be gated through the same global-version and capability process.
 
 ## Why It Matters

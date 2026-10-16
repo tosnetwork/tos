@@ -103,7 +103,7 @@ def main():
             "block_lt": 1000,
             "rand_seed": "00" * 32,
             "config_root_hash": "cf" * 32,
-            "global_version": 18,
+            "global_version": behaviour["global_version"],
             "gas_limit": 1000000,
             "libraries": [],
         },

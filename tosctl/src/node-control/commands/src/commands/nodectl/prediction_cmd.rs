@@ -41,7 +41,7 @@ use std::{
 };
 
 const OPERATION_BUDGET: u64 = 1_000_000_000;
-const AUDITED_GLOBAL_VERSIONS: [u32; 2] = [14, 15];
+const AUDITED_GLOBAL_VERSIONS: [u32; 3] = [14, 15, 16];
 
 #[derive(clap::Args, Clone)]
 #[command(about = "PredictionMarket V1 operations")]
@@ -2182,7 +2182,9 @@ mod tests {
         assert!(validate_global_version(13, false).is_err());
         assert!(validate_global_version(14, true).is_ok());
         assert!(validate_global_version(15, true).is_ok());
-        assert!(validate_global_version(16, true).is_err());
+        assert!(validate_global_version(16, true).is_ok());
+        assert!(validate_global_version(17, true).is_err());
+        assert!(validate_global_version(17, false).is_ok());
         assert!(validate_global_version(16, false).is_ok());
     }
 

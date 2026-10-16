@@ -16,6 +16,9 @@
 //! native engine. The test names refer to the matrix in
 //! crosschain/token-bridge/SETTLEMENT-PROTOCOL.md.
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
+
 #[path = "token_bridge/burn.rs"]
 mod burn;
 #[path = "token_bridge/deep.rs"]
