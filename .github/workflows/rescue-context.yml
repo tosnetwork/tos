@@ -62,10 +62,10 @@ jobs:
     name: ${{ matrix.suite }} (${{ matrix.runner }})
     strategy:
       fail-fast: false
-      # Start all 15 isolated workers; long suites must not wait for short suites.
-      max-parallel: 16
+      # Start all 19 manual workers (10 on PRs); long suites must not wait for short suites.
+      max-parallel: 20
       matrix:
-        suite: [signer-core, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
+        suite: [signer-fee, signer-mnemonic, signer-vault, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
         runner: ${{ fromJSON(github.event_name == 'workflow_dispatch' && '["ubuntu-24.04","ubuntu-24.04-arm"]' || '["ubuntu-24.04"]') }}
         exclude:
           # These controls were x86-only in the serial workflow.
@@ -118,7 +118,7 @@ jobs:
         if: contains(fromJSON('["fee-lifecycle","fee-successor","fee-promotion"]'), matrix.suite)
         run: cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet
       - name: Generated admission configuration loading
-        if: contains(fromJSON('["signer-core","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"]'), matrix.suite)
+        if: contains(fromJSON('["signer-fee","signer-mnemonic","signer-vault","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"]'), matrix.suite)
         run: |
           python test/wallet-quantum/test_recorded_admission.py
           python test/wallet-quantum/admission_config_controls.py --output-dir artifacts/context/quantum-generated-config
@@ -168,7 +168,7 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/quantum-post-accept
       - name: SDK deployment and native cached recovery on generated configuration
-        if: contains(fromJSON('["signer-core","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"]'), matrix.suite)
+        if: contains(fromJSON('["signer-fee","signer-mnemonic","signer-vault","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"]'), matrix.suite)
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
             --features native-wallet-signer --example lms_fee_cache_fixture \
@@ -187,8 +187,8 @@ jobs:
         run: |
           python test/wallet-quantum/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer
           python test/wallet-quantum/pq_signer_controls.py --c-api --build build --output artifacts/context/wallet-pq-signer-c
-      - name: Rust native wallet signer and proven-key controls
-        if: contains(fromJSON('["signer-core"]'), matrix.suite)
+      - name: Native fee signer and tree controls
+        if: contains(fromJSON('["signer-fee"]'), matrix.suite)
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer
@@ -204,12 +204,18 @@ jobs:
           python test/wallet-quantum/fee_tree_controls.py --output artifacts/context/fee-tree-controls
           python test/wallet-quantum/fee_tree_cache_controls.py --output artifacts/context/fee-tree-cache-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib internal_fee_signature_matches_independent_vm
+      - name: Native mnemonic and KDF controls
+        if: contains(fromJSON('["signer-mnemonic"]'), matrix.suite)
+        run: |
           python test/wallet-quantum/kdf_controls.py --output artifacts/context/wallet-kdf-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos-native-mnemonic
           python test/wallet-quantum/mnemonic_vector_check.py
           python test/wallet-quantum/mnemonic_controls.py --output artifacts/context/native-mnemonic-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --features vault --lib vault::mnemonic_tests
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --features native-wallet-signer --lib fee_state_tests
+      - name: Vault signer persistence and proven-key controls
+        if: contains(fromJSON('["signer-vault"]'), matrix.suite)
+        run: |
           python test/wallet-quantum/rust_signer_controls.py --output artifacts/context/rust-wallet-signer-controls
           python test/wallet-quantum/vault_signer_controls.py --output artifacts/context/vault-wallet-signer-controls
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p secrets-vault --lib storage::

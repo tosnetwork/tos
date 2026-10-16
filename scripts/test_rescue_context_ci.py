@@ -32,9 +32,9 @@ class RescueCiTests(unittest.TestCase):
 
     def test_all_original_steps_and_architectures_remain(self):
         coverage = self.check()
-        self.assertEqual(len(coverage), 15)
+        self.assertEqual(len(coverage), 19)
         self.assertEqual(len(self.contract["steps"]), 52)
-        for row in self.contract["steps"]:
+        for row in guard.expanded_steps(self.contract):
             expected = {guard.RUNNERS[0]} if row["x86_only"] else set(guard.RUNNERS)
             self.assertEqual(
                 {runner for (_, runner), names in coverage.items() if row["name"] in names},
@@ -43,7 +43,7 @@ class RescueCiTests(unittest.TestCase):
 
     def test_event_specific_scheduling_and_receipt_cli(self):
         coverage = self.check()
-        for event, count in [("pull_request", 8), ("workflow_dispatch", 15)]:
+        for event, count in [("pull_request", 10), ("workflow_dispatch", 19)]:
             scheduled = guard.coverage_for_event(coverage, event)
             self.assertEqual(len(scheduled), count)
             if event == "pull_request":
@@ -104,7 +104,7 @@ class RescueCiTests(unittest.TestCase):
                             "--write-receipt",
                             str(root / "unexpected.json"),
                             "--suite",
-                            "signer-core",
+                            "signer-fee",
                             "--runner",
                             guard.RUNNERS[1],
                         ],
@@ -118,7 +118,7 @@ class RescueCiTests(unittest.TestCase):
             guard.coverage_for_event(coverage, "push")
 
     def test_each_original_step_cannot_disappear_change_or_be_skipped(self):
-        for row in self.contract["steps"]:
+        for row in guard.expanded_steps(self.contract):
             name = row["name"]
             block = next(
                 b
@@ -129,7 +129,7 @@ class RescueCiTests(unittest.TestCase):
                 ("", "missing serial step"),
                 (
                     block.replace("        run:", "        run: exit 0 #", 1),
-                    "serial commands changed",
+                    "serial commands changed|split commands do not reconstruct original|split body must be a literal script",
                 ),
                 (
                     block.replace("        run:", "        if: false\n        run:", 1),
@@ -143,6 +143,25 @@ class RescueCiTests(unittest.TestCase):
                 ):
                     self.check(self.workflow.replace(block, mutation, 1))
 
+    def test_split_commands_cannot_change_even_with_updated_part_hash(self):
+        contract = copy.deepcopy(self.contract)
+        original = next(row for row in contract["steps"] if "parts" in row)
+        part = original["parts"][0]
+        block = next(
+            b
+            for b in guard.blocks(self.workflow.split("\n  parity:\n")[0])
+            if b.startswith("      - name: " + part["name"] + "\n")
+        )
+        changed = block.replace("          cargo test", "          true # cargo test", 1)
+        part["run_sha256"] = guard.digest(changed[changed.index("        run:") :].rstrip() + "\n")
+        with self.assertRaisesRegex(ValueError, "split commands do not reconstruct original"):
+            self.check(self.workflow.replace(block, changed, 1), contract)
+        contract = copy.deepcopy(self.contract)
+        original = next(row for row in contract["steps"] if "parts" in row)
+        original["parts"].reverse()
+        with self.assertRaisesRegex(ValueError, "split commands do not reconstruct original"):
+            self.check(contract=contract)
+
     def test_prerequisites_cannot_be_removed_from_other_suites(self):
         contract = copy.deepcopy(self.contract)
         row = next(
@@ -155,11 +174,13 @@ class RescueCiTests(unittest.TestCase):
             self.check(text, contract)
 
     def test_each_consumer_keeps_its_local_prerequisites(self):
-        for consumer in self.contract["steps"]:
+        for consumer in guard.expanded_steps(self.contract):
             for suite in consumer["suites"]:
                 for name in consumer["requires"]:
                     contract = copy.deepcopy(self.contract)
-                    prerequisite = next(row for row in contract["steps"] if row["name"] == name)
+                    prerequisite = next(
+                        row for row in guard.expanded_steps(contract) if row["name"] == name
+                    )
                     old = guard.condition(prerequisite)
                     prerequisite["suites"].remove(suite)
                     block = next(
@@ -191,7 +212,7 @@ class RescueCiTests(unittest.TestCase):
                 "matrix.suite == 'fee-lifecycle'",
                 1,
             ),
-            "parallel bottleneck": self.workflow.replace("max-parallel: 16", "max-parallel: 4", 1),
+            "parallel bottleneck": self.workflow.replace("max-parallel: 20", "max-parallel: 4", 1),
             "fail fast": self.workflow.replace("fail-fast: false", "fail-fast: true", 1),
             "ignored errors": self.workflow.replace(
                 "  suites:\n", "  suites:\n    continue-on-error: true\n", 1

@@ -2,9 +2,9 @@
   "base": "8bf39647d6cde0b00fc8c49e8ecb354be85d4897",
   "scope": "Workflow and Python CI controls only; no production C++, Rust, FunC or cryptographic fixture changes.",
   "pending": [
-    "Hosted PR execution of eight x86 workers and x86 parity gate",
-    "Manual dual-architecture execution before release or architecture-sensitive merge; not automatically triggered",
-    "Actual PR wall time below one hour remains to be measured"
+    "Hosted PR execution of ten x86 workers and x86 parity gate",
+    "Manual dual-architecture validation on exact release or architecture-sensitive commit",
+    "Measure signer shards and overall workflow wall time"
   ],
   "artifacts": {
     "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-split-20261016",
@@ -83,24 +83,25 @@
     "wall_seconds": 6809
   },
   "local_results": {
-    "baseline_equivalence": "52 unchanged shell bodies and original architecture policies",
-    "scheduled_workers": 15,
-    "max_parallel": 16,
-    "guard_unit_methods_passed": 7,
-    "step_deletion_change_skip_mutants": 156,
+    "baseline_equivalence": "51 original literal scripts unchanged; three concatenated signer parts reconstruct the remaining original script byte for byte",
+    "scheduled_workers": 19,
+    "max_parallel": 20,
+    "guard_unit_methods_passed": 8,
+    "step_deletion_change_skip_mutants": 162,
     "additional_controls": "every consumer prerequisite, CLI in all three fee suites, parallel capacity, matrix failures and complete receipts",
     "guard_removal_controls": {
-      "command_integrity": "52 assertion failures after removing the guard",
-      "matrix_failure_propagation": "1 assertion failure after removing the guard",
-      "receipt_completeness": "1 assertion failure after removing the guard"
+      "command_integrity": "51 assertion failures after removing per-step hash guard; split reconstruction remains active",
+      "matrix_failure_propagation": "1 intended assertion failure",
+      "receipt_completeness": "1 intended assertion failure",
+      "split_reconstruction": "changed command accepted when original-block reconstruction guard is removed; test fails with ValueError not raised"
     },
     "actionlint": "v1.7.12; passes with external shellcheck/pyflakes disabled",
     "bash_syntax": "every run block passes bash -n",
     "ruff": "check and format pass",
     "diff_whitespace": "pass",
-    "event_policy": "PR: eight x86 workers; manual dispatch: 15 dual-architecture workers",
-    "receipt_cli": "actual CLI generation and complete/missing/wrong-event verification exercised for both events; ARM receipt issuance on PR rejected",
-    "event_sensitivity": "Removing event filtering fails at the intended PR worker-count assertion (15 != 8), without setup errors"
+    "event_policy": "PR: ten x86 workers; manual dispatch: 19 dual-architecture workers",
+    "receipt_cli": "actual generation and complete/missing/wrong-event verification for both events; PR ARM issuance rejected",
+    "split_command_integrity": "changed command rejected even if the part hash is updated; reordering parts rejected"
   },
   "refined_artifacts": {
     "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-subhour-20261016",
@@ -171,6 +172,37 @@
         "file": "tests.log",
         "bytes": 105,
         "sha256": "782c57c0e31414414e90184d8b7655c9b64135898b9219b40cf3963856c9b929"
+      }
+    ]
+  },
+  "signer_shard_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-signer-shards-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "coverage.log",
+        "bytes": 88,
+        "sha256": "dc2c6aa56baa7845ddbf9afd433f1d8c9a280be9b1e69fc6fe4533821790cf13"
+      },
+      {
+        "file": "guard-sensitivity.log",
+        "bytes": 42368,
+        "sha256": "86efc7404fd9c8044faa1e32caf5b8fa378998be055bf8c87f401eb22e35ea9f"
+      },
+      {
+        "file": "split-sensitivity.log",
+        "bytes": 929,
+        "sha256": "8f5396d05296c4f39ccb47966dac457aa624c068e4b1609cdd5f9e73b507d0a0"
+      },
+      {
+        "file": "split-sensitivity.py",
+        "bytes": 825,
+        "sha256": "c59e4493d007d795088a263efd77601670abf96279cf8466d06f1d44b7f9052c"
+      },
+      {
+        "file": "tests.log",
+        "bytes": 106,
+        "sha256": "c404e7d8ddffa74e581b05c5824cdb7093037f3d0a9620a13e460e85427e415d"
       }
     ]
   }

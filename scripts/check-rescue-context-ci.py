@@ -11,7 +11,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = [
-    "signer-core",
+    "signer-fee",
+    "signer-mnemonic",
+    "signer-vault",
     "fee-promotion",
     "fee-lifecycle",
     "fee-successor",
@@ -62,6 +64,10 @@ def condition(row):
     )
 
 
+def expanded_steps(contract):
+    return [part for row in contract["steps"] for part in row.get("parts", [row])]
+
+
 def validate(text, contract, source_guard):
     require(
         text.count("\n  suites:\n") == text.count("\n  parity:\n") == 1,
@@ -74,12 +80,12 @@ def validate(text, contract, source_guard):
     require(re.search(r"(?m)^    if:", suites_text) is None, "suite job must not be conditional")
     require("      fail-fast: false\n" in suites_text, "all suites must complete independently")
     require(
-        "      max-parallel: 16\n" in suites_text, "all 15 workers need bounded parallel capacity"
+        "      max-parallel: 20\n" in suites_text, "all 19 workers need bounded parallel capacity"
     )
     matrix = suites_text.split("      matrix:\n", 1)[1].split("    runs-on:", 1)[0]
     require(
         matrix
-        == """        suite: [signer-core, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
+        == """        suite: [signer-fee, signer-mnemonic, signer-vault, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
         """
         + RUNNER_MATRIX
         + """
@@ -113,7 +119,24 @@ def validate(text, contract, source_guard):
         len(contract["steps"]) == 52,
         "serial coverage contract must retain all 52 build/control steps",
     )
-    for row in contract["steps"]:
+    for original in contract["steps"]:
+        if "parts" not in original:
+            continue
+        commands = []
+        for part in original["parts"]:
+            name = part["name"]
+            require(name in step_map, f"missing serial step {name}")
+            block = step_map[name]
+            run = block[block.index("        run:") :].rstrip() + "\n"
+            require(run.startswith("        run: |\n"), "split body must be a literal script")
+            commands.append(run.removeprefix("        run: |\n"))
+            require(part["x86_only"] == original["x86_only"], "split architecture policy changed")
+        require(
+            digest("        run: |\n" + "".join(commands)) == original["run_sha256"],
+            "split commands do not reconstruct original: " + original["name"],
+        )
+    steps = expanded_steps(contract)
+    for row in steps:
         name = row["name"]
         require(name in step_map, f"missing serial step {name}")
         b = step_map[name]
@@ -129,8 +152,8 @@ def validate(text, contract, source_guard):
         expected_runners = {RUNNERS[0]} if row["x86_only"] else set(RUNNERS)
         actual = {r for s, r in pairs() if selected(row, s, r)}
         require(actual == expected_runners, f"architecture lost: {name}")
-    original_names = [row["name"] for row in contract["steps"]]
-    require(len(set(original_names)) == 52, "duplicate original coverage entry")
+    original_names = [row["name"] for row in steps]
+    require(len(set(original_names)) == len(steps), "duplicate original coverage entry")
     for helper in [
         "Build shared public fixture signer",
         "Build the fee lifecycle CLI",
@@ -145,7 +168,7 @@ def validate(text, contract, source_guard):
     )
     for suite, runner in pairs():
         done = set()
-        for row in contract["steps"]:
+        for row in steps:
             if selected(row, suite, runner):
                 require(
                     set(row["requires"]) <= done,
@@ -268,7 +291,7 @@ def validate(text, contract, source_guard):
         "coverage guard and its negative tests must run in required source-guards",
     )
     # Detect unsupported extra per-step skip rules, including hidden receipts.
-    named = {row["name"] for row in contract["steps"]}
+    named = {row["name"] for row in steps}
     for name, b in step_map.items():
         if name in named:
             continue
@@ -282,9 +305,7 @@ def validate(text, contract, source_guard):
                 },
                 f"unexpected skip rule: {name}",
             )
-    return {
-        pair: [row["name"] for row in contract["steps"] if selected(row, *pair)] for pair in pairs()
-    }
+    return {pair: [row["name"] for row in steps if selected(row, *pair)] for pair in pairs()}
 
 
 def coverage_for_event(coverage, event):

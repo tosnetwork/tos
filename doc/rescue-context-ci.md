@@ -1,7 +1,7 @@
 # Rescue context CI suites
 
 `rescue-context.yml` runs the same serial corpus in isolated jobs. The baseline is
-main commit `8bf39647d6cde0b00fc8c49e8ecb354be85d4897`. Its 52 named build/control
+main commit `8bf39647d6cde0b00fc8c49e8ecb354be85d4897`. Its 52 original build/control
 steps (one build and 51 test/control groups) and their exact shell bodies are
 pinned in `test/wallet-quantum/rescue-ci-contract.json`.
 
@@ -10,16 +10,18 @@ pinned in `test/wallet-quantum/rescue-ci-contract.json`.
 | fee-lifecycle | x86-64, ARM64 | Fee baseline, CLI preparation, custody, sessions and POP receipts |
 | fee-successor | x86-64, ARM64 | Successor tree, key reuse rejection and joint migration |
 | fee-promotion | x86-64, ARM64 | Successor tree, installed route rotation and repeated recovery |
-| signer-core | x86-64, ARM64 | Rust native wallet signer and proven-key controls |
+| signer-fee | x86-64, ARM64 | Native fee signer, journal, recovery and tree controls |
+| signer-mnemonic | x86-64, ARM64 | KDF, native mnemonic vectors and wallet state controls |
+| signer-vault | x86-64, ARM64 | Vault signing, persistence, ownership, recovery and proven-key controls |
 | signer-custody | x86-64, ARM64 | Native signer, SDK wire, restoration and custody controls |
 | release-wallet | x86-64, ARM64 | Generated admission configuration, whole transactions, release bundle, SDK recovery and receiver delivery |
 | vm-ingress | x86-64, ARM64 | Receipt-bound timing, ingress, Falcon/version checks and C++/Rust VM parity |
 | mutations | x86-64 | The formerly x86-only fee/VM deletion and mutation controls |
 
 Existing x86-only controls inside the other suites remain x86-only. There are
-eight automatic x86-64 workers on pull requests. ARM64 is manual-only in this
-workflow: `workflow_dispatch` runs all 15 workers (both architectures), with a
-matrix parallelism limit of 16 so all can start together.
+ten automatic x86-64 workers on pull requests. ARM64 is manual-only in this
+workflow: `workflow_dispatch` runs all 19 workers (both architectures), with a
+matrix parallelism limit of 20 so all can start together.
 The longest suites are listed first if hosted capacity causes a queue.
 Every worker retains the original 180-minute timeout; tests, iteration counts,
 compiler flags, native `-j2` setting and failure behavior are unchanged.
@@ -42,7 +44,7 @@ Public artifacts have unique architecture/suite names and retain the existing
 are uploaded separately. The two existing `parity (ubuntu-24.04, 180)` and
 `parity (ubuntu-24.04-arm, 180)` checks remain as final gates. The x86 gate runs on PRs; both gates run on manual
 dispatch. Each gate requires
-the entire scheduled matrix to succeed and all eight PR receipts or all 15
+the entire scheduled matrix to succeed and all ten PR receipts or all 19
 manual-run receipts to match the event, source SHA, run ID, coverage contract and
 expected check list. An unscheduled ARM gate is absent on PRs; it is not reported
 as a passing ARM test. Attempt-specific artifact names avoid
@@ -76,13 +78,21 @@ alone cannot remove that serial bottleneck.
 The refined schedule separates the Rust signer block from custody and divides
 fees into initial/session, successor/migration and installed-route groups.
 Each fee worker independently builds the CLI and regenerates its needed baseline,
-recovery tree and successor fixture. Exact original command bodies are unchanged.
+recovery tree and successor fixture. The large signer block is now three independently scheduled steps. Concatenating
+their literal command bodies must reproduce the original pinned block exactly;
+all other original bodies remain unchanged. The coverage contract retains 52
+original groups and expands them to 54 execution steps. Split-part hashes alone
+cannot authorize a changed or dropped command.
 
-Using the maximum observed duration of each original step on each architecture,
+Before the three-way signer split, using the maximum observed duration of each original step on each architecture,
 plus corresponding setup/helper durations, the projected longest worker is
 55m02s. This assumes simultaneous starts and comparable hosted hardware/load;
 it excludes runner queueing and is not a measured result for the new schedule.
 See `rescue-context-ci-timing.json` for per-worker estimates and source evidence.
+The former x86 signer estimate was 51m32s. Its three replacement workers repeat
+build prerequisites, and per-shard durations have not yet been measured. Other
+unmodified groups still have estimates near 50 minutes (vm-ingress: 49m44s), so
+splitting the signer alone is not evidence of a much shorter overall workflow.
 The matrix limit does not increase account or ARM runner capacity. A sub-hour
 workflow cannot be guaranteed if runners queue or the corpus runs more slowly.
 Cold runs repeat builds and prerequisites, increasing total runner minutes.
@@ -101,7 +111,7 @@ See `rescue-context-ci-validation.json` for local evidence and outstanding CI.
 
 In Actions, select **Experimental rescue context parity**, choose **Run workflow**,
 and select the branch/tag to validate. This runs both x86-64 and ARM64 and checks
-all 15 receipts. The equivalent CLI is:
+all 19 receipts. The equivalent CLI is:
 
 ```sh
 gh workflow run rescue-context.yml --ref <branch-or-tag>

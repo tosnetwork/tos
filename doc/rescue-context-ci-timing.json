@@ -86,9 +86,21 @@
       }
     ],
     "parallel_limit": 16,
-    "status": "projection; hosted execution pending",
+    "status": "historical projection before manual ARM policy and three-way signer split",
     "source_run": 38839495687,
     "method": "For each architecture, maximum observed duration per unchanged original step, plus successful helper/setup durations from corresponding old suite. All 15 workers start together; excludes runner queue and assumes comparable hardware/load/cache. Projection, not measured optimized CI.",
     "projected_critical_seconds": 3302
+  },
+  "current_schedule": {
+    "automatic_x86_workers": 10,
+    "manual_dual_arch_workers": 19,
+    "max_parallel": 20,
+    "signer_shards": [
+      "signer-fee",
+      "signer-mnemonic",
+      "signer-vault"
+    ],
+    "status": "hosted measurement pending; signer shard timings are not yet measured",
+    "remaining_unmodified_x86_vm_ingress_projected_seconds": 2984
   }
 }
