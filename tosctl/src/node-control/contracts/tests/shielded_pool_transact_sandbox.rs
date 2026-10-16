@@ -1086,8 +1086,8 @@ fn what_a_transact_spends_and_where() {
     // The total is what the suite reports elsewhere; this test's claim is the
     // shape of the breakdown, not the total.
     //
-    // It used to assert this was above a million, because it was. At global
-    // version 18 the two insertions stopped walking their paths in FunC and
+    // It used to assert this was above a million, because it was. With
+    // POSEIDON2_PATH7 the two insertions stopped walking their paths in FunC and
     // the whole path to the proof came to 825,393 -- under the 1,000,000 the
     // reference implementation's basechain grants a transaction, which is the
     // figure the gas budget work spent a day being wrong about. The bound is kept, pointing the
@@ -1185,7 +1185,7 @@ fn a_transact_fits_its_ceiling_and_the_gas_this_chain_grants() {
     // what the ceiling is protecting against on a chain configured otherwise.
     //
     // This used to starve the path at 1,000,000. It no longer starves there:
-    // since global version 18 the whole path to the proof is 825,393, so the
+    // with POSEIDON2_PATH7 the whole path to the proof is 825,393, so the
     // figure has to be one that is actually short of it.
     let mut starved = Pool::deploy_with_gas_limit(RefState::genesis().root(), Some(500_000));
     let now = starved.bc.now();

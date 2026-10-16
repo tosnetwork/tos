@@ -28,7 +28,6 @@ from cells import Cell
 CTX_AUTH = b"TOS-AUTH-SLH-DSA-SHA2-128S-v1"
 CTX_ML = b"TOS-AUTH-V2-ML-DSA-44-v1"
 VERSION = 16  # unified development genesis
-FALCON_VERSION = 19  # suite 2 keeps F93101's gate
 BUDGET = 1_000_000
 
 
@@ -99,10 +98,10 @@ def main(out):
     falcon = json.loads((ROOT / "test/pq-falcon512/vectors.json").read_text())["vectors"]
     fv = next(v for v in falcon if v["expected"] == "V" and v["message"])
     fmsg, fsig, fpk = (bytes.fromhex(fv[k]) for k in ("message", "signature", "public_key"))
-    add("s2-valid", "V", "int:2", fmsg, b"", fsig, fpk, version=FALCON_VERSION)
-    add("s2-bitflip", "I", "int:2", fmsg, b"", flip(fsig, 100), fpk, version=FALCON_VERSION)
-    add("s2-nonempty-context", "E9", "int:2", fmsg, b"x", fsig, fpk, version=FALCON_VERSION)
-    add("s2-refused-at-genesis", "E5", "int:2", fmsg, b"", fsig, fpk, version=18)
+    add("s2-valid", "V", "int:2", fmsg, b"", fsig, fpk)
+    add("s2-bitflip", "I", "int:2", fmsg, b"", flip(fsig, 100), fpk)
+    add("s2-nonempty-context", "E9", "int:2", fmsg, b"x", fsig, fpk)
+    add("s2-refused-before-genesis", "E6", "int:2", fmsg, b"", fsig, fpk, version=15)
 
     # Suite 3: SLH-DSA-SHA2-128s.
     pk_hex, sk_hex = run(os.environ["SLH_TOOL"], "keygen", "22" * 48).split()

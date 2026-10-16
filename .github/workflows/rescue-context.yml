@@ -580,7 +580,7 @@ jobs:
         run: |
           python test/wallet-quantum/fee_tx_mutation.py \
             --artifacts artifacts/context/quantum-fee-auth --target "$CARGO_TARGET_DIR"
-      - name: Falcon version-19 boundary in both VMs
+      - name: Falcon version-16 boundary in both VMs
         if: contains(fromJSON('["vm-ingress","mutations"]'), matrix.suite)
         run: |
           python test/pq-falcon512/version_boundary.py --build build \

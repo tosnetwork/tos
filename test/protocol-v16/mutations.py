@@ -87,7 +87,7 @@ def main():
 
     try:
         for name, header, constant, early_failure, late_failure in cases:
-            gate = 19 if name == "falcon" else 16
+            gate = 16
             for version, expected in [(gate - 1, early_failure), (gate + 1, late_failure)]:
                 label = name + "-" + str(version)
                 path = ROOT / header
