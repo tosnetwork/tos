@@ -56,7 +56,7 @@ closed PR. Open PRs, main, branch and tag caches are preserved. The PR state is
 checked again immediately before deletion. API or inventory errors do not grant
 permission to delete. The cache API is separate from test-result artifacts.
 
-The only Actions write permission is confined to this maintenance workflow. It
+The only Actions write permission is confined to the maintenance cleanup job. It
 has no PR trigger, requires the default branch, and checks out default-branch
 code with persisted credentials disabled. Manual dispatch defaults to a dry run;
 scheduled runs apply the bounded cleanup. No production runtime data is involved.

@@ -81,6 +81,12 @@ class CacheCleanupTests(unittest.TestCase):
     def test_maintenance_workflow_never_runs_pr_code_with_write_permission(self):
         path = Path(__file__).resolve().parents[1] / ".github/workflows/cache-maintenance.yml"
         text = path.read_text()
+        self.assertNotRegex(text, r"(?m)^  [A-Za-z-]+: write$")
+        self.assertIn(
+            "  cleanup:\n    permissions:\n      contents: read\n"
+            "      actions: write\n      pull-requests: read\n",
+            text,
+        )
         self.assertNotRegex(text, r"(?m)^  pull_request(?:_target)?:")
         self.assertIn(
             "if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)",
