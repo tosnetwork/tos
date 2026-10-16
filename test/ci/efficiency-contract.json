@@ -1,0 +1,375 @@
+{
+  "baseline": "c253e9e9c7cd9c1aaa6f9a6ca6ee223621529efe",
+  "original_assembly_sha256": "37da69c682f3dee1171372608e8793acc1a06ee4e30305f894316550da984a22",
+  "steps": [
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "strict-build",
+      "name": "Install system libraries",
+      "original_sha256": "c320c1aa04f48c0a4862d27f43e8dc6ad991d4d3e92f0dd668b1da9cddf8e564",
+      "run_sha256": "c320c1aa04f48c0a4862d27f43e8dc6ad991d4d3e92f0dd668b1da9cddf8e564",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "strict-build",
+      "name": "Install Clang 21",
+      "original_sha256": "494c96fbcc22d64f79cae771a3dad519fb03c1ef1d128c23c297e316106f8df2",
+      "run_sha256": "494c96fbcc22d64f79cae771a3dad519fb03c1ef1d128c23c297e316106f8df2",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "strict-build",
+      "name": "Install repository-pinned Rust toolchain",
+      "original_sha256": "953e8cb7235e402a673ab10d36c21186591f9454ed53747e131096923adab5bd",
+      "run_sha256": "953e8cb7235e402a673ab10d36c21186591f9454ed53747e131096923adab5bd",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "strict-build",
+      "name": "Build TOS",
+      "original_sha256": "1454c8dd918260fac9e62ec0867237e5a79bdf85713ab8972ed1097f5fb45e6a",
+      "run_sha256": "1454c8dd918260fac9e62ec0867237e5a79bdf85713ab8972ed1097f5fb45e6a",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "strict-build",
+      "name": "Static use-after-move guard",
+      "original_sha256": "f24f344fb6a56dcee014554d9c234811e4e4adbce54abf4717059021020381df",
+      "run_sha256": "f24f344fb6a56dcee014554d9c234811e4e4adbce54abf4717059021020381df",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "strict-build",
+      "name": "Targeted regression tests",
+      "original_sha256": "f6a1d45358a3801da48afec940725bed32dae55fe9b3d09ed66193528ce20798",
+      "run_sha256": "f6a1d45358a3801da48afec940725bed32dae55fe9b3d09ed66193528ce20798",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "strict-build",
+      "name": "Compile cache statistics",
+      "original_sha256": "bb05db4e66112357174d6d7d4ece40a3741e4dc23f3004c50394a08d09c81e50",
+      "run_sha256": "bb05db4e66112357174d6d7d4ece40a3741e4dc23f3004c50394a08d09c81e50",
+      "original_if": "always()",
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "hygiene",
+      "name": "Determine what this change touches",
+      "original_sha256": "ecfd981e81bb6578aeed6c11ce9fa1dbd122c051f9e9edaa63ea7b82f9f2cb53",
+      "run_sha256": "ecfd981e81bb6578aeed6c11ce9fa1dbd122c051f9e9edaa63ea7b82f9f2cb53",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "hygiene",
+      "name": "Install Clang 21 formatting tools",
+      "original_sha256": "c1e5e0a408f4cbb9208f55fb13cf2e486f2ee7ccab4dfd77ae581f591b721a96",
+      "run_sha256": "c1e5e0a408f4cbb9208f55fb13cf2e486f2ee7ccab4dfd77ae581f591b721a96",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "hygiene",
+      "name": "Check spaces at EOL on added lines",
+      "original_sha256": "2cdf6a30bb8c616a4f3985f03ee5e373a028dc1e3ef4cdc12c57d466ae2d9df4",
+      "run_sha256": "2cdf6a30bb8c616a4f3985f03ee5e373a028dc1e3ef4cdc12c57d466ae2d9df4",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "hygiene",
+      "name": "Check C++ formatting of changed lines",
+      "original_sha256": "81cf8db5764544599390436492b6b9afaf22ce2a1bb4fbd60105148c353fc75c",
+      "run_sha256": "81cf8db5764544599390436492b6b9afaf22ce2a1bb4fbd60105148c353fc75c",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "hygiene",
+      "name": "Prepare Python environment",
+      "original_sha256": "041bcb47af6659ef476ca40a5bd1563a8c76c01bcd1d2a815763186d9ac766ed",
+      "run_sha256": "041bcb47af6659ef476ca40a5bd1563a8c76c01bcd1d2a815763186d9ac766ed",
+      "original_if": "steps.changed.outputs.python_count != '0'",
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-werror.yml",
+      "job": "hygiene",
+      "name": "Lint changed Python",
+      "original_sha256": "b3f1c814708a8cca998f5d5f6e31073debd82dd66aa8db7aebfe933bd0874a1b",
+      "run_sha256": "b3f1c814708a8cca998f5d5f6e31073debd82dd66aa8db7aebfe933bd0874a1b",
+      "original_if": "steps.changed.outputs.python_count != '0'",
+      "deduplicated": true
+    },
+    {
+      "workflow": "auth-extension-validation.yml",
+      "job": "authentication",
+      "name": "Configure and build native contract tools",
+      "original_sha256": "b5fc04e12ca9d6c8cf02a1b0ca2754163f3ea7b3e50580deea78534fa6591947",
+      "run_sha256": "b5fc04e12ca9d6c8cf02a1b0ca2754163f3ea7b3e50580deea78534fa6591947",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "auth-extension-validation.yml",
+      "job": "authentication",
+      "name": "Install deterministic-signature test dependency",
+      "original_sha256": "4dfbebeb2d8d7d21c5661616d87420ea91f663aef132ae93e30244cd5fd81279",
+      "run_sha256": "4dfbebeb2d8d7d21c5661616d87420ea91f663aef132ae93e30244cd5fd81279",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "auth-extension-validation.yml",
+      "job": "authentication",
+      "name": "Native action-phase authentication tests and mutation checks",
+      "original_sha256": "955eb66ae2ff9df88ae34d6309b2917c1c6025b7a0be1486dc445475c50f26af",
+      "run_sha256": "955eb66ae2ff9df88ae34d6309b2917c1c6025b7a0be1486dc445475c50f26af",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "auth-extension-validation.yml",
+      "job": "authentication",
+      "name": "SDK wallet tests and network-bound vectors",
+      "original_sha256": "bb4a911da30cfc3180bf15b6ea95b1eccc8cf78db79a650301ade00a7e362a13",
+      "run_sha256": "bb4a911da30cfc3180bf15b6ea95b1eccc8cf78db79a650301ade00a7e362a13",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "auth-extension-validation.yml",
+      "job": "authentication",
+      "name": "Run agent, multisig and legacy wallet authority transactions",
+      "original_sha256": "ba92a75de26687366298642b520661202ea534c5142d994aa82a756c188d8537",
+      "run_sha256": "ba92a75de26687366298642b520661202ea534c5142d994aa82a756c188d8537",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "quantum-readiness.yml",
+      "job": "native",
+      "name": "Install system crypto development dependencies",
+      "original_sha256": "b81c49a9b2b51bcdf6f71dacb478075b5c611822db072f17c71541bf60d7a68c",
+      "run_sha256": "b81c49a9b2b51bcdf6f71dacb478075b5c611822db072f17c71541bf60d7a68c",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "quantum-readiness.yml",
+      "job": "native",
+      "name": "Build node and genesis configuration paths",
+      "original_sha256": "6a9977f3a257c8d686aafbe9d03550862ffd92e00c7fb5e06eeabe508fc103bc",
+      "run_sha256": "6a9977f3a257c8d686aafbe9d03550862ffd92e00c7fb5e06eeabe508fc103bc",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "quantum-readiness.yml",
+      "job": "native",
+      "name": "Prepare repository Python environment",
+      "original_sha256": "a7efd4d9eaca154fe5a4d914e2a1f948631144ea775f5d7a80411345d7b819f3",
+      "run_sha256": "a7efd4d9eaca154fe5a4d914e2a1f948631144ea775f5d7a80411345d7b819f3",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "quantum-readiness.yml",
+      "job": "native",
+      "name": "Configuration transitions and sensitivity controls",
+      "original_sha256": "1c0569aea3720bcb4ecafbd1b65dd78cad72624928fcbbecdec2442948b552a0",
+      "run_sha256": "1c0569aea3720bcb4ecafbd1b65dd78cad72624928fcbbecdec2442948b552a0",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "quantum-readiness.yml",
+      "job": "native",
+      "name": "Actual genesis construction and failure controls",
+      "original_sha256": "a08fe16df4069c85423a3eab788da5e28226997d638e4ee4c861c26ba760e37c",
+      "run_sha256": "a08fe16df4069c85423a3eab788da5e28226997d638e4ee4c861c26ba760e37c",
+      "original_if": null,
+      "deduplicated": true
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Trust this checkout for repository tests",
+      "original_sha256": "aa8d135d0c5b723e75378b6be72c1cd8f5242eef00582319adce7230dee6011f",
+      "run_sha256": "aa8d135d0c5b723e75378b6be72c1cd8f5242eef00582319adce7230dee6011f",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Install source-guard search tool",
+      "original_sha256": "98a37e78ead17188b3f16cf4f8fdae999ee69a2d7e2c942e1908138a40b567ea",
+      "run_sha256": "98a37e78ead17188b3f16cf4f8fdae999ee69a2d7e2c942e1908138a40b567ea",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Install repository-pinned Rust toolchain",
+      "original_sha256": "953e8cb7235e402a673ab10d36c21186591f9454ed53747e131096923adab5bd",
+      "run_sha256": "953e8cb7235e402a673ab10d36c21186591f9454ed53747e131096923adab5bd",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Build TOS",
+      "original_sha256": "ab050cd60adba0b5aad40c361c32bdc68cd601b9b4c82d62a778731bcac51570",
+      "run_sha256": "ab050cd60adba0b5aad40c361c32bdc68cd601b9b4c82d62a778731bcac51570",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Verify the build does not modify the source tree",
+      "original_sha256": "6b312b0be6aa64455bd0c64a31d7f323730aa111919e8f317215521155f93238",
+      "run_sha256": "6b312b0be6aa64455bd0c64a31d7f323730aa111919e8f317215521155f93238",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Run unit tests",
+      "original_sha256": "f18cb976d8f6d46080019e60a852e69ee0a42c2c02a74e98ce6e10b93404cc45",
+      "run_sha256": "b05ed18178478f328a84edbcbea929f82c8d85c2f301ff4ff530d2312d87203f",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Prepare Python environment",
+      "original_sha256": "6455dee8e49a685f8f8cb84152ae0b46b5cfc43c9ce53ccbe561dddd439c6df0",
+      "run_sha256": "6455dee8e49a685f8f8cb84152ae0b46b5cfc43c9ce53ccbe561dddd439c6df0",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Run Q01 and Z01 targeted Python tests",
+      "original_sha256": "c980ac8307d0d913d602fd1bbf2079a6bd7fbaff0ddeb31570c33aeffc4919b6",
+      "run_sha256": "c980ac8307d0d913d602fd1bbf2079a6bd7fbaff0ddeb31570c33aeffc4919b6",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Run tostester tests",
+      "original_sha256": "03819e45fa53873cf675ea5de65b22288332991dbf6059a5cab6849c7feb3eff",
+      "run_sha256": "03819e45fa53873cf675ea5de65b22288332991dbf6059a5cab6849c7feb3eff",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Run integration tests",
+      "original_sha256": "dee56d0837b8590e3012116efd6e2a9376a25faffe6b486c5c2997a7bb550675",
+      "run_sha256": "dee56d0837b8590e3012116efd6e2a9376a25faffe6b486c5c2997a7bb550675",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-x86-64-shared.yml",
+      "job": "build",
+      "name": "Run toslib integration test",
+      "original_sha256": "fc0f8a9e0b7266b29c15453babf16687143371c038c7d0a8651e12cbe5f74231",
+      "run_sha256": "fc0f8a9e0b7266b29c15453babf16687143371c038c7d0a8651e12cbe5f74231",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-arm64-shared.yml",
+      "job": "build",
+      "name": "Install system libraries",
+      "original_sha256": "804e4a7b88ddc665a25ca096de2a249dfc46b534be6d1675a603efac36f609a8",
+      "run_sha256": "94ef50dd91b77e21c6c0506b1a006d7e6357c8cd38d58e624f98c4ec5b256cd8",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-arm64-shared.yml",
+      "job": "build",
+      "name": "@if:matrix.os != 'ubuntu-24.04-arm'",
+      "original_sha256": "cb1b7c59f760d0e633efe2454d9133d31e83e4b81f7b8294e37d33ff05779c56",
+      "run_sha256": "cb1b7c59f760d0e633efe2454d9133d31e83e4b81f7b8294e37d33ff05779c56",
+      "original_if": "matrix.os != 'ubuntu-24.04-arm'",
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-arm64-shared.yml",
+      "job": "build",
+      "name": "Install llvm-21",
+      "original_sha256": "4e49de648615ca332cdd7bf6265605aed2560722dc909807bff1d5fe8af6c91d",
+      "run_sha256": "4e49de648615ca332cdd7bf6265605aed2560722dc909807bff1d5fe8af6c91d",
+      "original_if": "matrix.os == 'ubuntu-24.04-arm'",
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-arm64-shared.yml",
+      "job": "build",
+      "name": "Install repository-pinned Rust toolchain",
+      "original_sha256": "953e8cb7235e402a673ab10d36c21186591f9454ed53747e131096923adab5bd",
+      "run_sha256": "953e8cb7235e402a673ab10d36c21186591f9454ed53747e131096923adab5bd",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-arm64-shared.yml",
+      "job": "build",
+      "name": "Build TOS",
+      "original_sha256": "483574e99c093fbb1dddde6415d93be88fe0660929edb496c32bf0b29ddd06fc",
+      "run_sha256": "483574e99c093fbb1dddde6415d93be88fe0660929edb496c32bf0b29ddd06fc",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-arm64-shared.yml",
+      "job": "build",
+      "name": "Run Tests",
+      "original_sha256": "f18cb976d8f6d46080019e60a852e69ee0a42c2c02a74e98ce6e10b93404cc45",
+      "run_sha256": "b05ed18178478f328a84edbcbea929f82c8d85c2f301ff4ff530d2312d87203f",
+      "original_if": null,
+      "deduplicated": false
+    },
+    {
+      "workflow": "build-tos-linux-arm64-shared.yml",
+      "job": "build",
+      "name": "Run toslib integration test",
+      "original_sha256": "fc0f8a9e0b7266b29c15453babf16687143371c038c7d0a8651e12cbe5f74231",
+      "run_sha256": "fc0f8a9e0b7266b29c15453babf16687143371c038c7d0a8651e12cbe5f74231",
+      "original_if": null,
+      "deduplicated": false
+    }
+  ]
+}
