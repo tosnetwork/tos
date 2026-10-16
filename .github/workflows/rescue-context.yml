@@ -61,10 +61,10 @@ jobs:
     name: ${{ matrix.suite }} (${{ matrix.runner }})
     strategy:
       fail-fast: false
-      # Bound shared runner demand; put the longest suites first.
-      max-parallel: 4
+      # Start all 15 isolated workers; long suites must not wait for short suites.
+      max-parallel: 16
       matrix:
-        suite: [fee-lifecycle, signer-custody, release-wallet, vm-ingress, mutations]
+        suite: [signer-core, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
         exclude:
           # These controls were x86-only in the serial workflow.
@@ -114,10 +114,10 @@ jobs:
       - name: Build shared public fixture signer
         run: cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture
       - name: Build the fee lifecycle CLI
-        if: matrix.suite == 'fee-lifecycle'
+        if: contains(fromJSON('["fee-lifecycle","fee-successor","fee-promotion"]'), matrix.suite)
         run: cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet
       - name: Generated admission configuration loading
-        if: contains(fromJSON('["release-wallet","signer-custody","fee-lifecycle","vm-ingress","mutations"]'), matrix.suite)
+        if: contains(fromJSON('["signer-core","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"]'), matrix.suite)
         run: |
           python test/wallet-quantum/test_recorded_admission.py
           python test/wallet-quantum/admission_config_controls.py --output-dir artifacts/context/quantum-generated-config
@@ -167,7 +167,7 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/quantum-post-accept
       - name: SDK deployment and native cached recovery on generated configuration
-        if: contains(fromJSON('["release-wallet","signer-custody","fee-lifecycle","vm-ingress","mutations"]'), matrix.suite)
+        if: contains(fromJSON('["signer-core","fee-promotion","fee-lifecycle","fee-successor","signer-custody","vm-ingress","release-wallet","mutations"]'), matrix.suite)
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
             --features native-wallet-signer --example lms_fee_cache_fixture \
@@ -187,7 +187,7 @@ jobs:
           python test/wallet-quantum/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer
           python test/wallet-quantum/pq_signer_controls.py --c-api --build build --output artifacts/context/wallet-pq-signer-c
       - name: Rust native wallet signer and proven-key controls
-        if: contains(fromJSON('["signer-custody"]'), matrix.suite)
+        if: contains(fromJSON('["signer-core"]'), matrix.suite)
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer
@@ -282,7 +282,7 @@ jobs:
           python test/wallet-quantum/test_preparation.py --output artifacts/context/quantum-preparation \
             --rust-driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
       - name: Full R2 fee transaction parity at diagnostic credit
-        if: contains(fromJSON('["fee-lifecycle","vm-ingress","mutations"]'), matrix.suite)
+        if: contains(fromJSON('["fee-lifecycle","fee-successor","fee-promotion","vm-ingress","mutations"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_tx_parity.py \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
@@ -369,7 +369,7 @@ jobs:
             --fixture artifacts/context/quantum-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-initial-controls
       - name: Initial fee custody CLI recovery and controls
-        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
+        if: contains(fromJSON('["fee-lifecycle","fee-successor","fee-promotion"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_recovery_fixture.py --output artifacts/context/fee-recovery-fixture
           cmp artifacts/context/fee-recovery-fixture/native-fee-recovery.json tosctl/src/wallet-pq-signer/tests/fixtures/native-fee-recovery.json
@@ -428,7 +428,7 @@ jobs:
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-prepare-controls
       - name: Successor fee tree and funded POP lifecycle controls
-        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
+        if: contains(fromJSON('["fee-successor","fee-promotion"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_recovery_fixture.py \
             --vector-index 0 \
@@ -442,7 +442,7 @@ jobs:
             --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
             --output artifacts/context/cli-successor-pop-controls
       - name: Reject active LMS key reuse in successor routes
-        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
+        if: contains(fromJSON('["fee-successor"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fresh_fee_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -452,7 +452,7 @@ jobs:
             --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
             --output artifacts/context/fresh-fee-controls
       - name: Joint fee sessions and native client migration controls
-        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
+        if: contains(fromJSON('["fee-successor"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_migration_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -462,7 +462,7 @@ jobs:
             --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
             --output artifacts/context/cli-migration-controls
       - name: Installed fee route promotion and repeated recovery controls
-        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
+        if: contains(fromJSON('["fee-promotion"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_recovery_fixture.py \
             --vector-index 0 --key-generation 8 \

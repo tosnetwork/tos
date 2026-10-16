@@ -1,26 +1,9 @@
 {
   "base": "8bf39647d6cde0b00fc8c49e8ecb354be85d4897",
   "scope": "Workflow and Python CI controls only; no production C++, Rust, FunC or cryptographic fixture changes.",
-  "local_results": {
-    "baseline_equivalence": "52 unchanged shell bodies and original architecture policies",
-    "scheduled_workers": 9,
-    "max_parallel": 4,
-    "guard_unit_methods_passed": 5,
-    "step_deletion_change_skip_mutants": 156,
-    "guard_removal_controls": {
-      "command_integrity": "52 assertion failures after removing the guard",
-      "matrix_failure_propagation": "1 assertion failure after removing the guard",
-      "receipt_completeness": "1 assertion failure after removing the guard"
-    },
-    "receipt_cli": "nine worker receipts and partial-rerun reuse pass",
-    "actionlint": "v1.7.12; workflow validation passed (external shellcheck/pyflakes disabled)",
-    "bash_syntax": "all run blocks pass bash -n",
-    "ruff": "check and format pass",
-    "diff_whitespace": "pass"
-  },
   "pending": [
-    "First full hosted execution of all nine suites and both aggregate gates",
-    "Measured wall time, runner minutes and native object cache hit rates"
+    "Full hosted execution of all 15 workers and both parity gates",
+    "Measured refined wall time and queue delay; sub-hour timing is a projection"
   ],
   "artifacts": {
     "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-split-20261016",
@@ -75,5 +58,85 @@
     "ruff check scripts/check-rescue-context-ci.py scripts/test_rescue_context_ci.py",
     "ruff format --check scripts/check-rescue-context-ci.py scripts/test_rescue_context_ci.py",
     "git diff --check"
-  ]
+  ],
+  "initial_split_validation": {
+    "baseline_equivalence": "52 unchanged shell bodies and original architecture policies",
+    "scheduled_workers": 9,
+    "max_parallel": 4,
+    "guard_unit_methods_passed": 5,
+    "step_deletion_change_skip_mutants": 156,
+    "guard_removal_controls": {
+      "command_integrity": "52 assertion failures after removing the guard",
+      "matrix_failure_propagation": "1 assertion failure after removing the guard",
+      "receipt_completeness": "1 assertion failure after removing the guard"
+    },
+    "receipt_cli": "nine worker receipts and partial-rerun reuse pass",
+    "actionlint": "v1.7.12; workflow validation passed (external shellcheck/pyflakes disabled)",
+    "bash_syntax": "all run blocks pass bash -n",
+    "ruff": "check and format pass",
+    "diff_whitespace": "pass"
+  },
+  "initial_hosted_result": {
+    "run_id": 38839495687,
+    "conclusion": "success",
+    "wall_seconds": 6809
+  },
+  "local_results": {
+    "baseline_equivalence": "52 unchanged shell bodies and original architecture policies",
+    "scheduled_workers": 15,
+    "max_parallel": 16,
+    "guard_unit_methods_passed": 6,
+    "step_deletion_change_skip_mutants": 156,
+    "additional_controls": "every consumer prerequisite, CLI in all three fee suites, parallel capacity, matrix failures and complete receipts",
+    "guard_removal_controls": {
+      "command_integrity": "52 assertion failures after removing the guard",
+      "matrix_failure_propagation": "1 assertion failure after removing the guard",
+      "receipt_completeness": "1 assertion failure after removing the guard"
+    },
+    "actionlint": "v1.7.12; passes with external shellcheck/pyflakes disabled",
+    "bash_syntax": "every run block passes bash -n",
+    "ruff": "check and format pass",
+    "diff_whitespace": "pass"
+  },
+  "refined_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-subhour-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "baseline-equivalence.log",
+        "bytes": 137,
+        "sha256": "5fd1457f3388ea0c42a4f03752c93201c1fb67bc4f75a52b0e0b91738407327b"
+      },
+      {
+        "file": "coverage.log",
+        "bytes": 88,
+        "sha256": "974f940d9e647203368ba2811b4ee7e1ce98d2dcb57cb67f8be7bedf38046a2a"
+      },
+      {
+        "file": "guard-sensitivity.log",
+        "bytes": 43111,
+        "sha256": "14c816e4f3f689cffe2433fad931ee6d9612366f285e2ded36f771daa524b654"
+      },
+      {
+        "file": "negative-tests.log",
+        "bytes": 104,
+        "sha256": "34a1d2caea11c396ad445c470c16da76f0a475fd8ffac12ee0ad5335d6f255e2"
+      },
+      {
+        "file": "project_schedule.py",
+        "bytes": 2111,
+        "sha256": "54b13c4ecd601261f2092e17a29360365e0ba1aac14488e69096487dab0e2cac"
+      },
+      {
+        "file": "projection.json",
+        "bytes": 2040,
+        "sha256": "3c7b482190358691ba82e6760486fea375c47c7207d542414bb074398c51b232"
+      },
+      {
+        "file": "source-jobs.json",
+        "bytes": 183805,
+        "sha256": "db7b478c8b93c67029dcc43532cd11b19328e501ff32cb9c1eecffece7fb25ad"
+      }
+    ]
+  }
 }

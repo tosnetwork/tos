@@ -1,0 +1,94 @@
+{
+  "measured_first_split": {
+    "run_id": 38839495687,
+    "url": "https://github.com/tosnetwork/tos/actions/runs/38839495687",
+    "workers": 9,
+    "parallel_limit": 4,
+    "wall_seconds": 6809,
+    "all_jobs_passed": true
+  },
+  "refined_schedule": {
+    "workers": [
+      {
+        "suite": "fee-lifecycle",
+        "runner": "ubuntu-24.04",
+        "projected_seconds": 2716
+      },
+      {
+        "suite": "fee-lifecycle",
+        "runner": "ubuntu-24.04-arm",
+        "projected_seconds": 3203
+      },
+      {
+        "suite": "fee-promotion",
+        "runner": "ubuntu-24.04",
+        "projected_seconds": 2657
+      },
+      {
+        "suite": "fee-promotion",
+        "runner": "ubuntu-24.04-arm",
+        "projected_seconds": 3080
+      },
+      {
+        "suite": "fee-successor",
+        "runner": "ubuntu-24.04",
+        "projected_seconds": 2617
+      },
+      {
+        "suite": "fee-successor",
+        "runner": "ubuntu-24.04-arm",
+        "projected_seconds": 2764
+      },
+      {
+        "suite": "mutations",
+        "runner": "ubuntu-24.04",
+        "projected_seconds": 1561
+      },
+      {
+        "suite": "release-wallet",
+        "runner": "ubuntu-24.04",
+        "projected_seconds": 1483
+      },
+      {
+        "suite": "release-wallet",
+        "runner": "ubuntu-24.04-arm",
+        "projected_seconds": 1149
+      },
+      {
+        "suite": "signer-core",
+        "runner": "ubuntu-24.04",
+        "projected_seconds": 3092
+      },
+      {
+        "suite": "signer-core",
+        "runner": "ubuntu-24.04-arm",
+        "projected_seconds": 3302
+      },
+      {
+        "suite": "signer-custody",
+        "runner": "ubuntu-24.04",
+        "projected_seconds": 2051
+      },
+      {
+        "suite": "signer-custody",
+        "runner": "ubuntu-24.04-arm",
+        "projected_seconds": 1846
+      },
+      {
+        "suite": "vm-ingress",
+        "runner": "ubuntu-24.04",
+        "projected_seconds": 2984
+      },
+      {
+        "suite": "vm-ingress",
+        "runner": "ubuntu-24.04-arm",
+        "projected_seconds": 2651
+      }
+    ],
+    "parallel_limit": 16,
+    "status": "projection; hosted execution pending",
+    "source_run": 38839495687,
+    "method": "For each architecture, maximum observed duration per unchanged original step, plus successful helper/setup durations from corresponding old suite. All 15 workers start together; excludes runner queue and assumes comparable hardware/load/cache. Projection, not measured optimized CI.",
+    "projected_critical_seconds": 3302
+  }
+}

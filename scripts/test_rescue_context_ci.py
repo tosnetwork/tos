@@ -30,7 +30,7 @@ class RescueCiTests(unittest.TestCase):
 
     def test_all_original_steps_and_architectures_remain(self):
         coverage = self.check()
-        self.assertEqual(len(coverage), 9)
+        self.assertEqual(len(coverage), 15)
         self.assertEqual(len(self.contract["steps"]), 52)
         for row in self.contract["steps"]:
             expected = {guard.RUNNERS[0]} if row["x86_only"] else set(guard.RUNNERS)
@@ -76,11 +76,39 @@ class RescueCiTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing prerequisite"):
             self.check(text, contract)
 
+    def test_each_consumer_keeps_its_local_prerequisites(self):
+        for consumer in self.contract["steps"]:
+            for suite in consumer["suites"]:
+                for name in consumer["requires"]:
+                    contract = copy.deepcopy(self.contract)
+                    prerequisite = next(row for row in contract["steps"] if row["name"] == name)
+                    old = guard.condition(prerequisite)
+                    prerequisite["suites"].remove(suite)
+                    block = next(
+                        b
+                        for b in guard.blocks(self.workflow.split("\n  parity:\n")[0])
+                        if b.startswith("      - name: " + name + "\n")
+                    )
+                    mutant = self.workflow.replace(
+                        block, block.replace(old, guard.condition(prerequisite), 1), 1
+                    )
+                    with self.subTest(consumer=consumer["name"], suite=suite, missing=name):
+                        with self.assertRaisesRegex(
+                            ValueError, "missing prerequisite|architecture lost"
+                        ):
+                            self.check(mutant, contract)
+
     def test_matrix_and_gate_cannot_hide_failures(self):
         mutants = {
             "arm omitted": self.workflow.replace(
                 "runner: [ubuntu-24.04, ubuntu-24.04-arm]", "runner: [ubuntu-24.04]", 1
             ),
+            "fee CLI missing in new suites": self.workflow.replace(
+                'contains(fromJSON(\'["fee-lifecycle","fee-successor","fee-promotion"]\'), matrix.suite)',
+                "matrix.suite == 'fee-lifecycle'",
+                1,
+            ),
+            "parallel bottleneck": self.workflow.replace("max-parallel: 16", "max-parallel: 4", 1),
             "fail fast": self.workflow.replace("fail-fast: false", "fail-fast: true", 1),
             "ignored errors": self.workflow.replace(
                 "  suites:\n", "  suites:\n    continue-on-error: true\n", 1

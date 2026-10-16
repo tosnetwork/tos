@@ -10,7 +10,16 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SUITES = ["fee-lifecycle", "signer-custody", "release-wallet", "vm-ingress", "mutations"]
+SUITES = [
+    "signer-core",
+    "fee-promotion",
+    "fee-lifecycle",
+    "fee-successor",
+    "signer-custody",
+    "vm-ingress",
+    "release-wallet",
+    "mutations",
+]
 RUNNERS = ["ubuntu-24.04", "ubuntu-24.04-arm"]
 CONTRACT = ROOT / "test/wallet-quantum/rescue-ci-contract.json"
 WORKFLOW = ROOT / ".github/workflows/rescue-context.yml"
@@ -62,11 +71,13 @@ def validate(text, contract, source_guard):
     require("continue-on-error:" not in text, "suite failures must propagate")
     require(re.search(r"(?m)^    if:", suites_text) is None, "suite job must not be conditional")
     require("      fail-fast: false\n" in suites_text, "all suites must complete independently")
-    require("      max-parallel: 4\n" in suites_text, "runner demand must stay bounded")
+    require(
+        "      max-parallel: 16\n" in suites_text, "all 15 workers need bounded parallel capacity"
+    )
     matrix = suites_text.split("      matrix:\n", 1)[1].split("    runs-on:", 1)[0]
     require(
         matrix
-        == """        suite: [fee-lifecycle, signer-custody, release-wallet, vm-ingress, mutations]
+        == """        suite: [signer-core, fee-promotion, fee-lifecycle, fee-successor, signer-custody, vm-ingress, release-wallet, mutations]
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
         exclude:
           # These controls were x86-only in the serial workflow.
@@ -147,7 +158,8 @@ def validate(text, contract, source_guard):
     )
     cli = step_map["Build the fee lifecycle CLI"]
     require(
-        "        if: matrix.suite == 'fee-lifecycle'\n" in cli
+        '        if: contains(fromJSON(\'["fee-lifecycle","fee-successor","fee-promotion"]\'), matrix.suite)\n'
+        in cli
         and cli.strip().endswith(
             "run: cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet"
         ),
