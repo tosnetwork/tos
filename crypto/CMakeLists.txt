@@ -726,6 +726,13 @@ add_subdirectory(pq)
 # The controller's deployment commands. Seeds for the test are placed with the
 # consensus-key tool, which writes the same 32-byte seed file the root is loaded from.
 if(TARGET tos-pq-consensus-key)
+  add_test(NAME pq-signing-tool-integers
+           COMMAND "${CMAKE_COMMAND}" -E env python3
+                   "${CMAKE_CURRENT_SOURCE_DIR}/../test/pq-mldsa44/signing_tool_integer_test.py"
+                   --controller "$<TARGET_FILE:tos-pq-controller>"
+                   --vote "$<TARGET_FILE:tos-pq-vote>"
+                   --consensus-key "$<TARGET_FILE:tos-pq-consensus-key>")
+  set_tests_properties(pq-signing-tool-integers PROPERTIES TIMEOUT 120)
   add_test(NAME controller-tool
            COMMAND "${CMAKE_COMMAND}" -E env python3
                    "${CMAKE_CURRENT_SOURCE_DIR}/../test/pq-mldsa44/controller_tool_test.py"
