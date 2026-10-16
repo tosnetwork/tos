@@ -51,7 +51,7 @@
     },
     "global_id": 1,
     "network": "4242424242424242424242424242424242424242424242424242424242424242",
-    "sha256": "4eb417375f201341b5d59ee7a0ed1d03364ed8c1047de6b75e3127851504fdf8",
+    "sha256": "59c6318f5136ba95ac62be988618b8e8ba4058e79c7b8ebd553783444af0930e",
     "version": 16
   },
   "files": {
@@ -73,7 +73,7 @@
     },
     "config.boc": {
       "bytes": 7475,
-      "sha256": "4eb417375f201341b5d59ee7a0ed1d03364ed8c1047de6b75e3127851504fdf8"
+      "sha256": "59c6318f5136ba95ac62be988618b8e8ba4058e79c7b8ebd553783444af0930e"
     },
     "repository/LICENSE": {
       "bytes": 35149,
@@ -196,8 +196,8 @@
       "sha256": "81b937c31175302516a2624dcfd53e43525431e208a541970f2bc045482dc281"
     },
     "repository/test/auth-extensions/native.py": {
-      "bytes": 8243,
-      "sha256": "aa6c3baa80129b1127e19bfe65c0f38e5e5ac72e2d6aa14d734dace3ad52f2ae"
+      "bytes": 8327,
+      "sha256": "b32dfb791ec13030bee78cb6ab89a8ff795ce38a6b7d5c9cdba90e5401dc0a82"
     },
     "repository/test/pq-falcon512/vectors.json": {
       "bytes": 129214,
