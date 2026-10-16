@@ -1,0 +1,79 @@
+{
+  "base": "8bf39647d6cde0b00fc8c49e8ecb354be85d4897",
+  "scope": "Workflow and Python CI controls only; no production C++, Rust, FunC or cryptographic fixture changes.",
+  "local_results": {
+    "baseline_equivalence": "52 unchanged shell bodies and original architecture policies",
+    "scheduled_workers": 9,
+    "max_parallel": 4,
+    "guard_unit_methods_passed": 5,
+    "step_deletion_change_skip_mutants": 156,
+    "guard_removal_controls": {
+      "command_integrity": "52 assertion failures after removing the guard",
+      "matrix_failure_propagation": "1 assertion failure after removing the guard",
+      "receipt_completeness": "1 assertion failure after removing the guard"
+    },
+    "receipt_cli": "nine worker receipts and partial-rerun reuse pass",
+    "actionlint": "v1.7.12; workflow validation passed (external shellcheck/pyflakes disabled)",
+    "bash_syntax": "all run blocks pass bash -n",
+    "ruff": "check and format pass",
+    "diff_whitespace": "pass"
+  },
+  "pending": [
+    "First full hosted execution of all nine suites and both aggregate gates",
+    "Measured wall time, runner minutes and native object cache hit rates"
+  ],
+  "artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-split-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "actionlint.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "baseline-equivalence.log",
+        "bytes": 137,
+        "sha256": "5fd1457f3388ea0c42a4f03752c93201c1fb67bc4f75a52b0e0b91738407327b"
+      },
+      {
+        "file": "baseline-equivalence.py",
+        "bytes": 1347,
+        "sha256": "53d4727a51a7d96d78f8cd8e90c4771e5e37966fd8d9fa82a31d746e027168d3"
+      },
+      {
+        "file": "coverage.log",
+        "bytes": 87,
+        "sha256": "8b84b522cfc7faebe3784324ec6bdd0778ad28a01236a968da4560be23dbad79"
+      },
+      {
+        "file": "guard-sensitivity.log",
+        "bytes": 43111,
+        "sha256": "8e8401779c41507f51deb356ecf87cefc005c122724e41d3af70e6547143357b"
+      },
+      {
+        "file": "guard-sensitivity.py",
+        "bytes": 1300,
+        "sha256": "067258b6f3c75e67c7f95c46a6763cc3d807139e45ae034ba7b059175913aa9c"
+      },
+      {
+        "file": "negative-tests.log",
+        "bytes": 103,
+        "sha256": "986d795753a01f3edab4eac3346f8f466ab5813adf566a890ca62b76a5e66e5a"
+      },
+      {
+        "file": "receipt-cli.log",
+        "bytes": 1104,
+        "sha256": "59e3be1d17b992a12d0cab392680f7caafc2a5096edfc20b41bda3f0d60695da"
+      }
+    ]
+  },
+  "commands": [
+    "python3 scripts/check-rescue-context-ci.py",
+    "python3 scripts/test_rescue_context_ci.py",
+    "actionlint -shellcheck= -pyflakes= .github/workflows/rescue-context.yml .github/workflows/source-guards.yml",
+    "ruff check scripts/check-rescue-context-ci.py scripts/test_rescue_context_ci.py",
+    "ruff format --check scripts/check-rescue-context-ci.py scripts/test_rescue_context_ci.py",
+    "git diff --check"
+  ]
+}

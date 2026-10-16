@@ -5,6 +5,11 @@ on:
   pull_request:
     paths:
       - '.github/workflows/rescue-context.yml'
+      - '.github/workflows/source-guards.yml'
+      - '.github/actions/native-cache/**'
+      - 'scripts/check-rescue-context-ci.py'
+      - 'scripts/test_rescue_context_ci.py'
+      - 'test/wallet-quantum/rescue-ci-contract.json'
       - 'scripts/build-wallet-quantum-bundle.py'
       - 'LICENSE'
       - 'THIRD_PARTY_NOTICES.md'
@@ -52,20 +57,21 @@ defaults:
     shell: bash
 
 jobs:
-  parity:
+  suites:
+    name: ${{ matrix.suite }} (${{ matrix.runner }})
     strategy:
       fail-fast: false
+      # Bound shared runner demand; put the longest suites first.
+      max-parallel: 4
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            timeout_minutes: 180
-          - runner: ubuntu-24.04-arm
-            timeout_minutes: 180
+        suite: [fee-lifecycle, signer-custody, release-wallet, vm-ingress, mutations]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        exclude:
+          # These controls were x86-only in the serial workflow.
+          - suite: mutations
+            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
-    # The serial control steps take about 150 minutes on a hosted runner of
-    # either architecture, so both get the same headroom for the repeated H20
-    # rebuilds and the final native ingress build.
-    timeout-minutes: ${{ matrix.timeout_minutes }}
+    timeout-minutes: 180
     env:
       TOS_ROOT: ${{ github.workspace }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/build-cargo
@@ -87,6 +93,15 @@ jobs:
         run: python -m pip install cryptography==46.0.4
       - name: Install pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
+      - name: Validate suite coverage before building
+        run: |
+          python scripts/check-rescue-context-ci.py
+          python scripts/test_rescue_context_ci.py
+      - name: Reuse compatible native objects
+        uses: ./.github/actions/native-cache
+        with:
+          profile: rescue-context
+          max-size: 1G
       - name: Build native Release tools and both Rust drivers
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -96,30 +111,39 @@ jobs:
             --example fee-native-cost --example suite-parity --example falcon-parity --example pq-tx-parity
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
             --example lms_fee_cache_fixture --example quantum_auth_encode --example quantum_pop_encode --example quantum_prepare_encode --example quantum_fee_encode --example quantum_genesis_encode
+      - name: Build shared public fixture signer
+        run: cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture
+      - name: Build the fee lifecycle CLI
+        if: matrix.suite == 'fee-lifecycle'
+        run: cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet
       - name: Generated admission configuration loading
+        if: contains(fromJSON('["release-wallet","signer-custody","fee-lifecycle","vm-ingress","mutations"]'), matrix.suite)
         run: |
           python test/wallet-quantum/test_recorded_admission.py
           python test/wallet-quantum/admission_config_controls.py --output-dir artifacts/context/quantum-generated-config
       - name: Whole transactions using the generated admission configuration
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
         run: |
           python test/wallet-quantum/release_config_transactions.py \
             --config artifacts/context/quantum-generated-config/restored-config.boc \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/quantum-release-transactions
       - name: Reproducible code and interface review bundle
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
         run: |
           python test/wallet-quantum/release_bundle_controls.py \
             --config artifacts/context/quantum-generated-config/restored-config.boc \
             --expected-manifest test/wallet-quantum/review-candidate-manifest.json \
             --output artifacts/context/quantum-review-bundle
       - name: Generated-config transaction sensitivity controls
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/release_config_controls.py \
             --config artifacts/context/quantum-generated-config/restored-config.boc \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/quantum-release-transaction-controls
       - name: Full wallet flows on the generated candidate configuration
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
         run: |
           candidate_controls=()
           if [ '${{ matrix.runner }}' = ubuntu-24.04 ]; then candidate_controls=(--controls); fi
@@ -128,6 +152,7 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/quantum-release-wallet "${candidate_controls[@]}"
       - name: PRIMARY wallet and recipient execution on the unchanged candidate
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
         run: |
           python test/wallet-quantum/module_tx_parity.py \
             --chain-config artifacts/context/quantum-generated-config/restored-config.boc \
@@ -135,12 +160,14 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/quantum-release-primary
       - name: Account-funded execution after ACCEPT
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
         run: |
           python test/wallet-quantum/post_accept_transactions.py \
             --config artifacts/context/quantum-generated-config/restored-config.boc \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/quantum-post-accept
       - name: SDK deployment and native cached recovery on generated configuration
+        if: contains(fromJSON('["release-wallet","signer-custody","fee-lifecycle","vm-ingress","mutations"]'), matrix.suite)
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p contracts \
             --features native-wallet-signer --example lms_fee_cache_fixture \
@@ -149,16 +176,18 @@ jobs:
             --config artifacts/context/quantum-generated-config/restored-config.boc \
             --examples "$CARGO_TARGET_DIR/debug/examples" --output artifacts/context/quantum-release-sdk
       - name: Configured SDK fee-route identity controls
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/sdk_route_controls.py \
             --fixtures artifacts/context/quantum-release-sdk/transactions/native \
             --examples "$CARGO_TARGET_DIR/debug/examples" --output artifacts/context/quantum-release-sdk-controls
       - name: PQ-only native wallet signer and fault controls
+        if: contains(fromJSON('["signer-custody"]'), matrix.suite)
         run: |
           python test/wallet-quantum/pq_signer_controls.py --build build --output artifacts/context/wallet-pq-signer
           python test/wallet-quantum/pq_signer_controls.py --c-api --build build --output artifacts/context/wallet-pq-signer-c
       - name: Rust native wallet signer and proven-key controls
+        if: contains(fromJSON('["signer-custody"]'), matrix.suite)
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer --example public_fixture
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p wallet-pq-signer
@@ -193,6 +222,7 @@ jobs:
           python test/wallet-quantum/migration_signing_controls.py --output artifacts/context/migration-signing-controls
           python test/wallet-quantum/fee_rollover_controls.py --output artifacts/context/fee-rollover-controls
       - name: PQ custody restore CLI and protected input controls
+        if: contains(fromJSON('["signer-custody"]'), matrix.suite)
         run: |
           cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tosctl --features pq-wallet
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p secrets-vault --lib secret_input::
@@ -201,11 +231,13 @@ jobs:
           python test/wallet-quantum/cli_create.py --cli "$CARGO_TARGET_DIR/debug/tosctl" --output artifacts/context/pq-cli-create
           python test/wallet-quantum/cli_create_controls.py --cli "$CARGO_TARGET_DIR/debug/tosctl" --output artifacts/context/pq-cli-create-controls
       - name: Fee signer scheduling boundaries and deletion controls
+        if: contains(fromJSON('["signer-custody"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_schedule_controls.py --output artifacts/context/fee-schedule
           # Keep fork/exec handoff separate from immediate journal reopen probes.
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib lms_fee_ -- --test-threads=1
       - name: PQ-only wallet SDK wire vectors
+        if: contains(fromJSON('["signer-custody"]'), matrix.suite)
         run: |
           python test/wallet-quantum/sdk_auth_vectors.py --output /tmp/quantum-auth-vectors.json
           cmp /tmp/quantum-auth-vectors.json tosctl/src/node-control/contracts/tests/fixtures/quantum/auth-wire.json
@@ -221,12 +253,13 @@ jobs:
           cmp /tmp/quantum-successor-vectors.json tosctl/src/node-control/contracts/tests/fixtures/quantum/successor-wire.json
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p contracts --lib wallet_quantum
       - name: Initial recovery manifest semantic controls
+        if: contains(fromJSON('["signer-custody"]'), matrix.suite)
         run: |
           python test/wallet-quantum/manifest_controls.py --output artifacts/context/initial-manifest-controls
           python test/wallet-quantum/manifest_recovery_controls.py --output artifacts/context/manifest-recovery-controls
           python test/wallet-quantum/manifest_vault_controls.py --output artifacts/context/manifest-vault-controls
       - name: Wallet SDK semantic deletion controls
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["signer-custody"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/sdk_auth_controls.py --output artifacts/context/auth-sdk-controls
           python test/wallet-quantum/sdk_auth_controls.py --pop --output artifacts/context/pop-sdk-controls
@@ -235,10 +268,11 @@ jobs:
           python test/wallet-quantum/cached_fee_decode_controls.py --output artifacts/context/fee-cached-decode-controls
           python test/wallet-quantum/sdk_auth_controls.py --genesis --output artifacts/context/genesis-sdk-controls
       - name: Durable fee reservation deletion controls
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["signer-custody"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/fee_journal_controls.py --output artifacts/context/fee-journal
       - name: PQ-only complete receiver delivery
+        if: contains(fromJSON('["release-wallet"]'), matrix.suite)
         run: |
           python test/wallet-quantum/module_tx_parity.py \
             --native-signer build/crypto/pq/test-wallet-pq-signer-fixture \
@@ -248,6 +282,7 @@ jobs:
           python test/wallet-quantum/test_preparation.py --output artifacts/context/quantum-preparation \
             --rust-driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
       - name: Full R2 fee transaction parity at diagnostic credit
+        if: contains(fromJSON('["fee-lifecycle","vm-ingress","mutations"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_tx_parity.py \
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
@@ -281,11 +316,13 @@ jobs:
             --cache-driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/quantum-fee-prepare
       - name: Encrypted fee custody matches executed recovery messages
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/recorded_fee_custody.py \
             --fixtures artifacts/context/quantum-fee-prepare/native \
             --output artifacts/context/quantum-recorded-fee-custody --controls
       - name: Initial wallet preparation CLI controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_prepare_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -293,6 +330,7 @@ jobs:
             --fixture artifacts/context/quantum-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-prepare-controls
       - name: Initial primary signing CLI retirement controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_primary_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -300,6 +338,7 @@ jobs:
             --fixture artifacts/context/quantum-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-primary-controls
       - name: PRIMARY CLI recipient delivery and receipt controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_delivery_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -307,6 +346,7 @@ jobs:
             --fixture artifacts/context/quantum-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-delivery-controls
       - name: SLH lock CLI native execution and action controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_lock_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -314,12 +354,14 @@ jobs:
             --fixture artifacts/context/quantum-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-lock-controls
       - name: Initial wallet inspection proof-binding controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_inspect_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
             --fixture artifacts/context/quantum-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-inspect-controls
       - name: Initial manifest CLI restoration controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_initial_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -327,6 +369,7 @@ jobs:
             --fixture artifacts/context/quantum-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/cli-initial-controls
       - name: Initial fee custody CLI recovery and controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_recovery_fixture.py --output artifacts/context/fee-recovery-fixture
           cmp artifacts/context/fee-recovery-fixture/native-fee-recovery.json tosctl/src/wallet-pq-signer/tests/fixtures/native-fee-recovery.json
@@ -341,6 +384,7 @@ jobs:
             --public-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-controls
       - name: Fee session restore barrier and exclusive ownership controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_fee_session_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -348,6 +392,7 @@ jobs:
             --fee-session-tree artifacts/context/quantum-fee-prepare/native/PUBLIC-TEST-ONLY-lms-tree \
             --output artifacts/context/cli-fee-session-controls
       - name: Fee session abrupt export crash and native funded lock controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_fee_session_crash_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -356,6 +401,7 @@ jobs:
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-session-crash-controls
       - name: Fee session dual-role POP and challenge controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_fee_pop_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -364,6 +410,7 @@ jobs:
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-pop-controls
       - name: POP receipt CLI authenticated history and binding controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_pop_receipt_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -372,6 +419,7 @@ jobs:
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-pop-receipt-controls
       - name: Fee session successor preparation and deployment controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_fee_prepare_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -380,6 +428,7 @@ jobs:
             --fee-session-tree artifacts/context/fee-recovery-fixture/PUBLIC-TEST-ONLY-tree \
             --output artifacts/context/cli-fee-prepare-controls
       - name: Successor fee tree and funded POP lifecycle controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_recovery_fixture.py \
             --vector-index 0 \
@@ -393,6 +442,7 @@ jobs:
             --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
             --output artifacts/context/cli-successor-pop-controls
       - name: Reject active LMS key reuse in successor routes
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fresh_fee_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -402,6 +452,7 @@ jobs:
             --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
             --output artifacts/context/fresh-fee-controls
       - name: Joint fee sessions and native client migration controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/cli_migration_controls.py \
             --cli "$CARGO_TARGET_DIR/debug/tosctl" \
@@ -411,6 +462,7 @@ jobs:
             --successor-fee-fixture artifacts/context/successor-fee-recovery-fixture \
             --output artifacts/context/cli-migration-controls
       - name: Installed fee route promotion and repeated recovery controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/fee_recovery_fixture.py \
             --vector-index 0 --key-generation 8 \
@@ -425,24 +477,28 @@ jobs:
             --second-successor-fee-fixture artifacts/context/second-successor-fee-recovery-fixture \
             --output artifacts/context/cli-rotation-controls
       - name: Compiled-code manifest reconstruction controls
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/manifest_integration_controls.py \
             --driver "$CARGO_TARGET_DIR/debug/examples/quantum_genesis_encode" \
             --fixture artifacts/context/quantum-fee-prepare/native/sdk-genesis.json \
             --output artifacts/context/manifest-integration-controls
       - name: Verify gated migration signature was actually executed
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/recorded_migration_control.py \
             --fixtures artifacts/context/quantum-fee-prepare/native \
             --submission artifacts/context/quantum-fee-prepare/native/recovery/sdk-migration.boc \
             --output artifacts/context/quantum-gated-migration-control
       - name: Reject corrupt primary POP before migration
+        if: contains(fromJSON('["fee-lifecycle"]'), matrix.suite)
         run: |
           python test/wallet-quantum/dual_pop_control.py \
             --baseline artifacts/context/quantum-fee-prepare \
             --native-signer "$CARGO_TARGET_DIR/debug/examples/public_fixture" \
             --output artifacts/context/quantum-dual-pop-rejection
       - name: Receipt-checked native transaction timing smoke
+        if: contains(fromJSON('["vm-ingress"]'), matrix.suite)
         run: |
           python test/wallet-quantum/test_benchmark_transactions.py
           python test/wallet-quantum/recorded_admission.py \
@@ -466,6 +522,7 @@ jobs:
             --driver "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity" \
             --output artifacts/context/quantum-admission-envelope-probe --iterations 10
       - name: Native ingress parser boundary controls
+        if: contains(fromJSON('["vm-ingress"]'), matrix.suite)
         run: |
           cmake --build build --target test-ext-message-pool -j2
           build/test-ext-message-pool
@@ -481,50 +538,53 @@ jobs:
             --driver build/test-ext-message-ingress-fixtures \
             --output artifacts/context/quantum-ingress-fixture-probe --iterations 10
       - name: Native LMS chain buffer sensitivity
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/lms_buffer_controls.py --build build \
             --fixtures artifacts/context/quantum-fee-prepare \
             --output artifacts/context/quantum-lms-buffer-controls
       - name: Receipt-bound module rent invariant
+        if: contains(fromJSON('["vm-ingress"]'), matrix.suite)
         run: |
           python test/wallet-quantum/module_rent_control.py \
             --baseline artifacts/context/quantum-fee-prepare/native \
             --output artifacts/context/quantum-fee-prepare/module-rent-control.json
       - name: Preparation fee admission deletion controls
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/preparation_fee_controls.py \
             --baseline artifacts/context/quantum-fee-prepare \
             --output artifacts/context/quantum-fee-prepare-controls
       - name: Recovery state transition deletion controls
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/recovery_controls.py \
             --baseline artifacts/context/quantum-fee-prepare \
             --output artifacts/context/quantum-recovery-controls
       - name: Real cached signature verification deletion control
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/cache_verification_control.py --native-fee-signer \
             --baseline artifacts/context/quantum-fee-auth/native/sdk-cache \
             --driver "$CARGO_TARGET_DIR/debug/examples/lms_fee_cache_fixture" \
             --output artifacts/context/quantum-cache-verification-control
       - name: Full fee verification deletion control
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/wallet-quantum/fee_tx_mutation.py \
             --artifacts artifacts/context/quantum-fee-auth --target "$CARGO_TARGET_DIR"
       - name: Falcon version-19 boundary in both VMs
+        if: contains(fromJSON('["vm-ingress","mutations"]'), matrix.suite)
         run: |
           python test/pq-falcon512/version_boundary.py --build build \
             --rust-examples "$CARGO_TARGET_DIR/debug/examples" --out artifacts/context/falcon-version
       - name: Reject early and late Falcon activation mutations
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/pq-falcon512/version_controls.py --build build \
             --rust-examples "$CARGO_TARGET_DIR/debug/examples" --out artifacts/context/falcon-version-controls
       - name: Verify context, opcode, complete transactions and legacy pricing
+        if: contains(fromJSON('["vm-ingress","mutations"]'), matrix.suite)
         run: |
           build/crypto/tlbc -q crypto/block/block.tlb crypto/smartcont/wallet-quantum-rescue.tlb
           python test/rescue-fee-gate/test_context_admission.py \
@@ -539,26 +599,76 @@ jobs:
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_assembler --lib lms_fee_hash_mnemonic_round_trip
           cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib
       - name: Require meaningful mutation failures and restore binaries
-        if: matrix.runner == 'ubuntu-24.04'
+        if: contains(fromJSON('["mutations"]'), matrix.suite) && matrix.runner == 'ubuntu-24.04'
         run: |
           python test/rescue-fee-gate/context_mutations.py --artifacts artifacts/context --target "$CARGO_TARGET_DIR"
           python test/rescue-fee-gate/context_transactions.py --output artifacts/context \
             --rust "$CARGO_TARGET_DIR/debug/examples/pq-tx-parity"
           git diff --exit-code
+      - name: Require source restoration
+        run: git diff --exit-code
+      - name: Record successful suite
+        run: |
+          python scripts/check-rescue-context-ci.py --write-receipt artifacts/context/suite-success.json \
+            --suite '${{ matrix.suite }}' --runner '${{ matrix.runner }}'
+      - name: Retain success receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rescue-receipt-${{ matrix.runner }}-${{ matrix.suite }}-attempt-${{ github.run_attempt }}
+          path: artifacts/context/suite-success.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Compile cache statistics
+        if: always()
+        run: ccache --show-stats
       - name: Record exact source and public evidence hashes
         if: always()
         run: |
           mkdir -p artifacts/context
           git rev-parse HEAD > artifacts/context/source-commit.txt
+          printf '%s\n' '${{ matrix.suite }}' > artifacts/context/suite.txt
           uname -a > artifacts/context/platform.txt
           find artifacts/context -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > artifacts/context/SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: rescue-context-${{ matrix.runner }}
+          name: rescue-context-${{ matrix.runner }}-${{ matrix.suite }}-attempt-${{ github.run_attempt }}
           path: |
             artifacts/context
             !artifacts/context/**/PUBLIC-TEST-ONLY-lms-tree
             !artifacts/context/**/PUBLIC-TEST-ONLY-successor-tree
             !artifacts/context/**/PUBLIC-TEST-ONLY-tree
           retention-days: 14
+
+  parity:
+    # Retain the existing public check names. A skipped/cancelled matrix is a
+    # failed gate, and upload-only success cannot satisfy this check.
+    name: parity (${{ matrix.runner }}, 180)
+    needs: suites
+    if: always()
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require all scheduled suites to pass
+        env:
+          SUITES_RESULT: ${{ needs.suites.result }}
+        run: test "$SUITES_RESULT" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: rescue-receipt-*
+          path: receipts
+      - name: Verify every receipt matches this source and run
+        env:
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python scripts/check-rescue-context-ci.py --verify-receipts receipts
