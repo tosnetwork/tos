@@ -28,6 +28,11 @@ jobs:
         with:
           python-version: '3.14'
 
+      - name: Verify rescue suite coverage and failure controls
+        run: |
+          python3 scripts/check-rescue-context-ci.py
+          python3 scripts/test_rescue_context_ci.py
+
       - name: Install configure-time tools
         run: |
           sudo apt-get update
