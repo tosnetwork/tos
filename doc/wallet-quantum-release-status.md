@@ -46,12 +46,12 @@ activation condition remains open: approved release configuration and published
 client defaults must be selected together after the required gates. Generating
 a BOC does not alter a running network.
 
-Current native and Rust introduction gates are suite/ML-DSA at version 16, the
-fixed LMS fee-hash operation at 17, and both dedicated and generic Falcon paths
-at 19. The candidate genesis is version 18. These are separate concepts; an
-opcode's introduction minimum need not equal the candidate genesis version.
-The older statement that current Falcon gates were 16 is obsolete. Final-head
-version controls must still prove Falcon refusal at 18 and acceptance at 19.
+Every native and Rust introduction gate is at version 16, the genesis version:
+suite/ML-DSA, the fixed LMS fee-hash operation, the `c7[18]` import context and
+both dedicated and generic Falcon paths. Version controls prove refusal at 15 and
+acceptance at 16. The candidate configuration below still uses version 18 because
+it also requires the ConfigParam 48 AUTH policy, which is mandatory from
+version 17; that requirement is a configuration rule, not an instruction gate.
 
 ## Selected generated-config transaction evidence
 

@@ -87,3 +87,8 @@ independent comparison preserve all code/configuration identities and the other
 [The refresh record](review-format-refresh-20261006.json) retains both manifest
 identities and the exact commands. The earlier evidence index remains unchanged
 and continues to describe its original manifest, rather than the refreshed one.
+
+Opening every feature at global version 16 refreshes six pinned files:
+`crypto/vm/pqops.h`, `tosctl/src/vm/src/executor/pq.rs`, `crypto/smartcont/pq.fc`
+(comment only), `doc/tvm-lms-fee-hash.md` and the two rescue suite TSVs. Code,
+configuration and the other pinned identities are unchanged.

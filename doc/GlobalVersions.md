@@ -349,10 +349,11 @@ Not yet activated on any TOS network, same as version 14 above.
 
 ## Version 16: unified development baseline
 
-ML-DSA-44, all three Poseidon2 instructions and the frozen-account recovery
-fix are enabled at version 16. Falcon retains a separate version-19 gate in
-the Quantum candidate profile; version 18 does not activate either Falcon entry point.
-This changes execution under version 16: existing development-chain history
+Every protocol feature this binary implements is enabled at version 16, the
+genesis version: ML-DSA-44, Falcon-512 padded, the generic `PQCHECKSIG_SUITE`
+instruction (suites 1-4), `LMSCHECKFEEHASH`, all three Poseidon2 instructions,
+the `c7[18]` import-statistics element and the frozen-account recovery fix.
+There are no later version gates. This changes execution under version 16: existing development-chain history
 requires the original binary, or a fresh genesis for the consolidated baseline.
 No running network is migrated by this source change.
 
@@ -443,29 +444,32 @@ Rejected as invalid (exit 6) at versions 0-15. `POSEIDON2_PERM8` and
 
 PATH7 adds no separate transaction-engine change.
 
-## Version 19: original Falcon wallet authorization
+### Falcon-512 padded, generic suite and fee verification
 
-`PQCHECKSIG_FALCON512_PADDED` has candidate codepage-0 allocation `F93101` and
-minimum global version 19. It consumes message/signature/public-key Cells,
-uses the fixed original Falcon-512 padded profile and returns a TVM boolean.
-The development proposal charges 20,000 base gas plus one gas per decoded byte
-and ordinary instruction/cell loads. Historical versions reject the opcode.
-See [the frozen profile](falcon512-profile-v1.json) and
-[implementation and remaining gates](wallet-falcon-fndsa.md).
+- `PQCHECKSIG_FALCON512_PADDED` (`F93101`) consumes message/signature/public-key
+  Cells, uses the fixed original Falcon-512 padded profile and returns a TVM
+  boolean. It charges 20,000 base gas plus one gas per decoded byte and ordinary
+  instruction/cell loads. See [the frozen profile](falcon512-profile-v1.json) and
+  [implementation and remaining gates](wallet-falcon-fndsa.md).
+- `PQCHECKSIG_SUITE` (`F93102`, `message context signature public_key suite - valid`)
+  dispatches suite 1 ML-DSA-44, suite 2 Falcon-512 padded, suite 3
+  SLH-DSA-SHA2-128s and suite 4 the one-level HSS/LMS fee verifier. Suite 2 shares
+  `F93101`'s version gate.
+- `LMSCHECKFEEHASH` (`F93103`, `hash leaf signature public_key - valid`) is the
+  fixed H20/W4 fee-admission profile. See [tvm-lms-fee-hash.md](tvm-lms-fee-hash.md).
 
-Generic `PQCHECKSIG_SUITE` suite 2 also requires version 19 and returns
-`range_chk` at versions 16 through 18. The dedicated opcode returns
-`inv_opcode` below 19.
+All three are rejected as invalid (exit 6) at versions 0-15. The Falcon,
+SLH-DSA and LMS tariffs are prototype values pending reference-hardware
+calibration and protocol approval; profile acceptance bytes cannot later be
+reinterpreted as formal FN-DSA.
 
-This candidate changes Falcon execution at versions 16 through 18 compared
-with the consolidated development profile. Existing development histories
-that executed Falcon at those versions require their original binary; use a
-fresh genesis to test this profile.
+### c7 tuple
 
-The binary capability ceiling is 19. This change does not alter a network's
-ConfigParam 8 or canonical genesis. The candidate allocation, version and gas
-must receive protocol approval before activation; profile acceptance bytes
-cannot later be reinterpreted as formal FN-DSA.
+**c7** tuple extended from 18 to 19 elements:
+* **18**: `null | [1, incoming_message_hash, cells, bits]` - complete import
+  statistics of the inbound external message of an ordinary, non-special
+  transaction; null for internal messages, tick/tock, getters and compute-only
+  contexts. See [tvm-lms-fee-hash.md](tvm-lms-fee-hash.md).
 
 ## Capability flags versus version bumps
 
