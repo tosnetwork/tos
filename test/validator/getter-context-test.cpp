@@ -9,7 +9,6 @@
 #include "auto/tl/lite_api.h"
 #include "auto/tl/lite_api.hpp"
 #include "block/get-method-context.h"
-#include "proof-verify.h"
 #include "smc-envelope/SmartContract.h"
 #include "td/actor/actor.h"
 #include "td/utils/Time.h"
@@ -23,6 +22,7 @@
 
 #include "getter-context-fixture.h"
 #include "getter-context-reference.h"
+#include "proof-verify.h"
 
 namespace {
 
@@ -161,8 +161,8 @@ void c7_parity_cases(const std::string& zero, const std::string& elector, const 
     context.global_version = version;
     auto proven = tos::proofverify::proven_getter_c7(*state.config, getter.code, getter.balance,
                                                      address_slice(getter.address), getter.due_payment, context);
-    std::string proven_shape = proven.is_ok() ? c7_shape_of(proven.ok()->at(0).as_tuple())
-                                              : "error: " + proven.error().message().str();
+    std::string proven_shape =
+        proven.is_ok() ? c7_shape_of(proven.ok()->at(0).as_tuple()) : "error: " + proven.error().message().str();
 
     tos::SmartContract contract{tos::SmartContract::State{code, vm::CellBuilder{}.finalize_novm()}};
     tos::SmartContract::Args args;

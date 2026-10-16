@@ -74,6 +74,13 @@ def main():
         raise RuntimeError("baseline failed")
     cases = [
         (
+            "stale-probe-version",
+            "test/wallet-quantum/release-config-probe.fc",
+            "throw_unless(903, version~load_uint(32) == 16);",
+            "throw_unless(903, version~load_uint(32) == 18);",
+            "'s1-valid', 0, {'exit': 903",
+        ),
+        (
             "native-fallback",
             "test/auth-extensions/native.py",
             "configuration.b64(), vm_log_verbosity",
