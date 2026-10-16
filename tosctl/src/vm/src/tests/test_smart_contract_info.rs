@@ -525,3 +525,39 @@ fn incoming_storage_context_is_versioned_and_optional() {
         }
     }
 }
+
+/// The getter c7 shape shared with the C++ getter paths (liteserver, proof
+/// verifier, emulator), which check the same record in `getter-context-c7-parity`.
+#[test]
+fn getter_context_shape_matches_the_cpp_getter_paths() {
+    use chain_block::{ConfigParam8, ConfigParamEnum, GlobalVersion};
+    let path =
+        format!("{}/../../../test/validator/data/getter-c7-shape.tsv", env!("CARGO_MANIFEST_DIR"));
+    let record = std::fs::read_to_string(&path).expect("getter c7 shape record");
+    let mut rows = 0;
+    for line in record.lines().filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        let fields: Vec<&str> = line.split('\t').collect();
+        assert_eq!(fields.len(), 3, "malformed row {line:?}");
+        let version: u32 = fields[0].parse().expect("version");
+        let length: usize = fields[1].parse().expect("length");
+        let mut sci = SmartContractInfo::default();
+        sci.config_params
+            .set_config(ConfigParamEnum::ConfigParam8(ConfigParam8 {
+                global_version: GlobalVersion { version, capabilities: 0 },
+            }))
+            .unwrap();
+        // A get-method imports no external message.
+        sci.incoming_storage = None;
+        let item = sci.as_temp_data_item();
+        let params = item.as_tuple().unwrap()[0].as_tuple().unwrap();
+        assert_eq!(params.len(), length, "c7[0] length at version {version}");
+        let slot = match params.get(18) {
+            None => "absent",
+            Some(StackItem::None) => "null",
+            Some(_) => "value",
+        };
+        assert_eq!(slot, fields[2], "c7[18] at version {version}");
+        rows += 1;
+    }
+    assert!(rows >= 3, "the shape record must cover versions 15, 16 and 17");
+}
