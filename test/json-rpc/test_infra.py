@@ -9,18 +9,17 @@ Covers:
   - Method not found -> error -32601 (spec-compliant `error.code`)
   - GET /api-info      -> served method list and its derived count
 """
+
 import pytest
 import requests
-
 from rpc_contract import assert_error, expect_error
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  1. Healthcheck
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestHealthcheck:
 
+class TestHealthcheck:
     def test_healthcheck_returns_200(self, endpoint, headers):
         """GET /healthcheck should return 200 with a text body."""
         url = endpoint.rstrip("/") + "/healthcheck"
@@ -39,8 +38,8 @@ class TestHealthcheck:
 #  2. Readyz
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestReadyz:
 
+class TestReadyz:
     def test_readyz_returns_json(self, endpoint, headers):
         """GET /readyz should return JSON with at least 'ready' and 'sync_lag_seconds'."""
         url = endpoint.rstrip("/") + "/readyz"
@@ -62,8 +61,8 @@ class TestReadyz:
 #  3. CORS preflight (OPTIONS)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestCORS:
 
+class TestCORS:
     @pytest.mark.parametrize("path", ["/", "/jsonRPC", "/getMasterchainInfo", "/healthcheck"])
     def test_options_returns_204(self, endpoint, headers, path):
         """OPTIONS on any path should return 204 with CORS headers."""
@@ -84,8 +83,8 @@ class TestCORS:
 #  4. Batch request support (JSON-RPC 2.0)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestBatch:
 
+class TestBatch:
     def test_batch_returns_array(self, endpoint, headers):
         """A JSON-RPC batch must be processed and return an array of responses
         (spec section 6).  Pre-fix the server rejected batches with a single
@@ -126,8 +125,10 @@ class TestBatch:
     def test_batch_too_large_rejected(self, endpoint, headers):
         """Batches over the 100-element cap are rejected with -32600."""
         url = endpoint.rstrip("/") + "/jsonRPC"
-        batch = [{"jsonrpc": "2.0", "id": i, "method": "getMasterchainInfo", "params": {}}
-                 for i in range(150)]
+        batch = [
+            {"jsonrpc": "2.0", "id": i, "method": "getMasterchainInfo", "params": {}}
+            for i in range(150)
+        ]
         resp = requests.post(url, json=batch, headers=headers)
         data = resp.json()
         assert isinstance(data, dict)
@@ -160,8 +161,8 @@ class TestBatch:
 #  5. Method not found
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestMethodNotFound:
 
+class TestMethodNotFound:
     def test_unknown_method_jsonrpc(self, endpoint, headers):
         """An unknown method via JSON-RPC must return spec-shape -32601."""
         url = endpoint.rstrip("/") + "/jsonRPC"
@@ -209,8 +210,8 @@ class TestMethodNotFound:
 #  6. /api-info
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestApiInfo:
 
+class TestApiInfo:
     def test_methods_count_is_derived(self, endpoint, headers):
         resp = requests.get(endpoint.rstrip("/") + "/api-info", headers=headers)
         assert resp.status_code == 200, resp.text
@@ -220,8 +221,14 @@ class TestApiInfo:
         assert isinstance(methods, list) and methods
         assert len(set(methods)) == len(methods), "method names must be unique"
         assert data["methods_count"] == len(methods)
-        for name in ("getMasterchainInfo", "shards", "getShards", "getConfigParam",
-                     "sendBoc", "getAccountDelegations"):
+        for name in (
+            "getMasterchainInfo",
+            "shards",
+            "getShards",
+            "getConfigParam",
+            "sendBoc",
+            "getAccountDelegations",
+        ):
             assert name in methods
 
     def test_rest_get_routes_are_served_methods(self, endpoint, headers):

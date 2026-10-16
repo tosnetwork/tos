@@ -6,8 +6,8 @@ Covers:
   - getConfigAll
   - getLibraries
 """
-import pytest
 
+import pytest
 from rpc_contract import assert_success, expect_error, expect_invalid_param, expect_result
 
 
@@ -24,8 +24,8 @@ def absent_config_param(api_method_call_get):
 #  1. getConfigParam
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetConfigParam:
 
+class TestGetConfigParam:
     METHOD = "getConfigParam"
 
     @pytest.mark.parametrize("param", [0, 1, 2, 15, 34])
@@ -59,8 +59,9 @@ class TestGetConfigParam:
         error = expect_error(response, -32004, "CONFIG_PARAM_ABSENT", retryable=False)
         assert error["message"] == f"config param {absent_config_param} not found"
 
-    def test_absent_param_decoded_view(self, api_method_call_no_get, api_method_call_get,
-                                       absent_config_param):
+    def test_absent_param_decoded_view(
+        self, api_method_call_no_get, api_method_call_get, absent_config_param
+    ):
         response = api_method_call_no_get(
             self.METHOD, param=absent_config_param, include_decoded=True
         )
@@ -81,8 +82,8 @@ class TestGetConfigParam:
 #  2. getConfigAll
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetConfigAll:
 
+class TestGetConfigAll:
     METHOD = "getConfigAll"
 
     def test_basic(self, api_method_call):
@@ -125,8 +126,8 @@ class TestGetConfigAll:
 #  3. getLibraries
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetLibraries:
 
+class TestGetLibraries:
     METHOD = "getLibraries"
 
     @staticmethod

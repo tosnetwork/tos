@@ -9,10 +9,9 @@ Covers:
   - getAddressState
   - getTokenData
 """
+
 import pytest
-
 from rpc_contract import assert_success, expect_error, expect_invalid_param
-
 
 # ---------------------------------------------------------------------------
 # Common addresses for a local testnet
@@ -36,8 +35,8 @@ BURN_ADDRESS = "0:00000000000000000000000000000000000000000000000000000000000000
 #  1. getAddressInformation
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetAddressInformation:
 
+class TestGetAddressInformation:
     METHOD = "getAddressInformation"
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, ELECTOR_FRIENDLY])
@@ -57,8 +56,7 @@ class TestGetAddressInformation:
         expect_error(response)
 
     def test_for_given_block(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno - 10)
+        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno - 10)
         assert response.status_code == 200, response.text
         data = response.json()
         assert_success(data)
@@ -71,8 +69,9 @@ class TestGetAddressInformation:
         expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
         expect_error(response)
 
     def test_uninitialized_address(self, api_method_call):
@@ -108,8 +107,8 @@ class TestGetAddressInformation:
 #  2. getExtendedAddressInformation
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetExtendedAddressInformation:
 
+class TestGetExtendedAddressInformation:
     METHOD = "getExtendedAddressInformation"
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, CONFIG_ADDRESS])
@@ -141,6 +140,7 @@ class TestGetExtendedAddressInformation:
         """Deployed wallet v3 should be recognized with its account state type."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -155,8 +155,7 @@ class TestGetExtendedAddressInformation:
         assert data["result"]["@type"] == "fullAccountState"
 
     def test_for_given_block(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno - 10)
+        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno - 10)
         assert response.status_code == 200, response.text
         data = response.json()
         assert_success(data)
@@ -169,8 +168,9 @@ class TestGetExtendedAddressInformation:
         expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
         expect_error(response)
 
 
@@ -178,8 +178,8 @@ class TestGetExtendedAddressInformation:
 #  3. getWalletInformation
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetWalletInformation:
 
+class TestGetWalletInformation:
     METHOD = "getWalletInformation"
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, CONFIG_ADDRESS, ZERO_MC_ADDRESS])
@@ -207,7 +207,10 @@ class TestGetWalletInformation:
         data_old = resp_old.json()
         assert_success(data_new)
         assert_success(data_old)
-        assert data_old["result"]["last_transaction_id"]["lt"] < data_new["result"]["last_transaction_id"]["lt"]
+        assert (
+            data_old["result"]["last_transaction_id"]["lt"]
+            < data_new["result"]["last_transaction_id"]["lt"]
+        )
 
     def test_wrong_seqno(self, api_method_call):
         """A malformed optional seqno is refused, not ignored."""
@@ -215,14 +218,16 @@ class TestGetWalletInformation:
         expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
         expect_error(response)
 
     def test_wallet_v1_detected(self, api_method_call):
         """Deployed wallet v1 should be detected with correct type."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -243,6 +248,7 @@ class TestGetWalletInformation:
         """Highload wallets: detected as wallet type but reference flags wallet=False."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -261,6 +267,7 @@ class TestGetWalletInformation:
         """Deployed wallet v3 should be detected with correct type and seqno."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -282,6 +289,7 @@ class TestGetWalletInformation:
         """Deployed wallet v4 should be detected with correct type."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -303,6 +311,7 @@ class TestGetWalletInformation:
         """Deployed wallet v5 should be detected with correct type."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -324,8 +333,8 @@ class TestGetWalletInformation:
 #  4. getAddressBalance
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetAddressBalance:
 
+class TestGetAddressBalance:
     METHOD = "getAddressBalance"
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, CONFIG_ADDRESS, ZERO_MC_ADDRESS])
@@ -363,8 +372,9 @@ class TestGetAddressBalance:
         expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
         expect_error(response)
 
 
@@ -372,8 +382,8 @@ class TestGetAddressBalance:
 #  5. getAddressState
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetAddressState:
 
+class TestGetAddressState:
     METHOD = "getAddressState"
     VALID_STATES = {"active", "frozen", "uninitialized"}
 
@@ -410,14 +420,16 @@ class TestGetAddressState:
         expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
         expect_error(response)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  6. getTokenData
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestGetTokenData:
     """
@@ -448,6 +460,7 @@ class TestGetTokenData:
         """Deployed Jetton master should return jettonMasterData."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -471,6 +484,7 @@ class TestGetTokenData:
         """Deployed NFT collection should return nftCollectionData."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")

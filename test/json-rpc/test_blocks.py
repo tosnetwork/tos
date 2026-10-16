@@ -42,6 +42,7 @@ def assert_block_zero_or_refused(response, block_id_of):
         error = assert_error(body)
         assert error["code"] != -32602, error
 
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  1. getMasterchainInfo
 # ═══════════════════════════════════════════════════════════════════════════

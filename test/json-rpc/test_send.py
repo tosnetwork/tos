@@ -8,7 +8,7 @@ Covers:
   - sendQuery                 (TOS exclusive)
   - estimateFee
 """
-import pytest
+
 from rpc_contract import assert_success, expect_error
 
 ELECTOR_ADDRESS = "-1:3333333333333333333333333333333333333333333333333333333333333333"
@@ -23,8 +23,8 @@ INVALID_BOC = "dGVzdA=="  # base64("test")
 #  1. sendBoc
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestSendBoc:
 
+class TestSendBoc:
     METHOD = "sendBoc"
 
     def test_missing_boc(self, api_method_call_no_get):
@@ -41,8 +41,8 @@ class TestSendBoc:
 #  2. sendBocReturnHash
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestSendBocReturnHash:
 
+class TestSendBocReturnHash:
     METHOD = "sendBocReturnHash"
 
     def test_missing_boc(self, api_method_call_no_get):
@@ -58,8 +58,8 @@ class TestSendBocReturnHash:
 #  3. sendBocReturnHashNoError  (TOS exclusive)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestSendBocReturnHashNoError:
 
+class TestSendBocReturnHashNoError:
     METHOD = "sendBocReturnHashNoError"
 
     def test_missing_boc(self, api_method_call_no_get):
@@ -82,8 +82,8 @@ class TestSendBocReturnHashNoError:
 #  4. sendQuery  (TOS exclusive)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestSendQuery:
 
+class TestSendQuery:
     METHOD = "sendQuery"
 
     def test_missing_params(self, api_method_call_no_get):
@@ -104,8 +104,8 @@ class TestSendQuery:
 #  5. estimateFee
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestEstimateFee:
 
+class TestEstimateFee:
     METHOD = "estimateFee"
 
     def test_missing_params(self, api_method_call):

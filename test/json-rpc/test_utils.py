@@ -7,10 +7,9 @@ Covers:
   - packAddress
   - unpackAddress
 """
+
 import pytest
-
 from rpc_contract import assert_success, expect_error, expect_result
-
 
 # ---------------------------------------------------------------------------
 # Shared test data
@@ -31,17 +30,20 @@ EXPECTED_RAW = RAW_UPPER
 #  1. detectAddress
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestDetectAddress:
 
+class TestDetectAddress:
     METHOD = "detectAddress"
 
-    @pytest.mark.parametrize("address,accepted", [
-        (FRIENDLY_BOUNCEABLE, True),
-        (RAW_LOWER, True),
-        (RAW_UPPER, True),
-        ("not_an_address", False),
-        ("", False),
-    ])
+    @pytest.mark.parametrize(
+        "address,accepted",
+        [
+            (FRIENDLY_BOUNCEABLE, True),
+            (RAW_LOWER, True),
+            (RAW_UPPER, True),
+            ("not_an_address", False),
+            ("", False),
+        ],
+    )
     def test_detect(self, api_method_call, address, accepted):
         response = api_method_call(self.METHOD, address=address)
         if accepted:
@@ -58,27 +60,30 @@ class TestDetectAddress:
 #  2. detectHash
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestDetectHash:
 
+class TestDetectHash:
     METHOD = "detectHash"
 
-    @pytest.mark.parametrize("hash_val,accepted", [
-        # standard base64
-        ("CPUE4WXeEJT+Dwz1fY/rkreWvYnsOt3I44i1G5ojJPM=", True),
-        # standard base64 without padding -- should fail
-        ("CPUE4WXeEJT+Dwz1fY/rkreWvYnsOt3I44i1G5ojJPM", False),
-        # url-safe base64 with padding
-        ("CPUE4WXeEJT-Dwz1fY_rkreWvYnsOt3I44i1G5ojJPM=", True),
-        # url-safe base64 without padding
-        ("CPUE4WXeEJT-Dwz1fY_rkreWvYnsOt3I44i1G5ojJPM", True),
-        # hex lowercase
-        ("08f504e165de1094fe0f0cf57d8feb92b796bd89ec3addc8e388b51b9a2324f3", True),
-        # hex uppercase
-        ("08F504E165DE1094FE0F0CF57D8FEB92B796BD89EC3ADDC8E388B51B9A2324F3", True),
-        # garbage
-        ("not a hash", False),
-        ("", False),
-    ])
+    @pytest.mark.parametrize(
+        "hash_val,accepted",
+        [
+            # standard base64
+            ("CPUE4WXeEJT+Dwz1fY/rkreWvYnsOt3I44i1G5ojJPM=", True),
+            # standard base64 without padding -- should fail
+            ("CPUE4WXeEJT+Dwz1fY/rkreWvYnsOt3I44i1G5ojJPM", False),
+            # url-safe base64 with padding
+            ("CPUE4WXeEJT-Dwz1fY_rkreWvYnsOt3I44i1G5ojJPM=", True),
+            # url-safe base64 without padding
+            ("CPUE4WXeEJT-Dwz1fY_rkreWvYnsOt3I44i1G5ojJPM", True),
+            # hex lowercase
+            ("08f504e165de1094fe0f0cf57d8feb92b796bd89ec3addc8e388b51b9a2324f3", True),
+            # hex uppercase
+            ("08F504E165DE1094FE0F0CF57D8FEB92B796BD89EC3ADDC8E388B51B9A2324F3", True),
+            # garbage
+            ("not a hash", False),
+            ("", False),
+        ],
+    )
     def test_detect(self, api_method_call, hash_val, accepted):
         response = api_method_call(self.METHOD, hash=hash_val)
         if accepted:
@@ -95,8 +100,8 @@ class TestDetectHash:
 #  3. packAddress
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestPackAddress:
 
+class TestPackAddress:
     METHOD = "packAddress"
 
     @pytest.mark.parametrize("address", ALL_FORMS)
@@ -121,8 +126,8 @@ class TestPackAddress:
 #  4. unpackAddress
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestUnpackAddress:
 
+class TestUnpackAddress:
     METHOD = "unpackAddress"
 
     @pytest.mark.parametrize("address", ALL_FORMS)

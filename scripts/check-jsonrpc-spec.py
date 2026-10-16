@@ -48,7 +48,8 @@ DEFAULT_CONTRACT = ROOT / "validator-engine" / "json-rpc-contract.h"
 TABLE_ROW = re.compile(r'^\s*\{"([A-Za-z_][A-Za-z0-9_]*)",\s*([A-Z](?:\s*\|\s*[A-Z])*)\s*,', re.M)
 KNOWN_FLAGS = {"W", "G", "C", "A", "R"}
 ERROR_KIND = re.compile(
-    r'inline\s+constexpr\s+ErrorKind\s+k\w+\s*\{\s*"([A-Z_]+)"\s*,\s*(-?\d+)\s*,\s*(true|false)\s*\}')
+    r'inline\s+constexpr\s+ErrorKind\s+k\w+\s*\{\s*"([A-Z_]+)"\s*,\s*(-?\d+)\s*,\s*(true|false)\s*\}'
+)
 
 
 class SpecError(Exception):
@@ -97,11 +98,11 @@ class _Flow:
             end = self.text.find(quote, end)
             if end < 0:
                 raise SpecError(f"unterminated quote in flow: {self.text}")
-            if quote == "'" and self.text[end + 1:end + 2] == "'":
+            if quote == "'" and self.text[end + 1 : end + 2] == "'":
                 end += 2
                 continue
             break
-        token = self.text[self.pos:end + 1]
+        token = self.text[self.pos : end + 1]
         self.pos = end + 1
         return _scalar(token)
 
@@ -119,7 +120,7 @@ class _Flow:
         start = self.pos
         while self.pos < len(self.text) and self.text[self.pos] not in stops:
             self.pos += 1
-        return _scalar(self.text[start:self.pos])
+        return _scalar(self.text[start : self.pos])
 
     def _mapping(self):
         self.pos += 1
@@ -176,11 +177,11 @@ def _split_key(content):
             end = content.find(quote, end)
             if end < 0:
                 return None
-            if quote == "'" and content[end + 1:end + 2] == "'":
+            if quote == "'" and content[end + 1 : end + 2] == "'":
                 end += 2
                 continue
             break
-        key_text, rest = content[:end + 1], content[end + 1:]
+        key_text, rest = content[: end + 1], content[end + 1 :]
         if not (rest == ":" or rest.startswith(": ")):
             return None
         return _scalar(key_text), rest[1:].strip()
@@ -305,7 +306,9 @@ def read_method_table(server_path):
         flags = {f.strip() for f in match.group(2).split("|")}
         unknown = flags - KNOWN_FLAGS
         if unknown:
-            raise SpecError(f"{server_path}: method {match.group(1)} has unknown flags {sorted(unknown)}")
+            raise SpecError(
+                f"{server_path}: method {match.group(1)} has unknown flags {sorted(unknown)}"
+            )
         rows.append((match.group(1), flags))
     names = [name for name, _ in rows]
     duplicates = sorted({n for n in names if names.count(n) > 1})
@@ -351,9 +354,11 @@ def read_spec(spec_path):
             op_id = op.get("operationId") if isinstance(op, dict) else None
             if not isinstance(op_id, str) or not op_id.endswith(suffix):
                 continue
-            name = op_id[:len(op_id) - len(suffix)] if suffix else op_id
+            name = op_id[: len(op_id) - len(suffix)] if suffix else op_id
             if path != "/" + name:
-                raise SpecError(f"{verb.upper()} {path}: operationId {op_id} does not match its path")
+                raise SpecError(
+                    f"{verb.upper()} {path}: operationId {op_id} does not match its path"
+                )
             table[name] = path
     error_data = dig(doc, "components", "schemas", "ErrorData")
     reason_enum = dig(error_data, "properties", "reason", "enum")
@@ -424,26 +429,58 @@ def main():
     }
     for what, found in extracted.items():
         if not found:
-            problems.append(f"extracted nothing for {what}; the layout changed or the source is empty")
+            problems.append(
+                f"extracted nothing for {what}; the layout changed or the source is empty"
+            )
 
     dupes = sorted({n for n in spec["enum"] if spec["enum"].count(n) > 1})
     if dupes:
         problems.append(f"/jsonRPC method enum lists names twice: {', '.join(dupes)}")
-    compare("/jsonRPC method enum", names, spec["enum"], problems, "the method table", "the spec enum")
-    compare("POST /<method> paths", names - admin_names, spec["post"], problems,
-            "the method table (non-admin)", "the spec")
-    compare("GET /<method> paths", get_names, spec["get"], problems, "the G-flagged methods", "the spec")
-    compare("x-admin-methods", admin_names, spec["admin"], problems, "the A-flagged methods", "the spec")
-    compare("x-write-methods", write_names, spec["write"], problems, "the W-flagged methods", "the spec")
+    compare(
+        "/jsonRPC method enum", names, spec["enum"], problems, "the method table", "the spec enum"
+    )
+    compare(
+        "POST /<method> paths",
+        names - admin_names,
+        spec["post"],
+        problems,
+        "the method table (non-admin)",
+        "the spec",
+    )
+    compare(
+        "GET /<method> paths", get_names, spec["get"], problems, "the G-flagged methods", "the spec"
+    )
+    compare(
+        "x-admin-methods", admin_names, spec["admin"], problems, "the A-flagged methods", "the spec"
+    )
+    compare(
+        "x-write-methods", write_names, spec["write"], problems, "the W-flagged methods", "the spec"
+    )
 
-    compare("ErrorData reason enum", kinds, spec["reason_enum"], problems, "json-rpc-contract.h", "the spec enum")
-    compare("x-error-reasons", kinds, spec["reason_table"], problems, "json-rpc-contract.h", "x-error-reasons")
+    compare(
+        "ErrorData reason enum",
+        kinds,
+        spec["reason_enum"],
+        problems,
+        "json-rpc-contract.h",
+        "the spec enum",
+    )
+    compare(
+        "x-error-reasons",
+        kinds,
+        spec["reason_table"],
+        problems,
+        "json-rpc-contract.h",
+        "x-error-reasons",
+    )
     for reason in sorted(set(kinds) & set(spec["reason_table"])):
         if kinds[reason] != spec["reason_table"][reason]:
             code, retryable = kinds[reason]
             spec_code, spec_retryable = spec["reason_table"][reason]
-            problems.append(f"x-error-reasons {reason}: header says code {code} retryable {str(retryable).lower()}, "
-                            f"spec says code {spec_code} retryable {str(spec_retryable).lower()}")
+            problems.append(
+                f"x-error-reasons {reason}: header says code {code} retryable {str(retryable).lower()}, "
+                f"spec says code {spec_code} retryable {str(spec_retryable).lower()}"
+            )
 
     if problems:
         print(f"check-jsonrpc-spec: FAIL: {args.spec} disagrees with the server", file=sys.stderr)
@@ -451,9 +488,11 @@ def main():
             print(f"  - {problem}", file=sys.stderr)
         return 1
 
-    print(f"check-jsonrpc-spec: OK: {len(names)} methods ({len(names) - len(admin_names)} POST routes, "
-          f"{len(get_names)} GET routes, {len(admin_names)} admin, {len(write_names)} write), "
-          f"{len(kinds)} error reasons")
+    print(
+        f"check-jsonrpc-spec: OK: {len(names)} methods ({len(names) - len(admin_names)} POST routes, "
+        f"{len(get_names)} GET routes, {len(admin_names)} admin, {len(write_names)} write), "
+        f"{len(kinds)} error reasons"
+    )
     return 0
 
 

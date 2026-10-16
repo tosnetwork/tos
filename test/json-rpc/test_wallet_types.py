@@ -5,9 +5,11 @@ wallet_type, seqno, and wallet_id for each deployed wallet version.
 These tests require contracts deployed on the local testnet.
 Run ``python -m deployer http://127.0.0.1:8011/`` first, or pass ``--deploy``.
 """
+
 import json
-import pytest
 from pathlib import Path
+
+import pytest
 from rpc_contract import assert_success
 
 DEPLOYED_FILE = Path(__file__).parent / "deployed_addresses.json"
@@ -31,7 +33,6 @@ def wallets():
 
 
 class TestWalletV1:
-
     def test_wallet_type(self, api_method_call_get, wallets):
         info = wallets.get("wallet_v1")
         if not info or not info.get("address"):
@@ -47,7 +48,6 @@ class TestWalletV1:
 
 
 class TestWalletV3R2:
-
     def test_wallet_type(self, api_method_call_get, wallets):
         info = wallets.get("wallet_v3r2")
         if not info or not info.get("address"):
@@ -64,7 +64,6 @@ class TestWalletV3R2:
 
 
 class TestWalletV4R2:
-
     def test_wallet_type(self, api_method_call_get, wallets):
         info = wallets.get("wallet_v4r2")
         if not info or not info.get("address"):
@@ -81,7 +80,6 @@ class TestWalletV4R2:
 
 
 class TestWalletV5R1:
-
     def test_wallet_type(self, api_method_call_get, wallets):
         info = wallets.get("wallet_v5r1")
         if not info or not info.get("address"):
@@ -98,7 +96,6 @@ class TestWalletV5R1:
 
 
 class TestHighloadV1:
-
     def test_wallet_type(self, api_method_call_get, wallets):
         info = wallets.get("highload_v1")
         if not info or not info.get("address"):
@@ -114,7 +111,6 @@ class TestHighloadV1:
 
 
 class TestHighloadV2:
-
     def test_wallet_type(self, api_method_call_get, wallets):
         info = wallets.get("highload_v2")
         if not info or not info.get("address"):

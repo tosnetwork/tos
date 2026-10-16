@@ -18,7 +18,6 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "test/tostester/src"))
 
 import nacl.signing  # noqa: E402
-from tos_service_test_identities import load_test_identity  # noqa: E402
 from contract import WalletV1Blueprint  # noqa: E402
 from pytosiq_core import (  # noqa: E402
     Address,
@@ -31,6 +30,7 @@ from pytosiq_core import (  # noqa: E402
     StateInit,
     WalletMessage,
 )
+from tos_service_test_identities import load_test_identity  # noqa: E402
 
 CONTRACT_DIR = REPO / "crypto/smartcont/reference/usdt-jetton-master/contracts"
 FUNC = REPO / "build/crypto/func"
@@ -43,9 +43,7 @@ OP_INTERNAL_TRANSFER = 0x178D4519
 OP_TOP_UP = 0xD372158C
 NANO = 1_000_000_000
 DEFAULT_SUPPLY = 1_000_000 * 1_000_000
-DEFAULT_METADATA_URI = (
-    "data:application/json,%7B%22symbol%22%3A%22tUSDT%22%2C%22decimals%22%3A6%7D"
-)
+DEFAULT_METADATA_URI = "data:application/json,%7B%22symbol%22%3A%22tUSDT%22%2C%22decimals%22%3A6%7D"
 
 
 def read_private(path: Path) -> bytes:
@@ -69,9 +67,7 @@ def lite(config: Path, *commands: str, timeout: int = 30) -> str:
 
 
 def rpc(endpoint: str, method: str, **params):
-    body = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-    ).encode()
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     request = urllib.request.Request(
         endpoint, data=body, headers={"Content-Type": "application/json"}
     )
@@ -269,7 +265,9 @@ def main() -> int:
     parser.add_argument("--target-supply", type=int, default=DEFAULT_SUPPLY)
     parser.add_argument(
         "--test-identities",
-        default=str(REPO.parent / "tos-service-spec/test-vectors/tos-service-test-identities-v1.json"),
+        default=str(
+            REPO.parent / "tos-service-spec/test-vectors/tos-service-test-identities-v1.json"
+        ),
     )
     parser.add_argument(
         "--buyer-address",
@@ -287,9 +285,7 @@ def main() -> int:
     state_dir = Path(args.state_dir)
     private_key = nacl.signing.SigningKey(read_private(state_dir / "main-wallet.pk"))
     address_file = read_private(state_dir / "main-wallet.addr")
-    admin = Address(
-        (int.from_bytes(address_file[32:36], "big", signed=True), address_file[:32])
-    )
+    admin = Address((int.from_bytes(address_file[32:36], "big", signed=True), address_file[:32]))
     buyer_key_path = Path(args.test_identities)
     buyer_deployed_now = False
     if args.buyer_address:
@@ -410,9 +406,7 @@ def main() -> int:
 
     endpoints = [f"http://127.0.0.1:{port}/jsonRPC" for port in (8011, 8012, 8013)]
     chain_heads = [rpc(endpoint, "getMasterchainInfo") for endpoint in endpoints]
-    network_votes = {
-        (head["init"]["root_hash"], head["init"]["file_hash"]) for head in chain_heads
-    }
+    network_votes = {(head["init"]["root_hash"], head["init"]["file_hash"]) for head in chain_heads}
     if len(network_votes) != 1:
         raise RuntimeError("testnet endpoints disagree on genesis identity")
     checkpoint = min(head["last"]["seqno"] for head in chain_heads)
@@ -434,8 +428,7 @@ def main() -> int:
         if (
             observed_master["total_supply"] != str(args.target_supply)
             or observed_master["admin"] != admin.to_str()
-            or observed_master["wallet_code_hash"]
-            != "tvm-cell-sha256:" + wallet_code.hash.hex()
+            or observed_master["wallet_code_hash"] != "tvm-cell-sha256:" + wallet_code.hash.hex()
             or observed_master["metadata_uri"] != args.metadata_uri
         ):
             raise RuntimeError(f"unexpected test USDT master state from {endpoint}")

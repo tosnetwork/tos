@@ -5,9 +5,9 @@ Covers:
   - runGetMethod     (POST only -- requires stack param)
   - runGetMethodStd  (TOS exclusive, POST only)
 """
+
 import json
 import logging
-import pytest
 
 from rpc_contract import SHARD_ALL, assert_success, expect_error, expect_result
 
@@ -20,8 +20,8 @@ ELECTOR_ADDRESS = "-1:3333333333333333333333333333333333333333333333333333333333
 #  1. runGetMethod
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestRunGetMethod:
 
+class TestRunGetMethod:
     METHOD = "runGetMethod"
 
     def test_active_election_id(self, api_method_call_no_get):
@@ -112,8 +112,8 @@ class TestRunGetMethod:
 #  2. runGetMethodStd  (TOS exclusive)
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestRunGetMethodStd:
 
+class TestRunGetMethodStd:
     METHOD = "runGetMethodStd"
 
     def test_basic(self, api_method_call_no_get):
@@ -127,9 +127,7 @@ class TestRunGetMethodStd:
         data = response.json()
         assert_success(data)
 
-    def test_checkpoint_identity_matches_lookup(
-        self, api_method_call_no_get, last_mc_seqno
-    ):
+    def test_checkpoint_identity_matches_lookup(self, api_method_call_no_get, last_mc_seqno):
         """A checkpoint-pinned getter must identify the exact block it used."""
         lookup = api_method_call_no_get(
             "lookupBlock",
