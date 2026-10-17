@@ -204,7 +204,7 @@ if (TOS_BUILD_FUZZERS)
   # add the compiler's fuzzing driver at link time (test/fuzz). A fuzzing build stops at
   # the first sanitizer report so the fuzzer records the input instead of running past it.
   if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    message(FATAL_ERROR "TOS_BUILD_FUZZERS requires a compiler with -fsanitize=fuzzer (Clang)")
+    message(FATAL_ERROR "TOS_BUILD_FUZZERS requires a compiler with -fsanitize=fuzzer")
   endif()
   if (NOT TOS_USE_ASAN)
     message(FATAL_ERROR "TOS_BUILD_FUZZERS requires TOS_USE_ASAN=ON")
