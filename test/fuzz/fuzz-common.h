@@ -14,7 +14,7 @@
 // A target refuses malformed input the way the node does, through td::Status, and treats
 // that refusal as an ordinary outcome. What it must never do is hide a failure: a broken
 // invariant on input the code accepted ends the process at once, with the reason on
-// stderr, so libFuzzer records the input as a crash. Nothing here catches a signal, an
+// stderr, so the fuzzer records the input as a crash. Nothing here catches a signal, an
 // exception or a sanitizer report.
 
 #pragma once

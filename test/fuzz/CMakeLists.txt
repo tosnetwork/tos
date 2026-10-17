@@ -1,4 +1,4 @@
-# Coverage-guided fuzz targets (libFuzzer), built only with -DTOS_BUILD_FUZZERS=ON, which
+# Coverage-guided fuzz targets (the compiler's fuzzing runtime), built only with -DTOS_BUILD_FUZZERS=ON, which
 # instruments the whole tree for coverage. Configure them together with the sanitizers:
 #
 #   cmake -S . -B build-fuzz -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \

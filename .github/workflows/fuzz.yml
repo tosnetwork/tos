@@ -1,7 +1,7 @@
 name: Coverage-guided fuzzing
 
-# Coverage-guided fuzz targets (libFuzzer, under AddressSanitizer and
-# UndefinedBehaviorSanitizer) for the parsers that take bytes from peers or
+# Coverage-guided fuzz targets (the compiler's fuzzing runtime, under the
+# address and undefined-behaviour sanitizers) for the parsers that take bytes from peers or
 # from disk: bags of cells, external message admission, persistent-state
 # import, block finality signatures, Simplex votes and certificates, FEC and
 # RLDP decoding, and SLH-DSA verification. The targets live in test/fuzz; each
@@ -32,7 +32,7 @@ concurrency:
 
 env:
   # Stop at the first fault with its trace intact. Leak detection stays on: a
-  # target leaking per input exhausts memory over a long run, and libFuzzer
+  # target leaking per input exhausts memory over a long run, and the fuzzer
   # reports the leak with the input that caused it.
   ASAN_OPTIONS: abort_on_error=1:halt_on_error=1:symbolize=1
   UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1

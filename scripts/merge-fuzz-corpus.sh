@@ -4,8 +4,8 @@
 #
 #   scripts/merge-fuzz-corpus.sh <build-dir> <work-dir> [target ...]
 #
-# For each target with a corpus under <work-dir>/corpus/<target>, libFuzzer's
-# -merge=1 picks the inputs that keep its coverage (the committed seeds count as
+# For each target with a corpus under <work-dir>/corpus/<target>, the fuzzer's
+# -merge=1 mode picks the inputs that keep its coverage (the committed seeds count as
 # already covered and are not copied), and the corpus is replaced by that set.
 # A target whose merge fails keeps its corpus as it was and makes the script exit
 # non-zero.
