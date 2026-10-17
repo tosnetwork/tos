@@ -31,16 +31,17 @@ the same CMake options shown below. The final invocation is:
 
 ```bash
 CCACHE_DIR=/tmp/tos-issue-232-ccache python3 -u scripts/static-analysis.py \
+  --base d7ef85b4cccdc1dbad6b814ceb0b3714ef81dc08 \
   --build-dir build --base-build-dir ../tos-main-issue232/build \
   --llvm-bin /usr/lib/llvm-21/bin \
   --codechecker /tmp/tos-issue-232-tools/bin/CodeChecker \
   --jobs 4 --keep-temp
 ```
 
-At execution, the default comparison ref `origin/main` resolved to the recorded
-base revision. For a later replay, add
-`--base d7ef85b4cccdc1dbad6b814ceb0b3714ef81dc08` to keep that comparison fixed
-after the remote ref or merge history changes.
+The explicit base pins the comparison to the recorded merge base even if
+`origin/main` later moves. The initial complete comparison at commit
+`1fee4c9b3660548d072b9c077382ab4cf0d5bdff` also passed; the invocation above
+was repeated successfully after the formatting follow-up described below.
 
 Here the CodeChecker path is the local virtual environment containing version
 6.29.1. Install the normal native build prerequisites, including the microhttpd
@@ -52,6 +53,44 @@ before dependency scanning; from each worktree's root:
 CCACHE_DIR=/tmp/tos-issue-232-ccache \
   ninja -C build -j3 "$PWD/storage/storage-daemon/smartcont/provider-code.h"
 ```
+
+## CI follow-up
+
+The initial PR hygiene job reported four continuation-line indentations in
+`download-state.cpp` and `download-state.hpp`. After aligning them with Clang 21,
+the full changed-line formatter against the recorded base exited 0 with
+`clang-format did not modify any files`. Ruff 0.15.2 check and format also passed
+for all four changed Python files. Exact commands and the two updated source
+hashes are recorded in `validation.json`.
+
+The original complete CTest and mutation-control batches were executed before
+the four-line indentation follow-up and were not repeated as a batch;
+`git diff --ignore-all-space --exit-code` against the initial PR commit, restricted
+to the two C++ files, exited 0.
+
+The GNU ld CI build subsequently exposed unresolved manager references in the
+transport test: `block_finality_broadcast_trace_id`, the `BlockHandleImpl`
+constructor, and its vtable. The test now directly links `validator`,
+`validator-common`, `full-node` and `tos_validator` after the RPC library, so the
+common objects are included directly and `validator` precedes `full-node`.
+
+The original generated link command, replayed with `-fuse-ld=bfd`, reproduced
+the same unresolved symbols and exited 1. After the dependency correction, the
+GNU ld link exited 0 and the resulting binary passed all 26 transport cases.
+This replay used the exact CMake definition published in commit
+`fc6898c64ca483302c4d6ac71707ccfa3bb5782f`.
+The link replay reused already compiled candidate objects; it did not rebuild
+the full native suite. These are separate linker and runtime results; the link
+failure is not counted as an additional readiness-guard control.
+
+This test-only dependency correction was configured while the static comparison
+was in progress. All 1,011 compilation commands remained byte-identical. A
+separate modification-time check found no generated C/C++ source/header file
+rewritten after the preconfigure snapshot, so the comparison retained
+the same C++ inputs. The exact link replay recipe and bounded results are in
+`validation.json`. To repeat the target normally with GNU ld, configure the
+build below with `-DTOS_USE_LLD=OFF`, build `test-json-rpc-transport`, and run its
+exact CTest name with `--no-tests=error`.
 
 ## Repeat the green checks
 
