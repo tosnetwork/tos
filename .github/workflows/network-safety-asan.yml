@@ -21,15 +21,20 @@ on:
   pull_request:
     branches: [master, testnet, main]
     types: [opened, reopened, synchronize, ready_for_review]
-    # Every test the job runs, and the in-tree code each one links: the network stacks,
-    # the JSON-RPC server the transport test runs, the socket and buffer layer and the
-    # TL schema they all speak. A test file missing here is a test whose rewrite never
-    # runs instrumented.
+    # Every test source the job runs, and the network-facing code those tests
+    # exercise directly: the network stacks and their accept path, the JSON-RPC
+    # server library the transport test runs (with the wallet index and control
+    # getters it links), the socket and buffer layer, the key-value layer, metrics and
+    # the TL schema. Deeper shared libraries (block, crypto, the rest of tdutils) are
+    # not listed: a change there runs in the ordinary test pass, not instrumented.
     paths:
       - 'adnl/**'
       - 'overlay/**'
       - 'quic/**'
       - 'http/**'
+      - 'tdnet/**'
+      - 'tddb/**'
+      - 'metrics/**'
       - 'dht/**'
       - 'fec/**'
       - 'keyring/**'
@@ -39,6 +44,8 @@ on:
       - 'rldp-http-proxy/**'
       - 'tdactor/**'
       - 'validator-engine/json-rpc-*'
+      - 'validator-engine/wallet-index*'
+      - 'validator-engine/control-getter*'
       - 'validator-engine/CMakeLists.txt'
       - 'tl/generate/scheme/**'
       - 'test/test-td-main.cpp'
