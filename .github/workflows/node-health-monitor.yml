@@ -120,4 +120,4 @@ jobs:
           build-health/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
       - name: Compile cache statistics
         if: always()
-        run: ccache --show-stats
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
