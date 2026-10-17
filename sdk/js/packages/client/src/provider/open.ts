@@ -23,9 +23,16 @@
 
 import { Cell } from "@tos/core";
 import type { TosProvider, AddressLike, CellLike } from "./TosProvider.js";
-import type { ContractProvider, ContractGetResult, ContractState, SendConfirmation, SenderArguments, StackReader as IStackReader } from "./ContractProvider.js";
+import type { ContractProvider, ContractGetResult, ContractState, ExternalSendResult, SendConfirmation, SenderArguments, StackReader as IStackReader } from "./ContractProvider.js";
 import type { TupleItemLike } from "./TosProvider.js";
 import { StackReaderImpl } from "../utils/StackReader.js";
+import {
+  ErrorCodes,
+  INACTIVE_ACCOUNT_EXIT_CODE,
+  TosContractError,
+  TosError,
+  TosNotDeployedError,
+} from "../errors.js";
 
 // Cell/Address parser for RichStackReader. Injected via setCoreParser().
 let _cellFromBase64: ((b64: string) => unknown) | null = null;
@@ -160,6 +167,17 @@ function makeContractProvider(address: AddressLike, client: TosProvider, contrac
 
     async get(method: string | number, args?: TupleItemLike[]): Promise<ContractGetResult> {
       const result = await client.runGetMethod(addrString, method, args);
+      if (result.exit_code === INACTIVE_ACCOUNT_EXIT_CODE) {
+        throw new TosNotDeployedError(addrString, String(method));
+      }
+      // TVM reports success as 0, or 1 for the alternative success exit.
+      if (result.exit_code !== 0 && result.exit_code !== 1) {
+        throw new TosContractError(
+          `get-method ${String(method)} on ${addrString} exited with code ${result.exit_code}`,
+          result.exit_code,
+          addrString,
+        );
+      }
       return {
         gasUsed: result.gas_used,
         exitCode: result.exit_code,
@@ -176,7 +194,7 @@ function makeContractProvider(address: AddressLike, client: TosProvider, contrac
       return {};
     },
 
-    async external(message: CellLike | Uint8Array | string): Promise<SendConfirmation> {
+    async external(message: CellLike | Uint8Array | string): Promise<ExternalSendResult> {
       // Wrap the body into a full ext_in_msg_info external message via sendQuery.
       // sendQuery on the C++ side builds the external message envelope (address, init, body).
       const init = (contract as Record<string, unknown>)?.["init"] as StateInitLike | undefined;
@@ -185,6 +203,9 @@ function makeContractProvider(address: AddressLike, client: TosProvider, contrac
         body: message as CellLike | string,
         ...(await externalStateInit(client, addrString, init)),
       });
+      if (typeof result?.hash !== "string" || result.hash.length === 0) {
+        throw new TosError("sendQuery accepted the message but returned no message hash", ErrorCodes.INVALID_RESPONSE);
+      }
       return { hash: result.hash };
     },
   };

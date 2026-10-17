@@ -11,6 +11,7 @@ import {
   type StateInit,
 } from "@tos/core";
 import { isWeakEd25519PublicKey } from "@tos/crypto";
+import { ErrorCodes, TosError } from "@tos/client";
 import type { OutMessage } from "./types.js";
 
 /**
@@ -36,8 +37,31 @@ export function requireWalletPublicKey(publicKey: Uint8Array, wallet: string): U
 // Constants
 // ---------------------------------------------------------------------------
 
-/** Default send mode: PAY_GAS_SEPARATELY + IGNORE_ERRORS = 3 */
-const DEFAULT_SEND_MODE = 3;
+/**
+ * Default send mode: PAY_GAS_SEPARATELY + IGNORE_ERRORS = 3.
+ *
+ * The ignore-errors flag stays on by default. The wallet contracts accept the
+ * message and advance their seqno in the compute phase; if a message then
+ * fails in the action phase without that flag, the whole action phase fails,
+ * the new seqno is discarded with it, and the same signed message stays valid
+ * and can be executed (and charged) again until `validUntil`. With the flag the
+ * failed message is skipped and the seqno advances, so a signed transfer runs
+ * at most once.
+ *
+ * The cost is that a skipped message is not an error on chain: the
+ * transaction succeeds and charges its fee while no value moves. That is why
+ * `sendTransfer` refuses, before signing, a transfer the balance visibly
+ * cannot cover (see {@link requireAffordable}), and why the confirmation is
+ * `waitForTransfer` from `@tos/client`, which compares the transaction's
+ * outgoing messages with the transfer, never a seqno change.
+ */
+export const DEFAULT_SEND_MODE = 3;
+
+/** Send-mode flag: carry the whole remaining balance (the message value is ignored). */
+const SEND_MODE_CARRY_ALL_BALANCE = 128;
+
+/** Largest value a uint32 `validUntil` field can hold. */
+const MAX_VALID_UNTIL = 0xffffffff;
 
 // ---------------------------------------------------------------------------
 // State-init serialization
@@ -166,17 +190,92 @@ export function createInternalMessage(msg: OutMessage): Cell {
 export function storeOutMessages(
   messages: OutMessage[],
   builder: ReturnType<typeof beginCell>,
+  sendMode?: number,
 ): void {
   for (const msg of messages) {
-    const mode = msg.mode ?? DEFAULT_SEND_MODE;
-    builder.storeUint(mode, 8);
+    builder.storeUint(effectiveSendMode(msg, sendMode), 8);
     builder.storeRef(createInternalMessage(msg));
   }
 }
 
 /**
- * Return the default valid-until timestamp: current time + 60 seconds.
+ * The send mode a message goes out with: its own `mode`, else the transfer's
+ * `sendMode`, else {@link DEFAULT_SEND_MODE}.
+ *
+ * @throws Error when the chosen mode is not an integer in 0..255
  */
-export function defaultValidUntil(): number {
-  return Math.floor(Date.now() / 1000) + 60;
+export function effectiveSendMode(msg: OutMessage, sendMode?: number): number {
+  const mode = msg.mode ?? sendMode ?? DEFAULT_SEND_MODE;
+  if (!Number.isInteger(mode) || mode < 0 || mode > 255) {
+    throw new Error(`send mode must be an integer in 0..255, got ${String(mode)}`);
+  }
+  return mode;
+}
+
+/**
+ * Refuse, before anything is signed, a transfer the wallet visibly cannot pay.
+ *
+ * Rule: the values of all messages not sent with the carry-all-balance flag
+ * (128) must add up to strictly less than the wallet's balance. Every wallet
+ * transaction pays its own fees from the balance before its messages leave, so
+ * a transfer of the whole balance cannot succeed either. Fees are not
+ * estimated here, so passing this check does not mean the transfer will
+ * settle: a transfer that fits the balance but not the balance less fees is
+ * caught afterwards by `waitForTransfer`.
+ *
+ * @param messages - The transfer's messages
+ * @param balance  - The wallet's current balance in nanoTOS
+ * @param sendMode - The transfer-level send mode, if any
+ * @param wallet   - Wallet name for error messages
+ * @throws TosError with code `INSUFFICIENT_BALANCE` when the rule fails
+ * @throws Error when a message value is not a non-negative bigint
+ */
+export function requireAffordable(
+  messages: OutMessage[],
+  balance: bigint,
+  sendMode: number | undefined,
+  wallet: string,
+): void {
+  let total = 0n;
+  for (const msg of messages) {
+    if (typeof msg.value !== "bigint" || msg.value < 0n) {
+      throw new Error(`${wallet}: message value must be a non-negative bigint`);
+    }
+    if ((effectiveSendMode(msg, sendMode) & SEND_MODE_CARRY_ALL_BALANCE) === 0) {
+      total += msg.value;
+    }
+  }
+  if (total >= balance) {
+    throw new TosError(
+      `${wallet}: the transfer sends ${total} nanoTOS but the wallet holds ${balance}; the balance must exceed the value sent, since fees are paid from it too`,
+      ErrorCodes.INSUFFICIENT_BALANCE,
+    );
+  }
+}
+
+/**
+ * The `validUntil` a signed message carries: the caller's value, or the
+ * current time + 60 seconds when none is given.
+ *
+ * The wallet contracts refuse a message whose `validUntil` is not after the
+ * current time (exit 35), so a value already in the past would only produce a
+ * signature nobody can use: it is refused here instead.
+ *
+ * @throws Error when `validUntil` is not an integer, exceeds uint32, or is not
+ *   after the current time
+ */
+export function resolveValidUntil(validUntil: number | undefined, wallet: string): number {
+  const now = Math.floor(Date.now() / 1000);
+  if (validUntil === undefined) {
+    return now + 60;
+  }
+  if (!Number.isInteger(validUntil) || validUntil < 0 || validUntil > MAX_VALID_UNTIL) {
+    throw new Error(`${wallet}: validUntil must be a uint32 UNIX time, got ${String(validUntil)}`);
+  }
+  if (validUntil <= now) {
+    throw new Error(
+      `${wallet}: validUntil ${validUntil} is not after the current time ${now}; the wallet would refuse the message`,
+    );
+  }
+  return validUntil;
 }

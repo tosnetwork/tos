@@ -190,16 +190,62 @@ export interface ShortTransaction {
   hash?: string;
 }
 
+/**
+ * A message as `getTransactions` summarizes it. `hash` is the base64
+ * representation hash of the message cell: for an external message it equals
+ * the hash `sendQuery` / `sendBocReturnHash` returned when it was sent.
+ */
+export interface MessageSummary {
+  hash?: string;
+  kind: "external" | "internal" | "unknown";
+  source?: string;
+  destination?: string;
+  value?: string;
+  bounced?: boolean;
+  created_lt?: string;
+  created_at?: number;
+}
+
+/** The compute phase of an ordinary or tick-tock transaction. */
+export type ComputePhaseSummary =
+  | {
+      skipped: false;
+      success: boolean;
+      exit_code: number;
+      vm_steps: number;
+      account_activated: boolean;
+    }
+  | { skipped: true; skip_reason: number };
+
+/** The action phase of an ordinary or tick-tock transaction. */
+export interface ActionPhaseSummary {
+  success: boolean;
+  valid: boolean;
+  no_funds: boolean;
+  result_code: number;
+  total_actions: number;
+  skipped_actions: number;
+  messages_created: number;
+}
+
 /** Full serialized transaction (from getTransactions / getBlockTransactionsExt). */
 export interface Transaction {
   "@type": "raw.transaction";
+  block_id?: BlockIdExt;
   data: string;               // base64-encoded BOC
+  utime?: number;
   transaction_id: TransactionId;
   fee: string;
-  storage_fee: string;
-  other_fee: string;
-  in_msg?: unknown;
-  out_msgs?: unknown[];
+  account?: string;
+  in_msg_hash?: string;
+  /** The inbound message; null for a transaction without one. */
+  in_msg: MessageSummary | null;
+  out_msgs: MessageSummary[];
+  transaction_type?: string;
+  aborted?: boolean | null;
+  destroyed?: boolean | null;
+  compute?: ComputePhaseSummary | null;
+  action?: ActionPhaseSummary | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Cell, Address, beginCell } from "@tos/core";
 import { keyPairFromSeed, signVerify } from "@tos/crypto";
 import { WalletV5R1 } from "./WalletV5R1.js";
 import { WalletV4R2 } from "./WalletV4R2.js";
+
+// The signing tests use fixed validUntil values, which the wallets refuse
+// once they are not after the current time: pin the clock before all of them.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(0);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // The network every wallet in these tests signs for (ConfigParam 19).
 const NETWORK = 42;

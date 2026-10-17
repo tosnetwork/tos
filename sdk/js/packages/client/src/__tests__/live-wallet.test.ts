@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, beforeAll } from "vitest";
-import { TosClient, Networks, open, waitForSeqnoChange, setCoreParser } from "../index.js";
+import { TosClient, Networks, open, waitForTransfer, setCoreParser } from "../index.js";
 
 import { mnemonicToPrivateKey } from "@tos/crypto";
 import { Cell } from "@tos/core";
@@ -88,7 +88,7 @@ describe.skipIf(!canRun)("Wallet live integration", () => {
     expect(balance >= 0n).toBe(true);
   });
 
-  it("sends a self-transfer and waits for seqno change", async () => {
+  it("sends a self-transfer and waits for it to be delivered", async () => {
     const balance: bigint = await openedWallet.getBalance();
     // Need at least 0.1 TOS to cover fees
     if (balance < toNano("0.1")) {
@@ -101,7 +101,7 @@ describe.skipIf(!canRun)("Wallet live integration", () => {
     const seqnoBefore: number = await openedWallet.getSeqno();
 
     // Send a tiny self-transfer (0.01 TOS to own address)
-    await openedWallet.sendTransfer(signer, {
+    const sent = await openedWallet.sendTransfer(signer, {
       messages: [
         {
           to: wallet.address,
@@ -111,14 +111,15 @@ describe.skipIf(!canRun)("Wallet live integration", () => {
       ],
     });
 
-    // Wait for seqno to increment (confirms the tx landed)
-    const newSeqno = await waitForSeqnoChange(
+    // Wait for the transaction and require that it created the message.
+    const tx = await waitForTransfer(
       client,
       wallet.address.toRawString(),
-      seqnoBefore,
+      sent,
       { timeout: 30_000, pollInterval: 1_500 },
     );
 
-    expect(newSeqno).toBe(seqnoBefore + 1);
+    expect(tx.out_msgs).toHaveLength(1);
+    expect(await openedWallet.getSeqno()).toBe(seqnoBefore + 1);
   });
 });

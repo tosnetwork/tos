@@ -22,6 +22,9 @@ export type {
   OutMsgQueueSizeShard,
   ShortTransaction,
   Transaction,
+  MessageSummary,
+  ComputePhaseSummary,
+  ActionPhaseSummary,
   NftItemData,
   NftCollectionData,
   JettonMasterData,
@@ -57,6 +60,9 @@ export {
   TosError,
   TosRpcError,
   TosContractError,
+  TosNotDeployedError,
+  TosNotDeliveredError,
+  INACTIVE_ACCOUNT_EXIT_CODE,
   ErrorCodes,
   ErrorReasons,
 } from "./errors.js";
@@ -83,6 +89,7 @@ export type {
   ContractState,
   ContractGetResult,
   SendConfirmation,
+  ExternalSendResult,
   SendMode,
   StateInit,
   StackReader,
@@ -114,5 +121,11 @@ export { Networks } from "./client/Networks.js";
 export type { NetworkConfig } from "./client/Networks.js";
 
 // Utilities
-export { waitForTransaction, waitForSeqnoChange } from "./utils/wait.js";
-export type { WaitOpts } from "./utils/wait.js";
+export {
+  waitForTransaction,
+  waitForTransfer,
+  waitForReceipt,
+  requireDelivered,
+  MAX_TRANSACTIONS_PER_POLL,
+} from "./utils/wait.js";
+export type { WaitOpts, PendingTransfer, Receipt } from "./utils/wait.js";

@@ -41,7 +41,7 @@ spec:
         - name: STATE_TTL
           value: "86400"
         - name: ARCHIVE_TTL
-          value: "86400"
+          value: "604800"
         - name: THREADS
           value: "8"
         - name: VERBOSITY

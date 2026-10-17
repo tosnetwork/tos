@@ -1,0 +1,342 @@
+{
+  "_provenance": "Public testnet node answers to the JS SDK during the WAL-01 journey (node build 8bf39647d, 2026-10-16, wallet 0:aaa3eda4...5702, WalletV4R2, global id 2). Every transaction and answer is verbatim, with two exceptions. getTransactionsAfterSettlement joins the verbatim newest transaction of the first poll after settlement (the journey log cut that answer at 4000 characters) with the two verbatim transactions of the poll before it. overdrawTransaction is rebuilt in the node's shape from the fields recorded for it; its action counters are those of one message skipped under the ignore-errors flag. TODO: replace overdrawTransaction with the getTransactions answer captured for an overdraw on the epoch-4 testnet, and drop this exception.",
+  "_todo": "overdrawTransaction is rebuilt, not captured: replace it with a captured epoch-4 answer",
+  "runGetMethodUndeployed": {
+    "@type": "smc.runResult",
+    "gas_used": 0,
+    "stack": [],
+    "exit_code": -256,
+    "last_transaction_id": null,
+    "block_id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 539519,
+      "root_hash": "s2BDGky5VVf6ttglHsTjsncGFyKAgqH/nm+LNnz/FJU=",
+      "file_hash": "2Fbw99CJLe1g0M//ciTZWBjePOuFejFSD+9jgizXRxA="
+    }
+  },
+  "sendQueryDeploy": {
+    "status": 1,
+    "hash": "1XQ/DKVBjUBm/RCVxlZ88t4jvs0tW/E8ljIw9Huc+kw="
+  },
+  "sendQueryTransfer": {
+    "status": 1,
+    "hash": "7hQvTcDxTBPE3ywPGwBdFGyDoGqfKhAxLLzWO288coU="
+  },
+  "getTransactionsBeforeSettlement": [
+    {
+      "@type": "raw.transaction",
+      "block_id": {
+        "@type": "tos.blockIdExt",
+        "workchain": 0,
+        "shard": "-9223372036854775808",
+        "seqno": 544818,
+        "root_hash": "4DvA0+TnI0zuc+YsUB0DIlQGCaugwGr+QrI3H9mpZeo=",
+        "file_hash": "wrWQ7OfAZym8zOGr9i0ruQFpRy0lAXxTlhETRFBGims="
+      },
+      "data": "te6ccgECGwEABDcAA7V6qj7aQTxJ36a5BjVs4p017P9fj9wggn5t7YBNFv+1cCAAAAf4WGB0EKlJxBICF8n9A8cGuy+XbDxRK/Rl6NvxY9dPiXivmc8gAAAH+ENlXDatICJQAARhG5/oAQIDAQGgBACCcv2USwFx3LNd0X56cUlxVn7EES+JW7Bg/8RTAqQXn66FMzeBUBRHa2LyhYOwOby/UppN/68tuPJy9wnCMQAT4PECDQxAR5MExEAZGgJFiAFVR9tIJ4k79Ncgxq2cU6a9n+vx+4QQT829sAmi3/auBB4FBgIBNAcIAKKdxqBXC4qQM5nxvf/jYXn3+gJlcyy1uq0E3yxkv61tr7Asgu9rijSo7JKtlexyEt2ge+iIAIotWwIWSPLzohIJAAAAAimpoxf/////AAAAAAABFP8A9KQT9LzyyAsJAFEAAAAAKamjF7bDBaZBYBZZmIu1Lvldwedjxvk2sYwIgTDNl9jLKKIyQAIBIAoLAgFIDA0D+PKDCNcYINIf+DUSuvKk0x/TH9Mf0wcD+CO78mPtRNDTH9Mf0//0BDBRU7ryoVFhuvKiJds88mMG+QFUEHX5EPKj+AAgwACeApMg10qW0wfUAvsA6ALeIMABjhcC0gfT/1kByMoHy//J0MhAE4EBCPRBWN7AApEx4w0DpAMVFhcBnNAg10nBIJJfA+AB0NMDAXGwkl8D4PpAMAHTHwGCEHBsdWe9kl8D4O1E0NMf0x/T//QEMGwxIvpEAcjKB8v/ydABgQEI9ApvoTGSXwPjDQ4CAUgPEABm0z/6ADD4J28iMFAEoSO+8uBQghDwbHVncIAYyMsFUATPFlAE+gISy2oSyx/LP8mAQPsAAgFYERIAEbjJftRNDXCx+ABFsp37UTQ0x/TH9P/9AQwbDFZAcjKB8v/ydABgQEI9ApvoTGACASATFAAXrc52omhpn5jrhf/AABevHfaiaGmPmOuFj8AB2CCr94EA7L6OECCrB4TvsITvugGAf7DAf7DggwaxIIQ/sCCDBr0hgjCxOAKIbVP8hb2wAYIwTsf9d5KsA/q9sJIwcOAggwa6IYLpAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgLqxIRgAKgHSB9P/MAHIygfL/8nQAYEBCPRZMAAcA8jLHxLLH8v/9ADJ7VQAkoLwJuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/IW6sQGC8McXanA9TdhPujwLdg0QZw8qIFP6LDnMxk7H/XeSrAP6urEAnUHPoxOIAAAAAAAAAAAaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAW8AAAAAAAAAAAAAAAAEtRS2kSeULjPfdJ4YfFGEir+G1RruLcPyCFvDGFBOfjgQ=",
+      "utime": 1792148005,
+      "transaction_id": {
+        "@type": "internal.transactionId",
+        "lt": "547701000001",
+        "hash": "1TB11pTXH7ZM8HYAG7QwuYVCq4ItrO8DYa1IkyunT0o="
+      },
+      "fee": "580863",
+      "account": "AAA3EDA413C49DFA6B906356CE29D35ECFF5F8FDC20827E6DED804D16FFB5702",
+      "in_msg_hash": "1XQ/DKVBjUBm/RCVxlZ88t4jvs0tW/E8ljIw9Huc+kw=",
+      "in_msg": {
+        "hash": "1XQ/DKVBjUBm/RCVxlZ88t4jvs0tW/E8ljIw9Huc+kw=",
+        "kind": "external"
+      },
+      "out_msgs": [],
+      "transaction_type": "ordinary",
+      "aborted": false,
+      "destroyed": false,
+      "compute": {
+        "skipped": false,
+        "success": true,
+        "exit_code": 0,
+        "vm_steps": 104,
+        "account_activated": true
+      },
+      "action": {
+        "success": true,
+        "valid": true,
+        "no_funds": false,
+        "result_code": 0,
+        "total_actions": 0,
+        "skipped_actions": 0,
+        "messages_created": 0
+      }
+    },
+    {
+      "@type": "raw.transaction",
+      "block_id": {
+        "@type": "tos.blockIdExt",
+        "workchain": 0,
+        "shard": "-9223372036854775808",
+        "seqno": 544797,
+        "root_hash": "HRdt7YlqNDnB+rqyxjcZLhWydg0WojPoH8oGb/Vq7Zs=",
+        "file_hash": "s+ZydJZ/xlhmiiowNqc1YRhwvvUJofdgIebrcrRhhrU="
+      },
+      "data": "te6ccgECBQEAAQgAA696qj7aQTxJ36a5BjVs4p017P9fj9wggn5t7YBNFv+1cCAAAAf4Q2VcMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAatICHQABgIAQIDAQGgBACCcpCuyJZa+rsW68PLm0COuucbYY14eIvIDQmENZPKyY2k/ZRLAXHcs13RfnpxSXFWfsQRL4lbsGD/xFMCpBefroUADwwJDuaygAEgAK9IAfcwUfonArRjqtpd/XUSVsx7FPzoIWKSCUVtOsLr+hvzACqo+2kE8Sd+muQY1bOKdNez/X4/cIIJ+be2ATRb/tXAkO5rKAAFWzwAAAD/CGyrhNWkBDpA",
+      "utime": 1792147997,
+      "transaction_id": {
+        "@type": "internal.transactionId",
+        "lt": "547679000003",
+        "hash": "CpScQSAhfJ/QPHBrsvl2w8USv0Zejb8WPXT4l4r5nPI="
+      },
+      "fee": "0",
+      "account": "AAA3EDA413C49DFA6B906356CE29D35ECFF5F8FDC20827E6DED804D16FFB5702",
+      "in_msg_hash": "Tbe6lQblplCH3ATKrJk7JoLLSQH8/8/Hkl8aMouGQA0=",
+      "in_msg": {
+        "hash": "Tbe6lQblplCH3ATKrJk7JoLLSQH8/8/Hkl8aMouGQA0=",
+        "kind": "internal",
+        "source": "EQD7mCj9E4FaMdVtLv66iStmPYp-dBCxSQSitp1hdf0N-Z77",
+        "destination": "EQCqo-2kE8Sd-muQY1bOKdNez_X4_cIIJ-be2ATRb_tXAn9i",
+        "value": "1000000000",
+        "bounced": false,
+        "created_lt": "547679000002",
+        "created_at": 1792147997
+      },
+      "out_msgs": [],
+      "transaction_type": "ordinary",
+      "aborted": true,
+      "destroyed": false,
+      "compute": {
+        "skipped": true,
+        "skip_reason": 0
+      },
+      "action": null
+    }
+  ],
+  "getTransactionsAfterSettlement": [
+    {
+      "@type": "raw.transaction",
+      "block_id": {
+        "@type": "tos.blockIdExt",
+        "workchain": 0,
+        "shard": "-9223372036854775808",
+        "seqno": 544866,
+        "root_hash": "e7dHwv6gFslXpoAsPh1p6lFIPzAThpXjeVjpMkmzQ1Q=",
+        "file_hash": "zq3Co9O7RAOWZi0ehzbgP2ogPPWKwMISpPipGqHKkTc="
+      },
+      "data": "te6ccgECCwEAAkwAA7V6qj7aQTxJ36a5BjVs4p017P9fj9wggn5t7YBNFv+1cCAAAAf4hic0HVMHXWlNcftkzwdgAbtDC5hUKrgi2s7wNhrUiTK6dPSgAAAH+FhgdBatICOAADRgYvnIAQIDAgHgBAUAgnIzN4FQFEdrYvKFg7A5vL9Smk3/ry248nL3CcIxABPg8U4gRIvtv3nerizUHxb0ndtfvy7D7Z0XfqUB2TMXYuqmAg0MQUYTioRACQoBRYgBVUfbSCeJO/TXIMatnFOmvZ/r8fuEEE/NvbAJot/2rgQMBgEB3wgBpJzxfTpnzUH0mvZCetNBjgP8zsyXQ3sZJYKSGylhxF0c3xEdw7vzNs7KgvK1/AxEcENIbpKMab9Mh/+WCTnDSAIAAAACKamjF2rSAuwAAAABAAMHAGhCAH3MFH6JwK0Y6raXf11ElbMexT86CFikglFbTrC6/ob8oBfXhAAAAAAAAAAAAAAAAAAAAK9IAVVH20gniTv01yDGrZxTpr2f6/H7hBBPzb2wCaLf9q4FAD7mCj9E4FaMdVtLv66iStmPYp+dBCxSQSitp1hdf0N+UAvrwgAFWzwAAAD/EMTmhNWkBHBAAJ1CH+MTiAAAAAAAAAAAHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAG3JgII1yVs0AAAAAAACAAAAAAACRAafg/Qz6fbYPT2NdafA3fAfsTpFhDQH+vmuhl0PAepAUBXM",
+      "utime": 1792148024,
+      "transaction_id": {
+        "@type": "internal.transactionId",
+        "lt": "547749000001",
+        "hash": "xzsPjRPIkuHhvu28keKHn2Fs3ZgtNWBYpPQTz0GNiSE="
+      },
+      "fee": "202702",
+      "account": "AAA3EDA413C49DFA6B906356CE29D35ECFF5F8FDC20827E6DED804D16FFB5702",
+      "in_msg_hash": "7hQvTcDxTBPE3ywPGwBdFGyDoGqfKhAxLLzWO288coU=",
+      "in_msg": {
+        "hash": "7hQvTcDxTBPE3ywPGwBdFGyDoGqfKhAxLLzWO288coU=",
+        "kind": "external"
+      },
+      "out_msgs": [
+        {
+          "hash": "0jxObWpkAXssmMpfgHH9FWzu9gypuWk4g93O6ulrXrw=",
+          "kind": "internal",
+          "source": "EQCqo-2kE8Sd-muQY1bOKdNez_X4_cIIJ-be2ATRb_tXAn9i",
+          "destination": "EQD7mCj9E4FaMdVtLv66iStmPYp-dBCxSQSitp1hdf0N-Z77",
+          "value": "50000000",
+          "bounced": false,
+          "created_lt": "547749000002",
+          "created_at": 1792148024
+        }
+      ],
+      "transaction_type": "ordinary",
+      "aborted": false,
+      "destroyed": false,
+      "compute": {
+        "skipped": false,
+        "success": true,
+        "exit_code": 0,
+        "vm_steps": 112,
+        "account_activated": false
+      },
+      "action": {
+        "success": true,
+        "valid": true,
+        "no_funds": false,
+        "result_code": 0,
+        "total_actions": 1,
+        "skipped_actions": 0,
+        "messages_created": 1
+      }
+    },
+    {
+      "@type": "raw.transaction",
+      "block_id": {
+        "@type": "tos.blockIdExt",
+        "workchain": 0,
+        "shard": "-9223372036854775808",
+        "seqno": 544818,
+        "root_hash": "4DvA0+TnI0zuc+YsUB0DIlQGCaugwGr+QrI3H9mpZeo=",
+        "file_hash": "wrWQ7OfAZym8zOGr9i0ruQFpRy0lAXxTlhETRFBGims="
+      },
+      "data": "te6ccgECGwEABDcAA7V6qj7aQTxJ36a5BjVs4p017P9fj9wggn5t7YBNFv+1cCAAAAf4WGB0EKlJxBICF8n9A8cGuy+XbDxRK/Rl6NvxY9dPiXivmc8gAAAH+ENlXDatICJQAARhG5/oAQIDAQGgBACCcv2USwFx3LNd0X56cUlxVn7EES+JW7Bg/8RTAqQXn66FMzeBUBRHa2LyhYOwOby/UppN/68tuPJy9wnCMQAT4PECDQxAR5MExEAZGgJFiAFVR9tIJ4k79Ncgxq2cU6a9n+vx+4QQT829sAmi3/auBB4FBgIBNAcIAKKdxqBXC4qQM5nxvf/jYXn3+gJlcyy1uq0E3yxkv61tr7Asgu9rijSo7JKtlexyEt2ge+iIAIotWwIWSPLzohIJAAAAAimpoxf/////AAAAAAABFP8A9KQT9LzyyAsJAFEAAAAAKamjF7bDBaZBYBZZmIu1Lvldwedjxvk2sYwIgTDNl9jLKKIyQAIBIAoLAgFIDA0D+PKDCNcYINIf+DUSuvKk0x/TH9Mf0wcD+CO78mPtRNDTH9Mf0//0BDBRU7ryoVFhuvKiJds88mMG+QFUEHX5EPKj+AAgwACeApMg10qW0wfUAvsA6ALeIMABjhcC0gfT/1kByMoHy//J0MhAE4EBCPRBWN7AApEx4w0DpAMVFhcBnNAg10nBIJJfA+AB0NMDAXGwkl8D4PpAMAHTHwGCEHBsdWe9kl8D4O1E0NMf0x/T//QEMGwxIvpEAcjKB8v/ydABgQEI9ApvoTGSXwPjDQ4CAUgPEABm0z/6ADD4J28iMFAEoSO+8uBQghDwbHVncIAYyMsFUATPFlAE+gISy2oSyx/LP8mAQPsAAgFYERIAEbjJftRNDXCx+ABFsp37UTQ0x/TH9P/9AQwbDFZAcjKB8v/ydABgQEI9ApvoTGACASATFAAXrc52omhpn5jrhf/AABevHfaiaGmPmOuFj8AB2CCr94EA7L6OECCrB4TvsITvugGAf7DAf7DggwaxIIQ/sCCDBr0hgjCxOAKIbVP8hb2wAYIwTsf9d5KsA/q9sJIwcOAggwa6IYLpAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgLqxIRgAKgHSB9P/MAHIygfL/8nQAYEBCPRZMAAcA8jLHxLLH8v/9ADJ7VQAkoLwJuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/IW6sQGC8McXanA9TdhPujwLdg0QZw8qIFP6LDnMxk7H/XeSrAP6urEAnUHPoxOIAAAAAAAAAAAaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAW8AAAAAAAAAAAAAAAAEtRS2kSeULjPfdJ4YfFGEir+G1RruLcPyCFvDGFBOfjgQ=",
+      "utime": 1792148005,
+      "transaction_id": {
+        "@type": "internal.transactionId",
+        "lt": "547701000001",
+        "hash": "1TB11pTXH7ZM8HYAG7QwuYVCq4ItrO8DYa1IkyunT0o="
+      },
+      "fee": "580863",
+      "account": "AAA3EDA413C49DFA6B906356CE29D35ECFF5F8FDC20827E6DED804D16FFB5702",
+      "in_msg_hash": "1XQ/DKVBjUBm/RCVxlZ88t4jvs0tW/E8ljIw9Huc+kw=",
+      "in_msg": {
+        "hash": "1XQ/DKVBjUBm/RCVxlZ88t4jvs0tW/E8ljIw9Huc+kw=",
+        "kind": "external"
+      },
+      "out_msgs": [],
+      "transaction_type": "ordinary",
+      "aborted": false,
+      "destroyed": false,
+      "compute": {
+        "skipped": false,
+        "success": true,
+        "exit_code": 0,
+        "vm_steps": 104,
+        "account_activated": true
+      },
+      "action": {
+        "success": true,
+        "valid": true,
+        "no_funds": false,
+        "result_code": 0,
+        "total_actions": 0,
+        "skipped_actions": 0,
+        "messages_created": 0
+      }
+    },
+    {
+      "@type": "raw.transaction",
+      "block_id": {
+        "@type": "tos.blockIdExt",
+        "workchain": 0,
+        "shard": "-9223372036854775808",
+        "seqno": 544797,
+        "root_hash": "HRdt7YlqNDnB+rqyxjcZLhWydg0WojPoH8oGb/Vq7Zs=",
+        "file_hash": "s+ZydJZ/xlhmiiowNqc1YRhwvvUJofdgIebrcrRhhrU="
+      },
+      "data": "te6ccgECBQEAAQgAA696qj7aQTxJ36a5BjVs4p017P9fj9wggn5t7YBNFv+1cCAAAAf4Q2VcMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAatICHQABgIAQIDAQGgBACCcpCuyJZa+rsW68PLm0COuucbYY14eIvIDQmENZPKyY2k/ZRLAXHcs13RfnpxSXFWfsQRL4lbsGD/xFMCpBefroUADwwJDuaygAEgAK9IAfcwUfonArRjqtpd/XUSVsx7FPzoIWKSCUVtOsLr+hvzACqo+2kE8Sd+muQY1bOKdNez/X4/cIIJ+be2ATRb/tXAkO5rKAAFWzwAAAD/CGyrhNWkBDpA",
+      "utime": 1792147997,
+      "transaction_id": {
+        "@type": "internal.transactionId",
+        "lt": "547679000003",
+        "hash": "CpScQSAhfJ/QPHBrsvl2w8USv0Zejb8WPXT4l4r5nPI="
+      },
+      "fee": "0",
+      "account": "AAA3EDA413C49DFA6B906356CE29D35ECFF5F8FDC20827E6DED804D16FFB5702",
+      "in_msg_hash": "Tbe6lQblplCH3ATKrJk7JoLLSQH8/8/Hkl8aMouGQA0=",
+      "in_msg": {
+        "hash": "Tbe6lQblplCH3ATKrJk7JoLLSQH8/8/Hkl8aMouGQA0=",
+        "kind": "internal",
+        "source": "EQD7mCj9E4FaMdVtLv66iStmPYp-dBCxSQSitp1hdf0N-Z77",
+        "destination": "EQCqo-2kE8Sd-muQY1bOKdNez_X4_cIIJ-be2ATRb_tXAn9i",
+        "value": "1000000000",
+        "bounced": false,
+        "created_lt": "547679000002",
+        "created_at": 1792147997
+      },
+      "out_msgs": [],
+      "transaction_type": "ordinary",
+      "aborted": true,
+      "destroyed": false,
+      "compute": {
+        "skipped": true,
+        "skip_reason": 0
+      },
+      "action": null
+    }
+  ],
+  "getAddressInformationBeforeOverdraw": {
+    "@type": "raw.fullAccountState",
+    "balance": "928485218",
+    "code": "te6ccgECEQEAAloAART/APSkE/S88sgLAQIBIAIDAgFIBAUD+PKDCNcYINIf+DUSuvKk0x/TH9Mf0wcD+CO78mPtRNDTH9Mf0//0BDBRU7ryoVFhuvKiJds88mMG+QFUEHX5EPKj+AAgwACeApMg10qW0wfUAvsA6ALeIMABjhcC0gfT/1kByMoHy//J0MhAE4EBCPRBWN7AApEx4w0DpAMNDg8BnNAg10nBIJJfA+AB0NMDAXGwkl8D4PpAMAHTHwGCEHBsdWe9kl8D4O1E0NMf0x/T//QEMGwxIvpEAcjKB8v/ydABgQEI9ApvoTGSXwPjDQYCAUgHCABm0z/6ADD4J28iMFAEoSO+8uBQghDwbHVncIAYyMsFUATPFlAE+gISy2oSyx/LP8mAQPsAAgFYCQoAEbjJftRNDXCx+ABFsp37UTQ0x/TH9P/9AQwbDFZAcjKB8v/ydABgQEI9ApvoTGACASALDAAXrc52omhpn5jrhf/AABevHfaiaGmPmOuFj8AB2CCr94EA7L6OECCrB4TvsITvugGAf7DAf7DggwaxIIQ/sCCDBr0hgjCxOAKIbVP8hb2wAYIwTsf9d5KsA/q9sJIwcOAggwa6IYLpAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgLqxIRAAKgHSB9P/MAHIygfL/8nQAYEBCPRZMAAcA8jLHxLLH8v/9ADJ7VQAkoLwJuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/IW6sQGC8McXanA9TdhPujwLdg0QZw8qIFP6LDnMxk7H/XeSrAP6urE=",
+    "data": "te6ccgEBAQEAKwAAUQAAAAMpqaMXtsMFpkFgFlmYi7Uu+V3B52PG+TaxjAiBMM2X2MsoojJA",
+    "last_transaction_id": {
+      "@type": "internal.transactionId",
+      "lt": "548059000001",
+      "hash": "dFVQ6uGcABmGL6TSBwT+ELZ3mHiPXlmir1WwUQ2xYTY="
+    },
+    "block_id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 539964,
+      "root_hash": "USZXEGm/wb4EZZefGSiuD1DRwWZKmFi8wNsJ3pSoZxs=",
+      "file_hash": "+9ewZsxhK7bE9Sz7Qgb4mi/IxpAHsY8MZ0/9LYcWS1g="
+    },
+    "sync_utime": 1792148184,
+    "extra_currencies": [],
+    "state": "active",
+    "frozen_hash": "",
+    "storage_stat": {
+      "@type": "storage.stat",
+      "used_cells": "19",
+      "used_bits": "4796",
+      "last_paid": 1792148150,
+      "due_payment": null
+    }
+  },
+  "runGetMethodSeqnoBeforeOverdraw": {
+    "@type": "smc.runResult",
+    "gas_used": 0,
+    "stack": [["num", "3"]],
+    "exit_code": 0,
+    "last_transaction_id": null,
+    "block_id": {
+      "@type": "tos.blockIdExt",
+      "workchain": -1,
+      "shard": "-9223372036854775808",
+      "seqno": 539964,
+      "root_hash": "USZXEGm/wb4EZZefGSiuD1DRwWZKmFi8wNsJ3pSoZxs=",
+      "file_hash": "+9ewZsxhK7bE9Sz7Qgb4mi/IxpAHsY8MZ0/9LYcWS1g="
+    }
+  },
+  "sendQueryOverdraw": {
+    "status": 1,
+    "hash": "B40kPwJ2Y8JFkdwN/WopZS6OrPxL8jMbC3pt7mfzkEY="
+  },
+  "overdrawTransaction": {
+    "@type": "raw.transaction",
+    "utime": 1792148185,
+    "transaction_id": {
+      "@type": "internal.transactionId",
+      "lt": "548147000001",
+      "hash": "JsIRA5PAVrT7fPeTW6fcpXzymb0DGH5UwkGl0ltKD6s="
+    },
+    "fee": "620084",
+    "account": "AAA3EDA413C49DFA6B906356CE29D35ECFF5F8FDC20827E6DED804D16FFB5702",
+    "in_msg_hash": "B40kPwJ2Y8JFkdwN/WopZS6OrPxL8jMbC3pt7mfzkEY=",
+    "in_msg": {
+      "hash": "B40kPwJ2Y8JFkdwN/WopZS6OrPxL8jMbC3pt7mfzkEY=",
+      "kind": "external"
+    },
+    "out_msgs": [],
+    "transaction_type": "ordinary",
+    "aborted": false,
+    "destroyed": false,
+    "compute": {
+      "skipped": false,
+      "success": true,
+      "exit_code": 0,
+      "vm_steps": 112,
+      "account_activated": false
+    },
+    "action": {
+      "success": true,
+      "valid": true,
+      "no_funds": false,
+      "result_code": 0,
+      "total_actions": 1,
+      "skipped_actions": 1,
+      "messages_created": 0
+    }
+  }
+}
