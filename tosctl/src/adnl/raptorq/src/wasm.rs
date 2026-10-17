@@ -4,7 +4,7 @@ use crate::{
     encoder::Encoder as EncoderNative,
 };
 use js_sys::Uint8Array;
-use std::vec::Vec;
+use std::{string::ToString, vec::Vec};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -24,8 +24,10 @@ impl Decoder {
     }
 
     #[wasm_bindgen]
-    pub fn decode(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
-        self.decoder.decode(EncodingPacket::deserialize(packet))
+    pub fn decode(&mut self, packet: &[u8]) -> Result<Option<Vec<u8>>, JsError> {
+        let packet =
+            EncodingPacket::deserialize(packet).map_err(|e| JsError::new(&e.to_string()))?;
+        self.decoder.decode(packet).map_err(|e| JsError::new(&e.to_string()))
     }
 }
 
@@ -42,11 +44,13 @@ impl Encoder {
     }
 
     #[wasm_bindgen]
-    pub fn encode(&mut self, repair_packets_per_block: u32) -> Vec<Uint8Array> {
-        self.encoder
+    pub fn encode(&mut self, repair_packets_per_block: u32) -> Result<Vec<Uint8Array>, JsError> {
+        Ok(self
+            .encoder
             .get_encoded_packets(repair_packets_per_block)
+            .map_err(|e| JsError::new(&e.to_string()))?
             .iter()
             .map(|packet| Uint8Array::from(packet.serialize().as_slice()))
-            .collect()
+            .collect())
     }
 }

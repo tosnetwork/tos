@@ -4,7 +4,7 @@ use crate::{
     encoder::Encoder as EncoderNative,
 };
 use pyo3::{prelude::*, types::*};
-use std::vec::Vec;
+use std::{string::ToString, vec::Vec};
 
 #[pyclass]
 pub struct Encoder {
@@ -27,6 +27,7 @@ impl Encoder {
         let packets: Vec<&PyBytes> = self
             .encoder
             .get_encoded_packets(repair_packets_per_block)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?
             .iter()
             .map(|packet| PyBytes::new(py, &packet.serialize()))
             .collect();
@@ -60,7 +61,9 @@ impl Decoder {
         py: Python<'p>,
         packet: &PyBytes,
     ) -> PyResult<Option<&'p PyBytes>> {
-        let result = self.decoder.decode(EncodingPacket::deserialize(packet.as_bytes()));
+        let to_py = |e: crate::base::Error| pyo3::exceptions::PyValueError::new_err(e.to_string());
+        let packet = EncodingPacket::deserialize(packet.as_bytes()).map_err(to_py)?;
+        let result = self.decoder.decode(packet).map_err(to_py)?;
         Ok(result.map(|data| PyBytes::new(py, &data)))
     }
 }

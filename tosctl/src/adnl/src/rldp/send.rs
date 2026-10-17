@@ -12,7 +12,7 @@ use crate::{
     node::AdnlNode,
     rldp::{stat::PacketBandwidthInfo, Constraints, RldpPeer, TransferId},
 };
-use chain_block::{fail, Result, UInt256};
+use chain_block::{error, fail, Result, UInt256};
 use std::{
     cmp::min,
     collections::HashMap,
@@ -99,7 +99,9 @@ impl RaptorqEncoder {
         let packet = if let Some(packet) = self.source_packets.pop() {
             packet
         } else {
-            let mut packets = encoders[self.encoder_index].repair_packets(*seqno, 1);
+            let mut packets = encoders[self.encoder_index]
+                .repair_packets(*seqno, 1)
+                .map_err(|e| error!("Cannot encode RaptorQ repair symbol {}: {e}", *seqno))?;
             let packet = if let Some(packet) = packets.pop() {
                 packet
             } else {

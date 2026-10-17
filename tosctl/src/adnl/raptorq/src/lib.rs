@@ -66,7 +66,10 @@ pub use crate::wasm::Decoder as WasmDecoder;
 #[cfg(feature = "wasm")]
 pub use crate::wasm::Encoder as WasmEncoder;
 pub use crate::{
-    base::{partition, EncodingPacket, ObjectTransmissionInformation, PayloadId},
+    base::{
+        partition, EncodingPacket, Error, ObjectTransmissionInformation, PayloadId,
+        ENCODING_SYMBOL_ID_LIMIT,
+    },
     decoder::SourceBlockDecoder,
     encoder::{
         calculate_block_offsets, EncoderBuilder, SourceBlockEncoder, SourceBlockEncodingPlan,

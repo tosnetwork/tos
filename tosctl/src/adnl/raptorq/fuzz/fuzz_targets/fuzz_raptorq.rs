@@ -67,6 +67,7 @@ fuzz_target!(|config: FuzzConfig| {
     // Perform the encoding, and serialize to Vec<u8> for transmission
     let mut packets: Vec<Vec<u8>> = encoder
         .get_encoded_packets((expected_symbols as u32) + 20)
+        .expect("repair symbol ids fit in 24 bits")
         .iter()
         .map(|packet| packet.serialize())
         .collect();
@@ -86,8 +87,10 @@ fuzz_target!(|config: FuzzConfig| {
     // Perform the decoding
     let mut result = None;
     while !packets.is_empty() {
-        result = decoder.decode(EncodingPacket::deserialize(&packets.pop().unwrap()));
-        if result != None {
+        let packet =
+            EncodingPacket::deserialize(&packets.pop().unwrap()).expect("well-formed packet");
+        result = decoder.decode(packet).expect("packet matches the configuration");
+        if result.is_some() {
             break;
         }
     }

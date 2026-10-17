@@ -7,10 +7,76 @@ use crate::{
 use alloc::vec::Vec;
 #[cfg(not(feature = "std"))]
 use core::cmp::min;
+#[cfg(not(feature = "std"))]
+use core::fmt;
 #[cfg(feature = "serde_support")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
-use std::{cmp::min, vec::Vec};
+use std::{cmp::min, fmt, vec::Vec};
+
+/// Encoding symbol ids are 24-bit unsigned integers (section 3.2); every id on
+/// the wire must be below this bound.
+pub const ENCODING_SYMBOL_ID_LIMIT: u32 = 1 << 24;
+
+/// Why a symbol, a packet or a request was refused.
+///
+/// Every value that reaches the decoder from a peer is checked against the
+/// configured object before it is used, and a mismatch is reported here rather
+/// than by a panic.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Error {
+    /// The encoding symbol id is not below [`ENCODING_SYMBOL_ID_LIMIT`].
+    EncodingSymbolIdOutOfRange { encoding_symbol_id: u32 },
+    /// The symbol length differs from the configured symbol size.
+    SymbolSizeMismatch { expected: u32, actual: usize },
+    /// The source block number names no source block of this object.
+    SourceBlockOutOfRange { source_block_number: u8, source_blocks: usize },
+    /// A source block decoder was handed a packet for another source block.
+    SourceBlockMismatch { expected: u8, actual: u8 },
+    /// A serialized packet is shorter than its 4-byte payload id.
+    PacketTooShort { length: usize },
+    /// Repair symbol ids start at the source symbol count K; a lower id names
+    /// a source symbol.
+    RepairSymbolIdBelowSourceSymbols { encoding_symbol_id: u32, source_symbols: u32 },
+    /// The requested repair symbols would run past the largest encoding
+    /// symbol id.
+    RepairSymbolRangeOverflow { start: u32, count: u32 },
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::EncodingSymbolIdOutOfRange { encoding_symbol_id } => write!(
+                f,
+                "encoding symbol id {encoding_symbol_id:#x} is not below {ENCODING_SYMBOL_ID_LIMIT:#x}"
+            ),
+            Error::SymbolSizeMismatch { expected, actual } => {
+                write!(f, "symbol is {actual} bytes, expected {expected}")
+            }
+            Error::SourceBlockOutOfRange { source_block_number, source_blocks } => write!(
+                f,
+                "source block {source_block_number} out of range ({source_blocks} source blocks)"
+            ),
+            Error::SourceBlockMismatch { expected, actual } => {
+                write!(f, "packet for source block {actual} given to the decoder of block {expected}")
+            }
+            Error::PacketTooShort { length } => {
+                write!(f, "packet of {length} bytes is shorter than its payload id")
+            }
+            Error::RepairSymbolIdBelowSourceSymbols { encoding_symbol_id, source_symbols } => write!(
+                f,
+                "repair symbol id {encoding_symbol_id} is below the source symbol count {source_symbols}"
+            ),
+            Error::RepairSymbolRangeOverflow { start, count } => write!(
+                f,
+                "{count} repair symbols from id {start} run past {ENCODING_SYMBOL_ID_LIMIT:#x}"
+            ),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for Error {}
 
 // As defined in section 3.2
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -21,17 +87,28 @@ pub struct PayloadId {
 }
 
 impl PayloadId {
-    pub fn new(source_block_number: u8, encoding_symbol_id: u32) -> PayloadId {
-        // Encoding Symbol ID must be a 24-bit unsigned int
-        assert!(encoding_symbol_id < 16777216);
-        PayloadId { source_block_number, encoding_symbol_id }
+    /// Refuses an encoding symbol id that does not fit in 24 bits.
+    pub fn new(source_block_number: u8, encoding_symbol_id: u32) -> Result<PayloadId, Error> {
+        if encoding_symbol_id >= ENCODING_SYMBOL_ID_LIMIT {
+            return Err(Error::EncodingSymbolIdOutOfRange { encoding_symbol_id });
+        }
+        Ok(PayloadId { source_block_number, encoding_symbol_id })
+    }
+
+    /// Id of a source symbol. A block has at most 56403 source symbols, so
+    /// the index of one is always a valid 24-bit id.
+    pub(crate) fn for_source_symbol(source_block_number: u8, index: u16) -> PayloadId {
+        PayloadId { source_block_number, encoding_symbol_id: u32::from(index) }
     }
 
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn deserialize(data: &[u8; 4]) -> PayloadId {
+        // Three bytes cannot encode an id at or above the 24-bit limit.
         PayloadId {
             source_block_number: data[0],
-            encoding_symbol_id: ((data[1] as u32) << 16) + ((data[2] as u32) << 8) + data[3] as u32,
+            encoding_symbol_id: (u32::from(data[1]) << 16)
+                | (u32::from(data[2]) << 8)
+                | u32::from(data[3]),
         }
     }
 
@@ -68,11 +145,15 @@ impl EncodingPacket {
         EncodingPacket { payload_id, data }
     }
 
-    pub fn deserialize(data: &[u8]) -> EncodingPacket {
-        let payload_data = [data[0], data[1], data[2], data[3]];
-        EncodingPacket {
-            payload_id: PayloadId::deserialize(&payload_data),
-            data: Vec::from(&data[4..]),
+    /// Refuses input shorter than the 4-byte payload id. The symbol length is
+    /// checked by the decoder, which knows the configured symbol size.
+    pub fn deserialize(data: &[u8]) -> Result<EncodingPacket, Error> {
+        match data {
+            [sbn, esi0, esi1, esi2, payload @ ..] => Ok(EncodingPacket {
+                payload_id: PayloadId::deserialize(&[*sbn, *esi0, *esi1, *esi2]),
+                data: Vec::from(payload),
+            }),
+            _ => Err(Error::PacketTooShort { length: data.len() }),
         }
     }
 
@@ -211,16 +292,22 @@ impl ObjectTransmissionInformation {
 
         let kt = int_div_ceil(transfer_length, symbol_size as u64);
 
-        let n_max = symbol_size as u32 / (sub_symbol_size * alignment) as u32;
+        // N_max = floor(T / (SS * Al)) (section 4.3). A symbol shorter than
+        // SS * Al = 64 bytes cannot be split into sub-blocks at all, so it is
+        // one sub-block rather than zero (which divided by zero below).
+        let n_max = (symbol_size / u32::from(sub_symbol_size * alignment)).max(1);
 
         let kl = |n: u32| -> u32 {
-            for &(kprime, _, _, _, _) in SYSTEMATIC_INDICES_AND_PARAMETERS.iter().rev() {
-                let x = int_div_ceil(symbol_size as u64, alignment as u64 * n as u64);
-                if kprime <= (decoder_memory_requirement / (alignment as u64 * x as u64)) as u32 {
-                    return kprime;
-                }
-            }
-            unreachable!();
+            let x = int_div_ceil(symbol_size as u64, alignment as u64 * n as u64);
+            let fits = decoder_memory_requirement / (alignment as u64 * x as u64).max(1);
+            SYSTEMATIC_INDICES_AND_PARAMETERS
+                .iter()
+                .rev()
+                .map(|&(kprime, _, _, _, _)| kprime)
+                .find(|&kprime| u64::from(kprime) <= fits)
+                // A memory bound below the smallest block still gets the
+                // smallest block.
+                .unwrap_or(SYSTEMATIC_INDICES_AND_PARAMETERS[0].0)
         };
 
         let num_source_blocks = int_div_ceil(kt as u64, kl(n_max) as u64);

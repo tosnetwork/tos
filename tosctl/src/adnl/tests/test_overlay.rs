@@ -1698,7 +1698,7 @@ fn test_overlay_raptorq() {
                     .map(|&i| &source_packets[i])
                     .chain(repair_indices.iter().map(|&i| &repair_packets[i]));
                 for (seq, chunk) in base.chain(extras.iter()) {
-                    if let Some(result) = decoder.decode(*seq, chunk) {
+                    if let Some(result) = decoder.decode(*seq, chunk).unwrap() {
                         return Some(result);
                     }
                 }
@@ -1829,7 +1829,7 @@ fn test_raptorq_large_symbol_size() {
 
         let mut decoded = None;
         for (seq, chunk) in packets.iter().take(source_count + 2) {
-            if let Some(result) = decoder.decode(*seq, chunk) {
+            if let Some(result) = decoder.decode(*seq, chunk).unwrap() {
                 decoded = Some(result);
                 break;
             }
@@ -1839,6 +1839,45 @@ fn test_raptorq_large_symbol_size() {
         assert_eq!(result.len(), DATA_SIZE, "decoded size mismatch");
         assert_eq!(result, data, "decoded data mismatch");
         println!("  OK: encode/decode verified for symbol_size={part_size}");
+    }
+}
+
+/// A peer chooses the seqno and the length of every RLDP or broadcast symbol.
+/// One that is not exactly the negotiated symbol size, or whose seqno does not
+/// fit in 24 bits, is refused with an error and leaves the decoder usable.
+#[test]
+fn test_raptorq_decoder_refuses_malformed_symbols() {
+    use adnl::{RaptorqDecoder, RaptorqEncoder};
+
+    let data: Vec<u8> = (0..3000u32).map(|i| (i * 7) as u8).collect();
+    for symbol in [None, Some(77u32)] {
+        let mut encoder = RaptorqEncoder::with_data(&data, symbol);
+        let params = encoder.params().clone();
+        let symbol_size = params.symbol_size as usize;
+        let mut decoder = RaptorqDecoder::with_params(params.clone()).unwrap();
+
+        for len in [0, 1, symbol_size - 1, symbol_size + 1] {
+            assert!(decoder.decode(0, &vec![0; len]).is_err(), "length {len} accepted");
+            assert!(decoder.decode(1 << 20, &vec![0; len]).is_err(), "length {len} accepted");
+        }
+        for seqno in [1u32 << 24, (1 << 24) + 5, u32::MAX] {
+            assert!(decoder.decode(seqno, &vec![0; symbol_size]).is_err(), "seqno {seqno:#x}");
+        }
+
+        // Skip source symbol 0 so repair symbols are needed, then decode.
+        let mut seqno = 0u32;
+        let mut decoded = None;
+        for _ in 0..(params.symbols_count as usize * 2 + 10) {
+            let chunk = encoder.encode(&mut seqno).unwrap();
+            if seqno != 0 {
+                decoded = decoder.decode(seqno, &chunk).unwrap();
+                if decoded.is_some() {
+                    break;
+                }
+            }
+            seqno += 1;
+        }
+        assert_eq!(decoded.as_deref(), Some(data.as_slice()), "symbol size {symbol_size}");
     }
 }
 
@@ -1856,11 +1895,15 @@ fn test_twostep_fec_encoder_large_symbols() {
         assert_eq!(params.data_size, data.len() as i32);
         assert_eq!(params.symbol_size, part_size as i32);
 
-        // Generate one symbol per neighbour (like broadcast-twostep.cpp)
+        // Generate one symbol per neighbour (like broadcast-twostep.cpp). The
+        // seqno advances per symbol as the broadcast sender advances it; a
+        // repair symbol is never requested under a source symbol's seqno.
         let mut seqno = 0u32;
         for _ in 0..neighbours {
             let chunk = encoder.encode(&mut seqno).unwrap();
             assert_eq!(chunk.len(), part_size, "symbol size mismatch");
+            seqno += 1;
         }
+        assert_eq!(seqno, neighbours, "every symbol carries its own seqno");
     }
 }

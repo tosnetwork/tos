@@ -100,10 +100,22 @@ impl RaptorqDecoder {
         Ok(Self { engine: raptorq::Decoder::new(config), params })
     }
 
-    /// Decode
-    pub fn decode(&mut self, seqno: u32, data: &[u8]) -> Option<Vec<u8>> {
-        let packet = raptorq::EncodingPacket::new(raptorq::PayloadId::new(0, seqno), data.to_vec());
-        self.engine.decode(packet)
+    /// Decode one symbol received from a peer.
+    ///
+    /// The seqno is the symbol's encoding symbol id and must fit in 24 bits;
+    /// the symbol must be exactly the negotiated symbol size. Anything else is
+    /// refused before it reaches the decoder, as the C++ decoder does.
+    pub fn decode(&mut self, seqno: u32, data: &[u8]) -> Result<Option<Vec<u8>>> {
+        let symbol_size = usize::try_from(self.params.symbol_size)
+            .map_err(|_| error!("Invalid FEC params: symbol_size {}", self.params.symbol_size))?;
+        if data.len() != symbol_size {
+            fail!("RaptorQ symbol has {} bytes, expected {}", data.len(), symbol_size)
+        }
+        let payload_id = raptorq::PayloadId::new(0, seqno)
+            .map_err(|e| error!("Bad RaptorQ seqno {seqno:#x}: {e}"))?;
+        self.engine
+            .decode(raptorq::EncodingPacket::new(payload_id, data.to_vec()))
+            .map_err(|e| error!("Bad RaptorQ symbol {seqno}: {e}"))
     }
 
     /// Parameters
@@ -384,7 +396,7 @@ impl RecvTransfer {
                 part.core.get_decoder(fec_type)?
             }
         };
-        if let Some(mut data) = decoder.decode(chunk_seqno_u32, &chunk.data) {
+        if let Some(mut data) = decoder.decode(chunk_seqno_u32, &chunk.data)? {
             match &mut self.parts {
                 RecvParts::V1(part) => {
                     if data.len() + self.data.len() > total_size {

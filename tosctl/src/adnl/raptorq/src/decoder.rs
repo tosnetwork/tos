@@ -1,6 +1,7 @@
 use crate::{
     base::{
-        intermediate_tuple, partition, EncodingPacket, ObjectTransmissionInformation, PayloadId,
+        intermediate_tuple, partition, EncodingPacket, Error, ObjectTransmissionInformation,
+        ENCODING_SYMBOL_ID_LIMIT,
     },
     constraint_matrix::{enc_indices, generate_constraint_matrix},
     encoder::SPARSE_MATRIX_THRESHOLD,
@@ -23,6 +24,9 @@ use core::iter;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
 use std::{collections::HashSet as Set, iter, vec::Vec};
+
+/// Symbols beyond K that a source block decoder keeps, as in the C++ decoder.
+const MAX_EXTRA_SYMBOLS: u32 = 10;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde_support", derive(Serialize, Deserialize))]
@@ -68,37 +72,34 @@ impl Decoder {
         }
     }
 
-    pub fn decode(&mut self, packet: EncodingPacket) -> Option<Vec<u8>> {
-        let block_number = packet.payload_id.source_block_number() as usize;
-        if self.blocks[block_number].is_none() {
-            self.blocks[block_number] =
-                self.block_decoders[block_number].decode(iter::once(packet));
-        }
-        for block in self.blocks.iter() {
-            if block.is_none() {
-                return None;
-            }
-        }
-
-        let mut result = vec![];
-        for block in self.blocks.iter().flatten() {
-            result.extend(block);
-        }
-
-        result.truncate(self.config.transfer_length() as usize);
-        Some(result)
+    /// Adds one packet and returns the object once every block is decoded.
+    ///
+    /// A packet whose source block number, encoding symbol id or length does
+    /// not fit this object is refused with an error and changes nothing.
+    pub fn decode(&mut self, packet: EncodingPacket) -> Result<Option<Vec<u8>>, Error> {
+        self.add_new_packet(packet)?;
+        Ok(self.get_result())
     }
 
-    #[cfg(not(any(feature = "python", feature = "wasm")))]
-    pub fn add_new_packet(&mut self, packet: EncodingPacket) {
-        let block_number = packet.payload_id.source_block_number() as usize;
-        if self.blocks[block_number].is_none() {
-            self.blocks[block_number] =
-                self.block_decoders[block_number].decode(iter::once(packet));
+    /// Adds one packet without assembling the result; see [`Decoder::decode`].
+    pub fn add_new_packet(&mut self, packet: EncodingPacket) -> Result<(), Error> {
+        let source_block_number = packet.payload_id.source_block_number();
+        let block_number = usize::from(source_block_number);
+        let source_blocks = self.blocks.len();
+        let (Some(block), Some(block_decoder)) =
+            (self.blocks.get_mut(block_number), self.block_decoders.get_mut(block_number))
+        else {
+            return Err(Error::SourceBlockOutOfRange { source_block_number, source_blocks });
+        };
+        if block.is_none() {
+            *block = block_decoder.decode(iter::once(packet))?;
+        } else {
+            // The block is complete; still refuse what does not fit it.
+            block_decoder.validate(&packet)?;
         }
+        Ok(())
     }
 
-    #[cfg(not(any(feature = "python", feature = "wasm")))]
     pub fn get_result(&self) -> Option<Vec<u8>> {
         for block in self.blocks.iter() {
             if block.is_none() {
@@ -110,7 +111,7 @@ impl Decoder {
         for block in self.blocks.iter().flatten() {
             result.extend(block);
         }
-        result.truncate(self.config.transfer_length() as usize);
+        result.truncate(usize::try_from(self.config.transfer_length()).unwrap_or(usize::MAX));
         Some(result)
     }
 }
@@ -124,7 +125,8 @@ pub struct SourceBlockDecoder {
     symbol_alignment: u8,
     source_block_symbols: u32,
     source_symbols: Vec<Option<Symbol>>,
-    repair_packets: Vec<EncodingPacket>,
+    /// Received repair symbols, keyed by internal symbol id (ESI + K' - K).
+    repair_symbols: Vec<(u32, Symbol)>,
     received_source_symbols: u32,
     received_esi: Set<u32>,
     decoded: bool,
@@ -161,7 +163,7 @@ impl SourceBlockDecoder {
             symbol_alignment: config.symbol_alignment(),
             source_block_symbols: source_symbols,
             source_symbols: vec![None; source_symbols as usize],
-            repair_packets: vec![],
+            repair_symbols: vec![],
             received_source_symbols: 0,
             received_esi,
             decoded: false,
@@ -235,31 +237,68 @@ impl SourceBlockDecoder {
         return Some(result);
     }
 
+    /// Checks that a packet belongs to this block, carries an encoding symbol
+    /// id below 2^24 and is exactly one symbol long.
+    fn validate(&self, packet: &EncodingPacket) -> Result<(), Error> {
+        let source_block_number = packet.payload_id.source_block_number();
+        if source_block_number != self.source_block_id {
+            return Err(Error::SourceBlockMismatch {
+                expected: self.source_block_id,
+                actual: source_block_number,
+            });
+        }
+        let encoding_symbol_id = packet.payload_id.encoding_symbol_id();
+        if encoding_symbol_id >= ENCODING_SYMBOL_ID_LIMIT {
+            return Err(Error::EncodingSymbolIdOutOfRange { encoding_symbol_id });
+        }
+        if packet.data.len() != self.symbol_size as usize {
+            return Err(Error::SymbolSizeMismatch {
+                expected: self.symbol_size,
+                actual: packet.data.len(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Adds packets and returns the block once it can be decoded.
+    ///
+    /// Each packet is validated before it is stored: it must belong to this
+    /// block, carry an encoding symbol id below 2^24 and be exactly one symbol
+    /// long. The first packet that fails is refused with an error; packets
+    /// before it in `packets` are kept, packets after it are not looked at.
     pub fn decode<T: IntoIterator<Item = EncodingPacket>>(
         &mut self,
         packets: T,
-    ) -> Option<Vec<u8>> {
+    ) -> Result<Option<Vec<u8>>, Error> {
         let num_extended_symbols = extended_source_block_symbols(self.source_block_symbols);
+        // K' - K padding symbols sit between the last source symbol and the
+        // first repair symbol in internal-symbol-id space.
+        let padding = num_extended_symbols.saturating_sub(self.source_block_symbols);
+        // Like the C++ decoder, keep at most K + 10 symbols: once that many are
+        // held, further repair symbols are ignored, which bounds the memory a
+        // peer can make one transfer hold.
+        let max_symbols = self.source_block_symbols.saturating_add(MAX_EXTRA_SYMBOLS);
         for packet in packets {
-            assert_eq!(self.source_block_id, packet.payload_id.source_block_number());
-
+            self.validate(&packet)?;
             let (payload_id, payload) = packet.split();
-            let symbol_id = if payload_id.encoding_symbol_id() >= self.source_block_symbols {
-                payload_id.encoding_symbol_id() + num_extended_symbols - self.source_block_symbols
+            let encoding_symbol_id = payload_id.encoding_symbol_id();
+            if encoding_symbol_id < self.source_block_symbols {
+                if self.received_esi.insert(encoding_symbol_id) {
+                    if let Some(slot) = self.source_symbols.get_mut(encoding_symbol_id as usize) {
+                        *slot = Some(Symbol::new(payload));
+                        self.received_source_symbols =
+                            self.received_source_symbols.saturating_add(1);
+                    }
+                }
             } else {
-                payload_id.encoding_symbol_id()
-            };
-            if self.received_esi.insert(symbol_id) {
-                if symbol_id >= num_extended_symbols {
-                    // Repair symbol
-                    self.repair_packets
-                        .push(EncodingPacket::new(PayloadId::new(0, symbol_id), payload));
-                } else {
-                    // Check that this is not an extended symbol (which aren't explicitly sent)
-                    assert!(symbol_id < self.source_block_symbols);
-                    // Source symbol
-                    self.source_symbols[symbol_id as usize] = Some(Symbol::new(payload));
-                    self.received_source_symbols += 1;
+                let held = self.received_source_symbols as usize + self.repair_symbols.len();
+                if held >= max_symbols as usize {
+                    continue;
+                }
+                // Cannot overflow: the id is below 2^24 and the padding below 2^16.
+                let internal_symbol_id = encoding_symbol_id.saturating_add(padding);
+                if self.received_esi.insert(internal_symbol_id) {
+                    self.repair_symbols.push((internal_symbol_id, Symbol::new(payload)));
                 }
             }
         }
@@ -268,11 +307,13 @@ impl SourceBlockDecoder {
             let mut result =
                 vec![0; self.symbol_size as usize * self.source_block_symbols as usize];
             for (i, symbol) in self.source_symbols.iter().enumerate() {
-                self.unpack_sub_blocks(&mut result, symbol.as_ref().unwrap(), i);
+                if let Some(symbol) = symbol {
+                    self.unpack_sub_blocks(&mut result, symbol, i);
+                }
             }
 
             self.decoded = true;
-            return Some(result);
+            return Ok(Some(result));
         }
 
         if self.received_esi.len() as u32 >= num_extended_symbols {
@@ -295,9 +336,9 @@ impl SourceBlockDecoder {
                 d.push(Symbol::zero(self.symbol_size as usize));
             }
 
-            for repair_packet in self.repair_packets.iter() {
-                encoded_indices.push(repair_packet.payload_id.encoding_symbol_id());
-                d.push(Symbol::new(repair_packet.data.clone()));
+            for (internal_symbol_id, symbol) in self.repair_symbols.iter() {
+                encoded_indices.push(*internal_symbol_id);
+                d.push(symbol.clone());
             }
 
             if extended_source_block_symbols(self.source_block_symbols) >= self.sparse_threshold {
@@ -305,16 +346,16 @@ impl SourceBlockDecoder {
                     self.source_block_symbols,
                     &encoded_indices,
                 );
-                return self.try_pi_decode(constraint_matrix, hdpc, d);
+                return Ok(self.try_pi_decode(constraint_matrix, hdpc, d));
             } else {
                 let (constraint_matrix, hdpc) = generate_constraint_matrix::<DenseBinaryMatrix>(
                     self.source_block_symbols,
                     &encoded_indices,
                 );
-                return self.try_pi_decode(constraint_matrix, hdpc, d);
+                return Ok(self.try_pi_decode(constraint_matrix, hdpc, d));
             }
         }
-        None
+        Ok(None)
     }
 
     fn rebuild_source_symbol(
@@ -333,5 +374,42 @@ impl SourceBlockDecoder {
             rebuilt += &intermediate_symbols[i];
         }
         rebuilt
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SourceBlockDecoder, MAX_EXTRA_SYMBOLS};
+    use crate::{EncodingPacket, ObjectTransmissionInformation, PayloadId};
+
+    #[test]
+    fn stored_repair_symbols_are_bounded() {
+        // K = 4: at most K + 10 symbols are held however many distinct repair
+        // ids a peer sends, so one transfer cannot grow without bound.
+        let config = ObjectTransmissionInformation::with_defaults(3000, 768);
+        let mut decoder = SourceBlockDecoder::new2(0, &config, 3000);
+        let first_repair = decoder.source_block_symbols;
+        for id in first_repair..first_repair + 1000 {
+            let packet = EncodingPacket::new(PayloadId::new(0, id).unwrap(), vec![0; 768]);
+            let _ = decoder.decode([packet]).unwrap();
+        }
+        assert_eq!(
+            decoder.repair_symbols.len() as u32,
+            decoder.source_block_symbols + MAX_EXTRA_SYMBOLS
+        );
+    }
+
+    #[test]
+    fn duplicate_symbols_are_stored_once() {
+        let config = ObjectTransmissionInformation::with_defaults(3000, 768);
+        let mut decoder = SourceBlockDecoder::new2(0, &config, 3000);
+        for _ in 0..3 {
+            for id in [1, 7] {
+                let packet = EncodingPacket::new(PayloadId::new(0, id).unwrap(), vec![1; 768]);
+                assert_eq!(decoder.decode([packet]), Ok(None));
+            }
+        }
+        assert_eq!(decoder.received_source_symbols, 1);
+        assert_eq!(decoder.repair_symbols.len(), 1);
     }
 }

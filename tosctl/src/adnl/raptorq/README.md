@@ -8,6 +8,26 @@
 
 ### Status: NO LONGER MAINTAINED; HAS KNOWN BUGS.
 
+### This vendored copy
+
+Vendored from raptorq 1.7.0 and changed to interoperate with the C++ RaptorQ
+implementation (`tdfec/`) that the network's C++ nodes run:
+
+- Encoding symbol ids are the ids on the wire (the RLDP and broadcast seqno).
+  Ids below K are source symbols; a repair symbol with id `esi >= K` is the
+  encoding of internal symbol `esi + K' - K`. `repair_packets(start, n)` takes
+  such an id, so `start` must be at least K.
+- P1 is the smallest prime strictly greater than P, as the C++ side computes it.
+- Every packet given to the decoder is validated (source block, 24-bit id,
+  exact symbol length) and refused with `raptorq::Error` rather than a panic;
+  a source block decoder keeps at most K + 10 symbols.
+
+`tests/tdfec_interop.rs` checks byte-for-byte agreement with golden vectors
+produced by the C++ encoder (`tests/tdfec/generate.cpp` says how to rebuild
+them). Fuzz both targets for ten minutes each with `make fuzz`
+(`cargo +nightly fuzz run <target> -- -max_total_time=600`; needs cargo-fuzz).
+The Python bindings do not build against the pinned pyo3 release.
+
 ### Overview
 
 Rust implementation of RaptorQ (RFC6330)

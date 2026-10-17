@@ -87,7 +87,9 @@ fn criterion_benchmark(c: &mut Criterion) {
                 let config = ObjectTransmissionInformation::new(0, symbol_size, 0, 1, 1);
                 let encoder = SourceBlockEncoder::new2(1, &config, &roundtrip_data);
                 let mut decoder = SourceBlockDecoder::new2(1, &config, elements as u64);
-                return decoder.decode(encoder.source_packets());
+                return decoder
+                    .decode(encoder.source_packets())
+                    .expect("packets match the configuration");
             })
         })
         .throughput(Throughput::Bytes(data.len() as u64)),
@@ -102,7 +104,10 @@ fn criterion_benchmark(c: &mut Criterion) {
                 let encoder = SourceBlockEncoder::new2(1, &config, &repair_data);
                 let repair_packets = (elements / symbol_size as usize) as u32;
                 let mut decoder = SourceBlockDecoder::new2(1, &config, elements as u64);
-                return decoder.decode(encoder.repair_packets(0, repair_packets));
+                let packets = encoder
+                    .repair_packets(encoder.source_symbol_count(), repair_packets)
+                    .expect("repair symbol ids fit in 24 bits");
+                return decoder.decode(packets).expect("packets match the configuration");
             })
         })
         .throughput(Throughput::Bytes(data.len() as u64)),
