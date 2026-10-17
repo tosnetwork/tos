@@ -629,6 +629,7 @@ pub enum PqBlockSignatureReasonCode {
     DictionaryIndex,
     DictionaryMissingEntry,
     DictionaryExtraEntry,
+    NoncanonicalDictionary,
     CandidateOversize,
     CandidateNoncanonicalChunk,
     CandidateNonByteAligned,
@@ -654,6 +655,7 @@ impl PqBlockSignatureReasonCode {
             Self::DictionaryIndex => "dictionary_index",
             Self::DictionaryMissingEntry => "dictionary_missing_entry",
             Self::DictionaryExtraEntry => "dictionary_extra_entry",
+            Self::NoncanonicalDictionary => "noncanonical_dictionary",
             Self::CandidateOversize => "candidate_oversize",
             Self::CandidateNoncanonicalChunk => "candidate_noncanonical_chunk",
             Self::CandidateNonByteAligned => "candidate_non_byte_aligned",
@@ -924,6 +926,31 @@ impl BlockSignaturesSimplexPq {
     }
 }
 
+/// The signature dictionary as the serializer writes it: entry `i` under key `i`.
+/// A dictionary has exactly one canonical encoding, this one; the decoder
+/// rebuilds it from the parsed entries and refuses any other encoding of the
+/// same entries (another edge label form spelling the same key bits).
+fn pq_signature_dictionary(
+    signatures: &[PqBlockSignaturePair],
+) -> Result<PqBlockSignaturePairDict> {
+    let mut ids = HashSet::new();
+    let mut dictionary = PqBlockSignaturePairDict::default();
+    for (index, signature) in signatures.iter().enumerate() {
+        if !ids.insert(signature.validator_id.clone()) {
+            return pq_reject(
+                PqBlockSignatureReasonCode::DuplicateValidatorId,
+                "duplicate validator_id",
+            );
+        }
+        let key = u16::try_from(index).map_err(|_| PqBlockSignatureError {
+            code: PqBlockSignatureReasonCode::SignerCount,
+            message: "signer count exceeds dictionary key space".into(),
+        })?;
+        dictionary.set(&key, signature)?;
+    }
+    Ok(dictionary)
+}
+
 impl Serializable for BlockSignaturesSimplexPq {
     fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
         if self.sig_count > PQ_SIGNATURE_MAX_SIGNERS {
@@ -938,17 +965,7 @@ impl Serializable for BlockSignaturesSimplexPq {
                 "signature count mismatch",
             );
         }
-        let mut ids = HashSet::new();
-        let mut dictionary = PqBlockSignaturePairDict::default();
-        for (index, signature) in self.signatures.iter().enumerate() {
-            if !ids.insert(signature.validator_id.clone()) {
-                return pq_reject(
-                    PqBlockSignatureReasonCode::DuplicateValidatorId,
-                    "duplicate validator_id",
-                );
-            }
-            dictionary.set(&(index as u16), signature)?;
-        }
+        let dictionary = pq_signature_dictionary(&self.signatures)?;
         read_candidate_data(&self.candidate_data)?;
         cell.append_u8(BLOCK_SIGNATURES_SIMPLEX_PQ_TAG)?;
         self.validator_info.write_to(cell)?;
@@ -1018,6 +1035,15 @@ impl Deserializable for BlockSignaturesSimplexPq {
             return pq_reject(
                 PqBlockSignatureReasonCode::DictionaryExtraEntry,
                 "dictionary extra entry",
+            );
+        }
+        let canonical = pq_signature_dictionary(&self.signatures)?;
+        if dictionary.root().map(|root| root.repr_hash())
+            != canonical.root().map(|root| root.repr_hash())
+        {
+            return pq_reject(
+                PqBlockSignatureReasonCode::NoncanonicalDictionary,
+                "noncanonical dictionary",
             );
         }
         self.session_id.read_from(cell)?;

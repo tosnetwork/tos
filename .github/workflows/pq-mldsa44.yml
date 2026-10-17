@@ -216,6 +216,7 @@ jobs:
         run: |
           cargo test --manifest-path tosctl/src/block/Cargo.toml --lib pq_bytes -- --nocapture
           cargo test --manifest-path tosctl/src/block/Cargo.toml --lib shared_pq_block_signature_codec_parity_does_not_verify_finality -- --nocapture
+          cargo test --manifest-path tosctl/src/block/Cargo.toml --lib noncanonical_signature_dictionary_is_refused -- --nocapture
           cargo test --manifest-path tosctl/src/block/Cargo.toml --lib validators -- --nocapture
           cargo test --manifest-path tosctl/src/tl/api/Cargo.toml --test session_vectors -- --nocapture
           cargo test --manifest-path tosctl/src/tl/api/Cargo.toml --test pq_signature_tl_vectors -- --nocapture
