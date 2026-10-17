@@ -38,9 +38,20 @@ def rpc(origin, method, **params):
     }
 
 
+def succeeded(body):
+    """A JSON-RPC success answer: a result and no error object. Replies retained
+    from earlier runs also carried an ok flag; it must not say false."""
+    return (
+        isinstance(body, dict)
+        and "result" in body
+        and "error" not in body
+        and body.get("ok", True) is True
+    )
+
+
 def result(exchange):
     body = json.loads(exchange["response_body"])
-    assert exchange["status"] == 200 and body.get("ok") is True, body
+    assert exchange["status"] == 200 and succeeded(body), body
     return body["result"]
 
 
@@ -83,6 +94,7 @@ def main():
         if query["method"] == "getWalletInformation"
         and query["params"].get("address") == args.wallet
         and row["status"] == 200
+        and succeeded(json.loads(row["response_body"]))
     ]
     assert wallet_rows and any(index > send_index for index, _ in wallet_rows), (
         "no captured wallet seqno polling after sendBoc"

@@ -57,27 +57,33 @@ Support both `POST /jsonRPC` with `{jsonrpc:"2.0",id,method,params}` and named
 REST POST routes with the params object as body. Authentication, CORS, request
 limits and source-IP attribution use the existing dispatch path.
 
-Keep current successful handler envelopes:
+Answers use the server-wide JSON-RPC 2.0 shape documented in `doc/openapi.yaml`.
+Success, HTTP 200:
 
 ```json
-{"ok":true,"jsonrpc":"2.0","id":7,"result":{}}
+{"jsonrpc":"2.0","id":7,"result":{}}
 ```
 
-Keep current method-handler error envelopes, including their mapped HTTP status:
+Error, also HTTP 200, on `/jsonRPC` and on the REST routes alike (REST answers
+carry id null):
 
 ```json
 {
-  "ok":false,"jsonrpc":"2.0","id":7,
-  "error":"Requested block does not match the resolved block","code":409,
-  "error_info":{"schema_version":1,"reason":"BLOCK_ID_MISMATCH","retryable":false}
+  "jsonrpc":"2.0","id":7,
+  "error":{
+    "code":-32009,
+    "message":"BLOCK_ID_MISMATCH",
+    "data":{"schema_version":1,"reason":"BLOCK_ID_MISMATCH","retryable":false}
+  }
 }
 ```
 
-`error_info` is a proposed additive field. It contains a stable reason, not raw
-liteserver exceptions or echoed BOCs. Existing `error` text remains a string.
-JSON-RPC envelope/parser errors retain the existing nested `error` object and
-HTTP behavior. This design does not globally convert one envelope format into
-another. REST request IDs retain current handling.
+`error.data` (`ErrorInfo` in the schema) carries the stable reason; it never
+contains raw liteserver exceptions or echoed BOCs. For these views the message is
+the reason string. There is no `ok` member and no top-level `code`. Only refusals
+made before any method runs (authentication 401, ingress budget 429, unknown GET
+path 404, HTTP method 405, content type 415) use another HTTP status, with the
+same error body.
 
 ### 2.2 Primitive types
 
@@ -106,7 +112,8 @@ New views accept optional `block_id` and existing `seqno`:
    be a masterchain ID: workchain -1 and shard `-9223372036854775808`.
 2. If both selectors are present, their seqnos MUST agree.
 3. Resolve that height, then compare **all five identity fields** with `block_id`.
-   A mismatch returns 409; never silently retry against another fork/head.
+   A mismatch answers `BLOCK_ID_MISMATCH` (-32009); never silently retry against
+   another fork/head.
 4. If neither is supplied, resolve latest once and use that immutable ID for the
    entire request. Return it so the client can pin subsequent calls.
 5. Every account/config/proof subquery uses that same ID. Hash mismatches in an
@@ -119,25 +126,29 @@ return `BLOCK_UNAVAILABLE`, never reinterpret zero as latest in the new view.
 
 ### 2.4 Error reasons
 
-| Reason | Handler code / HTTP | Retryable | Meaning |
+Every reason travels in `error.data` of an HTTP 200 answer.
+
+| Reason | JSON-RPC code | Retryable | Meaning |
 | --- | --- | --- | --- |
-| `INVALID_ARGUMENT` | -32602 / 422 | false | Type, selector, encoding or request bound invalid |
-| `UNSIGNED_BLOCK` | -32602 / 422 | false | Genesis requested through R1 |
-| `BLOCK_ID_MISMATCH` | 409 / 409 | false | Caller-supplied complete ID disagrees with resolved identity |
-| `BLOCK_UNAVAILABLE` | -32603 / 500 | false | Historical data unavailable; use another archival source |
-| `EVIDENCE_INVALID` | -32603 / 500 | false | Proof, signature, identity or native layout validation failed |
-| `UNSUPPORTED_CARRIER` | -32603 / 500 | false | Native carrier has no supported decoder |
-| `STATE_INVALID` | -32603 / 500 | false | Recognized account/config state is malformed or required policy is missing |
-| `RESOURCE_LIMIT` | -32603 / 500 | false | Valid-looking evidence exceeds a configured processing/response budget |
-| `UPSTREAM_UNAVAILABLE` | -32603 / 500 | true | Temporary transport/timeout failure |
-| `VERIFICATION_BACKEND_FAILURE` | -32603 / 500 | true | Native cryptographic backend failed; not an invalid-signature verdict |
+| `INVALID_ARGUMENT` | -32602 | false | Type, selector, encoding or request bound invalid |
+| `UNSIGNED_BLOCK` | -32602 | false | Genesis requested through R1 |
+| `BLOCK_ID_MISMATCH` | -32009 | false | Caller-supplied complete ID disagrees with resolved identity |
+| `BLOCK_UNAVAILABLE` | -32004 | false | Historical data unavailable on this node (its state was garbage-collected); use an archival node |
+| `CONFIG_PARAM_ABSENT` | -32004 | false | R4 `include_decoded` view of an absent parameter that has no typed decoder |
+| `EVIDENCE_INVALID` | -32603 | false | Proof, signature, identity or native layout validation failed |
+| `UNSUPPORTED_CARRIER` | -32603 | false | Native carrier has no supported decoder |
+| `STATE_INVALID` | -32603 | false | Recognized account/config state is malformed or required policy is missing |
+| `RESOURCE_LIMIT` | -32603 | false | Valid-looking evidence exceeds a configured processing/response budget |
+| `UPSTREAM_UNAVAILABLE` | -32603 | true | Temporary transport/timeout failure, or the block is not applied yet |
+| `VERIFICATION_BACKEND_FAILURE` | -32603 | true | Native cryptographic backend failed; not an invalid-signature verdict |
 
 Assign `reason` from typed internal failures, not fragile matching of human error
 strings. Preserve diagnostics in bounded internal logs without exposing payloads.
-Existing authentication, rate-limit and response-timeout envelopes/status codes
-are unchanged. Admission saturation uses the existing 429 behavior and does not
-masquerade as `EVIDENCE_INVALID`. Unknown account code is an explicit successful
-unknown recognition result; it is not `STATE_INVALID`.
+Exhausted verified-view capacity (worker permits or the response budget) answers
+`RATE_LIMITED` (-32005, retryable) at HTTP 200 and does not masquerade as
+`EVIDENCE_INVALID`; the ingress budget refusal before dispatch stays HTTP 429.
+Unknown account code is an explicit successful unknown recognition result; it is
+not `STATE_INVALID`.
 
 ## 3. R1 — `getMasterchainBlockSignatures`
 
@@ -302,8 +313,8 @@ Any identity, key, proof or signature failure fails the whole response.
 
 Do not launch one actor task per signer without a cap. Proposed initial default:
 **two actual in-flight PQ verification jobs per process**, covering target and
-anchor-bridge validation, with no unbounded queue. Use the existing 429 admission
-response when occupied. This operator tunable MUST NOT change consensus limits.
+anchor-bridge validation, with no unbounded queue. When occupied, answer
+`RATE_LIMITED` (-32005, retryable) at HTTP 200. This operator tunable MUST NOT change consensus limits.
 
 The worker owns its verification permit from scheduling until actual completion
 (or acknowledged cancellation before execution). A client timeout/disconnect may
@@ -483,7 +494,7 @@ Both transport forms use the existing `getProofQuery` handler:
 ```
 
 ```json
-{"ok":true,"jsonrpc":"2.0","id":null,"result":{"reply":"<base64 boxed native reply>"}}
+{"jsonrpc":"2.0","id":null,"result":{"reply":"<base64 boxed native reply>"}}
 ```
 
 No new verification-status field is attached. Raw bytes may be invalid evidence

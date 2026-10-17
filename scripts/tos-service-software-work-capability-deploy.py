@@ -25,10 +25,14 @@ module_spec.loader.exec_module(gate)
 
 
 def rpc(endpoint, method, **params):
-    request = urllib.request.Request(endpoint, data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode(), headers={"Content-Type": "application/json"})
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
     with urllib.request.urlopen(request, timeout=10) as response:
         value = json.loads(response.read().decode())
-    if not value.get("ok"):
+    if not isinstance(value, dict) or "error" in value or "result" not in value:
         raise RuntimeError(f"{endpoint} {method}: {value}")
     return value["result"]
 
@@ -53,8 +57,15 @@ def main():
     vector = json.loads((SPEC / "test-vectors/software-work-manifest-v1.json").read_text())
     manifest_digest = bytes.fromhex(vector["expected"]["digest"].removeprefix("sha256:"))
 
-    code = gate.Cell.one_from_boc(base64.b64decode(b"".join(
-        (REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64").read_bytes().split())))
+    code = gate.Cell.one_from_boc(
+        base64.b64decode(
+            b"".join(
+                (REPO / "crypto/smartcont/tos-service-native-registry-v1.boc.base64")
+                .read_bytes()
+                .split()
+            )
+        )
+    )
     if code.hash.hex() != gate.CODE_HASH:
         raise RuntimeError("frozen Native Registry code hash mismatch")
     config = gate.registry_config(root, file_hash, args.network_id, 0, code)
@@ -62,42 +73,92 @@ def main():
 
     payer_key = nacl.signing.SigningKey(gate.read_private(Path(args.state_dir) / "main-wallet.pk"))
     address_file = gate.read_private(Path(args.state_dir) / "main-wallet.addr")
-    payer = gate.Address((int.from_bytes(address_file[32:36], "big", signed=True), address_file[:32]))
+    payer = gate.Address(
+        (int.from_bytes(address_file[32:36], "big", signed=True), address_file[:32])
+    )
     provider_key = load_test_identity(Path(args.test_identities), "provider-controller")
     provider_nonce = bytes([0x72]) * 32
     provider_policy = gate.policy(provider_key)
-    provider_id = gate.agent_identity(root, file_hash, args.network_id, provider_nonce, provider_policy)
+    provider_id = gate.agent_identity(
+        root, file_hash, args.network_id, provider_nonce, provider_policy
+    )
     provider_init = gate.state_init(code, config, 1, provider_id)
     provider_address = gate.address_of(0, provider_init)
     provider_state = gate.state_view(gate.account_data(config_path, provider_address.to_str()))
-    if provider_state["tombstone"] or provider_state["generation"] != 1 or provider_state["sequence"] != 1:
-        raise RuntimeError("active provider Agent from the current local Gate C rehearsal is absent")
+    if (
+        provider_state["tombstone"]
+        or provider_state["generation"] != 1
+        or provider_state["sequence"] != 1
+    ):
+        raise RuntimeError(
+            "active provider Agent from the current local Gate C rehearsal is absent"
+        )
 
     capability_version = b"1.2.0"
     capability_nonce = hashlib.sha256(b"tos-service-local-software-work-capability-v1").digest()
-    capability_id = gate.capability_identity(root, file_hash, args.network_id, capability_nonce,
-        provider_id, capability_version, manifest_digest)
+    capability_id = gate.capability_identity(
+        root,
+        file_hash,
+        args.network_id,
+        capability_nonce,
+        provider_id,
+        capability_version,
+        manifest_digest,
+    )
     capability_init = gate.state_init(code, config, 2, capability_id)
     capability_address = gate.address_of(0, capability_init)
     deployed_now = False
     try:
         view = gate.state_view(gate.account_data(config_path, capability_address.to_str()))
     except Exception:
-        details = (gate.Builder().store_bytes(hashlib.sha256(capability_version).digest())
-                   .store_bytes(manifest_digest)
-                   .store_ref(gate.Builder().store_bytes(capability_version).end_cell()).end_cell())
-        payload = (gate.Builder().store_bytes(capability_nonce).store_bytes(provider_id)
-                   .store_ref(details).end_cell())
+        details = (
+            gate.Builder()
+            .store_bytes(hashlib.sha256(capability_version).digest())
+            .store_bytes(manifest_digest)
+            .store_ref(gate.Builder().store_bytes(capability_version).end_cell())
+            .end_cell()
+        )
+        payload = (
+            gate.Builder()
+            .store_bytes(capability_nonce)
+            .store_bytes(provider_id)
+            .store_ref(details)
+            .end_cell()
+        )
         query = int(time.time_ns()) & ((1 << 64) - 1)
-        action = gate.action(gate.REGISTER_CAPABILITY, 2, 1, 1, capability_id,
-            bytes(32), 0x83, signed_domain, payload)
-        gate.send_wallet_message(config_path, payer_key, payer, provider_address, 20 * gate.NANO,
-            gate.body(gate.OP_AUTHORIZE_CAPABILITY, query, action,
-                gate.signature_set(provider_key, action), gate.signature_set(None, action)))
+        action = gate.action(
+            gate.REGISTER_CAPABILITY,
+            2,
+            1,
+            1,
+            capability_id,
+            bytes(32),
+            0x83,
+            signed_domain,
+            payload,
+        )
+        gate.send_wallet_message(
+            config_path,
+            payer_key,
+            payer,
+            provider_address,
+            20 * gate.NANO,
+            gate.body(
+                gate.OP_AUTHORIZE_CAPABILITY,
+                query,
+                action,
+                gate.signature_set(provider_key, action),
+                gate.signature_set(None, action),
+            ),
+        )
         view = gate.wait_state(config_path, capability_address.to_str(), 1, 1)
         deployed_now = True
-    if (view["generation"] != 1 or view["sequence"] != 1 or view["tombstone"]
-            or view["owner_id"] != "agent_" + provider_id.hex()):
+    if (
+        view["generation"] != 1
+        or view["sequence"] != 1
+        or view["tombstone"]
+        or view["owner_id"] != "agent_" + provider_id.hex()
+    ):
         raise RuntimeError("software-work Capability does not match the expected current lineage")
 
     endpoints = [f"http://127.0.0.1:{port}/jsonRPC" for port in (8011, 8012, 8013)]
@@ -106,7 +167,9 @@ def main():
     endpoint_evidence = []
     votes = set()
     for endpoint in endpoints:
-        info = rpc(endpoint, "getAddressInformation", address=capability_address.to_str(), seqno=checkpoint)
+        info = rpc(
+            endpoint, "getAddressInformation", address=capability_address.to_str(), seqno=checkpoint
+        )
         if info.get("state") != "active" or info["block_id"]["seqno"] != checkpoint:
             raise RuntimeError(f"non-finalized Capability response from {endpoint}")
         observed_code = gate.Cell.one_from_boc(base64.b64decode(info["code"]))
@@ -114,18 +177,39 @@ def main():
         observed = gate.state_view(observed_data)
         if observed_code.hash != code.hash or observed != view:
             raise RuntimeError(f"Capability disagreement at {endpoint}")
-        vote = (info["block_id"]["root_hash"], info["block_id"]["file_hash"], observed_data.hash.hex())
+        vote = (
+            info["block_id"]["root_hash"],
+            info["block_id"]["file_hash"],
+            observed_data.hash.hex(),
+        )
         votes.add(vote)
-        endpoint_evidence.append({"endpoint": endpoint, "checkpoint": checkpoint, "block_root_hash": info["block_id"]["root_hash"], "block_file_hash": info["block_id"]["file_hash"], "data_hash": "tvm-cell-sha256:" + observed_data.hash.hex()})
+        endpoint_evidence.append(
+            {
+                "endpoint": endpoint,
+                "checkpoint": checkpoint,
+                "block_root_hash": info["block_id"]["root_hash"],
+                "block_file_hash": info["block_id"]["file_hash"],
+                "data_hash": "tvm-cell-sha256:" + observed_data.hash.hex(),
+            }
+        )
     if len(votes) != 1:
         raise RuntimeError("three endpoints did not produce one Capability state vote")
 
     evidence = {
         "schema": "tos.service.software-work-capability-deployment.v1",
         "deployed_now": deployed_now,
-        "network": {"network_id": args.network_id, "genesis_root_hash": "sha256:" + root.hex(), "genesis_file_hash": "sha256:" + file_hash.hex()},
+        "network": {
+            "network_id": args.network_id,
+            "genesis_root_hash": "sha256:" + root.hex(),
+            "genesis_file_hash": "sha256:" + file_hash.hex(),
+        },
         "capability_version": capability_version.decode(),
-        "manifest": {"protocol": vector["manifest"]["protocol"], "version": vector["manifest"]["version"], "digest": vector["expected"]["digest"], "canonical_cbor_base64": vector["expected"]["canonical_cbor_base64"]},
+        "manifest": {
+            "protocol": vector["manifest"]["protocol"],
+            "version": vector["manifest"]["version"],
+            "digest": vector["expected"]["digest"],
+            "canonical_cbor_base64": vector["expected"]["canonical_cbor_base64"],
+        },
         "provider_agent_id": "agent_" + provider_id.hex(),
         "provider_agent_address": provider_address.to_str(),
         "capability_id": "cap_" + capability_id.hex(),
@@ -136,7 +220,7 @@ def main():
         "checkpoint": gate.master_checkpoint(config_path),
         "endpoint_verification": endpoint_evidence,
         "quorum": 2,
-        "verdict": "PASS_SOFTWARE_WORK_CAPABILITY_VERSION_BINDING"
+        "verdict": "PASS_SOFTWARE_WORK_CAPABILITY_VERSION_BINDING",
     }
     Path(args.evidence).write_text(json.dumps(evidence, indent=2) + "\n")
     print(json.dumps(evidence, indent=2))

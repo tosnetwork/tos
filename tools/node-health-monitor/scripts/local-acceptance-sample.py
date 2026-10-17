@@ -71,7 +71,7 @@ def rpc_sample(node):
         if len(raw) > 16384:
             raise ValueError("RPC body overflow")
         value = json.loads(raw)
-        if value.get("ok") is not True or value.get("id") != node:
+        if "error" in value or "result" not in value or value.get("id") != node:
             raise ValueError("RPC refused or wrong receipt")
         result = value["result"]
         return {

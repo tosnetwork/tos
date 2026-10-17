@@ -126,7 +126,7 @@ fn the_fixed_nesting_is_within_its_allowance() {
 #[test]
 fn a_malformed_body_at_the_depth_limit_fits_in_far_fewer_bytes() {
     let error_envelope = format!(
-        r#"{{"ok":false,"jsonrpc":"2.0","id":"x","code":500,"error":{}{}}}"#,
+        r#"{{"jsonrpc":"2.0","id":"x","error":{}{}}}"#,
         "[".repeat(MAX_JSON_DEPTH - 1),
         "]".repeat(MAX_JSON_DEPTH - 1)
     );
@@ -144,53 +144,74 @@ fn result_of(text: &str, status: u16, id: &str) -> Result<Json, String> {
     envelope_result(parse_document(text)?, status, id)
 }
 
+const ERROR_DATA: &str =
+    r#""data":{"schema_version":1,"reason":"INTERNAL_ERROR","retryable":false}"#;
+
 #[test]
 fn the_envelope_rules_are_the_clients() {
-    let ok = r#"{"ok":true,"jsonrpc":"2.0","id":"r1","result":{"a":1}}"#;
+    let ok = r#"{"jsonrpc":"2.0","id":"r1","result":{"a":1}}"#;
     assert!(result_of(ok, 200, "r1").is_ok());
+    let error = format!(r#"{{"code":-32603,"message":"e",{ERROR_DATA}}}"#);
     for (case, text, status) in [
-        ("wrong id", ok, 200),
-        ("missing id", r#"{"ok":true,"jsonrpc":"2.0","result":{}}"#, 200),
-        ("numeric id", r#"{"ok":true,"jsonrpc":"2.0","id":1,"result":{}}"#, 200),
-        ("wrong version", r#"{"ok":true,"jsonrpc":"1.0","id":"r1","result":{}}"#, 200),
-        ("ok not a boolean", r#"{"ok":"yes","jsonrpc":"2.0","id":"r1","result":{}}"#, 200),
-        ("no result", r#"{"ok":true,"jsonrpc":"2.0","id":"r1"}"#, 200),
+        ("wrong id", ok.to_string(), 200),
+        ("missing id", r#"{"jsonrpc":"2.0","result":{}}"#.to_string(), 200),
+        ("numeric id", r#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_string(), 200),
+        ("null id", r#"{"jsonrpc":"2.0","id":null,"result":{}}"#.to_string(), 200),
+        ("wrong version", r#"{"jsonrpc":"1.0","id":"r1","result":{}}"#.to_string(), 200),
+        ("numeric version", r#"{"jsonrpc":2.0,"id":"r1","result":{}}"#.to_string(), 200),
+        ("no version", r#"{"id":"r1","result":{}}"#.to_string(), 200),
+        ("an ok member", r#"{"ok":true,"jsonrpc":"2.0","id":"r1","result":{}}"#.to_string(), 200),
+        (
+            "a top-level code",
+            format!(r#"{{"jsonrpc":"2.0","id":"r1","code":-32603,"error":{error}}}"#),
+            200,
+        ),
+        ("no result", r#"{"jsonrpc":"2.0","id":"r1"}"#.to_string(), 200),
         (
             "result and error",
-            r#"{"ok":true,"jsonrpc":"2.0","id":"r1","result":{},"error":"e","code":500}"#,
+            format!(r#"{{"jsonrpc":"2.0","id":"r1","result":{{}},"error":{error}}}"#),
+            200,
+        ),
+        ("error not an object", r#"{"jsonrpc":"2.0","id":"r1","error":"e"}"#.to_string(), 200),
+        (
+            "error without code",
+            format!(r#"{{"jsonrpc":"2.0","id":"r1","error":{{"message":"e",{ERROR_DATA}}}}}"#),
             200,
         ),
         (
-            "error with result",
-            r#"{"ok":false,"jsonrpc":"2.0","id":"r1","result":{},"error":"e","code":500}"#,
-            500,
+            "error without data",
+            r#"{"jsonrpc":"2.0","id":"r1","error":{"code":-32603,"message":"e"}}"#.to_string(),
+            200,
         ),
-        ("error without code", r#"{"ok":false,"jsonrpc":"2.0","id":"r1","error":"e"}"#, 500),
-        ("a successful envelope on HTTP 500", ok, 500),
+        ("a successful envelope on HTTP 500", ok.to_string(), 500),
+        ("a successful envelope on HTTP 204", ok.to_string(), 204),
         (
             "duplicate result",
-            r#"{"ok":true,"jsonrpc":"2.0","id":"r1","result":{},"result":{}}"#,
+            r#"{"jsonrpc":"2.0","id":"r1","result":{},"result":{}}"#.to_string(),
             200,
         ),
-        ("duplicate id", r#"{"ok":true,"jsonrpc":"2.0","id":"r1","id":"r1","result":{}}"#, 200),
+        ("duplicate id", r#"{"jsonrpc":"2.0","id":"r1","id":"r1","result":{}}"#.to_string(), 200),
         (
             "duplicate nested key",
-            r#"{"ok":true,"jsonrpc":"2.0","id":"r1","result":{"a":1,"a":2}}"#,
+            r#"{"jsonrpc":"2.0","id":"r1","result":{"a":1,"a":2}}"#.to_string(),
             200,
         ),
-        ("trailing JSON", r#"{"ok":true,"jsonrpc":"2.0","id":"r1","result":{}} {}"#, 200),
-        ("not an object", "[]", 200),
+        ("trailing JSON", r#"{"jsonrpc":"2.0","id":"r1","result":{}} {}"#.to_string(), 200),
+        ("not an object", "[]".to_string(), 200),
     ] {
         let id = if case == "wrong id" { "r2" } else { "r1" };
-        assert!(result_of(text, status, id).is_err(), "{case} was accepted");
+        assert!(result_of(&text, status, id).is_err(), "{case} was accepted");
     }
     let refused = result_of(
-        r#"{"ok":false,"jsonrpc":"2.0","id":"r1","error":"exit code 11","code":500}"#,
-        500,
+        &format!(r#"{{"jsonrpc":"2.0","id":"r1","error":{{"code":-32603,"message":"exit code 11",{ERROR_DATA}}}}}"#),
+        200,
         "r1",
     )
     .expect_err("an error envelope");
-    assert_eq!(refused, "the endpoint answered error 500: exit code 11");
+    assert_eq!(
+        refused,
+        "the endpoint answered error -32603 INTERNAL_ERROR (retryable: false): exit code 11"
+    );
 }
 
 /// An error envelope with deeply nested data is parsed and dropped on the worker and
@@ -198,16 +219,21 @@ fn the_envelope_rules_are_the_clients() {
 #[test]
 fn a_deep_error_envelope_becomes_a_bounded_message() {
     let deep = format!(
-        r#"{{"ok":false,"jsonrpc":"2.0","id":"r1","code":500,"error":{}1{}}}"#,
+        r#"{{"jsonrpc":"2.0","id":"r1","error":{}1{}}}"#,
         "[".repeat(1_000),
         "]".repeat(1_000)
     );
-    assert_eq!(result_of(&deep, 500, "r1").expect_err("refused"), "error must be a string");
+    assert_eq!(result_of(&deep, 200, "r1").expect_err("refused"), "error must be an object");
     let long = format!(
-        r#"{{"ok":false,"jsonrpc":"2.0","id":"r1","code":500,"error":"{}"}}"#,
+        r#"{{"jsonrpc":"2.0","id":"r1","error":{{"code":-32603,"message":"{}",{ERROR_DATA}}}}}"#,
         "x".repeat(10_000)
     );
-    assert!(result_of(&long, 500, "r1").expect_err("refused").chars().count() <= MAX_ERROR_CHARS);
+    assert!(result_of(&long, 200, "r1").expect_err("refused").chars().count() <= MAX_ERROR_CHARS);
+    let forged = format!(
+        r#"{{"jsonrpc":"2.0","id":"r1","error":{{"code":-32603,"message":"m","data":{{"schema_version":1,"reason":"{}","retryable":false}}}}}}"#,
+        "a b".repeat(100)
+    );
+    assert!(result_of(&forged, 200, "r1").expect_err("refused").contains("MALFORMED_REASON"));
 }
 
 // ─── The node's real answers through the worker's decoding ────────────────────
@@ -291,12 +317,17 @@ fn result_failures_are_terminal_and_envelope_failures_are_retried() {
         assert!(matches!(result, Attempt::Refused(_)), "{case}: {result:?}");
     }
     for (case, from, to, category) in [
-        ("an error envelope", r#""ok":true"#, r#""ok":false"#, "envelope_error"),
+        ("an ok member", r#"{"jsonrpc""#, r#"{"ok":true,"jsonrpc""#, "envelope_error"),
         ("a mismatched id", r#""id":"r1""#, r#""id":"r2""#, "envelope_error"),
         ("no result", r#""result":"#, r#""outcome":"#, "envelope_error"),
         ("wrong jsonrpc", r#""jsonrpc":"2.0""#, r#""jsonrpc":"1.0""#, "envelope_error"),
-        ("malformed JSON", r#""ok":true,"#, r#""ok":true,,"#, "malformed_json"),
-        ("a duplicate key", r#""ok":true,"#, r#""ok":true,"ok":true,"#, "malformed_json"),
+        ("malformed JSON", r#""jsonrpc":"2.0","#, r#""jsonrpc":"2.0",,"#, "malformed_json"),
+        (
+            "a duplicate key",
+            r#""jsonrpc":"2.0","#,
+            r#""jsonrpc":"2.0","jsonrpc":"2.0","#,
+            "malformed_json",
+        ),
         ("no block", r#""block_id":"#, r#""block":"#, "wrong_block"),
     ] {
         let text = response(TWO_LIVE).text.replacen(from, to, 1);
@@ -305,6 +336,12 @@ fn result_failures_are_terminal_and_envelope_failures_are_retried() {
         let result = decode_getter_response(&attempt, ProposalRead::List, &checkpoint);
         assert!(matches!(result, Attempt::Retry(c) if c == category), "{case}: {result:?}");
     }
+    let error = format!(
+        r#"{{"jsonrpc":"2.0","id":"r1","error":{{"code":-32603,"message":"exit code 11",{ERROR_DATA}}}}}"#
+    );
+    let attempt = RawRpcResponse { status: 200, text: error, request_id: "r1".into() };
+    let result = decode_getter_response(&attempt, ProposalRead::List, &checkpoint);
+    assert!(matches!(result, Attempt::Retry("envelope_error")), "{result:?}");
     let deep = format!("{}{}", "[".repeat(MAX_JSON_DEPTH + 1), "]".repeat(MAX_JSON_DEPTH + 1));
     let attempt = RawRpcResponse { status: 200, text: deep, request_id: "r1".into() };
     let result = decode_getter_response(&attempt, ProposalRead::List, &checkpoint);

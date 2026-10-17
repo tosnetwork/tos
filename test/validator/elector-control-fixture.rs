@@ -277,7 +277,7 @@ impl Fixture {
                             } else {
                                 public_result(method)
                             };
-                            let body = serde_json::json!({"jsonrpc":"2.0","id":request["id"],"ok":true,"result":result}).to_string();
+                            let body = serde_json::json!({"jsonrpc":"2.0","id":request["id"],"result":result}).to_string();
                             let response = format!(
                                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                                 body.len()

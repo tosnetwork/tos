@@ -58,8 +58,9 @@ export {
   TosRpcError,
   TosContractError,
   ErrorCodes,
+  ErrorReasons,
 } from "./errors.js";
-export type { ErrorCode } from "./errors.js";
+export type { ErrorCode, ErrorReason, RpcErrorData } from "./errors.js";
 
 // Provider interfaces
 export type {

@@ -78,17 +78,17 @@ std::string render_config_validator_set_json(int config_id, td::Ref<vm::Cell> pa
 void JsonRpcServer::handle_getProofQuery(td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise) {
   auto encoded = params.get_required_string_field("query");
   if (encoded.is_error() || encoded.ok().size() > 21848) {
-    promise.set_value(make_json_error(-32602, "Invalid proof query", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Invalid proof query", req_id));
     return;
   }
   auto bytes = td::base64_decode(encoded.ok());
   if (bytes.is_error()) {
-    promise.set_value(make_json_error(-32602, "Invalid proof query", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Invalid proof query", req_id));
     return;
   }
   auto checked = proofverify::checked_readonly_query(bytes.ok());
   if (checked.is_error()) {
-    promise.set_value(make_json_error(-32602, "Proof query refused", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Proof query refused", req_id));
     return;
   }
   // Charge the maximum base64 reply and envelope before fetching evidence.
@@ -96,12 +96,14 @@ void JsonRpcServer::handle_getProofQuery(td::JsonObject &params, std::string req
   // and slow socket writes, instead of vanishing when the handler completes.
   auto response_reservation = reserve_explorer_response((((64u << 20) + 2u) / 3u) * 4u + 512u);
   if (!response_reservation) {
-    promise.set_value(json_rpc::rate_limited_response(opts_.cors_origin));
+    promise.set_value(make_json_rpc_error(json_rpc::kRateLimited, "Server busy: verified-view capacity exhausted",
+                                          req_id, opts_.cors_origin));
     return;
   }
   auto permit = explorer::WorkPermit::acquire();
   if (!permit) {
-    promise.set_value(json_rpc::rate_limited_response(opts_.cors_origin));
+    promise.set_value(make_json_rpc_error(json_rpc::kRateLimited, "Server busy: verified-view capacity exhausted",
+                                          req_id, opts_.cors_origin));
     return;
   }
   auto wrapped =
@@ -110,18 +112,19 @@ void JsonRpcServer::handle_getProofQuery(td::JsonObject &params, std::string req
                                              req_id = std::move(req_id), cors = opts_.cors_origin,
                                              promise = std::move(promise)](td::Result<td::BufferSlice> reply) mutable {
     if (reply.is_error() || reply.ok().size() > (64u << 20)) {
-      promise.set_value(make_json_error(-32603, "Proof response unavailable", req_id, cors));
+      promise.set_value(make_json_rpc_error(-32603, "Proof response unavailable", req_id, cors));
       return;
     }
     response_reservation.reset();
     response_reservation = reserve_explorer_response(((reply.ok().size() + 2u) / 3u) * 4u + 512u);
     if (!response_reservation) {
-      promise.set_value(json_rpc::rate_limited_response(cors));
+      promise.set_value(
+          make_json_rpc_error(json_rpc::kRateLimited, "Server busy: verified-view capacity exhausted", req_id, cors));
       return;
     }
     auto encoded = proofverify::readonly_reply_json(reply.ok().as_slice());
     if (encoded.is_error()) {
-      promise.set_value(make_json_error(-32603, "Proof response unavailable", req_id, cors));
+      promise.set_value(make_json_rpc_error(-32603, "Proof response unavailable", req_id, cors));
       return;
     }
     auto response = make_json_ok(encoded.move_as_ok(), req_id, cors);
@@ -142,22 +145,26 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
     config_id_r = params.get_required_int_field("config_id");
   }
   if (config_id_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'param' parameter", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'param' parameter", req_id));
     return;
   }
   int config_id = config_id_r.ok();
 
   auto with_proof_r = params.get_optional_bool_field("with_proof", false);
   if (with_proof_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Invalid 'with_proof' parameter", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Invalid 'with_proof' parameter", req_id));
     return;
   }
   const bool with_proof = with_proof_r.ok();
 
   // Optional seqno: query config at a specific MC block
-  auto seqno_r = params.get_optional_int_field("seqno");
-  bool has_seqno = seqno_r.is_ok() && seqno_r.ok() > 0;
-  td::int32 seqno = has_seqno ? static_cast<td::int32>(seqno_r.ok()) : 0;
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
+  }
+  bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   // Use the same shared-Slot pattern as runGetMethod: keep promise + req_id
   // reachable from the step-1 outer
@@ -169,10 +176,10 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
     std::string req_id;
     std::string cors;
     bool settled{false};
-    void settle_error(int code, const std::string& msg) {
+    void settle_error(int code, const std::string &msg, const td::Status &cause = td::Status::OK()) {
       if (settled) return;
       settled = true;
-      promise.set_value(make_json_error(code, msg, req_id, cors));
+      promise.set_value(make_json_rpc_error(code, msg, req_id, cors, cause));
     }
   };
   auto slot = std::make_shared<Slot>();
@@ -194,7 +201,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
         self_id, &JsonRpcServer::send_liteserver_query, std::move(query),
         td::PromiseCreator::lambda([cors, config_id, with_proof, slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "getConfigParam failed: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "getConfigParam failed: " << R.error(), R.error());
             return;
           }
           auto data = R.move_as_ok();
@@ -202,7 +209,7 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
           auto F = tos::fetch_tl_object<tos::lite_api::liteServer_configInfo>(
               std::move(data), true);
           if (F.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "parse configInfo: " << F.error());
+            slot->settle_error(-32603, PSTRING() << "parse configInfo: " << F.error(), F.error());
             return;
           }
           auto f = F.move_as_ok();
@@ -212,27 +219,34 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
           auto state_r = block::check_extract_state_proof(
               blk_id, f->state_proof_.as_slice(), f->config_proof_.as_slice());
           if (state_r.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "state proof error: " << state_r.error());
+            slot->settle_error(-32603, PSTRING() << "state proof error: " << state_r.error(), state_r.error());
             return;
           }
 
           auto cfg_r = block::Config::extract_from_state(state_r.move_as_ok(), 0);
           if (cfg_r.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "config extract error: " << cfg_r.error());
+            slot->settle_error(-32603, PSTRING() << "config extract error: " << cfg_r.error(), cfg_r.error());
             return;
           }
           auto cfg = cfg_r.move_as_ok();
 
           auto param_cell = cfg->get_config_param(config_id);
           if (param_cell.is_null()) {
-            slot->settle_error(-32603, PSTRING() << "config param " << config_id << " not found");
+            // An absent parameter is an answer about the chain, not a fault:
+            // it is typed so a client can tell it from a failure to look.
+            if (!slot->settled) {
+              slot->settled = true;
+              slot->promise.set_value(make_json_rpc_error(json_rpc::kConfigParamAbsent,
+                                                          PSTRING() << "config param " << config_id << " not found",
+                                                          slot->req_id, cors));
+            }
             return;
           }
 
           // Serialize cell to BOC, then base64
           auto boc_r = vm::std_boc_serialize(param_cell);
           if (boc_r.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "BOC serialize error: " << boc_r.error());
+            slot->settle_error(-32603, PSTRING() << "BOC serialize error: " << boc_r.error(), boc_r.error());
             return;
           }
           auto b64 = td::base64_encode(boc_r.ok().as_slice());
@@ -269,12 +283,12 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
     send_liteserver_query(std::move(lookup_query),
         [do_query_config = std::move(do_query_config), slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "lookupBlock: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "lookupBlock: " << R.error(), R.error());
             return;
           }
           auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(R.move_as_ok(), true);
           if (lb_r.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error());
+            slot->settle_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error(), lb_r.error());
             return;
           }
           do_query_config(std::move(lb_r.move_as_ok()->id_));
@@ -287,12 +301,12 @@ void JsonRpcServer::handle_getConfigParam(td::JsonObject &params, std::string re
     send_liteserver_query(std::move(mc_query),
         [do_query_config = std::move(do_query_config), slot](td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error());
+            slot->settle_error(-32603, PSTRING() << "getMasterchainInfo: " << R.error(), R.error());
             return;
           }
           auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(R.move_as_ok(), true);
           if (mc_r.is_error()) {
-            slot->settle_error(-32603, PSTRING() << "parse getMasterchainInfo: " << mc_r.error());
+            slot->settle_error(-32603, PSTRING() << "parse getMasterchainInfo: " << mc_r.error(), mc_r.error());
             return;
           }
           do_query_config(std::move(mc_r.move_as_ok()->last_));
@@ -307,8 +321,7 @@ void JsonRpcServer::handle_getLibraries(td::JsonObject &params, std::string req_
   // Parse library_list — a JSON array of base64-encoded 256-bit hashes
   auto list_val = params.extract_field("library_list");
   if (list_val.type() != td::JsonValue::Type::Array) {
-    promise.set_value(make_json_error(-32602,
-        "Missing or invalid 'library_list' (expected JSON array)", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing or invalid 'library_list' (expected JSON array)", req_id));
     return;
   }
   auto &arr = list_val.get_array();
@@ -319,7 +332,7 @@ void JsonRpcServer::handle_getLibraries(td::JsonObject &params, std::string req_
   // thousands of entries.
   constexpr size_t kMaxLibraryList = 16;
   if (arr.size() > kMaxLibraryList) {
-    promise.set_value(make_json_error(
+    promise.set_value(make_json_rpc_error(
         -32602, PSTRING() << "Too many entries in 'library_list': " << arr.size() << ", max " << kMaxLibraryList,
         req_id));
     return;
@@ -328,14 +341,12 @@ void JsonRpcServer::handle_getLibraries(td::JsonObject &params, std::string req_
   hashes.reserve(arr.size());
   for (auto &elem : arr) {
     if (elem.type() != td::JsonValue::Type::String) {
-      promise.set_value(make_json_error(-32602,
-          "library_list entries must be base64 strings", req_id));
+      promise.set_value(make_json_rpc_error(-32602, "library_list entries must be base64 strings", req_id));
       return;
     }
     auto decoded_r = td::base64_decode(elem.get_string());
     if (decoded_r.is_error() || decoded_r.ok().size() != 32) {
-      promise.set_value(make_json_error(-32602,
-          "Invalid base64 hash in library_list (expected 32 bytes)", req_id));
+      promise.set_value(make_json_rpc_error(-32602, "Invalid base64 hash in library_list (expected 32 bytes)", req_id));
       return;
     }
     td::Bits256 hash;
@@ -359,15 +370,15 @@ void JsonRpcServer::handle_getLibraries(td::JsonObject &params, std::string req_
       [cors = opts_.cors_origin, req_id = std::move(req_id), promise = std::move(promise)](
           td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "getLibraries failed: " << R.error(), req_id, cors));
+          promise.set_value(
+              make_json_rpc_error(-32603, PSTRING() << "getLibraries failed: " << R.error(), req_id, cors, R.error()));
           return;
         }
         auto lib_r = tos::fetch_tl_object<tos::lite_api::liteServer_libraryResult>(
             R.move_as_ok(), true);
         if (lib_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse libraryResult: " << lib_r.error(), req_id, cors));
+          promise.set_value(make_json_rpc_error(-32603, PSTRING() << "parse libraryResult: " << lib_r.error(), req_id,
+                                                cors, lib_r.error()));
           return;
         }
         auto lib = lib_r.move_as_ok();
@@ -395,11 +406,13 @@ void JsonRpcServer::handle_getLibraries(td::JsonObject &params, std::string req_
 void JsonRpcServer::handle_getConfigAll(td::JsonObject &params, std::string req_id,
                                         td::Promise<HttpReturn> promise) {
   // Optional seqno parameter — if provided, we look up that specific block
-  td::int32 seqno = 0;
-  auto seqno_r = params.get_optional_int_field("seqno");
-  if (seqno_r.is_ok() && seqno_r.ok() > 0) {
-    seqno = static_cast<td::int32>(seqno_r.ok());
+  auto seqno_r = json_rpc::parse_optional_seqno_param(params);
+  if (seqno_r.is_error()) {
+    promise.set_value(make_json_rpc_error(-32602, seqno_r.error().message().str(), req_id));
+    return;
   }
+  const bool has_seqno = seqno_r.ok().has_value();
+  td::int32 seqno = has_seqno ? *seqno_r.ok() : 0;
 
   // Step 1: Get masterchain info (or lookup specific block by seqno)
   auto mc_inner = tos::serialize_tl_object(
@@ -408,25 +421,25 @@ void JsonRpcServer::handle_getConfigAll(td::JsonObject &params, std::string req_
       tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(mc_inner)), true);
 
   auto self_id = actor_id(this);
-  send_liteserver_query(std::move(mc_query),
-      [cors = opts_.cors_origin, seqno, req_id = std::move(req_id), self_id, promise = std::move(promise)](
-          td::Result<td::BufferSlice> R) mutable {
+  send_liteserver_query(
+      std::move(mc_query), [cors = opts_.cors_origin, has_seqno, seqno, req_id = std::move(req_id), self_id,
+                            promise = std::move(promise)](td::Result<td::BufferSlice> R) mutable {
         if (R.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "getMasterchainInfo failed: " << R.error(), req_id, cors));
+          promise.set_value(make_json_rpc_error(-32603, PSTRING() << "getMasterchainInfo failed: " << R.error(), req_id,
+                                                cors, R.error()));
           return;
         }
         auto mc_r = tos::fetch_tl_object<tos::lite_api::liteServer_masterchainInfo>(
             R.move_as_ok(), true);
         if (mc_r.is_error()) {
-          promise.set_value(make_json_error(-32603,
-              PSTRING() << "parse masterchainInfo: " << mc_r.error(), req_id, cors));
+          promise.set_value(make_json_rpc_error(-32603, PSTRING() << "parse masterchainInfo: " << mc_r.error(), req_id,
+                                                cors, mc_r.error()));
           return;
         }
         auto mc = mc_r.move_as_ok();
 
         // If specific seqno requested, look up that block first
-        if (seqno > 0) {
+        if (has_seqno) {
           auto block_id = tos::create_tl_object<tos::lite_api::tosNode_blockId>(
               -1, static_cast<td::int64>(-1LL << 63), seqno);
           auto lookup_inner = tos::serialize_tl_object(
@@ -442,15 +455,15 @@ void JsonRpcServer::handle_getConfigAll(td::JsonObject &params, std::string req_
                   [cors, req_id = std::move(req_id), self_id, promise = std::move(promise)](
                       td::Result<td::BufferSlice> R) mutable {
             if (R.is_error()) {
-              promise.set_value(make_json_error(-32603,
-                  PSTRING() << "lookupBlock: " << R.error(), req_id, cors));
+              promise.set_value(
+                  make_json_rpc_error(-32603, PSTRING() << "lookupBlock: " << R.error(), req_id, cors, R.error()));
               return;
             }
             auto lb_r = tos::fetch_tl_object<tos::lite_api::liteServer_blockHeader>(
                 R.move_as_ok(), true);
             if (lb_r.is_error()) {
-              promise.set_value(make_json_error(-32603,
-                  PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id, cors));
+              promise.set_value(make_json_rpc_error(-32603, PSTRING() << "parse lookupBlock: " << lb_r.error(), req_id,
+                                                    cors, lb_r.error()));
               return;
             }
             auto lb = lb_r.move_as_ok();
@@ -469,15 +482,15 @@ void JsonRpcServer::handle_getConfigAll(td::JsonObject &params, std::string req_
                     [cors, req_id = std::move(req_id), promise = std::move(promise)](
                         td::Result<td::BufferSlice> R) mutable {
               if (R.is_error()) {
-                promise.set_value(make_json_error(-32603,
-                    PSTRING() << "getConfigAll failed: " << R.error(), req_id, cors));
+                promise.set_value(make_json_rpc_error(-32603, PSTRING() << "getConfigAll failed: " << R.error(), req_id,
+                                                      cors, R.error()));
                 return;
               }
               auto F = tos::fetch_tl_object<tos::lite_api::liteServer_configInfo>(
                   R.move_as_ok(), true);
               if (F.is_error()) {
-                promise.set_value(make_json_error(-32603,
-                    PSTRING() << "parse configInfo: " << F.error(), req_id, cors));
+                promise.set_value(make_json_rpc_error(-32603, PSTRING() << "parse configInfo: " << F.error(), req_id,
+                                                      cors, F.error()));
                 return;
               }
               auto f = F.move_as_ok();
@@ -486,15 +499,15 @@ void JsonRpcServer::handle_getConfigAll(td::JsonObject &params, std::string req_
               auto state_r = block::check_extract_state_proof(
                   blk_id, f->state_proof_.as_slice(), f->config_proof_.as_slice());
               if (state_r.is_error()) {
-                promise.set_value(make_json_error(-32603,
-                    PSTRING() << "state proof error: " << state_r.error(), req_id, cors));
+                promise.set_value(make_json_rpc_error(-32603, PSTRING() << "state proof error: " << state_r.error(),
+                                                      req_id, cors, state_r.error()));
                 return;
               }
 
               auto cfg_r = block::Config::extract_from_state(state_r.move_as_ok(), 0);
               if (cfg_r.is_error()) {
-                promise.set_value(make_json_error(-32603,
-                    PSTRING() << "config extract error: " << cfg_r.error(), req_id, cors));
+                promise.set_value(make_json_rpc_error(-32603, PSTRING() << "config extract error: " << cfg_r.error(),
+                                                      req_id, cors, cfg_r.error()));
                 return;
               }
               auto cfg = cfg_r.move_as_ok();
@@ -550,15 +563,15 @@ void JsonRpcServer::handle_getConfigAll(td::JsonObject &params, std::string req_
                 [cors, req_id = std::move(req_id), promise = std::move(promise)](
                     td::Result<td::BufferSlice> R) mutable {
           if (R.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "getConfigAll failed: " << R.error(), req_id, cors));
+            promise.set_value(make_json_rpc_error(-32603, PSTRING() << "getConfigAll failed: " << R.error(), req_id,
+                                                  cors, R.error()));
             return;
           }
           auto F = tos::fetch_tl_object<tos::lite_api::liteServer_configInfo>(
               R.move_as_ok(), true);
           if (F.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "parse configInfo: " << F.error(), req_id, cors));
+            promise.set_value(
+                make_json_rpc_error(-32603, PSTRING() << "parse configInfo: " << F.error(), req_id, cors, F.error()));
             return;
           }
           auto f = F.move_as_ok();
@@ -567,15 +580,15 @@ void JsonRpcServer::handle_getConfigAll(td::JsonObject &params, std::string req_
           auto state_r = block::check_extract_state_proof(
               blk_id, f->state_proof_.as_slice(), f->config_proof_.as_slice());
           if (state_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "state proof error: " << state_r.error(), req_id, cors));
+            promise.set_value(make_json_rpc_error(-32603, PSTRING() << "state proof error: " << state_r.error(), req_id,
+                                                  cors, state_r.error()));
             return;
           }
 
           auto cfg_r = block::Config::extract_from_state(state_r.move_as_ok(), 0);
           if (cfg_r.is_error()) {
-            promise.set_value(make_json_error(-32603,
-                PSTRING() << "config extract error: " << cfg_r.error(), req_id, cors));
+            promise.set_value(make_json_rpc_error(-32603, PSTRING() << "config extract error: " << cfg_r.error(),
+                                                  req_id, cors, cfg_r.error()));
             return;
           }
           auto cfg = cfg_r.move_as_ok();

@@ -39,7 +39,10 @@ def rpc(endpoint, index):
     )
     with urllib.request.urlopen(request, timeout=5) as response:
         value = json.load(response)
-    require(value.get("id") == index and value.get("ok") is True, "config query refused")
+    require(
+        value.get("id") == index and "result" in value and "error" not in value,
+        "config query refused",
+    )
     raw = base64.b64decode(value["result"]["config"]["bytes"], validate=True)
     roots = Boc(raw).deserialize()
     require(len(roots) == 1, "config BOC root count")
@@ -413,7 +416,10 @@ def main():
 
                 broadcast = query("sendBoc", {"boc": base64.b64encode(message).decode()})
                 (out / "broadcast-result.json").write_text(json.dumps(broadcast, indent=2) + "\n")
-                require(broadcast.get("ok") is True, "test message broadcast refused")
+                require(
+                    "result" in broadcast and "error" not in broadcast,
+                    "test message broadcast refused",
+                )
                 observations = {}
                 deadline = time.monotonic() + 90
                 while time.monotonic() < deadline:
@@ -424,14 +430,14 @@ def main():
                     (out / "transaction-observations.json").write_text(
                         json.dumps(observations, indent=2) + "\n"
                     )
-                    if all(v.get("ok") is True and v.get("result") for v in observations.values()):
+                    if all("error" not in v and v.get("result") for v in observations.values()):
                         break
                     require(
                         process.poll() is None, "candidate exited during transaction observation"
                     )
                     time.sleep(1)
                 require(
-                    all(v.get("ok") is True and v.get("result") for v in observations.values()),
+                    all("error" not in v and v.get("result") for v in observations.values()),
                     "four-account transaction observation deadline exceeded",
                 )
                 from quantum_transaction_chain import verify as verify_transaction_chain

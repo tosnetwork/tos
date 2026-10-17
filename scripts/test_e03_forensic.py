@@ -16,7 +16,11 @@ def test_captured_send_binds_wallet_and_destination(tmp_path, monkeypatch):
     rows = []
     for method, params, response in [
         ("getWalletInformation", {"address": "wallet"}, {"result": {"seqno": 1, "balance": "120"}}),
-        ("sendBoc", {"boc": base64.b64encode(message.to_boc()).decode()}, {"ok": True}),
+        (
+            "sendBoc",
+            {"boc": base64.b64encode(message.to_boc()).decode()},
+            {"jsonrpc": "2.0", "id": "sendBoc", "result": {"@type": "ok"}},
+        ),
         (
             "getWalletInformation",
             {"address": "wallet"},
@@ -42,6 +46,14 @@ def test_captured_send_binds_wallet_and_destination(tmp_path, monkeypatch):
     trace.write_text("\n".join(rows) + "\n")
 
     def exchange(result):
+        return {
+            "status": 200,
+            "request_body": "{}",
+            "response_body": json.dumps({"jsonrpc": "2.0", "id": 1, "result": result}),
+        }
+
+    def retained_exchange(result):
+        # Replies captured before the error-object contract carried an ok flag.
         return {
             "status": 200,
             "request_body": "{}",
@@ -91,7 +103,7 @@ def test_captured_send_binds_wallet_and_destination(tmp_path, monkeypatch):
             {
                 "raw": {
                     "wallet_info": exchange({"seqno": 2, "balance": "90"}),
-                    "wallet_transactions": exchange([wallet_tx]),
+                    "wallet_transactions": retained_exchange([wallet_tx]),
                     "destination_info": exchange({"state": "active"}),
                     "destination_transactions": exchange([target_tx]),
                 }

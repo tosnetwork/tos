@@ -670,12 +670,12 @@ fn nothing_but_an_oversized_list_falls_back() {
     assert_ne!(other_block, good);
     assert_ne!(bad_entry, good);
     for (case, list) in [
-        ("malformed JSON", Reply::raw(200, "{\"ok\":true,")),
+        ("malformed JSON", Reply::raw(200, "{\"jsonrpc\":\"2.0\",")),
         (
             "an error envelope",
             Reply::raw(
-                500,
-                r#"{"ok":false,"jsonrpc":"2.0","id":"@@ID@@","error":"exit code 11","code":500}"#,
+                200,
+                r#"{"jsonrpc":"2.0","id":"@@ID@@","error":{"code":-32603,"message":"exit code 11","data":{"schema_version":1,"reason":"INTERNAL_ERROR","retryable":false}}}"#,
             ),
         ),
         ("another block", Reply::raw(200, other_block)),

@@ -35,6 +35,7 @@ export {
   TosRpcError,
   TosContractError,
   ErrorCodes,
+  ErrorReasons,
   StackReaderImpl,
   // Functions
   open,
@@ -70,6 +71,8 @@ export type {
   CellLike,
   TupleItemLike,
   BlockQueryOpts,
+  ErrorReason,
+  RpcErrorData,
   // Response types
   BlockIdExt,
   AccountInfo,

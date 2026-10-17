@@ -7250,6 +7250,10 @@ fn sponsorship_rpc_temporarily_unavailable(failure: &str) -> bool {
         || failure.contains("RPC temporarily unavailable:")
         || failure.contains("rpc_error_category=timeout")
         || failure.contains("rpc_error_category=transport_unavailable")
+        // Typed JSON-RPC errors the server marks retryable.
+        || failure.contains("rpc_error_category=upstream_unavailable")
+        || failure.contains("rpc_error_category=rate_limit")
+        || failure.contains("rpc_error_category=verification_backend_failure")
 }
 
 fn rpc_failure_category(error: &anyhow::Error) -> &'static str {

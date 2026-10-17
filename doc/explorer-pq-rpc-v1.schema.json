@@ -318,6 +318,7 @@
             "UNSIGNED_BLOCK",
             "BLOCK_ID_MISMATCH",
             "BLOCK_UNAVAILABLE",
+            "CONFIG_PARAM_ABSENT",
             "EVIDENCE_INVALID",
             "UNSUPPORTED_CARRIER",
             "STATE_INVALID",

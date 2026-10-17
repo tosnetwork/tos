@@ -1088,6 +1088,8 @@ target_link_libraries(test-json-rpc-explorer PRIVATE json-rpc-explorer control-g
 target_compile_definitions(test-json-rpc-explorer PRIVATE EXPLORER_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/explorer-finality")
 add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-parse.cpp)
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
+add_executable(test-json-rpc-contract test/test-td-main.cpp test/test-json-rpc-contract.cpp)
+target_link_libraries(test-json-rpc-contract PRIVATE json-rpc-parse tdutils)
 add_executable(test-json-rpc-storage test/test-td-main.cpp test/test-json-rpc-storage.cpp)
 target_link_libraries(test-json-rpc-storage PRIVATE validator-engine-json-rpc json-rpc-storage tos_block tos_crypto tdutils)
 add_executable(test-account-model-detection test/test-td-main.cpp test/test-account-model-detection.cpp)
@@ -2091,6 +2093,7 @@ tos_test(test-full-node-shard-admission)
 tos_test(test-config-transition)
 tos_test(test-json-rpc-explorer)
 tos_test(test-json-rpc-parse)
+tos_test(test-json-rpc-contract)
 tos_test(test-json-rpc-storage)
 tos_test(test-account-model-detection)
 tos_test(test-json-rpc-source-ip)
@@ -2131,6 +2134,12 @@ if (Python3_Interpreter_FOUND)
            COMMAND ${Python3_EXECUTABLE}
                    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-route-gating.py)
   set_tests_properties(jsonrpc-route-gating PROPERTIES LABELS "source-guard")
+  # The dispatcher method table, the typed error reasons and doc/openapi.yaml
+  # must describe the same API.
+  add_test(NAME jsonrpc-openapi-spec
+           COMMAND ${Python3_EXECUTABLE}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-jsonrpc-spec.py)
+  set_tests_properties(jsonrpc-openapi-spec PROPERTIES LABELS "source-guard")
   # The real engine binary must refuse to start a write-enabled plaintext
   # JSON-RPC listener on a non-loopback address.
   add_test(NAME json-rpc-startup-refusal

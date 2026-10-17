@@ -247,7 +247,7 @@ void ArchiveSlice::tear_down() {
 
 void ArchiveSlice::add_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
   if (destroyed_) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
   if (handle->id().seqno() == 0) {
@@ -330,7 +330,7 @@ void ArchiveSlice::add_handle(BlockHandle handle, td::Promise<td::Unit> promise)
 
 void ArchiveSlice::update_handle(BlockHandle handle, td::Promise<td::Unit> promise) {
   if (destroyed_) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
   if (!handle->need_flush() && (temp_ || handle->handle_moved_to_archive())) {
@@ -357,7 +357,7 @@ void ArchiveSlice::update_handle(BlockHandle handle, td::Promise<td::Unit> promi
 td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
                                           std::vector<std::pair<FileReference, td::BufferSlice>> files) {
   if (destroyed_) {
-    co_return td::Status::Error(ErrorCode::notready, "package already gc'd");
+    co_return td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected));
   }
   CHECK(!key_blocks_only_);
   CHECK(!temp_);
@@ -379,7 +379,7 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
   }
   auto [offsets, pack_size] = co_await td::actor::ask(p->writer, &PackageWriter::append_multi, std::move(files_to_add));
   if (destroyed_) {
-    co_return td::Status::Error(ErrorCode::notready, "package already gc'd");
+    co_return td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected));
   }
   begin_transaction();
   if (sliced_mode_) {
@@ -406,7 +406,7 @@ td::actor::Task<> ArchiveSlice::add_block(BlockHandle handle,
 void ArchiveSlice::add_file(BlockHandle handle, FileReference ref_id, td::BufferSlice data,
                             td::Promise<td::Unit> promise) {
   if (destroyed_) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
   before_query();
@@ -436,7 +436,7 @@ void ArchiveSlice::add_file(BlockHandle handle, FileReference ref_id, td::Buffer
 void ArchiveSlice::add_file_cont(size_t idx, FileReference ref_id, td::uint64 offset, td::uint64 size,
                                  td::Promise<td::Unit> promise) {
   if (destroyed_) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
   begin_transaction();
@@ -454,7 +454,7 @@ void ArchiveSlice::add_file_cont(size_t idx, FileReference ref_id, td::uint64 of
 
 void ArchiveSlice::get_handle(BlockIdExt block_id, td::Promise<BlockHandle> promise) {
   if (destroyed_) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
   before_query();
@@ -480,7 +480,7 @@ void ArchiveSlice::get_handle(BlockIdExt block_id, td::Promise<BlockHandle> prom
 
 void ArchiveSlice::get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHandle> promise) {
   if (destroyed_) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
   before_query();
@@ -503,7 +503,7 @@ void ArchiveSlice::get_temp_handle(BlockIdExt block_id, td::Promise<ConstBlockHa
 
 void ArchiveSlice::get_file(ConstBlockHandle handle, FileReference ref_id, td::Promise<td::BufferSlice> promise) {
   if (destroyed_) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
   before_query();
@@ -536,7 +536,7 @@ void ArchiveSlice::get_block_common(AccountIdPrefixFull account_id,
                                     std::function<td::int32(tos_api::db_lt_el_value &)> compare, bool exact,
                                     td::Promise<ConstBlockHandle> promise) {
   if (destroyed_) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "package already gc'd"));
+    promise.set_error(td::Status::Error(ErrorCode::notready, td::Slice(kPackageGarbageCollected)));
     return;
   }
   before_query();

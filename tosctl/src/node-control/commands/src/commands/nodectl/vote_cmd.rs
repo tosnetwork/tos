@@ -2146,7 +2146,7 @@ mod proposal_read_back_tests {
             num("0"),
         ]);
         format!(
-            r#"{{"ok":true,"jsonrpc":"2.0","id":1,"result":{{"@type":"smc.runResult","gas_used":0,"stack":[{proposal}],"exit_code":0,"last_transaction_id":null,"block_id":null}}}}"#
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"@type":"smc.runResult","gas_used":0,"stack":[{proposal}],"exit_code":0,"last_transaction_id":null,"block_id":null}}}}"#
         )
     }
 

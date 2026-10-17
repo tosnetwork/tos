@@ -44,7 +44,6 @@ def check_receipts(
                 dict(
                     jsonrpc="2.0",
                     id=body["id"],
-                    ok=True,
                     result=[
                         dict(
                             data=base64.b64encode(tx.boc()).decode(),

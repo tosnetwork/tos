@@ -30,10 +30,10 @@ def main():
     ]
     subprocess.run(target, check=True)
     try:
-        needle = 'method == "getProofQuery"'
+        needle = '{"getProofQuery", G,'
         if baseline.count(needle) != 1:
             raise RuntimeError("Expected exactly one proof RPC route")
-        source.write_text(baseline.replace(needle, 'method == "getProofQueryRemoved"', 1))
+        source.write_text(baseline.replace(needle, '{"getProofQueryRemoved", G,', 1))
         subprocess.run(compile_command, check=True)
         result = subprocess.run(target, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         (build / "proof-query-route-control.log").write_text(result.stdout)

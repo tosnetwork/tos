@@ -52,8 +52,25 @@ REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 
 
+class JsonRpcError(RuntimeError):
+    """A JSON-RPC error answer: {"error": {code, message, data: {reason, retryable}}}."""
+
+    def __init__(self, method: str, error: dict):
+        data = error.get("data") if isinstance(error.get("data"), dict) else {}
+        self.method = method
+        self.code = error.get("code")
+        self.message = str(error.get("message", ""))
+        self.reason = data.get("reason")
+        self.retryable = data.get("retryable") is True
+        super().__init__(f"{method}: {self.code} {self.reason}: {self.message}")
+
+
 def rpc_call(rpc_addr: str, method: str, *, timeout: float = 8, **params):
-    """Read path identical to the Android wallet: POST http://<rpc>/jsonRPC."""
+    """Read path identical to the Android wallet: POST http://<rpc>/jsonRPC.
+
+    Returns the decoded answer. Method errors are HTTP 200 answers carrying an
+    ``error`` object; only refusals made before dispatch raise HTTPError.
+    """
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{rpc_addr}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
@@ -70,9 +87,20 @@ def rpc_call(rpc_addr: str, method: str, *, timeout: float = 8, **params):
         raise
 
 
+def rpc_result(rpc_addr: str, method: str, *, timeout: float = 8, **params):
+    """The ``result`` of a method call; an error answer raises JsonRpcError."""
+    answer = rpc_call(rpc_addr, method, timeout=timeout, **params)
+    error = answer.get("error")
+    if isinstance(error, dict):
+        raise JsonRpcError(method, error)
+    if "result" not in answer:
+        raise RuntimeError(f"{method}: answer has neither result nor error: {answer}")
+    return answer["result"]
+
+
 def rpc_balance_nano(rpc_addr: str, address: str, *, timeout: float = 8) -> int:
-    r = rpc_call(rpc_addr, "getAddressInformation", address=address, timeout=timeout)
-    return int(r["result"]["balance"])
+    r = rpc_result(rpc_addr, "getAddressInformation", address=address, timeout=timeout)
+    return int(r["balance"])
 
 
 async def wait_initial_balance_readable(rpc_addr: str, address: str, timeout: float = 40.0) -> int:
@@ -90,10 +118,9 @@ async def wait_initial_balance_readable(rpc_addr: str, address: str, timeout: fl
             return await asyncio.to_thread(
                 rpc_balance_nano, rpc_addr, address, timeout=min(8, remaining)
             )
-        except urllib.error.HTTPError as error:
-            body = getattr(error, "json_rpc_body", b"").decode(errors="replace")
-            if error.code != 500 or not re.search(
-                r"cannot load block \(0,8000000000000000,0\):[^\n]+: not in db", body
+        except JsonRpcError as error:
+            if not re.search(
+                r"cannot load block \(0,8000000000000000,0\):[^\n]+: not in db", error.message
             ):
                 raise
             if time.monotonic() >= deadline:

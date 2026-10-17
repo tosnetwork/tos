@@ -9,8 +9,9 @@ Covers:
   - getAddressState
   - getTokenData
 """
-import pytest
 
+import pytest
+from rpc_contract import assert_success, expect_error, expect_invalid_param
 
 # ---------------------------------------------------------------------------
 # Common addresses for a local testnet
@@ -34,59 +35,58 @@ BURN_ADDRESS = "0:00000000000000000000000000000000000000000000000000000000000000
 #  1. getAddressInformation
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetAddressInformation:
 
+class TestGetAddressInformation:
     METHOD = "getAddressInformation"
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, ELECTOR_FRIENDLY])
     def test_basic(self, api_method_call, address):
         response = api_method_call(self.METHOD, address=address)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] == "raw.fullAccountState"
 
     def test_no_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_for_given_block(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno - 10)
-        assert response.status_code == 200, response.json().get("error")
+        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno - 10)
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] == "raw.fullAccountState"
         assert data["result"]["block_id"]["seqno"] == last_mc_seqno - 10
 
     def test_wrong_seqno(self, api_method_call):
-        """Non-numeric seqno is silently ignored (optional field) — accept success or error."""
+        """A malformed optional seqno is refused, not ignored."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno="invalid")
-        data = response.json()
-        assert data["ok"] in (True, False)
+        expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
-        assert response.json()["ok"] is False
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
+        expect_error(response)
 
     def test_uninitialized_address(self, api_method_call):
         response = api_method_call(self.METHOD, address=BURN_ADDRESS)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["state"] == "uninitialized"
 
     def test_extra_currencies(self, api_method_call):
         """Zero masterchain address should have extra currencies from genesis."""
         response = api_method_call(self.METHOD, address=ZERO_MC_ADDRESS)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] == "raw.fullAccountState"
         # The testnet genesis mints extra currencies (id=239) to the zero address
         extra = data["result"].get("extra_currencies", [])
@@ -107,32 +107,32 @@ class TestGetAddressInformation:
 #  2. getExtendedAddressInformation
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetExtendedAddressInformation:
 
+class TestGetExtendedAddressInformation:
     METHOD = "getExtendedAddressInformation"
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, CONFIG_ADDRESS])
     def test_basic(self, api_method_call, address):
         response = api_method_call(self.METHOD, address=address)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] == "fullAccountState"
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_empty_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_raw_account_state(self, api_method_call):
         """Zero masterchain address should return raw.accountState."""
         response = api_method_call(self.METHOD, address=ZERO_MC_ADDRESS)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] == "fullAccountState"
         assert data["result"]["account_state"]["@type"] == "raw.accountState"
 
@@ -140,6 +140,7 @@ class TestGetExtendedAddressInformation:
         """Deployed wallet v3 should be recognized with its account state type."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -148,55 +149,54 @@ class TestGetExtendedAddressInformation:
         if not addr:
             pytest.skip("wallet_v3r2 not deployed")
         response = api_method_call(self.METHOD, address=addr)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] == "fullAccountState"
 
     def test_for_given_block(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno - 10)
-        assert response.status_code == 200, response.json().get("error")
+        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno - 10)
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] == "fullAccountState"
         assert data["result"]["block_id"]["seqno"] == last_mc_seqno - 10
 
     def test_wrong_seqno(self, api_method_call):
-        """Non-numeric seqno is silently ignored (optional field) — accept success or error."""
+        """A malformed optional seqno is refused, not ignored."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno="invalid")
-        data = response.json()
-        assert data["ok"] in (True, False)
+        expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
-        assert response.json()["ok"] is False
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
+        expect_error(response)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  3. getWalletInformation
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetWalletInformation:
 
+class TestGetWalletInformation:
     METHOD = "getWalletInformation"
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, CONFIG_ADDRESS, ZERO_MC_ADDRESS])
     def test_basic(self, api_method_call, address):
         response = api_method_call(self.METHOD, address=address)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert data["result"]["@type"] == "ext.accounts.walletInformation"
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_empty_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_for_given_block_different_lt(self, api_method_call, last_mc_seqno):
         """Querying the elector at two different seqnos should show different last_transaction_id.lt."""
@@ -205,24 +205,29 @@ class TestGetWalletInformation:
         assert resp_new.status_code == 200 and resp_old.status_code == 200
         data_new = resp_new.json()
         data_old = resp_old.json()
-        assert data_new["ok"] is True and data_old["ok"] is True
-        assert data_old["result"]["last_transaction_id"]["lt"] < data_new["result"]["last_transaction_id"]["lt"]
+        assert_success(data_new)
+        assert_success(data_old)
+        assert (
+            data_old["result"]["last_transaction_id"]["lt"]
+            < data_new["result"]["last_transaction_id"]["lt"]
+        )
 
     def test_wrong_seqno(self, api_method_call):
-        """Non-numeric seqno is silently ignored (optional field) — accept success or error."""
+        """A malformed optional seqno is refused, not ignored."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno="invalid")
-        data = response.json()
-        assert data["ok"] in (True, False)
+        expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
-        assert response.json()["ok"] is False
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
+        expect_error(response)
 
     def test_wallet_v1_detected(self, api_method_call):
         """Deployed wallet v1 should be detected with correct type."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -233,7 +238,7 @@ class TestGetWalletInformation:
         response = api_method_call(self.METHOD, address=addr)
         assert response.status_code == 200
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "wallet v1 r1"
@@ -243,6 +248,7 @@ class TestGetWalletInformation:
         """Highload wallets: detected as wallet type but reference flags wallet=False."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -254,13 +260,14 @@ class TestGetWalletInformation:
             response = api_method_call(self.METHOD, address=addr)
             assert response.status_code == 200
             data = response.json()
-            assert data["ok"] is True
+            assert_success(data)
             assert data["result"]["wallet_type"] is not None
 
     def test_wallet_v3_detected(self, api_method_call):
         """Deployed wallet v3 should be detected with correct type and seqno."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -271,7 +278,7 @@ class TestGetWalletInformation:
         response = api_method_call(self.METHOD, address=addr)
         assert response.status_code == 200
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "wallet v3 r2"
@@ -282,6 +289,7 @@ class TestGetWalletInformation:
         """Deployed wallet v4 should be detected with correct type."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -292,7 +300,7 @@ class TestGetWalletInformation:
         response = api_method_call(self.METHOD, address=addr)
         assert response.status_code == 200
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "wallet v4 r2"
@@ -303,6 +311,7 @@ class TestGetWalletInformation:
         """Deployed wallet v5 should be detected with correct type."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -313,7 +322,7 @@ class TestGetWalletInformation:
         response = api_method_call(self.METHOD, address=addr)
         assert response.status_code == 200
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["wallet"] is True
         assert result["wallet_type"] == "wallet v5 r1"
@@ -324,25 +333,25 @@ class TestGetWalletInformation:
 #  4. getAddressBalance
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetAddressBalance:
 
+class TestGetAddressBalance:
     METHOD = "getAddressBalance"
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, CONFIG_ADDRESS, ZERO_MC_ADDRESS])
     def test_basic(self, api_method_call, address):
         response = api_method_call(self.METHOD, address=address)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert isinstance(data["result"], str)
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_empty_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_balance_differs_across_blocks(self, api_method_call, last_mc_seqno):
         """Elector balance at two different seqnos should differ (active elector has txs every block)."""
@@ -351,38 +360,39 @@ class TestGetAddressBalance:
         assert resp_new.status_code == 200 and resp_old.status_code == 200
         data_new = resp_new.json()
         data_old = resp_old.json()
-        assert data_new["ok"] is True and data_old["ok"] is True
+        assert_success(data_new)
+        assert_success(data_old)
         assert isinstance(data_new["result"], str)
         assert isinstance(data_old["result"], str)
         assert data_old["result"] != data_new["result"]
 
     def test_wrong_seqno(self, api_method_call):
-        """Non-numeric seqno is silently ignored (optional field) — accept success or error."""
+        """A malformed optional seqno is refused, not ignored."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno="invalid")
-        data = response.json()
-        assert data["ok"] in (True, False)
+        expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
-        assert response.json()["ok"] is False
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
+        expect_error(response)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  5. getAddressState
 # ═══════════════════════════════════════════════════════════════════════════
 
-class TestGetAddressState:
 
+class TestGetAddressState:
     METHOD = "getAddressState"
     VALID_STATES = {"active", "frozen", "uninitialized"}
 
     @pytest.mark.parametrize("address", [ELECTOR_ADDRESS, CONFIG_ADDRESS, ZERO_MC_ADDRESS])
     def test_basic(self, api_method_call, address):
         response = api_method_call(self.METHOD, address=address)
-        assert response.status_code == 200, response.json().get("error")
+        assert response.status_code == 200, response.text
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         assert isinstance(data["result"], str)
         assert data["result"] in self.VALID_STATES
 
@@ -398,27 +408,28 @@ class TestGetAddressState:
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_empty_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_wrong_seqno(self, api_method_call):
-        """Non-numeric seqno is silently ignored (optional field) — accept success or error."""
+        """A malformed optional seqno is refused, not ignored."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS, seqno="invalid")
-        data = response.json()
-        assert data["ok"] in (True, False)
+        expect_invalid_param(response, "seqno")
 
     def test_future_seqno(self, api_method_call, last_mc_seqno):
-        response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS,
-                                   seqno=last_mc_seqno + 1000000)
-        assert response.json()["ok"] is False
+        response = api_method_call(
+            self.METHOD, address=ELECTOR_ADDRESS, seqno=last_mc_seqno + 1000000
+        )
+        expect_error(response)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  6. getTokenData
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 class TestGetTokenData:
     """
@@ -434,22 +445,22 @@ class TestGetTokenData:
 
     def test_invalid_address(self, api_method_call):
         response = api_method_call(self.METHOD, address="invalid")
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_empty_address(self, api_method_call):
         response = api_method_call(self.METHOD)
-        assert response.json()["ok"] is False
+        expect_error(response)
 
     def test_not_a_token(self, api_method_call):
-        """Calling getTokenData on a non-token contract should return 409."""
+        """getTokenData on a non-token contract is a typed, non-retryable refusal."""
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS)
-        assert response.status_code == 409
-        assert response.json()["ok"] is False
+        expect_error(response, -32006, "CONTRACT_KIND_UNSUPPORTED", retryable=False)
 
     def test_jetton_master_data(self, api_method_call):
         """Deployed Jetton master should return jettonMasterData."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -460,7 +471,7 @@ class TestGetTokenData:
         response = api_method_call(self.METHOD, address=addr)
         assert response.status_code == 200
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "ext.tokens.jettonMasterData"
         assert result["jetton_name"] == "TOS Test Jetton"
@@ -473,6 +484,7 @@ class TestGetTokenData:
         """Deployed NFT collection should return nftCollectionData."""
         import json
         from pathlib import Path
+
         deployed = Path(__file__).parent / "deployed_addresses.json"
         if not deployed.exists():
             pytest.skip("No deployed contracts")
@@ -483,7 +495,7 @@ class TestGetTokenData:
         response = api_method_call(self.METHOD, address=addr)
         assert response.status_code == 200
         data = response.json()
-        assert data["ok"] is True
+        assert_success(data)
         result = data["result"]
         assert result["@type"] == "ext.tokens.nftCollectionData"
         assert "next_item_index" in result

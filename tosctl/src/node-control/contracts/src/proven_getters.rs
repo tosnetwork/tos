@@ -3435,7 +3435,7 @@ pub(crate) mod transaction_receipt_tests {
                         }
                     }
                 };
-                let body = serde_json::json!({"ok":true,"jsonrpc":"2.0", "id":request["id"], "result":reply})
+                let body = serde_json::json!({"jsonrpc":"2.0", "id":request["id"], "result":reply})
                     .to_string();
                 requests.push(request);
                 tokio::time::sleep(delay).await;

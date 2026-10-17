@@ -1,78 +1,4344 @@
-openapi: 3.1.0
+# OpenAPI description of the validator-engine JSON-RPC server.
+#
+# Kept aligned with the dispatcher by scripts/check-jsonrpc-spec.py: the method
+# names and flags in validator-engine/json-rpc-server.cpp and the error kinds in
+# validator-engine/json-rpc-contract.h must match this file. Layout: 2-space
+# indentation, block mappings, flow style only for short leaf values.
+openapi: '3.1.0'
 info:
-  title: TOS Native JSON-RPC
-  version: 1.0.0
-  description: Native-only JSON-RPC surface for the current TOS node build.
-servers:
-  - url: /
+  title: 'TOS JSON-RPC API'
+  version: '2.0.0'
+  description: |-
+    JSON-RPC 2.0 and REST surface of the validator-engine embedded HTTP server.
+
+    Every method is reachable three ways:
+
+    - `POST /jsonRPC` with a JSON-RPC 2.0 envelope (single request or batch).
+    - `POST /<method>` with the named-parameter object as the body (no envelope; an empty body is `{}`).
+    - `GET /<method>?k=v` for the methods documented with a GET operation. The query string becomes the params
+      object: `workchain`, `seqno`, `unixtime`, `param` and `config_id` become JSON integers when their text is
+      exactly a canonical int32 (otherwise they stay strings and are refused); `include_pq`, `include_decoded`,
+      `with_proof` and `include_experimental` become booleans for `true`/`false`; every other member stays a string.
+
+    Only named parameters exist. Parameters are parsed strictly: a present value of the wrong JSON type or
+    range
+    is refused with -32602 naming the parameter, never replaced by a default.
+
+    Answers. Every method answer, success or error, is HTTP 200 on every route, with the body
+    `{"jsonrpc":"2.0","id":...,"result":...}` or
+    `{"jsonrpc":"2.0","id":...,"error":{"code","message","data"}}`
+    (`JsonRpcSuccess` / `JsonRpcError`). REST routes answer with id null. There is no `ok` member and no
+    top-level
+    `code`. Method-level capacity refusals are HTTP 200 with RATE_LIMITED. Only refusals made before any
+    method
+    runs use another status, with the same error body:
+
+    | status | code | reason | when |
+    | --- | --- | --- | --- |
+    | 401 | -32000 | UNAUTHORIZED | missing or wrong X-API-Key |
+    | 429 | -32005 | RATE_LIMITED | per-source ingress budget exhausted at header admission |
+    | 404 | -32601 | METHOD_NOT_FOUND | GET of an unknown path |
+    | 405 | -32600 | INVALID_REQUEST | HTTP method other than GET, POST or OPTIONS |
+    | 415 | -32600 | INVALID_REQUEST | POST without Content-Type: application/json |
+
+    OPTIONS on any path is a CORS preflight answered with 204. A POST to a path that is neither a method name
+    nor
+    another route is treated as `/jsonRPC`.
+
+    Every block id in every response writes `shard` as the signed decimal string (see `Shard`). The typed
+    error
+    reasons are listed in `ErrorData`. Result shapes of the verified views (getMasterchainBlockSignatures, the
+    include_pq views of getAccountCapability and getWalletInformation, the include_decoded view of
+    getConfigParam,
+    getProofQuery) are defined in doc/explorer-pq-rpc-v1.schema.json.
+
+    Admin method: getNodeConsensusStatus (result `NodeConsensusStatus`) is off by default and served on
+    `/jsonRPC` and `POST /getNodeConsensusStatus` only when the operator starts the engine with
+    --json-rpc-expose-consensus-status; otherwise it answers METHOD_NOT_FOUND. It has no GET route.
+
+    Write methods (sendBoc, sendBocReturnHash, sendBocReturnHashNoError, sendQuery, submitSignedTransaction
+    and the
+    grant/revoke methods) answer WRITE_DISABLED (-32601) when the server runs in read-only mode.
+  license: {name: GPL-2.0-or-later, identifier: GPL-2.0-or-later}
+servers: [{url: /, description: 'The validator-engine JSON-RPC listener.'}]
+security: [{ApiKeyAuth: []}]
+tags:
+  - {name: envelope, description: 'JSON-RPC 2.0 envelope endpoint'}
+  - {name: health, description: 'Probes and metadata'}
+  - {name: utils, description: 'Address and hash utilities'}
+  - {name: accounts, description: 'Account state'}
+  - {name: permissions, description: 'Account permission views and lifecycle'}
+  - {name: blocks, description: 'Blocks and chain state'}
+  - {name: transactions, description: Transactions}
+  - {name: config, description: 'Configuration, libraries and proofs'}
+  - {name: runmethod, description: 'Get-method execution'}
+  - {name: send, description: 'Message building, submission and fees'}
 paths:
   /jsonRPC:
     post:
-      summary: JSON-RPC 2.0 endpoint
-      operationId: json_rpc_post
+      operationId: jsonRPC
+      summary: 'JSON-RPC 2.0 endpoint'
+      tags: [envelope]
+      description: |-
+        JSON-RPC 2.0 envelope endpoint.
+
+        Envelope rules:
+
+        - Empty body or not JSON: -32700 PARSE_ERROR. Top level neither an object nor an array: -32600.
+        - `jsonrpc` must be exactly the string "2.0"; `method` must be a string; otherwise -32600.
+        - `params` absent or an object. An array (positional parameters) is refused with -32602
+          INVALID_ARGUMENT:
+          only named parameters exist. Any other type, including null, is -32600.
+        - `id` a string, number or null; anything else is -32600 with id null. A request object with no `id`
+        member is a notification: it runs and the answer is HTTP 204 with no body, also when the method fails
+          or is
+          unknown. An invalid envelope (-32600) is always answered.
+        - Unknown method: -32601 METHOD_NOT_FOUND "Method not found: <name>". Write method in read-only mode:
+          -32601
+          WRITE_DISABLED.
+
+        Batch: an array of 1 to 100 request objects, processed in order. The answer is a JSON array of the
+        answers to
+        the non-notification elements; when every element is a notification the answer is HTTP 204 with no
+        body. An
+        empty array or more than 100 elements is answered with a single -32600 error object.
+      x-admin-methods: [getNodeConsensusStatus]
+      x-write-methods:
+        - sendBoc
+        - sendBocReturnHash
+        - sendBocReturnHashNoError
+        - sendQuery
+        - submitSignedTransaction
+        - grantAccountDelegation
+        - revokeAccountDelegation
+        - grantAccountSession
+        - revokeAccountSession
+        - grantAccountAgent
+        - revokeAccountAgent
       requestBody:
         required: true
         content:
           application/json:
             schema:
               oneOf:
-                - $ref: '#/components/schemas/JsonRpcRequest'
+                - {'$ref': '#/components/schemas/JsonRpcRequest'}
                 - type: array
-                  items:
-                    $ref: '#/components/schemas/JsonRpcRequest'
+                  minItems: 1
+                  maxItems: 100
+                  items: {'$ref': '#/components/schemas/JsonRpcRequest'}
       responses:
         '200':
-          description: JSON-RPC response
+          description: 'Answer to a request, or array of answers to a batch. Method errors are HTTP 200.'
           content:
             application/json:
               schema:
                 oneOf:
-                  - $ref: '#/components/schemas/JsonRpcResponse'
+                  - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
                   - type: array
                     items:
-                      $ref: '#/components/schemas/JsonRpcResponse'
+                      oneOf:
+                        - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                        - {'$ref': '#/components/schemas/JsonRpcError'}
+        '204': {description: 'Notification, or a batch of notifications only. No body.'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /healthcheck:
+    get:
+      operationId: healthcheck
+      summary: 'Liveness probe'
+      tags: [health]
+      security: []
+      description: 'Static reply; starts no work and needs no API key.'
+      responses:
+        '200':
+          description: Alive.
+          content: {text/plain: {schema: {const: OK}}}
+  /readyz:
+    get:
+      operationId: readyz
+      summary: 'Readiness probe'
+      tags: [health]
+      description: >-
+        Reports whether the node is synced. Not charged to the per-source budget; the answer is cached for a
+        short interval.
+      responses:
+        '200':
+          description: Synced.
+          content: {application/json: {schema: {'$ref': '#/components/schemas/ReadyzResult'}}}
+        '503':
+          description: 'Not synced, or the node could not be queried.'
+          content: {application/json: {schema: {'$ref': '#/components/schemas/ReadyzResult'}}}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+  /api-info:
+    get:
+      operationId: apiInfo
+      summary: 'Machine-readable API metadata'
+      tags: [health]
+      security: []
+      description: >-
+        Derived from the method table, so it lists exactly the methods this server serves. No API key needed.
+      responses:
+        '200':
+          description: 'API metadata.'
+          content: {application/json: {schema: {'$ref': '#/components/schemas/ApiInfo'}}}
+  /detectAddress:
+    get:
+      operationId: detectAddress_get
+      summary: 'Detect the forms of an address'
+      tags: [utils]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/DetectedAddress'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: detectAddress
+      summary: 'Detect the forms of an address'
+      tags: [utils]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/DetectedAddress'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /detectHash:
+    get:
+      operationId: detectHash_get
+      summary: 'Detect the encodings of a 256-bit hash'
+      tags: [utils]
+      parameters:
+        - name: hash
+          in: query
+          required: true
+          description: 'Hash as base64, base64url or hex.'
+          schema: {'$ref': '#/components/schemas/Hash'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/DetectedHash'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: detectHash
+      summary: 'Detect the encodings of a 256-bit hash'
+      tags: [utils]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hash]
+              properties:
+                hash: {'$ref': '#/components/schemas/Hash', description: 'Hash as base64, base64url or hex.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/DetectedHash'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /packAddress:
+    get:
+      operationId: packAddress_get
+      summary: 'Raw address to user-friendly form'
+      tags: [utils]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Raw address `workchain:hex`.'
+          schema: {type: string}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {type: string, description: 'User-friendly address.'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: packAddress
+      summary: 'Raw address to user-friendly form'
+      tags: [utils]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties: {address: {type: string, description: 'Raw address `workchain:hex`.'}}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {type: string, description: 'User-friendly address.'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /unpackAddress:
+    get:
+      operationId: unpackAddress_get
+      summary: 'User-friendly address to raw form'
+      tags: [utils]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {type: string, description: 'Raw address `workchain:hex`.'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: unpackAddress
+      summary: 'User-friendly address to raw form'
+      tags: [utils]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {type: string, description: 'Raw address `workchain:hex`.'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAddressInformation:
+    get:
+      operationId: getAddressInformation_get
+      summary: 'Raw account state'
+      tags: [accounts]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/RawFullAccountState'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAddressInformation
+      summary: 'Raw account state'
+      tags: [accounts]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/RawFullAccountState'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getExtendedAddressInformation:
+    get:
+      operationId: getExtendedAddressInformation_get
+      summary: 'Extended account state'
+      tags: [accounts]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/FullAccountState'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getExtendedAddressInformation
+      summary: 'Extended account state'
+      tags: [accounts]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/FullAccountState'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getWalletInformation:
+    get:
+      operationId: getWalletInformation_get
+      summary: 'Wallet information (type, seqno, balance)'
+      tags: [accounts]
+      description: |-
+        With include_pq, with_proof or block_id the answer is the verified view: the result additionally
+        carries `pq_authorization` (PublicAuthorization in doc/explorer-pq-rpc-v1.schema.json) and its
+        failures use the verified-view reasons.
+
+        POST only: block_id.
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+        - name: include_pq
+          in: query
+          description: >-
+            Request the verified post-quantum authorization view. Requires the canonical raw address form
+            (`workchain:64 lowercase hex`). Any of include_pq, with_proof or block_id selects the verified
+            view, which requires include_pq=true.
+          schema: {type: boolean, default: false}
+        - name: with_proof
+          in: query
+          description: 'Include the raw proof bytes.'
+          schema: {type: boolean, default: false}
+        - name: include_experimental
+          in: query
+          description: 'Include experimental capability fields.'
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/WalletInformation'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getWalletInformation
+      summary: 'Wallet information (type, seqno, balance)'
+      tags: [accounts]
+      description: >-
+        With include_pq, with_proof or block_id the answer is the verified view: the result additionally
+        carries `pq_authorization` (PublicAuthorization in doc/explorer-pq-rpc-v1.schema.json) and its
+        failures use the verified-view reasons.
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+                include_pq:
+                  type: boolean
+                  default: false
+                  description: >-
+                    Request the verified post-quantum authorization view. Requires the canonical raw address
+                    form (`workchain:64 lowercase hex`). Any of include_pq, with_proof or block_id selects the
+                    verified view, which requires include_pq=true.
+                with_proof: {type: boolean, default: false, description: 'Include the raw proof bytes.'}
+                include_experimental:
+                  type: boolean
+                  default: false
+                  description: 'Include experimental capability fields.'
+                block_id:
+                  '$ref': '#/components/schemas/MasterchainBlockId'
+                  description: >-
+                    Complete masterchain block id to pin the answer to. Its seqno must equal `seqno` when both
+                    are given; a different resolved block answers BLOCK_ID_MISMATCH. POST only (an object
+                    cannot travel in a query string).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/WalletInformation'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAddressBalance:
+    get:
+      operationId: getAddressBalance_get
+      summary: 'Account balance in nanotomis'
+      tags: [accounts]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result:
+                            type: string
+                            pattern: '^[0-9]+$'
+                            description: 'Balance in nanotomis, decimal.'
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAddressBalance
+      summary: 'Account balance in nanotomis'
+      tags: [accounts]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result:
+                            type: string
+                            pattern: '^[0-9]+$'
+                            description: 'Balance in nanotomis, decimal.'
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAddressState:
+    get:
+      operationId: getAddressState_get
+      summary: 'Account state'
+      tags: [accounts]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result:
+                            type: string
+                            description: 'Account state, e.g. active, uninitialized, frozen.'
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAddressState
+      summary: 'Account state'
+      tags: [accounts]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result:
+                            type: string
+                            description: 'Account state, e.g. active, uninitialized, frozen.'
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAccountCapability:
+    get:
+      operationId: getAccountCapability_get
+      summary: 'Account model and capabilities'
+      tags: [accounts]
+      description: |-
+        With include_pq, with_proof or block_id the answer is the verified view: the result additionally
+        carries `pq_authorization` (PublicAuthorization in doc/explorer-pq-rpc-v1.schema.json) and its
+        failures use the verified-view reasons.
+
+        POST only: block_id.
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+        - name: include_experimental
+          in: query
+          description: 'Include experimental capability fields.'
+          schema: {type: boolean, default: false}
+        - name: include_pq
+          in: query
+          description: >-
+            Request the verified post-quantum authorization view. Requires the canonical raw address form
+            (`workchain:64 lowercase hex`). Any of include_pq, with_proof or block_id selects the verified
+            view, which requires include_pq=true.
+          schema: {type: boolean, default: false}
+        - name: with_proof
+          in: query
+          description: 'Include the raw proof bytes.'
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountCapability'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAccountCapability
+      summary: 'Account model and capabilities'
+      tags: [accounts]
+      description: >-
+        With include_pq, with_proof or block_id the answer is the verified view: the result additionally
+        carries `pq_authorization` (PublicAuthorization in doc/explorer-pq-rpc-v1.schema.json) and its
+        failures use the verified-view reasons.
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+                include_experimental:
+                  type: boolean
+                  default: false
+                  description: 'Include experimental capability fields.'
+                include_pq:
+                  type: boolean
+                  default: false
+                  description: >-
+                    Request the verified post-quantum authorization view. Requires the canonical raw address
+                    form (`workchain:64 lowercase hex`). Any of include_pq, with_proof or block_id selects the
+                    verified view, which requires include_pq=true.
+                with_proof: {type: boolean, default: false, description: 'Include the raw proof bytes.'}
+                block_id:
+                  '$ref': '#/components/schemas/MasterchainBlockId'
+                  description: >-
+                    Complete masterchain block id to pin the answer to. Its seqno must equal `seqno` when both
+                    are given; a different resolved block answers BLOCK_ID_MISMATCH. POST only (an object
+                    cannot travel in a query string).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountCapability'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAccountDelegations:
+    get:
+      operationId: getAccountDelegations_get
+      summary: 'List the account''s delegation grants'
+      tags: [permissions]
+      description: |-
+        Account models without a permission source answer PERMISSION_SOURCE_UNSUPPORTED (-32006).
+
+        POST only: include_inactive.
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: status
+          in: query
+          description: 'Only entries with this status.'
+          schema: {type: string, enum: [active, expired, revoked, unknown]}
+        - name: source_tier
+          in: query
+          description: >-
+            Force a permission source tier. indexed answers INDEXED_STATE_STALE and deferred answers
+            PERMISSION_SOURCE_DEFERRED when not available.
+          schema: {type: string, enum: [protocol, account_standard, indexed, deferred]}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {type: array, items: {'$ref': '#/components/schemas/PermissionDelegation'}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAccountDelegations
+      summary: 'List the account''s delegation grants'
+      tags: [permissions]
+      description: 'Account models without a permission source answer PERMISSION_SOURCE_UNSUPPORTED (-32006).'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                include_inactive:
+                  type: boolean
+                  default: false
+                  description: >-
+                    Include expired and revoked entries. POST only (the query string does not carry booleans
+                    for this member).
+                status:
+                  type: string
+                  enum: [active, expired, revoked, unknown]
+                  description: 'Only entries with this status.'
+                source_tier:
+                  type: string
+                  enum: [protocol, account_standard, indexed, deferred]
+                  description: >-
+                    Force a permission source tier. indexed answers INDEXED_STATE_STALE and deferred answers
+                    PERMISSION_SOURCE_DEFERRED when not available.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {type: array, items: {'$ref': '#/components/schemas/PermissionDelegation'}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAccountSessions:
+    get:
+      operationId: getAccountSessions_get
+      summary: 'List the account''s session capabilities'
+      tags: [permissions]
+      description: |-
+        Account models without a permission source answer PERMISSION_SOURCE_UNSUPPORTED (-32006).
+
+        POST only: include_inactive.
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: status
+          in: query
+          description: 'Only entries with this status.'
+          schema: {type: string, enum: [active, expired, revoked, unknown]}
+        - name: source_tier
+          in: query
+          description: >-
+            Force a permission source tier. indexed answers INDEXED_STATE_STALE and deferred answers
+            PERMISSION_SOURCE_DEFERRED when not available.
+          schema: {type: string, enum: [protocol, account_standard, indexed, deferred]}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {type: array, items: {'$ref': '#/components/schemas/PermissionSession'}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAccountSessions
+      summary: 'List the account''s session capabilities'
+      tags: [permissions]
+      description: 'Account models without a permission source answer PERMISSION_SOURCE_UNSUPPORTED (-32006).'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                include_inactive:
+                  type: boolean
+                  default: false
+                  description: >-
+                    Include expired and revoked entries. POST only (the query string does not carry booleans
+                    for this member).
+                status:
+                  type: string
+                  enum: [active, expired, revoked, unknown]
+                  description: 'Only entries with this status.'
+                source_tier:
+                  type: string
+                  enum: [protocol, account_standard, indexed, deferred]
+                  description: >-
+                    Force a permission source tier. indexed answers INDEXED_STATE_STALE and deferred answers
+                    PERMISSION_SOURCE_DEFERRED when not available.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {type: array, items: {'$ref': '#/components/schemas/PermissionSession'}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAccountAgents:
+    get:
+      operationId: getAccountAgents_get
+      summary: 'List the account''s agent capabilities'
+      tags: [permissions]
+      description: |-
+        Account models without a permission source answer PERMISSION_SOURCE_UNSUPPORTED (-32006).
+
+        POST only: include_inactive.
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: status
+          in: query
+          description: 'Only entries with this status.'
+          schema: {type: string, enum: [active, expired, revoked, unknown]}
+        - name: source_tier
+          in: query
+          description: >-
+            Force a permission source tier. indexed answers INDEXED_STATE_STALE and deferred answers
+            PERMISSION_SOURCE_DEFERRED when not available.
+          schema: {type: string, enum: [protocol, account_standard, indexed, deferred]}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {type: array, items: {'$ref': '#/components/schemas/PermissionAgent'}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAccountAgents
+      summary: 'List the account''s agent capabilities'
+      tags: [permissions]
+      description: 'Account models without a permission source answer PERMISSION_SOURCE_UNSUPPORTED (-32006).'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                include_inactive:
+                  type: boolean
+                  default: false
+                  description: >-
+                    Include expired and revoked entries. POST only (the query string does not carry booleans
+                    for this member).
+                status:
+                  type: string
+                  enum: [active, expired, revoked, unknown]
+                  description: 'Only entries with this status.'
+                source_tier:
+                  type: string
+                  enum: [protocol, account_standard, indexed, deferred]
+                  description: >-
+                    Force a permission source tier. indexed answers INDEXED_STATE_STALE and deferred answers
+                    PERMISSION_SOURCE_DEFERRED when not available.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {type: array, items: {'$ref': '#/components/schemas/PermissionAgent'}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getTokenData:
+    get:
+      operationId: getTokenData_get
+      summary: 'Token contract data (jetton master, NFT collection or item)'
+      tags: [accounts]
+      description: >-
+        A contract that is not a recognised token contract answers CONTRACT_KIND_UNSUPPORTED (-32006).
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/TokenData'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getTokenData
+      summary: 'Token contract data (jetton master, NFT collection or item)'
+      tags: [accounts]
+      description: >-
+        A contract that is not a recognised token contract answers CONTRACT_KIND_UNSUPPORTED (-32006).
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/TokenData'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAccountJettons:
+    get:
+      operationId: getAccountJettons_get
+      summary: 'Jetton wallets owned by an account (wallet index)'
+      tags: [accounts]
+      description: >-
+        Served from the node's basechain wallet index. Without the index the method answers -32601 (disabled)
+        or -32603 (unavailable).
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: limit
+          in: query
+          description: >-
+            Maximum number of entries. Larger values are clamped to 10000; zero or negative means the default.
+          schema: {type: integer, minimum: 1, default: 10000}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountJettons'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAccountJettons
+      summary: 'Jetton wallets owned by an account (wallet index)'
+      tags: [accounts]
+      description: >-
+        Served from the node's basechain wallet index. Without the index the method answers -32601 (disabled)
+        or -32603 (unavailable).
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                limit:
+                  type: integer
+                  minimum: 1
+                  default: 10000
+                  description: >-
+                    Maximum number of entries. Larger values are clamped to 10000; zero or negative means the
+                    default.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountJettons'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAccountNfts:
+    get:
+      operationId: getAccountNfts_get
+      summary: 'NFT items owned by an account (wallet index)'
+      tags: [accounts]
+      description: 'Served from the node''s basechain wallet index.'
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: limit
+          in: query
+          description: >-
+            Maximum number of entries. Larger values are clamped to 10000; zero or negative means the default.
+          schema: {type: integer, minimum: 1, default: 10000}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountNfts'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAccountNfts
+      summary: 'NFT items owned by an account (wallet index)'
+      tags: [accounts]
+      description: 'Served from the node''s basechain wallet index.'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                limit:
+                  type: integer
+                  minimum: 1
+                  default: 10000
+                  description: >-
+                    Maximum number of entries. Larger values are clamped to 10000; zero or negative means the
+                    default.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountNfts'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAccountEvents:
+    get:
+      operationId: getAccountEvents_get
+      summary: 'Account event feed (wallet index)'
+      tags: [accounts]
+      description: 'Served from the node''s basechain wallet index.'
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: limit
+          in: query
+          description: 'Page size. Larger values are clamped to 100; zero or negative means the default.'
+          schema: {type: integer, minimum: 1, default: 100}
+        - name: before_lt
+          in: query
+          description: >-
+            Only events strictly before this logical time (positive uint64 decimal); use next_from of the
+            previous page.
+          schema: {type: string, pattern: '^[1-9][0-9]*$'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountEvents'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAccountEvents
+      summary: 'Account event feed (wallet index)'
+      tags: [accounts]
+      description: 'Served from the node''s basechain wallet index.'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                limit:
+                  type: integer
+                  minimum: 1
+                  default: 100
+                  description: >-
+                    Page size. Larger values are clamped to 100; zero or negative means the default.
+                before_lt:
+                  type: string
+                  pattern: '^[1-9][0-9]*$'
+                  description: >-
+                    Only events strictly before this logical time (positive uint64 decimal); use next_from of
+                    the previous page.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountEvents'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getAccountEvent:
+    get:
+      operationId: getAccountEvent_get
+      summary: 'One account event (wallet index)'
+      tags: [accounts]
+      description: 'An unknown event answers NOT_FOUND (-32004).'
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: event_id
+          in: query
+          required: true
+          description: 'Event id `<lt>:<hex hash>` as returned in events.'
+          schema: {type: string}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountEvent'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getAccountEvent
+      summary: 'One account event (wallet index)'
+      tags: [accounts]
+      description: 'An unknown event answers NOT_FOUND (-32004).'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, event_id]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                event_id: {type: string, description: 'Event id `<lt>:<hex hash>` as returned in events.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountEvent'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getMasterchainInfo:
+    get:
+      operationId: getMasterchainInfo_get
+      summary: 'Latest masterchain block'
+      tags: [blocks]
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/MasterchainInfo'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getMasterchainInfo
+      summary: 'Latest masterchain block'
+      tags: [blocks]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content: {application/json: {schema: {type: object}}}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/MasterchainInfo'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getConsensusBlock:
+    get:
+      operationId: getConsensusBlock_get
+      summary: 'Latest block served to queries'
+      tags: [blocks]
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ConsensusBlock'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getConsensusBlock
+      summary: 'Latest block served to queries'
+      tags: [blocks]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content: {application/json: {schema: {type: object}}}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ConsensusBlock'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /lookupBlock:
+    get:
+      operationId: lookupBlock_get
+      summary: 'Look up a block by seqno, logical time or unix time'
+      tags: [blocks]
+      description: |-
+        Exactly one of seqno, lt and unixtime must be given; none or more than one answers -32602.
+      parameters:
+        - name: workchain
+          in: query
+          required: true
+          description: 'Workchain id.'
+          schema: {'$ref': '#/components/schemas/Workchain'}
+        - name: shard
+          in: query
+          required: true
+          description: 'Shard id.'
+          schema: {'$ref': '#/components/schemas/Shard'}
+        - name: seqno
+          in: query
+          description: 'Select by seqno.'
+          schema: {'$ref': '#/components/schemas/Seqno'}
+        - name: lt
+          in: query
+          description: 'Select the block containing this logical time.'
+          schema: {'$ref': '#/components/schemas/LtInput'}
+        - name: unixtime
+          in: query
+          description: 'Select by generation time.'
+          schema: {type: integer, minimum: 0, maximum: 2147483647}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BlockIdExt'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: lookupBlock
+      summary: 'Look up a block by seqno, logical time or unix time'
+      tags: [blocks]
+      description: >-
+        Exactly one of seqno, lt and unixtime must be given; none or more than one answers -32602.
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard]
+              properties:
+                workchain: {'$ref': '#/components/schemas/Workchain', description: 'Workchain id.'}
+                shard: {'$ref': '#/components/schemas/Shard', description: 'Shard id.'}
+                seqno: {'$ref': '#/components/schemas/Seqno', description: 'Select by seqno.'}
+                lt:
+                  '$ref': '#/components/schemas/LtInput'
+                  description: 'Select the block containing this logical time.'
+                unixtime:
+                  type: integer
+                  minimum: 0
+                  maximum: 2147483647
+                  description: >-
+                    Select by generation time.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BlockIdExt'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /shards:
+    get:
+      operationId: shards_get
+      summary: 'Shard blocks of a masterchain block'
+      tags: [blocks]
+      description: >-
+        Shard blocks referenced by a masterchain block. `shards` and `getShards` are the same method.
+      parameters:
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ShardList'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: shards
+      summary: 'Shard blocks of a masterchain block'
+      tags: [blocks]
+      description: >-
+        Shard blocks referenced by a masterchain block. `shards` and `getShards` are the same method.
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ShardList'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getShards:
+    get:
+      operationId: getShards_get
+      summary: 'Shard blocks of a masterchain block (alias of shards)'
+      tags: [blocks]
+      description: >-
+        Shard blocks referenced by a masterchain block. `shards` and `getShards` are the same method.
+      parameters:
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ShardList'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getShards
+      summary: 'Shard blocks of a masterchain block (alias of shards)'
+      tags: [blocks]
+      description: >-
+        Shard blocks referenced by a masterchain block. `shards` and `getShards` are the same method.
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ShardList'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getBlockHeader:
+    get:
+      operationId: getBlockHeader_get
+      summary: 'Block header'
+      tags: [blocks]
+      parameters:
+        - name: workchain
+          in: query
+          required: true
+          description: 'Workchain id.'
+          schema: {'$ref': '#/components/schemas/Workchain'}
+        - name: shard
+          in: query
+          required: true
+          description: 'Shard id.'
+          schema: {'$ref': '#/components/schemas/Shard'}
+        - name: seqno
+          in: query
+          required: true
+          description: 'Block seqno.'
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BlockHeader'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getBlockHeader
+      summary: 'Block header'
+      tags: [blocks]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard, seqno]
+              properties:
+                workchain: {'$ref': '#/components/schemas/Workchain', description: 'Workchain id.'}
+                shard: {'$ref': '#/components/schemas/Shard', description: 'Shard id.'}
+                seqno: {'$ref': '#/components/schemas/Seqno', description: 'Block seqno.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BlockHeader'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getMasterchainBlockSignatures:
+    get:
+      operationId: getMasterchainBlockSignatures_get
+      summary: 'Verified signatures of a masterchain block'
+      tags: [blocks]
+      description: |-
+        Verified view. The result is PqSignaturesResult in doc/explorer-pq-rpc-v1.schema.json.
+
+        Served history window: the evidence is built from the target block's masterchain state and its
+        predecessor's. A block whose state this node has garbage-collected -- older than the node's state GC
+        horizon, set by validator-engine --state-ttl (default 86400 s) and advanced only at key-block
+        boundaries -- answers BLOCK_UNAVAILABLE (-32004, retryable false). Repeating the request against the
+        same node will not succeed; use an archival node for older blocks. A block the node has not applied
+        yet, or a timeout, answers UPSTREAM_UNAVAILABLE (retryable true).
+
+        POST only: block_id.
+      parameters:
+        - name: seqno
+          in: query
+          description: 'Masterchain seqno. Required unless block_id is given; 0 answers UNSIGNED_BLOCK.'
+          schema: {type: integer, minimum: 0, maximum: 2147483647}
+        - name: with_proof
+          in: query
+          description: 'Include the raw proof bytes.'
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {'$ref': 'explorer-pq-rpc-v1.schema.json#/$defs/PqSignaturesResult'}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getMasterchainBlockSignatures
+      summary: 'Verified signatures of a masterchain block'
+      tags: [blocks]
+      description: |-
+        Verified view. The result is PqSignaturesResult in doc/explorer-pq-rpc-v1.schema.json.
+
+        Served history window: the evidence is built from the target block's masterchain state and its
+        predecessor's. A block whose state this node has garbage-collected -- older than the node's state GC
+        horizon, set by validator-engine --state-ttl (default 86400 s) and advanced only at key-block
+        boundaries -- answers BLOCK_UNAVAILABLE (-32004, retryable false). Repeating the request against the
+        same node will not succeed; use an archival node for older blocks. A block the node has not applied
+        yet, or a timeout, answers UPSTREAM_UNAVAILABLE (retryable true).
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seqno:
+                  type: integer
+                  minimum: 0
+                  maximum: 2147483647
+                  description: >-
+                    Masterchain seqno. Required unless block_id is given; 0 answers UNSIGNED_BLOCK.
+                block_id:
+                  '$ref': '#/components/schemas/MasterchainBlockId'
+                  description: >-
+                    Complete masterchain block id to pin the answer to. Its seqno must equal `seqno` when both
+                    are given; a different resolved block answers BLOCK_ID_MISMATCH. POST only (an object
+                    cannot travel in a query string).
+                with_proof: {type: boolean, default: false, description: 'Include the raw proof bytes.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {'$ref': 'explorer-pq-rpc-v1.schema.json#/$defs/PqSignaturesResult'}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getShardBlockProof:
+    get:
+      operationId: getShardBlockProof_get
+      summary: 'Proof chain from a shard block to the masterchain'
+      tags: [blocks]
+      parameters:
+        - name: workchain
+          in: query
+          required: true
+          description: 'Workchain id.'
+          schema: {'$ref': '#/components/schemas/Workchain'}
+        - name: shard
+          in: query
+          required: true
+          description: 'Shard id.'
+          schema: {'$ref': '#/components/schemas/Shard'}
+        - name: seqno
+          in: query
+          required: true
+          description: 'Block seqno.'
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ShardBlockProof'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getShardBlockProof
+      summary: 'Proof chain from a shard block to the masterchain'
+      tags: [blocks]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard, seqno]
+              properties:
+                workchain: {'$ref': '#/components/schemas/Workchain', description: 'Workchain id.'}
+                shard: {'$ref': '#/components/schemas/Shard', description: 'Shard id.'}
+                seqno: {'$ref': '#/components/schemas/Seqno', description: 'Block seqno.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ShardBlockProof'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getOutMsgQueueSize:
+    get:
+      operationId: getOutMsgQueueSize_get
+      summary: 'Outbound message queue sizes'
+      tags: [blocks]
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/OutMsgQueueSizes'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getOutMsgQueueSize
+      summary: 'Outbound message queue sizes'
+      tags: [blocks]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content: {application/json: {schema: {type: object}}}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/OutMsgQueueSizes'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getBlockTransactions:
+    get:
+      operationId: getBlockTransactions_get
+      summary: 'Short transaction ids in a block'
+      tags: [transactions]
+      parameters:
+        - name: workchain
+          in: query
+          required: true
+          description: 'Workchain id.'
+          schema: {'$ref': '#/components/schemas/Workchain'}
+        - name: shard
+          in: query
+          required: true
+          description: 'Shard id.'
+          schema: {'$ref': '#/components/schemas/Shard'}
+        - name: seqno
+          in: query
+          required: true
+          description: 'Block seqno.'
+          schema: {'$ref': '#/components/schemas/Seqno'}
+        - name: count
+          in: query
+          description: 'Page size. Larger values are clamped to 256.'
+          schema: {type: integer, minimum: 1, default: 40}
+        - name: after_lt
+          in: query
+          description: 'Pagination cursor: logical time of the last transaction seen.'
+          schema: {'$ref': '#/components/schemas/Lt'}
+        - name: after_account
+          in: query
+          description: 'Pagination cursor: 256-bit account id (base64 or hex) of the last transaction seen.'
+          schema: {type: string}
+        - name: after_hash
+          in: query
+          description: 'Former name of after_account, still accepted.'
+          schema: {type: string}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BlockTransactions'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getBlockTransactions
+      summary: 'Short transaction ids in a block'
+      tags: [transactions]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard, seqno]
+              properties:
+                workchain: {'$ref': '#/components/schemas/Workchain', description: 'Workchain id.'}
+                shard: {'$ref': '#/components/schemas/Shard', description: 'Shard id.'}
+                seqno: {'$ref': '#/components/schemas/Seqno', description: 'Block seqno.'}
+                count:
+                  type: integer
+                  minimum: 1
+                  default: 40
+                  description: 'Page size. Larger values are clamped to 256.'
+                after_lt:
+                  '$ref': '#/components/schemas/Lt'
+                  description: 'Pagination cursor: logical time of the last transaction seen.'
+                after_account:
+                  type: string
+                  description: >-
+                    Pagination cursor: 256-bit account id (base64 or hex) of the last transaction seen.
+                after_hash: {type: string, description: 'Former name of after_account, still accepted.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BlockTransactions'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getBlockTransactionsExt:
+    get:
+      operationId: getBlockTransactionsExt_get
+      summary: 'Full transactions in a block'
+      tags: [transactions]
+      parameters:
+        - name: workchain
+          in: query
+          required: true
+          description: 'Workchain id.'
+          schema: {'$ref': '#/components/schemas/Workchain'}
+        - name: shard
+          in: query
+          required: true
+          description: 'Shard id.'
+          schema: {'$ref': '#/components/schemas/Shard'}
+        - name: seqno
+          in: query
+          required: true
+          description: 'Block seqno.'
+          schema: {'$ref': '#/components/schemas/Seqno'}
+        - name: count
+          in: query
+          description: 'Page size. Larger values are clamped to 256.'
+          schema: {type: integer, minimum: 1, default: 40}
+        - name: after_lt
+          in: query
+          description: 'Pagination cursor: logical time of the last transaction seen.'
+          schema: {'$ref': '#/components/schemas/Lt'}
+        - name: after_account
+          in: query
+          description: 'Pagination cursor: 256-bit account id (base64 or hex) of the last transaction seen.'
+          schema: {type: string}
+        - name: after_hash
+          in: query
+          description: 'Former name of after_account, still accepted.'
+          schema: {type: string}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BlockTransactionsExt'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getBlockTransactionsExt
+      summary: 'Full transactions in a block'
+      tags: [transactions]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workchain, shard, seqno]
+              properties:
+                workchain: {'$ref': '#/components/schemas/Workchain', description: 'Workchain id.'}
+                shard: {'$ref': '#/components/schemas/Shard', description: 'Shard id.'}
+                seqno: {'$ref': '#/components/schemas/Seqno', description: 'Block seqno.'}
+                count:
+                  type: integer
+                  minimum: 1
+                  default: 40
+                  description: 'Page size. Larger values are clamped to 256.'
+                after_lt:
+                  '$ref': '#/components/schemas/Lt'
+                  description: 'Pagination cursor: logical time of the last transaction seen.'
+                after_account:
+                  type: string
+                  description: >-
+                    Pagination cursor: 256-bit account id (base64 or hex) of the last transaction seen.
+                after_hash: {type: string, description: 'Former name of after_account, still accepted.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BlockTransactionsExt'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getTransactions:
+    get:
+      operationId: getTransactions_get
+      summary: 'Account transactions'
+      tags: [transactions]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: limit
+          in: query
+          description: 'Number of transactions. Larger values are clamped to 100.'
+          schema: {type: integer, minimum: 1, default: 10}
+        - name: lt
+          in: query
+          description: 'Start from this logical time (default: the account''s last transaction).'
+          schema: {'$ref': '#/components/schemas/Lt'}
+        - name: hash
+          in: query
+          description: 'Hash of the transaction at `lt` (base64 or hex).'
+          schema: {'$ref': '#/components/schemas/Hash'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {type: array, items: {'$ref': '#/components/schemas/RawTransaction'}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getTransactions
+      summary: 'Account transactions'
+      tags: [transactions]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                limit:
+                  type: integer
+                  minimum: 1
+                  default: 10
+                  description: 'Number of transactions. Larger values are clamped to 100.'
+                lt:
+                  '$ref': '#/components/schemas/Lt'
+                  description: 'Start from this logical time (default: the account''s last transaction).'
+                hash:
+                  '$ref': '#/components/schemas/Hash'
+                  description: 'Hash of the transaction at `lt` (base64 or hex).'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - properties:
+                          result: {type: array, items: {'$ref': '#/components/schemas/RawTransaction'}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getTransactionsStd:
+    get:
+      operationId: getTransactionsStd_get
+      summary: 'Account transactions (raw.transactions object)'
+      tags: [transactions]
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: limit
+          in: query
+          description: 'Number of transactions. Larger values are clamped to 100.'
+          schema: {type: integer, minimum: 1, default: 10}
+        - name: lt
+          in: query
+          description: 'Start from this logical time (default: the account''s last transaction).'
+          schema: {'$ref': '#/components/schemas/Lt'}
+        - name: hash
+          in: query
+          description: 'Hash of the transaction at `lt` (base64 or hex).'
+          schema: {'$ref': '#/components/schemas/Hash'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/RawTransactions'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getTransactionsStd
+      summary: 'Account transactions (raw.transactions object)'
+      tags: [transactions]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                limit:
+                  type: integer
+                  minimum: 1
+                  default: 10
+                  description: 'Number of transactions. Larger values are clamped to 100.'
+                lt:
+                  '$ref': '#/components/schemas/Lt'
+                  description: 'Start from this logical time (default: the account''s last transaction).'
+                hash:
+                  '$ref': '#/components/schemas/Hash'
+                  description: 'Hash of the transaction at `lt` (base64 or hex).'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/RawTransactions'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /tryLocateTx:
+    get:
+      operationId: tryLocateTx_get
+      summary: 'Locate the transaction that processed a message'
+      tags: [transactions]
+      parameters:
+        - name: source
+          in: query
+          required: true
+          description: 'Message source address.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: destination
+          in: query
+          required: true
+          description: 'Message destination address.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: created_lt
+          in: query
+          required: true
+          description: 'created_lt of the message, a positive decimal.'
+          schema: {type: string, pattern: '^[1-9][0-9]*$'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LocatedTransaction'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: tryLocateTx
+      summary: 'Locate the transaction that processed a message'
+      tags: [transactions]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, destination, created_lt]
+              properties:
+                source: {'$ref': '#/components/schemas/Address', description: 'Message source address.'}
+                destination:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Message destination address.'
+                created_lt:
+                  type: string
+                  pattern: '^[1-9][0-9]*$'
+                  description: 'created_lt of the message, a positive decimal.'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LocatedTransaction'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /tryLocateResultTx:
+    get:
+      operationId: tryLocateResultTx_get
+      summary: 'Locate the destination transaction of a message'
+      tags: [transactions]
+      parameters:
+        - name: source
+          in: query
+          required: true
+          description: 'Message source address.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: destination
+          in: query
+          required: true
+          description: 'Message destination address.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: created_lt
+          in: query
+          required: true
+          description: 'created_lt of the message, a positive decimal.'
+          schema: {type: string, pattern: '^[1-9][0-9]*$'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LocatedTransaction'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: tryLocateResultTx
+      summary: 'Locate the destination transaction of a message'
+      tags: [transactions]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, destination, created_lt]
+              properties:
+                source: {'$ref': '#/components/schemas/Address', description: 'Message source address.'}
+                destination:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Message destination address.'
+                created_lt:
+                  type: string
+                  pattern: '^[1-9][0-9]*$'
+                  description: 'created_lt of the message, a positive decimal.'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LocatedTransaction'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /tryLocateSourceTx:
+    get:
+      operationId: tryLocateSourceTx_get
+      summary: 'Locate the source transaction of a message'
+      tags: [transactions]
+      parameters:
+        - name: source
+          in: query
+          required: true
+          description: 'Message source address.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: destination
+          in: query
+          required: true
+          description: 'Message destination address.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: created_lt
+          in: query
+          required: true
+          description: 'created_lt of the message, a positive decimal.'
+          schema: {type: string, pattern: '^[1-9][0-9]*$'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LocatedTransaction'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: tryLocateSourceTx
+      summary: 'Locate the source transaction of a message'
+      tags: [transactions]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source, destination, created_lt]
+              properties:
+                source: {'$ref': '#/components/schemas/Address', description: 'Message source address.'}
+                destination:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Message destination address.'
+                created_lt:
+                  type: string
+                  pattern: '^[1-9][0-9]*$'
+                  description: 'created_lt of the message, a positive decimal.'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LocatedTransaction'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getConfigParam:
+    get:
+      operationId: getConfigParam_get
+      summary: 'One configuration parameter'
+      tags: [config]
+      description: |-
+        An absent parameter answers CONFIG_PARAM_ABSENT (-32004) with message "config param N not found".
+
+        POST only: block_id.
+      parameters:
+        - name: param
+          in: query
+          description: 'Configuration parameter id (required unless config_id is given).'
+          schema: {type: integer, format: int32}
+        - {name: config_id, in: query, description: 'Alias of param.', schema: {type: integer, format: int32}}
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+        - name: with_proof
+          in: query
+          description: 'Include the raw proof bytes.'
+          schema: {type: boolean, default: false}
+        - name: include_decoded
+          in: query
+          description: >-
+            Request the verified typed view: the result additionally carries `decoded` (DecodedConfig in
+            doc/explorer-pq-rpc-v1.schema.json). block_id selects the same view and requires
+            include_decoded=true.
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ConfigInfo'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getConfigParam
+      summary: 'One configuration parameter'
+      tags: [config]
+      description: >-
+        An absent parameter answers CONFIG_PARAM_ABSENT (-32004) with message "config param N not found".
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                param:
+                  type: integer
+                  format: int32
+                  description: 'Configuration parameter id (required unless config_id is given).'
+                config_id: {type: integer, format: int32, description: 'Alias of param.'}
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+                with_proof: {type: boolean, default: false, description: 'Include the raw proof bytes.'}
+                include_decoded:
+                  type: boolean
+                  default: false
+                  description: >-
+                    Request the verified typed view: the result additionally carries `decoded` (DecodedConfig
+                    in doc/explorer-pq-rpc-v1.schema.json). block_id selects the same view and requires
+                    include_decoded=true.
+                block_id:
+                  '$ref': '#/components/schemas/MasterchainBlockId'
+                  description: >-
+                    Complete masterchain block id to pin the answer to. Its seqno must equal `seqno` when both
+                    are given; a different resolved block answers BLOCK_ID_MISMATCH. POST only (an object
+                    cannot travel in a query string).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ConfigInfo'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getConfigAll:
+    get:
+      operationId: getConfigAll_get
+      summary: 'All configuration parameters'
+      tags: [config]
+      parameters:
+        - name: seqno
+          in: query
+          description: >-
+            Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+          schema: {'$ref': '#/components/schemas/Seqno'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ConfigInfo'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getConfigAll
+      summary: 'All configuration parameters'
+      tags: [config]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ConfigInfo'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getLibraries:
+    get:
+      operationId: getLibraries_get
+      summary: 'Library cells by hash'
+      tags: [config]
+      description: 'POST only: library_list.'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LibraryResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getLibraries
+      summary: 'Library cells by hash'
+      tags: [config]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [library_list]
+              properties:
+                library_list:
+                  type: array
+                  maxItems: 16
+                  items: {'$ref': '#/components/schemas/Hash'}
+                  description: >-
+                    Base64 256-bit library hashes, at most 16. POST only: a query string cannot carry an
+                    array, so the GET route always answers -32602.
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LibraryResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getProofQuery:
+    get:
+      operationId: getProofQuery_get
+      summary: 'Forward an allowlisted read-only proof query'
+      tags: [config]
+      description: 'The result is ProofResult in doc/explorer-pq-rpc-v1.schema.json.'
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: 'Base64 serialized read-only query (decoded at most 16384 bytes).'
+          schema: {type: string, maxLength: 21848, contentEncoding: base64}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': 'explorer-pq-rpc-v1.schema.json#/$defs/ProofResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: getProofQuery
+      summary: 'Forward an allowlisted read-only proof query'
+      tags: [config]
+      description: 'The result is ProofResult in doc/explorer-pq-rpc-v1.schema.json.'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  maxLength: 21848
+                  contentEncoding: base64
+                  description: 'Base64 serialized read-only query (decoded at most 16384 bytes).'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': 'explorer-pq-rpc-v1.schema.json#/$defs/ProofResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /runGetMethod:
+    post:
+      operationId: runGetMethod
+      summary: 'Run a get-method'
+      tags: [runmethod]
+      description: 'Result stack entries use [type, value] pairs.'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, method]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                method: {type: string, minLength: 1, description: 'Get-method name, e.g. "seqno".'}
+                stack:
+                  type: array
+                  items: {type: array, minItems: 2, maxItems: 2}
+                  description: >-
+                    Input stack as [type, value] pairs: ["num", "123"], ["cell", {"bytes": "<base64 BOC>"}],
+                    ["slice", {"bytes": "<base64 BOC>"}]; the tvm.Number/tvm.Cell/tvm.Slice type names are
+                    accepted.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/RunResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /runGetMethodStd:
+    post:
+      operationId: runGetMethodStd
+      summary: 'Run a get-method (typed stack entries)'
+      tags: [runmethod]
+      description: 'Result stack entries use typed tvm.stackEntry* objects.'
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, method]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                method: {type: string, minLength: 1, description: 'Get-method name, e.g. "seqno".'}
+                stack:
+                  type: array
+                  items: {type: array, minItems: 2, maxItems: 2}
+                  description: >-
+                    Input stack as [type, value] pairs: ["num", "123"], ["cell", {"bytes": "<base64 BOC>"}],
+                    ["slice", {"bytes": "<base64 BOC>"}]; the tvm.Number/tvm.Cell/tvm.Slice type names are
+                    accepted.
+                seqno:
+                  '$ref': '#/components/schemas/Seqno'
+                  description: >-
+                    Masterchain block seqno to read at. Absent = the latest block; 0 = block 0 (not latest).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/RunResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /estimateFee:
+    get:
+      operationId: estimateFee_get
+      summary: 'Estimate the fees of an external message'
+      tags: [send]
+      description: 'POST only: ignore_chksig.'
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: 'Account address: raw `workchain:hex` or the user-friendly base64/base64url form.'
+          schema: {'$ref': '#/components/schemas/Address'}
+        - name: body
+          in: query
+          required: true
+          description: 'Message body BOC.'
+          schema: {'$ref': '#/components/schemas/Base64Boc'}
+        - name: init_code
+          in: query
+          description: 'StateInit code BOC.'
+          schema: {'$ref': '#/components/schemas/Base64Boc'}
+        - name: init_data
+          in: query
+          description: 'StateInit data BOC.'
+          schema: {'$ref': '#/components/schemas/Base64Boc'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/FeeEstimate'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+    post:
+      operationId: estimateFee
+      summary: 'Estimate the fees of an external message'
+      tags: [send]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, body]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                body: {'$ref': '#/components/schemas/Base64Boc', description: 'Message body BOC.'}
+                init_code: {'$ref': '#/components/schemas/Base64Boc', description: 'StateInit code BOC.'}
+                init_data: {'$ref': '#/components/schemas/Base64Boc', description: 'StateInit data BOC.'}
+                ignore_chksig:
+                  type: boolean
+                  default: true
+                  description: >-
+                    Ignore signature checks while emulating. POST only (the query string does not carry
+                    booleans for this member).
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/FeeEstimate'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /buildTransactionIntent:
+    post:
+      operationId: buildTransactionIntent
+      summary: 'Build a transaction intent'
+      tags: [send]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Sender account (alias: address). One of from/address is required unless `intent` is given.
+                address: {'$ref': '#/components/schemas/Address', description: 'Alias of `from`.'}
+                body:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'Message body BOC (required unless carried inside `intent`).'
+                init_code:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'StateInit code BOC (deploy).'
+                init_data:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'StateInit data BOC (deploy).'
+                account_model:
+                  type: string
+                  description: 'Account model; when absent the node discovers it from the account''s code.'
+                authorization_version: {type: string, description: 'Authorization version label.'}
+                signer:
+                  type: string
+                  maxLength: 256
+                  description: 'Signer role address (default: the sender).'
+                submitter:
+                  type: string
+                  maxLength: 256
+                  description: 'Submitter role address (default: the sender).'
+                fee_payer:
+                  type: string
+                  maxLength: 256
+                  description: 'Fee payer role address (default: the sender).'
+                delegation_ref:
+                  type: string
+                  description: >-
+                    Delegation reference (aliases: delegation, delegation_grant). Session and agent references
+                    are refused.
+                intent:
+                  '$ref': '#/components/schemas/TransactionIntentInput'
+                  description: 'Structured alternative to the flat members above.'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/TransactionIntent'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /getSigningPayload:
+    post:
+      operationId: getSigningPayload
+      summary: 'Build the payload to sign'
+      tags: [send]
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Sender account (alias: address). One of from/address is required unless `intent` is given.
+                address: {'$ref': '#/components/schemas/Address', description: 'Alias of `from`.'}
+                body:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'Message body BOC (required unless carried inside `intent`).'
+                init_code:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'StateInit code BOC (deploy).'
+                init_data:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'StateInit data BOC (deploy).'
+                account_model:
+                  type: string
+                  description: 'Account model; when absent the node discovers it from the account''s code.'
+                authorization_version: {type: string, description: 'Authorization version label.'}
+                signer:
+                  type: string
+                  maxLength: 256
+                  description: 'Signer role address (default: the sender).'
+                submitter:
+                  type: string
+                  maxLength: 256
+                  description: 'Submitter role address (default: the sender).'
+                fee_payer:
+                  type: string
+                  maxLength: 256
+                  description: 'Fee payer role address (default: the sender).'
+                delegation_ref:
+                  type: string
+                  description: >-
+                    Delegation reference (aliases: delegation, delegation_grant). Session and agent references
+                    are refused.
+                intent:
+                  '$ref': '#/components/schemas/TransactionIntentInput'
+                  description: 'Structured alternative to the flat members above.'
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/SigningPayload'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /sendBoc:
+    post:
+      operationId: sendBoc
+      summary: 'Send a serialized external message'
+      tags: [send]
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boc]
+              properties:
+                boc: {'$ref': '#/components/schemas/Base64Boc', description: 'External message BOC.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/SendStatus'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /sendBocReturnHash:
+    post:
+      operationId: sendBocReturnHash
+      summary: 'Send a message and return its hash'
+      tags: [send]
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boc]
+              properties:
+                boc: {'$ref': '#/components/schemas/Base64Boc', description: 'External message BOC.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/SendStatusWithHash'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /sendBocReturnHashNoError:
+    post:
+      operationId: sendBocReturnHashNoError
+      summary: 'Send a message and return its hash'
+      tags: [send]
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [boc]
+              properties:
+                boc: {'$ref': '#/components/schemas/Base64Boc', description: 'External message BOC.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/ExtMessageInfo'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /sendQuery:
+    post:
+      operationId: sendQuery
+      summary: 'Build and send an external message'
+      tags: [send]
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, body]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: >-
+                    Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
+                body: {'$ref': '#/components/schemas/Base64Boc', description: 'Message body BOC.'}
+                init_code: {'$ref': '#/components/schemas/Base64Boc', description: 'StateInit code BOC.'}
+                init_data: {'$ref': '#/components/schemas/Base64Boc', description: 'StateInit data BOC.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/SendStatusWithHash'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /submitSignedTransaction:
+    post:
+      operationId: submitSignedTransaction
+      summary: 'Submit a signed transaction'
+      tags: [send]
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                signed_message_boc:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: >-
+                    Signed external message BOC. One of signed_message_boc, boc or payload is required.
+                boc: {'$ref': '#/components/schemas/Base64Boc', description: 'Alias of signed_message_boc.'}
+                payload:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'Alias of signed_message_boc.'
+                payload_encoding: {type: string, enum: [boc_base64], description: 'Encoding of payload.'}
+                signer: {type: string, description: 'Signer role address.'}
+                submitter: {type: string, description: 'Submitter role address (default: signer).'}
+                fee_payer: {type: string, description: 'Fee payer role address (default: signer).'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/SubmissionResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /grantAccountDelegation:
+    post:
+      operationId: grantAccountDelegation
+      summary: 'Grant an account delegation'
+      tags: [permissions]
+      description: >-
+        Answers the mutation the account would have to sign; the node does not change state. Unsupported
+        account models answer PERMISSION_SOURCE_UNSUPPORTED, immutable ones LIFECYCLE_IMMUTABLE (-32006).
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, grantee, scope]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Account that grants the permission.'
+                grantee: {type: string, minLength: 1, description: 'Grantee address.'}
+                scope:
+                  type: string
+                  enum:
+                    - submit_only
+                    - bounded_transfer
+                    - bounded_contract_call
+                    - session_issuance
+                    - agent_execution
+                  description: 'Canonical scope.'
+                constraints:
+                  '$ref': '#/components/schemas/PermissionConstraints'
+                  description: 'Optional constraints object.'
+                expires_at:
+                  type: integer
+                  minimum: 0
+                  maximum: 4294967295
+                  description: 'Unix time of expiry.'
+                revocable: {type: boolean, default: true, description: 'Whether the grant can be revoked.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LifecycleMutationResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /revokeAccountDelegation:
+    post:
+      operationId: revokeAccountDelegation
+      summary: 'Revoke an account delegation'
+      tags: [permissions]
+      description: >-
+        Answers the mutation the account would have to sign; the node does not change state. Unsupported
+        account models answer PERMISSION_SOURCE_UNSUPPORTED, immutable ones LIFECYCLE_IMMUTABLE (-32006).
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, permission_id]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Account that granted the permission.'
+                permission_id: {type: string, minLength: 1, description: 'Permission to revoke.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LifecycleMutationResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /grantAccountSession:
+    post:
+      operationId: grantAccountSession
+      summary: 'Grant an account session'
+      tags: [permissions]
+      description: >-
+        Answers the mutation the account would have to sign; the node does not change state. Unsupported
+        account models answer PERMISSION_SOURCE_UNSUPPORTED, immutable ones LIFECYCLE_IMMUTABLE (-32006).
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, grantee, scope]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Account that grants the permission.'
+                grantee: {type: string, minLength: 1, description: 'Grantee address.'}
+                scope:
+                  type: string
+                  enum:
+                    - submit_only
+                    - bounded_transfer
+                    - bounded_contract_call
+                    - session_issuance
+                    - agent_execution
+                  description: 'Canonical scope.'
+                constraints:
+                  '$ref': '#/components/schemas/PermissionConstraints'
+                  description: 'Optional constraints object.'
+                expires_at:
+                  type: integer
+                  minimum: 0
+                  maximum: 4294967295
+                  description: 'Unix time of expiry.'
+                revocable: {type: boolean, default: true, description: 'Whether the grant can be revoked.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LifecycleMutationResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /revokeAccountSession:
+    post:
+      operationId: revokeAccountSession
+      summary: 'Revoke an account session'
+      tags: [permissions]
+      description: >-
+        Answers the mutation the account would have to sign; the node does not change state. Unsupported
+        account models answer PERMISSION_SOURCE_UNSUPPORTED, immutable ones LIFECYCLE_IMMUTABLE (-32006).
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, permission_id]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Account that granted the permission.'
+                permission_id: {type: string, minLength: 1, description: 'Permission to revoke.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LifecycleMutationResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /grantAccountAgent:
+    post:
+      operationId: grantAccountAgent
+      summary: 'Grant an account agent'
+      tags: [permissions]
+      description: >-
+        Answers the mutation the account would have to sign; the node does not change state. Unsupported
+        account models answer PERMISSION_SOURCE_UNSUPPORTED, immutable ones LIFECYCLE_IMMUTABLE (-32006).
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, grantee, scope]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Account that grants the permission.'
+                grantee: {type: string, minLength: 1, description: 'Grantee address.'}
+                scope:
+                  type: string
+                  enum:
+                    - submit_only
+                    - bounded_transfer
+                    - bounded_contract_call
+                    - session_issuance
+                    - agent_execution
+                  description: 'Canonical scope.'
+                constraints:
+                  '$ref': '#/components/schemas/PermissionConstraints'
+                  description: 'Optional constraints object.'
+                expires_at:
+                  type: integer
+                  minimum: 0
+                  maximum: 4294967295
+                  description: 'Unix time of expiry.'
+                revocable: {type: boolean, default: true, description: 'Whether the grant can be revoked.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LifecycleMutationResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
+  /revokeAccountAgent:
+    post:
+      operationId: revokeAccountAgent
+      summary: 'Revoke an account agent'
+      tags: [permissions]
+      description: >-
+        Answers the mutation the account would have to sign; the node does not change state. Unsupported
+        account models answer PERMISSION_SOURCE_UNSUPPORTED, immutable ones LIFECYCLE_IMMUTABLE (-32006).
+      x-write: true
+      requestBody:
+        required: false
+        description: 'Named parameters. An empty body is {}.'
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, permission_id]
+              properties:
+                address:
+                  '$ref': '#/components/schemas/Address'
+                  description: 'Account that granted the permission.'
+                permission_id: {type: string, minLength: 1, description: 'Permission to revoke.'}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/LifecycleMutationResult'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: >-
+        Required on every route except /healthcheck, /api-info and OPTIONS when the server is configured with
+        an API key.
+  responses:
+    Unauthorized:
+      description: 'Missing or wrong X-API-Key: code -32000, reason UNAUTHORIZED.'
+      content: {application/json: {schema: {'$ref': '#/components/schemas/JsonRpcError'}}}
+    RateLimited:
+      description: >-
+        Per-source ingress budget exhausted at header admission: code -32005, reason RATE_LIMITED, retryable.
+      content: {application/json: {schema: {'$ref': '#/components/schemas/JsonRpcError'}}}
+    UnsupportedMediaType:
+      description: 'POST without Content-Type application/json: code -32600, reason INVALID_REQUEST.'
+      content: {application/json: {schema: {'$ref': '#/components/schemas/JsonRpcError'}}}
   schemas:
+    Workchain:
+      type: integer
+      format: int32
+      minimum: -2147483648
+      maximum: 2147483647
+      description: >-
+        Workchain id, a JSON integer in the signed 32-bit range. A string such as "-1" is refused.
+    Seqno:
+      type: integer
+      minimum: 0
+      maximum: 2147483647
+      description: >-
+        Block seqno, a JSON integer in [0, 2147483647]. Strings, negatives, fractions and exponent forms are
+        refused.
+    Shard:
+      type: string
+      pattern: '^-?[1-9][0-9]*$'
+      description: >-
+        Shard id as the signed decimal of the 64-bit shard id, written exactly as responses write it: no '+',
+        no leading zeros, never 0, e.g. "-9223372036854775808" for the full masterchain or basechain shard.
+        The unsigned form, hex and JSON numbers are refused.
+      examples: ['-9223372036854775808']
+    Lt:
+      type: string
+      pattern: '^(0|[1-9][0-9]*)$'
+      description: 'Logical time, canonical decimal of a non-negative 64-bit integer.'
+    LtInput:
+      oneOf: [{'$ref': '#/components/schemas/Lt'}, {type: integer, minimum: 0}]
+      description: 'Logical time as the canonical decimal string or a JSON integer.'
+    Address: {type: string, description: 'Account address: raw `workchain:hex` or user-friendly form.'}
+    Hash: {type: string, description: '256-bit hash, base64 (standard or url-safe) or hex.'}
+    Base64Boc: {type: string, contentEncoding: base64, description: 'Base64 serialized bag of cells.'}
+    BlockIdExt:
+      type: object
+      required: [workchain, shard, seqno, root_hash, file_hash]
+      properties:
+        '@type': {const: tos.blockIdExt}
+        workchain: {'$ref': '#/components/schemas/Workchain'}
+        shard: {'$ref': '#/components/schemas/Shard'}
+        seqno: {'$ref': '#/components/schemas/Seqno'}
+        root_hash: {type: string, description: Base64.}
+        file_hash: {type: string, description: Base64.}
+    MasterchainBlockId:
+      type: object
+      required: [workchain, shard, seqno, root_hash, file_hash]
+      additionalProperties: false
+      description: >-
+        Complete masterchain block id used as a selector. Duplicate or unknown members are refused.
+      properties:
+        '@type': {type: string}
+        workchain: {const: -1}
+        shard: {const: '-9223372036854775808'}
+        seqno: {'$ref': '#/components/schemas/Seqno'}
+        root_hash:
+          type: string
+          minLength: 44
+          maxLength: 44
+          description: 'Standard padded base64 of 32 bytes.'
+        file_hash:
+          type: string
+          minLength: 44
+          maxLength: 44
+          description: 'Standard padded base64 of 32 bytes.'
+    InternalTransactionId:
+      type: object
+      properties:
+        '@type': {const: internal.transactionId}
+        lt: {'$ref': '#/components/schemas/Lt'}
+        hash: {type: string}
     JsonRpcRequest:
       type: object
       required: [jsonrpc, method]
+      description: 'One JSON-RPC 2.0 request object. A request object with no `id` member is a notification.'
       properties:
         jsonrpc:
-          type: string
           const: '2.0'
-        id:
-          oneOf:
-            - type: string
-            - type: integer
-            - type: 'null'
+          description: >-
+            Exactly the string "2.0"; a missing member, "1.0" or the number 2.0 is refused with -32600.
         method:
           type: string
+          enum:
+            - detectAddress
+            - detectHash
+            - packAddress
+            - unpackAddress
+            - getAddressInformation
+            - getExtendedAddressInformation
+            - getWalletInformation
+            - getAddressBalance
+            - getAddressState
+            - getAccountCapability
+            - getAccountDelegations
+            - getAccountSessions
+            - getAccountAgents
+            - getTokenData
+            - getAccountJettons
+            - getAccountNfts
+            - getAccountEvents
+            - getAccountEvent
+            - getMasterchainInfo
+            - getConsensusBlock
+            - getNodeConsensusStatus
+            - lookupBlock
+            - shards
+            - getShards
+            - getBlockHeader
+            - getMasterchainBlockSignatures
+            - getShardBlockProof
+            - getOutMsgQueueSize
+            - getBlockTransactions
+            - getBlockTransactionsExt
+            - getTransactions
+            - getTransactionsStd
+            - tryLocateTx
+            - tryLocateResultTx
+            - tryLocateSourceTx
+            - getConfigParam
+            - getConfigAll
+            - getLibraries
+            - getProofQuery
+            - runGetMethod
+            - runGetMethodStd
+            - estimateFee
+            - buildTransactionIntent
+            - getSigningPayload
+            - sendBoc
+            - sendBocReturnHash
+            - sendBocReturnHashNoError
+            - sendQuery
+            - submitSignedTransaction
+            - grantAccountDelegation
+            - revokeAccountDelegation
+            - grantAccountSession
+            - revokeAccountSession
+            - grantAccountAgent
+            - revokeAccountAgent
+          description: >-
+            Method name. A non-string is refused with -32600; an unknown name answers -32601 METHOD_NOT_FOUND.
+            getNodeConsensusStatus is served only when the operator enabled it.
         params:
-          oneOf:
-            - type: array
-            - type: object
-            - type: 'null'
-    JsonRpcResponse:
-      type: object
-      required: [jsonrpc]
-      properties:
-        jsonrpc:
-          type: string
-          const: '2.0'
+          type: object
+          description: >-
+            Named parameters. Absent means {}. An array (positional parameters) is refused with -32602
+            INVALID_ARGUMENT, message "Invalid params: positional parameters are not supported; 'params' must
+            be an object"; any other type, including null, with -32600. Only named parameters exist.
         id:
-          oneOf:
-            - type: string
-            - type: integer
-            - type: 'null'
-        result: {}
-        error:
-          $ref: '#/components/schemas/JsonRpcError'
+          type: [string, number, 'null']
+          description: >-
+            Echoed in the answer. Any other type is refused with -32600 and id null. Absent = notification.
+    JsonRpcSuccess:
+      type: object
+      required: [jsonrpc, id, result]
+      additionalProperties: false
+      properties: {jsonrpc: {const: '2.0'}, id: {type: [string, number, 'null']}, result: {}}
     JsonRpcError:
       type: object
-      required: [code, message]
+      required: [jsonrpc, id, error]
+      additionalProperties: false
+      description: 'Every error answer, on every route. REST routes answer with id null.'
       properties:
-        code:
-          type: integer
-        message:
+        jsonrpc: {const: '2.0'}
+        id: {type: [string, number, 'null']}
+        error:
+          type: object
+          required: [code, message, data]
+          additionalProperties: false
+          properties:
+            code: {type: integer}
+            message: {type: string}
+            data: {'$ref': '#/components/schemas/ErrorData'}
+    ErrorData:
+      type: object
+      required: [schema_version, reason, retryable]
+      additionalProperties: false
+      description: |-
+        Typed error detail. `reason` is the stable machine-readable name to branch on; `code` is the JSON-RPC
+        code it travels under; `retryable` says whether repeating the same request can succeed.
+
+        | reason | code | retryable | meaning |
+        | --- | --- | --- | --- |
+        | PARSE_ERROR | -32700 | false | The body is empty or is not JSON. |
+        | INVALID_REQUEST | -32600 | false | The envelope is invalid (jsonrpc not exactly "2.0", method not a string, params neither absent nor an object or array, id not a string/number/null, empty or oversized batch), or a pre-dispatch HTTP refusal (405 method, 415 content type). |
+        | METHOD_NOT_FOUND | -32601 | false | No method of that name is served (including the admin method when the operator has not enabled it), or GET of an unknown path (HTTP 404). Also used by the wallet-index methods when the node runs without the index. |
+        | WRITE_DISABLED | -32601 | false | A write method was called on a server started in read-only mode. |
+        | INVALID_ARGUMENT | -32602 | false | A parameter is missing, of the wrong JSON type, out of range or malformed; positional (array) params. The message names the parameter. |
+        | INTERNAL_ERROR | -32603 | false | The method failed for a reason that has no more specific kind. Repeating the same request is not expected to succeed. |
+        | UNAUTHORIZED | -32000 | false | Missing or wrong X-API-Key (HTTP 401, before any method runs). |
+        | RATE_LIMITED | -32005 | true | A capacity budget refused the request: the per-source ingress budget at header admission (HTTP 429), or a method-level budget such as the per-source method budget or verified-view worker capacity (HTTP 200). Retry later. |
+        | NOT_FOUND | -32004 | false | The requested object does not exist in this node's answer. |
+        | CONFIG_PARAM_ABSENT | -32004 | false | getConfigParam for a configuration parameter that is not set (message "config param N not found"); also the include_decoded view of an absent parameter that has no typed decoder. |
+        | BLOCK_UNAVAILABLE | -32004 | false | The block or its state is outside the history this node serves (garbage-collected state or archive package). Not retryable against the same node; ask an archival node. |
+        | PERMISSION_SOURCE_UNSUPPORTED | -32006 | false | The account model has no permission source for this view or lifecycle operation (message keeps its PERMISSION_SOURCE_UNSUPPORTED prefix). |
+        | PERMISSION_SOURCE_DEFERRED | -32006 | false | The requested permission source tier is deferred and not served. |
+        | INDEXED_STATE_STALE | -32006 | false | source_tier=indexed was forced, but no fresh indexed permission state is available. |
+        | LIFECYCLE_IMMUTABLE | -32006 | false | The account model does not allow this grant or revoke. |
+        | CONTRACT_KIND_UNSUPPORTED | -32006 | false | getTokenData on a contract that is not a recognised token contract. |
+        | UPSTREAM_UNAVAILABLE | -32603 | true | The node could not answer now: a query timed out or was cancelled, the node is not synced, or the block is not applied yet. The same request can succeed later. |
+        | UNSIGNED_BLOCK | -32602 | false | getMasterchainBlockSignatures for seqno 0 (the zero state carries no signatures). |
+        | BLOCK_ID_MISMATCH | -32009 | false | A caller-supplied complete block_id disagrees with the block the node resolved at that height. |
+        | EVIDENCE_INVALID | -32603 | false | Proof, signature, block identity or native layout validation failed in a verified view. |
+        | UNSUPPORTED_CARRIER | -32603 | false | A native signature carrier has no supported decoder. |
+        | STATE_INVALID | -32603 | false | A recognised account or configuration state is malformed, or a required policy is missing. |
+        | RESOURCE_LIMIT | -32603 | false | Valid-looking evidence exceeds a configured processing or response budget of a verified view. |
+        | VERIFICATION_BACKEND_FAILURE | -32603 | true | The native cryptographic backend failed; this is not an invalid-signature verdict. |
+
+        A call site that names no reason maps its code: -32700 PARSE_ERROR, -32600 INVALID_REQUEST, -32601
+        METHOD_NOT_FOUND, -32602 INVALID_ARGUMENT, -32000 UNAUTHORIZED, -32004 NOT_FOUND, -32005 RATE_LIMITED,
+        anything else INTERNAL_ERROR. A failure of the node's own query path is classified first:
+        garbage-collected data is BLOCK_UNAVAILABLE, a timeout, cancellation or not-ready answer is
+        UPSTREAM_UNAVAILABLE.
+      properties:
+        schema_version: {const: 1}
+        reason:
           type: string
-        data: {}
+          enum:
+            - PARSE_ERROR
+            - INVALID_REQUEST
+            - METHOD_NOT_FOUND
+            - WRITE_DISABLED
+            - INVALID_ARGUMENT
+            - INTERNAL_ERROR
+            - UNAUTHORIZED
+            - RATE_LIMITED
+            - NOT_FOUND
+            - CONFIG_PARAM_ABSENT
+            - BLOCK_UNAVAILABLE
+            - PERMISSION_SOURCE_UNSUPPORTED
+            - PERMISSION_SOURCE_DEFERRED
+            - INDEXED_STATE_STALE
+            - LIFECYCLE_IMMUTABLE
+            - CONTRACT_KIND_UNSUPPORTED
+            - UPSTREAM_UNAVAILABLE
+            - UNSIGNED_BLOCK
+            - BLOCK_ID_MISMATCH
+            - EVIDENCE_INVALID
+            - UNSUPPORTED_CARRIER
+            - STATE_INVALID
+            - RESOURCE_LIMIT
+            - VERIFICATION_BACKEND_FAILURE
+        retryable: {type: boolean}
+      x-error-reasons:
+        - {reason: PARSE_ERROR, code: -32700, retryable: false}
+        - {reason: INVALID_REQUEST, code: -32600, retryable: false}
+        - {reason: METHOD_NOT_FOUND, code: -32601, retryable: false}
+        - {reason: WRITE_DISABLED, code: -32601, retryable: false}
+        - {reason: INVALID_ARGUMENT, code: -32602, retryable: false}
+        - {reason: INTERNAL_ERROR, code: -32603, retryable: false}
+        - {reason: UNAUTHORIZED, code: -32000, retryable: false}
+        - {reason: RATE_LIMITED, code: -32005, retryable: true}
+        - {reason: NOT_FOUND, code: -32004, retryable: false}
+        - {reason: CONFIG_PARAM_ABSENT, code: -32004, retryable: false}
+        - {reason: BLOCK_UNAVAILABLE, code: -32004, retryable: false}
+        - {reason: PERMISSION_SOURCE_UNSUPPORTED, code: -32006, retryable: false}
+        - {reason: PERMISSION_SOURCE_DEFERRED, code: -32006, retryable: false}
+        - {reason: INDEXED_STATE_STALE, code: -32006, retryable: false}
+        - {reason: LIFECYCLE_IMMUTABLE, code: -32006, retryable: false}
+        - {reason: CONTRACT_KIND_UNSUPPORTED, code: -32006, retryable: false}
+        - {reason: UPSTREAM_UNAVAILABLE, code: -32603, retryable: true}
+        - {reason: UNSIGNED_BLOCK, code: -32602, retryable: false}
+        - {reason: BLOCK_ID_MISMATCH, code: -32009, retryable: false}
+        - {reason: EVIDENCE_INVALID, code: -32603, retryable: false}
+        - {reason: UNSUPPORTED_CARRIER, code: -32603, retryable: false}
+        - {reason: STATE_INVALID, code: -32603, retryable: false}
+        - {reason: RESOURCE_LIMIT, code: -32603, retryable: false}
+        - {reason: VERIFICATION_BACKEND_FAILURE, code: -32603, retryable: true}
+    ReadyzResult:
+      type: object
+      required: [ready]
+      properties:
+        ready: {type: boolean}
+        sync_lag_seconds: {type: integer}
+        last_block_utime: {type: integer}
+        node_time: {type: integer}
+        last_block: {'$ref': '#/components/schemas/BlockIdExt'}
+        error: {type: string, description: 'Present when the node could not be queried.'}
+    ApiInfo:
+      type: object
+      required: [name, version, methods_count, methods, readonly, endpoints]
+      properties:
+        name: {const: 'TOS JSON-RPC API'}
+        version: {type: string, examples: ['2.0.0']}
+        methods_count:
+          type: integer
+          description: 'Number of served methods: 54 by default, 55 when getNodeConsensusStatus is enabled.'
+        methods: {type: array, items: {type: string}}
+        readonly: {type: boolean}
+        endpoints:
+          type: object
+          properties:
+            jsonrpc: {const: /jsonRPC}
+            rest_post: {const: '/<method>'}
+            rest_get:
+              type: array
+              items: {type: string}
+              description: 'The GET routes, e.g. "/getMasterchainInfo".'
+            health: {const: /healthcheck}
+            readyz: {const: /readyz}
+            api_info: {const: /api-info}
+        openapi_spec: {const: doc/openapi.yaml}
+        explorer_schema: {const: doc/explorer-pq-rpc-v1.schema.json}
+    DetectedAddress:
+      type: object
+      properties:
+        raw_form: {type: string}
+        bounceable: {type: object, properties: {b64: {type: string}, b64url: {type: string}}}
+        non_bounceable: {type: object, properties: {b64: {type: string}, b64url: {type: string}}}
+        given_type: {type: string}
+        test_only: {type: boolean}
+    DetectedHash:
+      type: object
+      properties:
+        '@type': {const: ext.utils.detectedHash}
+        b64: {type: string}
+        b64url: {type: string}
+        hex: {type: string}
+    RawFullAccountState:
+      type: object
+      properties:
+        '@type': {const: raw.fullAccountState}
+        balance: {type: string}
+        code: {type: string}
+        data: {type: string}
+        last_transaction_id: {'$ref': '#/components/schemas/InternalTransactionId'}
+        block_id: {'$ref': '#/components/schemas/BlockIdExt'}
+        frozen_hash: {type: string}
+        sync_utime: {type: integer}
+    FullAccountState:
+      type: object
+      properties:
+        '@type': {const: fullAccountState}
+        address:
+          type: object
+          properties: {'@type': {const: accountAddress}, account_address: {type: string}}
+        balance: {}
+        last_transaction_id: {'$ref': '#/components/schemas/InternalTransactionId'}
+        block_id: {'$ref': '#/components/schemas/BlockIdExt'}
+        sync_utime: {type: integer}
+        account_state:
+          type: object
+          properties:
+            '@type': {const: raw.accountState}
+            code: {type: string}
+            data: {type: string}
+            frozen_hash: {type: string}
+        revision: {type: integer}
+    WalletInformation:
+      type: object
+      properties:
+        '@type': {const: ext.accounts.walletInformation}
+        wallet: {type: boolean}
+        balance: {type: string}
+        account_state: {type: string}
+        last_transaction_id: {'$ref': '#/components/schemas/InternalTransactionId'}
+        wallet_type: {type: [string, 'null']}
+        seqno: {type: [integer, 'null']}
+        wallet_id: {type: [integer, 'null']}
+        pq_authorization: {'$ref': 'explorer-pq-rpc-v1.schema.json#/$defs/PublicAuthorization'}
+    AccountCapability:
+      type: object
+      properties:
+        '@type': {const: account.capability}
+        address: {type: string}
+        account_model: {type: string}
+        authorization_version: {type: string}
+        capability_maturity: {type: string}
+        supports_delegation: {type: boolean}
+        supports_sessions: {type: boolean}
+        supports_agents: {type: boolean}
+        supports_sponsorship: {type: boolean}
+        delegation_source: {}
+        session_source: {}
+        agent_source: {}
+        observed_masterchain_block: {'$ref': '#/components/schemas/BlockIdExt'}
+        observed_shard_block: {'$ref': '#/components/schemas/BlockIdExt'}
+        pq_authorization: {'$ref': 'explorer-pq-rpc-v1.schema.json#/$defs/PublicAuthorization'}
+    PermissionDelegation:
+      type: object
+      properties:
+        '@type': {const: account.delegationGrant}
+        id: {type: string}
+        account: {type: string}
+        grantor: {type: string}
+        grantee: {type: string}
+        scope: {type: string}
+        constraints: {type: object}
+        constraints_extensions: {}
+        created_at: {}
+        expires_at: {}
+        revoked_at: {}
+    PermissionSession: {type: object, properties: {'@type': {const: account.sessionCapability}}}
+    PermissionAgent: {type: object, properties: {'@type': {const: account.agentCapability}}}
+    PermissionConstraints:
+      type: object
+      additionalProperties: false
+      description: 'Only the canonical constraint members are accepted, each a scalar or null.'
+      properties:
+        target_allowlist: {type: [string, number, boolean, 'null']}
+        max_value: {type: [string, number, boolean, 'null']}
+        max_uses: {type: [string, number, boolean, 'null']}
+        not_before: {type: [string, number, boolean, 'null']}
+        expires_at: {type: [string, number, boolean, 'null']}
+    LifecycleMutationResult:
+      type: object
+      properties:
+        '@type': {const: lifecycle.mutationResult}
+        method: {type: string}
+        account_model: {type: string}
+        accepted: {const: true}
+        mutation_intent: {type: object}
+        affected_object_preview: {}
+        preview_note: {type: string}
+    TokenData:
+      oneOf:
+        - type: object
+          properties:
+            '@type': {const: ext.tokens.jettonMasterData}
+            total_supply: {type: string}
+            mintable: {type: boolean}
+            admin_address: {type: string}
+            jetton_content: {type: string}
+            jetton_wallet_code: {type: string}
+        - type: object
+          properties:
+            '@type': {const: ext.tokens.nftCollectionData}
+            next_item_index: {type: string}
+            collection_content: {type: string}
+            owner_address: {type: string}
+        - type: object
+          properties:
+            '@type': {const: ext.tokens.nftItemData}
+            init: {type: boolean}
+            index: {type: string}
+            collection_address: {type: string}
+            owner_address: {type: string}
+    AccountJettons:
+      type: object
+      properties:
+        '@type': {const: wallet.accountJettons}
+        index_state: {type: object}
+        jettons:
+          type: array
+          items:
+            type: object
+            properties:
+              jetton_master: {type: string}
+              jetton_wallet: {type: string}
+              last_lt: {'$ref': '#/components/schemas/Lt'}
+    AccountNfts:
+      type: object
+      properties:
+        '@type': {const: wallet.accountNfts}
+        index_state: {type: object}
+        nfts:
+          type: array
+          items:
+            type: object
+            properties:
+              nft_item: {type: string}
+              collection: {type: [string, 'null']}
+              last_lt: {'$ref': '#/components/schemas/Lt'}
+    AccountEvent:
+      type: object
+      properties:
+        '@type': {const: wallet.accountEvent}
+        event_id: {type: string}
+        lt: {'$ref': '#/components/schemas/Lt'}
+        hash: {type: string}
+        timestamp: {type: integer}
+        fee: {type: string}
+        transfers:
+          type: array
+          items:
+            type: object
+            properties:
+              '@type': {const: wallet.nativeTransfer}
+              direction: {type: string}
+              source: {type: string}
+              destination: {type: string}
+              amount: {type: string}
+              bounced: {type: boolean}
+              comment: {type: string}
+        raw_transaction: {type: string}
+    AccountEvents:
+      type: object
+      properties:
+        '@type': {const: wallet.accountEvents}
+        events: {type: array, items: {'$ref': '#/components/schemas/AccountEvent'}}
+        next_from: {type: [string, 'null'], description: 'before_lt for the next page; null on the last.'}
+    MasterchainInfo:
+      type: object
+      properties:
+        '@type': {const: blocks.masterchainInfo}
+        last: {'$ref': '#/components/schemas/BlockIdExt'}
+        state_root_hash: {type: string}
+        init: {'$ref': '#/components/schemas/BlockIdExt'}
+    ConsensusBlock:
+      type: object
+      properties:
+        '@type': {const: ext.blocks.consensusBlock}
+        consensus_block: {type: integer}
+        timestamp: {type: integer, description: 'Unix time this node first saw that seqno.'}
+        last_block_utime: {type: integer}
+    NodeConsensusStatus:
+      type: object
+      description: 'Result of the admin method getNodeConsensusStatus.'
+      properties:
+        '@type': {const: ext.node.consensusStatus}
+        unix_time: {type: integer}
+        applied_masterchain_block: {'$ref': '#/components/schemas/BlockIdExt'}
+        consensus_block_seqno: {type: [integer, 'null']}
+        applied_minus_consensus: {type: integer, minimum: 0}
+        last_key_block: {'$ref': '#/components/schemas/BlockIdExt'}
+        masterchain_cc_seqno: {type: integer}
+        validator_set:
+          type: [object, 'null']
+          properties:
+            catchain_seqno: {type: integer}
+            set_hash: {type: integer}
+            total_weight: {type: integer}
+            count: {type: integer}
+            is_validator: {type: [boolean, 'null']}
+    ShardList:
+      type: object
+      properties:
+        '@type': {const: blocks.shards}
+        shards: {type: array, items: {'$ref': '#/components/schemas/BlockIdExt'}}
+    BlockHeader:
+      type: object
+      properties:
+        '@type': {const: blocks.header}
+        id: {'$ref': '#/components/schemas/BlockIdExt'}
+        global_id: {type: integer}
+        version: {type: integer}
+        after_merge: {type: boolean}
+        before_split: {type: boolean}
+        after_split: {type: boolean}
+        want_merge: {type: boolean}
+        want_split: {type: boolean}
+        validator_list_hash_short: {type: integer}
+        catchain_seqno: {type: integer}
+        min_ref_mc_seqno: {type: integer}
+        is_key_block: {type: boolean}
+        prev_key_block_seqno: {type: integer}
+        start_lt: {'$ref': '#/components/schemas/Lt'}
+        end_lt: {'$ref': '#/components/schemas/Lt'}
+        gen_utime: {type: integer}
+        prev_blocks: {type: array, items: {'$ref': '#/components/schemas/BlockIdExt'}}
+        header_proof: {type: string, description: 'Present only when the header proof could not be parsed.'}
+    ShardBlockProof:
+      type: object
+      properties:
+        '@type': {const: blocks.shardBlockProof}
+        masterchain_id: {'$ref': '#/components/schemas/BlockIdExt'}
+        links:
+          type: array
+          items:
+            type: object
+            properties: {id: {'$ref': '#/components/schemas/BlockIdExt'}, proof: {type: string}}
+    OutMsgQueueSizes:
+      type: object
+      properties:
+        '@type': {const: blocks.outMsgQueueSizes}
+        shards:
+          type: array
+          items:
+            type: object
+            properties:
+              '@type': {const: blocks.outMsgQueueSize}
+              id: {'$ref': '#/components/schemas/BlockIdExt'}
+              size: {type: integer}
+        ext_msg_queue_size_limit: {type: integer}
+    BlockTransactions:
+      type: object
+      properties:
+        '@type': {const: blocks.transactions}
+        id: {'$ref': '#/components/schemas/BlockIdExt'}
+        req_count: {type: integer}
+        incomplete: {type: boolean}
+        transactions:
+          type: array
+          items:
+            type: object
+            properties:
+              '@type': {const: blocks.shortTxId}
+              account: {type: string}
+              lt: {'$ref': '#/components/schemas/Lt'}
+              hash: {type: string}
+    BlockTransactionsExt:
+      type: object
+      properties:
+        '@type': {const: blocks.transactionsExt}
+        id: {'$ref': '#/components/schemas/BlockIdExt'}
+        req_count: {type: integer}
+        incomplete: {type: boolean}
+        transactions: {type: array, items: {'$ref': '#/components/schemas/RawTransaction'}}
+    RawTransaction:
+      type: object
+      properties:
+        '@type': {const: raw.transaction}
+        block_id: {'$ref': '#/components/schemas/BlockIdExt'}
+        data: {type: string}
+        utime: {type: integer}
+        transaction_id: {'$ref': '#/components/schemas/InternalTransactionId'}
+        fee: {type: string}
+        account: {type: string}
+    RawTransactions:
+      type: object
+      properties:
+        '@type': {const: raw.transactions}
+        transactions: {type: array, items: {'$ref': '#/components/schemas/RawTransaction'}}
+        previous_transaction_id: {'$ref': '#/components/schemas/InternalTransactionId'}
+    LocatedTransaction:
+      type: object
+      properties:
+        '@type': {const: blocks.transaction}
+        source: {type: string}
+        destination: {type: string}
+        lt: {'$ref': '#/components/schemas/Lt'}
+        hash: {type: string}
+        block_id: {'$ref': '#/components/schemas/BlockIdExt'}
+    ConfigInfo:
+      type: object
+      properties:
+        '@type': {const: configInfo}
+        config:
+          type: object
+          properties: {'@type': {const: tvm.cell}, bytes: {type: [string, 'null']}}
+        config_params:
+          type: object
+          description: 'getConfigAll only: parameter id to {bytes}.'
+          additionalProperties: {type: object, properties: {bytes: {type: string}}}
+        block_id: {'$ref': '#/components/schemas/BlockIdExt'}
+        state_proof: {type: string}
+        config_proof: {type: string}
+        decoded: {'$ref': 'explorer-pq-rpc-v1.schema.json#/$defs/DecodedConfig'}
+    LibraryResult:
+      type: object
+      properties:
+        '@type': {const: smc.libraryResult}
+        result:
+          type: array
+          items: {type: object, properties: {hash: {type: string}, data: {type: string}}}
+    RunResult:
+      type: object
+      properties:
+        '@type': {const: smc.runResult}
+        gas_used: {type: integer}
+        exit_code: {type: integer}
+        stack: {type: array, items: {}}
+        last_transaction_id: {}
+        block_id: {}
+    FeeEstimate:
+      type: object
+      properties:
+        '@type': {const: query.fees}
+        source_fees:
+          type: object
+          properties:
+            '@type': {const: fees}
+            in_fwd_fee: {type: integer}
+            storage_fee: {type: integer}
+            gas_fee: {type: integer}
+            fwd_fee: {type: integer}
+        destination_fees: {type: array, items: {}}
+    SendStatus: {type: object, properties: {status: {type: integer}}}
+    SendStatusWithHash: {type: object, properties: {status: {type: integer}, hash: {type: string}}}
+    ExtMessageInfo: {type: object, properties: {'@type': {const: raw.extMessageInfo}, hash: {type: string}}}
+    AuthorizationRoles:
+      type: object
+      properties:
+        '@type': {const: account.authorizationRoles}
+        signer: {type: string}
+        submitter: {type: string}
+        fee_payer: {type: string}
+        is_self_submitted: {type: boolean}
+        is_self_paid: {type: boolean}
+    TransactionIntentInput:
+      type: object
+      properties:
+        from: {'$ref': '#/components/schemas/Address'}
+        address: {'$ref': '#/components/schemas/Address'}
+        body: {'$ref': '#/components/schemas/Base64Boc'}
+        init_code: {'$ref': '#/components/schemas/Base64Boc'}
+        init_data: {'$ref': '#/components/schemas/Base64Boc'}
+        account_model: {type: string}
+        authorization_version: {type: string}
+        delegation_ref: {type: string}
+        action:
+          type: object
+          required: [body]
+          properties:
+            address: {'$ref': '#/components/schemas/Address'}
+            body: {'$ref': '#/components/schemas/Base64Boc'}
+            init_code: {'$ref': '#/components/schemas/Base64Boc'}
+            init_data: {'$ref': '#/components/schemas/Base64Boc'}
+        authorization_roles:
+          type: object
+          properties: {signer: {type: string}, submitter: {type: string}, fee_payer: {type: string}}
+    TransactionIntent:
+      type: object
+      properties:
+        '@type': {const: transaction.intent}
+        from: {type: string}
+        account_model: {type: string}
+        authorization_version: {type: string}
+        action:
+          type: object
+          properties:
+            '@type': {const: transaction.action.externalMessage}
+            address: {type: string}
+            body: {type: string}
+            init_code: {type: string}
+            init_data: {type: string}
+        authorization_roles: {'$ref': '#/components/schemas/AuthorizationRoles'}
+        fee_intent:
+          type: object
+          properties:
+            '@type': {const: transaction.feeIntent}
+            mode: {enum: [self_paid, third_party_requested]}
+        replay_protection:
+          type: object
+          properties: {'@type': {const: transaction.replayProtection}, mode: {const: contract_defined}}
+        delegation_ref: {type: string}
+    SigningPayload:
+      type: object
+      properties:
+        '@type': {const: transaction.signingPayload}
+        payload_version: {const: 1}
+        payload_encoding: {const: boc_base64}
+        payload: {type: string}
+        chain_id: {type: integer}
+        delegation_ref: {type: string}
+        replay_protection:
+          type: object
+          properties: {'@type': {const: transaction.replayProtection}, mode: {const: contract_defined}}
+    SubmissionResult:
+      type: object
+      properties:
+        '@type': {const: transaction.submissionResult}
+        accepted: {type: boolean}
+        transaction_hash: {type: string}
+        submission_id: {type: string}
+        status: {type: integer}
+        authorization_roles: {'$ref': '#/components/schemas/AuthorizationRoles'}

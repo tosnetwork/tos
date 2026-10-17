@@ -402,3 +402,18 @@ TEST(JsonRpcExplorer, native_failures_map_without_matching_diagnostic_strings) {
   ASSERT_TRUE(!retryable(missing));
   ASSERT_TRUE(retryable(timeout));
 }
+
+// Signature evidence for a block is built from that block's state and its
+// predecessor's. Once the node has garbage-collected either, the query path
+// fails with a plain error code; only the shared message tells it apart from a
+// transient fault, and it is a history limit, not something a retry can fix.
+TEST(JsonRpcExplorer, garbage_collected_evidence_is_unavailable_history) {
+  auto gone = upstream_error(td::Status::Error(tos::ErrorCode::error, td::Slice(tos::kStateGarbageCollected)));
+  ASSERT_EQ(gone.code(), static_cast<int>(Failure::BlockUnavailable));
+  ASSERT_TRUE(!retryable(gone));
+  ASSERT_EQ(std::string(error_kind(gone).reason), "BLOCK_UNAVAILABLE");
+  ASSERT_EQ(error_kind(gone).code, -32004);
+  auto other = upstream_error(td::Status::Error(tos::ErrorCode::error, "connection reset"));
+  ASSERT_EQ(other.code(), static_cast<int>(Failure::UpstreamUnavailable));
+  ASSERT_TRUE(retryable(other));
+}

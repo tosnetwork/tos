@@ -83,7 +83,7 @@ fn result_with(stack: &str) -> String {
 }
 
 fn envelope(result: &str) -> String {
-    format!(r#"{{"ok":true,"jsonrpc":"2.0","id":"@@ID@@","result":{result}}}"#)
+    format!(r#"{{"jsonrpc":"2.0","id":"@@ID@@","result":{result}}}"#)
 }
 
 /// A list answer with `count` proposals, the last carrying `voters` voters.
@@ -831,7 +831,10 @@ fn assert_one_request_per_endpoint(nodes: &[&ServedNode]) {
 }
 
 fn small_error(status: u16) -> Reply {
-    Reply::raw(status, r#"{"ok":false,"jsonrpc":"2.0","id":"@@ID@@","error":"busy","code":500}"#)
+    Reply::raw(
+        status,
+        r#"{"jsonrpc":"2.0","id":"@@ID@@","error":{"code":-32603,"message":"busy","data":{"schema_version":1,"reason":"INTERNAL_ERROR","retryable":false}}}"#,
+    )
 }
 
 fn big(status: u16) -> Reply {
@@ -967,16 +970,27 @@ fn an_endpoint_specific_answer_failure_fails_over() {
             "an error envelope",
             Reply::raw(
                 200,
-                r#"{"ok":false,"jsonrpc":"2.0","id":"@@ID@@","error":"node failure","code":500}"#,
+                r#"{"jsonrpc":"2.0","id":"@@ID@@","error":{"code":-32603,"message":"node failure","data":{"schema_version":1,"reason":"INTERNAL_ERROR","retryable":false}}}"#,
             ),
         ),
-        ("malformed JSON", Reply::raw(200, "{\"ok\":true,")),
+        ("malformed JSON", Reply::raw(200, "{\"jsonrpc\":\"2.0\",")),
         ("trailing data", Reply::raw(200, format!("{valid} {{}}"))),
         ("a mismatched id", Reply::raw(200, valid.replace("\"@@ID@@\"", "\"another\""))),
-        ("no result", Reply::raw(200, r#"{"ok":true,"jsonrpc":"2.0","id":"@@ID@@"}"#)),
+        ("no result", Reply::raw(200, r#"{"jsonrpc":"2.0","id":"@@ID@@"}"#)),
+        (
+            "an ok member",
+            Reply::raw(200, valid.replacen("{\"jsonrpc\":", "{\"ok\":true,\"jsonrpc\":", 1)),
+        ),
         (
             "a duplicate envelope key",
-            Reply::raw(200, valid.replacen("{\"ok\":true,", "{\"ok\":true,\"ok\":true,", 1)),
+            Reply::raw(
+                200,
+                valid.replacen(
+                    "{\"jsonrpc\":\"2.0\",",
+                    "{\"jsonrpc\":\"2.0\",\"jsonrpc\":\"2.0\",",
+                    1,
+                ),
+            ),
         ),
         ("over-deep garbage", Reply::raw(200, nested_arrays_answer(MAX_JSON_DEPTH + 1))),
         ("another block", Reply::raw(200, at_block(&valid, SEQNO - 1))),
@@ -1046,7 +1060,7 @@ fn a_valid_envelope_at_the_checkpoint_settles_the_read() {
     });
     // A retryable failure first, then a terminal answer: the read stops there.
     runtime.block_on(async {
-        let retry = endpoint(Reply::raw(200, "{\"ok\":true,")).await;
+        let retry = endpoint(Reply::raw(200, "{\"jsonrpc\":\"2.0\",")).await;
         let terminal = endpoint(Reply::raw(200, with_exit(&valid, 11))).await;
         let third = endpoint(Reply::raw(200, valid.clone())).await;
         let nodes = [&retry, &terminal, &third];
@@ -1064,7 +1078,7 @@ fn envelope_failures_never_make_the_answer_too_large() {
     let envelope = || {
         Reply::raw(
             200,
-            r#"{"ok":false,"jsonrpc":"2.0","id":"@@ID@@","error":"node failure","code":500}"#,
+            r#"{"jsonrpc":"2.0","id":"@@ID@@","error":{"code":-32603,"message":"node failure","data":{"schema_version":1,"reason":"INTERNAL_ERROR","retryable":false}}}"#,
         )
     };
     let runtime = runtime();

@@ -15,16 +15,19 @@ lifetime bug on a node with no chain behind it.
 Usage: asan-corpus.py http://127.0.0.1:8081/
 """
 
-import json
-import sys
 import concurrent.futures
+import sys
 
 import requests
 
 
 def post_raw(base, body, timeout=15):
-    return requests.post(base + "jsonRPC", data=body.encode(),
-                         headers={"Content-Type": "application/json"}, timeout=timeout)
+    return requests.post(
+        base + "jsonRPC",
+        data=body.encode(),
+        headers={"Content-Type": "application/json"},
+        timeout=timeout,
+    )
 
 
 def post_json(base, obj, timeout=15):
@@ -48,63 +51,172 @@ def main() -> int:
 
     print("batch sizes (the buffer-lifetime path)")
     for n in (1, 2, 3, 100):
-        case(f"batch of {n}", lambda n=n: post_json(base, [
-            {"jsonrpc": "2.0", "id": i, "method": "noSuchMethod", "params": {}}
-            for i in range(n)
-        ]))
+        case(
+            f"batch of {n}",
+            lambda n=n: post_json(
+                base,
+                [
+                    {"jsonrpc": "2.0", "id": i, "method": "noSuchMethod", "params": {}}
+                    for i in range(n)
+                ],
+            ),
+        )
     # Distinct method names per element: if a later element is read from
     # released storage, the reply names something other than what was sent.
-    case("batch with distinct unknown methods", lambda: post_json(base, [
-        {"jsonrpc": "2.0", "id": i, "method": f"unknownMethod{i:04d}", "params": {}}
-        for i in range(50)
-    ]))
-    case("batch over the element cap", lambda: post_json(base, [
-        {"jsonrpc": "2.0", "id": i, "method": "noSuchMethod", "params": {}}
-        for i in range(150)
-    ]))
-    case("batch of non-objects", lambda: post_raw(base, "[null,null,1,\"x\"]"))
-    case("batch mixing objects and non-objects",
-         lambda: post_raw(base, '[null,{"jsonrpc":"2.0","id":2,"method":"noSuchMethod"},3]'))
+    case(
+        "batch with distinct unknown methods",
+        lambda: post_json(
+            base,
+            [
+                {"jsonrpc": "2.0", "id": i, "method": f"unknownMethod{i:04d}", "params": {}}
+                for i in range(50)
+            ],
+        ),
+    )
+    case(
+        "batch over the element cap",
+        lambda: post_json(
+            base,
+            [
+                {"jsonrpc": "2.0", "id": i, "method": "noSuchMethod", "params": {}}
+                for i in range(150)
+            ],
+        ),
+    )
+    case("batch of non-objects", lambda: post_raw(base, '[null,null,1,"x"]'))
+    case(
+        "batch mixing objects and non-objects",
+        lambda: post_raw(base, '[null,{"jsonrpc":"2.0","id":2,"method":"noSuchMethod"},3]'),
+    )
 
     print("request ids")
     for raw in (".", "--", "1e+-.3", "0", "-1", "1.5", "1e10", "1" * 4096):
-        case(f"id {raw[:16]!r}", lambda raw=raw: post_raw(
-            base, '{"jsonrpc":"2.0","id":%s,"method":"noSuchMethod","params":{}}' % raw))
-    case("very long string id", lambda: post_raw(
-        base, '{"jsonrpc":"2.0","id":"%s","method":"noSuchMethod","params":{}}' % ("x" * 100000)))
+        case(
+            f"id {raw[:16]!r}",
+            lambda raw=raw: post_raw(
+                base, '{"jsonrpc":"2.0","id":%s,"method":"noSuchMethod","params":{}}' % raw
+            ),
+        )
+    case(
+        "very long string id",
+        lambda: post_raw(
+            base, '{"jsonrpc":"2.0","id":"%s","method":"noSuchMethod","params":{}}' % ("x" * 100000)
+        ),
+    )
 
     print("body shapes")
-    case("4 MiB body", lambda: post_raw(
-        base, '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":{"pad":"%s"}}'
-        % ("a" * (4 * 1024 * 1024 - 200))))
-    case("body over the cap", lambda: post_raw(
-        base, '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":{"pad":"%s"}}'
-        % ("a" * (5 * 1024 * 1024))))
+    case(
+        "4 MiB body",
+        lambda: post_raw(
+            base,
+            '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":{"pad":"%s"}}'
+            % ("a" * (4 * 1024 * 1024 - 200)),
+        ),
+    )
+    case(
+        "body over the cap",
+        lambda: post_raw(
+            base,
+            '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":{"pad":"%s"}}'
+            % ("a" * (5 * 1024 * 1024)),
+        ),
+    )
     case("truncated json", lambda: post_raw(base, '{"jsonrpc":"2.0","id":1,"method":'))
-    case("deeply nested params", lambda: post_raw(
-        base, '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":%s}'
-        % ("[" * 90 + "]" * 90)))
+    case(
+        "deeply nested params",
+        lambda: post_raw(
+            base,
+            '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":%s}' % ("[" * 90 + "]" * 90),
+        ),
+    )
     case("empty body", lambda: post_raw(base, ""))
     case("array of arrays", lambda: post_raw(base, "[[],[],[]]"))
 
+    print("envelope rules (each answered locally, before any node query)")
+    for raw in (
+        '{"id":1,"method":"noSuchMethod","params":{}}',
+        '{"jsonrpc":"1.0","id":1,"method":"noSuchMethod","params":{}}',
+        '{"jsonrpc":2.0,"id":1,"method":"noSuchMethod","params":{}}',
+        '{"jsonrpc":"2.0","id":1,"method":12,"params":{}}',
+        '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":"x"}',
+        '{"jsonrpc":"2.0","id":1,"method":"noSuchMethod","params":null}',
+        '{"jsonrpc":"2.0","id":1,"method":"getMasterchainInfo","params":[1,2]}',
+        '{"jsonrpc":"2.0","id":{"x":1},"method":"noSuchMethod","params":{}}',
+        '{"jsonrpc":"2.0","method":"noSuchMethod","params":{}}',
+        '[{"jsonrpc":"2.0","method":"noSuchMethod"},{"jsonrpc":"2.0","method":"x"}]',
+        '[{"jsonrpc":"1.0","method":"noSuchMethod"},{"jsonrpc":"2.0","id":2,"method":"x"}]',
+        "42",
+        '"x"',
+        "true",
+    ):
+        case(f"envelope {raw[:40]!r}", lambda raw=raw: post_raw(base, raw))
+    for path, params in (
+        ("lookupBlock", {"workchain": "-1", "shard": "zz", "seqno": "abc"}),
+        ("getBlockHeader", {"workchain": -1, "shard": "9223372036854775808", "seqno": -3}),
+        ("shards", {"seqno": "abc"}),
+        ("getConfigAll", {"seqno": 1.5}),
+    ):
+        case(
+            f"strict params POST /{path}",
+            lambda path=path, params=params: requests.post(base + path, json=params, timeout=15),
+        )
+        case(
+            f"strict params GET /{path}",
+            lambda path=path, params=params: requests.get(base + path, params=params, timeout=15),
+        )
+    case("api-info", lambda: requests.get(base + "api-info", timeout=15))
+
     print("malformed payloads on the write surface")
     for boc in ("", "!!!!", "AAAA", "A" * 200000):
-        case(f"sendBoc {len(boc)} chars", lambda boc=boc: post_json(
-            base, {"jsonrpc": "2.0", "id": 1, "method": "sendBoc",
-                   "params": {"boc": boc}}))
-    case("runGetMethod with junk stack", lambda: post_json(
-        base, {"jsonrpc": "2.0", "id": 1, "method": "runGetMethod",
-               "params": {"address": "0:" + "0" * 64, "method": "seqno",
-                          "stack": [["num", "!!!"]] * 300}}))
+        case(
+            f"sendBoc {len(boc)} chars",
+            lambda boc=boc: post_json(
+                base, {"jsonrpc": "2.0", "id": 1, "method": "sendBoc", "params": {"boc": boc}}
+            ),
+        )
+    case(
+        "runGetMethod with junk stack",
+        lambda: post_json(
+            base,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "runGetMethod",
+                "params": {
+                    "address": "0:" + "0" * 64,
+                    "method": "seqno",
+                    "stack": [["num", "!!!"]] * 300,
+                },
+            },
+        ),
+    )
 
     print("account reads")
     for addr in ("", "0:", "0:" + "0" * 64, "-1:" + "f" * 64, "x" * 500):
-        case(f"getAddressInformation {addr[:12]!r}", lambda addr=addr: post_json(
-            base, {"jsonrpc": "2.0", "id": 1, "method": "getAddressInformation",
-                   "params": {"address": addr}}))
-    case("getAccountEvents at the page cap", lambda: post_json(
-        base, {"jsonrpc": "2.0", "id": 1, "method": "getAccountEvents",
-               "params": {"address": "0:" + "0" * 64, "limit": 1000}}))
+        case(
+            f"getAddressInformation {addr[:12]!r}",
+            lambda addr=addr: post_json(
+                base,
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getAddressInformation",
+                    "params": {"address": addr},
+                },
+            ),
+        )
+    case(
+        "getAccountEvents at the page cap",
+        lambda: post_json(
+            base,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountEvents",
+                "params": {"address": "0:" + "0" * 64, "limit": 1000},
+            },
+        ),
+    )
 
     print("connection handling")
     case("headers then abandon", lambda: _abandon(base))
@@ -112,10 +224,17 @@ def main() -> int:
 
     print("concurrency (promises in flight while the server is busy)")
     with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
-        futures = [pool.submit(post_json, base, [
-            {"jsonrpc": "2.0", "id": i, "method": f"unknownMethod{i}", "params": {}}
-            for i in range(8)
-        ]) for _ in range(200)]
+        futures = [
+            pool.submit(
+                post_json,
+                base,
+                [
+                    {"jsonrpc": "2.0", "id": i, "method": f"unknownMethod{i}", "params": {}}
+                    for i in range(8)
+                ],
+            )
+            for _ in range(200)
+        ]
         done = sum(1 for f in concurrent.futures.as_completed(futures) if f)
     print(f"  ok    200 concurrent batches ({done} completed)")
 

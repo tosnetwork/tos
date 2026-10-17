@@ -21,7 +21,8 @@ def run(directory):
         cell = Boc(base64.b64decode(raw)).deserialize()[0]
         tx = Transaction.deserialize(cell.begin_parse())
         observations[role] = dict(
-            ok=True,
+            jsonrpc="2.0",
+            id=1,
             result=[
                 dict(
                     data=raw,

@@ -1,6 +1,6 @@
 # `list_proposals` answers from a running node
 
-Both files are verbatim `runGetMethodStd` responses from the local development
+Both files are `runGetMethodStd` responses from the local development
 network's node 1 (`http://127.0.0.1:8011/`) for the configuration contract
 `-1:5555555555555555555555555555555555555555555555555555555555555555`, requested
 with an empty stack. They pin how the node's serializer renders the getter's
@@ -8,10 +8,14 @@ result: `null()` (no proposal registered) as an empty `tvm.stackEntryList`, and 
 non-empty cons list of `[phash, proposal]` pairs as nested two-element
 `tvm.stackEntryTuple`s ending in that same empty list, never as a list.
 
+The captures predate the JSON-RPC envelope without an `ok` member: each file is
+the captured bytes with the leading `"ok":true,` member removed, nothing else
+changed. The SHA-256 below is of the file as stored.
+
 | File | Masterchain block | SHA-256 |
 | --- | --- | --- |
-| `empty-live.json` | 125669 | `2726dce435e8f87852056905bb6d74c85c1d1b093f33c92c4e07e440dfc24f64` |
-| `two-live.json` | 127595 | `f0da2e559822a38834fd6614d0954e5ce5b10acf7be014d62e3d6d2b829524e8` |
+| `empty-live.json` | 125669 | `eafcdbfb923aa23201b1474272c7b46aadd515ec205ac03deec325976c8dd412` |
+| `two-live.json` | 127595 | `18dbe430c6f42440f534f3dabe5fbbf74ccbde0e43d3001eadadac212deccf37` |
 
 Between the two captures, two proposals were registered for this purpose with
 `tosctl vote offer create --param <p> --remove --expires-in 1000000 --wallet <w> --yes`

@@ -25,6 +25,8 @@ on:
       - 'test/test-json-rpc-*'
       - 'test/json-rpc/**'
       - 'scripts/asan-jsonrpc-corpus.py'
+      - 'scripts/check-jsonrpc-spec.py'
+      - 'doc/openapi.yaml'
       - '.github/workflows/jsonrpc-asan.yml'
   workflow_dispatch:
   workflow_call:
@@ -103,6 +105,9 @@ jobs:
 
     - name: Check JSON-RPC route gating
       run: python3 scripts/check-jsonrpc-route-gating.py
+
+    - name: Check the OpenAPI spec against the method table and error kinds
+      run: python3 scripts/check-jsonrpc-spec.py
 
   corpus:
     name: instrumented node vs corpus
