@@ -1115,6 +1115,11 @@ target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
 # The real JSON-RPC server and listener, driven over loopback TCP.
 add_executable(test-json-rpc-transport test/test-td-main.cpp test/test-json-rpc-transport.cpp)
 target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc)
+# The bootstrap-readiness case subclasses the validator manager and builds block
+# handles, so the test links the manager's static libraries again after the server
+# library: they depend on each other, and the archive order alone leaves symbols
+# from full-node and validator-common unresolved in a static release build.
+target_link_libraries(test-json-rpc-transport PRIVATE validator validator-common full-node tos_validator)
 # The restricted-wallet delegation views the account-capability handlers call,
 # against a fake liteserver.
 add_executable(test-json-rpc-account-capability test/test-td-main.cpp test/test-json-rpc-account-capability.cpp)
