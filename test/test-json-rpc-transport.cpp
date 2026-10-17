@@ -646,8 +646,11 @@ namespace {
 constexpr double kResponseTimeout = 1.0;
 // Allowance on top of the deadline for the alarm to run on the actor scheduler,
 // which this test pumps in 20 ms slices on a shared CI runner, and for the one
-// reply that may be queued after the stall is seen.
-constexpr double kTolerance = 1.0;
+// reply that may be queued after the stall is seen. Measured from the socket the
+// release lands within a few tens of milliseconds of the deadline in plain and
+// instrumented builds alike, so this stays well short of a deadline running late
+// by half again.
+constexpr double kTolerance = 0.4;
 
 // The descriptor of the server's end of the connection `client_fd` opened to a
 // server in this process: the socket whose local address is the client's peer
