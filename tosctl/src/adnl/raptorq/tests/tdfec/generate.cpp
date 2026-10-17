@@ -43,6 +43,9 @@ struct Case {
   const char *name;
   size_t data_size;
   size_t symbol_size;
+  // Repair ids this case must also cover, in both the vectors and the decode
+  // subset.
+  std::vector<uint32_t> extra_ids;
 };
 
 // Inputs are a fixed xorshift stream so the vector file is reproducible.
@@ -53,7 +56,7 @@ std::string make_data(size_t size, uint64_t seed) {
     x ^= x << 13;
     x ^= x >> 7;
     x ^= x << 17;
-    data[i] = static_cast<char>(x & 0xff);
+    data[i] = static_cast<char>((x >> 24) & 0xff);
   }
   return data;
 }
@@ -75,30 +78,49 @@ int main() {
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(FATAL));
   // RLDP uses 768-byte symbols; two-step broadcast uses an unaligned size
   // derived from the neighbour count; the 8-byte case gives K' >= 250, which
-  // takes the Rust decoder down its sparse-matrix path.
-  const Case cases[] = {
-      {"single_symbol", 1, 768}, {"rldp_k2_exact", 1536, 768},      {"rldp_k4", 3000, 768},
-      {"rldp_k27", 20000, 768},  {"broadcast_unaligned", 1000, 77}, {"sparse_k375", 3000, 8},
+  // takes the Rust decoder down its sparse-matrix path. The last two cases pin
+  // ids whose rand() argument y + i wraps past 2^32: wire id 3158218 for
+  // K = 978 (internal id 3158229) and internal id 8192877 for K = 2153.
+  const std::vector<Case> cases = {
+      {"single_symbol", 1, 768, {}},
+      {"rldp_k2_exact", 1536, 768, {}},
+      {"rldp_k4", 3000, 768, {}},
+      {"rldp_k27", 20000, 768, {}},
+      {"broadcast_unaligned", 1000, 77, {}},
+      {"sparse_k375", 3000, 8, {}},
+      {"rand_wrap_k978", 978 * 4, 4, {3158218}},
+      {"rand_wrap_k2153", 2153 * 4, 4, {8192877 - (2195 - 2153)}},
   };
   uint64_t seed = 0x9e3779b97f4a7c15ULL;
   for (const auto &c : cases) {
     seed += 0x2545f4914f6cdd1dULL;
     std::string data = make_data(c.data_size, seed);
+    if (std::all_of(data.begin(), data.end(), [](char b) { return b == 0; })) {
+      std::fprintf(stderr, "case %s has all-zero data\n", c.name);
+      return 1;
+    }
     auto encoder = td::fec::RaptorQEncoder::create(td::BufferSlice(data), c.symbol_size);
     encoder->prepare_more_symbols();
     auto params = encoder->get_parameters();
     uint32_t k = static_cast<uint32_t>(params.symbols_count);
 
     // The decode subset drops every other source symbol (and the first one
-    // always) and fills the gap with repair symbols, two of them near 2^24.
+    // always) and fills the gap with repair symbols: the case's extra ids
+    // first, then two near 2^24.
     std::vector<uint32_t> subset;
     for (uint32_t i = 1; i < k; i += 2) {
       subset.push_back(i);
     }
     uint32_t needed = k - static_cast<uint32_t>(subset.size()) + 2;
+    uint32_t used = 0;
+    for (uint32_t id : c.extra_ids) {
+      subset.push_back(id);
+      used++;
+    }
     subset.push_back((1u << 24) - 1);
     subset.push_back((1u << 24) - 64);
-    for (uint32_t i = 0; i + 2 < needed; i++) {
+    used += 2;
+    for (uint32_t i = 0; i + used < needed; i++) {
       subset.push_back(k + 3 + i);
     }
 

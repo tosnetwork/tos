@@ -82,7 +82,10 @@ fn cases() -> Vec<Case> {
         }
     }
     assert!(current.is_none(), "unterminated case");
-    assert_eq!(cases.len(), 6, "vector file is incomplete");
+    assert_eq!(cases.len(), 8, "vector file is incomplete");
+    for case in &cases {
+        assert!(case.data.iter().any(|b| *b != 0), "{}: all-zero input pins nothing", case.name);
+    }
     cases
 }
 

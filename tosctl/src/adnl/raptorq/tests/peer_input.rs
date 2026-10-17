@@ -98,6 +98,35 @@ fn ids_up_to_the_24_bit_limit_decode_without_panic() {
 }
 
 #[test]
+fn regression_rand_argument_wraps_for_valid_ids() {
+    // For these ids y = B + id * A (mod 2^32) is 2^32 - 2 or 2^32 - 1, and the
+    // RFC 6330 rand() sum y + i overflowed: wire id 3158218 for K = 978
+    // (internal id 3158229), and internal id 8192877 for K = 2153 (wire id
+    // 8192835). Both must encode, and decode, without a panic.
+    for (k, id) in [(978u32, 3_158_218u32), (2153, 8_192_877 - (2195 - 2153))] {
+        let symbol_size = 4u32;
+        let data = random_data((k * symbol_size) as usize, u64::from(k));
+        let config = ObjectTransmissionInformation::new(data.len() as u64, symbol_size, 1, 1, 1);
+        let encoder = Encoder::new(&data, config);
+        let block = &encoder.get_block_encoders()[0];
+        assert_eq!(block.source_symbol_count(), k);
+        let repair = block.repair_packets(id, 1).unwrap().remove(0);
+        let mut decoder = Decoder::new(config);
+        // Every source symbol but the first, then the wrapping repair symbol.
+        for packet in block.source_packets().into_iter().skip(1) {
+            assert_eq!(decoder.decode(packet), Ok(None));
+        }
+        let mut result = decoder.decode(repair).unwrap();
+        let mut next = k;
+        while result.is_none() {
+            result = decoder.decode(block.repair_packets(next, 1).unwrap().remove(0)).unwrap();
+            next += 1;
+        }
+        assert_eq!(result, Some(data), "K = {k}");
+    }
+}
+
+#[test]
 fn foreign_source_blocks_are_refused() {
     let mut decoder = Decoder::new(rldp_config(3000));
     let foreign = EncodingPacket::new(PayloadId::new(1, 0).unwrap(), vec![0; 768]);
