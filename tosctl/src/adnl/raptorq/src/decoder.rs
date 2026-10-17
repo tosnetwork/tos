@@ -130,6 +130,12 @@ pub struct SourceBlockDecoder {
     received_source_symbols: u32,
     received_esi: Set<u32>,
     decoded: bool,
+    /// A symbol was stored since the last solve attempt. Like the C++
+    /// decoder's may_decode flag, it keeps duplicate, capped or post-failure
+    /// packets from each triggering another full solve.
+    may_decode: bool,
+    #[cfg(test)]
+    solve_attempts: u32,
     sparse_threshold: u32,
 }
 
@@ -167,6 +173,9 @@ impl SourceBlockDecoder {
             received_source_symbols: 0,
             received_esi,
             decoded: false,
+            may_decode: false,
+            #[cfg(test)]
+            solve_attempts: 0,
             sparse_threshold: SPARSE_MATRIX_THRESHOLD,
         }
     }
@@ -288,6 +297,7 @@ impl SourceBlockDecoder {
                         *slot = Some(Symbol::new(payload));
                         self.received_source_symbols =
                             self.received_source_symbols.saturating_add(1);
+                        self.may_decode = true;
                     }
                 }
             } else {
@@ -299,6 +309,7 @@ impl SourceBlockDecoder {
                 let internal_symbol_id = encoding_symbol_id.saturating_add(padding);
                 if self.received_esi.insert(internal_symbol_id) {
                     self.repair_symbols.push((internal_symbol_id, Symbol::new(payload)));
+                    self.may_decode = true;
                 }
             }
         }
@@ -316,7 +327,12 @@ impl SourceBlockDecoder {
             return Ok(Some(result));
         }
 
-        if self.received_esi.len() as u32 >= num_extended_symbols {
+        if self.may_decode && self.received_esi.len() as u32 >= num_extended_symbols {
+            self.may_decode = false;
+            #[cfg(test)]
+            {
+                self.solve_attempts += 1;
+            }
             let s = num_ldpc_symbols(self.source_block_symbols) as usize;
             let h = num_hdpc_symbols(self.source_block_symbols) as usize;
 
@@ -397,6 +413,24 @@ mod tests {
             decoder.repair_symbols.len() as u32,
             decoder.source_block_symbols + MAX_EXTRA_SYMBOLS
         );
+    }
+
+    #[test]
+    fn only_a_newly_stored_symbol_triggers_a_solve() {
+        // K = 4. A solve is attempted once K symbols are held and then once per
+        // newly stored symbol up to the K + 10 cap: 11 attempts. Duplicates and
+        // symbols past the cap must not each re-run the solver.
+        let config = ObjectTransmissionInformation::with_defaults(3000, 768);
+        let mut decoder = SourceBlockDecoder::new2(0, &config, 3000);
+        let k = decoder.source_block_symbols;
+        let repair = |id: u32| EncodingPacket::new(PayloadId::new(0, id).unwrap(), vec![3; 768]);
+        for id in k..k + 1000 {
+            let _ = decoder.decode([repair(id)]).unwrap();
+        }
+        for _ in 0..100 {
+            let _ = decoder.decode([repair(k)]).unwrap();
+        }
+        assert_eq!(decoder.solve_attempts, MAX_EXTRA_SYMBOLS + 1);
     }
 
     #[test]
