@@ -26,7 +26,9 @@
 #include <dirent.h>
 #include <functional>
 #include <limits>
+#ifdef __linux__
 #include <linux/sock_diag.h>
+#endif
 #include <netinet/in.h>
 #include <poll.h>
 #include <string>
@@ -93,6 +95,7 @@ class PortReservation {
   int port_ = 0;
 };
 
+#ifdef __linux__
 size_t open_fd_count() {
   size_t count = 0;
   DIR *dir = ::opendir("/proc/self/fd");
@@ -103,6 +106,7 @@ size_t open_fd_count() {
   ::closedir(dir);
   return count;
 }
+#endif
 
 class Client {
  public:
@@ -645,6 +649,7 @@ TEST(JsonRpcTransport, a_listener_without_a_response_deadline_is_not_constructed
 
 namespace {
 
+#ifdef __linux__
 constexpr double kResponseTimeout = 1.0;
 // Allowance on top of the deadline for the alarm to run on the actor scheduler,
 // which this test pumps in 20 ms slices on a shared CI runner, and for the one
@@ -847,6 +852,11 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
   });
   SET_VERBOSITY_LEVEL(verbosity);
 }
+#else
+void stalled_client_is_released_by_the_deadline(bool, bool) {
+  LOG(WARNING) << "Skipping stalled-client deadline scenario: requires Linux socket memory accounting";
+}
+#endif
 
 }  // namespace
 

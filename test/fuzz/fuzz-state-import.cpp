@@ -58,6 +58,7 @@ class CheckingSink final : public vm::StreamingCellSink {
     return td::Status::OK();
   }
   void abort() override {
+    TOS_FUZZ_INVARIANT(finished == 0);
     TOS_FUZZ_INVARIANT(begun == 1);
     TOS_FUZZ_INVARIANT(aborted == 0);
     aborted++;
@@ -122,6 +123,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t *data, std::size_t size
     }
   } else {
     // Refused before the cell loop: no callback at all. Refused after: abort, once.
+    TOS_FUZZ_INVARIANT(sink.finished == 0);
     TOS_FUZZ_INVARIANT(sink.aborted == sink.begun);
   }
   return 0;
