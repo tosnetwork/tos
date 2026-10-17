@@ -153,6 +153,11 @@ export interface Wallet extends Contract {
    * values are not below the balance, or when `validUntil` is not in the
    * future. The result only means the node accepted the message; pass it to
    * `waitForTransfer` to learn whether the transfer was delivered.
+   *
+   * A never-deployed wallet has no seqno to read, so this throws
+   * `TosNotDeployedError` for it: its first message must be signed with seqno
+   * 0 and carry the StateInit, which is what `sendDeploy` sends. Deploy first,
+   * confirm with `waitForTransfer`, then transfer.
    */
   sendTransfer(
     provider: ContractProvider,

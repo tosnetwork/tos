@@ -184,7 +184,8 @@ describe("an unaffordable transfer", () => {
     const sent = await opened.sendTransfer(SIGNER, {
       messages: [{ to: DESTINATION, value: balance - 1n }],
     });
-    expect(sent).toEqual({ hash: node.sendQueryOverdraw.hash, outMessages: 1 });
+    // afterLt is the last transaction the node reported before the send.
+    expect(sent).toEqual({ hash: node.sendQueryOverdraw.hash, outMessages: 1, afterLt: "548059000001" });
     const err = await rejection(waitForTransfer(client, WAL01_WALLET, sent, FAST));
     expect(err).toBeInstanceOf(TosNotDeliveredError);
     expect(requests.map((r) => r.method)).toEqual([

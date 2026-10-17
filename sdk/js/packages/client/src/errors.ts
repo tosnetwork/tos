@@ -5,6 +5,8 @@
  * with a single `instanceof` check.
  */
 
+import type { MessageSummary } from "./types.js";
+
 // Re-export the Address type for TosContractError (imported from @tos/core
 // at the boundary; kept as `unknown` here to avoid a hard runtime dep in
 // error-only paths).
@@ -208,7 +210,13 @@ export const INACTIVE_ACCOUNT_EXIT_CODE = -256;
 
 /**
  * A get-method was asked of an account that is not active: never deployed,
- * empty, or frozen. Deploy the contract first (a wallet: `sendDeploy`).
+ * empty, or frozen. Deploy the contract first.
+ *
+ * For a wallet this is what `getSeqno`, and so `sendTransfer`, raise before
+ * the first deployment. A never-deployed wallet has no seqno to read: its
+ * first message is signed with seqno 0 and must carry the wallet's StateInit,
+ * which is what `sendDeploy` sends. Deploy with `sendDeploy`, confirm it with
+ * `waitForTransfer`, then transfer.
  */
 export class TosNotDeployedError extends TosError {
   /** The raw address of the account. */
@@ -236,19 +244,39 @@ export class TosNotDeployedError extends TosError {
  * A transaction for the sent message executed on chain but did not deliver
  * what was signed: it aborted, its compute or action phase failed, or it
  * created fewer (or more) outgoing messages than the transfer carried. The
- * fees it charged are spent; the value did not move.
+ * fees it charged are spent.
+ *
+ * This does not mean that no value moved. With the ignore-errors flag each
+ * message is sent or skipped on its own: in a three-message transfer whose
+ * third message the balance cannot pay, the first two leave and only the
+ * third is skipped. {@link createdMessages} lists the messages that did leave.
+ * Never resend the whole transfer after this error: send again only the
+ * messages missing from `createdMessages`, in a new transfer with a new seqno.
  */
 export class TosNotDeliveredError extends TosError {
   /** Why the transaction does not count as delivered. */
   readonly reason: string;
   /** The executed transaction, as the node returned it. */
   readonly transaction: unknown;
+  /**
+   * The outgoing messages the transaction did create (`out_msgs`, with their
+   * destination and value), in the order the node listed them; empty when it
+   * created none.
+   */
+  readonly createdMessages: MessageSummary[];
 
   constructor(reason: string, transaction: unknown) {
-    super(`transfer not delivered: ${reason}`, ErrorCodes.NOT_DELIVERED);
+    const created = (transaction as { out_msgs?: unknown } | null)?.out_msgs;
+    const createdMessages = Array.isArray(created) ? (created as MessageSummary[]).slice() : [];
+    const left =
+      createdMessages.length > 0
+        ? `; ${createdMessages.length} outgoing message(s) did leave the wallet (see createdMessages)`
+        : "";
+    super(`transfer not delivered: ${reason}${left}`, ErrorCodes.NOT_DELIVERED);
     this.name = "TosNotDeliveredError";
     this.reason = reason;
     this.transaction = transaction;
+    this.createdMessages = createdMessages;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

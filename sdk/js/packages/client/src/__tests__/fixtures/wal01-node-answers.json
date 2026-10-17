@@ -1,5 +1,6 @@
 {
-  "_provenance": "Public testnet node answers to the JS SDK during the WAL-01 journey (node build 8bf39647d, 2026-10-16, wallet 0:aaa3eda4...5702, WalletV4R2, global id 2). Every transaction and answer is verbatim, with two exceptions. getTransactionsAfterSettlement joins the verbatim newest transaction of the first poll after settlement (the journey log cut that answer at 4000 characters) with the two verbatim transactions of the poll before it. overdrawTransaction is rebuilt in the node's shape from the fields recorded for it; its action counters are those of one message skipped under the ignore-errors flag.",
+  "_provenance": "Public testnet node answers to the JS SDK during the WAL-01 journey (node build 8bf39647d, 2026-10-16, wallet 0:aaa3eda4...5702, WalletV4R2, global id 2). Every transaction and answer is verbatim, with two exceptions. getTransactionsAfterSettlement joins the verbatim newest transaction of the first poll after settlement (the journey log cut that answer at 4000 characters) with the two verbatim transactions of the poll before it. overdrawTransaction is rebuilt in the node's shape from the fields recorded for it; its action counters are those of one message skipped under the ignore-errors flag. TODO: replace overdrawTransaction with the getTransactions answer captured for an overdraw on the epoch-4 testnet, and drop this exception.",
+  "_todo": "overdrawTransaction is rebuilt, not captured: replace it with a captured epoch-4 answer",
   "runGetMethodUndeployed": {
     "@type": "smc.runResult",
     "gas_used": 0,

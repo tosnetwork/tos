@@ -10,6 +10,7 @@ import {
   TosError,
   TosNotDeliveredError,
   requireDelivered,
+  waitForReceipt,
   waitForTransaction,
   waitForTransfer,
 } from "../index.js";
@@ -264,5 +265,183 @@ describe("requireDelivered", () => {
       })();
       expect((err as TosError).code).toBe(ErrorCodes.INVALID_PARAMETER);
     }
+  });
+});
+
+/** A 32-byte hash, base64, distinct for each index. */
+function syntheticHash(index: number): string {
+  const bytes = new Uint8Array(32).fill(0xa5);
+  bytes[0] = index & 0xff;
+  bytes[1] = (index >> 8) & 0xff;
+  return btoa(String.fromCharCode(...bytes));
+}
+
+/**
+ * `count` transactions newer than the settled transfer, in the node's shape:
+ * copies of the verbatim settled transfer with their own lt, transaction hash
+ * and inbound message hash, newest first.
+ */
+function intervening(count: number): Array<Record<string, unknown>> {
+  const template = wal01().getTransactionsAfterSettlement[0] as Record<string, unknown>;
+  return Array.from({ length: count }, (_, i) => {
+    const tx = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
+    const lt = (547_800_000_001n + BigInt(count - i) * 1_000_000n).toString();
+    tx.transaction_id = { "@type": "internal.transactionId", lt, hash: syntheticHash(1000 + i) };
+    tx.in_msg = { hash: syntheticHash(i), kind: "external" };
+    tx.in_msg_hash = syntheticHash(i);
+    return tx;
+  });
+}
+
+describe("waitForTransaction paging", () => {
+  it("pages back past more than 16 newer transactions to the one looked for", async () => {
+    const node = wal01();
+    const newer = intervening(20);
+    const older = node.getTransactionsAfterSettlement;
+    const cursor = newer[15] as { transaction_id: { lt: string; hash: string } };
+    // The node answers 16 per page; a page that starts at a cursor repeats it.
+    const { client, requests } = stubbedClient([
+      result(newer.slice(0, 16)),
+      result([...newer.slice(15), ...older]),
+    ]);
+    const tx = await waitForTransaction(client, WAL01_WALLET, node.sendQueryTransfer.hash, FAST);
+    expect(tx.transaction_id.lt).toBe("547749000001");
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.params).toEqual({ address: WAL01_WALLET, limit: 16 });
+    expect(requests[1]?.params).toEqual({
+      address: WAL01_WALLET,
+      limit: 16,
+      lt: cursor.transaction_id.lt,
+      hash: cursor.transaction_id.hash,
+    });
+  });
+
+  it("stops paging at afterLt, the history before the message was sent", async () => {
+    const node = wal01();
+    const newer = intervening(20);
+    const afterLt = (newer[10] as { transaction_id: { lt: string } }).transaction_id.lt;
+    const answers = Array.from({ length: 400 }, () => result(newer.slice(0, 16)));
+    const { client, requests } = stubbedClient(answers);
+    const err = await rejection(
+      waitForTransaction(client, WAL01_WALLET, node.sendQueryTransfer.hash, { ...FAST, afterLt }),
+    );
+    expect((err as TosError).code).toBe(ErrorCodes.WAIT_TIMEOUT);
+    // Every poll read one page only: its oldest transaction is already at or before afterLt.
+    expect(requests.every((r) => r.params.lt === undefined)).toBe(true);
+  });
+
+  it("waitForTransfer stops at the afterLt the wallet recorded when sending", async () => {
+    const node = wal01();
+    const newer = intervening(20);
+    const afterLt = (newer[10] as { transaction_id: { lt: string } }).transaction_id.lt;
+    const answers = Array.from({ length: 400 }, () => result(newer.slice(0, 16)));
+    const { client, requests } = stubbedClient(answers);
+    const err = await rejection(
+      waitForTransfer(
+        client,
+        WAL01_WALLET,
+        { hash: node.sendQueryTransfer.hash, outMessages: 1, afterLt },
+        FAST,
+      ),
+    );
+    expect((err as TosError).code).toBe(ErrorCodes.WAIT_TIMEOUT);
+    expect(requests.every((r) => r.params.lt === undefined)).toBe(true);
+  });
+
+  it("refuses an afterLt that is not a decimal lt", async () => {
+    const { client, requests } = stubbedClient([]);
+    for (const afterLt of ["", "-1", "12a", "1e9"]) {
+      const err = await rejection(
+        waitForTransaction(client, WAL01_WALLET, wal01().sendQueryTransfer.hash, {
+          ...FAST,
+          afterLt,
+        }),
+      );
+      expect((err as TosError).code).toBe(ErrorCodes.INVALID_PARAMETER);
+    }
+    expect(requests).toHaveLength(0);
+  });
+
+  it("says a timeout leaves the outcome unknown", async () => {
+    const node = wal01();
+    const { client } = stubbedClient(
+      Array.from({ length: 400 }, () => result(node.getTransactionsBeforeSettlement)),
+    );
+    const err = await rejection(
+      waitForTransaction(client, WAL01_WALLET, node.sendQueryTransfer.hash, FAST),
+    );
+    expect((err as TosError).code).toBe(ErrorCodes.WAIT_TIMEOUT);
+    expect((err as Error).message).toContain("outcome is unknown");
+    expect((err as Error).message).toContain("do not resend it before then");
+  });
+});
+
+describe("a partly delivered transfer", () => {
+  it("lists the messages that did leave, so only the missing ones are resent", async () => {
+    const node = wal01();
+    const { client } = stubbedClient([result(node.getTransactionsAfterSettlement)]);
+    // The settled transaction created one message; a transfer of two would
+    // have had its second skipped.
+    const err = await rejection(
+      waitForTransfer(
+        client,
+        WAL01_WALLET,
+        { hash: node.sendQueryTransfer.hash, outMessages: 2 },
+        FAST,
+      ),
+    );
+    expect(err).toBeInstanceOf(TosNotDeliveredError);
+    const notDelivered = err as TosNotDeliveredError;
+    expect(notDelivered.createdMessages).toHaveLength(1);
+    expect(notDelivered.createdMessages[0]).toMatchObject({
+      kind: "internal",
+      destination: "EQD7mCj9E4FaMdVtLv66iStmPYp-dBCxSQSitp1hdf0N-Z77",
+      value: "50000000",
+    });
+    expect(notDelivered.message).toContain("1 outgoing message(s) did leave the wallet");
+  });
+
+  it("lists none when nothing left", async () => {
+    const node = wal01();
+    const { client } = stubbedClient([result([node.overdrawTransaction])]);
+    const err = await rejection(
+      waitForTransfer(
+        client,
+        WAL01_WALLET,
+        { hash: node.sendQueryOverdraw.hash, outMessages: 1 },
+        FAST,
+      ),
+    );
+    expect((err as TosNotDeliveredError).createdMessages).toEqual([]);
+    expect((err as Error).message).not.toContain("did leave");
+  });
+});
+
+describe("waitForReceipt", () => {
+  it("follows an internal message to the recipient's transaction", async () => {
+    const node = wal01();
+    // The funding message from the relayer, as the relayer's out_msgs list
+    // it, and the wallet's transaction that executed it.
+    const funding = node.getTransactionsAfterSettlement[2] as unknown as Transaction;
+    const message = funding.in_msg;
+    if (message === null) throw new Error("fixture has an inbound message");
+    const { client, requests } = stubbedClient([result(node.getTransactionsAfterSettlement)]);
+    const receipt = await waitForReceipt(client, message, FAST);
+    expect(receipt.transaction_id.lt).toBe("547679000003");
+    expect(requests[0]?.params.address).toBe("EQCqo-2kE8Sd-muQY1bOKdNez_X4_cIIJ-be2ATRb_tXAn9i");
+  });
+
+  it("refuses a message that is not internal or has no destination", async () => {
+    const { client, requests } = stubbedClient([]);
+    const external = { hash: wal01().sendQueryTransfer.hash, kind: "external" as const };
+    const toWallet = {
+      ...external,
+      destination: "EQCqo-2kE8Sd-muQY1bOKdNez_X4_cIIJ-be2ATRb_tXAn9i",
+    };
+    for (const message of [external, toWallet, { ...external, kind: "internal" as const }]) {
+      const err = await rejection(waitForReceipt(client, message, FAST));
+      expect((err as TosError).code).toBe(ErrorCodes.INVALID_PARAMETER);
+    }
+    expect(requests).toHaveLength(0);
   });
 });

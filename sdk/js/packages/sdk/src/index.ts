@@ -45,6 +45,8 @@ export {
   setCoreParser,
   waitForTransaction,
   waitForTransfer,
+  waitForReceipt,
+  MAX_TRANSACTIONS_PER_POLL,
   requireDelivered,
   // Constants
   Networks,

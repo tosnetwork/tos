@@ -116,5 +116,11 @@ export { Networks } from "./client/Networks.js";
 export type { NetworkConfig } from "./client/Networks.js";
 
 // Utilities
-export { waitForTransaction, waitForTransfer, requireDelivered } from "./utils/wait.js";
+export {
+  waitForTransaction,
+  waitForTransfer,
+  waitForReceipt,
+  requireDelivered,
+  MAX_TRANSACTIONS_PER_POLL,
+} from "./utils/wait.js";
 export type { WaitOpts, PendingTransfer } from "./utils/wait.js";

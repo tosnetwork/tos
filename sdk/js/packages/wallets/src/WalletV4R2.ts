@@ -301,7 +301,10 @@ export class WalletV4R2 implements Wallet {
       .endCell();
 
     const { hash } = await provider.external(body);
-    return { hash, outMessages: args.messages.length };
+    // Where the wallet's history stood before this message: waitForTransfer
+    // pages back no further than that.
+    const outMessages = args.messages.length;
+    return state.last === null ? { hash, outMessages } : { hash, outMessages, afterLt: state.last.lt };
   }
 
   /**
