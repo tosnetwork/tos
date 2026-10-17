@@ -19,6 +19,7 @@
 #pragma once
 
 #include "json-rpc-explorer.h"
+#include "json-rpc-server-fee.h"
 #include "json-rpc-server-parse.h"
 #include "json-rpc-server-runresult.h"
 #include "json-rpc-server-storage.h"
@@ -105,6 +106,36 @@ std::string detect_wallet_type(const vm::CellHash& code_hash);
 std::string detect_account_model(const ParsedAccountState& parsed,
                                  const std::string& wallet_type);
 std::string detect_authorization_version(const std::string& wallet_type);
+
+// ─── estimateFee: from the fetched state to the answer ─────────────────
+// Defined in json-rpc-server-send.cpp. The handler fetches and verifies the
+// account state and the config; everything it decides from them is here, so a
+// test can hold the answer to the executor.
+
+struct EstimateFeeRequest {
+  block::StdAddress address;
+  td::Ref<vm::Cell> body;
+  // Null when the request leaves them out.
+  td::Ref<vm::Cell> init_code;
+  td::Ref<vm::Cell> init_data;
+  bool ignore_chksig = true;
+};
+
+// The account in the executor's terms: active (with its code and data), frozen
+// (with the hash it was frozen with), or uninitialized, which includes an
+// account that does not exist.
+td::Result<EstimateAccount> estimate_account_from(const ParsedAccountState& parsed);
+
+// The `query.fees` result for `request` against `parsed` under `cfg` (with its
+// library dictionary, null for none). Errors carry the JSON-RPC code they are
+// answered with: kEstimateRejectedCode for a request the executor would reject,
+// kEstimateUnsupportedCode for a workchain the estimate does not model, -32603
+// otherwise.
+td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest& request,
+                                                       const ParsedAccountState& parsed,
+                                                       std::shared_ptr<const block::Config> cfg,
+                                                       td::Ref<vm::Cell> libraries_root,
+                                                       td::Ref<vm::Tuple> prev_blocks_info);
 
 // ─── Shared: AccountCapabilityContext ──────────────────────────────────
 
