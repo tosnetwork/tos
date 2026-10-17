@@ -301,9 +301,12 @@ TEST(Cells, pruned_branch_rebuilt_from_a_hash_and_a_depth) {
 // bag cannot show this: its checksum is read from the last four bytes of whatever was
 // passed, so any truncation fails the checksum first and the size check never decides.
 // The bags here carry no checksum, so every prefix reaches the size check, and the error
-// must be the one that check reports. Without the check, a prefix that ends inside the
-// root list or the index is sliced past its end, and a prefix that ends inside the cell
-// data is refused later with a different error.
+// must be the one that check reports: not enough bytes, with the whole bag's size as the
+// requirement. A prefix too short to hold the header is refused earlier by the header
+// parse, which reports the same words but only the header's size as the requirement.
+// Without the check, a prefix that ends inside the root list or the index is sliced past
+// its end, and a prefix that ends inside the cell data is refused later with a different
+// error.
 TEST(Cells, boc_without_checksum_shorter_than_its_header_declares_is_refused_by_the_size_check) {
   auto leaf = [](int tag) {
     vm::CellBuilder cb;
@@ -344,17 +347,33 @@ TEST(Cells, boc_without_checksum_shorter_than_its_header_declares_is_refused_by_
     ASSERT_EQ(static_cast<long long>(full.size()), r_whole.ok());
     ASSERT_TRUE(whole.get_root_cell()->get_hash() == root->get_hash());
 
+    std::size_t refused_by_size_check = 0;
     for (size_t length = 0; length < full.size(); length++) {
       // A copy of exactly `length` bytes, so a read past the prefix leaves the buffer.
       std::string prefix = full.substr(0, length).str();
+      vm::BagOfCells::Info prefix_info;
+      const bool header_complete = prefix_info.parse_serialized_header(td::Slice(prefix)) > 0;
       vm::BagOfCells boc;
       auto r_boc = boc.deserialize(td::Slice(prefix));
       ASSERT_TRUE(r_boc.is_error());
-      if (r_boc.error().message().str().find("not enough bytes") == std::string::npos) {
+      auto message = r_boc.error().message().str();
+      // A header-complete prefix must be refused for lacking the whole bag; a shorter one
+      // for lacking the header, so for something less than the whole bag.
+      std::string expected = PSTRING() << "cannot deserialize bag-of-cells: not enough bytes (" << length
+                                       << " present, ";
+      bool refused_for_size = message.rfind(expected, 0) == 0;
+      bool whole_bag_required = message == expected + std::to_string(full.size()) + " required)";
+      if (!refused_for_size || header_complete != whole_bag_required) {
         LOG(FATAL) << "mode " << mode << ", " << length << " of " << full.size()
-                   << " bytes: refused by a later check: " << r_boc.error();
+                   << " bytes, header complete: " << header_complete << ": refused by the wrong check: " << message;
+      }
+      if (whole_bag_required) {
+        refused_by_size_check++;
       }
     }
+    // The size check itself decided, not only the header parse: every prefix from the end
+    // of the header to one byte short of the bag.
+    ASSERT_TRUE(refused_by_size_check > 0);
     checked_modes++;
   }
   // Generic and indexed layouts, with and without cache bits and stored hashes.
