@@ -1225,11 +1225,9 @@ td::Result<EstimateAccount> estimate_account_from(const ParsedAccountState &pars
   return account;
 }
 
-td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest &request,
-                                                       const ParsedAccountState &parsed,
-                                                       std::shared_ptr<const block::Config> cfg,
-                                                       td::Ref<vm::Cell> libraries_root,
-                                                       td::Ref<vm::Tuple> prev_blocks_info) {
+td::Result<std::string> estimate_external_message_fees(
+    const EstimateFeeRequest &request, const ParsedAccountState &parsed, std::shared_ptr<const block::Config> cfg,
+    td::Ref<vm::Cell> libraries_root, td::Ref<vm::Tuple> prev_blocks_info, tos::UnixTime execution_time) {
   const auto &addr = request.address;
   TRY_STATUS(check_estimate_workchain(cfg->get_workchain_list(), addr.workchain));
 
@@ -1241,7 +1239,7 @@ td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest 
   rules.global_version = cfg->get_global_version();
   if (account.status == EstimateAccount::Status::Uninitialized) {
     // The executor's lookup: workchain:int32 followed by the address.
-    auto suspended = cfg->get_suspended_addresses(parsed.sync_utime);
+    auto suspended = cfg->get_suspended_addresses(execution_time);
     if (suspended) {
       vm::CellBuilder key;
       if (!(key.store_long_bool(addr.workchain, 32) && key.store_bits_bool(addr.addr))) {
@@ -1286,8 +1284,8 @@ td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest 
   auto basechain_msg_prices = basechain_msg_prices_r.move_as_ok();
   block::MsgPrices *msg_prices[2] = {&basechain_msg_prices, &masterchain_msg_prices};
 
-  auto storage_fee_256 = block::StoragePrices::compute_storage_fees(
-      parsed.sync_utime, storage_prices, parsed.storage_used, parsed.storage_last_paid, false, is_masterchain);
+  auto storage_fee_256 = block::StoragePrices::compute_storage_fees(execution_time, storage_prices, parsed.storage_used,
+                                                                    parsed.storage_last_paid, false, is_masterchain);
   auto storage_fee = storage_fee_256.is_null() ? 0 : storage_fee_256->to_long();
 
   auto in_fwd_fee_r =
@@ -1311,7 +1309,7 @@ td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest 
                                                                      .set_limits(gas_limits)
                                                                      .set_balance(parsed.balance)
                                                                      .set_extra_currencies(parsed.extra_currencies_cell)
-                                                                     .set_now(parsed.sync_utime)
+                                                                     .set_now(execution_time)
                                                                      .set_ignore_chksig(request.ignore_chksig)
                                                                      .set_address(addr)
                                                                      .set_config(cfg)
@@ -1502,10 +1500,12 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                               return;
                             }
 
+                            // Use the verified masterchain context, not the account shard proof time.
+                            const auto execution_time = cfg->utime;
                             auto libraries_root = cfg->get_libraries_root();
                             auto answer = estimate_external_message_fees(
                                 request, parsed, std::shared_ptr<const block::Config>(cfg.release()),
-                                std::move(libraries_root), prev_blocks_r.move_as_ok());
+                                std::move(libraries_root), prev_blocks_r.move_as_ok(), execution_time);
                             if (answer.is_error()) {
                               auto error = answer.move_as_error();
                               if (error.code() == kEstimateUnsupportedCode) {

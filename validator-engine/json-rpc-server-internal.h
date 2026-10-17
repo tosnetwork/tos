@@ -130,12 +130,11 @@ td::Result<EstimateAccount> estimate_account_from(const ParsedAccountState& pars
 // library dictionary, null for none). Errors carry the JSON-RPC code they are
 // answered with: kEstimateRejectedCode for a request the executor would reject,
 // kEstimateUnsupportedCode for a workchain the estimate does not model, -32603
-// otherwise.
-td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest& request,
-                                                       const ParsedAccountState& parsed,
-                                                       std::shared_ptr<const block::Config> cfg,
-                                                       td::Ref<vm::Cell> libraries_root,
-                                                       td::Ref<vm::Tuple> prev_blocks_info);
+// otherwise. execution_time is the verified masterchain context time; account
+// shard proofs can predate it and must not set admission or emulation time.
+td::Result<std::string> estimate_external_message_fees(
+    const EstimateFeeRequest& request, const ParsedAccountState& parsed, std::shared_ptr<const block::Config> cfg,
+    td::Ref<vm::Cell> libraries_root, td::Ref<vm::Tuple> prev_blocks_info, tos::UnixTime execution_time);
 
 // ─── Shared: AccountCapabilityContext ──────────────────────────────────
 

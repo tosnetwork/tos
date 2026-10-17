@@ -38,6 +38,7 @@
 #include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "emulator/test/tos-genesis-config.h"
+#include "fift/utils.h"
 #include "smc-envelope/GenericAccount.h"
 #include "smc-envelope/SmartContractCode.h"
 #include "td/utils/base64.h"
@@ -45,6 +46,7 @@
 #include "td/utils/tests.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/dict.h"
+#include "vm/vm.h"
 
 #include "json-rpc-server-fee.h"
 #include "json-rpc-server-internal.h"
@@ -191,7 +193,9 @@ struct Executed {
 // imports the message, the import fee it charges, and whether its compute phase
 // runs the message or skips it.
 Executed execute(const block::Account& account, td::Ref<vm::Cell> message,
-                 std::shared_ptr<const block::Config> cfg = genesis_priced_config()) {
+                 std::shared_ptr<const block::Config> cfg = genesis_priced_config(),
+                 tos::UnixTime execution_time = kNow) {
+  vm::init_vm(false).ensure();
   td::Ref<vm::Cell> old_mparams;
   std::vector<block::StoragePrices> storage_prices;
   block::StoragePhaseConfig storage_cfg{&storage_prices};
@@ -202,12 +206,12 @@ Executed execute(const block::Account& account, td::Ref<vm::Cell> message,
   block::ActionPhaseConfig action_cfg;
   block::SerializeConfig serialize_cfg;
   td::RefInt256 masterchain_create_fee, basechain_create_fee;
-  block::FetchConfigParams::fetch_config_params(*cfg, td::Ref<vm::Tuple>{}, &old_mparams, &storage_prices, &storage_cfg,
-                                                &rand_seed, &compute_cfg, &action_cfg, &serialize_cfg,
-                                                &masterchain_create_fee, &basechain_create_fee, account.workchain, kNow)
+  block::FetchConfigParams::fetch_config_params(
+      *cfg, td::Ref<vm::Tuple>{}, &old_mparams, &storage_prices, &storage_cfg, &rand_seed, &compute_cfg, &action_cfg,
+      &serialize_cfg, &masterchain_create_fee, &basechain_create_fee, account.workchain, execution_time)
       .ensure();
   compute_cfg.libraries = std::make_unique<vm::Dictionary>(256);
-  block::transaction::Transaction trans(account, block::transaction::Transaction::tr_ord, kLt, kNow,
+  block::transaction::Transaction trans(account, block::transaction::Transaction::tr_ord, kLt, execution_time,
                                         std::move(message));
   Executed executed;
   if (!trans.unpack_input_msg(/*ihr_delivered=*/false, &action_cfg)) {
@@ -282,7 +286,7 @@ td::Result<std::string> handler_answer(const Wallet& wallet, const block::Accoun
                                        std::shared_ptr<const block::Config> cfg = genesis_priced_config()) {
   tos::EstimateFeeRequest request{wallet.address, std::move(body), std::move(init_code), std::move(init_data), true};
   return tos::estimate_external_message_fees(request, parsed_state(account), std::move(cfg), td::Ref<vm::Cell>{},
-                                             td::Ref<vm::Tuple>{});
+                                             td::Ref<vm::Tuple>{}, kNow);
 }
 
 td::int64 answered_import_fee(const std::string& answer) {
@@ -496,6 +500,76 @@ TEST(JsonRpcImportFee, a_suspended_address_is_not_deployed) {
   auto executed = execute(account, submitted_message(wallet, body, wallet.code, wallet.data), cfg);
   ASSERT_TRUE(executed.imported);
   ASSERT_EQ(static_cast<int>(block::ComputePhase::sk_suspended), executed.skip_reason);
+}
+
+TEST(JsonRpcImportFee, suspension_expires_at_execution_time_not_shard_proof_time) {
+  auto wallet = make_wallet();
+  vm::Dictionary addresses{288};
+  vm::CellBuilder key;
+  CHECK(key.store_long_bool(wallet.address.workchain, 32) && key.store_bits_bool(wallet.address.addr));
+  CHECK(addresses.set_builder(key.data_bits(), 288, vm::CellBuilder()));
+  constexpr tos::UnixTime expiry = kNow + 10;
+  vm::CellBuilder param;
+  CHECK(param.store_long_bool(0, 8) && param.store_maybe_ref(addresses.get_root_cell()) &&
+        param.store_long_bool(expiry, 32));
+  auto cfg = priced_config(fee_fixture::kTosGlobalVersion, {{44, param.finalize()}});
+  auto account = undeployed_account(wallet);
+  auto body = make_transfer_body(wallet.address);
+  tos::EstimateFeeRequest request{wallet.address, body, wallet.code, wallet.data, true};
+  for (auto execution_time : {expiry - 1, expiry, expiry + 1}) {
+    auto executed = execute(account, submitted_message(wallet, body, wallet.code, wallet.data), cfg, execution_time);
+    ASSERT_TRUE(executed.imported);
+    const bool suspended = execution_time < expiry;
+    ASSERT_EQ(suspended, executed.skip_reason == block::ComputePhase::sk_suspended);
+    for (auto proof_time : {kNow, expiry - 1}) {
+      auto parsed = parsed_state(account);
+      parsed.sync_utime = proof_time;
+      auto answer = tos::estimate_external_message_fees(request, parsed, cfg, {}, {}, execution_time);
+      ASSERT_EQ(suspended, answer.is_error());
+      if (suspended) {
+        ASSERT_EQ(tos::kEstimateRejectedCode, answer.error().code());
+        ASSERT_TRUE(answer.error().message().str().find("suspended") != std::string::npos);
+      }
+    }
+  }
+}
+
+TEST(JsonRpcImportFee, storage_and_emulation_use_the_same_execution_time) {
+  auto wallet = make_wallet();
+  // Accept only before the boundary, so using shard-proof time changes the gas fee.
+  auto code = fift::compile_asm("NOW " + std::to_string(kNow + 60) + " PUSHINT LESS 35 THROWIFNOT ACCEPT");
+  ASSERT_TRUE(code.is_ok());
+  wallet.code = code.move_as_ok();
+  auto cfg = genesis_priced_config();
+  tos::EstimateFeeRequest request{wallet.address, make_transfer_body(wallet.address), {}, {}, true};
+  auto parsed = parsed_state(active_account(wallet));
+  parsed.storage_used.cells = 1000;
+  parsed.storage_used.bits = 10000;
+  auto prices_r = cfg->get_storage_prices();
+  ASSERT_TRUE(prices_r.is_ok());
+  auto prices = prices_r.move_as_ok();
+  std::string previous;
+  for (auto execution_time : {kNow + 59, kNow + 61}) {
+    parsed.sync_utime = execution_time;
+    auto reference = tos::estimate_external_message_fees(request, parsed, cfg, {}, {}, execution_time);
+    ASSERT_TRUE(reference.is_ok());
+    ASSERT_EQ(execution_time >= kNow + 60, reference.ok().find("\"gas_fee\":0,") != std::string::npos);
+    auto expected_storage = block::StoragePrices::compute_storage_fees(execution_time, prices, parsed.storage_used,
+                                                                       parsed.storage_last_paid, false, false);
+    ASSERT_TRUE(expected_storage->to_long() > 0);
+    ASSERT_TRUE(reference.ok().find("\"storage_fee\":" + std::to_string(expected_storage->to_long()) + ",") !=
+                std::string::npos);
+    for (auto proof_time : {kNow, kNow + 1}) {
+      parsed.sync_utime = proof_time;
+      auto answer = tos::estimate_external_message_fees(request, parsed, cfg, {}, {}, execution_time);
+      ASSERT_TRUE(answer.is_ok());
+      ASSERT_EQ(reference.ok(), answer.ok());
+    }
+    if (!previous.empty()) {
+      ASSERT_TRUE(previous != reference.ok());
+    }
+    previous = reference.ok();
+  }
 }
 
 TEST(JsonRpcImportFee, the_estimate_runs_the_code_the_executor_runs) {

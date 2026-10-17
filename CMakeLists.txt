@@ -2208,6 +2208,10 @@ if(TARGET proof-persisted-fsync-shim)
   add_dependencies(all-tests proof-persisted-fsync-shim)
 endif()
 tos_test(test-emulator)
+# Keep the fee regressions in the PR selection without running the full emulator suite.
+add_test(NAME json-rpc-import-fee
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-jsonrpc-import-fee-tests.py $<TARGET_FILE:test-emulator>)
+set_tests_properties(json-rpc-import-fee PROPERTIES TIMEOUT 120)
 
 tos_test(test-fec)
 tos_regression_test(test-tddb)
