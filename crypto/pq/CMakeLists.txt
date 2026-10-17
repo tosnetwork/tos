@@ -312,7 +312,8 @@ if(TARGET tos_crypto)
     tos_pq_consensus_signer tos_pq_consensus tl_api tl_lite_api tl-utils)
   target_include_directories(test-pq-block-signature-conformance PRIVATE "${TOS_MLDSA_SOURCE_DIR}/mldsa")
   target_compile_definitions(test-pq-block-signature-conformance PRIVATE
-    MLD_CONFIG_FILE="consensus-signer-config.h")
+    MLD_CONFIG_FILE="consensus-signer-config.h"
+    NONCANONICAL_LABEL_BOC="${CMAKE_CURRENT_SOURCE_DIR}/../../test/pq-native/data/finality-noncanonical-label.boc")
   add_test(NAME pq-block-signature-conformance COMMAND test-pq-block-signature-conformance)
   add_test(NAME pq-finality-boundary-source
     COMMAND "${CMAKE_COMMAND}" -E env python3

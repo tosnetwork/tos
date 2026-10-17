@@ -56,6 +56,54 @@ static td::Status add_size_checked(std::size_t& total, std::size_t value) {
   return td::Status::OK();
 }
 
+// The signatures of a set are a HashmapE 16 keyed by position. A dictionary has
+// one canonical cell encoding, the one this serializer writes, but a reader
+// accepts any edge label encoding (hml_short, hml_long, hml_same) that spells the
+// same key bits. The parsers below rebuild the dictionary from what they parsed
+// with these same serializers and refuse a set whose dictionary is not that cell,
+// so a set has exactly one encoding and no second cell hash.
+static td::Result<td::Ref<vm::Cell>> build_signatures_dict(const std::vector<tos::BlockSignature>& signatures) {
+  vm::Dictionary dict{16};  // HashmapE 16 CryptoSignaturePair
+  for (unsigned i = 0; i < signatures.size(); i++) {
+    const tos::BlockSignature& sig = signatures[i];
+    vm::CellBuilder cb;
+    if (!(cb.store_bits_bool(sig.node)                      // sig_pair$_ node_id_short:bits256
+          && cb.store_long_bool(5, 4)                       //   ed25519_signature#5
+          && sig.signature.size() == 64                     // signature must be 64 bytes long
+          && cb.store_bytes_bool(sig.signature.data(), 64)  // R:bits256 s:bits256
+          && dict.set_builder(td::BitArray<16>{i}, cb, vm::Dictionary::SetMode::Add))) {
+      return td::Status::Error(PSTRING() << "failed to serialize");
+    }
+  }
+  return std::move(dict).extract_root_cell();
+}
+
+static td::Result<td::Ref<vm::Cell>> build_pq_signatures_dict(const std::vector<PQBlockSignature>& signatures) {
+  vm::Dictionary dict{16};  // HashmapE 16 PQBlockSignaturePair
+  for (std::size_t i = 0; i < signatures.size(); ++i) {
+    const auto& signature = signatures[i];
+    TRY_RESULT(packed_signature,
+               tos::pq::pack_pq_bytes(signature.signature.as_slice(), tos::pq::mldsa44_signature_bytes));
+    vm::CellBuilder pair;
+    if (!(pair.store_bits_bool(signature.validator_id.value.cbits(), 256) &&
+          pair.store_long_bool(static_cast<td::uint16>(signature.algorithm_id), 16) &&
+          pair.store_ref_bool(std::move(packed_signature)) &&
+          dict.set_builder(td::BitArray<16>{static_cast<unsigned>(i)}, pair, vm::Dictionary::SetMode::Add))) {
+      return td::Status::Error("pq signatures: dictionary serialization failed");
+    }
+  }
+  return std::move(dict).extract_root_cell();
+}
+
+// True when a received dictionary root is the cell the serializer writes for the
+// same entries. An empty dictionary has no root on either side.
+static bool is_canonical_dict_root(const td::Ref<vm::Cell>& received, const td::Ref<vm::Cell>& canonical) {
+  if (received.is_null() || canonical.is_null()) {
+    return received.is_null() && canonical.is_null();
+  }
+  return received->get_hash() == canonical->get_hash();
+}
+
 static td::Status check_vset(const BlockSignatureSet* sig_set, const td::Ref<ValidatorSet>& vset) {
   if (vset->get_catchain_seqno() != sig_set->get_catchain_seqno()) {
     return td::Status::Error(tos::ErrorCode::protoviolation, PSTRING() << "catchain seqno mismatch: expected "
@@ -264,19 +312,7 @@ class BlockSignatureSetBase : public BlockSignatureSet {
   }
 
   td::Result<td::Ref<vm::Cell>> serialize_dict() const {
-    vm::Dictionary dict{16};  // HashmapE 16 CryptoSignaturePair
-    for (unsigned i = 0; i < signatures_.size(); i++) {
-      const tos::BlockSignature& sig = signatures_[i];
-      vm::CellBuilder cb;
-      if (!(cb.store_bits_bool(sig.node)                      // sig_pair$_ node_id_short:bits256
-            && cb.store_long_bool(5, 4)                       //   ed25519_signature#5
-            && sig.signature.size() == 64                     // signature must be 64 bytes long
-            && cb.store_bytes_bool(sig.signature.data(), 64)  // R:bits256 s:bits256
-            && dict.set_builder(td::BitArray<16>{i}, cb, vm::Dictionary::SetMode::Add))) {
-        return td::Status::Error(PSTRING() << "failed to serialize");
-      }
-    }
-    return std::move(dict).extract_root_cell();
+    return build_signatures_dict(signatures_);
   }
 
  protected:
@@ -598,19 +634,7 @@ static td::Result<td::Ref<vm::Cell>> serialize_simplex_pq_cell(
   if (candidate == nullptr) {
     return td::Status::Error("pq candidate data: null object");
   }
-  vm::Dictionary dict{16};
-  for (std::size_t i = 0; i < signatures.size(); ++i) {
-    const auto& signature = signatures[i];
-    TRY_RESULT(packed_signature,
-               tos::pq::pack_pq_bytes(signature.signature.as_slice(), tos::pq::mldsa44_signature_bytes));
-    vm::CellBuilder pair;
-    if (!(pair.store_bits_bool(signature.validator_id.value.cbits(), 256) &&
-          pair.store_long_bool(static_cast<td::uint16>(signature.algorithm_id), 16) &&
-          pair.store_ref_bool(std::move(packed_signature)) &&
-          dict.set_builder(td::BitArray<16>{static_cast<unsigned>(i)}, pair, vm::Dictionary::SetMode::Add))) {
-      return td::Status::Error("pq signatures: dictionary serialization failed");
-    }
-  }
+  TRY_RESULT(dict_root, build_pq_signatures_dict(signatures));
   const auto candidate_bytes = tos::serialize_tl_object(candidate, true);
   if (candidate_bytes.size() > pq::pq_candidate_data_max_bytes) {
     return td::Status::Error("pq candidate data: oversize");
@@ -619,7 +643,7 @@ static td::Result<td::Ref<vm::Cell>> serialize_simplex_pq_cell(
   vm::CellBuilder root;
   if (!(root.store_long_bool(0x13, 8) && root.store_long_bool(validator_set_hash, 32) &&
         root.store_long_bool(cc_seqno, 32) && root.store_long_bool(signatures.size(), 32) &&
-        root.store_long_bool(signature_weight, 64) && root.store_maybe_ref(std::move(dict).extract_root_cell()) &&
+        root.store_long_bool(signature_weight, 64) && root.store_maybe_ref(std::move(dict_root)) &&
         root.store_bits_bool(session_id.cbits(), 256) && root.store_long_bool(slot, 32) &&
         root.store_ref_bool(std::move(candidate_cell)))) {
     return td::Status::Error("pq signatures: root serialization failed");
@@ -892,6 +916,10 @@ static td::Result<std::vector<tos::BlockSignature>> unpack_signatures_dict(td::R
       })) {
     return td::Status::Error("failed to parse signatures dict");
   }
+  TRY_RESULT(canonical_root, build_signatures_dict(signatures));
+  if (!is_canonical_dict_root(dict_root, canonical_root)) {
+    return td::Status::Error("noncanonical signatures dict");
+  }
   return signatures;
 }
 
@@ -969,6 +997,13 @@ static td::Result<std::vector<PQBlockSignature>> unpack_pq_signatures_dict(td::R
   }
   if (signatures.size() > declared_count) {
     return td::Status::Error("pq signatures: dictionary extra entry");
+  }
+  // Every entry is already canonical on its own (fixed-width fields, strict
+  // PQBytes), so what is left is the shape of the dictionary itself. This runs
+  // before any signature is verified.
+  TRY_RESULT(canonical_root, build_pq_signatures_dict(signatures));
+  if (!is_canonical_dict_root(dict_root, canonical_root)) {
+    return td::Status::Error("pq signatures: noncanonical dictionary");
   }
   return signatures;
 }
