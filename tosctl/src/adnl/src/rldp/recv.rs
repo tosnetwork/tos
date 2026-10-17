@@ -56,47 +56,56 @@ pub struct RaptorqDecoder {
 }
 
 impl RaptorqDecoder {
-    /// Construct with parameters
+    /// Largest object a FEC transfer may carry: the C++ ceiling on FEC
+    /// broadcasts (`Overlays::max_fec_broadcast_size()`, 16 MiB), which is
+    /// also above any RLDP part.
+    pub const MAX_DATA_SIZE: i32 = 16 << 20;
+
+    /// The codec configuration both sides use: one source block and one
+    /// sub-block, with the symbol size taken as is, which is how the C++
+    /// implementation lays out symbols. The default parameters switch to
+    /// sub-blocks from about 10 MiB and to several source blocks beyond that,
+    /// neither of which the C++ side produces or decodes.
+    ///
+    /// Symbol size can exceed u16::MAX for two-step broadcasts with few
+    /// neighbours, as on the C++ side.
+    pub fn config(
+        data_size: i32,
+        symbol_size: i32,
+    ) -> Result<raptorq::ObjectTransmissionInformation> {
+        const MAX_SOURCE_SYMBOLS: i64 = 56_403; // K'_max, RFC 6330 section 5.1.2
+        if symbol_size <= 0 {
+            fail!("Invalid FEC params: symbol_size must be > 0, got {symbol_size}");
+        }
+        if data_size <= 0 {
+            fail!("Invalid FEC params: data_size must be > 0, got {data_size}");
+        }
+        if data_size > Self::MAX_DATA_SIZE {
+            fail!("Invalid FEC params: data_size {data_size} exceeds {}", Self::MAX_DATA_SIZE);
+        }
+        // Both are positive i32 values, so neither the sum nor the quotient
+        // can overflow i64.
+        let source_symbols =
+            (i64::from(data_size) + i64::from(symbol_size) - 1) / i64::from(symbol_size);
+        if source_symbols > MAX_SOURCE_SYMBOLS {
+            fail!(
+                "Invalid FEC params: source symbol count {source_symbols} exceeds \
+                {MAX_SOURCE_SYMBOLS} (data_size={data_size}, symbol_size={symbol_size})"
+            );
+        }
+        Ok(raptorq::ObjectTransmissionInformation::new(
+            u64::from(data_size.unsigned_abs()),
+            symbol_size.unsigned_abs(),
+            1,
+            1,
+            1,
+        ))
+    }
+
+    /// Construct with parameters received from a peer. Every bound is checked
+    /// before the decoder allocates anything.
     pub fn with_params(params: FecTypeRaptorQ) -> Result<Self> {
-        const MAX_SOURCE_SYMBOLS: i32 = 56_403; // K'_max per RFC 6330 §5.1.2
-        if params.symbol_size <= 0 {
-            fail!("Invalid FEC params: symbol_size must be > 0, got {}", params.symbol_size);
-        }
-        if params.data_size <= 0 {
-            fail!("Invalid FEC params: data_size must be > 0, got {}", params.data_size);
-        }
-        let config = if params.symbol_size as usize == Constraints::SYMBOL {
-            raptorq::ObjectTransmissionInformation::with_defaults(
-                params.data_size as u64,
-                params.symbol_size as u16,
-            )
-        } else {
-            // Two-step broadcast case: symbol_size was set by the sender without alignment
-            // rounding (alignment=1). Use the same config as the encoder.
-            // symbol_size can exceed u16::MAX for large blocks with few validators
-            // (matches C++ behaviour which uses size_t for symbol_size).
-            //
-            // With source_blocks=1, raptorq asserts ceil(data_size/symbol_size) <=
-            // MAX_SOURCE_SYMBOLS_PER_BLOCK (K'_max = 56403, RFC 6330 §5.1.2).
-            // Validate before calling to prevent a panic on malformed network messages.
-            let source_symbols = (params.data_size as i64 + params.symbol_size as i64 - 1)
-                / params.symbol_size as i64;
-            if source_symbols > MAX_SOURCE_SYMBOLS as i64 {
-                fail!(
-                    "Invalid FEC params: source symbol count {source_symbols} \
-                    exceeds raptorq limit {MAX_SOURCE_SYMBOLS} (data_size={}, symbol_size={})",
-                    params.data_size,
-                    params.symbol_size
-                );
-            }
-            raptorq::ObjectTransmissionInformation::new(
-                params.data_size as u64,
-                params.symbol_size as u32,
-                1,
-                1,
-                1,
-            )
-        };
+        let config = Self::config(params.data_size, params.symbol_size)?;
         Ok(Self { engine: raptorq::Decoder::new(config), params })
     }
 

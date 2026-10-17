@@ -10,7 +10,7 @@ use crate::{
     adnl::common::{AdnlPeers, CountedObject, Counter},
     declare_counted,
     node::AdnlNode,
-    rldp::{stat::PacketBandwidthInfo, Constraints, RldpPeer, TransferId},
+    rldp::{stat::PacketBandwidthInfo, Constraints, RaptorqDecoder, RldpPeer, TransferId},
 };
 use chain_block::{error, fail, Result, UInt256};
 use std::{
@@ -45,33 +45,23 @@ pub struct RaptorqEncoder {
 impl RaptorqEncoder {
     /// Construct over data
     pub fn with_data(data: &[u8], symbol: Option<u32>) -> Self {
-        let engine =
-            if let Some(symbol_size) = symbol.filter(|&s| s as usize != Constraints::SYMBOL) {
-                // symbol_size is set for the two-step FEC broadcast case where data is
-                // sent to a fixed set of neighbours. In that case symbol_size is derived
-                // as ceil(data.len() / k) where k = ((neighbours * 2) - 2) / 3.
-                //
-                // Use alignment=1 to match C++ behaviour: pass symbol_size as-is without
-                // rounding down to a multiple of 8.
-                //
-                // source_blocks=1 is valid because the number of source symbols
-                //   kt = ceil(data.len() / symbol_size) <= k
-                // and k is bounded by the neighbour count (typically a few dozen, at most
-                // ~130), which is far below K'_max = 56403 (RFC 6330 max symbols per block).
-                //
-                // sub_blocks=1: the data fits comfortably in memory since
-                // kt <= k << K'_max, so no sub-block splitting is needed.
-                let config = raptorq::ObjectTransmissionInformation::new(
-                    data.len() as u64,
-                    symbol_size,
-                    1,
-                    1,
-                    1,
-                );
-                raptorq::Encoder::new(data, config)
-            } else {
-                raptorq::Encoder::with_defaults(data, Constraints::SYMBOL as u16)
-            };
+        // symbol_size is set for the two-step FEC broadcast case, where it is
+        // ceil(data.len() / k) for k = ((neighbours * 2) - 2) / 3 and is used as
+        // is (no rounding to a multiple of 8), as on the C++ side. Otherwise it
+        // is the 768-byte RLDP and FEC broadcast symbol.
+        let symbol_size = symbol.unwrap_or(Constraints::SYMBOL as u32);
+        // One source block and one sub-block, exactly as the receiver builds
+        // its decoder (see RaptorqDecoder::config). An object outside the
+        // receivable bounds (empty, or above 16 MiB) keeps the default layout;
+        // every receiver refuses it, which is the honest outcome for it.
+        let engine = match i32::try_from(data.len())
+            .ok()
+            .zip(i32::try_from(symbol_size).ok())
+            .and_then(|(len, size)| RaptorqDecoder::config(len, size).ok())
+        {
+            Some(config) => raptorq::Encoder::new(data, config),
+            None => raptorq::Encoder::with_defaults(data, Constraints::SYMBOL as u16),
+        };
         let mut source_packets = Vec::new();
         for encoder in engine.get_block_encoders() {
             // Reverse order to send efficiently
