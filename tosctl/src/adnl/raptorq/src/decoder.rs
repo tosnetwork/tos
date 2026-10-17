@@ -283,14 +283,20 @@ impl SourceBlockDecoder {
         // K' - K padding symbols sit between the last source symbol and the
         // first repair symbol in internal-symbol-id space.
         let padding = num_extended_symbols.saturating_sub(self.source_block_symbols);
-        // Like the C++ decoder, keep at most K + 10 symbols: once that many are
-        // held, further repair symbols are ignored, which bounds the memory a
-        // peer can make one transfer hold.
+        // Keep at most K + 10 symbols, source and repair together: once that
+        // many are held, every further symbol is ignored, so one transfer holds
+        // at most K + 10 payloads. (The C++ decoder caps only repair symbols at
+        // that count, which still lets K - 1 more source symbols in.) K + 10
+        // independent symbols decode with probability 1 - 1/256^11.
         let max_symbols = self.source_block_symbols.saturating_add(MAX_EXTRA_SYMBOLS);
         for packet in packets {
             self.validate(&packet)?;
             let (payload_id, payload) = packet.split();
             let encoding_symbol_id = payload_id.encoding_symbol_id();
+            let held = self.received_source_symbols as usize + self.repair_symbols.len();
+            if held >= max_symbols as usize {
+                continue;
+            }
             if encoding_symbol_id < self.source_block_symbols {
                 if self.received_esi.insert(encoding_symbol_id) {
                     if let Some(slot) = self.source_symbols.get_mut(encoding_symbol_id as usize) {
@@ -301,10 +307,6 @@ impl SourceBlockDecoder {
                     }
                 }
             } else {
-                let held = self.received_source_symbols as usize + self.repair_symbols.len();
-                if held >= max_symbols as usize {
-                    continue;
-                }
                 // Cannot overflow: the id is below 2^24 and the padding below 2^16.
                 let internal_symbol_id = encoding_symbol_id.saturating_add(padding);
                 if self.received_esi.insert(internal_symbol_id) {
@@ -413,6 +415,27 @@ mod tests {
             decoder.repair_symbols.len() as u32,
             decoder.source_block_symbols + MAX_EXTRA_SYMBOLS
         );
+    }
+
+    #[test]
+    fn source_symbols_count_against_the_cap() {
+        // K = 40. After K + 10 distinct repair symbols, the K - 1 source
+        // symbols a peer could still send must not be stored either: one
+        // transfer holds at most K + 10 payloads in total.
+        let config = ObjectTransmissionInformation::with_defaults(40 * 768, 768);
+        let mut decoder = SourceBlockDecoder::new2(0, &config, 40 * 768);
+        let k = decoder.source_block_symbols;
+        assert_eq!(k, 40);
+        let packet = |id: u32| EncodingPacket::new(PayloadId::new(0, id).unwrap(), vec![5; 768]);
+        for id in k..k + 1000 {
+            let _ = decoder.decode([packet(id)]).unwrap();
+        }
+        for id in 1..k {
+            let _ = decoder.decode([packet(id)]).unwrap();
+        }
+        let held = decoder.received_source_symbols as usize + decoder.repair_symbols.len();
+        assert_eq!(held as u32, k + MAX_EXTRA_SYMBOLS);
+        assert_eq!(decoder.received_source_symbols, 0);
     }
 
     #[test]

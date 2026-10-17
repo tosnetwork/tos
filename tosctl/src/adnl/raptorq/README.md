@@ -20,7 +20,8 @@ implementation (`tdfec/`) that the network's C++ nodes run:
 - P1 is the smallest prime strictly greater than P, as the C++ side computes it.
 - Every packet given to the decoder is validated (source block, 24-bit id,
   exact symbol length) and refused with `raptorq::Error` rather than a panic;
-  a source block decoder keeps at most K + 10 symbols, and re-runs the solver
+  a source block decoder keeps at most K + 10 symbols, source and repair
+  together (the C++ decoder caps only repair symbols), and re-runs the solver
   only after a new symbol was stored.
 - The section 5.3.5.1 `rand` sums wrap in 32 bits, as in C++; `y` reaches
   2^32 - 1 for valid ids.
