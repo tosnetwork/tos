@@ -1208,6 +1208,107 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
       });
 }
 
+td::Result<EstimateAccount> estimate_account_from(const ParsedAccountState &parsed) {
+  EstimateAccount account;
+  if (parsed.state_str == "active") {
+    account.status = EstimateAccount::Status::Active;
+    account.code = parsed.code_cell;
+    account.data = parsed.data_cell;
+  } else if (parsed.state_str == "frozen") {
+    account.status = EstimateAccount::Status::Frozen;
+    auto hash = td::base64_decode(parsed.frozen_hash);
+    if (hash.is_error() || hash.ok().size() != 32) {
+      return td::Status::Error(-32603, "frozen account state hash does not decode");
+    }
+    account.frozen_state_hash.as_slice().copy_from(hash.ok());
+  }
+  return account;
+}
+
+td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest &request,
+                                                       const ParsedAccountState &parsed,
+                                                       std::shared_ptr<const block::Config> cfg,
+                                                       td::Ref<vm::Cell> libraries_root,
+                                                       td::Ref<vm::Tuple> prev_blocks_info) {
+  const auto &addr = request.address;
+  TRY_STATUS(check_estimate_workchain(cfg->get_workchain_list(), addr.workchain));
+
+  // Price the message sendQuery submits for this same request: it carries a
+  // StateInit only when the request supplies one. The compute phase runs what
+  // the executor would, and a request the executor would reject is refused.
+  TRY_RESULT(account, estimate_account_from(parsed));
+  TRY_RESULT(estimate,
+             plan_external_message_estimate(addr, request.body, request.init_code, request.init_data, account));
+
+  bool is_masterchain = addr.workchain == tos::masterchainId;
+  bool is_special = false;
+  if (is_masterchain) {
+    auto special_r = cfg->get_special_smartcontracts(false);
+    if (special_r.is_error()) {
+      return td::Status::Error(-32603, PSLICE() << "special account list unavailable: " << special_r.error());
+    }
+    for (const auto &special : special_r.ok()) {
+      if (special == addr.addr) {
+        is_special = true;
+      }
+    }
+  }
+
+  auto gas_limits_prices_r = cfg->get_gas_limits_prices(is_masterchain);
+  auto storage_prices_r = cfg->get_storage_prices();
+  auto masterchain_msg_prices_r = cfg->get_msg_prices(true);
+  auto basechain_msg_prices_r = cfg->get_msg_prices(false);
+  if (gas_limits_prices_r.is_error() || storage_prices_r.is_error() || masterchain_msg_prices_r.is_error() ||
+      basechain_msg_prices_r.is_error()) {
+    return td::Status::Error(-32603, "fee config unavailable");
+  }
+  auto gas_limits_prices = gas_limits_prices_r.move_as_ok();
+  auto storage_prices = storage_prices_r.move_as_ok();
+  auto masterchain_msg_prices = masterchain_msg_prices_r.move_as_ok();
+  auto basechain_msg_prices = basechain_msg_prices_r.move_as_ok();
+  block::MsgPrices *msg_prices[2] = {&basechain_msg_prices, &masterchain_msg_prices};
+
+  auto storage_fee_256 = block::StoragePrices::compute_storage_fees(
+      parsed.sync_utime, storage_prices, parsed.storage_used, parsed.storage_last_paid, false, is_masterchain);
+  auto storage_fee = storage_fee_256.is_null() ? 0 : storage_fee_256->to_long();
+
+  auto in_fwd_fee_r = external_message_import_fee(estimate.message, *msg_prices[is_masterchain], is_special);
+  if (in_fwd_fee_r.is_error()) {
+    return td::Status::Error(-32603, PSLICE() << "import fee error: " << in_fwd_fee_r.error());
+  }
+  auto in_fwd_fee = in_fwd_fee_r.move_as_ok();
+
+  vm::Dictionary libraries{256};
+  if (libraries_root.not_null()) {
+    libraries = vm::Dictionary(libraries_root, 256);
+  }
+
+  auto smc = tos::SmartContract::create({estimate.code, estimate.data});
+  auto gas_limits = estimate_compute_gas_limits(td::make_refint(parsed.balance), gas_limits_prices);
+  auto run_res = smc.write().send_external_message(request.body, tos::SmartContract::Args()
+                                                                     .set_limits(gas_limits)
+                                                                     .set_balance(parsed.balance)
+                                                                     .set_extra_currencies(parsed.extra_currencies_cell)
+                                                                     .set_now(parsed.sync_utime)
+                                                                     .set_ignore_chksig(request.ignore_chksig)
+                                                                     .set_address(addr)
+                                                                     .set_config(cfg)
+                                                                     .set_prev_blocks_info(prev_blocks_info)
+                                                                     .set_libraries(std::move(libraries)));
+
+  td::int64 fwd_fee = 0;
+  if (run_res.success) {
+    auto fwd_fee_r = estimate_calc_fwd_fees(run_res.actions, msg_prices, is_masterchain);
+    if (fwd_fee_r.is_error()) {
+      return td::Status::Error(-32603, PSLICE() << "forward fee error: " << fwd_fee_r.error());
+    }
+    fwd_fee = fwd_fee_r.move_as_ok();
+  }
+
+  auto gas_fee = run_res.accepted ? estimate_compute_gas_price(run_res.gas_used, gas_limits_prices)->to_long() : 0;
+  return build_estimate_fee_json(in_fwd_fee, storage_fee, gas_fee, fwd_fee);
+}
+
 void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_id,
                                        td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
@@ -1319,26 +1420,8 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                     return;
                   }
                   auto parsed = parsed_r.move_as_ok();
-
-                  // Price the message sendQuery submits for this same request: it
-                  // carries a StateInit only when the request supplies one. The
-                  // compute phase runs the account's own code when it is active,
-                  // as the executor does.
-                  bool account_active = parsed.state_str == "active" && parsed.code_cell.not_null();
-                  if (!account_active && init_code.is_null()) {
-                    promise.set_value(make_json_rpc_error(
-                        -32603, "estimateFee requires deploy init_code/init_data or an active account state", req_id,
-                        cors));
-                    return;
-                  }
-                  auto estimate_r = plan_external_message_estimate(addr, body_cell, init_code, init_data,
-                                                                   account_active, parsed.code_cell, parsed.data_cell);
-                  if (estimate_r.is_error()) {
-                    promise.set_value(make_json_rpc_error(
-                        -32602, PSTRING() << "Failed to build external message: " << estimate_r.error(), req_id, cors));
-                    return;
-                  }
-                  auto estimate = estimate_r.move_as_ok();
+                  EstimateFeeRequest request{addr, std::move(body_cell), std::move(init_code), std::move(init_data),
+                                             ignore_chksig};
 
                   auto config_inner = tos::serialize_tl_object(
                       tos::create_tl_object<tos::lite_api::liteServer_getConfigAll>(
@@ -1350,8 +1433,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                   td::actor::send_closure(
                       self_id, &JsonRpcServer::send_liteserver_query, std::move(config_query),
                       td::PromiseCreator::lambda(
-                          [cors, addr, body_cell = std::move(body_cell), estimate = std::move(estimate),
-                           parsed = std::move(parsed), ignore_chksig, req_id = std::move(req_id),
+                          [cors, request = std::move(request), parsed = std::move(parsed), req_id = std::move(req_id),
                            promise = std::move(promise)](td::Result<td::BufferSlice> config_res) mutable {
                             if (config_res.is_error()) {
                               promise.set_value(make_json_rpc_error(
@@ -1381,7 +1463,8 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                             auto cfg_r = block::ConfigInfo::extract_config(
                                 state_root_r.move_as_ok(), requested_block_id,
                                 block::ConfigInfo::needPrevBlocks | block::ConfigInfo::needCapabilities |
-                                    block::ConfigInfo::needLibraries);
+                                    block::ConfigInfo::needLibraries | block::ConfigInfo::needSpecialSmc |
+                                    block::ConfigInfo::needWorkchainInfo);
                             if (cfg_r.is_error()) {
                               promise.set_value(
                                   make_json_rpc_error(-32603, PSTRING() << "config extract error: " << cfg_r.error(),
@@ -1397,77 +1480,23 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                               return;
                             }
 
-                            bool is_masterchain = addr.workchain == tos::masterchainId;
-                            auto gas_limits_prices_r = cfg->get_gas_limits_prices(is_masterchain);
-                            auto storage_prices_r = cfg->get_storage_prices();
-                            auto masterchain_msg_prices_r = cfg->get_msg_prices(true);
-                            auto basechain_msg_prices_r = cfg->get_msg_prices(false);
-                            if (gas_limits_prices_r.is_error() || storage_prices_r.is_error() ||
-                                masterchain_msg_prices_r.is_error() || basechain_msg_prices_r.is_error()) {
-                              promise.set_value(make_json_rpc_error(-32603, "fee config unavailable", req_id, cors));
-                              return;
-                            }
-                            auto gas_limits_prices = gas_limits_prices_r.move_as_ok();
-                            auto storage_prices = storage_prices_r.move_as_ok();
-                            auto masterchain_msg_prices = masterchain_msg_prices_r.move_as_ok();
-                            auto basechain_msg_prices = basechain_msg_prices_r.move_as_ok();
-                            block::MsgPrices* msg_prices[2] = {&basechain_msg_prices, &masterchain_msg_prices};
-
-                            auto storage_fee_256 = block::StoragePrices::compute_storage_fees(
-                                parsed.sync_utime, storage_prices, parsed.storage_used,
-                                parsed.storage_last_paid, false, is_masterchain);
-                            auto storage_fee = storage_fee_256.is_null() ? 0 : storage_fee_256->to_long();
-
-                            auto in_fwd_fee_r =
-                                external_message_import_fee(estimate.message, *msg_prices[is_masterchain]);
-                            if (in_fwd_fee_r.is_error()) {
-                              promise.set_value(
-                                  make_json_rpc_error(-32603, PSTRING() << "import fee error: " << in_fwd_fee_r.error(),
-                                                      req_id, cors, in_fwd_fee_r.error()));
-                              return;
-                            }
-                            auto in_fwd_fee = in_fwd_fee_r.move_as_ok();
-
-                            vm::Dictionary libraries{256};
-                            if (cfg->get_libraries_root().not_null()) {
-                              libraries = vm::Dictionary(cfg->get_libraries_root(), 256);
-                            }
-
-                            auto prev_blocks_info = prev_blocks_r.move_as_ok();
-                            auto cfg_shared = std::shared_ptr<const block::Config>(cfg.release());
-                            auto smc = tos::SmartContract::create({estimate.code, estimate.data});
-                            auto gas_limits =
-                                estimate_compute_gas_limits(td::make_refint(parsed.balance), gas_limits_prices);
-                            auto run_res = smc.write().send_external_message(
-                                body_cell,
-                                tos::SmartContract::Args()
-                                    .set_limits(gas_limits)
-                                    .set_balance(parsed.balance)
-                                    .set_extra_currencies(parsed.extra_currencies_cell)
-                                    .set_now(parsed.sync_utime)
-                                    .set_ignore_chksig(ignore_chksig)
-                                    .set_address(addr)
-                                    .set_config(cfg_shared)
-                                    .set_prev_blocks_info(prev_blocks_info)
-                                    .set_libraries(std::move(libraries)));
-
-                            td::int64 fwd_fee = 0;
-                            if (run_res.success) {
-                              auto fwd_fee_r = estimate_calc_fwd_fees(run_res.actions, msg_prices, is_masterchain);
-                              if (fwd_fee_r.is_error()) {
-                                promise.set_value(
-                                    make_json_rpc_error(-32603, PSTRING() << "forward fee error: " << fwd_fee_r.error(),
-                                                        req_id, cors, fwd_fee_r.error()));
-                                return;
+                            auto libraries_root = cfg->get_libraries_root();
+                            auto answer = estimate_external_message_fees(
+                                request, parsed, std::shared_ptr<const block::Config>(cfg.release()),
+                                std::move(libraries_root), prev_blocks_r.move_as_ok());
+                            if (answer.is_error()) {
+                              auto error = answer.move_as_error();
+                              if (error.code() == kEstimateUnsupportedCode) {
+                                promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
+                                                                      error.message().str(), req_id, cors));
+                              } else {
+                                promise.set_value(make_json_rpc_error(
+                                    error.code() == kEstimateRejectedCode ? kEstimateRejectedCode : -32603,
+                                    error.message().str(), req_id, cors));
                               }
-                              fwd_fee = fwd_fee_r.move_as_ok();
+                              return;
                             }
-
-                            auto gas_fee = run_res.accepted
-                                               ? estimate_compute_gas_price(run_res.gas_used, gas_limits_prices)->to_long()
-                                               : 0;
-                            promise.set_value(make_json_ok(
-                                build_estimate_fee_json(in_fwd_fee, storage_fee, gas_fee, fwd_fee), req_id, cors));
+                            promise.set_value(make_json_ok(answer.move_as_ok(), req_id, cors));
                           }));
                 }));
       });

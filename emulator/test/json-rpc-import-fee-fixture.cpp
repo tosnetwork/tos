@@ -17,9 +17,10 @@
 // The JSON-RPC estimateFee answers in_fwd_fee, the fee for importing the external
 // message. It must be the fee the executor charges for the message sendQuery submits
 // for the same request, with and without a StateInit, for a wallet that is not yet
-// deployed and for one that is active. Each case below plans the estimate exactly as
-// the handler does and holds its import fee to block::transaction::Transaction's
-// import of the submitted message.
+// deployed, one that is active and one that is frozen. Each case runs the handler's
+// own answer function on the account state the handler reads, and holds its import
+// fee to block::transaction::Transaction's import of the submitted message. A
+// request the executor would reject is refused, not priced.
 //
 // The forwarding prices are the TOS genesis ones, read from
 // crypto/smartcont/gen-zerostate.fif; every other parameter is the shared fixture
@@ -35,15 +36,18 @@
 #include "block/block-parse.h"
 #include "block/mc-config.h"
 #include "block/transaction.h"
+#include "block/workchain-execution-dispatch.h"
 #include "emulator/test/tos-genesis-config.h"
 #include "smc-envelope/GenericAccount.h"
 #include "smc-envelope/SmartContractCode.h"
+#include "td/utils/base64.h"
 #include "td/utils/misc.h"
 #include "td/utils/tests.h"
 #include "vm/cells/CellBuilder.h"
 #include "vm/dict.h"
 
 #include "json-rpc-server-fee.h"
+#include "json-rpc-server-internal.h"
 
 namespace {
 
@@ -165,8 +169,15 @@ td::Ref<vm::Cell> make_transfer_body(const block::StdAddress& to) {
   return body.finalize();
 }
 
-// What the executor charges for importing `message` into `account`.
-td::RefInt256 executed_import_fee(const block::Account& account, td::Ref<vm::Cell> message) {
+struct Executed {
+  td::RefInt256 import_fee;
+  // The compute phase's skip reason: sk_none when it runs the message.
+  int skip_reason = block::ComputePhase::sk_none;
+};
+
+// What the executor does with `message` for `account`: the import fee it charges,
+// and whether its compute phase runs the message or skips it.
+Executed execute(const block::Account& account, td::Ref<vm::Cell> message) {
   auto cfg = genesis_priced_config();
   td::Ref<vm::Cell> old_mparams;
   std::vector<block::StoragePrices> storage_prices;
@@ -182,11 +193,22 @@ td::RefInt256 executed_import_fee(const block::Account& account, td::Ref<vm::Cel
                                                 &rand_seed, &compute_cfg, &action_cfg, &serialize_cfg,
                                                 &masterchain_create_fee, &basechain_create_fee, account.workchain, kNow)
       .ensure();
+  compute_cfg.libraries = std::make_unique<vm::Dictionary>(256);
   block::transaction::Transaction trans(account, block::transaction::Transaction::tr_ord, kLt, kNow,
                                         std::move(message));
   CHECK(trans.unpack_input_msg(/*ihr_delivered=*/false, &action_cfg));
   CHECK(trans.in_fwd_fee.not_null());
-  return trans.in_fwd_fee;
+  Executed executed;
+  executed.import_fee = trans.in_fwd_fee;
+  CHECK(trans.prepare_storage_phase(storage_cfg, /*force_collect=*/true));
+  CHECK(trans.prepare_compute_phase(compute_cfg));
+  CHECK(trans.compute_phase != nullptr);
+  executed.skip_reason = trans.compute_phase->skip_reason;
+  return executed;
+}
+
+td::RefInt256 executed_import_fee(const block::Account& account, td::Ref<vm::Cell> message) {
+  return execute(account, std::move(message)).import_fee;
 }
 
 block::Account undeployed_account(const Wallet& wallet) {
@@ -204,17 +226,53 @@ block::Account active_account(const Wallet& wallet) {
   return account;
 }
 
-// estimateFee's in_fwd_fee for a request carrying `init_code`/`init_data` (null when
-// the request leaves them out) against an account in the given state.
-td::int64 estimated_import_fee(const Wallet& wallet, td::Ref<vm::Cell> body, td::Ref<vm::Cell> init_code,
-                               td::Ref<vm::Cell> init_data, bool account_active) {
-  auto plan = tos::plan_external_message_estimate(wallet.address, std::move(body), init_code, init_data, account_active,
-                                                  account_active ? wallet.code : td::Ref<vm::Cell>{},
-                                                  account_active ? wallet.data : td::Ref<vm::Cell>{});
-  CHECK(plan.is_ok());
-  auto prices = genesis_priced_config()->get_msg_prices(wallet.address.workchain == tos::masterchainId);
-  CHECK(prices.is_ok());
-  auto fee = tos::external_message_import_fee(plan.ok().message, prices.ok());
+td::Bits256 state_init_hash(const Wallet& wallet) {
+  return tos::GenericAccount::get_init_state(wallet.code, wallet.data)->get_hash().bits();
+}
+
+block::Account frozen_account(const Wallet& wallet) {
+  auto account = undeployed_account(wallet);
+  account.status = account.orig_status = block::Account::acc_frozen;
+  account.state_hash = state_init_hash(wallet);
+  return account;
+}
+
+// The account state the handler reads from the liteserver, in the same shapes
+// ParsedAccountState::parse produces for an active, a frozen and an
+// uninitialized account.
+tos::ParsedAccountState parsed_state(const Wallet& wallet, int status) {
+  tos::ParsedAccountState parsed;
+  parsed.balance = kWalletBalance;
+  parsed.balance_dec = std::to_string(kWalletBalance);
+  parsed.sync_utime = kNow;
+  parsed.storage_last_paid = kNow;
+  if (status == block::Account::acc_active) {
+    parsed.state_str = "active";
+    parsed.code_cell = wallet.code;
+    parsed.data_cell = wallet.data;
+  } else if (status == block::Account::acc_frozen) {
+    parsed.state_str = "frozen";
+    parsed.frozen_hash = td::base64_encode(state_init_hash(wallet).as_slice());
+  }
+  return parsed;
+}
+
+// The handler's answer for a request carrying `init_code`/`init_data` (null when
+// the request leaves them out) against `account`.
+td::Result<std::string> handler_answer(const Wallet& wallet, const block::Account& account, td::Ref<vm::Cell> body,
+                                       td::Ref<vm::Cell> init_code, td::Ref<vm::Cell> init_data) {
+  tos::EstimateFeeRequest request{wallet.address, std::move(body), std::move(init_code), std::move(init_data), true};
+  return tos::estimate_external_message_fees(request, parsed_state(wallet, account.status), genesis_priced_config(),
+                                             td::Ref<vm::Cell>{}, td::Ref<vm::Tuple>{});
+}
+
+td::int64 answered_import_fee(const std::string& answer) {
+  const std::string key = "\"in_fwd_fee\":";
+  auto at = answer.find(key);
+  CHECK(at != std::string::npos);
+  auto end = answer.find(',', at);
+  CHECK(end != std::string::npos);
+  auto fee = td::to_integer_safe<td::int64>(td::Slice(answer).substr(at + key.size(), end - at - key.size()));
   CHECK(fee.is_ok());
   return fee.ok();
 }
@@ -227,17 +285,57 @@ td::Ref<vm::Cell> submitted_message(const Wallet& wallet, td::Ref<vm::Cell> body
   return message.move_as_ok();
 }
 
+const char* status_name(int status) {
+  switch (status) {
+    case block::Account::acc_active:
+      return "active";
+    case block::Account::acc_frozen:
+      return "frozen";
+    default:
+      return "undeployed";
+  }
+}
+
 void expect_estimate_matches_execution(const Wallet& wallet, const block::Account& account, bool with_state_init) {
   auto body = make_transfer_body(wallet.address);
   auto init_code = with_state_init ? wallet.code : td::Ref<vm::Cell>{};
   auto init_data = with_state_init ? wallet.data : td::Ref<vm::Cell>{};
-  bool active = account.status == block::Account::acc_active;
-  auto estimated = estimated_import_fee(wallet, body, init_code, init_data, active);
-  auto executed = executed_import_fee(account, submitted_message(wallet, body, init_code, init_data));
-  LOG(INFO) << "import fee: estimated " << estimated << ", executed " << executed
-            << (with_state_init ? " (with StateInit)" : " (without StateInit)")
-            << (active ? ", active wallet" : ", undeployed wallet");
-  ASSERT_TRUE(td::cmp(executed, td::make_refint(estimated)) == 0);
+  auto answer = handler_answer(wallet, account, body, init_code, init_data);
+  if (answer.is_error()) {
+    LOG(ERROR) << answer.error();
+  }
+  ASSERT_TRUE(answer.is_ok());
+  auto estimated = answered_import_fee(answer.ok());
+  auto executed = execute(account, submitted_message(wallet, body, init_code, init_data));
+  LOG(INFO) << "import fee: estimated " << estimated << ", executed " << executed.import_fee
+            << (with_state_init ? " (with StateInit)" : " (without StateInit)") << ", " << status_name(account.status)
+            << " wallet";
+  ASSERT_TRUE(td::cmp(executed.import_fee, td::make_refint(estimated)) == 0);
+  // And the executor does run this message.
+  ASSERT_EQ(static_cast<int>(block::ComputePhase::sk_none), executed.skip_reason);
+}
+
+// The estimate refuses the request, and the executor's compute phase skips the
+// message for want of a usable state.
+void expect_refused_as_the_executor_skips(const Wallet& wallet, const block::Account& account,
+                                          td::Ref<vm::Cell> init_code, td::Ref<vm::Cell> init_data, td::Slice text) {
+  auto body = make_transfer_body(wallet.address);
+  auto answer = handler_answer(wallet, account, body, init_code, init_data);
+  ASSERT_TRUE(answer.is_error());
+  ASSERT_EQ(tos::kEstimateRejectedCode, answer.error().code());
+  ASSERT_TRUE(answer.error().message().str().find(text.str()) != std::string::npos);
+  auto executed = execute(account, submitted_message(wallet, body, init_code, init_data));
+  ASSERT_TRUE(executed.skip_reason == block::ComputePhase::sk_bad_state ||
+              executed.skip_reason == block::ComputePhase::sk_no_state);
+}
+
+// A wallet whose StateInit is not the one `wallet` is deployed with.
+Wallet other_wallet(const Wallet& wallet) {
+  Wallet other = wallet;
+  vm::CellBuilder data;
+  CHECK(data.store_long_bool(1, 32) && data.store_long_bool(1, 32) && data.store_zeroes_bool(256 + 1));
+  other.data = data.finalize();
+  return other;
 }
 
 }  // namespace
@@ -270,31 +368,128 @@ TEST(JsonRpcImportFee, a_state_init_sent_to_an_active_wallet_is_still_priced) {
   expect_estimate_matches_execution(wallet, active_account(wallet), /*with_state_init=*/true);
 }
 
+TEST(JsonRpcImportFee, unfreezing_a_frozen_wallet_prices_its_state_init) {
+  auto wallet = make_wallet();
+  expect_estimate_matches_execution(wallet, frozen_account(wallet), /*with_state_init=*/true);
+}
+
 TEST(JsonRpcImportFee, a_state_init_raises_the_import_fee) {
   auto wallet = make_wallet();
   auto body = make_transfer_body(wallet.address);
-  auto without = estimated_import_fee(wallet, body, {}, {}, /*account_active=*/true);
-  auto with = estimated_import_fee(wallet, body, wallet.code, wallet.data, /*account_active=*/true);
-  ASSERT_TRUE(with > without);
+  auto account = active_account(wallet);
+  auto without = handler_answer(wallet, account, body, {}, {});
+  auto with = handler_answer(wallet, account, body, wallet.code, wallet.data);
+  ASSERT_TRUE(without.is_ok() && with.is_ok());
+  ASSERT_TRUE(answered_import_fee(with.ok()) > answered_import_fee(without.ok()));
+}
+
+// Each request the executor's compute phase skips as having no usable state is
+// refused, rather than answered with a fee for a message that never executes.
+TEST(JsonRpcImportFee, requests_the_executor_rejects_are_refused) {
+  auto wallet = make_wallet();
+  auto other = other_wallet(wallet);
+  // An active account and a StateInit that is not its own.
+  expect_refused_as_the_executor_skips(wallet, active_account(wallet), other.code, other.data,
+                                       "does not hash to the address of this active account");
+  // An undeployed account: no StateInit, or one for another address.
+  expect_refused_as_the_executor_skips(wallet, undeployed_account(wallet), {}, {}, "not deployed");
+  expect_refused_as_the_executor_skips(wallet, undeployed_account(wallet), other.code, other.data,
+                                       "cannot deploy this account");
+  // A frozen account: no StateInit, or one it was not frozen with.
+  expect_refused_as_the_executor_skips(wallet, frozen_account(wallet), {}, {}, "frozen");
+  expect_refused_as_the_executor_skips(wallet, frozen_account(wallet), other.code, other.data, "cannot unfreeze it");
+  // A StateInit without code for an undeployed account leaves nothing to run.
+  auto body = make_transfer_body(wallet.address);
+  auto no_code = handler_answer(wallet, undeployed_account(wallet), body, {}, wallet.data);
+  ASSERT_TRUE(no_code.is_error());
+  ASSERT_EQ(tos::kEstimateRejectedCode, no_code.error().code());
 }
 
 TEST(JsonRpcImportFee, the_estimate_runs_the_code_the_executor_runs) {
   auto wallet = make_wallet();
   auto body = make_transfer_body(wallet.address);
-  vm::CellBuilder other;
-  CHECK(other.store_long_bool(0xdead, 16));
-  auto other_code = other.finalize();
-  // An active account runs its own code whatever StateInit the request carries.
-  auto active =
-      tos::plan_external_message_estimate(wallet.address, body, other_code, {}, true, wallet.code, wallet.data);
+  // The handler reads an active account's code and data from its state.
+  auto active = tos::estimate_account_from(parsed_state(wallet, block::Account::acc_active));
   ASSERT_TRUE(active.is_ok());
+  ASSERT_TRUE(active.ok().status == tos::EstimateAccount::Status::Active);
   ASSERT_TRUE(active.ok().code->get_hash() == wallet.code->get_hash());
-  // An undeployed one runs the request's.
-  auto undeployed = tos::plan_external_message_estimate(wallet.address, body, wallet.code, wallet.data, false, {}, {});
+  ASSERT_TRUE(active.ok().data->get_hash() == wallet.data->get_hash());
+  // An active account runs its own code, with or without its own StateInit.
+  for (bool with_state_init : {false, true}) {
+    auto plan =
+        tos::plan_external_message_estimate(wallet.address, body, with_state_init ? wallet.code : td::Ref<vm::Cell>{},
+                                            with_state_init ? wallet.data : td::Ref<vm::Cell>{}, active.ok());
+    ASSERT_TRUE(plan.is_ok());
+    ASSERT_TRUE(plan.ok().code->get_hash() == wallet.code->get_hash());
+  }
+  // An undeployed or frozen one runs the request's.
+  auto frozen = tos::estimate_account_from(parsed_state(wallet, block::Account::acc_frozen));
+  ASSERT_TRUE(frozen.is_ok());
+  ASSERT_TRUE(frozen.ok().status == tos::EstimateAccount::Status::Frozen);
+  ASSERT_TRUE(frozen.ok().frozen_state_hash == state_init_hash(wallet));
+  auto undeployed = tos::estimate_account_from(parsed_state(wallet, block::Account::acc_uninit));
   ASSERT_TRUE(undeployed.is_ok());
-  ASSERT_TRUE(undeployed.ok().code->get_hash() == wallet.code->get_hash());
-  // And one with no code at all cannot be estimated.
-  ASSERT_TRUE(tos::plan_external_message_estimate(wallet.address, body, {}, {}, false, {}, {}).is_error());
+  ASSERT_TRUE(undeployed.ok().status == tos::EstimateAccount::Status::Uninitialized);
+  for (const auto& account : {frozen.ok(), undeployed.ok()}) {
+    auto plan = tos::plan_external_message_estimate(wallet.address, body, wallet.code, wallet.data, account);
+    ASSERT_TRUE(plan.is_ok());
+    ASSERT_TRUE(plan.ok().code->get_hash() == wallet.code->get_hash());
+    ASSERT_TRUE(plan.ok().data->get_hash() == wallet.data->get_hash());
+  }
+}
+
+// The executor charges a special account nothing for importing a message.
+TEST(JsonRpcImportFee, a_special_account_imports_for_free) {
+  auto cfg = genesis_priced_config();
+  auto special = cfg->get_special_smartcontracts(false);
+  ASSERT_TRUE(special.is_ok() && !special.ok().empty());
+  auto wallet = make_wallet();
+  wallet.address = block::StdAddress(tos::masterchainId, special.ok().front());
+  auto body = make_transfer_body(wallet.address);
+  auto account = active_account(wallet);
+  account.is_special = true;
+  auto answer = handler_answer(wallet, account, body, {}, {});
+  ASSERT_TRUE(answer.is_ok());
+  auto executed = executed_import_fee(account, submitted_message(wallet, body, {}, {}));
+  ASSERT_TRUE(td::sgn(executed) == 0);
+  ASSERT_EQ(0, answered_import_fee(answer.ok()));
+
+  // An ordinary masterchain account pays.
+  td::Bits256 ordinary;
+  ordinary.as_slice().fill(0x77);
+  wallet.address = block::StdAddress(tos::masterchainId, ordinary);
+  auto ordinary_account = active_account(wallet);
+  auto ordinary_answer = handler_answer(wallet, ordinary_account, body, {}, {});
+  ASSERT_TRUE(ordinary_answer.is_ok());
+  auto ordinary_executed = executed_import_fee(ordinary_account, submitted_message(wallet, body, {}, {}));
+  ASSERT_TRUE(td::sgn(ordinary_executed) > 0);
+  ASSERT_TRUE(td::cmp(ordinary_executed, td::make_refint(answered_import_fee(ordinary_answer.ok()))) == 0);
+}
+
+// A workchain with its own compute phase is charged no import fee and does not
+// run TVM, so the estimate refuses it instead of quoting a TVM price.
+TEST(JsonRpcImportFee, a_workchain_with_a_custom_compute_phase_is_refused) {
+  auto workchain = [](int id, bool basic, td::int32 vm_version, td::uint32 type_id) {
+    auto info = td::make_ref<block::WorkchainInfo>();
+    info.write().workchain = id;
+    info.write().enabled_since = 0;
+    info.write().active = true;
+    info.write().accept_msgs = true;
+    info.write().basic = basic;
+    info.write().vm_version = vm_version;
+    info.write().workchain_type_id = type_id;
+    return info;
+  };
+  auto tvm = block::tvm_workchain_engine_key();
+  block::WorkchainSet workchains;
+  workchains[2] = workchain(2, false, 0, 7);
+  workchains[3] = workchain(3, true, static_cast<td::int32>(tvm.selector), 0);
+  auto refused = tos::check_estimate_workchain(workchains, 2);
+  ASSERT_TRUE(refused.is_error());
+  ASSERT_EQ(tos::kEstimateUnsupportedCode, refused.code());
+  ASSERT_TRUE(tos::check_estimate_workchain(workchains, 3).is_ok());
+  ASSERT_TRUE(tos::check_estimate_workchain(workchains, tos::basechainId).is_ok());
+  ASSERT_TRUE(tos::check_estimate_workchain(workchains, tos::masterchainId).is_ok());
 }
 
 TEST(JsonRpcImportFee, a_message_that_is_not_an_inbound_external_is_refused) {
@@ -303,6 +498,6 @@ TEST(JsonRpcImportFee, a_message_that_is_not_an_inbound_external_is_refused) {
   CHECK(tos::GenericAccount::store_int_message(internal, wallet.address, 1, {}));
   CHECK(internal.store_zeroes_bool(2));
   auto prices = genesis_priced_config()->get_msg_prices(false).move_as_ok();
-  ASSERT_TRUE(tos::external_message_import_fee(internal.finalize(), prices).is_error());
-  ASSERT_TRUE(tos::external_message_import_fee({}, prices).is_error());
+  ASSERT_TRUE(tos::external_message_import_fee(internal.finalize(), prices, false).is_error());
+  ASSERT_TRUE(tos::external_message_import_fee({}, prices, false).is_error());
 }

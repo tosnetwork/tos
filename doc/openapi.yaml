@@ -2941,10 +2941,14 @@ paths:
       description: >-
         Prices the message sendQuery submits for the same address, body, init_code and init_data: it
         carries a StateInit exactly when the request supplies init_code or init_data, so in_fwd_fee is the
-        import fee of that message. Leave both out for a wallet that is already active, and supply them to
-        deploy one. The compute phase runs the account's own code when the account is active, otherwise
-        init_code; an account that is not active and a request without init_code is an error. POST only:
-        ignore_chksig.
+        import fee of that message (zero for a special account, as the executor charges it). Leave both out
+        for a wallet that is already active, and supply them to deploy or unfreeze one. The compute phase runs
+        the account's own code when the account is active, otherwise init_code. A request the executor would
+        reject is refused with INVALID_ARGUMENT instead of priced: an account that is not deployed and no
+        StateInit or one whose hash is not the address; a frozen account and no StateInit or one other than
+        the StateInit it was frozen with; an active account and a StateInit whose hash is not the address.
+        An account on a workchain whose compute phase is not TVM is refused with CONTRACT_KIND_UNSUPPORTED.
+        POST only: ignore_chksig.
       parameters:
         - name: address
           in: query
@@ -2984,9 +2988,13 @@ paths:
       description: >-
         Prices the message sendQuery submits for the same address, body, init_code and init_data: it
         carries a StateInit exactly when the request supplies init_code or init_data, so in_fwd_fee is the
-        import fee of that message. Leave both out for a wallet that is already active, and supply them to
-        deploy one. The compute phase runs the account's own code when the account is active, otherwise
-        init_code; an account that is not active and a request without init_code is an error.
+        import fee of that message (zero for a special account, as the executor charges it). Leave both out
+        for a wallet that is already active, and supply them to deploy or unfreeze one. The compute phase runs
+        the account's own code when the account is active, otherwise init_code. A request the executor would
+        reject is refused with INVALID_ARGUMENT instead of priced: an account that is not deployed and no
+        StateInit or one whose hash is not the address; a frozen account and no StateInit or one other than
+        the StateInit it was frozen with; an active account and a StateInit whose hash is not the address.
+        An account on a workchain whose compute phase is not TVM is refused with CONTRACT_KIND_UNSUPPORTED.
       requestBody:
         required: false
         description: 'Named parameters. An empty body is {}.'

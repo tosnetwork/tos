@@ -101,6 +101,9 @@ export interface ExternalStateInitFields {
  * Pass the same fields to `estimateFee` to price the message that
  * `open(contract, provider).send…()` submits.
  *
+ * Reads the account state with one `getAddressState` call when `init` is
+ * given (none otherwise); a failure of that call rejects with its error.
+ *
  * @param provider - Provider used to read the account state
  * @param address - The account the message goes to
  * @param init - The contract's StateInit, if it has one
@@ -198,6 +201,13 @@ function makeContractProvider(address: AddressLike, client: TosProvider, contrac
  * This is the primary way to use wallet and contract wrappers with a client.
  * After calling `open()`, you can call contract methods without manually
  * passing the provider.
+ *
+ * External messages: for a contract that has a StateInit (`contract.init`),
+ * every external send first reads the account state with one
+ * `getAddressState` call, to attach the StateInit only while the account is
+ * not active (see {@link externalStateInit}). That is one extra request per
+ * send, and if it fails the send fails with its error and nothing is
+ * submitted. A contract without a StateInit sends without the extra call.
  *
  * @param contract - A contract instance with an `address` property
  * @param provider - A TosProvider (typically a TosClient instance)

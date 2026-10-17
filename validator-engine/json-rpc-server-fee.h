@@ -37,6 +37,24 @@ td::Result<td::Ref<vm::Cell>> build_query_external_message(const block::StdAddre
                                                            const td::Ref<vm::Cell>& init_data,
                                                            td::Ref<vm::Cell> body) noexcept;
 
+// The JSON-RPC codes a refused estimate travels under: a request the executor
+// would reject (INVALID_ARGUMENT), and an account whose execution the estimate
+// does not model (CONTRACT_KIND_UNSUPPORTED).
+inline constexpr int kEstimateRejectedCode = -32602;
+inline constexpr int kEstimateUnsupportedCode = -32006;
+
+// The account an estimate is made against, in the terms the executor's compute
+// phase decides by. An account that does not exist is uninitialized.
+struct EstimateAccount {
+  enum class Status { Uninitialized, Active, Frozen };
+  Status status = Status::Uninitialized;
+  // An active account's code and data.
+  td::Ref<vm::Cell> code;
+  td::Ref<vm::Cell> data;
+  // The hash of the StateInit a frozen account was frozen with.
+  td::Bits256 frozen_state_hash = td::Bits256::zero();
+};
+
 // What estimateFee prices and emulates for one request.
 struct ExternalMessageEstimate {
   // The message sendQuery submits for the same address, body, init_code and
@@ -48,19 +66,34 @@ struct ExternalMessageEstimate {
   td::Ref<vm::Cell> data;
 };
 
-// Fails when the body is missing, when the StateInit or the message cannot be
-// built, or when there is no code to run: an account that is not active and a
-// request without init_code.
-td::Result<ExternalMessageEstimate> plan_external_message_estimate(
-    const block::StdAddress& address, td::Ref<vm::Cell> body, const td::Ref<vm::Cell>& init_code,
-    const td::Ref<vm::Cell>& init_data, bool account_active, const td::Ref<vm::Cell>& account_code,
-    const td::Ref<vm::Cell>& account_data);
+// Refuses, with kEstimateRejectedCode, every request the executor's compute
+// phase skips as having no usable state, so that no fee is quoted for a
+// message that would never execute:
+//   * an uninitialized account and no StateInit, or a StateInit whose hash is
+//     not the address;
+//   * a frozen account and no StateInit, or a StateInit whose hash is not the
+//     hash the account was frozen with;
+//   * an active account and a StateInit whose hash is not the address.
+// Also refuses a request that leaves nothing to run (a StateInit without code
+// for an account that is not active), and fails when the body is missing or the
+// message cannot be built.
+td::Result<ExternalMessageEstimate> plan_external_message_estimate(const block::StdAddress& address,
+                                                                   td::Ref<vm::Cell> body,
+                                                                   const td::Ref<vm::Cell>& init_code,
+                                                                   const td::Ref<vm::Cell>& init_data,
+                                                                   const EstimateAccount& account);
 
 // The import fee (in_fwd_fee) the executor charges for importing `message` as an
-// inbound external message of an ordinary account: the forwarding price of every
-// cell and bit beyond the root cell, which the lump price pays for. Fails on a
-// message that is not an inbound external message, and on a fee that does not
-// fit the signed 64-bit field it is served in.
-td::Result<td::int64> external_message_import_fee(const td::Ref<vm::Cell>& message, const block::MsgPrices& prices);
+// inbound external message: the forwarding price of every cell and bit beyond
+// the root cell, which the lump price pays for, and nothing for a special
+// account. Fails on a message that is not an inbound external message, and on a
+// fee that does not fit the signed 64-bit field it is served in.
+td::Result<td::int64> external_message_import_fee(const td::Ref<vm::Cell>& message, const block::MsgPrices& prices,
+                                                  bool special_account);
+
+// Refuses, with kEstimateUnsupportedCode, a workchain whose compute phase is not
+// TVM: the executor charges such an account no import fee and runs its own
+// engine, neither of which an estimate made by emulating TVM can price.
+td::Status check_estimate_workchain(const block::WorkchainSet& workchains, tos::WorkchainId workchain);
 
 }  // namespace tos

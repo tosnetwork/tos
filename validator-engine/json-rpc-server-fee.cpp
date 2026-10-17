@@ -17,6 +17,7 @@
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "block/workchain-execution-dispatch.h"
 #include "smc-envelope/GenericAccount.h"
 #include "vm/boc.h"
 #include "vm/cells/CellBuilder.h"
@@ -67,26 +68,103 @@ td::Result<td::Ref<vm::Cell>> build_query_external_message(const block::StdAddre
   })());
 }
 
-td::Result<ExternalMessageEstimate> plan_external_message_estimate(
-    const block::StdAddress& address, td::Ref<vm::Cell> body, const td::Ref<vm::Cell>& init_code,
-    const td::Ref<vm::Cell>& init_data, bool account_active, const td::Ref<vm::Cell>& account_code,
-    const td::Ref<vm::Cell>& account_data) {
+namespace {
+
+td::Status rejected(td::Slice message) {
+  return td::Status::Error(kEstimateRejectedCode, message);
+}
+
+}  // namespace
+
+td::Result<ExternalMessageEstimate> plan_external_message_estimate(const block::StdAddress& address,
+                                                                   td::Ref<vm::Cell> body,
+                                                                   const td::Ref<vm::Cell>& init_code,
+                                                                   const td::Ref<vm::Cell>& init_data,
+                                                                   const EstimateAccount& account) {
+  const bool has_state_init = init_code.not_null() || init_data.not_null();
+  td::Bits256 state_init_hash = td::Bits256::zero();
+  if (has_state_init) {
+    auto state_init = tos::GenericAccount::get_init_state_checked(init_code, init_data);
+    if (state_init.is_error()) {
+      return rejected(PSLICE() << "Failed to build external message: " << state_init.error().message());
+    }
+    state_init_hash = state_init.ok()->get_hash().bits();
+  }
+
   ExternalMessageEstimate estimate;
-  if (account_active) {
-    estimate.code = account_code;
-    estimate.data = account_data;
-  } else {
-    estimate.code = init_code;
-    estimate.data = init_data;
+  switch (account.status) {
+    case EstimateAccount::Status::Active:
+      // The executor ignores the StateInit of an active account, but rejects an
+      // external message whose StateInit is not the account's own.
+      if (has_state_init && state_init_hash != address.addr) {
+        return rejected(
+            "the StateInit of init_code/init_data does not hash to the address of this active account; the "
+            "message would be rejected");
+      }
+      if (account.code.is_null()) {
+        return rejected("the active account has no code to run");
+      }
+      estimate.code = account.code;
+      estimate.data = account.data;
+      break;
+    case EstimateAccount::Status::Uninitialized:
+      if (!has_state_init) {
+        return rejected("the account is not deployed: estimateFee needs its init_code and init_data");
+      }
+      if (state_init_hash != address.addr) {
+        return rejected(
+            "the StateInit of init_code/init_data does not hash to the address; it cannot deploy this account");
+      }
+      estimate.code = init_code;
+      estimate.data = init_data;
+      break;
+    case EstimateAccount::Status::Frozen:
+      if (!has_state_init) {
+        return rejected("the account is frozen: estimateFee needs the init_code and init_data it was frozen with");
+      }
+      if (state_init_hash != account.frozen_state_hash) {
+        return rejected(
+            "the StateInit of init_code/init_data is not the one this frozen account was frozen with; it cannot "
+            "unfreeze it");
+      }
+      estimate.code = init_code;
+      estimate.data = init_data;
+      break;
   }
   if (estimate.code.is_null()) {
-    return td::Status::Error("estimateFee requires deploy init_code/init_data or an active account state");
+    return rejected("the StateInit has no code to run");
   }
-  TRY_RESULT_ASSIGN(estimate.message, build_query_external_message(address, init_code, init_data, std::move(body)));
+
+  auto message = build_query_external_message(address, init_code, init_data, std::move(body));
+  if (message.is_error()) {
+    return rejected(PSLICE() << "Failed to build external message: " << message.error().message());
+  }
+  estimate.message = message.move_as_ok();
   return estimate;
 }
 
-td::Result<td::int64> external_message_import_fee(const td::Ref<vm::Cell>& message, const block::MsgPrices& prices) {
+td::Status check_estimate_workchain(const block::WorkchainSet& workchains, tos::WorkchainId workchain) {
+  // The executor's own test for a custom compute phase.
+  if (workchain == tos::masterchainId || workchain == tos::basechainId) {
+    return td::Status::OK();
+  }
+  auto it = workchains.find(workchain);
+  if (it == workchains.end() || it->second.is_null() || !it->second->active) {
+    return td::Status::OK();
+  }
+  auto descriptor = block::normalize_workchain_descriptor(*it->second);
+  if (descriptor.is_error()) {
+    return td::Status::OK();
+  }
+  if (block::workchain_engine_key_is_tvm(block::workchain_engine_key_from_descriptor(descriptor.ok()))) {
+    return td::Status::OK();
+  }
+  return td::Status::Error(kEstimateUnsupportedCode, PSLICE() << "estimateFee does not price workchain " << workchain
+                                                              << ": its compute phase is not TVM");
+}
+
+td::Result<td::int64> external_message_import_fee(const td::Ref<vm::Cell>& message, const block::MsgPrices& prices,
+                                                  bool special_account) {
   if (message.is_null()) {
     return td::Status::Error("external message is empty");
   }
@@ -110,7 +188,8 @@ td::Result<td::int64> external_message_import_fee(const td::Ref<vm::Cell>& messa
     }
     const td::uint64 bits = stat.bits - cs.size();
     const td::uint64 cells = stat.cells - 1;
-    const td::uint64 fee = prices.compute_fwd_ihr_fees(cells, bits, true).first;
+    // A special account imports for free.
+    const td::uint64 fee = special_account ? 0 : prices.compute_fwd_ihr_fees(cells, bits, true).first;
     if (fee > static_cast<td::uint64>(std::numeric_limits<td::int64>::max())) {
       return td::Status::Error("import fee exceeds the signed 64-bit range");
     }

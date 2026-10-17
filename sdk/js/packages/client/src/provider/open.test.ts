@@ -102,6 +102,20 @@ describe("open(): StateInit on external messages", () => {
     expect(sent.init_data).toBe(w.init.data);
   });
 
+  it("fails the send, submitting nothing, when the account state cannot be read", async () => {
+    const w = wallet();
+    const node = stubNode("active");
+    const failing = {
+      ...(node.provider as unknown as Record<string, unknown>),
+      async getState() {
+        throw new Error("state unavailable");
+      },
+    } as unknown as TosProvider;
+    const opener = open(w as unknown as ContractLike, failing) as unknown as OpenedWallet;
+    await expect(opener.sendDeploy(SIGNER, 0n)).rejects.toThrow("state unavailable");
+    expect(node.sent).toEqual([]);
+  });
+
   it("does not read the account state for a contract without a StateInit", async () => {
     const node = stubNode("uninitialized");
     const contract = {
