@@ -26,6 +26,7 @@
 #include <dirent.h>
 #include <functional>
 #include <limits>
+#include <linux/sock_diag.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <string>
@@ -39,6 +40,7 @@
 #include "td/actor/actor.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
+#include "td/utils/misc.h"
 #include "td/utils/port/IPAddress.h"
 #include "td/utils/port/ServerSocketFd.h"
 #include "td/utils/tests.h"
@@ -249,6 +251,10 @@ class Client {
     }
     received += static_cast<size_t>(n);
     return true;
+  }
+
+  int fd() const {
+    return fd_;
   }
 
   void close() {
@@ -638,9 +644,68 @@ TEST(JsonRpcTransport, a_listener_without_a_response_deadline_is_not_constructed
 namespace {
 
 constexpr double kResponseTimeout = 1.0;
-// Scheduling allowance on top of the deadline: the alarm fires on the actor
-// scheduler, which this test pumps in 20 ms slices on a shared CI runner.
+// Allowance on top of the deadline for the alarm to run on the actor scheduler,
+// which this test pumps in 20 ms slices on a shared CI runner, and for the one
+// reply that may be queued after the stall is seen.
 constexpr double kTolerance = 1.0;
+
+// The descriptor of the server's end of the connection `client_fd` opened to a
+// server in this process: the socket whose local address is the client's peer
+// and whose peer is the client's local address. -1 if there is none.
+int server_end_of(int client_fd) {
+  sockaddr_in client_local{};
+  sockaddr_in client_peer{};
+  socklen_t len = sizeof(client_local);
+  if (::getsockname(client_fd, reinterpret_cast<sockaddr *>(&client_local), &len) != 0) {
+    return -1;
+  }
+  len = sizeof(client_peer);
+  if (::getpeername(client_fd, reinterpret_cast<sockaddr *>(&client_peer), &len) != 0) {
+    return -1;
+  }
+  DIR *dir = ::opendir("/proc/self/fd");
+  if (dir == nullptr) {
+    return -1;
+  }
+  int found = -1;
+  while (auto *entry = ::readdir(dir)) {
+    auto r_fd = td::to_integer_safe<int>(td::CSlice(static_cast<const char *>(entry->d_name)));
+    if (r_fd.is_error() || r_fd.ok() == client_fd) {
+      continue;
+    }
+    int fd = r_fd.ok();
+    sockaddr_in local{};
+    sockaddr_in peer{};
+    len = sizeof(local);
+    if (::getsockname(fd, reinterpret_cast<sockaddr *>(&local), &len) != 0 || local.sin_family != AF_INET) {
+      continue;
+    }
+    len = sizeof(peer);
+    if (::getpeername(fd, reinterpret_cast<sockaddr *>(&peer), &len) != 0) {
+      continue;
+    }
+    if (local.sin_port == client_peer.sin_port && local.sin_addr.s_addr == client_peer.sin_addr.s_addr &&
+        peer.sin_port == client_local.sin_port && peer.sin_addr.s_addr == client_local.sin_addr.s_addr) {
+      found = fd;
+      break;
+    }
+  }
+  ::closedir(dir);
+  return found;
+}
+
+// Whether the kernel's send buffer for `fd` is full: the bytes it has queued
+// reached the buffer size, so a write now takes nothing and the writer keeps
+// what it has. Writability as reported by poll() is not this: a socket stops
+// polling writable while it still has room, and writes that fit still succeed.
+bool send_buffer_full(int fd) {
+  uint32_t meminfo[SK_MEMINFO_VARS] = {};
+  socklen_t len = sizeof(meminfo);
+  if (::getsockopt(fd, SOL_SOCKET, SO_MEMINFO, meminfo, &len) != 0 || len < sizeof(meminfo)) {
+    return false;
+  }
+  return meminfo[SK_MEMINFO_WMEM_QUEUED] >= meminfo[SK_MEMINFO_SNDBUF];
+}
 
 // A batch of 100 unknown-method requests, each with an id at the bound: about
 // 34 KB of reply per request.
@@ -684,13 +749,17 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
     for (int i = 0; i < 400; i++) {
       stream += request;
     }
+    // The server runs in this process, so its end of the connection is one of
+    // this process's descriptors.
+    int server_fd = server_end_of(client.fd());
+    for (int attempt = 0; server_fd < 0 && attempt < 250; attempt++) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      server_fd = server_end_of(client.fd());
+    }
+    ASSERT_TRUE(server_fd >= 0);
     size_t offset = 0;
     auto start = Clock::now();
     auto give_up = start + std::chrono::seconds(20);
-    // Once the server holds this much more than at the start, replies are
-    // queued behind output the client has not read: the request read-ahead
-    // alone stays far below it.
-    const size_t stalled_mem = baseline_mem + (512 << 10);
     Clock::time_point stalled_at{};
     bool stalled = false;
     size_t peak_mem = 0;
@@ -701,14 +770,25 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
       if (!server_closed && !client.send_some(stream, offset)) {
         server_closed = true;
       }
-      if (trickle && !server_closed && !client.trickle(64, trickled)) {
-        server_closed = true;
-      }
       auto mem = td::BufferAllocator::get_buffer_mem();
       peak_mem = std::max(peak_mem, mem);
-      if (!stalled && mem > stalled_mem) {
+      // The stall starts when the kernel stops taking the server's output:
+      // from then on every reply waits behind output the client has not read,
+      // so the response deadline is armed no later than the first reply queued
+      // after this moment, and no later reply may move it. Taking the moment
+      // from the socket rather than from how much the server holds keeps the
+      // measurement independent of how fast the server gets there: an
+      // instrumented build reaches the same state later, not differently.
+      if (!stalled && !server_closed && send_buffer_full(server_fd)) {
         stalled = true;
         stalled_at = Clock::now();
+      }
+      // A trickle-reading client starts reading once the stall is seen: what it
+      // reads frees room in the kernel, so reading earlier could keep the
+      // buffer just short of full at every look. The few bytes it takes from
+      // then on are what must not move the deadline.
+      if (trickle && stalled && !server_closed && !client.trickle(64, trickled)) {
+        server_closed = true;
       }
       if (stalled && mem <= baseline_mem + (256 << 10) && open_fd_count() < fds_connected) {
         released_after = std::chrono::duration<double>(Clock::now() - stalled_at).count();
@@ -726,8 +806,8 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
     ASSERT_TRUE(stalled);
     ASSERT_TRUE(peak_mem > baseline_mem + (1 << 20));
     // Released by the deadline plus tolerance, counted from the moment the
-    // stall was seen (the first unwritten reply was queued no later): the
-    // server's socket is closed and its input and output buffers are freed.
+    // server's socket stopped taking output: the server's socket is closed
+    // and its input and output buffers are freed.
     ASSERT_TRUE(released_after >= 0);
     // The client sees the close once it reads what was in flight, and never
     // gets the replies the server dropped.
