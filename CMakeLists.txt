@@ -99,6 +99,7 @@ option(TOSLIB_ENABLE_JNI "Use \"ON\" to enable JNI-compatible TosLib API.")
 option(TOS_USE_ASAN "Use \"ON\" to enable AddressSanitizer." OFF)
 option(TOS_USE_TSAN "Use \"ON\" to enable ThreadSanitizer." OFF)
 option(TOS_USE_UBSAN "Use \"ON\" to enable UndefinedBehaviorSanitizer." OFF)
+option(TOS_BUILD_FUZZERS "Use \"ON\" to build the libFuzzer targets in test/fuzz (Clang, with ASan)." OFF)
 option(TOS_USE_COVERAGE "Use \"ON\" to enable code coverage with gcov." OFF)
 set(TOS_ARCH "native" CACHE STRING "Architecture, will be passed to -march=")
 
@@ -197,6 +198,18 @@ endif()
 if (TOS_USE_UBSAN)
   add_compile_options(-fsanitize=undefined)
   add_link_options(-fsanitize=undefined)
+endif()
+if (TOS_BUILD_FUZZERS)
+  # Coverage instrumentation for everything a fuzz target links; the targets themselves
+  # add libFuzzer's driver at link time (test/fuzz). A fuzzing build stops at the first
+  # sanitizer report so libFuzzer records the input instead of running past it.
+  if (NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    message(FATAL_ERROR "TOS_BUILD_FUZZERS requires Clang (libFuzzer)")
+  endif()
+  if (NOT TOS_USE_ASAN)
+    message(FATAL_ERROR "TOS_BUILD_FUZZERS requires TOS_USE_ASAN=ON")
+  endif()
+  add_compile_options(-fsanitize=fuzzer-no-link -fno-sanitize-recover=all)
 endif()
 
 if (TOS_USE_ABSEIL)
