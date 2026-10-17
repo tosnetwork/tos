@@ -20,11 +20,18 @@ on:
   pull_request:
     branches: [master, testnet, main]
     types: [opened, reopened, synchronize, ready_for_review]
+    # The tests and scripts each job runs, and the in-tree code the unit tests link
+    # beyond the JSON-RPC sources: the HTTP layer and the shared test main.
     paths:
       - 'validator-engine/json-rpc-*'
+      - 'validator-engine/CMakeLists.txt'
+      - 'http/**'
       - 'test/test-json-rpc-*'
+      - 'test/test-td-main.cpp'
       - 'test/json-rpc/**'
       - 'scripts/asan-jsonrpc-corpus.py'
+      - 'scripts/asan-jsonrpc-localnet.sh'
+      - 'scripts/check-jsonrpc-route-gating.py'
       - 'scripts/check-jsonrpc-spec.py'
       - 'doc/openapi.yaml'
       - '.github/workflows/jsonrpc-asan.yml'
