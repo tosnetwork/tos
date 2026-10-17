@@ -62,6 +62,8 @@ on:
       - 'tdutils/td/utils/BufferedFd.h'
       - 'tdutils/td/utils/port/**'
       - 'CMakeLists.txt'
+      - 'scripts/install-llvm-toolchain.sh'
+      - 'scripts/keys/apt-llvm-org.asc'
       - '.github/workflows/network-safety-asan.yml'
   workflow_dispatch:
   workflow_call:

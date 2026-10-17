@@ -32,6 +32,8 @@ on:
       - 'validator-engine/validator-engine*'
       - 'validator-engine/CMakeLists.txt'
       - 'CMakeLists.txt'
+      - 'scripts/install-llvm-toolchain.sh'
+      - 'scripts/keys/apt-llvm-org.asc'
       - 'http/**'
       - 'scripts/verify-build-tool.py'
       - 'uv.lock'
