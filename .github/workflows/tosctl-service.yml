@@ -7,6 +7,8 @@ on:
     paths:
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
+      - "tosctl/src/adnl/raptorq/**"
+      - "tosctl/src/Cargo.toml"
       - "tosctl/scripts/**"
       - "validator-engine/json-rpc-server*.cpp"
       - "scripts/localnet-jsonrpc.py"
@@ -17,6 +19,8 @@ on:
     paths:
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
+      - "tosctl/src/adnl/raptorq/**"
+      - "tosctl/src/Cargo.toml"
       - "tosctl/scripts/**"
       - "validator-engine/json-rpc-server*.cpp"
       - "scripts/localnet-jsonrpc.py"
@@ -71,6 +75,30 @@ jobs:
         run: cargo fmt -p secrets-vault --check
       - name: Vault tests
         run: cargo test -p secrets-vault --lib --locked
+
+  # The RaptorQ codec decodes symbols chosen by remote peers for the Rust RLDP
+  # and broadcast paths. Its suite pins byte-for-byte agreement with golden
+  # vectors from the C++ implementation and every refusal of malformed peer
+  # input; nothing ran it before. Its fuzz targets run with
+  # `make -C tosctl/src/adnl/raptorq fuzz`.
+  raptorq:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tosctl/src
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: tosctl/src -> target
+      - name: Formatting
+        run: cargo fmt -p raptorq --check
+      - name: Codec tests (unit, peer input, interop with the C++ vectors)
+        run: cargo test -p raptorq --locked
 
   # This harness creates a new encrypted file Vault for one local child
   # process. It has no third-party Python dependency and must stay unable to

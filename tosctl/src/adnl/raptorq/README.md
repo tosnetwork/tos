@@ -20,13 +20,25 @@ implementation (`tdfec/`) that the network's C++ nodes run:
 - P1 is the smallest prime strictly greater than P, as the C++ side computes it.
 - Every packet given to the decoder is validated (source block, 24-bit id,
   exact symbol length) and refused with `raptorq::Error` rather than a panic;
-  a source block decoder keeps at most K + 10 symbols.
+  a source block decoder keeps at most K + 10 symbols, and re-runs the solver
+  only after a new symbol was stored.
+- The section 5.3.5.1 `rand` sums wrap in 32 bits, as in C++; `y` reaches
+  2^32 - 1 for valid ids.
+- tosctl builds every RLDP and broadcast codec with one source block and one
+  sub-block (`RaptorqDecoder::config`), the only layout the C++ side uses, and
+  refuses objects above 16 MiB before allocating.
 
 `tests/tdfec_interop.rs` checks byte-for-byte agreement with golden vectors
 produced by the C++ encoder (`tests/tdfec/generate.cpp` says how to rebuild
 them). Fuzz both targets for ten minutes each with `make fuzz`
 (`cargo +nightly fuzz run <target> -- -max_total_time=600`; needs cargo-fuzz).
 The Python bindings do not build against the pinned pyo3 release.
+
+The workspace dev profile builds this crate optimised and without debug
+assertions (`tosctl/src/Cargo.toml`), so `cargo test` does not run the solver's
+debug self-checks: they made a 700 KB encode or decode take about 50 s instead
+of 15 ms. Overflow checks stay on. `cargo fuzz` without `-O` runs with the
+self-checks.
 
 ### Overview
 
