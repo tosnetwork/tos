@@ -1090,6 +1090,11 @@ add_executable(test-json-rpc-parse test/test-td-main.cpp test/test-json-rpc-pars
 target_link_libraries(test-json-rpc-parse PRIVATE json-rpc-parse tos_crypto tdutils)
 add_executable(test-json-rpc-contract test/test-td-main.cpp test/test-json-rpc-contract.cpp)
 target_link_libraries(test-json-rpc-contract PRIVATE json-rpc-parse tdutils)
+add_executable(test-bootstrap-state test/test-td-main.cpp test/test-bootstrap-state.cpp)
+target_compile_definitions(test-bootstrap-state PRIVATE
+  TOS_BOOTSTRAP_GENESIS="${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/data/c04-pq-genesis.boc")
+target_include_directories(test-bootstrap-state PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test-bootstrap-state PRIVATE validator validator-common full-node tos_block tos_crypto tdactor tdutils)
 add_executable(test-json-rpc-storage test/test-td-main.cpp test/test-json-rpc-storage.cpp)
 target_link_libraries(test-json-rpc-storage PRIVATE validator-engine-json-rpc json-rpc-storage tos_block tos_crypto tdutils)
 add_executable(test-account-model-detection test/test-td-main.cpp test/test-account-model-detection.cpp)
@@ -1110,6 +1115,11 @@ target_link_libraries(test-http-server-limits PRIVATE toshttp tdactor tdutils)
 # The real JSON-RPC server and listener, driven over loopback TCP.
 add_executable(test-json-rpc-transport test/test-td-main.cpp test/test-json-rpc-transport.cpp)
 target_link_libraries(test-json-rpc-transport PRIVATE validator-engine-json-rpc)
+# The bootstrap-readiness case subclasses the validator manager and builds block
+# handles, so the test links the manager's static libraries again after the server
+# library: they depend on each other, and the archive order alone leaves symbols
+# from full-node and validator-common unresolved in a static release build.
+target_link_libraries(test-json-rpc-transport PRIVATE validator validator-common full-node tos_validator)
 # The restricted-wallet delegation views the account-capability handlers call,
 # against a fake liteserver.
 add_executable(test-json-rpc-account-capability test/test-td-main.cpp test/test-json-rpc-account-capability.cpp)
@@ -2094,6 +2104,7 @@ tos_test(test-config-transition)
 tos_test(test-json-rpc-explorer)
 tos_test(test-json-rpc-parse)
 tos_test(test-json-rpc-contract)
+tos_test(test-bootstrap-state)
 tos_test(test-json-rpc-storage)
 tos_test(test-account-model-detection)
 tos_test(test-json-rpc-source-ip)
