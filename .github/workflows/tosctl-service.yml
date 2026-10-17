@@ -7,7 +7,7 @@ on:
     paths:
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
-      - "tosctl/src/adnl/raptorq/**"
+      - "tosctl/src/adnl/**"
       - "tosctl/src/Cargo.toml"
       - "tosctl/scripts/**"
       - "validator-engine/json-rpc-server*.cpp"
@@ -19,7 +19,7 @@ on:
     paths:
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
-      - "tosctl/src/adnl/raptorq/**"
+      - "tosctl/src/adnl/**"
       - "tosctl/src/Cargo.toml"
       - "tosctl/scripts/**"
       - "validator-engine/json-rpc-server*.cpp"
@@ -79,7 +79,9 @@ jobs:
   # The RaptorQ codec decodes symbols chosen by remote peers for the Rust RLDP
   # and broadcast paths. Its suite pins byte-for-byte agreement with golden
   # vectors from the C++ implementation and every refusal of malformed peer
-  # input; nothing ran it before. Its fuzz targets run with
+  # input; nothing ran it before. The ADNL wrapper tests cover what reaches the
+  # codec: FEC parameter admission, the single-block layout, RLDP part numbers
+  # and two-step part sizes. The fuzz targets run with
   # `make -C tosctl/src/adnl/raptorq fuzz`.
   raptorq:
     runs-on: ubuntu-latest
@@ -99,6 +101,10 @@ jobs:
         run: cargo fmt -p raptorq --check
       - name: Codec tests (unit, peer input, interop with the C++ vectors)
         run: cargo test -p raptorq --locked
+      - name: ADNL FEC wrapper tests
+        run: |
+          cargo test -p adnl --locked --lib rldp::
+          cargo test -p adnl --locked --test test_overlay -- test_raptorq test_twostep
 
   # This harness creates a new encrypted file Vault for one local child
   # process. It has no third-party Python dependency and must stay unable to
