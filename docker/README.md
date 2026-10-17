@@ -392,9 +392,18 @@ specific to the image:
   `PQ_CONSENSUS_KEY_FILE` naming the new key: the entrypoint refuses a
   variable that differs from the binding in `config.json`. Rotation is safe
   only in the interval the guide describes.
-- `GLOBAL_CONFIG_URL` must serve a global config whose `validator.init_block`
-  is a recent key block; a stale one leaves a new node unable to prove its way
-  to the current chain.
+- `GLOBAL_CONFIG_URL` should serve the network's published, regularly
+  refreshed global config. Its `validator.init_block` is a trust anchor and
+  need not be a persistent block: by default a new node walks the key blocks
+  after it, chooses the newest persistent state with enough time left, and
+  retries until a peer serves that state. This needs peers that keep the block
+  archive after the anchor, which is what the seven-day `ARCHIVE_TTL` default
+  is for (see [Archive retention](#archive-retention)).
+- To start exactly at `init_block` instead, add `--skip-key-sync` to
+  `CUSTOM_ARG`. It is optional, affects only the first synchronization of an
+  empty database, and is only appropriate when that anchor's complete
+  persistent state is served, which `scripts/refresh-global-config-init-block.py`
+  checks when it selects the anchor.
 
 ## Kubernetes
 ### Deploy in a quick way (without load balancer)

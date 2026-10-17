@@ -378,13 +378,24 @@ configuration is flushed to disk.
 
 ## 11. Refresh the global config's init block
 
-A fresh node needs both a persistent state at the global config's
-`validator.init_block` and the retained blocks/proofs needed to catch up from
-it. A recent key block alone is insufficient. Persistent states begin at
-131,072-second boundaries (about 36.4 hours), and the serializer waits a random
-0–6 hours before writing them. A masterchain state can also finish before its
-shard states. Publishing any of these unfinished anchors leaves newcomers
-retrying unavailable data.
+The global config's `validator.init_block` is a trust anchor. By default a
+fresh node walks the key blocks forward from it, then itself chooses the
+newest persistent key block that is at least `--sync-before` (default one
+hour) old and whose persistent state has more than eight hours left, and
+retries the state download until a peer serves it. The anchor therefore does
+not have to be a persistent block, but peers must still retain the key blocks
+after it and the blocks/proofs after the chosen state. Persistent states begin
+at 131,072-second boundaries (about 36.4 hours), are kept for at least 2^18
+seconds (about 72.8 hours) independently of `--archive-ttl`, and the
+serializer waits a random 0–6 hours before writing them. It is the block
+archive that a short `--archive-ttl` removes: with the old one-day Docker
+setting a newcomer could reach a state but not the proofs and blocks after it.
+
+Refresh the anchor regularly so that newcomers start from recent history.
+`--skip-key-sync` is optional: it makes a fresh node start exactly at
+`init_block` instead of choosing a newer persistent state, and is only
+appropriate for an anchor whose complete persistent state is served. The
+refresh script below selects such an anchor.
 
 ### Keep a continuous bootstrap source
 
@@ -428,6 +439,16 @@ as checking registered sizes. A persistent-state description or a split header
 without its required account parts never suffices. This is a bounded readiness
 check, not a download and verification of every byte in the snapshot.
 
+If the source answers `resource_limit` or `timeout`, it is busy (it scans at
+most two candidates at a time) and says nothing about the snapshot: the script
+asks again about the same candidate with bounded backoff (one minute in total)
+and then refuses, writing nothing, instead of settling for an older anchor.
+`resource_limit` is also the answer for a snapshot larger than the source's
+scan budget, which does not clear; a repeated refusal from an idle source
+means that. A candidate created after this host's clock is skipped with a
+message naming the difference; fix the host's time synchronization, since the
+remaining-time checks below are measured from it.
+
 The newest available candidate is selected only if both its persistent-state
 expiry and `gen_utime + archive_ttl` leave more than the requested remaining
 bootstrap time. The default is eight hours, matching the existing startup
@@ -451,9 +472,11 @@ Review and authenticate the newly selected full anchor before publication.
 The ordinary refresh intentionally refuses this rollback instead of silently
 changing a published trust anchor.
 
-### Start from the checked anchor and validate publication
+### Start a fresh node and validate publication
 
-Start the fresh node with the refreshed config and **`--skip-key-sync`**:
+A fresh node started with the refreshed config uses the default node-side
+selection described above; no extra flag is needed. To start exactly at the
+checked anchor instead, add `--skip-key-sync`:
 
 ```bash
 build/validator-engine/validator-engine \
@@ -464,11 +487,12 @@ build/validator-engine/validator-engine \
 
 Use the normal network/address options for the deployment. When initializing
 `<db>/config.json` from `-c`, review the generated file and start again as usual.
-The flag keeps initial synchronization on the explicitly selected anchor;
-without it, the default discovery may replace that anchor with a newer
-persistent block whose serializer is still waiting. The normal proof and state
-verification remains in place. This flag concerns initial synchronization; it
-does not disable subsequent block synchronization.
+Without the flag, the node may choose a newer persistent block than the anchor
+and wait, retrying, until that block's state is served. With it, the node
+downloads the anchor's state directly, so use it only with an anchor that
+`getBootstrapState` reported ready. The normal proof and state verification
+remains in place either way. The flag concerns the first synchronization of an
+empty database; it does not disable subsequent block synchronization.
 
 Before publishing, compare the source's full masterchain head with an
 independent trusted node, then perform an empty-database bootstrap and catch-up

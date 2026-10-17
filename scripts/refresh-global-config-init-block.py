@@ -35,13 +35,25 @@ It refuses unless:
   * the new init block is not older than the one the input already has, and
     if it is at the same height it is the same block (full id, not height).
 
+A candidate that is not ready is skipped and the walk moves to the previous
+key block, except when the source reports that it is busy (`resource_limit`
+or `timeout`): those say nothing about the snapshot, and the readiness method
+admits only two scans at a time, so anyone can keep it busy. The same
+candidate is asked again with bounded backoff, and the script refuses if the
+source stays busy, rather than settle for an older anchor. `resource_limit`
+also covers a snapshot that exceeds the source's scan budget; that never
+clears, and the refusal says so. A candidate newer than this host's clock is
+skipped with a message naming the clock difference: remaining validity
+cannot be measured from a clock that is behind the source's blocks.
+
 The node is trusted, not checked: nothing here verifies a proof. Point it at a
 node you operate and have already compared, on the full block id, with a
 second node you trust. The refreshed file is an input to a release; it is
 authenticated by what the release does with it (digest and attestation), not
 by this script. Availability is checked on that source, not on every peer.
-Start a fresh node with --skip-key-sync to use the checked anchor: otherwise
-it may replace it with a newer, not-yet-served persistent state. See
+A fresh node needs no extra flag: by default it walks the key blocks after the
+anchor and chooses a persistent state itself. --skip-key-sync is optional and
+makes it start exactly at this checked anchor instead. See
 doc/validator-operator-guide.md for source retention and publication steps.
 
 Usage:
@@ -71,6 +83,10 @@ HASH_BYTES = 32
 RPC_TIMEOUT_SECONDS = 20
 MIN_BOOTSTRAP_SECONDS = 8 * 3600
 MAX_KEY_BLOCKS = 4096
+# Readiness reasons that describe the source's load, not the snapshot.
+BUSY_REASONS = frozenset({"resource_limit", "timeout"})
+# Seconds to wait before each repeated readiness query of a busy source.
+BUSY_RETRY_DELAYS = (2, 4, 8, 16, 30)
 
 Rpc = Callable[..., Any]
 
@@ -210,8 +226,16 @@ def bootstrap_available(
 
     created = require_int(status.get("gen_utime"), f"getBootstrapState({seqno}).gen_utime")
     header_created = require_int(header.get("gen_utime"), f"gen_utime of block {seqno}")
-    if created != header_created or created <= 0 or created > now:
+    if created != header_created or created <= 0:
         raise RefreshError(f"getBootstrapState({seqno}) has an inconsistent snapshot timestamp")
+    if created > now:
+        # The remaining-time checks below would be measured from a clock that
+        # is behind the chain; an older candidate may still qualify.
+        return (
+            False,
+            f"block was created {created - now}s after this host's clock; "
+            "check this host's time synchronization",
+        )
     expires = require_int(status.get("expires_at"), f"getBootstrapState({seqno}).expires_at")
     if expires <= created:
         raise RefreshError(f"getBootstrapState({seqno}) has an invalid snapshot expiry")
@@ -236,6 +260,39 @@ def bootstrap_available(
     return True, reason
 
 
+def bootstrap_available_when_idle(
+    rpc: Rpc,
+    block: dict[str, Any],
+    header: dict[str, Any],
+    *,
+    now: int | None,
+    minimum_validity: int,
+    sleep: Callable[[float], None],
+) -> tuple[bool, str]:
+    """bootstrap_available, asked again while the source reports it is busy."""
+    attempts = len(BUSY_RETRY_DELAYS) + 1
+    reason = ""
+    for attempt in range(attempts):
+        available, reason = bootstrap_available(
+            rpc, block, header, now=now, minimum_validity=minimum_validity
+        )
+        if available or reason not in BUSY_REASONS:
+            return available, reason
+        if attempt < len(BUSY_RETRY_DELAYS):
+            delay = BUSY_RETRY_DELAYS[attempt]
+            print(
+                f"getBootstrapState({block['seqno']}): source busy ({reason}); "
+                f"asking again in {delay}s",
+                file=sys.stderr,
+            )
+            sleep(delay)
+    raise RefreshError(
+        f"getBootstrapState({block['seqno']}) answered {reason} {attempts} times: the source is "
+        "busy, or the snapshot exceeds its scan budget, so the snapshot's readiness is unknown. "
+        "An older anchor is not substituted; retry later or use a source that is not saturated."
+    )
+
+
 def refreshed(
     config: dict[str, Any],
     rpc: Rpc,
@@ -243,6 +300,7 @@ def refreshed(
     global_id: int,
     minimum_validity: int = MIN_BOOTSTRAP_SECONDS,
     now: int | None = None,
+    sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
     """Set validator.init_block to the newest complete, sufficiently retained snapshot."""
     if minimum_validity <= 0:
@@ -329,8 +387,13 @@ def refreshed(
                 f"the config's init block {current_seqno} and the node's block at that height "
                 f"differ in their hashes; the node is on another chain or the config is wrong"
             )
-        available, reason = bootstrap_available(
-            rpc, looked_up, key_header, now=now, minimum_validity=minimum_validity
+        available, reason = bootstrap_available_when_idle(
+            rpc,
+            looked_up,
+            key_header,
+            now=now,
+            minimum_validity=minimum_validity,
+            sleep=time.sleep if sleep is None else sleep,
         )
         if available:
             result = json.loads(json.dumps(config))
@@ -417,7 +480,8 @@ def main(argv: list[str] | None = None, rpc_factory: Callable[[str], Rpc] = http
         f"root_hash {block['root_hash']} file_hash {block['file_hash']} -> {args.output}"
     )
     print(
-        "Bootstrap a fresh node with --skip-key-sync; publish the config before its validity window closes."
+        "This anchor's snapshot is served, so --skip-key-sync may start a fresh node exactly here; "
+        "publish the config before its validity window closes."
     )
     return 0
 

@@ -295,7 +295,7 @@
   },
   "live_cold_bootstrap": {
     "status": "not_run",
-    "required_before_publication": "Use an empty database, the refreshed config and --skip-key-sync over the intended peer path; catch up and compare full block IDs with independent trusted nodes."
+    "required_before_publication": "Use an empty database and the refreshed config over the intended peer path, with the default node-side state selection (and with the optional --skip-key-sync if operators are told to use it); catch up and compare full block IDs with independent trusted nodes."
   },
   "evidence_retention": "Only bounded real failure/summary excerpts are retained here. Complete transient logs and stacks are not retained by this record, and their temporary-path hashes are not presented as durable evidence. Recreate full output with the commands and committed tests/runner.",
   "limits": [

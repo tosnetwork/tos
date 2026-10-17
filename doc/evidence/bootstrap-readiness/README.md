@@ -92,6 +92,35 @@ the same C++ inputs. The exact link replay recipe and bounded results are in
 build below with `-DTOS_USE_LLD=OFF`, build `test-json-rpc-transport`, and run its
 exact CTest name with `--no-tests=error`.
 
+## Review follow-up: busy source and host clock
+
+The refresh script no longer walks back past a candidate the source reports as
+`resource_limit` or `timeout`: it asks about the same candidate again after
+2, 4, 8, 16 and 30 seconds and then refuses without writing. A candidate whose
+`gen_utime` is after the script host's clock is now skipped with a message
+naming the difference, instead of refusing the whole run. The Python source
+hashes in `validation.json` describe the earlier candidate; after this
+follow-up they are:
+
+| File | SHA-256 |
+| --- | --- |
+| `scripts/refresh-global-config-init-block.py` | `e3792d5ed7f84fb839216d6e29ad7ebbb826703bf51b7b6cb6f4bcf5e52af80f` |
+| `scripts/test_refresh_global_config_init_block.py` | `96098fd8f560a91c3074ecff145add83167ed26f914debf8a812f5b3732cc91a` |
+
+`python3 scripts/test_refresh_global_config_init_block.py` passed 52 tests.
+The same test file run against the previous script (the parent commit's
+`scripts/refresh-global-config-init-block.py`) failed six tests and errored
+one, each at its intended check: busy-then-ready selected block 40 instead of
+100 for both reasons; persistently busy exited 0 instead of refusing for both
+reasons; the future-timestamp candidate refused the run instead of falling
+back to block 40, and its single-candidate variant refused with
+`inconsistent snapshot timestamp` instead of the clock message; the bound check
+errored because the retry schedule does not exist there.
+
+The operator documents now describe the default node-side state selection as
+the normal fresh-node path and `--skip-key-sync` as optional, for an anchor
+whose served state the script has checked.
+
 ## Repeat the green checks
 
 Use the repository's build prerequisites and a configured Release build with

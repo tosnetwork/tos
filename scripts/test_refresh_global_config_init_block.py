@@ -95,6 +95,8 @@ class FakeChain:
         self.init_seqno = 0
         self.ready_blocks = set(key_blocks)
         self.bootstrap_override: dict[int, dict[str, Any]] = {}
+        # Overrides consumed one per getBootstrapState call, after bootstrap_override.
+        self.bootstrap_sequence: dict[int, list[dict[str, Any]]] = {}
 
     def timestamp(self, seqno: int) -> int:
         return NOW - 12 * 3600 - (self.last - seqno) * 60
@@ -154,6 +156,9 @@ class FakeChain:
                 "archive_ttl": 7 * 86400,
             }
             status.update(self.bootstrap_override.get(seqno, {}))
+            sequence = self.bootstrap_sequence.get(seqno)
+            if sequence:
+                status.update(sequence.pop(0))
             return status
         raise RefreshError(f"unexpected method {method}")
 
@@ -167,6 +172,13 @@ class RefreshTest(unittest.TestCase):
         clock = mock.patch("time.time", return_value=NOW)
         clock.start()
         self.addCleanup(clock.stop)
+        # No test waits; each records the waits the script asked for.
+        sleeper = mock.patch("time.sleep")
+        self.sleep = sleeper.start()
+        self.addCleanup(sleeper.stop)
+
+    def sleeps(self) -> list[float]:
+        return [call.args[0] for call in self.sleep.call_args_list]
 
     def tearDown(self) -> None:
         for path in sorted(self.tmp.rglob("*"), reverse=True):
@@ -456,11 +468,54 @@ class RefreshTest(unittest.TestCase):
         chain.bootstrap_override[100] = {"gen_utime": NOW - 1}
         self.assert_refused(chain, "inconsistent snapshot timestamp")
 
-    def test_snapshot_from_the_future_is_refused(self) -> None:
+    def test_snapshot_newer_than_the_host_clock_is_skipped(self) -> None:
+        # The host's clock is behind the source: the newest candidate cannot
+        # be measured, but an older one already in the host's past can.
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.header_override[100] = {"gen_utime": NOW + 90}
+        chain.bootstrap_override[100] = {"gen_utime": NOW + 90}
+        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(40))
+        self.assertEqual(self.sleeps(), [])
+
+    def test_only_snapshot_newer_than_the_host_clock_writes_nothing(self) -> None:
         chain = FakeChain(last=120, key_blocks={100})
-        chain.header_override[100] = {"gen_utime": NOW + 1}
-        chain.bootstrap_override[100] = {"gen_utime": NOW + 1}
-        self.assert_refused(chain, "inconsistent snapshot timestamp")
+        chain.header_override[100] = {"gen_utime": NOW + 90}
+        chain.bootstrap_override[100] = {"gen_utime": NOW + 90}
+        self.assert_refused(chain, "100: block was created 90s after this host's clock")
+
+    # ---- a busy source is asked again, never replaced by an older anchor
+
+    def test_busy_source_is_asked_again_until_it_answers(self) -> None:
+        for reason in ("resource_limit", "timeout"):
+            with self.subTest(reason=reason):
+                self.sleep.reset_mock()
+                chain = FakeChain(last=120, key_blocks={40, 100})
+                busy = {"ready": False, "reason": reason}
+                chain.bootstrap_sequence[100] = [busy, busy]
+                result = self.refreshed(chain)
+                self.output.unlink()
+                self.assertEqual(result["validator"]["init_block"], config_id(100))
+                probes = [p["seqno"] for m, p in chain.calls if m == "getBootstrapState"]
+                self.assertEqual(probes, [100, 100, 100])
+                self.assertEqual(self.sleeps(), list(refresh.BUSY_RETRY_DELAYS[:2]))
+
+    def test_persistently_busy_source_is_refused_without_walking_back(self) -> None:
+        for reason in ("resource_limit", "timeout"):
+            with self.subTest(reason=reason):
+                self.sleep.reset_mock()
+                self.output.unlink(missing_ok=True)
+                chain = FakeChain(last=120, key_blocks={40, 100})
+                chain.bootstrap_override[100] = {"ready": False, "reason": reason}
+                self.assert_refused(chain, f"getBootstrapState(100) answered {reason}")
+                probes = [p["seqno"] for m, p in chain.calls if m == "getBootstrapState"]
+                attempts = len(refresh.BUSY_RETRY_DELAYS) + 1
+                self.assertEqual(probes, [100] * attempts, "an older anchor was probed")
+                self.assertEqual(self.sleeps(), list(refresh.BUSY_RETRY_DELAYS))
+
+    def test_busy_retries_are_bounded(self) -> None:
+        self.assertEqual(refresh.BUSY_REASONS, {"resource_limit", "timeout"})
+        self.assertLessEqual(sum(refresh.BUSY_RETRY_DELAYS), 120)
+        self.assertTrue(all(delay > 0 for delay in refresh.BUSY_RETRY_DELAYS))
 
     def test_invalid_expiry_is_refused(self) -> None:
         chain = FakeChain(last=120, key_blocks={100})

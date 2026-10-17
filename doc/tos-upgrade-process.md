@@ -219,8 +219,9 @@ whose complete persistent snapshot is available from the trusted source's
 serving archive. The source must implement `getBootstrapState`; an ordinary
 recent key block or a serializer description is not sufficient. Keep bootstrap
 sources on seven-day archive retention and validate an empty-database bootstrap
-with `--skip-key-sync`, including catch-up to independently compared full block
-IDs. A retention increase does not recover previously deleted history. See
+(with the default node-side state selection, and with the optional
+`--skip-key-sync` if operators are told to use it), including catch-up to
+independently compared full block IDs. A retention increase does not recover previously deleted history. See
 [the operator procedure](validator-operator-guide.md#11-refresh-the-global-configs-init-block)
 for publication timing and recovery of an unusable earlier config. The release
 authenticates the refreshed file by its digest and attestation; the refresh
