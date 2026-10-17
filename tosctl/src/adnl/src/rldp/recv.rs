@@ -102,10 +102,73 @@ impl RaptorqDecoder {
         ))
     }
 
-    /// Construct with parameters received from a peer. Every bound is checked
-    /// before the decoder allocates anything.
+    /// Symbol sizes an ordinary FEC object (RLDP, FEC broadcast) may declare,
+    /// as the C++ `FecType::create()` admits them.
+    pub const MIN_SYMBOL_SIZE: i32 = 768;
+    pub const MAX_SYMBOL_SIZE: i32 = 1 << 11;
+
+    /// Construct for an ordinary FEC object (RLDP or FEC broadcast) from
+    /// parameters received from a peer. Like the C++ `FecType::create()`, the
+    /// symbol size must be 768 to 2048 bytes and `symbols_count` must be
+    /// ceil(data_size / symbol_size). Every bound is checked before the decoder
+    /// allocates anything.
     pub fn with_params(params: FecTypeRaptorQ) -> Result<Self> {
+        if !(Self::MIN_SYMBOL_SIZE..=Self::MAX_SYMBOL_SIZE).contains(&params.symbol_size) {
+            fail!(
+                "Invalid FEC params: symbol_size {} outside {}..={}",
+                params.symbol_size,
+                Self::MIN_SYMBOL_SIZE,
+                Self::MAX_SYMBOL_SIZE
+            );
+        }
+        Self::with_checked_params(params)
+    }
+
+    /// Construct for a two-step broadcast, whose symbol is one neighbour's part
+    /// of the object: any size from 1 byte up to, but excluding, the object
+    /// size, as the C++ two-step receiver admits it.
+    pub fn with_two_step_params(params: FecTypeRaptorQ) -> Result<Self> {
+        if params.symbol_size <= 0 || params.symbol_size >= params.data_size {
+            fail!(
+                "Invalid two-step FEC params: part size {} for {} bytes",
+                params.symbol_size,
+                params.data_size
+            );
+        }
+        Self::with_checked_params(params)
+    }
+
+    /// The FEC parameters a two-step broadcast part implies: the declared
+    /// object size, the part as the symbol, and the symbol count derived from
+    /// both. None if the declared size is not a receivable object size or the
+    /// part is empty or not smaller than the object, so nothing is computed
+    /// from an out-of-range peer value.
+    pub fn two_step_fec_type(data_size: i32, part_len: usize) -> Option<FecTypeRaptorQ> {
+        if data_size <= 0 || data_size > Self::MAX_DATA_SIZE {
+            return None;
+        }
+        let symbol_size = i32::try_from(part_len).ok().filter(|s| *s > 0 && *s < data_size)?;
+        let symbols_count = i32::try_from(
+            (i64::from(data_size) + i64::from(symbol_size) - 1) / i64::from(symbol_size),
+        )
+        .ok()?;
+        Some(FecTypeRaptorQ { data_size, symbols_count, symbol_size })
+    }
+
+    fn with_checked_params(params: FecTypeRaptorQ) -> Result<Self> {
         let config = Self::config(params.data_size, params.symbol_size)?;
+        // config() has checked both sizes are positive and bounded.
+        let expected = (i64::from(params.data_size) + i64::from(params.symbol_size) - 1)
+            / i64::from(params.symbol_size);
+        if i64::from(params.symbols_count) != expected {
+            fail!(
+                "Invalid FEC params: symbols_count {} for {} bytes in {}-byte symbols, \
+                expected {expected}",
+                params.symbols_count,
+                params.data_size,
+                params.symbol_size
+            );
+        }
         Ok(Self { engine: raptorq::Decoder::new(config), params })
     }
 
@@ -288,6 +351,30 @@ impl RecvTransfer {
         }
     }
 
+    /// Admits a peer's part number the way the C++ receiver does
+    /// (`RldpConnection::receive_raw_obj`): the transfer of `total_size` bytes
+    /// is cut into parts of `Constraints::SLICE` bytes, so the part must exist
+    /// and its FEC object must be exactly that part's size. Returns the part
+    /// index. Nothing is allocated for a part before it passes.
+    fn check_part(part: i32, total_size: usize, part_data_size: i32) -> Result<usize> {
+        let Ok(index) = usize::try_from(part) else { fail!("Negative RLDP part number {part}") };
+        let parts = total_size.div_ceil(Constraints::SLICE);
+        if index >= parts {
+            fail!("RLDP part {part} out of range: {parts} parts for {total_size} bytes")
+        }
+        let offset = index
+            .checked_mul(Constraints::SLICE)
+            .ok_or_else(|| error!("RLDP part {part} offset overflows"))?;
+        let expected = total_size.saturating_sub(offset).min(Constraints::SLICE);
+        if usize::try_from(part_data_size).ok() != Some(expected) {
+            fail!(
+                "RLDP part {part} carries {part_data_size} bytes, expected {expected} \
+                (total_size={total_size})"
+            )
+        }
+        Ok(index)
+    }
+
     #[allow(clippy::boxed_local)]
     pub(crate) fn process_chunk(&mut self, chunk: Chunk) -> Result<Option<TaggedByteSlice<'_>>> {
         #[cfg(feature = "debug")]
@@ -336,7 +423,7 @@ impl RecvTransfer {
                 .map_err(|e| error!("RLDP total size {} is too big: {}", total_size, e))?;
             total_size
         };
-        let chunk_part_usize = chunk.part as usize;
+        let chunk_part_usize = Self::check_part(chunk.part, total_size, fec_type.data_size)?;
         let chunk_seqno_u32 = chunk.seqno as u32;
         let decoder = match &mut self.parts {
             RecvParts::V1(part) => match part.part {
@@ -530,5 +617,38 @@ impl RecvTransferState {
     }
     pub(crate) fn set_updates(&self) {
         self.updates.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RecvTransfer;
+    use crate::rldp::Constraints;
+
+    const SLICE: i32 = Constraints::SLICE as i32;
+
+    #[test]
+    fn part_numbers_outside_the_transfer_are_refused() {
+        // 5,000,000 bytes: parts 0 and 1 of 2,000,000 and part 2 of 1,000,000.
+        let total = 5_000_000usize;
+        for part in [-1, i32::MIN, 3, 4, 1_000_000, i32::MAX] {
+            assert!(RecvTransfer::check_part(part, total, SLICE).is_err(), "part {part}");
+        }
+        // An empty transfer has no parts at all.
+        assert!(RecvTransfer::check_part(0, 0, 0).is_err());
+        assert_eq!(RecvTransfer::check_part(0, total, SLICE).ok(), Some(0));
+        assert_eq!(RecvTransfer::check_part(1, total, SLICE).ok(), Some(1));
+        assert_eq!(RecvTransfer::check_part(2, total, 1_000_000).ok(), Some(2));
+        assert_eq!(RecvTransfer::check_part(0, 100, 100).ok(), Some(0));
+    }
+
+    #[test]
+    fn a_part_must_carry_its_own_size() {
+        let total = 5_000_000usize;
+        for (part, size) in [(0, SLICE - 1), (0, SLICE + 1), (1, 1_000_000), (2, SLICE), (2, 0)] {
+            assert!(RecvTransfer::check_part(part, total, size).is_err(), "{part}/{size}");
+        }
+        assert!(RecvTransfer::check_part(0, 100, 99).is_err());
+        assert!(RecvTransfer::check_part(0, 100, -100).is_err());
     }
 }

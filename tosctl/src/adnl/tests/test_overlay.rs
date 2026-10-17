@@ -1824,7 +1824,7 @@ fn test_raptorq_large_symbol_size() {
         );
 
         // Decode using exactly source_count symbols (minimum required)
-        let mut decoder = RaptorqDecoder::with_params(params.clone())
+        let mut decoder = RaptorqDecoder::with_two_step_params(params.clone())
             .expect("decoder creation must succeed for large symbol_size");
 
         let mut decoded = None;
@@ -1852,17 +1852,23 @@ fn test_raptorq_decoder_bounds_peer_parameters() {
     use adnl::RaptorqDecoder;
     use tl_api::tos::fec::type_::RaptorQ as FecTypeRaptorQ;
 
+    // symbols_count as an honest sender sets it.
     let params = |data_size: i32, symbol_size: i32| FecTypeRaptorQ {
         data_size,
         symbol_size,
-        symbols_count: 0,
+        symbols_count: if symbol_size > 0 && data_size > 0 {
+            ((i64::from(data_size) + i64::from(symbol_size) - 1) / i64::from(symbol_size)) as i32
+        } else {
+            0
+        },
     };
     let max = RaptorqDecoder::MAX_DATA_SIZE;
     assert_eq!(max, 16 << 20);
+    // Refused by both constructors: bad or unbounded object sizes.
     for (data_size, symbol_size) in [
         (max + 1, 768),
         (i32::MAX, 768),
-        (i32::MAX, i32::MAX),
+        (i32::MAX, i32::MAX - 1),
         (0, 768),
         (-1, 768),
         (1000, 0),
@@ -1870,18 +1876,78 @@ fn test_raptorq_decoder_bounds_peer_parameters() {
         // 2^20 one-byte symbols: more than K'_max = 56403 source symbols.
         (1 << 20, 1),
     ] {
-        assert!(
-            RaptorqDecoder::with_params(params(data_size, symbol_size)).is_err(),
-            "data_size {data_size}, symbol_size {symbol_size} accepted"
-        );
+        let p = params(data_size, symbol_size);
+        assert!(RaptorqDecoder::with_params(p.clone()).is_err(), "{p:?} accepted");
+        assert!(RaptorqDecoder::with_two_step_params(p.clone()).is_err(), "{p:?} accepted");
     }
-    for (data_size, symbol_size) in [(max, 768), (11 << 20, 768), (max, 136_534), (1, 768)] {
+    // Ordinary FEC objects (RLDP, FEC broadcast): 768..=2048-byte symbols,
+    // as the C++ FecType::create() admits them.
+    for symbol_size in [1, 77, 767, 2049, 136_534] {
+        let p = params(100_000, symbol_size);
+        assert!(RaptorqDecoder::with_params(p.clone()).is_err(), "{p:?} accepted");
+    }
+    for symbol_size in [768, 771, 2048] {
+        assert!(RaptorqDecoder::with_params(params(100_000, symbol_size)).is_ok());
+    }
+    // A two-step part must be smaller than the object.
+    for (data_size, symbol_size) in [(1000, 1000), (1000, 1001), (1, 1)] {
+        let p = params(data_size, symbol_size);
+        assert!(RaptorqDecoder::with_two_step_params(p.clone()).is_err(), "{p:?} accepted");
+    }
+    // symbols_count must be ceil(data_size / symbol_size), for both kinds.
+    for (data_size, symbol_size, symbols_count) in
+        [(3000, 768, 0), (3000, 768, 3), (3000, 768, 5), (3000, 768, -4), (3000, 77, 38)]
+    {
+        let p = FecTypeRaptorQ { data_size, symbol_size, symbols_count };
+        assert!(RaptorqDecoder::with_params(p.clone()).is_err(), "{p:?} accepted");
+        assert!(RaptorqDecoder::with_two_step_params(p.clone()).is_err(), "{p:?} accepted");
+    }
+    // Accepted parameters describe one source block and one sub-block.
+    for (data_size, symbol_size) in [(max, 768), (11 << 20, 768), (1, 768), (max, 2048)] {
         let config = RaptorqDecoder::config(data_size, symbol_size).unwrap();
         assert_eq!(config.source_blocks(), 1, "data_size {data_size}");
         assert_eq!(config.sub_blocks(), 1, "data_size {data_size}");
         assert_eq!(config.symbol_size(), symbol_size as u32);
         assert!(RaptorqDecoder::with_params(params(data_size, symbol_size)).is_ok());
     }
+    for (data_size, symbol_size) in [(max, 136_534), (3000, 77), (2, 1)] {
+        let config = RaptorqDecoder::config(data_size, symbol_size).unwrap();
+        assert_eq!((config.source_blocks(), config.sub_blocks()), (1, 1));
+        assert!(RaptorqDecoder::with_two_step_params(params(data_size, symbol_size)).is_ok());
+    }
+}
+
+/// A two-step part implies its FEC parameters from the declared object size
+/// and the part length. The declared size is checked before anything is
+/// computed from it: i32::MAX with a 2-byte part overflowed i32 when the
+/// symbol count was derived.
+#[test]
+fn test_raptorq_two_step_fec_type_from_peer_part() {
+    use adnl::RaptorqDecoder;
+
+    for (data_size, part_len) in [
+        (i32::MAX, 2),
+        (i32::MAX, 1),
+        (RaptorqDecoder::MAX_DATA_SIZE + 1, 2),
+        (0, 1),
+        (-5, 1),
+        (1000, 0),
+        (1000, 1000),
+        (1000, 5000),
+        (1000, usize::MAX),
+    ] {
+        assert_eq!(
+            RaptorqDecoder::two_step_fec_type(data_size, part_len),
+            None,
+            "data_size {data_size}, part {part_len}"
+        );
+    }
+    let fec = RaptorqDecoder::two_step_fec_type(3000, 77).unwrap();
+    assert_eq!((fec.data_size, fec.symbol_size, fec.symbols_count), (3000, 77, 39));
+    assert!(RaptorqDecoder::with_two_step_params(fec).is_ok());
+    let max = RaptorqDecoder::MAX_DATA_SIZE;
+    let fec = RaptorqDecoder::two_step_fec_type(max, max as usize - 1).unwrap();
+    assert_eq!(fec.symbols_count, 2);
 }
 
 /// Above about 10 MiB the default parameters used sub-blocks, a layout the
@@ -1925,7 +1991,11 @@ fn test_raptorq_decoder_refuses_malformed_symbols() {
         let mut encoder = RaptorqEncoder::with_data(&data, symbol);
         let params = encoder.params().clone();
         let symbol_size = params.symbol_size as usize;
-        let mut decoder = RaptorqDecoder::with_params(params.clone()).unwrap();
+        let mut decoder = if symbol.is_some() {
+            RaptorqDecoder::with_two_step_params(params.clone()).unwrap()
+        } else {
+            RaptorqDecoder::with_params(params.clone()).unwrap()
+        };
 
         for len in [0, 1, symbol_size - 1, symbol_size + 1] {
             assert!(decoder.decode(0, &vec![0; len]).is_err(), "length {len} accepted");
