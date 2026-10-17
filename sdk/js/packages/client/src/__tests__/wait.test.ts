@@ -293,6 +293,123 @@ function intervening(count: number): Array<Record<string, unknown>> {
   });
 }
 
+describe("waitForTransaction and afterLt", () => {
+  it("never returns a transaction at or before afterLt, even for the same message", async () => {
+    const node = wal01();
+    const settledLt = "547749000001";
+    const atBoundary = stubbedClient(
+      Array.from({ length: 400 }, () => result(node.getTransactionsAfterSettlement)),
+    );
+    const err = await rejection(
+      waitForTransaction(atBoundary.client, WAL01_WALLET, node.sendQueryTransfer.hash, {
+        ...FAST,
+        afterLt: settledLt,
+      }),
+    );
+    expect((err as TosError).code).toBe(ErrorCodes.WAIT_TIMEOUT);
+
+    const justBefore = stubbedClient([result(node.getTransactionsAfterSettlement)]);
+    const tx = await waitForTransaction(
+      justBefore.client,
+      WAL01_WALLET,
+      node.sendQueryTransfer.hash,
+      {
+        ...FAST,
+        afterLt: "547749000000",
+      },
+    );
+    expect(tx.transaction_id.lt).toBe(settledLt);
+  });
+
+  it("waits for the retry of a signed transfer instead of returning the failed attempt", async () => {
+    const node = wal01();
+    // The overdraw attempt executed (and failed to deliver); the identical
+    // signed message is resubmitted after funding. Its transaction has the
+    // same inbound message hash at a later lt.
+    const failed = node.overdrawTransaction as unknown as Transaction;
+    const retry: Transaction = JSON.parse(JSON.stringify(node.getTransactionsAfterSettlement[0]));
+    retry.transaction_id = {
+      "@type": "internal.transactionId",
+      lt: "548262000001",
+      hash: syntheticHash(9),
+    };
+    retry.in_msg = { hash: node.sendQueryOverdraw.hash, kind: "external" };
+    const { client, requests } = stubbedClient([
+      result([failed]),
+      result([failed]),
+      result([retry, failed]),
+    ]);
+    const tx = await waitForTransfer(
+      client,
+      WAL01_WALLET,
+      { hash: node.sendQueryOverdraw.hash, outMessages: 1, afterLt: failed.transaction_id.lt },
+      FAST,
+    );
+    expect(tx.transaction_id.lt).toBe("548262000001");
+    expect(requests).toHaveLength(3);
+  });
+});
+
+describe("waitForTransaction deadline", () => {
+  /** An endless history served slowly: every page is full and older than the last. */
+  function slowHistory(delayMs: number, hang = false) {
+    const template = wal01().getTransactionsAfterSettlement[0] as Record<string, unknown>;
+    let calls = 0;
+    let next = 900_000_000_000n;
+    const provider = {
+      getTransactions: async () => {
+        calls += 1;
+        if (hang) return new Promise(() => undefined);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return Array.from({ length: 16 }, () => {
+          next -= 1_000n;
+          const tx = JSON.parse(JSON.stringify(template)) as Record<string, unknown>;
+          tx.transaction_id = {
+            "@type": "internal.transactionId",
+            lt: next.toString(),
+            hash: syntheticHash(3),
+          };
+          tx.in_msg = { hash: syntheticHash(4), kind: "external" };
+          return tx;
+        });
+      },
+    };
+    return {
+      provider: provider as unknown as Parameters<typeof waitForTransaction>[0],
+      calls: () => calls,
+    };
+  }
+
+  it("returns within its timeout while paging a slow, long history", async () => {
+    const { provider, calls } = slowHistory(5);
+    const started = Date.now();
+    const err = await rejection(
+      waitForTransaction(provider, WAL01_WALLET, wal01().sendQueryTransfer.hash, {
+        timeout: 30,
+        pollInterval: 1,
+      }),
+    );
+    const elapsed = Date.now() - started;
+    expect((err as TosError).code).toBe(ErrorCodes.WAIT_TIMEOUT);
+    // 30 ms of 5 ms requests: a handful, not the whole 1024-transaction scan.
+    expect(elapsed).toBeLessThan(150);
+    expect(calls()).toBeLessThan(15);
+  });
+
+  it("does not wait past its timeout for a request that never answers", async () => {
+    const { provider } = slowHistory(0, true);
+    const started = Date.now();
+    const err = await rejection(
+      waitForTransaction(provider, WAL01_WALLET, wal01().sendQueryTransfer.hash, {
+        timeout: 30,
+        pollInterval: 1,
+      }),
+    );
+    expect((err as TosError).code).toBe(ErrorCodes.WAIT_TIMEOUT);
+    expect(Date.now() - started).toBeLessThan(150);
+  });
+});
+
 describe("waitForTransaction paging", () => {
   it("pages back past more than 16 newer transactions to the one looked for", async () => {
     const node = wal01();
@@ -427,8 +544,36 @@ describe("waitForReceipt", () => {
     if (message === null) throw new Error("fixture has an inbound message");
     const { client, requests } = stubbedClient([result(node.getTransactionsAfterSettlement)]);
     const receipt = await waitForReceipt(client, message, FAST);
-    expect(receipt.transaction_id.lt).toBe("547679000003");
+    expect(receipt.transaction.transaction_id.lt).toBe("547679000003");
     expect(requests[0]?.params.address).toBe("EQCqo-2kE8Sd-muQY1bOKdNez_X4_cIIJ-be2ATRb_tXAn9i");
+    // The wallet was not deployed: the transaction aborted, yet the
+    // non-bounceable funding stayed. Aborted is not a bounce.
+    expect(receipt.transaction.aborted).toBe(true);
+    expect(receipt.bounce).toBeNull();
+  });
+
+  it("reports the bounced message the recipient actually sent back", async () => {
+    const node = wal01();
+    const funding = node.getTransactionsAfterSettlement[2] as unknown as Transaction;
+    const message = funding.in_msg;
+    if (message === null) throw new Error("fixture has an inbound message");
+    // The same transaction as if the message had been bounceable: it then
+    // carries the bounced message back to the source.
+    const bounced: Transaction = JSON.parse(JSON.stringify(funding));
+    const back = {
+      hash: syntheticHash(7),
+      kind: "internal" as const,
+      source: message.destination,
+      destination: message.source,
+      value: "999333333",
+      bounced: true,
+      created_lt: "547679000004",
+      created_at: 1792147997,
+    };
+    bounced.out_msgs = [back];
+    const { client } = stubbedClient([result([bounced])]);
+    const receipt = await waitForReceipt(client, message, FAST);
+    expect(receipt.bounce).toEqual(back);
   });
 
   it("refuses a message that is not internal or has no destination", async () => {

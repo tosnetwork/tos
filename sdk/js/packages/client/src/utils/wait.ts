@@ -36,15 +36,14 @@
  * outgoing message is executed later in the recipient's own transaction, and
  * a bounceable message (the default) to an address that cannot take it, for
  * example one that is not deployed, comes back to the wallet as a bounced
- * message, less fees. To follow a message to the recipient, pass it to
- * {@link waitForReceipt}:
+ * message, less fees, when the recipient's transaction can still pay for
+ * it. To follow a message to the recipient, pass it to {@link waitForReceipt}:
  *
  * ```typescript
  * const tx = await waitForTransfer(client, wallet.address, sent);
  * for (const message of tx.out_msgs) {
- *   const receipt = await waitForReceipt(client, message);
- *   // receipt.aborted / receipt.compute / receipt.out_msgs (a bounce shows as
- *   // an outgoing message with bounced: true back to the sender)
+ *   const { transaction, bounce } = await waitForReceipt(client, message);
+ *   // bounce: the bounced message the recipient actually sent back, or null
  * }
  * ```
  */
@@ -64,10 +63,14 @@ export interface WaitOpts {
   pollInterval?: number;
   /**
    * The logical time of the account's last transaction before the message was
-   * sent (decimal string). Each poll then pages back through the account's
-   * history until it reaches that transaction, so transactions arriving in
-   * between cannot push the one looked for out of view. Without it, each
-   * poll looks at most {@link MAX_TRANSACTIONS_PER_POLL} transactions back.
+   * sent (decimal string). Only transactions after it (lt strictly greater)
+   * can match: an earlier transaction for an identical message, such as a
+   * previous attempt of the same signed transfer, is never returned. Each poll
+   * pages back through the account's history until it reaches that
+   * transaction, so transactions arriving in between cannot push the one
+   * looked for out of view. Without it, each poll looks at most
+   * {@link MAX_TRANSACTIONS_PER_POLL} transactions back and any matching
+   * transaction counts.
    */
   afterLt?: string;
 }
@@ -108,7 +111,8 @@ export const MAX_TRANSACTIONS_PER_POLL = 1024;
  *
  * Each poll pages back from the newest transaction until it reaches
  * `opts.afterLt` (or the start of the account's history, or
- * {@link MAX_TRANSACTIONS_PER_POLL} transactions).
+ * {@link MAX_TRANSACTIONS_PER_POLL} transactions). The timeout bounds the
+ * whole call, the history scan and each request included.
  *
  * Transient failures (network errors, timeouts, server errors marked
  * retryable) are retried until the deadline; any other error is thrown at once.
@@ -158,7 +162,7 @@ export async function waitForTransaction(
   let lastFailure: Error | undefined;
   for (;;) {
     try {
-      const found = await searchHistory(client, address, wanted, afterLt);
+      const found = await searchHistory(client, address, wanted, afterLt, deadline);
       if (found !== null) return found;
     } catch (err) {
       if (!isTransient(err)) throw err;
@@ -316,14 +320,20 @@ export async function waitForTransfer(
  * transaction that executed it on the recipient's account, and return that
  * transaction without judging it.
  *
- * Whether the recipient kept the value is in what it returns: an aborted
- * transaction or a failed compute phase means a bounceable message is sent
- * back, which shows as an outgoing message with `bounced: true` to the sender.
+ * Whether the value came back is only shown by an actual bounced message:
+ * `bounce` is the outgoing message of the recipient's transaction marked
+ * `bounced: true`, or null when it sent none. Do not infer it from the
+ * transaction's state. `aborted` alone proves neither a bounce nor a refund:
+ * a recipient whose action phase failed without bounce-on-failure keeps the
+ * value although the transaction aborted, and a failed compute phase can
+ * leave too little to pay for a bounce, so none is created. A non-bounceable
+ * message is never bounced.
  *
  * @param client  - A TosProvider (typically a TosClient instance).
  * @param message - The internal message, as `out_msgs` lists it.
  * @param opts    - Timeout, polling and paging options.
- * @returns The recipient's transaction for the message.
+ * @returns The recipient's transaction for the message and the bounced
+ *   message it sent back, if any.
  * @throws {TosError} `INVALID_PARAMETER` when the message is not an internal
  *   message with a destination and a hash; `WAIT_TIMEOUT` when it is not found
  *   in time
@@ -332,7 +342,7 @@ export async function waitForReceipt(
   client: TosProvider,
   message: MessageSummary,
   opts?: WaitOpts,
-): Promise<Transaction> {
+): Promise<Receipt> {
   if (
     message?.kind !== "internal" ||
     typeof message.destination !== "string" ||
@@ -344,7 +354,24 @@ export async function waitForReceipt(
       ErrorCodes.INVALID_PARAMETER,
     );
   }
-  return waitForTransaction(client, message.destination, message.hash, opts);
+  const transaction = await waitForTransaction(client, message.destination, message.hash, opts);
+  if (!Array.isArray(transaction.out_msgs)) {
+    throw new TosError(
+      "the receipt transaction carries no out_msgs list",
+      ErrorCodes.INVALID_RESPONSE,
+    );
+  }
+  const bounce =
+    transaction.out_msgs.find((out) => out?.kind === "internal" && out.bounced === true) ?? null;
+  return { transaction, bounce };
+}
+
+/** The recipient's side of a message, as {@link waitForReceipt} returns it. */
+export interface Receipt {
+  /** The transaction that executed the message on the recipient's account. */
+  transaction: Transaction;
+  /** The bounced message that transaction sent back, or null when it sent none. */
+  bounce: MessageSummary | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -360,14 +387,18 @@ async function searchHistory(
   address: AddressLike | string,
   wanted: Uint8Array,
   afterLt: bigint | null,
+  deadline: number,
 ): Promise<Transaction | null> {
   let cursor: { lt: string; hash: string } | null = null;
   let seen = 0;
   while (seen < MAX_TRANSACTIONS_PER_POLL) {
-    const page: unknown = await client.getTransactions(
-      address,
-      PAGE_SIZE,
-      cursor === null ? undefined : { lt: cursor.lt, hash: cursor.hash },
+    const page: unknown = await beforeDeadline(
+      client.getTransactions(
+        address,
+        PAGE_SIZE,
+        cursor === null ? undefined : { lt: cursor.lt, hash: cursor.hash },
+      ),
+      deadline,
     );
     if (!Array.isArray(page)) {
       throw new TosError("getTransactions did not return an array", ErrorCodes.INVALID_RESPONSE);
@@ -376,14 +407,17 @@ async function searchHistory(
     const fresh = (page as Array<Transaction | null | undefined>).filter(
       (tx) => cursor === null || tx?.transaction_id?.lt !== cursor.lt,
     );
-    const found = findByInboundMessage(fresh, wanted);
+    // Only transactions strictly after afterLt may match: an older one for an
+    // identical message is a previous attempt, not this one.
+    const candidates = afterLt === null ? fresh : fresh.filter((tx) => requireLt(tx) > afterLt);
+    const found = findByInboundMessage(candidates, wanted);
     if (found !== null) return found;
     seen += fresh.length;
     if (fresh.length === 0 || page.length < PAGE_SIZE) return null;
     const oldest = fresh[fresh.length - 1];
-    const oldestLt = parseLt(oldest?.transaction_id?.lt);
+    const oldestLt = requireLt(oldest);
     const oldestHash = oldest?.transaction_id?.hash;
-    if (oldestLt === undefined || typeof oldestHash !== "string") {
+    if (typeof oldestHash !== "string") {
       throw new TosError(
         "getTransactions returned a transaction without a valid transaction_id",
         ErrorCodes.INVALID_RESPONSE,
@@ -414,6 +448,39 @@ function findByInboundMessage(
     if (bytesEqual(hash, wanted)) return tx;
   }
   return null;
+}
+
+/** A transaction's lt; a transaction without a valid one is a malformed answer. */
+function requireLt(tx: Transaction | null | undefined): bigint {
+  const lt = parseLt(tx?.transaction_id?.lt);
+  if (lt === undefined) {
+    throw new TosError(
+      "getTransactions returned a transaction without a valid transaction_id",
+      ErrorCodes.INVALID_RESPONSE,
+    );
+  }
+  return lt;
+}
+
+/**
+ * Settle with `request`, or fail with a transient `TIMEOUT` once `deadline`
+ * passes, so a slow node cannot hold the call past its timeout.
+ */
+function beforeDeadline<T>(request: Promise<T>, deadline: number): Promise<T> {
+  const remaining = deadline - Date.now();
+  const expired = () =>
+    new TosError("the wait deadline passed during a request", ErrorCodes.TIMEOUT);
+  if (remaining <= 0) {
+    request.catch(() => undefined);
+    return Promise.reject(expired());
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(expired()), remaining);
+  });
+  // The abandoned request may still fail later; that is not an unhandled error.
+  request.catch(() => undefined);
+  return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
 }
 
 /** A logical time as a decimal string; undefined when it is not one. */

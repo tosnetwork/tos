@@ -74,6 +74,7 @@ export type {
   NetworkConfig,
   WaitOpts,
   PendingTransfer,
+  Receipt,
   AddressLike,
   CellLike,
   TupleItemLike,

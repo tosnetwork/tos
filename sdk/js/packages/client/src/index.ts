@@ -123,4 +123,4 @@ export {
   requireDelivered,
   MAX_TRANSACTIONS_PER_POLL,
 } from "./utils/wait.js";
-export type { WaitOpts, PendingTransfer } from "./utils/wait.js";
+export type { WaitOpts, PendingTransfer, Receipt } from "./utils/wait.js";
