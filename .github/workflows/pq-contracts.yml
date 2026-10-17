@@ -120,7 +120,7 @@ jobs:
           git diff --exit-code
       - name: Compile cache statistics
         if: always()
-        run: ccache --show-stats
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
   # Surface the exact failing assertion in job metadata as well as logs/summary.
   # This remains readable when a client's redirected job-log download is unavailable.
   # Read-only permissions; no PR comments, tokens or repository writes from test code.
