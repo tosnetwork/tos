@@ -224,9 +224,11 @@ class Client {
 
   // Sends as much of stream[offset..] as the socket takes without waiting.
   // Returns false once the connection is closed by the server.
-  bool send_some(const std::string &stream, size_t &offset) {
-    while (offset < stream.size()) {
-      auto n = ::send(fd_, stream.data() + offset, stream.size() - offset, MSG_NOSIGNAL | MSG_DONTWAIT);
+  // At most up to `end` when given.
+  bool send_some(const std::string &stream, size_t &offset, size_t end = std::string::npos) {
+    end = std::min(end, stream.size());
+    while (offset < end) {
+      auto n = ::send(fd_, stream.data() + offset, end - offset, MSG_NOSIGNAL | MSG_DONTWAIT);
       if (n < 0) {
         return errno == EAGAIN || errno == EWOULDBLOCK;
       }
@@ -651,6 +653,10 @@ constexpr double kResponseTimeout = 1.0;
 // instrumented builds alike, so this stays well short of a deadline running late
 // by half again.
 constexpr double kTolerance = 0.4;
+// How often the stalled client sends another batch, and about how much reply each
+// batch asks for.
+constexpr auto kRequestPace = std::chrono::milliseconds(20);
+constexpr size_t kReplyBytes = 34 << 10;
 
 // The descriptor of the server's end of the connection `client_fd` opened to a
 // server in this process: the socket whose local address is the client's peer
@@ -725,11 +731,10 @@ std::string fat_batch(bool with_key) {
 }
 
 // A client that stops reading (or reads a few bytes at a time) while it keeps
-// sending requests as fast as the server takes them, for three deadlines. The
-// replies outgrow the kernel's socket buffers and pile up in the server; none
-// of them may move the deadline of the output the client has not read. The
-// server must drop the connection, and every byte it held for it, by that
-// deadline.
+// sending requests at a steady pace. The replies outgrow the kernel's socket
+// buffers and pile up in the server, and more keep coming after that; none of
+// them may move the deadline of the output the client has not read. The server
+// must drop the connection, and every byte it held for it, by that deadline.
 void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
   // Per-request logging would make the server too slow to outgrow the socket
   // buffers within the test.
@@ -769,12 +774,28 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
     size_t trickled = 0;
     bool server_closed = false;
     double released_after = -1;
+    // The latest moment, counted from the stall, at which the server was seen to
+    // queue another reply behind the output the client has not read.
+    double last_reply_after_stall = -1;
+    size_t reply_mark = 0;
     while (Clock::now() < give_up) {
-      if (!server_closed && !client.send_some(stream, offset)) {
+      // One batch every kRequestPace: slower than the server answers them, so its
+      // replies keep arriving after the stall instead of a backlog of requests
+      // filling it to its output watermark at once, and fast enough to outgrow
+      // the socket buffers within a few seconds.
+      auto elapsed = Clock::now() - start;
+      auto paced_end = request.size() * static_cast<size_t>(1 + elapsed / kRequestPace);
+      if (!server_closed && !client.send_some(stream, offset, paced_end)) {
         server_closed = true;
       }
       auto mem = td::BufferAllocator::get_buffer_mem();
       peak_mem = std::max(peak_mem, mem);
+      // A reply queued while the earlier ones wait shows as growth of at least
+      // half a reply over the largest amount held so far.
+      if (stalled && mem > reply_mark + kReplyBytes / 2) {
+        reply_mark = mem;
+        last_reply_after_stall = std::chrono::duration<double>(Clock::now() - stalled_at).count();
+      }
       // The stall starts when the kernel stops taking the server's output:
       // from then on every reply waits behind output the client has not read,
       // so the response deadline is armed no later than the first reply queued
@@ -785,6 +806,7 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
       if (!stalled && !server_closed && send_buffer_full(server_fd)) {
         stalled = true;
         stalled_at = Clock::now();
+        reply_mark = mem;
       }
       // A trickle-reading client starts reading once the stall is seen: what it
       // reads frees room in the kernel, so reading earlier could keep the
@@ -803,11 +825,17 @@ void stalled_client_is_released_by_the_deadline(bool with_key, bool trickle) {
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     LOG(WARNING) << "peak buffer memory over baseline: " << (peak_mem - baseline_mem) << " bytes; sent " << offset
-                 << " bytes; released " << released_after << " s after the stall was seen";
+                 << " bytes; released " << released_after << " s after the stall was seen; last reply queued "
+                 << last_reply_after_stall << " s after it";
     // The stall was real: the server held well over a megabyte of replies
     // for this client.
     ASSERT_TRUE(stalled);
     ASSERT_TRUE(peak_mem > baseline_mem + (1 << 20));
+    // Replies kept being queued behind the unread output long enough after the
+    // stall that a deadline reset by any of them would have expired after the
+    // allowed window: without this a release could pass only because the last
+    // reply came early.
+    ASSERT_TRUE(last_reply_after_stall >= kTolerance + 0.2);
     // Released by the deadline plus tolerance, counted from the moment the
     // server's socket stopped taking output: the server's socket is closed
     // and its input and output buffers are freed.
