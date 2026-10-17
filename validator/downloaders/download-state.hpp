@@ -175,8 +175,8 @@ struct SplitStatePart {
 // The readiness query admits at most 4096 possible prefixes, so parsing a
 // manifest cannot start an unbounded walk over the configured split depth.
 td::Result<std::vector<SplitStatePart>> read_split_state_parts(ShardId shard_id, RootHash root_hash,
-                                                            td::Ref<vm::Cell> wrapped_header,
-                                                            td::uint32 split_depth);
+                                                               td::Ref<vm::Cell> wrapped_header,
+                                                               td::uint32 split_depth);
 
 class DownloadShardState : public td::actor::Actor {
  public:
