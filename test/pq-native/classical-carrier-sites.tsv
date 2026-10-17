@@ -27,6 +27,7 @@ crypto/block/signature-set.cpp	*	35	definition	the C++ factories, #11/#12 codecs
 crypto/block/signature-set.h	*	2	definition	the public classical verification boundary declarations
 lite-client/lite-client-common.cpp	*	1	reachable	the checked lite parser accepts classical history and PQ carriers; trusted carrier verification remains downstream
 sdk/js/packages/client/src/types.ts	*	2	reachable	the public client response model has only ordinary/simplex classical signature shapes; the API carrier unit owns it
+test/fuzz/fuzz-finality-signatures.cpp	cpp_fetch	2	historical	fuzz target parses untrusted cells with and without the trusted PQ set; it only verifies with verify_pq_finality and emits nothing
 test/pq-native/c04-real-state-proof-test.cpp	cpp_fetch	2	historical	test-only proof fixture parses valid and wrong-set #13 PQ cells; generic fetch marker does not emit a classical carrier
 test/pq-native/custom-overlay-relay-dedup-test.cpp	cpp_factory	1	historical	relay dedup test builds an ordinary set only as opaque evidence content to key finality forwarding; nothing verifies or emits it
 test/pq-native/n6-microbench-smoke.cpp	cpp_fetch	1	historical	benchmark fixture parses a PQ lite carrier through the checked adapter; no production carrier selection

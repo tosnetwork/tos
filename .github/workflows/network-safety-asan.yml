@@ -21,21 +21,46 @@ on:
   pull_request:
     branches: [master, testnet, main]
     types: [opened, reopened, synchronize, ready_for_review]
+    # Every test source the job runs, and the network-facing code those tests
+    # exercise directly: the network stacks and their accept path, the JSON-RPC
+    # server library the transport test runs (with the wallet index and control
+    # getters it links), the socket and buffer layer, the key-value layer, metrics and
+    # the TL schema. Deeper shared libraries (block, crypto, the rest of tdutils) are
+    # not listed: a change there runs in the ordinary test pass, not instrumented.
     paths:
       - 'adnl/**'
       - 'overlay/**'
       - 'quic/**'
       - 'http/**'
+      - 'tdnet/**'
+      - 'tddb/**'
+      - 'metrics/**'
+      - 'dht/**'
+      - 'fec/**'
+      - 'keyring/**'
+      - 'keys/**'
+      - 'rldp/**'
+      - 'rldp2/**'
       - 'rldp-http-proxy/**'
       - 'tdactor/**'
+      - 'validator-engine/json-rpc-*'
+      - 'validator-engine/wallet-index*'
+      - 'validator-engine/control-getter*'
+      - 'validator-engine/CMakeLists.txt'
+      - 'tl/generate/scheme/**'
+      - 'test/test-td-main.cpp'
       - 'test/test-adnl-peer-pair-cap.cpp'
       - 'test/test-overlay-broadcast-capacity.cpp'
       - 'test/net/test-quic-sender.cpp'
       - 'test/test-http-server-limits.cpp'
+      - 'test/test-json-rpc-transport.cpp'
       - 'test/test-rldp-http-tunnel.cpp'
       - 'test/pq-native/adnl-ext-output-backpressure-test.cpp'
       - 'test/pq-native/adnl-ext-refusal-close-test.cpp'
       - 'tdutils/td/utils/tests.*'
+      - 'tdutils/td/utils/buffer.*'
+      - 'tdutils/td/utils/BufferedFd.h'
+      - 'tdutils/td/utils/port/**'
       - 'CMakeLists.txt'
       - '.github/workflows/network-safety-asan.yml'
   workflow_dispatch:

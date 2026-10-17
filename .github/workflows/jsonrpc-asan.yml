@@ -20,11 +20,29 @@ on:
   pull_request:
     branches: [master, testnet, main]
     types: [opened, reopened, synchronize, ready_for_review]
+    # The tests and scripts each job runs and the JSON-RPC-facing code they exercise:
+    # the JSON-RPC server library (with the wallet index and control getters it
+    # links), the HTTP layer, the shared test main, the build definition, and for the
+    # corpus job the node it builds and the pinned tools it installs. Deeper shared
+    # libraries are not listed; a change there runs in the ordinary test pass.
     paths:
       - 'validator-engine/json-rpc-*'
+      - 'validator-engine/wallet-index*'
+      - 'validator-engine/control-getter*'
+      - 'validator-engine/validator-engine*'
+      - 'validator-engine/CMakeLists.txt'
+      - 'CMakeLists.txt'
+      - 'http/**'
+      - 'scripts/verify-build-tool.py'
+      - 'uv.lock'
+      - 'pyproject.toml'
+      - 'test/tostester/generate_tl.py'
       - 'test/test-json-rpc-*'
+      - 'test/test-td-main.cpp'
       - 'test/json-rpc/**'
       - 'scripts/asan-jsonrpc-corpus.py'
+      - 'scripts/asan-jsonrpc-localnet.sh'
+      - 'scripts/check-jsonrpc-route-gating.py'
       - 'scripts/check-jsonrpc-spec.py'
       - 'doc/openapi.yaml'
       - '.github/workflows/jsonrpc-asan.yml'

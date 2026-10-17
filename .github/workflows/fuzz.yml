@@ -1,0 +1,128 @@
+name: Coverage-guided fuzzing
+
+# Coverage-guided fuzz targets (libFuzzer, under AddressSanitizer and
+# UndefinedBehaviorSanitizer) for the parsers that take bytes from peers or
+# from disk: bags of cells, external message admission, persistent-state
+# import, block finality signatures, Simplex votes and certificates, FEC and
+# RLDP decoding, and SLH-DSA verification. The targets live in test/fuzz; each
+# one states what it covers and the invariants it checks.
+#
+# On the schedule and on demand every target runs for a bounded time, starting
+# from the committed seeds plus the corpus the previous run kept in the cache.
+# The grown corpus is saved back to the cache and uploaded with any crash,
+# leak, timeout or out-of-memory input, and a finding fails the run. A push to
+# main only builds the targets, so a change that breaks them is seen at once
+# rather than on the next scheduled run.
+
+on:
+  schedule:
+    - cron: '41 3 * * *'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Seconds each target runs'
+        required: false
+        default: '600'
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+env:
+  # Stop at the first fault with its trace intact. Leak detection stays on: a
+  # target leaking per input exhausts memory over a long run, and libFuzzer
+  # reports the leak with the input that caused it.
+  ASAN_OPTIONS: abort_on_error=1:halt_on_error=1:symbolize=1
+  UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86-64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+    - name: Install system libraries
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential git cmake ninja-build
+
+    - name: Install Clang 21 with its runtimes
+      run: |
+        sudo scripts/install-llvm-toolchain.sh 21 all
+
+    - name: Configure the fuzzing build
+      run: |
+        cmake -S . -B build-fuzz -G Ninja \
+          -DCMAKE_C_COMPILER=clang-21 \
+          -DCMAKE_CXX_COMPILER=clang++-21 \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          -DTOS_BUILD_FUZZERS=ON \
+          -DTOS_USE_ASAN=ON \
+          -DTOS_USE_UBSAN=ON
+
+    - name: Build the fuzz targets
+      # Some targets pull in the frozen-contract embedding, whose verify step
+      # recompiles the sources with this build's func and fift.
+      env:
+        FUNC_BIN: ${{ github.workspace }}/build-fuzz/crypto/func
+        FIFT_BIN: ${{ github.workspace }}/build-fuzz/crypto/fift
+      run: |
+        ninja -C build-fuzz func fift
+        ninja -C build-fuzz fuzzers
+
+    - name: Restore the corpus from the previous run
+      if: github.event_name != 'push'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: fuzz-work/corpus
+        key: fuzz-corpus-${{ matrix.arch }}-${{ github.run_id }}
+        restore-keys: |
+          fuzz-corpus-${{ matrix.arch }}-
+
+    - name: Fuzz every target
+      if: github.event_name != 'push'
+      env:
+        SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || '600' }}
+        # Two instrumented targets at a time: each may grow to its 4 GiB RSS
+        # limit, and the hosted runners have 16 GiB.
+        FUZZ_JOBS: '2'
+      run: |
+        scripts/run-fuzzers.sh build-fuzz "$SECONDS_PER_TARGET" fuzz-work
+
+    - name: Minimise the grown corpus
+      # Keep only the inputs that add coverage beyond the committed seeds, so the
+      # cache does not accumulate every input every run ever found.
+      if: always() && github.event_name != 'push'
+      run: |
+        scripts/merge-fuzz-corpus.sh build-fuzz fuzz-work
+
+    - name: Save the grown corpus
+      if: always() && github.event_name != 'push'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: fuzz-work/corpus
+        key: fuzz-corpus-${{ matrix.arch }}-${{ github.run_id }}
+
+    - name: Upload the corpus, findings and logs
+      if: always() && github.event_name != 'push'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: fuzz-${{ matrix.arch }}
+        path: fuzz-work
+        if-no-files-found: ignore
+        retention-days: 30

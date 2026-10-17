@@ -19,3 +19,8 @@ option(TOS_BUILD_VALIDATOR_AUTH_TESTS "Build isolated validator signature confor
 if(TOS_BUILD_VALIDATOR_AUTH_TESTS)
   add_subdirectory(validator-auth)
 endif()
+
+# Coverage-guided fuzz targets; TOS_BUILD_FUZZERS also instruments the tree they link.
+if(TOS_BUILD_FUZZERS)
+  add_subdirectory(fuzz)
+endif()

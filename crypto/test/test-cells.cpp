@@ -36,6 +36,7 @@
 #include "td/utils/crypto.h"
 #include "td/utils/misc.h"
 #include "td/utils/tests.h"
+#include "vm/boc.h"
 #include "vm/cells.h"
 #include "vm/cellslice.h"
 
@@ -293,6 +294,90 @@ TEST(Cells, pruned_branch_rebuilt_from_a_hash_and_a_depth) {
   // Swapping the two branches is the mistake a reader of the TL-B would make, so it is
   // worth knowing it does not go unnoticed either.
   ASSERT_TRUE(state_init(rebuilt(data), rebuilt(code))->get_hash(0) != address);
+}
+
+// A bag of cells shorter than the size its own header declares must be refused by the
+// size check, before any offset from the header is used to slice the input. A checksummed
+// bag cannot show this: its checksum is read from the last four bytes of whatever was
+// passed, so any truncation fails the checksum first and the size check never decides.
+// The bags here carry no checksum, so every prefix reaches the size check, and the error
+// must be the one that check reports: not enough bytes, with the whole bag's size as the
+// requirement. A prefix too short to hold the header is refused earlier by the header
+// parse, which reports the same words but only the header's size as the requirement.
+// Without the check, a prefix that ends inside the root list or the index is sliced past
+// its end, and a prefix that ends inside the cell data is refused later with a different
+// error.
+TEST(Cells, boc_without_checksum_shorter_than_its_header_declares_is_refused_by_the_size_check) {
+  auto leaf = [](int tag) {
+    vm::CellBuilder cb;
+    cb.store_long(tag, 32);
+    return cb.finalize();
+  };
+  vm::CellBuilder inner;
+  inner.store_long(0xa5, 8);
+  inner.store_ref(leaf(3));
+  vm::CellBuilder cb;
+  cb.store_long(0x5a5a, 16);
+  cb.store_ref(leaf(1));
+  cb.store_ref(leaf(2));
+  cb.store_ref(inner.finalize());
+  auto root = cb.finalize();
+
+  int checked_modes = 0;
+  for (int mode = 0; mode <= vm::BagOfCells::Mode::max; mode++) {
+    if (mode & vm::BagOfCells::Mode::WithCRC32C) {
+      continue;
+    }
+    if ((mode & vm::BagOfCells::Mode::WithCacheBits) && !(mode & vm::BagOfCells::Mode::WithIndex)) {
+      continue;
+    }
+    auto r_serialized = vm::std_boc_serialize(root, mode);
+    ASSERT_TRUE(r_serialized.is_ok());
+    auto serialized = r_serialized.move_as_ok();
+    td::Slice full = serialized.as_slice();
+
+    // The whole bag carries no checksum and is accepted, so nothing but the size check
+    // stands between a prefix of it and the parser.
+    vm::BagOfCells::Info info;
+    ASSERT_EQ(static_cast<long long>(full.size()), info.parse_serialized_header(full));
+    ASSERT_TRUE(!info.has_crc32c);
+    vm::BagOfCells whole;
+    auto r_whole = whole.deserialize(full);
+    ASSERT_TRUE(r_whole.is_ok());
+    ASSERT_EQ(static_cast<long long>(full.size()), r_whole.ok());
+    ASSERT_TRUE(whole.get_root_cell()->get_hash() == root->get_hash());
+
+    std::size_t refused_by_size_check = 0;
+    for (size_t length = 0; length < full.size(); length++) {
+      // A copy of exactly `length` bytes, so a read past the prefix leaves the buffer.
+      std::string prefix = full.substr(0, length).str();
+      vm::BagOfCells::Info prefix_info;
+      const bool header_complete = prefix_info.parse_serialized_header(td::Slice(prefix)) > 0;
+      vm::BagOfCells boc;
+      auto r_boc = boc.deserialize(td::Slice(prefix));
+      ASSERT_TRUE(r_boc.is_error());
+      auto message = r_boc.error().message().str();
+      // A header-complete prefix must be refused for lacking the whole bag; a shorter one
+      // for lacking the header, so for something less than the whole bag.
+      std::string expected = PSTRING() << "cannot deserialize bag-of-cells: not enough bytes (" << length
+                                       << " present, ";
+      bool refused_for_size = message.rfind(expected, 0) == 0;
+      bool whole_bag_required = message == expected + std::to_string(full.size()) + " required)";
+      if (!refused_for_size || header_complete != whole_bag_required) {
+        LOG(FATAL) << "mode " << mode << ", " << length << " of " << full.size()
+                   << " bytes, header complete: " << header_complete << ": refused by the wrong check: " << message;
+      }
+      if (whole_bag_required) {
+        refused_by_size_check++;
+      }
+    }
+    // The size check itself decided, not only the header parse: every prefix from the end
+    // of the header to one byte short of the bag.
+    ASSERT_TRUE(refused_by_size_check > 0);
+    checked_modes++;
+  }
+  // Generic and indexed layouts, with and without cache bits and stored hashes.
+  ASSERT_EQ(12, checked_modes);
 }
 
 TEST(Bitstrings, main) {
