@@ -22,7 +22,11 @@ using namespace pq_block_signature_test;
 // Dictionary edge label encodings: hml_short, hml_long and hml_same spell the same
 // key bits in different cells; the serializer writes the shortest one.
 enum class LabelForm { Short, Long, Same };
+constexpr std::array<LabelForm, 3> label_forms{LabelForm::Short, LabelForm::Long, LabelForm::Same};
 
+// Writes the label of one dictionary node in the given form and keeps the rest of
+// the node. Returns null when the form cannot spell the label (hml_same for a
+// label that is not uniform).
 td::Ref<vm::Cell> relabel_node(td::Ref<vm::Cell> node, int max_len, LabelForm form, std::string_view name) {
   vm::dict::LabelParser label{std::move(node), max_len, vm::dict::LabelParser::chk_all};
   td::BitArray<16> bits;
@@ -49,7 +53,7 @@ td::Ref<vm::Cell> relabel_node(td::Ref<vm::Cell> node, int max_len, LabelForm fo
       const bool value = len > 0 && bits[0];
       for (int i = 0; i < len; ++i) {
         if (bits[i] != value) {
-          fail("PQ_BLOCK_SIGNATURE_RELABEL_NOT_UNIFORM case=" + std::string(name));
+          return {};
         }
       }
       ok = builder.store_long_bool(3, 2) && builder.store_long_bool(value ? 1 : 0, 1) &&
@@ -73,25 +77,66 @@ td::Ref<vm::Cell> replace_ref(const td::Ref<vm::Cell>& cell, unsigned index, td:
   return builder.finalize_novm();
 }
 
-int root_label_bits(const td::Ref<vm::Cell>& dict_root) {
-  vm::dict::LabelParser label{dict_root, 16, vm::dict::LabelParser::chk_all};
-  return label.l_bits;
+// Every dictionary that differs from the subtree at `node` in the label encoding of
+// exactly one node, for every node and every other form that can spell its label.
+// Positive control for the re-encoder: for every node exactly one form reproduces
+// the node bit for bit, so the serializer's own choice is among the forms written
+// here and each returned variant is a genuine re-encoding.
+void label_reencodings(const td::Ref<vm::Cell>& node, int max_len, std::string_view name,
+                       std::vector<td::Ref<vm::Cell>>& out) {
+  int reproduced = 0;
+  for (const auto form : label_forms) {
+    auto encoded = relabel_node(node, max_len, form, name);
+    if (encoded.is_null()) {
+      continue;
+    }
+    if (encoded->get_hash() == node->get_hash()) {
+      ++reproduced;
+    } else {
+      out.push_back(std::move(encoded));
+    }
+  }
+  if (reproduced != 1) {
+    fail("PQ_BLOCK_SIGNATURE_RELABEL_CONTROL_FAILED case=" + std::string(name));
+  }
+  vm::dict::LabelParser label{node, max_len, vm::dict::LabelParser::chk_all};
+  if (label.l_bits == max_len) {
+    return;  // a leaf
+  }
+  const int child_max_len = max_len - label.l_bits - 1;
+  vm::CellSlice fork{vm::NoVm(), node};
+  for (unsigned child = 0; child < 2; ++child) {
+    std::vector<td::Ref<vm::Cell>> below;
+    label_reencodings(fork.prefetch_ref(child), child_max_len, name, below);
+    for (auto& subtree : below) {
+      out.push_back(replace_ref(node, child, std::move(subtree)));
+    }
+  }
 }
 
-// Re-encodes one edge label of the signatures dictionary held in ref 0 of a
-// signature set root. The two-signer dictionary is a root fork with two leaves.
-td::Ref<vm::Cell> relabel_signature_set(const td::Ref<vm::Cell>& set_root, int leaf, LabelForm form,
-                                        std::string_view name) {
-  const auto dict_root = vm::CellSlice{vm::NoVm(), set_root}.prefetch_ref(0);
-  td::Ref<vm::Cell> new_dict;
-  if (leaf < 0) {
-    new_dict = relabel_node(dict_root, 16, form, name);
-  } else {
-    const int leaf_max_len = 16 - root_label_bits(dict_root) - 1;
-    const auto leaf_node = vm::CellSlice{vm::NoVm(), dict_root}.prefetch_ref(leaf);
-    new_dict = replace_ref(dict_root, leaf, relabel_node(leaf_node, leaf_max_len, form, name));
+std::vector<td::Ref<vm::Cell>> signature_set_reencodings(const td::Ref<vm::Cell>& set_root, std::string_view name) {
+  std::vector<td::Ref<vm::Cell>> dictionaries;
+  label_reencodings(vm::CellSlice{vm::NoVm(), set_root}.prefetch_ref(0), 16, name, dictionaries);
+  std::vector<td::Ref<vm::Cell>> result;
+  result.reserve(dictionaries.size());
+  for (auto& dictionary : dictionaries) {
+    result.push_back(replace_ref(set_root, 0, std::move(dictionary)));
   }
-  return replace_ref(set_root, 0, std::move(new_dict));
+  return result;
+}
+
+// Writes the label of leaf `leaf` under the root fork of a two-entry dictionary.
+td::Ref<vm::Cell> relabel_signature_set_leaf(const td::Ref<vm::Cell>& set_root, unsigned leaf, LabelForm form,
+                                             std::string_view name) {
+  const auto dict_root = vm::CellSlice{vm::NoVm(), set_root}.prefetch_ref(0);
+  vm::dict::LabelParser root_label{dict_root, 16, vm::dict::LabelParser::chk_all};
+  const int leaf_max_len = 16 - root_label.l_bits - 1;
+  const auto leaf_node = vm::CellSlice{vm::NoVm(), dict_root}.prefetch_ref(leaf);
+  auto encoded = relabel_node(leaf_node, leaf_max_len, form, name);
+  if (encoded.is_null()) {
+    fail("PQ_BLOCK_SIGNATURE_RELABEL_FAILED case=" + std::string(name));
+  }
+  return replace_ref(set_root, 0, replace_ref(dict_root, leaf, std::move(encoded)));
 }
 
 // The entries a dictionary holds, independent of how its nodes are encoded.
@@ -114,36 +159,17 @@ std::vector<std::pair<unsigned, td::Bits256>> dictionary_entries(const td::Ref<v
   return entries;
 }
 
-struct LabelVariant {
-  std::string_view name;
-  int leaf;  // -1 is the root edge
-  LabelForm form;
-};
-
-constexpr std::array<LabelVariant, 4> noncanonical_label_variants{{
-    {"leaf-label-long", 0, LabelForm::Long},
-    {"leaf-label-same", 1, LabelForm::Same},
-    {"root-label-short", -1, LabelForm::Short},
-    {"root-label-long", -1, LabelForm::Long},
-}};
-
-// A set whose signature dictionary is not in the serializer's form is the same
-// signatures under a second cell hash, and is refused before any signature is
-// verified. Returns the number of refused encodings.
+// The canonical set is accepted; every set whose signature dictionary differs from
+// it only in the encoding of one node's label holds the same signatures under a
+// second cell hash and is refused before any signature is verified. Returns the
+// number of refused encodings.
 std::size_t check_noncanonical_dictionary(const td::Ref<vm::Cell>& canonical, std::string_view prefix,
                                           std::string_view expected, td::Ref<block::ValidatorSet> trusted_set) {
-  // Positive control for the re-encoder: writing each canonical label in its
-  // own form reproduces the canonical cell bit for bit.
-  if (relabel_signature_set(canonical, -1, LabelForm::Same, prefix)->get_hash() != canonical->get_hash() ||
-      relabel_signature_set(canonical, 0, LabelForm::Short, prefix)->get_hash() != canonical->get_hash() ||
-      relabel_signature_set(canonical, 1, LabelForm::Short, prefix)->get_hash() != canonical->get_hash()) {
-    fail("PQ_BLOCK_SIGNATURE_RELABEL_CONTROL_FAILED case=" + std::string(prefix));
-  }
   const auto canonical_entries = dictionary_entries(canonical, prefix);
   std::size_t refused = 0;
-  for (const auto& variant : noncanonical_label_variants) {
-    const auto name = std::string(prefix) + "-" + std::string(variant.name);
-    auto encoded = relabel_signature_set(canonical, variant.leaf, variant.form, name);
+  std::size_t index = 0;
+  for (const auto& encoded : signature_set_reencodings(canonical, prefix)) {
+    const auto name = std::string(prefix) + "-reencoding-" + std::to_string(index++);
     if (encoded->get_hash() == canonical->get_hash()) {
       fail("PQ_BLOCK_SIGNATURE_RELABEL_NO_CHANGE case=" + name);
     }
@@ -158,7 +184,29 @@ std::size_t check_noncanonical_dictionary(const td::Ref<vm::Cell>& canonical, st
     }
     ++refused;
   }
+  if (refused == 0) {
+    fail("PQ_BLOCK_SIGNATURE_NO_REENCODINGS case=" + std::string(prefix));
+  }
   return refused;
+}
+
+// A #13 set of `count` entries with patterned signatures: enough for the codec,
+// which never verifies a signature.
+td::Ref<vm::Cell> patterned_pq_signature_set(std::size_t count) {
+  std::vector<block::PQBlockSignature> signatures;
+  for (std::size_t i = 0; i < count; ++i) {
+    td::BufferSlice signature(tos::pq::mldsa44_signature_bytes);
+    for (std::size_t j = 0; j < signature.size(); ++j) {
+      signature.as_slice()[j] = static_cast<char>((i * 31 + j) & 0xff);
+    }
+    signatures.push_back({tos::ValidatorId{hash_of("dictionary-validator-" + std::to_string(i))},
+                          tos::pq::PQAlgorithmId::mldsa44, std::move(signature)});
+  }
+  const auto id = block_id("dictionary-shape");
+  return require_ok(
+      block::BlockSignatureSet::serialize_simplex_pq(signatures, Fixture::catchain_seqno, 0x31415926, count,
+                                                     hash_of("dictionary-session"), Fixture::slot, candidate(id)),
+      "patterned-set-" + std::to_string(count));
 }
 
 td::Ref<vm::Cell> classical_signature_set(unsigned tag) {
@@ -203,9 +251,6 @@ std::size_t check_canonical_signature_dictionaries() {
                                   signatures, Fixture::catchain_seqno, fixture.validator_set->get_validator_set_hash(),
                                   weight, fixture.session, Fixture::slot, data),
                               "canonical-dictionary-serialize");
-  if (root_label_bits(vm::CellSlice{vm::NoVm(), canonical}.prefetch_ref(0)) != 15) {
-    fail("PQ_BLOCK_SIGNATURE_UNEXPECTED_DICTIONARY_SHAPE case=canonical-dictionary");
-  }
 
   // The honest encoding parses, verifies and serializes back to the same cell.
   const block::PQFinalityVerificationContext context{fixture.validator_set, fixture.id, fixture.session};
@@ -235,7 +280,7 @@ std::size_t check_canonical_signature_dictionaries() {
   // that is accepted and verifies as final; the reproducer itself is refused.
   auto bytes = require_ok(td::read_file(NONCANONICAL_LABEL_BOC), "reproducer-read");
   auto reproducer = require_ok(vm::std_boc_deserialize(bytes.as_slice()), "reproducer-boc");
-  auto repaired = relabel_signature_set(reproducer, 0, LabelForm::Short, "reproducer");
+  auto repaired = relabel_signature_set_leaf(reproducer, 0, LabelForm::Short, "reproducer");
   if (repaired->get_hash() == reproducer->get_hash() ||
       dictionary_entries(reproducer, "reproducer") != dictionary_entries(repaired, "reproducer-repaired")) {
     fail("PQ_BLOCK_SIGNATURE_REPRODUCER_NOT_A_REENCODING");
@@ -247,6 +292,20 @@ std::size_t check_canonical_signature_dictionaries() {
   expect_error(block::BlockSignatureSet::fetch(reproducer, fixture.validator_set),
                "pq signatures: noncanonical dictionary", "reproducer-trusted");
   ++refused;
+
+  // One entry (the root is a leaf) and the launch signer count: every node of the
+  // dictionary in every other form it can take is refused, and the canonical set
+  // parses.
+  for (const std::size_t count : {std::size_t{1}, std::size_t{21}}) {
+    const auto prefix = "pq-dictionary-" + std::to_string(count);
+    const auto set = patterned_pq_signature_set(count);
+    tos::ValidatorWeight set_weight = 0;
+    auto parsed = require_ok(block::BlockSignatureSet::fetch(set, set_weight), prefix);
+    if (parsed->get_size() != count || set_weight != count) {
+      fail("PQ_BLOCK_SIGNATURE_PATTERNED_SET case=" + prefix);
+    }
+    refused += check_noncanonical_dictionary(set, prefix, "pq signatures: noncanonical dictionary", {});
+  }
 
   // The classical carriers read their dictionary through the other parser.
   for (const unsigned tag : {0x11u, 0x12u}) {
@@ -544,6 +603,6 @@ int main() {
       "pq signatures: validator key_id mismatch", "descriptor-key-id-mismatch");
 
   const auto noncanonical_refused = check_canonical_signature_dictionaries();
-  std::printf("PQ_BLOCK_SIGNATURE_CONFORMANCE_OK positive_cases=7 negative_cases=%zu\n", 29 + noncanonical_refused);
+  std::printf("PQ_BLOCK_SIGNATURE_CONFORMANCE_OK positive_cases=9 negative_cases=%zu\n", 29 + noncanonical_refused);
   return 0;
 }
