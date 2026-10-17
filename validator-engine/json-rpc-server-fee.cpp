@@ -17,6 +17,7 @@
 
 #include "block/block-auto.h"
 #include "block/block-parse.h"
+#include "block/transaction.h"
 #include "block/workchain-execution-dispatch.h"
 #include "smc-envelope/GenericAccount.h"
 #include "vm/boc.h"
@@ -76,11 +77,9 @@ td::Status rejected(td::Slice message) {
 
 }  // namespace
 
-td::Result<ExternalMessageEstimate> plan_external_message_estimate(const block::StdAddress& address,
-                                                                   td::Ref<vm::Cell> body,
-                                                                   const td::Ref<vm::Cell>& init_code,
-                                                                   const td::Ref<vm::Cell>& init_data,
-                                                                   const EstimateAccount& account) {
+td::Result<ExternalMessageEstimate> plan_external_message_estimate(
+    const block::StdAddress& address, td::Ref<vm::Cell> body, const td::Ref<vm::Cell>& init_code,
+    const td::Ref<vm::Cell>& init_data, const EstimateAccount& account, const EstimateRules& rules) {
   const bool has_state_init = init_code.not_null() || init_data.not_null();
   td::Bits256 state_init_hash = td::Bits256::zero();
   if (has_state_init) {
@@ -115,6 +114,9 @@ td::Result<ExternalMessageEstimate> plan_external_message_estimate(const block::
         return rejected(
             "the StateInit of init_code/init_data does not hash to the address; it cannot deploy this account");
       }
+      if (rules.address_suspended) {
+        return rejected("the address is suspended (ConfigParam 44): the account cannot be deployed");
+      }
       estimate.code = init_code;
       estimate.data = init_data;
       break;
@@ -130,6 +132,14 @@ td::Result<ExternalMessageEstimate> plan_external_message_estimate(const block::
       estimate.code = init_code;
       estimate.data = init_data;
       break;
+  }
+  // Before external unfreezing, the executor rejects every external message
+  // whose StateInit is not the address's own, a frozen account's included.
+  if (rules.global_version < kExternalUnfreezeGlobalVersion && has_state_init && state_init_hash != address.addr) {
+    return rejected(PSLICE() << "the StateInit of init_code/init_data does not hash to the address; before global "
+                                "version "
+                             << kExternalUnfreezeGlobalVersion << " (this network runs " << rules.global_version
+                             << ") an external message cannot carry it");
   }
   if (estimate.code.is_null()) {
     return rejected("the StateInit has no code to run");
@@ -164,9 +174,13 @@ td::Status check_estimate_workchain(const block::WorkchainSet& workchains, tos::
 }
 
 td::Result<td::int64> external_message_import_fee(const td::Ref<vm::Cell>& message, const block::MsgPrices& prices,
-                                                  bool special_account) {
+                                                  bool special_account, const block::SizeLimitsConfig& limits) {
   if (message.is_null()) {
     return td::Status::Error("external message is empty");
+  }
+  if (message->get_depth() > limits.ext_msg_limits.max_depth) {
+    return rejected(PSLICE() << "the external message is " << message->get_depth()
+                             << " cells deep; the executor imports at most " << limits.ext_msg_limits.max_depth);
   }
   return TRY_VM(([&]() -> td::Result<td::int64> {
     // The same accounting as the executor's import of an inbound external
@@ -182,12 +196,21 @@ td::Result<td::int64> external_message_import_fee(const td::Ref<vm::Cell>& messa
     }
     vm::CellStorageStat stat;
     TRY_RESULT(cell_info, stat.compute_used_storage(cs));
-    (void)cell_info;
     if (stat.bits < cs.size() || stat.cells < 1) {
       return td::Status::Error("external message storage accounting is inconsistent");
     }
     const td::uint64 bits = stat.bits - cs.size();
     const td::uint64 cells = stat.cells - 1;
+    if (bits > limits.max_msg_bits || cells > limits.max_msg_cells) {
+      return rejected(PSLICE() << "the external message carries " << cells << " cells and " << bits
+                               << " bits beyond its root; the executor imports at most " << limits.max_msg_cells
+                               << " cells and " << limits.max_msg_bits << " bits");
+    }
+    if (cell_info.max_merkle_depth > block::transaction::Transaction::max_allowed_merkle_depth) {
+      return rejected(PSLICE() << "the external message nests Merkle proofs " << cell_info.max_merkle_depth
+                               << " deep; the executor imports at most "
+                               << block::transaction::Transaction::max_allowed_merkle_depth);
+    }
     // A special account imports for free.
     const td::uint64 fee = special_account ? 0 : prices.compute_fwd_ihr_fees(cells, bits, true).first;
     if (fee > static_cast<td::uint64>(std::numeric_limits<td::int64>::max())) {

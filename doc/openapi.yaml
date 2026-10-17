@@ -2946,9 +2946,11 @@ paths:
         the account's own code when the account is active, otherwise init_code. A request the executor would
         reject is refused with INVALID_ARGUMENT instead of priced: an account that is not deployed and no
         StateInit or one whose hash is not the address; a frozen account and no StateInit or one other than
-        the StateInit it was frozen with; an active account and a StateInit whose hash is not the address.
-        An account on a workchain whose compute phase is not TVM is refused with CONTRACT_KIND_UNSUPPORTED.
-        POST only: ignore_chksig.
+        the StateInit it was frozen with; an active account and a StateInit whose hash is not the address;
+        before global version 8, any StateInit whose hash is not the address; an address ConfigParam 44
+        suspends from deployment; and a message deeper, or with more cells or bits beyond its root, than
+        ConfigParam 43 lets the executor import. An account on a workchain whose compute phase is not TVM is
+        refused with CONTRACT_KIND_UNSUPPORTED. POST only: ignore_chksig.
       parameters:
         - name: address
           in: query
@@ -2993,8 +2995,11 @@ paths:
         the account's own code when the account is active, otherwise init_code. A request the executor would
         reject is refused with INVALID_ARGUMENT instead of priced: an account that is not deployed and no
         StateInit or one whose hash is not the address; a frozen account and no StateInit or one other than
-        the StateInit it was frozen with; an active account and a StateInit whose hash is not the address.
-        An account on a workchain whose compute phase is not TVM is refused with CONTRACT_KIND_UNSUPPORTED.
+        the StateInit it was frozen with; an active account and a StateInit whose hash is not the address;
+        before global version 8, any StateInit whose hash is not the address; an address ConfigParam 44
+        suspends from deployment; and a message deeper, or with more cells or bits beyond its root, than
+        ConfigParam 43 lets the executor import. An account on a workchain whose compute phase is not TVM is
+        refused with CONTRACT_KIND_UNSUPPORTED.
       requestBody:
         required: false
         description: 'Named parameters. An empty body is {}.'

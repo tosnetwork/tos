@@ -1237,8 +1237,26 @@ td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest 
   // StateInit only when the request supplies one. The compute phase runs what
   // the executor would, and a request the executor would reject is refused.
   TRY_RESULT(account, estimate_account_from(parsed));
+  EstimateRules rules;
+  rules.global_version = cfg->get_global_version();
+  if (account.status == EstimateAccount::Status::Uninitialized) {
+    // The executor's lookup: workchain:int32 followed by the address.
+    auto suspended = cfg->get_suspended_addresses(parsed.sync_utime);
+    if (suspended) {
+      vm::CellBuilder key;
+      if (!(key.store_long_bool(addr.workchain, 32) && key.store_bits_bool(addr.addr))) {
+        return td::Status::Error(-32603, "cannot build the suspended-address key");
+      }
+      rules.address_suspended = suspended->lookup(key.data_bits(), 288).not_null();
+    }
+  }
   TRY_RESULT(estimate,
-             plan_external_message_estimate(addr, request.body, request.init_code, request.init_data, account));
+             plan_external_message_estimate(addr, request.body, request.init_code, request.init_data, account, rules));
+  auto size_limits_r = cfg->get_size_limits_config();
+  if (size_limits_r.is_error()) {
+    return td::Status::Error(-32603, PSLICE() << "message size limits unavailable: " << size_limits_r.error());
+  }
+  auto size_limits = size_limits_r.move_as_ok();
 
   bool is_masterchain = addr.workchain == tos::masterchainId;
   bool is_special = false;
@@ -1272,8 +1290,12 @@ td::Result<std::string> estimate_external_message_fees(const EstimateFeeRequest 
       parsed.sync_utime, storage_prices, parsed.storage_used, parsed.storage_last_paid, false, is_masterchain);
   auto storage_fee = storage_fee_256.is_null() ? 0 : storage_fee_256->to_long();
 
-  auto in_fwd_fee_r = external_message_import_fee(estimate.message, *msg_prices[is_masterchain], is_special);
+  auto in_fwd_fee_r =
+      external_message_import_fee(estimate.message, *msg_prices[is_masterchain], is_special, size_limits);
   if (in_fwd_fee_r.is_error()) {
+    if (in_fwd_fee_r.error().code() == kEstimateRejectedCode) {
+      return in_fwd_fee_r.move_as_error();
+    }
     return td::Status::Error(-32603, PSLICE() << "import fee error: " << in_fwd_fee_r.error());
   }
   auto in_fwd_fee = in_fwd_fee_r.move_as_ok();
