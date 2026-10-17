@@ -98,8 +98,18 @@ jobs:
       if: github.event_name != 'push'
       env:
         SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || '600' }}
+        # Two instrumented targets at a time: each may grow to its 4 GiB RSS
+        # limit, and the hosted runners have 16 GiB.
+        FUZZ_JOBS: '2'
       run: |
         scripts/run-fuzzers.sh build-fuzz "$SECONDS_PER_TARGET" fuzz-work
+
+    - name: Minimise the grown corpus
+      # Keep only the inputs that add coverage beyond the committed seeds, so the
+      # cache does not accumulate every input every run ever found.
+      if: always() && github.event_name != 'push'
+      run: |
+        scripts/merge-fuzz-corpus.sh build-fuzz fuzz-work
 
     - name: Save the grown corpus
       if: always() && github.event_name != 'push'
