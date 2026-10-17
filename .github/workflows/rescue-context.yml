@@ -627,7 +627,7 @@ jobs:
           retention-days: 14
       - name: Compile cache statistics
         if: always()
-        run: ccache --show-stats
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
       - name: Record exact source and public evidence hashes
         if: always()
         run: |
