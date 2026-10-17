@@ -30,11 +30,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - name: Type check and test every package
+      - name: Type check, test and build every package
         working-directory: sdk/js
         run: |
           corepack enable
           pnpm install --frozen-lockfile
           pnpm -r typecheck
           pnpm -r test
+          # The build emits the declaration files the packages publish; a
+          # type check alone does not run it.
+          pnpm -r build
           git diff --exit-code

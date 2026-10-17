@@ -15,7 +15,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Address, type Cell, bytesToBase64 } from "@tos/core";
 import { keyPairFromSeed, sign } from "@tos/crypto";
 import { WalletV3R2 } from "./WalletV3R2.js";
@@ -37,6 +37,7 @@ async function deployBody(wallet: WalletV3R2 | WalletV4R2): Promise<Cell> {
     {
       external: async (cell: Cell) => {
         body = cell;
+        return { hash: bytesToBase64(cell.hash()) };
       },
     } as never,
     { sign: async (hash: Uint8Array) => sign(hash, KEY_PAIR.secretKey) } as never,
@@ -87,6 +88,16 @@ async function vectors() {
 }
 
 describe("network-bound wallet vectors", () => {
+  // Sign at the emulator's clock: the wallets refuse a validUntil that is
+  // not after the current time, and VALID_UNTIL is one hour after NOW.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW * 1000);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("the SDK still produces exactly the committed vectors", async () => {
     const actual = `${JSON.stringify(await vectors(), null, 2)}\n`;
     if (process.env.UPDATE_VECTORS === "1") {

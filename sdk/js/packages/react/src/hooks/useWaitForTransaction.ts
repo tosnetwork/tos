@@ -1,8 +1,10 @@
 /**
  * @tos/react — useWaitForTransaction hook.
  *
- * Polls the chain until a transaction with the given hash appears.
- * Internally uses the `waitForTransaction` utility from `@tos/client`.
+ * Polls the chain until the transaction that consumed the given external
+ * message appears. Internally uses the `waitForTransaction` utility from
+ * `@tos/client`, which returns the transaction without judging it: use
+ * `waitForTransfer` to require that a wallet transfer was delivered.
  */
 
 import { waitForTransaction } from "@tos/client";
@@ -34,7 +36,8 @@ export interface UseWaitForTransactionOptions extends QueryOptions {
  * The query is automatically enabled when both `hash` and `address` are
  * provided. Once the transaction is found it is cached and polling stops.
  *
- * @param hash - Base64-encoded transaction hash (or `undefined` to pause).
+ * @param hash - The external message hash `sendQuery` / `sendBocReturnHash`
+ *   returned (or `undefined` to pause).
  * @param opts - Query and wait options.
  * @returns A query result with `data` typed as `unknown` (raw transaction object).
  */

@@ -1,9 +1,19 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Cell, Address } from "@tos/core";
 import { keyPairFromSeed, signVerify } from "@tos/crypto";
 import { WalletV4R2 } from "./WalletV4R2.js";
 import { WalletV3R2 } from "./WalletV3R2.js";
 import { beginCell } from "@tos/core";
+
+// The signing tests use fixed validUntil values, which the wallets refuse
+// once they are not after the current time: pin the clock before all of them.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(0);
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // The network every wallet in these tests signs for (ConfigParam 19).
 const NETWORK = 42;
@@ -247,8 +257,8 @@ describe("WalletV4R2", () => {
     const wallet = WalletV4R2.create({ networkGlobalId: NETWORK, publicKey: KEY_PAIR.publicKey });
     let body: Cell | undefined;
     let signed: Uint8Array | undefined;
-    await wallet.sendDeploy(
-      { external: async (cell: Cell) => { body = cell; } } as never,
+    const sent = await wallet.sendDeploy(
+      { external: async (cell: Cell) => { body = cell; return { hash: "deploy-message-hash" }; } } as never,
       { sign: async (hash: Uint8Array) => { signed = hash; return new Uint8Array(64); } } as never,
       0n,
     );
@@ -263,5 +273,8 @@ describe("WalletV4R2", () => {
     expect(slice.loadUint(32)).toBe(0);
       expect(slice.loadUint(8)).toBe(0); // op: simple transfer
     expect(signed).toBeDefined();
+    // The node's message hash comes back to track the deployment, which
+    // creates no outgoing message.
+    expect(sent).toEqual({ hash: "deploy-message-hash", outMessages: 0 });
   });
 });

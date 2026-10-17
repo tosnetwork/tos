@@ -557,7 +557,8 @@ export class TosClient implements TosProvider {
   }
 
   /**
-   * Send a serialized BOC and return the transaction hash.
+   * Send a serialized BOC and return the hash of the external message it holds,
+   * which the consuming transaction's `in_msg.hash` will equal (see `waitForTransaction`).
    *
    * @param boc - Serialized message as a Cell, Uint8Array, or base64 string
    * @returns Send result with the message hash
