@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""Write a copy of a global config whose init block is the latest key block.
+"""Write a global config anchored at the newest available bootstrap snapshot.
 
 A client or a new node proves its way forward from the global config's
 validator.init_block, through every key block after it. Nodes collect old key
 blocks with the rest of their archive, so a global config that still starts
 from the zero state stops working for newcomers once the early key blocks are
 gone. A network's published global config therefore has to be refreshed to a
-recent key block, at least as often as the shortest archive retention among
-its public lite servers.
+served persistent key block, before its state or catch-up archives expire.
+Ordinary key blocks and snapshots still being serialized cannot bootstrap a
+new node. Bootstrap sources must retain archives across the persistent-state
+period, serialization delay, and the time newcomers need to catch up.
 
 This script reads the chain from one node's JSON-RPC and writes the refreshed
 copy:
 
   getMasterchainInfo   the node's zero state and its last masterchain block
-  getBlockHeader       is_key_block / prev_key_block_seqno of the last block,
-                       then the header of the chosen key block itself
-  lookupBlock          the chosen key block's full id
+  getBlockHeader       walk backwards through key-block headers
+  lookupBlock          independently identify each candidate in full
+  getBootstrapState    check the serving archive for the candidate's state,
+                       shard states, required split parts and shard proofs
 
 It refuses unless:
 
@@ -27,6 +30,8 @@ It refuses unless:
   * the chosen block's header says it is a key block, and every header read
     (the last block's included) carries the global id the operator expects;
   * a key block at the height of the last block is that same block;
+  * the complete snapshot is available and both its state and the source's
+    archive retention have the requested remaining bootstrap time;
   * the new init block is not older than the one the input already has, and
     if it is at the same height it is the same block (full id, not height).
 
@@ -34,7 +39,10 @@ The node is trusted, not checked: nothing here verifies a proof. Point it at a
 node you operate and have already compared, on the full block id, with a
 second node you trust. The refreshed file is an input to a release; it is
 authenticated by what the release does with it (digest and attestation), not
-by this script.
+by this script. Availability is checked on that source, not on every peer.
+Start a fresh node with --skip-key-sync to use the checked anchor: otherwise
+it may replace it with a newer, not-yet-served persistent state. See
+doc/validator-operator-guide.md for source retention and publication steps.
 
 Usage:
   refresh-global-config-init-block.py --rpc URL --global-id N IN OUT
@@ -46,9 +54,11 @@ import argparse
 import base64
 import binascii
 import json
+import math
 import os
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -59,6 +69,8 @@ MASTERCHAIN = -1
 MASTERCHAIN_SHARD = -(2**63)
 HASH_BYTES = 32
 RPC_TIMEOUT_SECONDS = 20
+MIN_BOOTSTRAP_SECONDS = 8 * 3600
+MAX_KEY_BLOCKS = 4096
 
 Rpc = Callable[..., Any]
 
@@ -166,8 +178,75 @@ def header_of(rpc: Rpc, seqno: int) -> tuple[dict[str, Any], dict[str, Any]]:
     return header, block
 
 
-def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, Any]:
-    """The config with validator.init_block set to the node's latest key block."""
+def bootstrap_available(
+    rpc: Rpc,
+    block: dict[str, Any],
+    header: dict[str, Any],
+    *,
+    now: int | None,
+    minimum_validity: int,
+) -> tuple[bool, str]:
+    """Check the exact serving snapshot and a conservative catch-up horizon."""
+    seqno = block["seqno"]
+    status = require_object(
+        rpc("getBootstrapState", **{**block, "shard": str(MASTERCHAIN_SHARD)}),
+        f"getBootstrapState({seqno})",
+    )
+    returned_id = masterchain_id(status.get("id"), f"getBootstrapState({seqno}).id")
+    if returned_id != block:
+        raise RefreshError(f"getBootstrapState({seqno}) answered a different full block id")
+    if not isinstance(status.get("ready"), bool):
+        raise RefreshError(f"getBootstrapState({seqno}).ready is not a boolean")
+    reason = status.get("reason")
+    if not isinstance(reason, str) or not reason:
+        raise RefreshError(f"getBootstrapState({seqno}).reason is not a nonempty string")
+    if not status["ready"]:
+        return False, reason
+
+    # A scan can outlive the requested remaining validity. Measure after the
+    # readiness response, not when the scan began. Explicit `now` is for tests.
+    if now is None:
+        now = int(time.time())
+
+    created = require_int(status.get("gen_utime"), f"getBootstrapState({seqno}).gen_utime")
+    header_created = require_int(header.get("gen_utime"), f"gen_utime of block {seqno}")
+    if created != header_created or created <= 0 or created > now:
+        raise RefreshError(f"getBootstrapState({seqno}) has an inconsistent snapshot timestamp")
+    expires = require_int(status.get("expires_at"), f"getBootstrapState({seqno}).expires_at")
+    if expires <= created:
+        raise RefreshError(f"getBootstrapState({seqno}) has an invalid snapshot expiry")
+    archive_ttl = status.get("archive_ttl")
+    if isinstance(archive_ttl, bool) or not isinstance(archive_ttl, (int, float)):
+        raise RefreshError(f"getBootstrapState({seqno}).archive_ttl is not a duration")
+    try:
+        finite = math.isfinite(archive_ttl)
+    except OverflowError:
+        finite = False
+    if not finite or archive_ttl <= 0:
+        raise RefreshError(f"getBootstrapState({seqno}).archive_ttl is not a positive duration")
+    if expires <= now + minimum_validity:
+        return False, f"snapshot expires within the requested {minimum_validity}s bootstrap window"
+    # Do not count CellDB retention or delayed GC as promised archive retention.
+    # Retaining a snapshot alone does not retain the blocks needed after it.
+    if created + archive_ttl <= now + minimum_validity:
+        return (
+            False,
+            f"archive retention cannot cover the requested {minimum_validity}s bootstrap window",
+        )
+    return True, reason
+
+
+def refreshed(
+    config: dict[str, Any],
+    rpc: Rpc,
+    *,
+    global_id: int,
+    minimum_validity: int = MIN_BOOTSTRAP_SECONDS,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Set validator.init_block to the newest complete, sufficiently retained snapshot."""
+    if minimum_validity <= 0:
+        raise RefreshError("minimum bootstrap validity must be positive")
     validator = require_object(config.get("validator"), "validator")
     zero_state = masterchain_id(validator.get("zero_state"), "validator.zero_state")
     if zero_state["seqno"] != 0:
@@ -176,6 +255,10 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
     if validator.get("init_block") is not None:
         current = masterchain_id(validator.get("init_block"), "validator.init_block")
     current_seqno = current["seqno"] if current is not None else 0
+    if current is not None and current_seqno == 0 and current != zero_state:
+        raise RefreshError(
+            "the config's zero-state init block and zero state differ in their hashes"
+        )
 
     info = require_object(rpc("getMasterchainInfo"), "getMasterchainInfo")
     node_zero = masterchain_id(info.get("init"), "getMasterchainInfo.init")
@@ -209,9 +292,14 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
             f"{current_seqno}; the node is behind or on another chain"
         )
 
-    if key_seqno == 0:
-        init_block = dict(zero_state)
-    else:
+    skipped: list[str] = []
+    checked = 0
+    while key_seqno > 0 and key_seqno >= current_seqno:
+        if checked >= MAX_KEY_BLOCKS:
+            raise RefreshError(
+                f"no usable snapshot within {MAX_KEY_BLOCKS} key blocks; check the source"
+            )
+        checked += 1
         looked_up = masterchain_id(
             rpc(
                 "lookupBlock",
@@ -235,19 +323,40 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
             raise RefreshError(
                 f"block {key_seqno} as looked up is not the last block getMasterchainInfo named"
             )
-        init_block = looked_up
-
-    # Heights alone never decide: an existing init block at the same height must
-    # be the same block, or the node and the config are on different chains.
-    if current is not None and init_block["seqno"] == current["seqno"] and init_block != current:
-        raise RefreshError(
-            f"the config's init block {current['seqno']} and the node's block at that height "
-            f"differ in their hashes; the node is on another chain or the config is wrong"
+        # Check the existing anchor even when its state is not available.
+        if current is not None and key_seqno == current_seqno and looked_up != current:
+            raise RefreshError(
+                f"the config's init block {current_seqno} and the node's block at that height "
+                f"differ in their hashes; the node is on another chain or the config is wrong"
+            )
+        available, reason = bootstrap_available(
+            rpc, looked_up, key_header, now=now, minimum_validity=minimum_validity
         )
+        if available:
+            result = json.loads(json.dumps(config))
+            result["validator"]["init_block"] = looked_up
+            return result
+        if len(skipped) < 8:
+            skipped.append(f"{key_seqno}: {reason}")
+        previous = require_int(key_header.get("prev_key_block_seqno"), "prev_key_block_seqno")
+        if previous < 0 or previous >= key_seqno:
+            raise RefreshError(
+                f"prev_key_block_seqno {previous} does not precede key block {key_seqno}"
+            )
+        key_seqno = previous
 
-    result = json.loads(json.dumps(config))
-    result["validator"]["init_block"] = init_block
-    return result
+    details = "; ".join(skipped) or "no persistent key block has been published yet"
+    recovery = (
+        " The existing init block is not rolled back; to repair an unusable newer anchor, "
+        "refresh from the original trusted global config after verifying the source."
+        if current_seqno > 0
+        else ""
+    )
+    raise RefreshError(
+        f"no available bootstrap snapshot at or after init block {current_seqno}: {details}. "
+        "Wait for complete serialization, or use a bootstrap source with sufficient archives."
+        + recovery
+    )
 
 
 def write_new_file(path: Path, text: str) -> None:
@@ -277,6 +386,12 @@ def main(argv: list[str] | None = None, rpc_factory: Callable[[str], Rpc] = http
     parser.add_argument(
         "--global-id", type=int, required=True, help="the network's global id, from its zero state"
     )
+    parser.add_argument(
+        "--minimum-validity",
+        type=int,
+        default=MIN_BOOTSTRAP_SECONDS,
+        help="seconds of remaining snapshot and archive retention required (default: 28800)",
+    )
     parser.add_argument("input", type=Path, help="the global config to refresh")
     parser.add_argument("output", type=Path, help="where to write the refreshed copy (new file)")
     args = parser.parse_args(argv)
@@ -286,7 +401,12 @@ def main(argv: list[str] | None = None, rpc_factory: Callable[[str], Rpc] = http
         except (OSError, ValueError) as error:
             raise RefreshError(f"cannot read {args.input}: {error}") from error
         config = require_object(config, str(args.input))
-        result = refreshed(config, rpc_factory(args.rpc), global_id=args.global_id)
+        result = refreshed(
+            config,
+            rpc_factory(args.rpc),
+            global_id=args.global_id,
+            minimum_validity=args.minimum_validity,
+        )
         write_new_file(args.output, json.dumps(result, indent=2) + "\n")
     except (RefreshError, OSError) as error:
         print(f"GLOBAL_CONFIG_REFRESH_REFUSED: {error}", file=sys.stderr)
@@ -295,6 +415,9 @@ def main(argv: list[str] | None = None, rpc_factory: Callable[[str], Rpc] = http
     print(
         f"init_block ({block['workchain']},{block['shard']},{block['seqno']}) "
         f"root_hash {block['root_hash']} file_hash {block['file_hash']} -> {args.output}"
+    )
+    print(
+        "Bootstrap a fresh node with --skip-key-sync; publish the config before its validity window closes."
     )
     return 0
 

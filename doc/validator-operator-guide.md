@@ -378,30 +378,112 @@ configuration is flushed to disk.
 
 ## 11. Refresh the global config's init block
 
-A node or client proves its way forward from the global config's
-`validator.init_block` through every later key block. Nodes drop old key
-blocks with the rest of their archive, so a global config whose init block is
-the zero state stops working for newcomers. Whoever publishes a network's
-global config refreshes it to a recent key block, at least as often as the
-shortest archive retention among the network's public lite servers:
+A fresh node needs both a persistent state at the global config's
+`validator.init_block` and the retained blocks/proofs needed to catch up from
+it. A recent key block alone is insufficient. Persistent states begin at
+131,072-second boundaries (about 36.4 hours), and the serializer waits a random
+0–6 hours before writing them. A masterchain state can also finish before its
+shard states. Publishing any of these unfinished anchors leaves newcomers
+retrying unavailable data.
+
+### Keep a continuous bootstrap source
+
+Run bootstrap sources with at least seven days of archive retention:
+`--archive-ttl 604800`. This is the native default and the Docker default
+`ARCHIVE_TTL=604800`. Check the deployed command/environment: an explicit
+older `ARCHIVE_TTL=86400` setting remains an override after upgrading.
+
+The persistent-state period plus maximum scheduled delay already requires
+152,672 seconds (42 h 24 min 32 s). Actual serialization, publication delay,
+state download, catch-up and operating margin are additional. One day cannot
+cover this interval. Retain both masterchain and workchain archives/proofs;
+keeping state files alone does not keep a usable catch-up path. Keep the
+serializer enabled and monitor its completion and archive storage capacity.
+
+Increasing retention does not recover history already deleted. A source with
+an earlier gap must rebuild its continuous retained window, or newcomers must
+use another intact archive source or a separately authenticated complete
+snapshot. The readiness query reports the current retention setting; it does
+not prove that every intermediate historical archive package still exists.
+
+### Select a served state
+
+Run the refresh against an upgraded, trusted source that implements
+`getBootstrapState`. The source must also serve full-node data on a path the
+newcomer can reach; a working HTTP endpoint alone does not establish that.
 
 ```bash
 python3 scripts/refresh-global-config-init-block.py \
   --rpc http://127.0.0.1:PORT/jsonRPC --global-id GLOBAL_ID \
+  --minimum-validity 28800 \
   CURRENT-global.config.json NEW-global.config.json
 ```
 
-It reads the trusted node's `getMasterchainInfo`, `getBlockHeader` and
-`lookupBlock` and writes a new file (it never overwrites one) whose init block
-is the latest key block. The one exception is a chain that has no key block
-after the zero state yet: then the init block is the zero state itself, checked
-against the config's. It refuses, writing nothing, when the node's zero
-state differs from the config's, when the key block's identities disagree, when
-a header is not a key block or carries another global id, or when the new init
-block is older than, or at the same height as but different from, the existing
-one. The node is trusted, not proven: compare its last block, on the full block
-id, with a second node you trust, and authenticate the published file through
-the release that carries it.
+The script reads `getMasterchainInfo`, walks backwards through key blocks with
+`getBlockHeader` and `lookupBlock`, and asks `getBootstrapState` about each
+candidate's **full** block ID. The node checks its registered serving archive:
+the masterchain state, every referenced shard state, every required nonempty
+part of a split state, and their archived block proofs. It reads files as well
+as checking registered sizes. A persistent-state description or a split header
+without its required account parts never suffices. This is a bounded readiness
+check, not a download and verification of every byte in the snapshot.
+
+The newest available candidate is selected only if both its persistent-state
+expiry and `gen_utime + archive_ttl` leave more than the requested remaining
+bootstrap time. The default is eight hours, matching the existing startup
+selection's download allowance; choose a larger value for slower newcomers.
+The clock is checked after each readiness answer, so time spent scanning is
+not counted as remaining validity. Retention is assessed conservatively:
+incidental delayed garbage collection is not promised extra retention.
+
+The script never overwrites a file or silently rolls back an existing anchor.
+It rejects mismatched zero states, full block IDs, global IDs, malformed
+answers, and invalid backward key-block links. If no suitable state is served,
+or the source lacks the readiness method, it writes nothing and explains the
+refusal. Before the first persistent snapshot, use the original genesis config
+for the initial network bootstrap; the refresh does not manufacture a served
+snapshot from the zero state.
+
+**Repairing a config generated by an older refresh script:** its init block
+may be newer than every available persistent state. After comparing trusted
+sources, run the refresh using the original trusted global config as input.
+Review and authenticate the newly selected full anchor before publication.
+The ordinary refresh intentionally refuses this rollback instead of silently
+changing a published trust anchor.
+
+### Start from the checked anchor and validate publication
+
+Start the fresh node with the refreshed config and **`--skip-key-sync`**:
+
+```bash
+build/validator-engine/validator-engine \
+  -C NEW-global.config.json -D /data/tos/fresh-db \
+  -c /data/tos/local-config.json \
+  --skip-key-sync --initial-sync-delay 5 --quic-flood-control -1
+```
+
+Use the normal network/address options for the deployment. When initializing
+`<db>/config.json` from `-c`, review the generated file and start again as usual.
+The flag keeps initial synchronization on the explicitly selected anchor;
+without it, the default discovery may replace that anchor with a newer
+persistent block whose serializer is still waiting. The normal proof and state
+verification remains in place. This flag concerns initial synchronization; it
+does not disable subsequent block synchronization.
+
+Before publishing, compare the source's full masterchain head with an
+independent trusted node, then perform an empty-database bootstrap and catch-up
+using the intended peer path and refreshed config. Require equal full block
+IDs with the trusted nodes. In particular, validate the transition while a
+newer persistent snapshot is still unavailable. Retain this as a release gate
+after changing retention on sources that previously pruned data.
+
+Publish promptly, including the config digest and release attestation; refresh
+regularly before the remaining download/catch-up window is exhausted and alert
+on a refusal. The availability answer is an observation on the queried source,
+not a reservation or evidence that every peer has the snapshot. An outage,
+later garbage collection or an old distributed config can still require a new
+refresh. The node is trusted by this script; release authentication and the
+new node's proof verification establish the trust boundary.
 
 ## 12. Upgrade a validator
 

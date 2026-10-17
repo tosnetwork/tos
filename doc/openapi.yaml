@@ -1536,6 +1536,46 @@ paths:
         '401': {'$ref': '#/components/responses/Unauthorized'}
         '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
         '429': {'$ref': '#/components/responses/RateLimited'}
+  /getBootstrapState:
+    post:
+      operationId: getBootstrapState
+      summary: 'Local archive readiness for an exact bootstrap anchor'
+      description: >-
+        Read-only and not cached. Requires the full nonzero masterchain block id.
+        A persistent-state description supplies the required file manifest, but
+        readiness also requires the masterchain snapshot, every referenced shard
+        snapshot and its nonempty split account parts to be registered and readable
+        through the node's serving archive. Nonzero blocks require readable archived
+        proofs; zero-seqno shards use their zero-state files. File probes read the
+        first and last registered byte; they do not perform a full corruption scan.
+        The node admits at most two concurrent scans, with a ten-second response
+        deadline, at most 4096 state files and a 4 MiB split-header read limit.
+        The result is an observation on this node, not an availability lease or a
+        test of remote peer connectivity. Clients must also leave enough time before
+        snapshot expiry and archive retention expiry for catch-up to finish.
+      tags: [blocks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {'$ref': '#/components/schemas/MasterchainBlockId'}
+                - {properties: {seqno: {type: integer, minimum: 1}}}
+      responses:
+        '200':
+          description: 'Method answer (success or error). Always HTTP 200.'
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - allOf:
+                      - {'$ref': '#/components/schemas/JsonRpcSuccess'}
+                      - {properties: {result: {'$ref': '#/components/schemas/BootstrapState'}}}
+                  - {'$ref': '#/components/schemas/JsonRpcError'}
+        '401': {'$ref': '#/components/responses/Unauthorized'}
+        '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
+        '429': {'$ref': '#/components/responses/RateLimited'}
   /getConsensusBlock:
     get:
       operationId: getConsensusBlock_get
@@ -3661,6 +3701,29 @@ components:
           minLength: 44
           maxLength: 44
           description: 'Standard padded base64 of 32 bytes.'
+    BootstrapState:
+      type: object
+      required: [id, ready, reason, gen_utime, expires_at, archive_ttl]
+      properties:
+        id: {'$ref': '#/components/schemas/BlockIdExt'}
+        ready: {type: boolean}
+        reason:
+          type: string
+          enum: [ready, snapshot_not_found, snapshot_expired, state_unavailable, proof_unavailable, invalid_state, resource_limit, timeout]
+        gen_utime:
+          type: integer
+          minimum: 0
+          description: 'Snapshot creation Unix time; zero when its description is unavailable.'
+        expires_at:
+          type: integer
+          minimum: 0
+          description: 'Persistent snapshot expiry Unix time; zero when its description is unavailable.'
+        archive_ttl:
+          type: number
+          description: >-
+            This node's configured ordinary archive retention in seconds. A client
+            must conservatively reject an anchor that is too old for this retention;
+            this field does not promise that all intervening archives exist.
     InternalTransactionId:
       type: object
       properties:
@@ -3704,6 +3767,7 @@ components:
             - shards
             - getShards
             - getBlockHeader
+            - getBootstrapState
             - getMasterchainBlockSignatures
             - getShardBlockProof
             - getOutMsgQueueSize

@@ -1,0 +1,302 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-17",
+  "base_commit": "d7ef85b4cccdc1dbad6b814ceb0b3714ef81dc08",
+  "candidate": "The candidate source represented by the hashes below; this evidence is committed with the implementation.",
+  "source_sha256": {
+    "validator/bootstrap-state.cpp": "0f83b91e85cf30b46ecd3212e833d0af23e0daf1e00e609b169301331c31cf72",
+    "validator/manager.cpp": "f525e54430a1fcad39ea10a729e9067c22c6e6fbb8e573d8de7f96fe6606df72",
+    "validator-engine/json-rpc-server.cpp": "6bb9a2d5b1fc0857e301669b69302d5ec3ed93c1f8fd3f7f0aae672ecb368e1d",
+    "scripts/refresh-global-config-init-block.py": "b1490d9bf8310513659bdd63c10940610ecd95b5841815f6a5e67acc4b8c57b9",
+    "scripts/test_refresh_global_config_init_block.py": "9b593b47e1787936640e5ed1bc99b739dbe8ae4bd1c6070f1793ee9dbe464a98",
+    "scripts/test_docker_validator_role.py": "f7fb9e778f589cef889f984430b58dc48d8ea90932b830d2e55a6ff348d3037f",
+    "docker/init.sh": "ed809e2248e7c3e2c5f42b3f3045989b931367ef93099e0d1d68153cca4c97b7",
+    "docker/tos-ali.yaml": "a217b028357132e2f2382dda8f63e8698384cd1e38a6d277ec39e3b1c4462b88",
+    "docker/tos-aws.yaml": "387b973d6067a49da0deb89966cfe6505aedcc8edfed00993b87c175d1359c6e",
+    "docker/tos-gcp.yaml": "2893f5a3247df67698e82255a28ad851300b2b0c198ff833507343fc928f47fc",
+    "docker/tos-metal-lb.yaml": "dfb8812921b03cfc16e419f2a3bae3a4820b5d451fa8ef13f11ab8900ca383ea",
+    "docker/tos-node-port.yaml": "7b20e4f123ae8aad0e3404723bf497c25db91faffd7946a72f698cf3347365ac"
+  },
+  "full_suites": [
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_refresh_global_config_init_block.py -q",
+      "exit_code": 0,
+      "passed": 48,
+      "skipped": 0,
+      "retained_summary": "Ran 48 tests in 0.051s; OK",
+      "source": "Executed again while preparing this record."
+    },
+    {
+      "command": "python3 scripts/test_docker_validator_role.py -v",
+      "exit_code": 0,
+      "tests_run": 66,
+      "passed": 53,
+      "skipped": 13,
+      "retained_summary": "Ran 66 tests in 1.964s; OK (skipped=13)",
+      "source": "Earlier observed execution; no standalone full-suite log was retained. Skips require a built validator-engine or bind-node tool; all three retention tests ran."
+    },
+    {
+      "command": "ctest --test-dir build --output-on-failure --no-tests=error -R '^(test-bootstrap-state|test-json-rpc-transport)$'",
+      "exit_code": 0,
+      "ctest_targets_passed": 2,
+      "cases": {
+        "test-bootstrap-state": 9,
+        "test-json-rpc-transport": 26
+      },
+      "retained_summary": [
+        "100% tests passed, 0 tests failed out of 2",
+        "9 test(s) passed",
+        "26 test(s) passed"
+      ],
+      "source": "CTests green run and corresponding LastTest output inspected during preparation."
+    }
+  ],
+  "refresh_controls": {
+    "baseline_source": "git show d7ef85b4cccdc1dbad6b814ceb0b3714ef81dc08:scripts/refresh-global-config-init-block.py",
+    "test_source": "Same candidate tests in every isolated temporary copy.",
+    "stale_clock_mutation": "At refreshed() entry, after validating minimum_validity, insert: if now is None: now = int(time.time()). This freezes the clock before RPCs.",
+    "runs": [
+      {
+        "name": "base-refusal-controls",
+        "tests": [
+          "test_newest_unserved_key_blocks_fall_back_to_the_served_snapshot",
+          "test_no_served_snapshot_writes_nothing",
+          "test_snapshot_without_enough_catch_up_archive_is_refused"
+        ],
+        "exit_code": 1,
+        "failure_excerpts": [
+          "AssertionError: {'wor[48 chars]no': 100, 'root_hash': 'cjEwMC4uLi4uLi4uLi4uLi[80 chars]i4='} != {'wor[48 chars]no': 40, 'root_hash': 'cjQwLi4uLi4uLi4uLi4uLi4[79 chars]i4='}",
+          "AssertionError: 0 != 1 :",
+          "AssertionError: 0 != 1 :"
+        ],
+        "summary": [
+          "Ran 3 tests in 0.012s",
+          "FAILED (failures=3)"
+        ]
+      },
+      {
+        "name": "head-refusal-controls",
+        "tests": [
+          "test_newest_unserved_key_blocks_fall_back_to_the_served_snapshot",
+          "test_no_served_snapshot_writes_nothing",
+          "test_snapshot_without_enough_catch_up_archive_is_refused"
+        ],
+        "exit_code": 0,
+        "failure_excerpts": [],
+        "summary": [
+          "Ran 3 tests in 0.007s",
+          "OK"
+        ]
+      },
+      {
+        "name": "stale-clock-control",
+        "tests": [
+          "test_slow_readiness_response_cannot_spend_the_requested_validity"
+        ],
+        "exit_code": 1,
+        "failure_excerpts": [
+          "AssertionError: 0 != 1 :"
+        ],
+        "summary": [
+          "Ran 1 test in 0.005s",
+          "FAILED (failures=1)"
+        ]
+      },
+      {
+        "name": "restored-clock-control",
+        "tests": [
+          "test_slow_readiness_response_cannot_spend_the_requested_validity"
+        ],
+        "exit_code": 0,
+        "failure_excerpts": [],
+        "summary": [
+          "Ran 1 test in 0.003s",
+          "OK"
+        ]
+      }
+    ]
+  },
+  "docker_controls": {
+    "tests": [
+      "EntrypointTest.test_default_archive_retention_is_one_week",
+      "EntrypointTest.test_explicit_archive_retention_is_preserved",
+      "EntrypointTest.test_kubernetes_archive_retention_is_one_week"
+    ],
+    "isolation": "Same candidate tests in two temporary repository-shaped trees; original Docker inputs from base_commit, corrected inputs from candidate.",
+    "red": {
+      "exit_code": 1,
+      "tests_run": 3,
+      "failures": 6,
+      "failed_boundaries": [
+        "docker/init.sh",
+        "docker/tos-ali.yaml",
+        "docker/tos-aws.yaml",
+        "docker/tos-gcp.yaml",
+        "docker/tos-metal-lb.yaml",
+        "docker/tos-node-port.yaml"
+      ],
+      "failure_fragments": {
+        "'--archive-ttl 604800 ' not found": 6,
+        "--archive-ttl 86400 --threads 8 --verbosity 3": 6
+      }
+    },
+    "green": {
+      "exit_code": 0,
+      "tests_run": 3,
+      "passed": 3
+    },
+    "explicit_override_control": "Passed in both runs for 86400 and 1209600."
+  },
+  "native_controls": {
+    "command": "python3 scripts/check-bootstrap-state-controls.py --build-dir build --output-dir CONTROL_OUTPUT --jobs 4",
+    "runner": "scripts/check-bootstrap-state-controls.py contains the exact substitutions and expected assertion checks; run only with other builds stopped.",
+    "baseline": {
+      "build_exit": 0,
+      "run_exit": 0,
+      "scope": "All nine bootstrap cases and the filtered bootstrap transport case."
+    },
+    "mutations": [
+      {
+        "name": "missing-account-part",
+        "target": "test-bootstrap-state",
+        "filter": "SplitHeaderRequiresOnlyNonemptyParts",
+        "build_exit": 0,
+        "run_exit": 1,
+        "failure_excerpt": "Expectation failed: !missing_part.ready!"
+      },
+      {
+        "name": "truncated-file",
+        "target": "test-bootstrap-state",
+        "filter": "CachedSizeDoesNotProveReadableFile",
+        "build_exit": 0,
+        "run_exit": 1,
+        "failure_excerpt": "Expectation failed: !run_readiness(archive).ready!"
+      },
+      {
+        "name": "missing-proof",
+        "target": "test-bootstrap-state",
+        "filter": "RequiresArchivedShardProof",
+        "build_exit": 0,
+        "run_exit": 1,
+        "failure_excerpt": "Expectation failed: !missing.ready!"
+      },
+      {
+        "name": "stalled-deadline",
+        "target": "test-bootstrap-state",
+        "filter": "DeadlineRespondsWhileReadIsStalledAndKeepsAdmissionLease",
+        "build_exit": 0,
+        "run_exit": 1,
+        "failure_excerpt": "Deadlock detected: control coroutine is suspended but there is no synchronous work to do"
+      },
+      {
+        "name": "manifest-budget",
+        "target": "test-bootstrap-state",
+        "filter": "ResourceBudgetsRefuseBeforeUnboundedReads",
+        "build_exit": 0,
+        "run_exit": 1,
+        "failure_excerpt": "Expectation failed: 0u is not equal to manifest->reads (0 != 16384)"
+      },
+      {
+        "name": "split-header-budget",
+        "target": "test-bootstrap-state",
+        "filter": "ResourceBudgetsRefuseBeforeUnboundedReads",
+        "build_exit": 0,
+        "run_exit": 1,
+        "failure_excerpt": "Expectation failed: \"resource_limit\" is not equal to too_large.reason (resource_limit != invalid_state)"
+      },
+      {
+        "name": "concurrent-admission",
+        "target": "test-json-rpc-transport",
+        "filter": "bootstrap_readiness_routes_the_exact_id_and_does_not_cache_availability",
+        "build_exit": 0,
+        "run_exit": 1,
+        "failure_excerpt": "Expectation failed: client.read_response(5000, status, body)!"
+      },
+      {
+        "name": "stale-cached-readiness",
+        "target": "test-json-rpc-transport",
+        "filter": "bootstrap_readiness_routes_the_exact_id_and_does_not_cache_availability",
+        "build_exit": 0,
+        "run_exit": 1,
+        "failure_excerpt": "Expectation failed: unavailable.find(\"\\\"ready\\\":false\") != std::string::npos!"
+      }
+    ],
+    "restored": {
+      "build_exit": 0,
+      "run_exit": 0,
+      "source_restore": "All three mutated source hashes match the pre-control candidate hashes recorded above.",
+      "scope": "All nine bootstrap cases and the single filtered bootstrap transport case, matching the control baseline. The separate full-suite result is recorded under full_suites."
+    }
+  },
+  "additional_lifecycle_finding": {
+    "failure_excerpt": "Check `context_` failed",
+    "origin": "Cache-enabled transport startup reached alarm_timestamp() in the JsonRpcServer constructor before actor context existed.",
+    "repair": "Moved the existing cache timer initialization to start_up(), preserving its interval.",
+    "counted_as_readiness_guard_failure": false
+  },
+  "static_analysis": {
+    "status": "passed",
+    "exit_code": 0,
+    "command": "CCACHE_DIR=/tmp/tos-issue-232-ccache python3 -u scripts/static-analysis.py --build-dir build --base-build-dir ../tos-main-issue232/build --llvm-bin /usr/lib/llvm-21/bin --codechecker /tmp/tos-issue-232-tools/bin/CodeChecker --jobs 4 --keep-temp",
+    "base_commit": "d7ef85b4cccdc1dbad6b814ceb0b3714ef81dc08",
+    "base_worktree_clean": true,
+    "rule_set": "73600cde7a576a01",
+    "codechecker_version": "6.29.1",
+    "llvm_version": "21.1.8",
+    "positive_controls": 10,
+    "analyzers": {
+      "head": {
+        "clangsa": {
+          "successful": 149,
+          "failed": 0,
+          "version": "21.1.8"
+        },
+        "clang-tidy": {
+          "successful": 149,
+          "failed": 0,
+          "version": "21.1.8"
+        }
+      },
+      "base": {
+        "clangsa": {
+          "successful": 146,
+          "failed": 0,
+          "version": "21.1.8"
+        },
+        "clang-tidy": {
+          "successful": 146,
+          "failed": 0,
+          "version": "21.1.8"
+        }
+      }
+    },
+    "new_blocking": 0,
+    "new_advisory": 0,
+    "retained_summary": [
+      "static-analysis: positive controls reported all 10 marked findings",
+      "static-analysis: HEAD 149 compilations, BASE 146 (merge base d7ef85b4cccd in /workspace/scratch/dfaf25839304/tos-main-issue232)",
+      "static-analysis: 0 new blocking, 0 new advisory"
+    ],
+    "earlier_preflight_refusals": [
+      {
+        "exit_code": 2,
+        "reason": "Missing microhttpd.h development header during dependency scanning."
+      },
+      {
+        "exit_code": 2,
+        "reason": "The provider-code.h generated contract header had not been built in the minimal checkout."
+      }
+    ],
+    "note": "The prerequisite issues were resolved in both checkouts. The complete final comparison, including fresh HEAD and merge-base analysis in one invocation, is the passing result. Earlier refused runs were not counted as passes."
+  },
+  "live_cold_bootstrap": {
+    "status": "not_run",
+    "required_before_publication": "Use an empty database, the refreshed config and --skip-key-sync over the intended peer path; catch up and compare full block IDs with independent trusted nodes."
+  },
+  "evidence_retention": "Only bounded real failure/summary excerpts are retained here. Complete transient logs and stacks are not retained by this record, and their temporary-path hashes are not presented as durable evidence. Recreate full output with the commands and committed tests/runner.",
+  "limits": [
+    "Native fixtures and loopback HTTP tests are not a live P2P bootstrap.",
+    "Readiness observes serving files/proofs; it neither scans every file byte nor proves every intervening catch-up archive exists.",
+    "archive_ttl is the current configuration, not recovery of previously pruned history or an availability lease."
+  ]
+}

@@ -213,7 +213,18 @@ Validators upgrade one at a time, keeping the quorum, as described in [Validator
 
 **Global config:**
 
-A release that publishes a network's global config refreshes its `validator.init_block` to a recent key block with `scripts/refresh-global-config-init-block.py`, so that new nodes and clients can still prove their way forward from it. The refreshed file is authenticated by the release that carries it (digest and attestation), not by the tool.
+A release that publishes a network's global config uses
+`scripts/refresh-global-config-init-block.py` to select the newest key block
+whose complete persistent snapshot is available from the trusted source's
+serving archive. The source must implement `getBootstrapState`; an ordinary
+recent key block or a serializer description is not sufficient. Keep bootstrap
+sources on seven-day archive retention and validate an empty-database bootstrap
+with `--skip-key-sync`, including catch-up to independently compared full block
+IDs. A retention increase does not recover previously deleted history. See
+[the operator procedure](validator-operator-guide.md#11-refresh-the-global-configs-init-block)
+for publication timing and recovery of an unusable earlier config. The release
+authenticates the refreshed file by its digest and attestation; the refresh
+tool itself does not verify consensus proofs.
 
 ### 4.5 Deprecation
 

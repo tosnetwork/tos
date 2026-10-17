@@ -47,6 +47,15 @@ cd build
 
 > **Note:** `--initial-sync-delay` and `--quic-flood-control -1` are required for ADNL connectivity. See [Validator.md](Validator.md) for details.
 
+For an established chain, obtain a freshly published global config whose
+`init_block` has a complete served persistent state. Add `--skip-key-sync` to
+the command above to start at that checked anchor. Otherwise initial discovery
+can replace it with a newer persistent block that is still being serialized.
+A genesis config or an arbitrary recent key block is not a reliable bootstrap
+path after old archives have been collected. The source retention policy,
+refresh command, and empty-database publication check are documented in
+[the operator guide](validator-operator-guide.md#11-refresh-the-global-configs-init-block).
+
 ## Important Runtime Options
 
 Useful flags from the current binary:
@@ -62,6 +71,10 @@ Useful flags from the current binary:
 - `--parallel-validation`: enable parallel validation across accounts
 - `--permanent-celldb`: archival-style cell retention
 - `--unsynced-liteserver`: allow liteserver queries before full sync
+- `--skip-key-sync`: use the global config's checked init block for initial
+  synchronization instead of selecting a newer persistent-state candidate
+- `--archive-ttl`: retain catch-up blocks/proofs; bootstrap sources should use
+  the seven-day default (`604800` seconds) and retain a continuous history
 
 ## Database Lock
 

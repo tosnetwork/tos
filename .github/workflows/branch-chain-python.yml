@@ -95,7 +95,8 @@ jobs:
             test-download-refusal-answers test-consensus-retry-backoff test-bridge-retirement \
             test-block-accepter test-rldp2-refusal-lifetime \
             test-startup-catchup-policy test-startup-catchup-importer test-startup-catchup-driver \
-            test-startup-catchup-probe test-startup-catchup-manager test-startup-orphan-reconcile
+            test-startup-catchup-probe test-startup-catchup-manager test-startup-orphan-reconcile \
+            test-bootstrap-state
           ccache --show-stats
 
       # Answered capacity refusals through the download actors, their query
@@ -122,6 +123,9 @@ jobs:
       # the startup inventory of orphaned session directories.
       - name: Check startup archive catch-up
         run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-startup-(catchup-(policy|importer|driver|probe|manager)|orphan-reconcile)$'
+
+      - name: Check complete served bootstrap snapshots
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-bootstrap-state$'
 
       - name: Install repository-pinned Rust toolchain for engine integration
         run: scripts/install-rust-toolchain.sh

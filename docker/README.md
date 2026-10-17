@@ -60,10 +60,27 @@ Below is the list of supported arguments and their default values:
 | VALIDATOR_ID      | Validator role: the controller account's 256-bit id, 64 hex digits or `-1:<64 hex digits>`. Requires PQ_CONSENSUS_KEY_FILE. See [Run a validator](#run-a-validator).                    |     no     |                                                         |
 | PQ_CONSENSUS_KEY_FILE | Validator role: absolute path, inside the container, of the mounted 32-byte consensus seed. Requires VALIDATOR_ID.                                                                   |     no     |                                                         |
 | STATE_TTL         | Node's state will be gc'd after this time (in seconds).                                                                                                                                   |     no     |                          86400                          |
-| ARCHIVE_TTL       | Node's archived blocks will be deleted after this time (in seconds).                                                                                                                      |     no     |                          86400                          |
+| ARCHIVE_TTL       | Node's archived blocks will be deleted after this time (in seconds). See [Archive retention](#archive-retention).                                                                          |     no     |                          604800                         |
 | THREADS           | Number of threads used by validator-engine.                                                                                                                                               |     no     |                            8                            |
 | VERBOSITY         | Verbosity level.                                                                                                                                                                          |     no     |                            3                            |
 | CUSTOM_ARG        | validator-engine might have some undocumented arguments. This is reserved for the test purposes.<br/>For example you can pass **--logname /var/tos-work/log** in order to have log files. |     no     |                                                         |
+
+### Archive retention
+
+The container and Kubernetes manifests retain archived blocks for 604800 seconds
+(seven days), matching the engine's native default. Bootstrap providers need a
+continuous archive from the persistent state a new node downloads through to
+the current chain. Persistent-state boundaries are 131072 seconds apart (about
+36.4 hours), and serialization starts after a random delay of up to 21600 seconds
+(six hours). Retention must also leave time for serialization, state download,
+and the new node's catch-up, so a one-day archive window is too short.
+
+Keep at least the default on bootstrap providers, and increase it if state
+publication or catch-up needs more time. Longer retention requires more disk
+space. Explicit `ARCHIVE_TTL` settings are preserved: existing deployments that
+set `ARCHIVE_TTL=86400` must update that setting. Raising the TTL cannot recover
+archives already deleted; a bootstrap source must actually retain the history
+after the selected persistent state.
 
 ### Run the node - the quick way
 The below command runs docker container with a TOS node, that will start synchronization process.
