@@ -467,6 +467,23 @@ class SplitStateDeserializer {
   block::gen::ShardStateUnsplit::Record shard_state_;
 };
 
+td::Result<std::vector<SplitStatePart>> read_split_state_parts(ShardId shard_id, RootHash root_hash,
+                                                               td::Ref<vm::Cell> wrapped_header,
+                                                               td::uint32 split_depth) {
+  const int shard_prefix_length = shard_pfx_len(shard_id);
+  if (!shard_id || split_depth > 63 || shard_prefix_length >= static_cast<int>(split_depth)) {
+    return td::Status::Error("invalid split state manifest depth");
+  }
+  if (static_cast<int>(split_depth) - shard_prefix_length > 12) {
+    return td::Status::Error("split state manifest exceeds 4096 prefixes");
+  }
+  if (wrapped_header.is_null()) {
+    return td::Status::Error("split state manifest header is missing");
+  }
+  SplitStateDeserializer deserializer;
+  return deserializer.get_effective_shards_from_header(shard_id, root_hash, std::move(wrapped_header), split_depth);
+}
+
 DownloadShardState::DownloadShardState(BlockIdExt block_id, BlockIdExt masterchain_block_id, td::uint32 split_depth,
                                        td::uint32 priority, td::actor::ActorId<ValidatorManager> manager,
                                        td::Timestamp timeout, td::Promise<td::Ref<ShardState>> promise)

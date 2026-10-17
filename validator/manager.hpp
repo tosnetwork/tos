@@ -19,6 +19,7 @@
 */
 #pragma once
 
+#include <atomic>
 #include <list>
 #include <map>
 #include <optional>
@@ -103,6 +104,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   friend class TwostepManagerProbe;
   friend class ExtMessageManagerTestHarness;
   friend class StartupCatchupManagerProbe;
+  friend class BootstrapRpcManager;
 
  private:
   // WAITERS
@@ -536,6 +538,7 @@ class ValidatorManagerImpl : public ValidatorManager {
                                   td::Promise<td::BufferSlice> promise) override;
   void get_previous_persistent_state_files(
       BlockSeqno cur_mc_seqno, td::Promise<std::vector<std::pair<std::string, ShardIdFull>>> promise) override;
+  void get_bootstrap_state(BlockIdExt id, td::Promise<BootstrapStateStatus> promise) override;
   void get_block_proof(BlockHandle handle, td::Promise<td::BufferSlice> promise) override;
   void get_block_proof_link(BlockHandle block_id, td::Promise<td::BufferSlice> promise) override;
   void get_key_block_proof(BlockIdExt block_id, td::Promise<td::BufferSlice> promise) override;
@@ -1013,6 +1016,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::map<adnl::AdnlNodeIdShort, Collator> collator_nodes_;
 
   std::map<BlockSeqno, td::Ref<PersistentStateDescription>> persistent_state_descriptions_;
+  std::shared_ptr<std::atomic<unsigned>> bootstrap_queries_ = std::make_shared<std::atomic<unsigned>>(0);
   std::map<BlockIdExt, td::Ref<PersistentStateDescription>> persistent_state_blocks_;
 
   std::map<td::uint64,

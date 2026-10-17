@@ -28,6 +28,7 @@
 #include "vm/cp0.h"
 #include "vm/vm.h"
 
+#include "json-rpc-explorer.h"
 #include "json-rpc-handler-guard.h"
 #include "json-rpc-server-internal.h"
 
@@ -562,6 +563,58 @@ void JsonRpcServer::handle_getBlockHeader(td::JsonObject &params, std::string re
               promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
             }));
       });
+}
+
+// ─── getBootstrapState ─────────────────────────────────────────────────
+
+void JsonRpcServer::handle_getBootstrapState(td::JsonObject &params, std::string req_id,
+                                             td::Promise<HttpReturn> promise) {
+  std::set<std::string> fields;
+  for (const auto &field : params.field_values_) {
+    if (!fields.insert(field.first.str()).second ||
+        (field.first == "@type" && field.second.type() != td::JsonValue::Type::String) ||
+        (field.first != "workchain" && field.first != "shard" && field.first != "seqno" && field.first != "root_hash" &&
+         field.first != "file_hash" && field.first != "@type")) {
+      promise.set_value(make_json_rpc_error(-32602, "Invalid bootstrap block id fields", req_id));
+      return;
+    }
+  }
+  auto selector = json_rpc::parse_block_selector(params);
+  auto root = params.get_required_string_field("root_hash");
+  auto file = params.get_required_string_field("file_hash");
+  if (selector.is_error() || root.is_error() || file.is_error() || selector.ok().workchain != masterchainId ||
+      static_cast<ShardId>(selector.ok().shard) != shardIdAll || selector.ok().seqno <= 0) {
+    promise.set_value(make_json_rpc_error(-32602, "A complete nonzero masterchain block id is required", req_id));
+    return;
+  }
+  auto root_hash = explorer::parse_hash(root.ok());
+  auto file_hash = explorer::parse_hash(file.ok());
+  if (root_hash.is_error() || file_hash.is_error() || root_hash.ok().is_zero() || file_hash.ok().is_zero()) {
+    promise.set_value(make_json_rpc_error(-32602, "Block hashes must be nonzero 32-byte canonical base64", req_id));
+    return;
+  }
+  BlockIdExt id{masterchainId, shardIdAll, static_cast<BlockSeqno>(selector.ok().seqno), root_hash.move_as_ok(),
+                file_hash.move_as_ok()};
+  td::actor::send_closure(
+      validator_manager_, &validator::ValidatorManagerInterface::get_bootstrap_state, id,
+      td::PromiseCreator::lambda([cors = opts_.cors_origin, req_id = std::move(req_id), promise = std::move(promise)](
+                                     td::Result<validator::BootstrapStateStatus> result) mutable {
+        guard_handler("getBootstrapState continuation", [&] {
+          if (result.is_error()) {
+            promise.set_value(
+                make_json_rpc_error(-32603, "Bootstrap state readiness is unavailable", req_id, cors, result.error()));
+            return;
+          }
+          auto status = result.move_as_ok();
+          td::StringBuilder out;
+          out << "{";
+          emit_block_id(out, "id", status.id);
+          out << ",\"ready\":" << (status.ready ? "true" : "false") << ",\"reason\":" << td::JsonString(status.reason)
+              << ",\"gen_utime\":" << status.gen_utime << ",\"expires_at\":" << status.expires_at
+              << ",\"archive_ttl\":" << status.archive_ttl << "}";
+          promise.set_value(make_json_ok(out.as_cslice().str(), req_id, cors));
+        });
+      }));
 }
 
 // ─── getMasterchainBlockSignatures ──────────────────────────────────────
