@@ -34,7 +34,7 @@ import { sign } from "@tos/crypto";
 import type {
   ContractProvider,
   Signer,
-  SendConfirmation,
+  PendingTransfer,
 } from "@tos/client";
 import { WALLET_V4R2_CODE } from "./codes.js";
 import type {
@@ -43,7 +43,7 @@ import type {
   CreateTransferAsyncArgs,
   SendTransferArgs,
 } from "./types.js";
-import { storeOutMessages, defaultValidUntil, requireWalletPublicKey } from "./utils.js";
+import { storeOutMessages, requireAffordable, requireWalletPublicKey, resolveValidUntil } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -168,7 +168,11 @@ export class WalletV4R2 implements Wallet {
   // Query methods (require ContractProvider)
   // -------------------------------------------------------------------------
 
-  /** Query the current on-chain sequence number. */
+  /**
+   * Query the current on-chain sequence number.
+   *
+   * @throws TosNotDeployedError when the wallet is not deployed
+   */
   async getSeqno(provider: ContractProvider): Promise<number> {
     const result = await provider.get("seqno", []);
     return result.stack.readNumber();
@@ -198,6 +202,7 @@ export class WalletV4R2 implements Wallet {
     seqno: number,
     messages: CreateTransferArgs["messages"],
     validUntil?: number,
+    sendMode?: number,
   ): Cell {
     if (messages.length < 1 || messages.length > MAX_MESSAGES) {
       throw new Error(
@@ -205,7 +210,7 @@ export class WalletV4R2 implements Wallet {
       );
     }
 
-    const until = validUntil ?? defaultValidUntil();
+    const until = resolveValidUntil(validUntil, "WalletV4R2");
     const builder = beginCell()
       .storeInt(this.networkGlobalId, 32)
       .storeUint(this.walletId, 32)
@@ -213,7 +218,7 @@ export class WalletV4R2 implements Wallet {
       .storeUint(seqno, 32)
       .storeUint(OP_SIMPLE_TRANSFER, 8); // op = 0 for simple transfer
 
-    storeOutMessages(messages, builder);
+    storeOutMessages(messages, builder, sendMode);
 
     return builder.endCell();
   }
@@ -229,6 +234,7 @@ export class WalletV4R2 implements Wallet {
       args.seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = sign(signingMessage.hash(), args.secretKey);
@@ -245,6 +251,7 @@ export class WalletV4R2 implements Wallet {
       args.seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = await args.signer(signingMessage.hash());
@@ -256,23 +263,34 @@ export class WalletV4R2 implements Wallet {
   }
 
   /**
-   * Query seqno, build, sign, and submit a transfer in one call.
+   * Query seqno and balance, build, sign, and submit a transfer in one call.
+   *
+   * Refuses before signing when the wallet is not deployed
+   * (`TosNotDeployedError`), when the values sent are not below the balance
+   * (`INSUFFICIENT_BALANCE`; fees come out of the balance too), or when
+   * `validUntil` is not in the future. The result only says the node accepted
+   * the message: pass it to `waitForTransfer` to learn whether the transfer was
+   * delivered. Messages go out with the ignore-errors flag by default, so one
+   * the wallet cannot pay is skipped on chain while the seqno still advances.
    *
    * @param provider - Injected by `open()`
    * @param via - Signer (e.g., KeyPairSigner)
    * @param args - Transfer arguments (messages, validUntil)
-   * @returns Send confirmation
+   * @returns The message hash and the number of outgoing messages to expect
    */
   async sendTransfer(
     provider: ContractProvider,
     via: Signer,
     args: SendTransferArgs,
-  ): Promise<SendConfirmation> {
+  ): Promise<PendingTransfer> {
     const seqno = await this.getSeqno(provider);
+    const state = await provider.getState();
+    requireAffordable(args.messages, state.balance, args.sendMode, "WalletV4R2");
     const signingMessage = this.buildSigningMessage(
       seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = await via.sign(signingMessage.hash());
@@ -282,15 +300,24 @@ export class WalletV4R2 implements Wallet {
       .storeSlice(signingMessage.beginParse())
       .endCell();
 
-    return provider.external(body);
+    const { hash } = await provider.external(body);
+    // Where the wallet's history stood before this message: waitForTransfer
+    // pages back no further than that.
+    const outMessages = args.messages.length;
+    return state.last === null ? { hash, outMessages } : { hash, outMessages, afterLt: state.last.lt };
   }
 
-  /** Deploy this wallet contract on-chain via an external message. */
+  /**
+   * Deploy this wallet contract on-chain via an external message.
+   *
+   * @returns The external message hash, with no outgoing messages expected;
+   *   confirm with `waitForTransfer`
+   */
   async sendDeploy(
     provider: ContractProvider,
     via: Signer,
     _value: bigint,
-  ): Promise<void> {
+  ): Promise<PendingTransfer> {
     // Deploy message: seqno=0 with validUntil=0xFFFFFFFF
     const deployMessage = beginCell()
       .storeInt(this.networkGlobalId, 32)
@@ -307,7 +334,8 @@ export class WalletV4R2 implements Wallet {
       .storeSlice(deployMessage.beginParse())
       .endCell();
 
-    await provider.external(body);
+    const { hash } = await provider.external(body);
+    return { hash, outMessages: 0 };
   }
 }
 

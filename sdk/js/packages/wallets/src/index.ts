@@ -47,7 +47,7 @@ export type { QuantumPolicy, QuantumCodeBundle, QuantumCodePins, QuantumGenesisP
 export { KeyPairSigner } from "./KeyPairSigner.js";
 
 // Utilities
-export { createInternalMessage } from "./utils.js";
+export { createInternalMessage, DEFAULT_SEND_MODE } from "./utils.js";
 
 // Compiled contract codes
 export {
