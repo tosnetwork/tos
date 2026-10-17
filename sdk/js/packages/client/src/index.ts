@@ -97,8 +97,13 @@ export type {
 } from "./provider/Signer.js";
 
 // open() and OpenedContract
-export { open, setCoreParser } from "./provider/open.js";
-export type { OpenedContract, ContractLike } from "./provider/open.js";
+export { open, setCoreParser, externalStateInit } from "./provider/open.js";
+export type {
+  OpenedContract,
+  ContractLike,
+  StateInitLike,
+  ExternalStateInitFields,
+} from "./provider/open.js";
 
 // Client
 export { TosClient } from "./client/TosClient.js";

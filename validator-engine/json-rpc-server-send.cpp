@@ -37,6 +37,7 @@
 #include "vm/excno.hpp"
 #include "vm/vm.h"
 
+#include "json-rpc-server-fee.h"
 #include "json-rpc-server-internal.h"
 #include "json-rpc-signing-payload.h"
 
@@ -552,38 +553,6 @@ static td::Result<td::Ref<vm::Cell>> build_external_message_cell(const InitialIn
   auto init_code = init_code_r.move_as_ok();
   auto init_data = init_data_r.move_as_ok();
   return tos::GenericAccount::create_ext_message_checked(addr, init_code, init_data, body_r.move_as_ok());
-}
-
-static td::Result<td::Ref<vm::Cell>> build_external_message_cell_by_ref(const block::StdAddress& addr,
-                                                                        const td::Ref<vm::Cell>& init_code,
-                                                                        const td::Ref<vm::Cell>& init_data,
-                                                                        td::Ref<vm::Cell> body) noexcept {
-  return TRY_VM(([&]() -> td::Result<td::Ref<vm::Cell>> {
-    if (body.is_null()) {
-      return td::Status::Error("Failed to build external message: body is empty");
-    }
-
-    vm::CellBuilder cb;
-    if (!(cb.store_long_bool(0b10, 2) && cb.store_long_bool(0b00, 2) && cb.store_long_bool(0b10, 2) &&
-          cb.store_zeroes_bool(1) && cb.store_long_bool(addr.workchain, 8) &&
-          cb.store_bits_bool(addr.addr.cbits(), 256) && cb.store_zeroes_bool(4))) {
-      return td::Status::Error("Failed to build external message header");
-    }
-
-    if (init_code.not_null() || init_data.not_null()) {
-      TRY_RESULT(init_state, tos::GenericAccount::get_init_state_checked(init_code, init_data));
-      if (!(cb.store_ones_bool(2) && cb.store_ref_bool(std::move(init_state)))) {
-        return td::Status::Error("Failed to store StateInit in external message");
-      }
-    } else if (!cb.store_zeroes_bool(1)) {
-      return td::Status::Error("Failed to store empty StateInit in external message");
-    }
-
-    if (!(cb.store_ones_bool(1) && cb.store_ref_bool(std::move(body)))) {
-      return td::Status::Error("Failed to store external message body");
-    }
-    return cb.finalize();
-  })());
 }
 
 static td::Result<std::string> serialize_cell_b64(td::Ref<vm::Cell> cell) {
@@ -1184,8 +1153,8 @@ void JsonRpcServer::handle_sendQuery(td::JsonObject &params, std::string req_id,
     return;
   }
 
-  auto msg_cell_r = build_external_message_cell_by_ref(addr, init_code_r.move_as_ok(), init_data_r.move_as_ok(),
-                                                       std::move(body_cell));
+  auto msg_cell_r =
+      build_query_external_message(addr, init_code_r.move_as_ok(), init_data_r.move_as_ok(), std::move(body_cell));
   if (msg_cell_r.is_error()) {
     promise.set_value(
         make_json_rpc_error(-32602, PSTRING() << "Failed to build external message: " << msg_cell_r.error(), req_id));
@@ -1351,14 +1320,25 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                   }
                   auto parsed = parsed_r.move_as_ok();
 
-                  td::Ref<vm::Cell> effective_code = init_code.not_null() ? init_code : parsed.code_cell;
-                  td::Ref<vm::Cell> effective_data = init_data.not_null() ? init_data : parsed.data_cell;
-                  if (effective_code.is_null()) {
+                  // Price the message sendQuery submits for this same request: it
+                  // carries a StateInit only when the request supplies one. The
+                  // compute phase runs the account's own code when it is active,
+                  // as the executor does.
+                  bool account_active = parsed.state_str == "active" && parsed.code_cell.not_null();
+                  if (!account_active && init_code.is_null()) {
                     promise.set_value(make_json_rpc_error(
                         -32603, "estimateFee requires deploy init_code/init_data or an active account state", req_id,
                         cors));
                     return;
                   }
+                  auto estimate_r = plan_external_message_estimate(addr, body_cell, init_code, init_data,
+                                                                   account_active, parsed.code_cell, parsed.data_cell);
+                  if (estimate_r.is_error()) {
+                    promise.set_value(make_json_rpc_error(
+                        -32602, PSTRING() << "Failed to build external message: " << estimate_r.error(), req_id, cors));
+                    return;
+                  }
+                  auto estimate = estimate_r.move_as_ok();
 
                   auto config_inner = tos::serialize_tl_object(
                       tos::create_tl_object<tos::lite_api::liteServer_getConfigAll>(
@@ -1370,9 +1350,8 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                   td::actor::send_closure(
                       self_id, &JsonRpcServer::send_liteserver_query, std::move(config_query),
                       td::PromiseCreator::lambda(
-                          [cors, addr, body_cell = std::move(body_cell), effective_code = std::move(effective_code),
-                           effective_data = std::move(effective_data), parsed = std::move(parsed), ignore_chksig,
-                           req_id = std::move(req_id),
+                          [cors, addr, body_cell = std::move(body_cell), estimate = std::move(estimate),
+                           parsed = std::move(parsed), ignore_chksig, req_id = std::move(req_id),
                            promise = std::move(promise)](td::Result<td::BufferSlice> config_res) mutable {
                             if (config_res.is_error()) {
                               promise.set_value(make_json_rpc_error(
@@ -1439,19 +1418,15 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
                                 parsed.storage_last_paid, false, is_masterchain);
                             auto storage_fee = storage_fee_256.is_null() ? 0 : storage_fee_256->to_long();
 
-                            auto message_r = tos::GenericAccount::create_ext_message_checked(addr, effective_code,
-                                                                                             effective_data, body_cell);
-                            if (message_r.is_error()) {
-                              promise.set_value(make_json_rpc_error(
-                                  -32602, PSTRING() << "Failed to build external message: " << message_r.error(),
-                                  req_id, cors));
+                            auto in_fwd_fee_r =
+                                external_message_import_fee(estimate.message, *msg_prices[is_masterchain]);
+                            if (in_fwd_fee_r.is_error()) {
+                              promise.set_value(
+                                  make_json_rpc_error(-32603, PSTRING() << "import fee error: " << in_fwd_fee_r.error(),
+                                                      req_id, cors, in_fwd_fee_r.error()));
                               return;
                             }
-                            auto message = message_r.move_as_ok();
-                            vm::CellStorageStat in_msg_stat;
-                            in_msg_stat.add_used_storage(message, true, 3);
-                            auto in_fwd_fee =
-                                msg_prices[is_masterchain]->compute_fwd_fees(in_msg_stat.cells, in_msg_stat.bits);
+                            auto in_fwd_fee = in_fwd_fee_r.move_as_ok();
 
                             vm::Dictionary libraries{256};
                             if (cfg->get_libraries_root().not_null()) {
@@ -1460,7 +1435,7 @@ void JsonRpcServer::handle_estimateFee(td::JsonObject &params, std::string req_i
 
                             auto prev_blocks_info = prev_blocks_r.move_as_ok();
                             auto cfg_shared = std::shared_ptr<const block::Config>(cfg.release());
-                            auto smc = tos::SmartContract::create({effective_code, effective_data});
+                            auto smc = tos::SmartContract::create({estimate.code, estimate.data});
                             auto gas_limits =
                                 estimate_compute_gas_limits(td::make_refint(parsed.balance), gas_limits_prices);
                             auto run_res = smc.write().send_external_message(

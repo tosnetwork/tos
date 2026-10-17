@@ -2938,7 +2938,13 @@ paths:
       operationId: estimateFee_get
       summary: 'Estimate the fees of an external message'
       tags: [send]
-      description: 'POST only: ignore_chksig.'
+      description: >-
+        Prices the message sendQuery submits for the same address, body, init_code and init_data: it
+        carries a StateInit exactly when the request supplies init_code or init_data, so in_fwd_fee is the
+        import fee of that message. Leave both out for a wallet that is already active, and supply them to
+        deploy one. The compute phase runs the account's own code when the account is active, otherwise
+        init_code; an account that is not active and a request without init_code is an error. POST only:
+        ignore_chksig.
       parameters:
         - name: address
           in: query
@@ -2952,11 +2958,11 @@ paths:
           schema: {'$ref': '#/components/schemas/Base64Boc'}
         - name: init_code
           in: query
-          description: 'StateInit code BOC.'
+          description: 'StateInit code BOC. When present, the priced message carries the StateInit.'
           schema: {'$ref': '#/components/schemas/Base64Boc'}
         - name: init_data
           in: query
-          description: 'StateInit data BOC.'
+          description: 'StateInit data BOC. When present, the priced message carries the StateInit.'
           schema: {'$ref': '#/components/schemas/Base64Boc'}
       responses:
         '200':
@@ -2975,6 +2981,12 @@ paths:
       operationId: estimateFee
       summary: 'Estimate the fees of an external message'
       tags: [send]
+      description: >-
+        Prices the message sendQuery submits for the same address, body, init_code and init_data: it
+        carries a StateInit exactly when the request supplies init_code or init_data, so in_fwd_fee is the
+        import fee of that message. Leave both out for a wallet that is already active, and supply them to
+        deploy one. The compute phase runs the account's own code when the account is active, otherwise
+        init_code; an account that is not active and a request without init_code is an error.
       requestBody:
         required: false
         description: 'Named parameters. An empty body is {}.'
@@ -2989,8 +3001,12 @@ paths:
                   description: >-
                     Account address: raw `workchain:hex` or the user-friendly base64/base64url form.
                 body: {'$ref': '#/components/schemas/Base64Boc', description: 'Message body BOC.'}
-                init_code: {'$ref': '#/components/schemas/Base64Boc', description: 'StateInit code BOC.'}
-                init_data: {'$ref': '#/components/schemas/Base64Boc', description: 'StateInit data BOC.'}
+                init_code:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'StateInit code BOC. When present, the priced message carries the StateInit.'
+                init_data:
+                  '$ref': '#/components/schemas/Base64Boc'
+                  description: 'StateInit data BOC. When present, the priced message carries the StateInit.'
                 ignore_chksig:
                   type: boolean
                   default: true
