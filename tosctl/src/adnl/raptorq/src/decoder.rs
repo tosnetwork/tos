@@ -283,20 +283,18 @@ impl SourceBlockDecoder {
         // K' - K padding symbols sit between the last source symbol and the
         // first repair symbol in internal-symbol-id space.
         let padding = num_extended_symbols.saturating_sub(self.source_block_symbols);
-        // Keep at most K + 10 symbols, source and repair together: once that
-        // many are held, every further symbol is ignored, so one transfer holds
-        // at most K + 10 payloads. (The C++ decoder caps only repair symbols at
-        // that count, which still lets K - 1 more source symbols in.) K + 10
-        // independent symbols decode with probability 1 - 1/256^11.
+        // The C++ decoder's admission rule (Decoder::add_symbol), ported as is:
+        // a source symbol (id < K) is always stored once; a repair symbol is
+        // ignored once K + 10 symbols, source and repair together, are held.
+        // A block therefore holds at most K source plus K + 10 repair symbols.
+        // Capping source symbols too would let dependent repair symbols that
+        // arrived first fill the cap and keep the genuine source symbols out,
+        // leaving the block undecodable.
         let max_symbols = self.source_block_symbols.saturating_add(MAX_EXTRA_SYMBOLS);
         for packet in packets {
             self.validate(&packet)?;
             let (payload_id, payload) = packet.split();
             let encoding_symbol_id = payload_id.encoding_symbol_id();
-            let held = self.received_source_symbols as usize + self.repair_symbols.len();
-            if held >= max_symbols as usize {
-                continue;
-            }
             if encoding_symbol_id < self.source_block_symbols {
                 if self.received_esi.insert(encoding_symbol_id) {
                     if let Some(slot) = self.source_symbols.get_mut(encoding_symbol_id as usize) {
@@ -307,6 +305,10 @@ impl SourceBlockDecoder {
                     }
                 }
             } else {
+                let held = self.received_source_symbols as usize + self.repair_symbols.len();
+                if held >= max_symbols as usize {
+                    continue;
+                }
                 // Cannot overflow: the id is below 2^24 and the padding below 2^16.
                 let internal_symbol_id = encoding_symbol_id.saturating_add(padding);
                 if self.received_esi.insert(internal_symbol_id) {
@@ -397,8 +399,10 @@ impl SourceBlockDecoder {
 
 #[cfg(test)]
 mod tests {
-    use super::{SourceBlockDecoder, MAX_EXTRA_SYMBOLS};
-    use crate::{EncodingPacket, ObjectTransmissionInformation, PayloadId};
+    use super::{SourceBlockDecoder, Vec, MAX_EXTRA_SYMBOLS};
+    use crate::{
+        encoder::Encoder, EncodingPacket, Error, ObjectTransmissionInformation, PayloadId,
+    };
 
     #[test]
     fn stored_repair_symbols_are_bounded() {
@@ -418,24 +422,74 @@ mod tests {
     }
 
     #[test]
-    fn source_symbols_count_against_the_cap() {
-        // K = 40. After K + 10 distinct repair symbols, the K - 1 source
-        // symbols a peer could still send must not be stored either: one
-        // transfer holds at most K + 10 payloads in total.
+    fn repair_symbols_are_capped_and_sources_stored_once() -> Result<(), Error> {
+        // Repairs stop at K + 10 held symbols, but late sources remain admissible.
         let config = ObjectTransmissionInformation::with_defaults(40 * 768, 768);
         let mut decoder = SourceBlockDecoder::new2(0, &config, 40 * 768);
         let k = decoder.source_block_symbols;
         assert_eq!(k, 40);
-        let packet = |id: u32| EncodingPacket::new(PayloadId::new(0, id).unwrap(), vec![5; 768]);
+        let packet = |id| -> Result<EncodingPacket, Error> {
+            Ok(EncodingPacket::new(PayloadId::new(0, id)?, vec![5; 768]))
+        };
         for id in k..k + 1000 {
-            let _ = decoder.decode([packet(id)]).unwrap();
+            let _ = decoder.decode([packet(id)?])?;
         }
-        for id in 1..k {
-            let _ = decoder.decode([packet(id)]).unwrap();
+        for _ in 0..3 {
+            for id in 0..k {
+                let _ = decoder.decode([packet(id)?])?;
+            }
         }
+        for id in k + 1000..k + 2000 {
+            let _ = decoder.decode([packet(id)?])?;
+        }
+        assert_eq!(decoder.repair_symbols.len() as u32, k + MAX_EXTRA_SYMBOLS);
+        assert_eq!(decoder.received_source_symbols, k);
         let held = decoder.received_source_symbols as usize + decoder.repair_symbols.len();
-        assert_eq!(held as u32, k + MAX_EXTRA_SYMBOLS);
-        assert_eq!(decoder.received_source_symbols, 0);
+        assert_eq!(held, (2 * k + MAX_EXTRA_SYMBOLS) as usize);
+
+        // Repair admission counts sources already held, not just other repairs.
+        let mut sources_first = SourceBlockDecoder::new2(0, &config, 40 * 768);
+        for id in 1..k {
+            let _ = sources_first.decode([packet(id)?])?;
+        }
+        for id in k..k + 1000 {
+            let _ = sources_first.decode([packet(id)?])?;
+        }
+        assert_eq!(sources_first.received_source_symbols, k - 1);
+        assert_eq!(sources_first.repair_symbols.len() as u32, MAX_EXTRA_SYMBOLS + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn late_source_symbols_recover_a_block_full_of_dependent_repairs() -> Result<(), Error> {
+        // Basis bytes expose both source coefficients. Repairs with coefficient
+        // zero for the first source cannot recover it, even with distinct ids.
+        let mut data = vec![0; 1536];
+        data[0] = 1;
+        data[769] = 1;
+        let config = ObjectTransmissionInformation::new(1536, 768, 1, 1, 1);
+        let encoder = Encoder::new(&data, config);
+        let block = &encoder.get_block_encoders()[0];
+        let k = block.source_symbol_count();
+        assert_eq!(k, 2);
+        let dependent: Vec<_> = block
+            .repair_packets(k, 8192)?
+            .into_iter()
+            .filter(|packet| packet.data()[0] == 0 && packet.data()[1] != 0)
+            .take((k + MAX_EXTRA_SYMBOLS) as usize)
+            .collect();
+        assert_eq!(dependent.len(), (k + MAX_EXTRA_SYMBOLS) as usize);
+        let mut decoder = SourceBlockDecoder::new2(0, &config, 1536);
+        for repair in dependent {
+            assert_eq!(decoder.decode([repair])?, None);
+        }
+        assert_eq!(decoder.repair_symbols.len() as u32, k + MAX_EXTRA_SYMBOLS);
+        let mut result = None;
+        for source in block.source_packets() {
+            result = decoder.decode([source])?;
+        }
+        assert_eq!(result, Some(data));
+        Ok(())
     }
 
     #[test]
