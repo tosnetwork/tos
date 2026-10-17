@@ -1,5 +1,7 @@
 use crate::{
-    base::{intermediate_tuple, partition, EncodingPacket, PayloadId},
+    base::{
+        intermediate_tuple, partition, EncodingPacket, Error, PayloadId, ENCODING_SYMBOL_ID_LIMIT,
+    },
     constraint_matrix::generate_constraint_matrix,
     matrix::DenseBinaryMatrix,
     operation_vector::{perform_op, SymbolOps},
@@ -141,13 +143,20 @@ impl Encoder {
         self.config
     }
 
-    pub fn get_encoded_packets(&self, repair_packets_per_block: u32) -> Vec<EncodingPacket> {
+    /// Every source packet of every block, followed by that block's first
+    /// `repair_packets_per_block` repair packets (encoding symbol ids K, K+1, ...).
+    pub fn get_encoded_packets(
+        &self,
+        repair_packets_per_block: u32,
+    ) -> Result<Vec<EncodingPacket>, Error> {
         let mut packets = vec![];
         for encoder in self.blocks.iter() {
             packets.extend(encoder.source_packets());
-            packets.extend(encoder.repair_packets(0, repair_packets_per_block));
+            packets.extend(
+                encoder.repair_packets(encoder.source_symbol_count(), repair_packets_per_block)?,
+            );
         }
-        packets
+        Ok(packets)
     }
 
     pub fn get_block_encoders(&self) -> &Vec<SourceBlockEncoder> {
@@ -275,39 +284,69 @@ impl SourceBlockEncoder {
         SourceBlockEncoder { source_block_id, source_symbols, intermediate_symbols }
     }
 
+    /// Number of source symbols K in this block. Repair symbol ids start here.
+    pub fn source_symbol_count(&self) -> u32 {
+        // Bounded by MAX_SOURCE_SYMBOLS_PER_BLOCK, which the configuration enforces.
+        self.source_symbols.len() as u32
+    }
+
     pub fn source_packets(&self) -> Vec<EncodingPacket> {
-        let mut esi: i32 = -1;
-        self.source_symbols
-            .iter()
-            .map(|symbol| {
-                esi += 1;
+        // A block holds at most MAX_SOURCE_SYMBOLS_PER_BLOCK (56403) source
+        // symbols, so every index fits in u16 and is a valid 24-bit id.
+        (0u16..)
+            .zip(self.source_symbols.iter())
+            .map(|(esi, symbol)| {
                 EncodingPacket::new(
-                    PayloadId::new(self.source_block_id, esi as u32),
+                    PayloadId::for_source_symbol(self.source_block_id, esi),
                     symbol.as_bytes().to_vec(),
                 )
             })
             .collect()
     }
 
-    // See section 5.3.4
-    pub fn repair_packets(&self, start_repair_symbol_id: u32, packets: u32) -> Vec<EncodingPacket> {
-        let source_symbols = self.source_symbols.len() as u32;
-        let start_encoding_symbol_id =
-            start_repair_symbol_id - source_symbols + extended_source_block_symbols(source_symbols);
-        let mut result = vec![];
+    /// Repair packets with encoding symbol ids `start_encoding_symbol_id ..
+    /// start_encoding_symbol_id + packets`, the ids that travel on the wire.
+    ///
+    /// Ids below K name source symbols, so a repair id must be at least K. The
+    /// repair symbol with id `esi` is the encoding of internal symbol
+    /// `esi + K' - K`, which skips the K' - K padding symbols (section 5.3.1,
+    /// and the C++ implementation the network runs).
+    pub fn repair_packets(
+        &self,
+        start_encoding_symbol_id: u32,
+        packets: u32,
+    ) -> Result<Vec<EncodingPacket>, Error> {
+        let source_symbols = self.source_symbol_count();
+        if start_encoding_symbol_id < source_symbols {
+            return Err(Error::RepairSymbolIdBelowSourceSymbols {
+                encoding_symbol_id: start_encoding_symbol_id,
+                source_symbols,
+            });
+        }
+        let range_overflow =
+            Error::RepairSymbolRangeOverflow { start: start_encoding_symbol_id, count: packets };
+        let end = start_encoding_symbol_id
+            .checked_add(packets)
+            .filter(|end| *end <= ENCODING_SYMBOL_ID_LIMIT)
+            .ok_or_else(|| range_overflow.clone())?;
+        let padding = extended_source_block_symbols(source_symbols)
+            .checked_sub(source_symbols)
+            .ok_or_else(|| range_overflow.clone())?;
         let lt_symbols = num_lt_symbols(source_symbols);
         let pi_symbols = num_pi_symbols(source_symbols);
         let sys_index = systematic_index(source_symbols);
         let p1 = calculate_p1(source_symbols, pi_symbols);
-        for i in 0..packets {
-            let tuple = intermediate_tuple(start_encoding_symbol_id + i, lt_symbols, sys_index, p1);
+        let mut result = vec![];
+        for encoding_symbol_id in start_encoding_symbol_id..end {
+            let internal_symbol_id =
+                encoding_symbol_id.checked_add(padding).ok_or_else(|| range_overflow.clone())?;
+            let tuple = intermediate_tuple(internal_symbol_id, lt_symbols, sys_index, p1);
             result.push(EncodingPacket::new(
-                PayloadId::new(self.source_block_id, start_repair_symbol_id + i),
-                enc(self.source_symbols.len() as u32, &self.intermediate_symbols, tuple)
-                    .into_bytes(),
+                PayloadId::new(self.source_block_id, encoding_symbol_id)?,
+                enc(source_symbols, &self.intermediate_symbols, tuple).into_bytes(),
             ));
         }
-        result
+        Ok(result)
     }
 }
 

@@ -61,7 +61,7 @@
       "job": "strict-build",
       "name": "Compile cache statistics",
       "original_sha256": "bb05db4e66112357174d6d7d4ece40a3741e4dc23f3004c50394a08d09c81e50",
-      "run_sha256": "bb05db4e66112357174d6d7d4ece40a3741e4dc23f3004c50394a08d09c81e50",
+      "run_sha256": "e0a0fc951051e6d845b179b1d54955e0fea467b6d2b5a83568b4ca2e91963703",
       "original_if": "always()",
       "deduplicated": true
     },

@@ -1698,7 +1698,7 @@ fn test_overlay_raptorq() {
                     .map(|&i| &source_packets[i])
                     .chain(repair_indices.iter().map(|&i| &repair_packets[i]));
                 for (seq, chunk) in base.chain(extras.iter()) {
-                    if let Some(result) = decoder.decode(*seq, chunk) {
+                    if let Some(result) = decoder.decode(*seq, chunk).unwrap() {
                         return Some(result);
                     }
                 }
@@ -1829,7 +1829,7 @@ fn test_raptorq_large_symbol_size() {
 
         let mut decoded = None;
         for (seq, chunk) in packets.iter().take(source_count + 2) {
-            if let Some(result) = decoder.decode(*seq, chunk) {
+            if let Some(result) = decoder.decode(*seq, chunk).unwrap() {
                 decoded = Some(result);
                 break;
             }
@@ -1839,6 +1839,116 @@ fn test_raptorq_large_symbol_size() {
         assert_eq!(result.len(), DATA_SIZE, "decoded size mismatch");
         assert_eq!(result, data, "decoded data mismatch");
         println!("  OK: encode/decode verified for symbol_size={part_size}");
+    }
+}
+
+/// FEC parameters arrive from a peer before any signature is checked (the
+/// broadcast receive path builds its decoder from the first part), so they are
+/// bounded like the C++ side bounds FEC broadcasts, and refused before the
+/// decoder allocates. Accepted parameters always describe one source block and
+/// one sub-block, the only layout the C++ implementation produces.
+#[test]
+fn test_raptorq_decoder_bounds_peer_parameters() {
+    use adnl::RaptorqDecoder;
+    use tl_api::tos::fec::type_::RaptorQ as FecTypeRaptorQ;
+
+    let params = |data_size: i32, symbol_size: i32| FecTypeRaptorQ {
+        data_size,
+        symbol_size,
+        symbols_count: 0,
+    };
+    let max = RaptorqDecoder::MAX_DATA_SIZE;
+    assert_eq!(max, 16 << 20);
+    for (data_size, symbol_size) in [
+        (max + 1, 768),
+        (i32::MAX, 768),
+        (i32::MAX, i32::MAX),
+        (0, 768),
+        (-1, 768),
+        (1000, 0),
+        (1000, -768),
+        // 2^20 one-byte symbols: more than K'_max = 56403 source symbols.
+        (1 << 20, 1),
+    ] {
+        assert!(
+            RaptorqDecoder::with_params(params(data_size, symbol_size)).is_err(),
+            "data_size {data_size}, symbol_size {symbol_size} accepted"
+        );
+    }
+    for (data_size, symbol_size) in [(max, 768), (11 << 20, 768), (max, 136_534), (1, 768)] {
+        let config = RaptorqDecoder::config(data_size, symbol_size).unwrap();
+        assert_eq!(config.source_blocks(), 1, "data_size {data_size}");
+        assert_eq!(config.sub_blocks(), 1, "data_size {data_size}");
+        assert_eq!(config.symbol_size(), symbol_size as u32);
+        assert!(RaptorqDecoder::with_params(params(data_size, symbol_size)).is_ok());
+    }
+}
+
+/// Above about 10 MiB the default parameters used sub-blocks, a layout the
+/// C++ side neither produces nor decodes. An 11 MiB object now round-trips
+/// with one source block and one sub-block, through repair symbols.
+#[test]
+fn test_raptorq_large_object_single_block_round_trip() {
+    use adnl::{RaptorqDecoder, RaptorqEncoder};
+
+    let data: Vec<u8> =
+        (0..(11u32 << 20)).map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8).collect();
+    let mut encoder = RaptorqEncoder::with_data(&data, None);
+    let params = encoder.params().clone();
+    assert_eq!(params.symbol_size, 768);
+    let mut decoder = RaptorqDecoder::with_params(params.clone()).unwrap();
+    let mut seqno = 0u32;
+    let mut decoded = None;
+    for _ in 0..(params.symbols_count as usize + 20) {
+        let chunk = encoder.encode(&mut seqno).unwrap();
+        // Lose the first 10 source symbols.
+        if seqno >= 10 {
+            decoded = decoder.decode(seqno, &chunk).unwrap();
+            if decoded.is_some() {
+                break;
+            }
+        }
+        seqno += 1;
+    }
+    assert!(decoded.as_deref() == Some(data.as_slice()), "11 MiB object did not round-trip");
+}
+
+/// A peer chooses the seqno and the length of every RLDP or broadcast symbol.
+/// One that is not exactly the negotiated symbol size, or whose seqno does not
+/// fit in 24 bits, is refused with an error and leaves the decoder usable.
+#[test]
+fn test_raptorq_decoder_refuses_malformed_symbols() {
+    use adnl::{RaptorqDecoder, RaptorqEncoder};
+
+    let data: Vec<u8> = (0..3000u32).map(|i| (i * 7) as u8).collect();
+    for symbol in [None, Some(77u32)] {
+        let mut encoder = RaptorqEncoder::with_data(&data, symbol);
+        let params = encoder.params().clone();
+        let symbol_size = params.symbol_size as usize;
+        let mut decoder = RaptorqDecoder::with_params(params.clone()).unwrap();
+
+        for len in [0, 1, symbol_size - 1, symbol_size + 1] {
+            assert!(decoder.decode(0, &vec![0; len]).is_err(), "length {len} accepted");
+            assert!(decoder.decode(1 << 20, &vec![0; len]).is_err(), "length {len} accepted");
+        }
+        for seqno in [1u32 << 24, (1 << 24) + 5, u32::MAX] {
+            assert!(decoder.decode(seqno, &vec![0; symbol_size]).is_err(), "seqno {seqno:#x}");
+        }
+
+        // Skip source symbol 0 so repair symbols are needed, then decode.
+        let mut seqno = 0u32;
+        let mut decoded = None;
+        for _ in 0..(params.symbols_count as usize * 2 + 10) {
+            let chunk = encoder.encode(&mut seqno).unwrap();
+            if seqno != 0 {
+                decoded = decoder.decode(seqno, &chunk).unwrap();
+                if decoded.is_some() {
+                    break;
+                }
+            }
+            seqno += 1;
+        }
+        assert_eq!(decoded.as_deref(), Some(data.as_slice()), "symbol size {symbol_size}");
     }
 }
 
@@ -1856,11 +1966,15 @@ fn test_twostep_fec_encoder_large_symbols() {
         assert_eq!(params.data_size, data.len() as i32);
         assert_eq!(params.symbol_size, part_size as i32);
 
-        // Generate one symbol per neighbour (like broadcast-twostep.cpp)
+        // Generate one symbol per neighbour (like broadcast-twostep.cpp). The
+        // seqno advances per symbol as the broadcast sender advances it; a
+        // repair symbol is never requested under a source symbol's seqno.
         let mut seqno = 0u32;
         for _ in 0..neighbours {
             let chunk = encoder.encode(&mut seqno).unwrap();
             assert_eq!(chunk.len(), part_size, "symbol size mismatch");
+            seqno += 1;
         }
+        assert_eq!(seqno, neighbours, "every symbol carries its own seqno");
     }
 }

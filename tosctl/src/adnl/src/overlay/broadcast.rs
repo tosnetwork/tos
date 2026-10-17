@@ -903,7 +903,7 @@ trait FecProtocol<T: FecBroadcastParsed + Send + 'static>: BroadcastProtocol<T> 
             bcast.date(),
         )?;
         bcast.src_key()?.verify(&to_sign, bcast.signature())?;
-        if let Some(ret) = decoder.decode(bcast.seqno(), bcast.part_data()) {
+        if let Some(ret) = decoder.decode(bcast.seqno(), bcast.part_data())? {
             let ret = if ret.len() != bcast.data_size() as usize {
                 fail!("Expected {} bytes, but received {}", bcast.data_size(), ret.len())
             } else {

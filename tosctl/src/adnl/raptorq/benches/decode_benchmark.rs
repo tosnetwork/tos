@@ -24,12 +24,19 @@ fn benchmark(symbol_size: u16, overhead: f64) -> u64 {
         let config = ObjectTransmissionInformation::new(0, symbol_size.into(), 0, 1, 1);
         let encoder = SourceBlockEncoder::new2(1, &config, &data);
         let elements_and_overhead = (symbol_count as f64 * (1.0 + overhead)) as u32;
-        let mut packets = encoder.repair_packets(0, iterations as u32 * elements_and_overhead);
+        let mut packets = encoder
+            .repair_packets(
+                encoder.source_symbol_count(),
+                iterations as u32 * elements_and_overhead,
+            )
+            .expect("repair symbol ids fit in 24 bits");
         let now = Instant::now();
         for _ in 0..iterations {
             let mut decoder = SourceBlockDecoder::new2(1, &config, elements as u64);
             let start = packets.len() - elements_and_overhead as usize;
-            if let Some(result) = decoder.decode(packets.drain(start..)) {
+            if let Some(result) =
+                decoder.decode(packets.drain(start..)).expect("packets match the configuration")
+            {
                 black_box_value += result[0] as u64;
             }
         }
