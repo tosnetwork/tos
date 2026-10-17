@@ -43,10 +43,19 @@ export interface ContractGetResult {
   stack: StackReader;
 }
 
-/** Confirmation returned after sending an internal / external message. */
+/** Confirmation returned after sending an internal message. */
 export interface SendConfirmation {
   hash?: string;
   status?: number;
+}
+
+/**
+ * What the node returned for an accepted external message: its hash, which a
+ * transaction's `in_msg.hash` will equal once the chain executes it.
+ * Acceptance is not settlement; see `waitForTransaction`.
+ */
+export interface ExternalSendResult {
+  hash: string;
 }
 
 /**
@@ -83,8 +92,13 @@ export interface ContractProvider {
   /**
    * Invoke a get-method on the contract.
    *
+   * Resolves only when the method ran and exited successfully (0 or 1); the
+   * stack of a failed run is never handed out.
+   *
    * @param method - Method name or numeric id.
    * @param args   - TVM stack arguments.
+   * @throws TosNotDeployedError when the account is not active (exit code -256)
+   * @throws TosContractError when the method exits with any other code
    */
   get(method: string | number, args?: TupleItemLike[]): Promise<ContractGetResult>;
 
@@ -100,6 +114,7 @@ export interface ContractProvider {
    * Send an external message directly to the contract.
    *
    * @param message - The BOC-serializable message cell.
+   * @returns The external message hash the node accepted.
    */
-  external(message: CellLike | Uint8Array | string): Promise<SendConfirmation>;
+  external(message: CellLike | Uint8Array | string): Promise<ExternalSendResult>;
 }

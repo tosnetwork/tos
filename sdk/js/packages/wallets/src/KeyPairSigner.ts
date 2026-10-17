@@ -15,13 +15,13 @@ import { sign } from "@tos/crypto";
 import type {
   Signer,
   SenderArguments,
-  SendConfirmation,
+  PendingTransfer,
 } from "@tos/client";
 import type { SendTransferArgs } from "./types.js";
 
 interface TransferCapableWallet {
   readonly address: Address;
-  sendTransfer(via: Signer, args: SendTransferArgs): Promise<SendConfirmation>;
+  sendTransfer(via: Signer, args: SendTransferArgs): Promise<PendingTransfer>;
 }
 
 function toAddress(address: SenderArguments["to"]): Address {

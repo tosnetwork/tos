@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { Address, beginCell, Cell } from "@tos/core";
 import { JettonMinter } from "./JettonMinter.js";
-import type { ContractGetResult, ContractProvider, ContractState, SendConfirmation } from "@tos/client";
+import type {
+  ContractGetResult,
+  ContractProvider,
+  ContractState,
+  ExternalSendResult,
+  SendConfirmation,
+} from "@tos/client";
 
 const DUMMY_ADDRESS = new Address(0, new Uint8Array(32));
 
@@ -20,7 +26,7 @@ class MockProvider implements ContractProvider {
     throw new Error("not implemented");
   }
 
-  external(): Promise<SendConfirmation> {
+  external(): Promise<ExternalSendResult> {
     throw new Error("not implemented");
   }
 }

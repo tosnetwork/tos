@@ -34,6 +34,9 @@ export {
   TosError,
   TosRpcError,
   TosContractError,
+  TosNotDeployedError,
+  TosNotDeliveredError,
+  INACTIVE_ACCOUNT_EXIT_CODE,
   ErrorCodes,
   ErrorReasons,
   StackReaderImpl,
@@ -41,7 +44,8 @@ export {
   open,
   setCoreParser,
   waitForTransaction,
-  waitForSeqnoChange,
+  waitForTransfer,
+  requireDelivered,
   // Constants
   Networks,
 } from "@tos/client";
@@ -67,6 +71,7 @@ export type {
   TosClientOptions,
   NetworkConfig,
   WaitOpts,
+  PendingTransfer,
   AddressLike,
   CellLike,
   TupleItemLike,

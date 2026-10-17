@@ -44,6 +44,9 @@ export const ErrorCodes = {
   INVALID_RESPONSE: "INVALID_RESPONSE",
   CONTRACT_ERROR: "CONTRACT_ERROR",
   WAIT_TIMEOUT: "WAIT_TIMEOUT",
+  NOT_DEPLOYED: "NOT_DEPLOYED",
+  NOT_DELIVERED: "NOT_DELIVERED",
+  INSUFFICIENT_BALANCE: "INSUFFICIENT_BALANCE",
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -188,6 +191,64 @@ export class TosContractError extends TosError {
     this.name = "TosContractError";
     this.exitCode = exitCode;
     this.address = address;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Account not active
+// ---------------------------------------------------------------------------
+
+/**
+ * The exit code a get-method reports when the account has no active state to
+ * run it on: it does not exist, is uninitialized (never deployed) or is frozen.
+ * The node returns it with an empty stack.
+ */
+export const INACTIVE_ACCOUNT_EXIT_CODE = -256;
+
+/**
+ * A get-method was asked of an account that is not active: never deployed,
+ * empty, or frozen. Deploy the contract first (a wallet: `sendDeploy`).
+ */
+export class TosNotDeployedError extends TosError {
+  /** The raw address of the account. */
+  readonly address: string;
+  /** The get-method that could not run. */
+  readonly method: string;
+
+  constructor(address: string, method: string) {
+    super(
+      `account ${address} is not deployed (uninitialized, empty or frozen): get-method ${method} cannot run`,
+      ErrorCodes.NOT_DEPLOYED,
+    );
+    this.name = "TosNotDeployedError";
+    this.address = address;
+    this.method = method;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Transfer not delivered
+// ---------------------------------------------------------------------------
+
+/**
+ * A transaction for the sent message executed on chain but did not deliver
+ * what was signed: it aborted, its compute or action phase failed, or it
+ * created fewer (or more) outgoing messages than the transfer carried. The
+ * fees it charged are spent; the value did not move.
+ */
+export class TosNotDeliveredError extends TosError {
+  /** Why the transaction does not count as delivered. */
+  readonly reason: string;
+  /** The executed transaction, as the node returned it. */
+  readonly transaction: unknown;
+
+  constructor(reason: string, transaction: unknown) {
+    super(`transfer not delivered: ${reason}`, ErrorCodes.NOT_DELIVERED);
+    this.name = "TosNotDeliveredError";
+    this.reason = reason;
+    this.transaction = transaction;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
