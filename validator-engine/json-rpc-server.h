@@ -464,9 +464,7 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                           td::Promise<HttpReturn> promise);
   void handle_shards(td::JsonObject &params, std::string req_id,
                      td::Promise<HttpReturn> promise);
-  void handle_getBlockHeader(td::JsonObject &params, std::string req_id,
-                             td::Promise<HttpReturn> promise);
-  void handle_getBootstrapState(td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise);
+  void handle_getBlockHeader(td::JsonObject &params, std::string req_id, td::Promise<HttpReturn> promise);
   void handle_getBlockTransactions(td::JsonObject &params, std::string req_id,
                                    td::Promise<HttpReturn> promise);
   void handle_getTransactions(td::JsonObject &params, std::string req_id,
@@ -678,7 +676,6 @@ class JsonRpcServer final : public td::actor::Actor, public virtual metrics::Asy
                               std::string req_id, std::string source_ip,
                               td::Promise<HttpReturn> promise);
 
-  void start_up() override;
   void alarm() override;
 
   // Sliding-window request budget per source address. Consulted once per

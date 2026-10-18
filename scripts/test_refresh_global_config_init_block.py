@@ -93,13 +93,15 @@ class FakeChain:
         # Overrides consumed one per getBlockHeader call, before header_override.
         self.header_sequence: dict[int, list[dict[str, Any]]] = {}
         self.init_seqno = 0
-        self.ready_blocks = set(key_blocks)
-        self.bootstrap_override: dict[int, dict[str, Any]] = {}
-        # Overrides consumed one per getBootstrapState call, after bootstrap_override.
-        self.bootstrap_sequence: dict[int, list[dict[str, Any]]] = {}
 
     def timestamp(self, seqno: int) -> int:
-        return NOW - 12 * 3600 - (self.last - seqno) * 60
+        keys = sorted(self.key_blocks)
+        base = ((NOW - 12 * 3600) // (1 << 17)) * (1 << 17)
+        preceding = [key for key in keys if key <= seqno]
+        if not preceding:
+            return base - (1 << 17)
+        key = preceding[-1]
+        return base + (keys.index(key) - len(keys) + 1) * (1 << 17) + 3600 + (seqno - key) * 60
 
     def prev_key(self, seqno: int) -> int:
         earlier = [k for k in self.key_blocks if k < seqno]
@@ -140,26 +142,6 @@ class FakeChain:
             if sequence:
                 header.update(sequence.pop(0))
             return header
-        if method == "getBootstrapState":
-            if (
-                params.get("root_hash") != rpc_id(seqno)["root_hash"]
-                or params.get("file_hash") != rpc_id(seqno)["file_hash"]
-            ):
-                raise RefreshError("readiness query is not bound to the full block id")
-            ready = seqno in self.ready_blocks
-            status = {
-                "id": rpc_id(seqno),
-                "ready": ready,
-                "reason": "ready" if ready else "state_unavailable",
-                "gen_utime": self.timestamp(seqno),
-                "expires_at": self.timestamp(seqno) + 3 * 86400,
-                "archive_ttl": 7 * 86400,
-            }
-            status.update(self.bootstrap_override.get(seqno, {}))
-            sequence = self.bootstrap_sequence.get(seqno)
-            if sequence:
-                status.update(sequence.pop(0))
-            return status
         raise RefreshError(f"unexpected method {method}")
 
 
@@ -170,15 +152,8 @@ class RefreshTest(unittest.TestCase):
         self.output = self.tmp / "refreshed.json"
         self.config = copy.deepcopy(GLOBAL_CONFIG)
         clock = mock.patch("time.time", return_value=NOW)
-        clock.start()
+        self.clock = clock.start()
         self.addCleanup(clock.stop)
-        # No test waits; each records the waits the script asked for.
-        sleeper = mock.patch("time.sleep")
-        self.sleep = sleeper.start()
-        self.addCleanup(sleeper.stop)
-
-    def sleeps(self) -> list[float]:
-        return [call.args[0] for call in self.sleep.call_args_list]
 
     def tearDown(self) -> None:
         for path in sorted(self.tmp.rglob("*"), reverse=True):
@@ -366,208 +341,171 @@ class RefreshTest(unittest.TestCase):
         self.assertIn("getMasterchainInfo: request failed", err.getvalue())
         self.assertFalse(self.output.exists())
 
-    # ---- completed persistent snapshots, not merely recent key blocks
-
-    def test_newest_unserved_key_blocks_fall_back_to_the_served_snapshot(self) -> None:
-        chain = FakeChain(last=120, key_blocks={40, 80, 100})
-        chain.ready_blocks = {40}
-        chain.bootstrap_override[100] = {"reason": "snapshot_not_found"}
-        result = self.refreshed(chain)
-        self.assertEqual(result["validator"]["init_block"], config_id(40))
-        probes = [params for method, params in chain.calls if method == "getBootstrapState"]
-        self.assertEqual([p["seqno"] for p in probes], [100, 80, 40])
-        for query in probes:
-            self.assertEqual(query["root_hash"], rpc_id(query["seqno"])["root_hash"])
-            self.assertEqual(query["file_hash"], rpc_id(query["seqno"])["file_hash"])
-
-    def test_latest_persistent_snapshot_is_used_only_after_it_becomes_ready(self) -> None:
+    def test_only_metadata_methods_are_called(self) -> None:
         chain = FakeChain(last=120, key_blocks={40, 100})
-        chain.ready_blocks = {40}
-        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(40))
-        self.output.unlink()
-        chain.ready_blocks.add(100)
+        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(100))
+        self.assertEqual(
+            {method for method, _ in chain.calls},
+            {"getMasterchainInfo", "getBlockHeader", "lookupBlock"},
+        )
+
+    def test_ordinary_key_block_is_skipped(self) -> None:
+        chain = FakeChain(last=120, key_blocks={40, 80, 100})
+        chain.header_override[80] = {"gen_utime": chain.timestamp(100)}
+        chain.header_override[100] = {"gen_utime": chain.timestamp(100) + 60}
+        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(80))
+
+    def test_period_boundary_uses_the_previous_key_block(self) -> None:
+        boundary = ((NOW - 12 * 3600) // (1 << 17)) * (1 << 17)
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.header_override[40] = {"gen_utime": boundary - 1}
+        chain.header_override[100] = {"gen_utime": boundary}
         self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(100))
 
-    def test_no_served_snapshot_writes_nothing(self) -> None:
-        chain = FakeChain(last=120, key_blocks={40, 100})
-        chain.ready_blocks.clear()
-        self.assert_refused(chain, "no available bootstrap snapshot")
+    def test_same_period_is_not_a_boundary_even_for_nearby_seconds(self) -> None:
+        boundary = ((NOW - 12 * 3600) // (1 << 17)) * (1 << 17)
+        for previous, current in ((0, 1), (65535, 65536)):
+            with self.subTest(previous=previous, current=current):
+                self.output.unlink(missing_ok=True)
+                chain = FakeChain(last=120, key_blocks={40, 100})
+                chain.header_override[40] = {"gen_utime": boundary + previous}
+                chain.header_override[100] = {"gen_utime": boundary + current}
+                self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(40))
 
-    def test_missing_shard_parts_or_proofs_prevent_publication(self) -> None:
-        for reason in ("state_unavailable", "proof_unavailable", "invalid_state", "resource_limit"):
-            with self.subTest(reason=reason):
-                chain = FakeChain(last=120, key_blocks={100})
-                chain.bootstrap_override[100] = {"ready": False, "reason": reason}
+    def test_one_hour_age_boundary(self) -> None:
+        for age, expected in ((3599, 40), (3600, 100), (3601, 100)):
+            with self.subTest(age=age):
+                self.output.unlink(missing_ok=True)
+                chain = FakeChain(last=120, key_blocks={40, 100})
+                chain.header_override[40] = {"gen_utime": 13728 * 131072 + 3600}
+                chain.header_override[100] = {"gen_utime": NOW - age}
+                self.assertEqual(
+                    self.refreshed(chain)["validator"]["init_block"], config_id(expected)
+                )
+
+    def test_only_too_young_key_block_writes_nothing(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.header_override[100] = {"gen_utime": NOW - 3599}
+        self.assert_refused(chain, "less than one hour old")
+
+    def test_future_key_block_is_skipped(self) -> None:
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.header_override[40] = {"gen_utime": 13728 * 131072 + 3600}
+        chain.header_override[100] = {"gen_utime": NOW + 120}
+        code, _, err = self.run_main(chain)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            json.loads(self.output.read_text())["validator"]["init_block"], config_id(40)
+        )
+
+    def test_only_future_key_block_writes_nothing(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.header_override[40] = {"gen_utime": 13728 * 131072 + 3600}
+        chain.header_override[100] = {"gen_utime": NOW + 120}
+        self.assert_refused(chain, "120s after this host's clock")
+
+    def test_native_lifetime_vectors(self) -> None:
+        for period, lifetime in (
+            (1, 262144),
+            (2, 524288),
+            (3, 262144),
+            (4, 1048576),
+            (6, 524288),
+            (8, 2097152),
+            (12, 1048576),
+        ):
+            with self.subTest(period=period):
+                timestamp = period * 131072 + 123
+                self.assertEqual(refresh.persistent_state_expiry(timestamp), timestamp + lifetime)
+
+    def test_expiry_must_exceed_eight_hours_at_selection(self) -> None:
+        created = 13733 * 131072 + 60
+        expiry = created + 262144
+        for delta, expected in ((-1, 100), (0, 40), (1, 40)):
+            with self.subTest(delta=delta):
+                self.output.unlink(missing_ok=True)
+                chain = FakeChain(last=120, key_blocks={40, 100})
+                chain.header_override[40] = {"gen_utime": created - 131072}
+                chain.header_override[100] = {"gen_utime": created}
+                with mock.patch("time.time", return_value=expiry - 28800 + delta):
+                    self.assertEqual(
+                        self.refreshed(chain)["validator"]["init_block"], config_id(expected)
+                    )
+
+    def test_only_expiring_state_writes_nothing(self) -> None:
+        created = 13733 * 131072 + 60
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.header_override[100] = {"gen_utime": created}
+        with mock.patch("time.time", return_value=created + 262144 - 28800):
+            self.assert_refused(chain, "expires within the requested 28800s")
+
+    def test_remaining_life_is_checked_after_header_reads(self) -> None:
+        created = 13733 * 131072 + 60
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.header_override[40] = {"gen_utime": created - 131072}
+        chain.header_override[100] = {"gen_utime": created}
+
+        def rpc(method: str, **params: Any) -> Any:
+            answer = chain(method, **params)
+            if method == "getBlockHeader" and params["seqno"] == 40:
+                self.clock.return_value = created + 262144 - 28800
+            return answer
+
+        self.clock.return_value = created + 262144 - 28801
+        self.assertEqual(self.refreshed(rpc)["validator"]["init_block"], config_id(40))
+
+    def test_previous_key_header_is_checked_in_full(self) -> None:
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.lookup_override[40] = {**rpc_id(40), "root_hash": h("fork")}
+        self.assert_refused(chain, "disagree on the full id of block 40")
+
+    def test_every_predecessor_must_be_a_key_block_of_the_expected_network(self) -> None:
+        for changes, reason in (
+            ({"is_key_block": False}, "block 40 is not a key block"),
+            ({"global_id": 2}, "block 40 carries global id 2"),
+        ):
+            with self.subTest(changes=changes):
+                chain = FakeChain(last=120, key_blocks={40, 100})
+                chain.header_override[40] = changes
                 self.assert_refused(chain, reason)
+
+    def test_timestamp_is_nonzero_uint32(self) -> None:
+        for value in (None, True, 0, -1, 1.5, 1 << 32):
+            with self.subTest(value=value):
+                chain = FakeChain(last=120, key_blocks={100})
+                chain.header_override[100] = {"gen_utime": value}
+                self.assert_refused(chain, "gen_utime of block 100")
+
+    def test_older_key_block_cannot_have_a_later_timestamp(self) -> None:
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.header_override[40] = {"gen_utime": chain.timestamp(100) + 1}
+        self.assert_refused(chain, "previous key block is newer")
+
+    def test_expiry_does_not_wrap(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.header_override[100] = {"gen_utime": (1 << 32) - 3601}
+        with mock.patch("time.time", return_value=(1 << 32) - 1):
+            self.assert_refused(chain, "expiry exceeds the uint32 time range")
 
     def test_unusable_newer_existing_anchor_is_not_rolled_back(self) -> None:
         self.config["validator"]["init_block"] = config_id(100)
-        chain = FakeChain(last=120, key_blocks={40, 100})
-        chain.ready_blocks = {40}
-        self.assert_refused(chain, "refresh from the original trusted global config")
-        self.assertNotIn(40, [p["seqno"] for m, p in chain.calls if m == "getBootstrapState"])
-
-    def test_same_height_fork_is_rejected_even_when_snapshot_is_unavailable(self) -> None:
-        self.config["validator"]["init_block"] = {**config_id(40), "file_hash": h("fork")}
-        chain = FakeChain(last=120, key_blocks={40, 100})
-        chain.ready_blocks.clear()
-        self.assert_refused(chain, "differ in their hashes")
-
-    def test_nearly_expired_snapshot_falls_back_to_a_longer_lived_one(self) -> None:
-        chain = FakeChain(last=120, key_blocks={40, 100})
-        chain.bootstrap_override[100] = {"expires_at": NOW + refresh.MIN_BOOTSTRAP_SECONDS}
-        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(40))
-
-    def test_snapshot_without_enough_catch_up_archive_is_refused(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        created = NOW - 23 * 3600
-        chain.header_override[100] = {"gen_utime": created}
-        chain.bootstrap_override[100] = {"gen_utime": created, "archive_ttl": 86400}
-        self.assert_refused(chain, "archive retention cannot cover")
-
-    def test_slow_readiness_response_cannot_spend_the_requested_validity(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        chain.bootstrap_override[100] = {"expires_at": NOW + refresh.MIN_BOOTSTRAP_SECONDS + 60}
-        clock = [NOW]
-
-        def rpc(method: str, **params: Any) -> Any:
-            if method == "getBootstrapState":
-                clock[0] += 3600
-            return chain(method, **params)
-
-        with mock.patch.object(refresh.time, "time", side_effect=lambda: clock[0]):
-            self.assert_refused(rpc, "snapshot expires within")
-
-    def test_explicit_download_budget_changes_required_retention(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        chain.bootstrap_override[100] = {"expires_at": NOW + 2 * 3600}
-        with self.assertRaisesRegex(RefreshError, "snapshot expires within"):
-            refresh.refreshed(self.config, chain, global_id=GLOBAL_ID)
-        result = refresh.refreshed(self.config, chain, global_id=GLOBAL_ID, minimum_validity=3600)
-        self.assertEqual(result["validator"]["init_block"], config_id(100))
-
-    def test_readiness_answer_must_name_the_exact_candidate(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        chain.bootstrap_override[100] = {"id": {**rpc_id(100), "file_hash": h("wrong")}}
-        self.assert_refused(chain, "answered a different full block id")
-
-    def test_unavailable_readiness_answer_must_also_name_the_exact_candidate(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        chain.bootstrap_override[100] = {"id": rpc_id(40), "ready": False}
-        self.assert_refused(chain, "answered a different full block id")
-
-    def test_ready_is_a_boolean_not_a_truthy_value(self) -> None:
-        for value in (1, "true", "false", None):
-            with self.subTest(value=value):
-                chain = FakeChain(last=120, key_blocks={100})
-                chain.bootstrap_override[100] = {"ready": value}
-                self.assert_refused(chain, ".ready is not a boolean")
-
-    def test_snapshot_time_must_match_the_candidate_header(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        chain.bootstrap_override[100] = {"gen_utime": NOW - 1}
-        self.assert_refused(chain, "inconsistent snapshot timestamp")
-
-    def test_snapshot_newer_than_the_host_clock_is_skipped(self) -> None:
-        # The host's clock is behind the source: the newest candidate cannot
-        # be measured, but an older one already in the host's past can.
-        chain = FakeChain(last=120, key_blocks={40, 100})
-        chain.header_override[100] = {"gen_utime": NOW + 90}
-        chain.bootstrap_override[100] = {"gen_utime": NOW + 90}
-        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(40))
-        self.assertEqual(self.sleeps(), [])
-
-    def test_only_snapshot_newer_than_the_host_clock_writes_nothing(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        chain.header_override[100] = {"gen_utime": NOW + 90}
-        chain.bootstrap_override[100] = {"gen_utime": NOW + 90}
-        self.assert_refused(chain, "100: block was created 90s after this host's clock")
-
-    # ---- a busy source is asked again, never replaced by an older anchor
-
-    def test_busy_source_is_asked_again_until_it_answers(self) -> None:
-        for reason in ("resource_limit", "timeout"):
-            with self.subTest(reason=reason):
-                self.sleep.reset_mock()
-                chain = FakeChain(last=120, key_blocks={40, 100})
-                busy = {"ready": False, "reason": reason}
-                chain.bootstrap_sequence[100] = [busy, busy]
-                result = self.refreshed(chain)
-                self.output.unlink()
-                self.assertEqual(result["validator"]["init_block"], config_id(100))
-                probes = [p["seqno"] for m, p in chain.calls if m == "getBootstrapState"]
-                self.assertEqual(probes, [100, 100, 100])
-                self.assertEqual(self.sleeps(), list(refresh.BUSY_RETRY_DELAYS[:2]))
-
-    def test_persistently_busy_source_is_refused_without_walking_back(self) -> None:
-        for reason in ("resource_limit", "timeout"):
-            with self.subTest(reason=reason):
-                self.sleep.reset_mock()
-                self.output.unlink(missing_ok=True)
-                chain = FakeChain(last=120, key_blocks={40, 100})
-                chain.bootstrap_override[100] = {"ready": False, "reason": reason}
-                self.assert_refused(chain, f"getBootstrapState(100) answered {reason}")
-                probes = [p["seqno"] for m, p in chain.calls if m == "getBootstrapState"]
-                attempts = len(refresh.BUSY_RETRY_DELAYS) + 1
-                self.assertEqual(probes, [100] * attempts, "an older anchor was probed")
-                self.assertEqual(self.sleeps(), list(refresh.BUSY_RETRY_DELAYS))
-
-    def test_busy_retries_are_bounded(self) -> None:
-        self.assertEqual(refresh.BUSY_REASONS, {"resource_limit", "timeout"})
-        self.assertLessEqual(sum(refresh.BUSY_RETRY_DELAYS), 120)
-        self.assertTrue(all(delay > 0 for delay in refresh.BUSY_RETRY_DELAYS))
-
-    def test_invalid_expiry_is_refused(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        chain.bootstrap_override[100] = {"expires_at": chain.timestamp(100)}
-        self.assert_refused(chain, "invalid snapshot expiry")
-
-    def test_invalid_archive_retention_is_refused(self) -> None:
-        for value in (True, "604800", 0, -1, float("nan"), float("inf"), 10**400):
-            with self.subTest(value=value):
-                chain = FakeChain(last=120, key_blocks={100})
-                chain.bootstrap_override[100] = {"archive_ttl": value}
-                self.assert_refused(chain, ".archive_ttl is not")
+        chain = FakeChain(last=120, key_blocks={40, 80, 100})
+        chain.header_override[100] = {"gen_utime": chain.timestamp(80) + 60}
+        self.assert_refused(chain, "existing init block is not rolled back")
 
     def test_backward_walk_cannot_loop_or_move_forward(self) -> None:
         for previous in (100, 120, -1):
             with self.subTest(previous=previous):
                 chain = FakeChain(last=120, key_blocks={100})
-                chain.ready_blocks.clear()
                 chain.header_override[100] = {"prev_key_block_seqno": previous}
                 self.assert_refused(chain, "does not precede key block 100")
 
     def test_backward_walk_is_bounded(self) -> None:
         chain = FakeChain(last=120, key_blocks={40, 80, 100})
-        chain.ready_blocks = {40}
+        for key in chain.key_blocks:
+            chain.header_override[key] = {"gen_utime": NOW - 12 * 3600}
         with mock.patch.object(refresh, "MAX_KEY_BLOCKS", 2):
             self.assert_refused(chain, "no usable snapshot within 2 key blocks")
-
-    def test_every_candidate_header_must_have_the_expected_global_id(self) -> None:
-        chain = FakeChain(last=120, key_blocks={40, 100})
-        chain.ready_blocks = {40}
-        chain.header_override[40] = {"global_id": 2}
-        self.assert_refused(chain, "block 40 carries global id 2, expected 1")
-
-    def test_missing_readiness_method_cannot_fall_back_to_latest_key_block(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-
-        def rpc(method: str, **params: Any) -> Any:
-            if method == "getBootstrapState":
-                raise RefreshError("getBootstrapState: method not found")
-            return chain(method, **params)
-
-        self.assert_refused(rpc, "getBootstrapState: method not found")
-
-    def test_invalid_download_budget_is_refused_before_reading_the_node(self) -> None:
-        chain = FakeChain(last=120, key_blocks={100})
-        for value in (0, -1):
-            with (
-                self.subTest(value=value),
-                self.assertRaisesRegex(RefreshError, "must be positive"),
-            ):
-                refresh.refreshed(self.config, chain, global_id=GLOBAL_ID, minimum_validity=value)
-        self.assertEqual(chain.calls, [])
 
 
 if __name__ == "__main__":

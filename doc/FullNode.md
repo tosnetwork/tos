@@ -47,16 +47,6 @@ cd build
 
 > **Note:** `--initial-sync-delay` and `--quic-flood-control -1` are required for ADNL connectivity. See [Validator.md](Validator.md) for details.
 
-For an established chain, use a freshly published global config. By default
-the node walks the key blocks after its `init_block` and itself chooses the
-newest persistent state with enough time left, waiting until a peer serves it;
-the anchor need not be a persistent block, but peers must still retain the
-history after it. `--skip-key-sync` is optional: it starts exactly at
-`init_block`, and is only appropriate when that anchor's complete persistent
-state is served, as the refresh script checks. The source retention policy,
-refresh command, and empty-database publication check are documented in
-[the operator guide](validator-operator-guide.md#11-refresh-the-global-configs-init-block).
-
 ## Important Runtime Options
 
 Useful flags from the current binary:
@@ -72,11 +62,6 @@ Useful flags from the current binary:
 - `--parallel-validation`: enable parallel validation across accounts
 - `--permanent-celldb`: archival-style cell retention
 - `--unsynced-liteserver`: allow liteserver queries before full sync
-- `--skip-key-sync`: optional; start the first synchronization exactly at the
-  global config's init block instead of selecting a newer persistent state.
-  Use it only with an init block whose complete persistent state is served
-- `--archive-ttl`: retain catch-up blocks/proofs; bootstrap sources should use
-  the seven-day default (`604800` seconds) and retain a continuous history
 
 ## Database Lock
 
@@ -202,9 +187,9 @@ Use the console and lite client to confirm:
 
 - Run as a service user
 - Keep logs on a separate volume when possible
-- Pin a consistent global config per environment, and keep its
-  `validator.init_block` refreshed: a new node cannot prove its way forward
-  from blocks its peers no longer keep (see
+- Pin a consistent global config per environment, and use one whose
+  `validator.init_block` is a recent key block: a new node cannot prove its way
+  forward from blocks its peers no longer keep (see
   [validator-operator-guide.md](validator-operator-guide.md#11-refresh-the-global-configs-init-block))
 - Upgrade binaries and configs together, not independently
 

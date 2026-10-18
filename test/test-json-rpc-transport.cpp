@@ -14,10 +14,11 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
-// Runs the real JSON-RPC server and its listener over loopback TCP. Envelope
-// scenarios are answered by the server itself; bootstrap readiness uses the
-// production manager with controlled archive reads. No database or network
-// peers are started by these fixtures.
+// Runs the real JSON-RPC server and its listener over loopback TCP, with no
+// validator behind it: every request below is answered by the server itself
+// (unknown method, invalid request, batch errors), which is enough to drive
+// the transport and the id handling end to end. Each scenario runs with the
+// API key disabled and enabled.
 
 #include <arpa/inet.h>
 #include <atomic>
@@ -35,7 +36,6 @@
 
 #include "auto/tl/lite_api.hpp"
 #include "http/http-inbound-connection.h"
-#include "quic/quic-sender.h"
 #include "td/actor/actor.h"
 #include "td/utils/base64.h"
 #include "td/utils/buffer.h"
@@ -43,11 +43,7 @@
 #include "td/utils/port/ServerSocketFd.h"
 #include "td/utils/tests.h"
 #include "tl-utils/lite-utils.hpp"
-#include "validator/fabric.h"
-#include "validator/impl/applied-ext-message-cleanup.hpp"
-#include "validator/manager.hpp"
 
-#include "json-rpc-explorer.h"
 #include "json-rpc-http-policy.h"
 #include "json-rpc-server-internal.h"
 #include "json-rpc-server.h"
@@ -304,21 +300,15 @@ std::string request_object(const std::string &id_literal) {
 
 // Runs `scenario` on a client thread against a JSON-RPC server, pumping the
 // actor scheduler on this thread until the scenario ends.
-void with_json_rpc(
-    tos::JsonRpcServer::Options options, std::function<void(int port)> scenario,
-    std::function<td::actor::ActorOwn<tos::validator::ValidatorManagerInterface>()> manager_factory = {}) {
+void with_json_rpc(tos::JsonRpcServer::Options options, std::function<void(int port)> scenario) {
   PortReservation reservation;
   const int port = reservation.port();
   td::IPAddress addr;
   addr.init_ipv4_port("127.0.0.1", port).ensure();
   td::actor::Scheduler scheduler({2});
   td::actor::ActorOwn<tos::JsonRpcServer> server;
-  td::actor::ActorOwn<tos::validator::ValidatorManagerInterface> manager;
   scheduler.run_in_context([&] {
-    if (manager_factory) {
-      manager = manager_factory();
-    }
-    server = tos::JsonRpcServer::create(manager.get(), std::move(options));
+    server = tos::JsonRpcServer::create({}, std::move(options));
     td::actor::send_closure(server, &tos::JsonRpcServer::listen, addr);
   });
   std::atomic<bool> done{false};
@@ -332,7 +322,6 @@ void with_json_rpc(
   client.join();
   scheduler.run_in_context([&] {
     server.reset();
-    manager.reset();
     td::actor::SchedulerContext::get().stop();
   });
   while (scheduler.run(1)) {
@@ -1278,207 +1267,6 @@ TEST(JsonRpcTransport, explorer_named_routes_require_the_configured_api_key) {
       ASSERT_TRUE(body.find("Unauthorized") != std::string::npos);
     });
   }
-}
-
-namespace {
-
-struct BootstrapRpcReads {
-  std::atomic<unsigned> handles{0};
-  std::atomic<unsigned> master_proofs{0};
-  std::atomic<unsigned> shard_proofs{0};
-  std::atomic<unsigned> state_slices{0};
-  std::atomic<bool> shard_available{true};
-  std::atomic<bool> hold_reads{false};
-  std::atomic<unsigned> held_reads{0};
-};
-
-}  // namespace
-
-namespace tos::validator {
-
-// Keep the production manager query and replace only its archive dependencies.
-// Startup is empty so the test neither opens a database nor starts networking.
-class BootstrapRpcManager final : public ValidatorManagerImpl {
- public:
-  explicit BootstrapRpcManager(std::shared_ptr<BootstrapRpcReads> reads)
-      : ValidatorManagerImpl(options(), "", {}, {}, {}, {}, {}), reads_(std::move(reads)) {
-  }
-
-  static tos::BlockIdExt id(tos::WorkchainId workchain, td::uint8 value = 1) {
-    td::Bits256 root, file;
-    root.as_slice().fill(value);
-    file.as_slice().fill(static_cast<td::uint8>(value + 1));
-    return {workchain, tos::shardIdAll, 10, root, file};
-  }
-
-  void start_up() override {
-    auto description = td::make_ref<tos::PersistentStateDescription>();
-    description.write().masterchain_id = id(tos::masterchainId);
-    description.write().shard_blocks = {{id(tos::basechainId), 0}};
-    description.write().start_time = static_cast<tos::UnixTime>(td::Clocks::system()) - 100;
-    description.write().end_time = description->start_time + 86400;
-    persistent_state_descriptions_.emplace(description->masterchain_id.seqno(), std::move(description));
-  }
-
-  void get_block_handle(tos::BlockIdExt block, bool force, td::Promise<tos::validator::BlockHandle> promise) override {
-    CHECK(!force);
-    CHECK(block == id(tos::masterchainId) || block == id(tos::basechainId));
-    ++reads_->handles;
-    auto handle = tos::validator::create_empty_block_handle(block);
-    handle->set_state_root_hash(block.root_hash);
-    if (block.is_masterchain()) {
-      handle->set_proof();
-    } else {
-      handle->set_proof_link();
-    }
-    handle->flushed_upto(handle->version());
-    promise.set_value(std::move(handle));
-  }
-
-  void get_block_proof(tos::validator::BlockHandle handle, td::Promise<td::BufferSlice> promise) override {
-    CHECK(handle->id().is_masterchain());
-    ++reads_->master_proofs;
-    promise.set_value(td::BufferSlice("archived masterchain proof"));
-  }
-
-  void get_block_proof_link(tos::validator::BlockHandle handle, td::Promise<td::BufferSlice> promise) override {
-    CHECK(!handle->id().is_masterchain());
-    ++reads_->shard_proofs;
-    promise.set_value(td::BufferSlice("archived shard proof"));
-  }
-
-  void get_persistent_state_size(tos::BlockIdExt block, tos::BlockIdExt anchor,
-                                 tos::validator::PersistentStateType type, td::Promise<td::uint64> promise) override {
-    CHECK(anchor == id(tos::masterchainId));
-    CHECK(type.get_offset() == type.offset<tos::validator::UnsplitStateType>());
-    if (reads_->hold_reads) {
-      held_sizes_.push_back(std::move(promise));
-      ++reads_->held_reads;
-      alarm_timestamp() = td::Timestamp::in(0.005);
-      return;
-    }
-    if (!block.is_masterchain() && !reads_->shard_available) {
-      promise.set_error(td::Status::Error(tos::ErrorCode::notready, "shard state is not registered"));
-      return;
-    }
-    promise.set_value(16);
-  }
-
-  void alarm() override {
-    if (reads_->hold_reads) {
-      alarm_timestamp() = td::Timestamp::in(0.005);
-      return;
-    }
-    for (auto &promise : held_sizes_) {
-      promise.set_value(16);
-    }
-    held_sizes_.clear();
-    reads_->held_reads = 0;
-  }
-
-  void get_persistent_state_slice(tos::BlockIdExt, tos::BlockIdExt anchor, tos::validator::PersistentStateType,
-                                  td::int64 offset, td::int64 length, td::Promise<td::BufferSlice> promise) override {
-    CHECK(anchor == id(tos::masterchainId));
-    CHECK(length == 1 && (offset == 0 || offset == 15));
-    ++reads_->state_slices;
-    promise.set_value(td::BufferSlice("x"));
-  }
-
- private:
-  static td::Ref<tos::validator::ValidatorManagerOptions> options() {
-    auto result = tos::validator::ValidatorManagerOptions::create({}, {});
-    result.write().set_archive_ttl(604800);
-    return result;
-  }
-  std::shared_ptr<BootstrapRpcReads> reads_;
-  std::vector<td::Promise<td::uint64>> held_sizes_;
-};
-
-}  // namespace tos::validator
-
-using BootstrapRpcManager = tos::validator::BootstrapRpcManager;
-
-TEST(JsonRpcTransport, bootstrap_readiness_routes_the_exact_id_and_does_not_cache_availability) {
-  auto reads = std::make_shared<BootstrapRpcReads>();
-  auto options = options_for(true);
-  options.cache_ttl = 60;
-  with_json_rpc(
-      options,
-      [reads](int port) {
-        auto call = [port](const std::string &params, bool rest = false) {
-          Client client(port, 0);
-          ASSERT_TRUE(client.connect());
-          auto request = "{\"jsonrpc\":\"2.0\",\"id\":73,\"method\":\"getBootstrapState\",\"params\":" + params + "}";
-          ASSERT_TRUE(client.send_all(rest ? post_to("/getBootstrapState", params, kApiKey) : post(request, true)));
-          std::string status, body;
-          ASSERT_TRUE(client.read_response(5000, status, body));
-          ASSERT_EQ("HTTP/1.1 200 OK", status);
-          ASSERT_TRUE(body.find(id_field(rest ? "null" : "73")) != std::string::npos);
-          return body;
-        };
-        const auto exact = BootstrapRpcManager::id(tos::masterchainId);
-        const auto params = tos::explorer::block_json(exact);
-        auto healthy = call(params);
-        ASSERT_TRUE(healthy.find("\"ready\":true") != std::string::npos);
-        ASSERT_TRUE(healthy.find("\"reason\":\"ready\"") != std::string::npos);
-        ASSERT_TRUE(healthy.find("\"root_hash\":\"" + td::base64_encode(exact.root_hash.as_slice()) + "\"") !=
-                    std::string::npos);
-        ASSERT_TRUE(healthy.find("\"file_hash\":\"" + td::base64_encode(exact.file_hash.as_slice()) + "\"") !=
-                    std::string::npos);
-        ASSERT_TRUE(healthy.find("\"archive_ttl\":604800") != std::string::npos);
-        ASSERT_EQ(2u, reads->handles.load());
-        ASSERT_EQ(1u, reads->master_proofs.load());
-        ASSERT_EQ(1u, reads->shard_proofs.load());
-        ASSERT_EQ(4u, reads->state_slices.load());
-
-        const auto unknown = BootstrapRpcManager::id(tos::masterchainId, 7);
-        auto absent = call(tos::explorer::block_json(unknown), true);
-        ASSERT_TRUE(absent.find("\"ready\":false") != std::string::npos);
-        ASSERT_TRUE(absent.find("\"reason\":\"snapshot_not_found\"") != std::string::npos);
-        ASSERT_TRUE(absent.find("\"root_hash\":\"" + td::base64_encode(unknown.root_hash.as_slice()) + "\"") !=
-                    std::string::npos);
-        ASSERT_EQ(2u, reads->handles.load());
-
-        reads->shard_available = false;
-        auto unavailable = call(params);
-        ASSERT_TRUE(unavailable.find("\"ready\":false") != std::string::npos);
-        ASSERT_TRUE(unavailable.find("\"reason\":\"state_unavailable\"") != std::string::npos);
-        reads->shard_available = true;
-        ASSERT_TRUE(call(params, true).find("\"ready\":true") != std::string::npos);
-
-        const auto before_invalid = reads->handles.load();
-        ASSERT_TRUE(call("{\"seqno\":10}").find("\"code\":-32602") != std::string::npos);
-        ASSERT_TRUE(
-            call(tos::explorer::block_json(BootstrapRpcManager::id(tos::basechainId))).find("\"code\":-32602") !=
-            std::string::npos);
-        ASSERT_EQ(before_invalid, reads->handles.load());
-
-        // Hold two actual manager queries inside their archive read. The third
-        // must be refused, and finishing the held reads must restore capacity.
-        reads->hold_reads = true;
-        Client first(port, 0), second(port, 0);
-        ASSERT_TRUE(first.connect());
-        ASSERT_TRUE(second.connect());
-        const auto held_request =
-            post("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"getBootstrapState\",\"params\":" + params + "}", true);
-        ASSERT_TRUE(first.send_all(held_request));
-        ASSERT_TRUE(second.send_all(held_request));
-        const auto hold_deadline = Clock::now() + std::chrono::seconds(3);
-        while (reads->held_reads.load() != 2 && Clock::now() < hold_deadline) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-        ASSERT_EQ(2u, reads->held_reads.load());
-        auto busy = call(params);
-        ASSERT_TRUE(busy.find("\"reason\":\"resource_limit\"") != std::string::npos);
-        reads->hold_reads = false;
-        for (auto *client : {&first, &second}) {
-          std::string status, body;
-          ASSERT_TRUE(client->read_response(5000, status, body));
-          ASSERT_TRUE(body.find("\"ready\":true") != std::string::npos);
-        }
-        ASSERT_TRUE(call(params).find("\"ready\":true") != std::string::npos);
-      },
-      [reads] { return td::actor::create_actor<BootstrapRpcManager>("bootstrap manager", reads); });
 }
 
 // The answers a client sees for the envelope rules, through the real listener:

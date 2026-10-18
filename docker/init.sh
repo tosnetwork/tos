@@ -67,9 +67,7 @@ else
 fi
 
 if [ -z "$ARCHIVE_TTL" ]; then
-    # Keep the engine's seven-day default so bootstrap peers can bridge the
-    # persistent-state interval, serialization delay, and subsequent catch-up.
-    ARCHIVE_TTL=604800
+    ARCHIVE_TTL=86400
     echo -e "\e[1;33m[=]\e[0m Using default ARCHIVE_TTL $ARCHIVE_TTL"
 else
     echo -e "\e[1;33m[=]\e[0m Using ARCHIVE_TTL $ARCHIVE_TTL"

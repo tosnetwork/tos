@@ -267,9 +267,6 @@ JsonRpcServer::JsonRpcServer(td::actor::ActorId<validator::ValidatorManagerInter
     , cache_(std::make_shared<JsonRpcResponseCache>(opts_.cache_max_entries, opts_.cache_max_body_bytes))
     , per_ip_gate_(opts_.per_ip_rate_window, opts_.per_ip_rate_requests, opts_.per_ip_rate_max_sources)
     , ingress_gate_(opts_.per_ip_ingress_window, opts_.per_ip_ingress_requests, opts_.per_ip_rate_max_sources) {
-}
-
-void JsonRpcServer::start_up() {
   // Arm periodic cache cleanup if caching is enabled
   if (opts_.cache_ttl > 0) {
     alarm_timestamp() = td::Timestamp::in(10.0);
@@ -1205,9 +1202,6 @@ const std::vector<JsonRpcServer::MethodEntry> &JsonRpcServer::method_table() {
       {"getBlockHeader", G | C,
        [](JsonRpcServer &s, td::JsonObject &p, std::string id, const std::string &,
           P r) { s.handle_getBlockHeader(p, std::move(id), std::move(r)); }},
-      {"getBootstrapState", R,
-       [](JsonRpcServer &s, td::JsonObject &p, std::string id, const std::string &,
-          P r) { s.handle_getBootstrapState(p, std::move(id), std::move(r)); }},
       {"getMasterchainBlockSignatures", G,
        [](JsonRpcServer &s, td::JsonObject &p, std::string id, const std::string &, P r) {
          s.handle_getMasterchainBlockSignatures(p, std::move(id), std::move(r));
