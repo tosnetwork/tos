@@ -16,6 +16,10 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # Explicit public namespace for disposable CI networks.
+  TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
+
 jobs:
   build:
     strategy:
