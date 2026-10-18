@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a copy of a global config whose init block is the latest key block.
+"""Write a copy of a global config whose init block follows native state selection.
 
 A client or a new node proves its way forward from the global config's
 validator.init_block, through every key block after it. Nodes collect old key
@@ -13,9 +13,8 @@ This script reads the chain from one node's JSON-RPC and writes the refreshed
 copy:
 
   getMasterchainInfo   the node's zero state and its last masterchain block
-  getBlockHeader       is_key_block / prev_key_block_seqno of the last block,
-                       then the header of the chosen key block itself
-  lookupBlock          the chosen key block's full id
+  getBlockHeader       walk key blocks backwards and read their timestamps
+  lookupBlock          independently check each key block's full id
 
 It refuses unless:
 
@@ -29,6 +28,12 @@ It refuses unless:
   * a key block at the height of the last block is that same block;
   * the new init block is not older than the one the input already has, and
     if it is at the same height it is the same block (full id, not height).
+
+The newest eligible key block starts a new 2^17-second period relative to its
+predecessor (the initial key block has no predecessor), is at least one hour
+old, and has more than eight hours of persistent-state life remaining. Expiry
+is gen_utime + 2^(18 + trailing_zero_bits(gen_utime / 2^17)), as in the node.
+Selection uses timestamps only: it does not probe snapshot availability.
 
 The node is trusted, not checked: nothing here verifies a proof. Point it at a
 node you operate and have already compared, on the full block id, with a
@@ -49,6 +54,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -59,6 +65,11 @@ MASTERCHAIN = -1
 MASTERCHAIN_SHARD = -(2**63)
 HASH_BYTES = 32
 RPC_TIMEOUT_SECONDS = 20
+PERSISTENT_STATE_PERIOD = 1 << 17
+SYNC_BLOCKS_BEFORE = 3600
+MIN_BOOTSTRAP_SECONDS = 8 * 3600
+MAX_UNIX_TIME = (1 << 32) - 1
+MAX_KEY_BLOCKS = 4096
 
 Rpc = Callable[..., Any]
 
@@ -166,8 +177,50 @@ def header_of(rpc: Rpc, seqno: int) -> tuple[dict[str, Any], dict[str, Any]]:
     return header, block
 
 
+def block_time(header: dict[str, Any], seqno: int) -> int:
+    timestamp = require_int(header.get("gen_utime"), f"gen_utime of block {seqno}")
+    if not 0 < timestamp <= MAX_UNIX_TIME:
+        raise RefreshError(f"gen_utime of block {seqno} is outside the nonzero uint32 range")
+    return timestamp
+
+
+def persistent_state_expiry(timestamp: int) -> int:
+    """The expiry used by the node's persistent_state_ttl, without wrapping."""
+    period = timestamp // PERSISTENT_STATE_PERIOD
+    if period == 0:
+        raise RefreshError("persistent-state timestamp precedes the first period")
+    trailing_zeroes = (period & -period).bit_length() - 1
+    expiry = timestamp + (1 << (18 + trailing_zeroes))
+    if expiry > MAX_UNIX_TIME:
+        raise RefreshError("persistent-state expiry exceeds the uint32 time range")
+    return expiry
+
+
+def eligible_persistent_state(created: int, previous: int | None, *, now: int) -> tuple[bool, str]:
+    if previous is not None and previous > created:
+        raise RefreshError("previous key block is newer than its successor")
+    if (
+        previous is not None
+        and created // PERSISTENT_STATE_PERIOD == previous // PERSISTENT_STATE_PERIOD
+    ):
+        return False, "not the first key block of its persistent-state period"
+    if created > now:
+        return (
+            False,
+            f"block was created {created - now}s after this host's clock; check time synchronization",
+        )
+    if created + SYNC_BLOCKS_BEFORE > now:
+        return False, "key block is less than one hour old"
+    if persistent_state_expiry(created) <= now + MIN_BOOTSTRAP_SECONDS:
+        return (
+            False,
+            f"persistent state expires within the requested {MIN_BOOTSTRAP_SECONDS}s download window",
+        )
+    return True, "persistent state meets the startup selection policy"
+
+
 def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, Any]:
-    """The config with validator.init_block set to the node's latest key block."""
+    """Select the newest key block meeting the native startup policy."""
     validator = require_object(config.get("validator"), "validator")
     zero_state = masterchain_id(validator.get("zero_state"), "validator.zero_state")
     if zero_state["seqno"] != 0:
@@ -176,6 +229,10 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
     if validator.get("init_block") is not None:
         current = masterchain_id(validator.get("init_block"), "validator.init_block")
     current_seqno = current["seqno"] if current is not None else 0
+    if current is not None and current_seqno == 0 and current != zero_state:
+        raise RefreshError(
+            "the config's zero-state init block and zero state differ in their hashes"
+        )
 
     info = require_object(rpc("getMasterchainInfo"), "getMasterchainInfo")
     node_zero = masterchain_id(info.get("init"), "getMasterchainInfo.init")
@@ -209,45 +266,81 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
             f"{current_seqno}; the node is behind or on another chain"
         )
 
-    if key_seqno == 0:
-        init_block = dict(zero_state)
-    else:
+    def checked_key(seqno: int) -> tuple[dict[str, Any], dict[str, Any]]:
         looked_up = masterchain_id(
             rpc(
                 "lookupBlock",
                 workchain=MASTERCHAIN,
                 shard=str(MASTERCHAIN_SHARD),
-                seqno=key_seqno,
+                seqno=seqno,
             ),
-            f"lookupBlock({key_seqno})",
+            f"lookupBlock({seqno})",
         )
-        key_header, key_block = header_of(rpc, key_seqno)
+        key_header, key_block = header_of(rpc, seqno)
         if key_block != looked_up:
             raise RefreshError(
-                f"lookupBlock and getBlockHeader disagree on the full id of block {key_seqno}"
+                f"lookupBlock and getBlockHeader disagree on the full id of block {seqno}"
             )
         if key_header.get("is_key_block") is not True:
-            raise RefreshError(f"block {key_seqno} is not a key block")
-        check_global_id(key_header, key_seqno, global_id)
+            raise RefreshError(f"block {seqno} is not a key block")
+        check_global_id(key_header, seqno, global_id)
         # The last block was already identified in full; a key block at the
         # same height must be that very block, not another one at that height.
-        if key_seqno == last["seqno"] and looked_up != last:
+        if seqno == last["seqno"] and looked_up != last:
             raise RefreshError(
-                f"block {key_seqno} as looked up is not the last block getMasterchainInfo named"
+                f"block {seqno} as looked up is not the last block getMasterchainInfo named"
             )
-        init_block = looked_up
+        # Check the existing anchor even when its state is not available.
+        if current is not None and seqno == current_seqno and looked_up != current:
+            raise RefreshError(
+                f"the config's init block {current_seqno} and the node's block at that height "
+                f"differ in their hashes; the node is on another chain or the config is wrong"
+            )
+        previous = require_int(key_header.get("prev_key_block_seqno"), "prev_key_block_seqno")
+        if previous < 0 or previous >= seqno:
+            raise RefreshError(
+                f"prev_key_block_seqno {previous} does not precede key block {seqno}"
+            )
+        block_time(key_header, seqno)
+        return key_header, looked_up
 
-    # Heights alone never decide: an existing init block at the same height must
-    # be the same block, or the node and the config are on different chains.
-    if current is not None and init_block["seqno"] == current["seqno"] and init_block != current:
-        raise RefreshError(
-            f"the config's init block {current['seqno']} and the node's block at that height "
-            f"differ in their hashes; the node is on another chain or the config is wrong"
+    skipped: list[str] = []
+    checked = 0
+    pending = None
+    while key_seqno > 0 and key_seqno >= current_seqno:
+        if checked >= MAX_KEY_BLOCKS:
+            raise RefreshError(
+                f"no usable snapshot within {MAX_KEY_BLOCKS} key blocks; check the source"
+            )
+        checked += 1
+        key_header, looked_up = checked_key(key_seqno) if pending is None else pending
+        previous = require_int(key_header["prev_key_block_seqno"], "prev_key_block_seqno")
+        pending = checked_key(previous) if previous > 0 else None
+        previous_time = block_time(pending[0], previous) if pending is not None else None
+        available, reason = eligible_persistent_state(
+            block_time(key_header, key_seqno),
+            previous_time,
+            now=int(time.time()),
         )
+        if available:
+            result = json.loads(json.dumps(config))
+            result["validator"]["init_block"] = looked_up
+            return result
+        if len(skipped) < 8:
+            skipped.append(f"{key_seqno}: {reason}")
+        key_seqno = previous
 
-    result = json.loads(json.dumps(config))
-    result["validator"]["init_block"] = init_block
-    return result
+    details = "; ".join(skipped) or "no persistent key block has been published yet"
+    recovery = (
+        " The existing init block is not rolled back; to repair an unusable newer anchor, "
+        "refresh from the original trusted global config after verifying the source."
+        if current_seqno > 0
+        else ""
+    )
+    raise RefreshError(
+        f"no eligible persistent key block at or after init block {current_seqno}: {details}. "
+        "Wait for a qualifying persistent-state key block before refreshing." + recovery
+    )
 
 
 def write_new_file(path: Path, text: str) -> None:
