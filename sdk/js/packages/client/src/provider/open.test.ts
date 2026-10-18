@@ -40,12 +40,15 @@ function stubNode(state: string): StubNode {
       stateReads.push(address);
       return state;
     },
+    async getAddressInformation() {
+      return { balance: "1000000000", state, last_transaction_id: { lt: "123", hash: "previous" } };
+    },
     async runGetMethod() {
       return { gas_used: 0, exit_code: 0, stack: [["num", "0x5"]] };
     },
     async sendQuery(query: SentQuery) {
       sent.push(query);
-      return { hash: "aGFzaA==" };
+      return { status: 1, hash: "aGFzaA==" };
     },
   } as unknown as TosProvider;
   return { provider, sent, stateReads };

@@ -112,15 +112,18 @@ describe("an undeployed wallet", () => {
 describe("sendDeploy", () => {
   it("returns the node's message hash, with no outgoing message expected", async () => {
     const node = wal01();
-    const { client, requests } = stubbedClient([result(node.sendQueryDeploy)]);
+    const { client, requests } = stubbedClient([result("uninitialized"), result(node.sendQueryDeploy)]);
     const sent = await openWallet(client).sendDeploy(SIGNER, 0n);
     expect(sent).toEqual({ hash: node.sendQueryDeploy.hash, outMessages: 0 });
-    expect(requests.map((r) => r.method)).toEqual(["sendQuery"]);
+    expect(requests.map((r) => r.method)).toEqual(["getAddressState", "sendQuery"]);
+    expect(requests[1]?.params.init_code).toBeDefined();
+    expect(requests[1]?.params.init_data).toBeDefined();
   });
 
   it("is confirmed by waitForTransfer once the deployment settled", async () => {
     const node = wal01();
     const { client } = stubbedClient([
+      result("uninitialized"),
       result(node.sendQueryDeploy),
       result(node.getTransactionsAfterSettlement),
     ]);
@@ -166,7 +169,7 @@ describe("an unaffordable transfer", () => {
 
   it("a message carrying the whole balance (mode 128) is not counted by its value", async () => {
     const { node, balance, reads } = beforeOverdraw();
-    const { client } = stubbedClient([...reads, result(node.sendQueryOverdraw)]);
+    const { client } = stubbedClient([...reads, result("active"), result(node.sendQueryOverdraw)]);
     const sent = await openWallet(client).sendTransfer(SIGNER, {
       messages: [{ to: DESTINATION, value: balance * 2n, mode: 128 }],
     });
@@ -177,6 +180,7 @@ describe("an unaffordable transfer", () => {
     const { node, balance, reads } = beforeOverdraw();
     const { client, requests } = stubbedClient([
       ...reads,
+      result("active"),
       result(node.sendQueryOverdraw),
       result([node.overdrawTransaction, ...node.getTransactionsAfterSettlement]),
     ]);
@@ -186,11 +190,15 @@ describe("an unaffordable transfer", () => {
     });
     // afterLt is the last transaction the node reported before the send.
     expect(sent).toEqual({ hash: node.sendQueryOverdraw.hash, outMessages: 1, afterLt: "548059000001" });
+    expect(requests[2]?.params.address).toBe(WAL01_WALLET);
+    expect(requests[3]?.params.init_code).toBeUndefined();
+    expect(requests[3]?.params.init_data).toBeUndefined();
     const err = await rejection(waitForTransfer(client, WAL01_WALLET, sent, FAST));
     expect(err).toBeInstanceOf(TosNotDeliveredError);
     expect(requests.map((r) => r.method)).toEqual([
       "runGetMethod",
       "getAddressInformation",
+      "getAddressState",
       "sendQuery",
       "getTransactions",
     ]);
