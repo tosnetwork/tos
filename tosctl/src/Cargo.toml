@@ -29,6 +29,14 @@ resolver = '2'
 [profile.bench]
 debug = true
 
+# The RaptorQ solver re-verifies its matrix state after every step when debug
+# assertions are on, which makes a debug build several thousand times slower:
+# encoding or decoding a 700 KB object took about 50 s instead of 15 ms. Debug
+# builds (and `cargo test`) use the solver as release builds do.
+[profile.dev.package.raptorq]
+debug-assertions = false
+opt-level = 3
+
 #Uncomment for profiling
 #[profile.release]
 #debug = 1

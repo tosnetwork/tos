@@ -585,6 +585,13 @@ trait FecProtocol<T: FecBroadcastParsed + Send + 'static>: BroadcastProtocol<T> 
     fn unwrap_transfer(wrapped: &OwnedBroadcast) -> Option<&RecvTransferFec<T>>;
     fn wrap_transfer(transfer: RecvTransferFec<T>) -> OwnedBroadcast;
 
+    /// The decoder for a peer's FEC parameters, admitted by this protocol's
+    /// rules. Ordinary FEC broadcasts use the 768..=2048-byte symbols that
+    /// every FEC object uses; two-step broadcasts override this.
+    fn new_decoder(fec_type: FecTypeRaptorQ) -> Result<RaptorqDecoder> {
+        RaptorqDecoder::with_params(fec_type)
+    }
+
     fn create_transfer(
         ctx: &BroadcastRecvContext,
         bcast_id: &BroadcastId,
@@ -595,7 +602,7 @@ trait FecProtocol<T: FecBroadcastParsed + Send + 'static>: BroadcastProtocol<T> 
             fail!("Wrong FEC type set for {bcast_type} broadcast");
         };
         let (sender, mut reader) = tokio::sync::mpsc::unbounded_channel();
-        let mut decoder = RaptorqDecoder::with_params(fec_type.clone())?;
+        let mut decoder = Self::new_decoder(fec_type.clone())?;
         let bcast_id_recv = *bcast_id;
         let overlay = ctx.overlay.clone();
         let src_key = bcast.src_key()?;
@@ -903,7 +910,7 @@ trait FecProtocol<T: FecBroadcastParsed + Send + 'static>: BroadcastProtocol<T> 
             bcast.date(),
         )?;
         bcast.src_key()?.verify(&to_sign, bcast.signature())?;
-        if let Some(ret) = decoder.decode(bcast.seqno(), bcast.part_data()) {
+        if let Some(ret) = decoder.decode(bcast.seqno(), bcast.part_data())? {
             let ret = if ret.len() != bcast.data_size() as usize {
                 fail!("Expected {} bytes, but received {}", bcast.data_size(), ret.len())
             } else {
@@ -1669,15 +1676,7 @@ impl FecBroadcastParsed for BroadcastTwostepFec {
     fn data_hash(&self) -> &[u8; 32] { self.data_hash.as_slice() }
     fn data_size(&self) -> usize { self.data_size as usize }
     fn fec_type(&self) -> Option<FecTypeRaptorQ> {
-        if self.part.is_empty() {
-            return None;
-        }
-        let symbol_size = self.part.len() as i32;
-        Some(FecTypeRaptorQ {
-            data_size: self.data_size,
-            symbols_count: (self.data_size + symbol_size - 1) / symbol_size,
-            symbol_size,
-        })
+        RaptorqDecoder::two_step_fec_type(self.data_size, self.part.len())
     }
     fn extra(&self) -> Option<&[u8]> { Some(&self.extra) }
     fn part_data(&self) -> &[u8] { &self.part }
@@ -1918,6 +1917,10 @@ impl BroadcastProtocol<BroadcastTwostepFec> for BroadcastTwostepFecProtocol {
 }
 
 impl FecProtocol<BroadcastTwostepFec> for BroadcastTwostepFecProtocol {
+    fn new_decoder(fec_type: FecTypeRaptorQ) -> Result<RaptorqDecoder> {
+        RaptorqDecoder::with_two_step_params(fec_type)
+    }
+
     fn build_broadcast_part(
         data: Vec<u8>,
         transfer: &SendTransferFec,

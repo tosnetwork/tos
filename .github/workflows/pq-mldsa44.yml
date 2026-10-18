@@ -126,7 +126,7 @@ jobs:
           retention-days: 14
       - name: Compile cache statistics
         if: always()
-        run: ccache --show-stats
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
   sanitizers:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -166,7 +166,7 @@ jobs:
           retention-days: 14
       - name: Compile cache statistics
         if: always()
-        run: ccache --show-stats
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
   vm-sanitizers:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -203,7 +203,7 @@ jobs:
           retention-days: 14
       - name: Compile cache statistics
         if: always()
-        run: ccache --show-stats
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
   rust-pqbytes:
     runs-on: ubuntu-24.04
     timeout-minutes: 30

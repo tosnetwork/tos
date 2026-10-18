@@ -17,8 +17,12 @@ fn main() {
     let encoder = Encoder::with_defaults(&data, 1400);
 
     // Perform the encoding, and serialize to Vec<u8> for transmission
-    let mut packets: Vec<Vec<u8>> =
-        encoder.get_encoded_packets(15).iter().map(|packet| packet.serialize()).collect();
+    let mut packets: Vec<Vec<u8>> = encoder
+        .get_encoded_packets(15)
+        .expect("repair symbol ids fit in 24 bits")
+        .iter()
+        .map(|packet| packet.serialize())
+        .collect();
 
     // Here we simulate losing 10 of the packets randomly. Normally, you would send them over
     // (potentially lossy) network here.
@@ -35,7 +39,9 @@ fn main() {
     // Perform the decoding
     let mut result = None;
     while !packets.is_empty() {
-        result = decoder.decode(EncodingPacket::deserialize(&packets.pop().unwrap()));
+        let packet =
+            EncodingPacket::deserialize(&packets.pop().unwrap()).expect("well-formed packet");
+        result = decoder.decode(packet).expect("packet matches the configuration");
         if result.is_some() {
             break;
         }
