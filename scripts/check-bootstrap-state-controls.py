@@ -50,7 +50,7 @@ def main():
             "missing-proof",
             native,
             '"proof_unavailable";\n      co_return status;',
-            'status.reason;\n      status.ready = true;\n      co_return status;',
+            "status.reason;\n      status.ready = true;\n      co_return status;",
             "test-bootstrap-state",
             "RequiresArchivedShardProof",
             "!missing.ready",
