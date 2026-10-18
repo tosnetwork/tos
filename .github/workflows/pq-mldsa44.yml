@@ -59,8 +59,8 @@ jobs:
           cmake --build build --target test-pq-mldsa44 test-pq-mldsa44-wrapper \
             test-pq-consensus test-pq-signer test-pq-bytes test-validator-descr-tags \
             test-validator-identity test-node-consensus-membership test-config43 test-authorisation-preimage \
-            test-controller-auth \
-            func fift tol -j2
+            test-controller-auth test-pq-block-signature-conformance \
+            test-pq-block-signature-vectors func fift tol -j2
       - name: Verify PQ consensus identity, signer and PQBytes codec
         id: consensus-identity
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -77,6 +77,14 @@ jobs:
           build/crypto/pq/test-authorisation-preimage
           build/crypto/pq/test-controller-auth
           build/test-node-consensus-membership
+      - name: Verify native block signature parsers and case counts
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          mkdir -p pq-results
+          build/crypto/pq/test-pq-block-signature-conformance | tee pq-results/block-signature-conformance.txt
+          grep -Fx 'PQ_BLOCK_SIGNATURE_CONFORMANCE_OK positive_cases=9 negative_cases=132' pq-results/block-signature-conformance.txt
+          build/crypto/pq/test-pq-block-signature-vectors | tee pq-results/block-signature-vectors.txt
+          grep -Fx 'PQ_BLOCK_SIGNATURE_VECTORS_OK rows=23' pq-results/block-signature-vectors.txt
       - name: Prepare pinned public vectors
         id: vectors
         run: python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
@@ -111,6 +119,7 @@ jobs:
             pq-results/*.boc
             pq-results/*.calibration.json
             pq-results/cli-checks.json
+            pq-results/block-signature-*.txt
             pq-results/benchmark.txt
             pq-results/mutations.txt
           if-no-files-found: warn
@@ -216,6 +225,7 @@ jobs:
         run: |
           cargo test --manifest-path tosctl/src/block/Cargo.toml --lib pq_bytes -- --nocapture
           cargo test --manifest-path tosctl/src/block/Cargo.toml --lib shared_pq_block_signature_codec_parity_does_not_verify_finality -- --nocapture
+          cargo test --manifest-path tosctl/src/block/Cargo.toml --lib noncanonical_signature_dictionary_is_refused -- --nocapture
           cargo test --manifest-path tosctl/src/block/Cargo.toml --lib validators -- --nocapture
           cargo test --manifest-path tosctl/src/tl/api/Cargo.toml --test session_vectors -- --nocapture
           cargo test --manifest-path tosctl/src/tl/api/Cargo.toml --test pq_signature_tl_vectors -- --nocapture

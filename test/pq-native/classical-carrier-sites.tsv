@@ -32,7 +32,7 @@ test/pq-native/custom-overlay-relay-dedup-test.cpp	cpp_factory	1	historical	rela
 test/pq-native/n6-microbench-smoke.cpp	cpp_fetch	1	historical	benchmark fixture parses a PQ lite carrier through the checked adapter; no production carrier selection
 test/pq-native/n6-microbench.cpp	cpp_fetch	3	historical	benchmark fixture parses #13 PQ cells to measure verification work; no production carrier selection
 test/pq-native/pending-finality-cache-test.cpp	cpp_fetch	2	historical	pending-finality negative fixtures parse wrong-set #13 PQ cells to exercise refusal paths
-test/pq-native/pq-block-signature-conformance-test.cpp	*	1	historical	crypto conformance exercises the explicitly test-only carried-session verifier
+test/pq-native/pq-block-signature-conformance-test.cpp	*	8	historical	crypto conformance exercises the explicitly test-only carried-session verifier; the generic cell fetch parses canonical #11/#12/#13 sets and refuses their non-canonical signature dictionaries
 test/pq-native/pq-block-signature-no-legacy-test.cpp	*	11	historical	negative fixtures prove classical carriers are refused under a post-quantum set
 test/pq-native/pq-block-signature-test-common.h	*	1	historical	shared persisted-carrier fixture parser
 test/pq-native/pq-block-signature-vectors-test.cpp	*	2	historical	shared #13 structural vectors retain classical parser coverage for reject cases

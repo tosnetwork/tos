@@ -120,3 +120,38 @@ fn shared_pq_block_signature_codec_parity_does_not_verify_finality() {
     }
     println!("RUST_PQ_BLOCK_SIGNATURE_VECTORS_OK rows={}", seen.len());
 }
+
+#[test]
+fn noncanonical_signature_dictionary_is_refused() {
+    // The same committed reproducer the native conformance test refuses: a valid
+    // set whose leaf 0 dictionary label is hml_long instead of the canonical
+    // hml_short. Keys, values and every other field are canonical.
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../test/pq-native/data/finality-noncanonical-label.boc"
+    );
+    let boc = std::fs::read(path).expect("committed non-canonical dictionary reproducer");
+    // Its signers: validators 0 and 1 of the shared fixture, weights 4 and 3, so
+    // every other structural check passes and only the dictionary encoding is wrong.
+    let validators: Vec<PqBlockValidatorWeight> = [(0u8, 4u64), (1, 3)]
+        .into_iter()
+        .map(|(index, weight)| {
+            let digest: [u8; 32] =
+                Sha256::digest(format!("pq-finality-validator-{index}").as_bytes()).into();
+            PqBlockValidatorWeight {
+                validator_id: UInt256::from(digest),
+                algorithm_id: MLDSA44_ALGORITHM_ID,
+                weight,
+            }
+        })
+        .collect();
+    let error = match BlockSignaturesSimplexPq::construct_from_pq_boc(&boc, &validators) {
+        Ok(_) => panic!("RUST_NONCANONICAL_DICTIONARY_ACCEPTED"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        pq_block_signature_reason_code(&error),
+        Some(PqBlockSignatureReasonCode::NoncanonicalDictionary),
+        "RUST_NONCANONICAL_DICTIONARY_REASON actual={error}"
+    );
+}
