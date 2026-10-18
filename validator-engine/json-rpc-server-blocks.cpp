@@ -611,7 +611,8 @@ void JsonRpcServer::handle_getBootstrapState(td::JsonObject &params, std::string
           emit_block_id(out, "id", status.id);
           out << ",\"ready\":" << (status.ready ? "true" : "false") << ",\"reason\":" << td::JsonString(status.reason)
               << ",\"gen_utime\":" << status.gen_utime << ",\"expires_at\":" << status.expires_at
-              << ",\"archive_ttl\":" << status.archive_ttl << "}";
+              << ",\"archive_ttl\":" << status.archive_ttl << ",\"archive_expires_at\":" << status.archive_expires_at
+              << "}";
           promise.set_value(make_json_ok(out.as_cslice().str(), req_id, cors));
         });
       }));

@@ -159,6 +159,13 @@ class FakeChain:
             sequence = self.bootstrap_sequence.get(seqno)
             if sequence:
                 status.update(sequence.pop(0))
+            # By default every required proof is in the anchor's own package.
+            if "archive_expires_at" not in status and isinstance(status.get("gen_utime"), int):
+                ttl = status.get("archive_ttl")
+                if isinstance(ttl, int) and not isinstance(ttl, bool):
+                    status["archive_expires_at"] = status["gen_utime"] + ttl
+                else:
+                    status["archive_expires_at"] = status["gen_utime"] + 7 * 86400
             return status
         raise RefreshError(f"unexpected method {method}")
 
@@ -424,6 +431,29 @@ class RefreshTest(unittest.TestCase):
         chain.header_override[100] = {"gen_utime": created}
         chain.bootstrap_override[100] = {"gen_utime": created, "archive_ttl": 86400}
         self.assert_refused(chain, "archive retention cannot cover")
+
+    def test_older_shard_proof_package_bounds_the_archive_window(self) -> None:
+        # Block 100's snapshot needs a shard block older than the anchor; its
+        # proof sits in an older archive package that expires within the
+        # window, although gen_utime + archive_ttl would still cover it.
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.bootstrap_override[100] = {
+            "archive_expires_at": NOW + refresh.MIN_BOOTSTRAP_SECONDS - 60
+        }
+        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(40))
+
+    def test_only_snapshot_with_an_expiring_proof_package_writes_nothing(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.bootstrap_override[100] = {"archive_expires_at": NOW + 3600}
+        self.assert_refused(chain, "100: archive retention cannot cover")
+
+    def test_archive_package_expiry_is_required(self) -> None:
+        for value in (None, "soon", True, 0, -1, 1.5):
+            with self.subTest(value=value):
+                self.output.unlink(missing_ok=True)
+                chain = FakeChain(last=120, key_blocks={100})
+                chain.bootstrap_override[100] = {"archive_expires_at": value}
+                self.assert_refused(chain, "getBootstrapState(100).archive_expires_at is ")
 
     def test_slow_readiness_response_cannot_spend_the_requested_validity(self) -> None:
         chain = FakeChain(last=120, key_blocks={100})

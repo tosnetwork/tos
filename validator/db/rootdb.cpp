@@ -671,6 +671,11 @@ void RootDb::check_key_block_proof_link_exists(BlockIdExt block_id, td::Promise<
                           std::move(P));
 }
 
+void RootDb::get_archive_package_start(ConstBlockHandle handle, td::Promise<UnixTime> promise) {
+  td::actor::send_closure(archive_db_, &ArchiveManager::get_archive_package_start, std::move(handle),
+                          std::move(promise));
+}
+
 void RootDb::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, td::Promise<td::uint64> promise) {
   td::actor::send_closure(archive_db_, &ArchiveManager::get_archive_id, masterchain_seqno, shard_prefix,
                           std::move(promise));

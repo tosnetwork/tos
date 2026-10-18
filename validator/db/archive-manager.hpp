@@ -76,6 +76,9 @@ class ArchiveManager : public td::actor::Actor {
   void get_block_by_seqno(AccountIdPrefixFull account_id, BlockSeqno seqno, td::Promise<ConstBlockHandle> promise);
 
   void get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, td::Promise<td::uint64> promise);
+  // Generation time of the first masterchain block in the ordinary package
+  // that serves `handle`'s archived files: the time run_gc ages it by.
+  void get_archive_package_start(ConstBlockHandle handle, td::Promise<UnixTime> promise);
   void get_archive_slice(td::uint64 archive_id, td::uint64 offset, td::uint32 limit,
                          td::Promise<td::BufferSlice> promise);
 

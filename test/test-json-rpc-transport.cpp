@@ -1287,6 +1287,7 @@ struct BootstrapRpcReads {
   std::atomic<unsigned> master_proofs{0};
   std::atomic<unsigned> shard_proofs{0};
   std::atomic<unsigned> state_slices{0};
+  std::atomic<unsigned> package_lookups{0};
   std::atomic<bool> shard_available{true};
   std::atomic<bool> hold_reads{false};
   std::atomic<unsigned> held_reads{0};
@@ -1345,6 +1346,15 @@ class BootstrapRpcManager final : public ValidatorManagerImpl {
     CHECK(!handle->id().is_masterchain());
     ++reads_->shard_proofs;
     promise.set_value(td::BufferSlice("archived shard proof"));
+  }
+
+  // The shard block's proof is in an older package than the anchor's.
+  static constexpr tos::UnixTime kShardPackageStart = 1000000000;
+  static constexpr tos::UnixTime kMasterPackageStart = kShardPackageStart + 3600;
+
+  void get_archive_package_start(tos::validator::ConstBlockHandle handle, td::Promise<tos::UnixTime> promise) override {
+    ++reads_->package_lookups;
+    promise.set_value(tos::UnixTime{handle->id().is_masterchain() ? kMasterPackageStart : kShardPackageStart});
   }
 
   void get_persistent_state_size(tos::BlockIdExt block, tos::BlockIdExt anchor,
@@ -1426,6 +1436,10 @@ TEST(JsonRpcTransport, bootstrap_readiness_routes_the_exact_id_and_does_not_cach
         ASSERT_TRUE(healthy.find("\"file_hash\":\"" + td::base64_encode(exact.file_hash.as_slice()) + "\"") !=
                     std::string::npos);
         ASSERT_TRUE(healthy.find("\"archive_ttl\":604800") != std::string::npos);
+        ASSERT_TRUE(
+            healthy.find("\"archive_expires_at\":" + std::to_string(BootstrapRpcManager::kShardPackageStart + 604800) +
+                         "}") != std::string::npos);
+        ASSERT_EQ(2u, reads->package_lookups.load());
         ASSERT_EQ(2u, reads->handles.load());
         ASSERT_EQ(1u, reads->master_proofs.load());
         ASSERT_EQ(1u, reads->shard_proofs.load());

@@ -17,8 +17,21 @@ struct BootstrapStateStatus {
   bool ready{false};
   std::string reason{"snapshot_not_found"};
   UnixTime gen_utime{0};
+  // Persistent-state expiry of the snapshot files.
   UnixTime expires_at{0};
   double archive_ttl{0};
+  // When ordinary archive retention may first delete a package holding a
+  // proof the snapshot needs: the earliest first-masterchain-block time of
+  // those packages plus archive_ttl. Zero unless ready.
+  UnixTime archive_expires_at{0};
+};
+
+// An archived block proof, with the package that serves it.
+struct ArchivedProof {
+  RootHash state_root;
+  // Generation time of the first masterchain block in the ordinary archive
+  // package that holds the proof; archive retention ages the package by it.
+  UnixTime package_start{0};
 };
 
 // The reader is deliberately restricted to archive reads. No wait-for-state,
@@ -27,7 +40,7 @@ struct BootstrapStateReader {
   // Holds the manager's admission slot until the underlying reads settle, even
   // if the client's deadline has already delivered a timeout response.
   std::shared_ptr<void> lease;
-  std::function<td::actor::Task<RootHash>(BlockIdExt)> proof_state_root;
+  std::function<td::actor::Task<ArchivedProof>(BlockIdExt)> archived_proof;
   std::function<td::actor::Task<td::uint64>(BlockIdExt, BlockIdExt, PersistentStateType)> state_size;
   std::function<td::actor::Task<td::BufferSlice>(BlockIdExt, BlockIdExt, PersistentStateType, td::int64, td::int64)>
       state_slice;

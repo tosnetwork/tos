@@ -1,4 +1,6 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
+#include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "downloaders/download-state.hpp"
@@ -56,6 +58,10 @@ td::actor::Task<BootstrapStateStatus> scan_bootstrap_state(td::Ref<PersistentSta
   auto shards = description->shard_blocks;
   shards.insert(shards.begin(), {description->masterchain_id, 0});
   std::size_t file_count = 0;
+  // A shard block older than the anchor is filed under its own, earlier
+  // masterchain reference, so its proof can sit in an older package that
+  // archive retention deletes first. Keep the earliest package start.
+  auto oldest_package = std::numeric_limits<UnixTime>::max();
   for (const auto &entry : shards) {
     if (!entry.block.is_valid_full()) {
       status.reason = "invalid_state";
@@ -78,11 +84,12 @@ td::actor::Task<BootstrapStateStatus> scan_bootstrap_state(td::Ref<PersistentSta
       ++file_count;
       continue;
     }
-    auto root = co_await reader.proof_state_root(entry.block).wrap();
+    auto root = co_await reader.archived_proof(entry.block).wrap();
     if (root.is_error()) {
       status.reason = deadline.is_in_past() ? "timeout" : "proof_unavailable";
       co_return status;
     }
+    oldest_package = std::min(oldest_package, root.ok().package_start);
     const bool split = entry.split_depth > static_cast<td::uint32>(shard_pfx_len(entry.block.id.shard));
     PersistentStateType type =
         split ? PersistentStateType{SplitPersistentStateType{}} : PersistentStateType{UnsplitStateType{}};
@@ -111,7 +118,8 @@ td::actor::Task<BootstrapStateStatus> scan_bootstrap_state(td::Ref<PersistentSta
       status.reason = "invalid_state";
       co_return status;
     }
-    auto parts = read_split_state_parts(entry.block.id.shard, root.ok(), cell.move_as_ok(), entry.split_depth);
+    auto parts =
+        read_split_state_parts(entry.block.id.shard, root.ok().state_root, cell.move_as_ok(), entry.split_depth);
     if (parts.is_error()) {
       status.reason = "invalid_state";
       co_return status;
@@ -139,6 +147,15 @@ td::actor::Task<BootstrapStateStatus> scan_bootstrap_state(td::Ref<PersistentSta
     status.reason = "snapshot_expired";
     co_return status;
   }
+  // The anchor itself always has a proof, so oldest_package is set here.
+  const double horizon = static_cast<double>(oldest_package) + archive_ttl;
+  if (!std::isfinite(horizon)) {
+    status.reason = "invalid_state";
+    co_return status;
+  }
+  constexpr auto kMaxTime = static_cast<double>(std::numeric_limits<UnixTime>::max());
+  status.archive_expires_at = horizon >= kMaxTime ? std::numeric_limits<UnixTime>::max()
+                                                  : static_cast<UnixTime>(std::floor(std::max(horizon, 0.0)));
   status.ready = true;
   status.reason = "ready";
   co_return status;

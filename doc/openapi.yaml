@@ -3703,7 +3703,7 @@ components:
           description: 'Standard padded base64 of 32 bytes.'
     BootstrapState:
       type: object
-      required: [id, ready, reason, gen_utime, expires_at, archive_ttl]
+      required: [id, ready, reason, gen_utime, expires_at, archive_ttl, archive_expires_at]
       properties:
         id: {'$ref': '#/components/schemas/BlockIdExt'}
         ready: {type: boolean}
@@ -3721,9 +3721,20 @@ components:
         archive_ttl:
           type: number
           description: >-
-            This node's configured ordinary archive retention in seconds. A client
-            must conservatively reject an anchor that is too old for this retention;
-            this field does not promise that all intervening archives exist.
+            This node's configured ordinary archive retention in seconds, used
+            to compute archive_expires_at for the required proof packages. This
+            field does not promise that all intervening archives exist.
+        archive_expires_at:
+          type: integer
+          minimum: 0
+          description: >-
+            Earliest Unix time at which ordinary archive retention may delete a
+            package holding a proof this snapshot needs: the oldest such
+            package's first masterchain block time plus archive_ttl. A shard
+            block older than the anchor can be served from an older package than
+            the anchor's own, so this can be earlier than gen_utime + archive_ttl.
+            Separate from expires_at, the persistent-state expiry. Zero unless
+            ready.
     InternalTransactionId:
       type: object
       properties:

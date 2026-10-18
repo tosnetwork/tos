@@ -1345,6 +1345,33 @@ void ArchiveManager::get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull sh
                           std::move(promise));
 }
 
+void ArchiveManager::get_archive_package_start(ConstBlockHandle handle, td::Promise<UnixTime> promise) {
+  // get_file reads an archived block's files from the ordinary package for
+  // its masterchain reference, the package with the largest id not above it
+  // (get_package_id). A block whose files are not there yet is served from a
+  // temporary package, which archive retention does not govern.
+  if (!handle->moved_to_archive() || !handle->inited_masterchain_ref_block()) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "block files are not in an archive package"));
+    return;
+  }
+  if (files_.empty() || handle->masterchain_ref_block() < files_.begin()->first.id) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "no archive package holds the block"));
+    return;
+  }
+  const auto package = get_package_id(handle->masterchain_ref_block());
+  auto it = files_.find(package);
+  if (it == files_.end() || it->second.deleted) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "the block's archive package was deleted"));
+    return;
+  }
+  auto first = it->second.first_blocks.find(ShardIdFull{masterchainId});
+  if (first == it->second.first_blocks.end()) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "the block's archive package has no masterchain block"));
+    return;
+  }
+  promise.set_value(UnixTime{first->second.ts});
+}
+
 void ArchiveManager::get_archive_slice(td::uint64 archive_id, td::uint64 offset, td::uint32 limit,
                                        td::Promise<td::BufferSlice> promise) {
   auto arch = static_cast<BlockSeqno>(archive_id);

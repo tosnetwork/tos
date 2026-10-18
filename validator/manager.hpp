@@ -539,6 +539,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void get_previous_persistent_state_files(
       BlockSeqno cur_mc_seqno, td::Promise<std::vector<std::pair<std::string, ShardIdFull>>> promise) override;
   void get_bootstrap_state(BlockIdExt id, td::Promise<BootstrapStateStatus> promise) override;
+  void get_archive_package_start(ConstBlockHandle handle, td::Promise<UnixTime> promise) override;
   void get_block_proof(BlockHandle handle, td::Promise<td::BufferSlice> promise) override;
   void get_block_proof_link(BlockHandle block_id, td::Promise<td::BufferSlice> promise) override;
   void get_key_block_proof(BlockIdExt block_id, td::Promise<td::BufferSlice> promise) override;

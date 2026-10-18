@@ -37,6 +37,9 @@ struct Archive {
   td::Ref<PersistentStateDescription> description{true};
   std::map<std::string, File> files;
   std::map<BlockIdExt, RootHash> proof_roots;
+  // First masterchain block time of the package serving each proof; the
+  // anchor's own package starts at the anchor.
+  std::map<BlockIdExt, UnixTime> package_starts;
   std::set<BlockIdExt> zero_states;
   std::size_t reads{0};
 
@@ -57,13 +60,14 @@ struct Archive {
 
   BootstrapStateReader reader() {
     BootstrapStateReader source;
-    source.proof_state_root = [this](BlockIdExt block) -> td::actor::Task<RootHash> {
+    source.archived_proof = [this](BlockIdExt block) -> td::actor::Task<ArchivedProof> {
       ++reads;
       auto it = proof_roots.find(block);
       if (it == proof_roots.end()) {
         co_return td::Status::Error("archived proof is absent");
       }
-      co_return it->second;
+      auto package = package_starts.find(block);
+      co_return ArchivedProof{it->second, package == package_starts.end() ? 1000u : package->second};
     };
     source.state_size = [this](BlockIdExt block, BlockIdExt anchor,
                                PersistentStateType type) -> td::actor::Task<td::uint64> {
@@ -141,6 +145,7 @@ TEST(BootstrapState, RequiresEveryRegisteredSnapshot) {
   ASSERT_EQ(1000u, ready.gen_utime);
   ASSERT_EQ(10000u, ready.expires_at);
   ASSERT_EQ(604800.0, ready.archive_ttl);
+  ASSERT_EQ(1000u + 604800u, ready.archive_expires_at);
 
   archive->files.at(archive->key(archive->mc, UnsplitStateType{})).registered = false;
   ASSERT_TRUE(!run_readiness(archive).ready);
@@ -149,6 +154,32 @@ TEST(BootstrapState, RequiresEveryRegisteredSnapshot) {
   auto missing = run_readiness(archive);
   ASSERT_TRUE(!missing.ready);
   ASSERT_EQ("state_unavailable", missing.reason);
+}
+
+TEST(BootstrapState, OldestRequiredPackageBoundsArchiveExpiry) {
+  // The shard block predates the anchor: its proof is filed under an earlier
+  // masterchain reference, in a package archive retention deletes first.
+  auto archive = std::make_shared<Archive>();
+  archive->package_starts[archive->shard] = 400;
+  auto ready = run_readiness(archive);
+  ASSERT_TRUE(ready.ready);
+  ASSERT_EQ(400u + 604800u, ready.archive_expires_at);
+  // The persistent-state expiry is reported separately and is unchanged.
+  ASSERT_EQ(10000u, ready.expires_at);
+  ASSERT_EQ(1000u, ready.gen_utime);
+
+  // An older masterchain package (never the case for a key-block anchor, which
+  // starts its own package) bounds it just the same.
+  archive->package_starts[archive->shard] = 1000;
+  archive->package_starts[archive->mc] = 900;
+  ASSERT_EQ(900u + 604800u, run_readiness(archive).archive_expires_at);
+
+  // A deleted package is an unavailable proof, not a ready snapshot.
+  archive->package_starts.erase(archive->mc);
+  archive->proof_roots.erase(archive->shard);
+  auto deleted = run_readiness(archive);
+  ASSERT_TRUE(!deleted.ready);
+  ASSERT_EQ(0u, deleted.archive_expires_at);
 }
 
 TEST(BootstrapState, CachedSizeDoesNotProveReadableFile) {

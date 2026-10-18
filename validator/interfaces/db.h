@@ -188,6 +188,11 @@ class Db : public td::actor::Actor {
 
   virtual void get_archive_id(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix,
                               td::Promise<td::uint64> promise) = 0;
+  // When ordinary archive retention starts aging the package serving the
+  // block's archived files (see ArchiveManager::get_archive_package_start).
+  virtual void get_archive_package_start(ConstBlockHandle handle, td::Promise<UnixTime> promise) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "archive package lookup is not supported"));
+  }
   virtual void get_archive_slice(td::uint64 archive_id, td::uint64 offset, td::uint32 limit,
                                  td::Promise<td::BufferSlice> promise) = 0;
   virtual void set_async_mode(bool mode, td::Promise<td::Unit> promise) = 0;

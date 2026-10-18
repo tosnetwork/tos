@@ -544,7 +544,7 @@ td::actor::Task<> query_bootstrap_archive(td::actor::ActorId<ValidatorManagerInt
   const auto deadline = td::Timestamp::in(10.0);
   BootstrapStateReader reader;
   reader.lease = std::move(lease);
-  reader.proof_state_root = [manager, deadline](BlockIdExt id) -> td::actor::Task<RootHash> {
+  reader.archived_proof = [manager, deadline](BlockIdExt id) -> td::actor::Task<ArchivedProof> {
     auto handle = co_await td::actor::ask(manager, &ValidatorManagerInterface::get_block_handle, id, false);
     if (deadline.is_in_past()) {
       co_return td::Status::Error(ErrorCode::timeout, "readiness deadline exceeded");
@@ -563,7 +563,9 @@ td::actor::Task<> query_bootstrap_archive(td::actor::ActorId<ValidatorManagerInt
     if (proof.empty()) {
       co_return td::Status::Error(ErrorCode::notready, "block proof is empty");
     }
-    co_return handle->state();
+    auto package_start = co_await td::actor::ask(manager, &ValidatorManagerInterface::get_archive_package_start,
+                                                 ConstBlockHandle{handle});
+    co_return ArchivedProof{handle->state(), package_start};
   };
   reader.state_size = [manager](BlockIdExt block, BlockIdExt mc,
                                 PersistentStateType type) -> td::actor::Task<td::uint64> {
@@ -614,6 +616,10 @@ void ValidatorManagerImpl::get_bootstrap_state(BlockIdExt id, td::Promise<Bootst
   query_bootstrap_archive(actor_id(this), it->second, opts_->archive_ttl(), std::move(lease), std::move(promise))
       .start()
       .detach();
+}
+
+void ValidatorManagerImpl::get_archive_package_start(ConstBlockHandle handle, td::Promise<UnixTime> promise) {
+  td::actor::send_closure(db_, &Db::get_archive_package_start, std::move(handle), std::move(promise));
 }
 
 void ValidatorManagerImpl::get_block_proof(BlockHandle handle, td::Promise<td::BufferSlice> promise) {

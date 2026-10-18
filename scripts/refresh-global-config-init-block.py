@@ -31,7 +31,9 @@ It refuses unless:
     (the last block's included) carries the global id the operator expects;
   * a key block at the height of the last block is that same block;
   * the complete snapshot is available and both its state and the source's
-    archive retention have the requested remaining bootstrap time;
+    archive retention have the requested remaining bootstrap time, archive
+    retention measured from the oldest archive package that serves a proof
+    the snapshot needs (archive_expires_at);
   * the new init block is not older than the one the input already has, and
     if it is at the same height it is the same block (full id, not height).
 
@@ -250,9 +252,17 @@ def bootstrap_available(
         raise RefreshError(f"getBootstrapState({seqno}).archive_ttl is not a positive duration")
     if expires <= now + minimum_validity:
         return False, f"snapshot expires within the requested {minimum_validity}s bootstrap window"
+    # A shard block older than the anchor is served from the archive package
+    # of its own, earlier masterchain reference, which retention deletes
+    # first; the source reports when the oldest required package may go.
+    archive_expires = require_int(
+        status.get("archive_expires_at"), f"getBootstrapState({seqno}).archive_expires_at"
+    )
+    if archive_expires <= 0:
+        raise RefreshError(f"getBootstrapState({seqno}).archive_expires_at is not a time")
     # Do not count CellDB retention or delayed GC as promised archive retention.
     # Retaining a snapshot alone does not retain the blocks needed after it.
-    if created + archive_ttl <= now + minimum_validity:
+    if min(expires, archive_expires) <= now + minimum_validity:
         return (
             False,
             f"archive retention cannot cover the requested {minimum_validity}s bootstrap window",

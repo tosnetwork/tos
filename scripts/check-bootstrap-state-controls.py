@@ -49,11 +49,20 @@ def main():
         (
             "missing-proof",
             native,
-            "if (root.is_error()) {",
-            "if (false && root.is_error()) {",
+            '"proof_unavailable";\n      co_return status;',
+            'status.reason;\n      status.ready = true;\n      co_return status;',
             "test-bootstrap-state",
             "RequiresArchivedShardProof",
             "!missing.ready",
+        ),
+        (
+            "newest-proof-package",
+            native,
+            "oldest_package = std::min(oldest_package, root.ok().package_start);",
+            "oldest_package = std::min(oldest_package, description->start_time);",
+            "test-bootstrap-state",
+            "OldestRequiredPackageBoundsArchiveExpiry",
+            "ready.archive_expires_at",
         ),
         (
             "stalled-deadline",

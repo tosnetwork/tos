@@ -418,6 +418,9 @@ class ValidatorManagerInterface : public td::actor::Actor {
   virtual void get_bootstrap_state(BlockIdExt id, td::Promise<BootstrapStateStatus> promise) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "bootstrap state readiness is not supported"));
   }
+  virtual void get_archive_package_start(ConstBlockHandle handle, td::Promise<UnixTime> promise) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "archive package lookup is not supported"));
+  }
 
   virtual void get_block_data(BlockHandle handle, td::Promise<td::BufferSlice> promise) = 0;
   virtual void check_zero_state_exists(BlockIdExt block_id, td::Promise<bool> promise) = 0;

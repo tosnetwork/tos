@@ -240,6 +240,66 @@ void manager_prune(const std::string &root, bool async_mode) {
             << std::endl;
 }
 
+// The package serving a block's archived files, and when retention starts
+// aging it, come from the real package map: a basechain block is filed under
+// its own masterchain reference, which can be an older package than the one
+// a later masterchain anchor lives in.
+void manager_package_start(const std::string &root) {
+  auto opts = ValidatorManagerOptions::create(block_id(0), block_id(0));
+  td::actor::Scheduler scheduler({2});
+  td::actor::ActorOwn<ArchiveManager> manager;
+  scheduler.run_in_context([&] {
+    manager = td::actor::create_actor<ArchiveManager>("package-start", td::actor::ActorId<RootDb>{}, root, opts);
+  });
+  auto add = [&](BlockHandle handle) {
+    request<td::Unit>(scheduler, [&](td::Promise<td::Unit> promise) {
+      td::actor::send_closure(manager, &ArchiveManager::add_handle, handle, std::move(promise));
+    }).ensure();
+  };
+  auto masterchain = [&](tos::BlockSeqno seqno, tos::UnixTime ts, bool key_block = false) {
+    auto handle = BlockHandleImpl::create_empty(block_id(seqno));
+    handle->set_logical_time(1000 + seqno);
+    handle->set_unix_time(ts);
+    handle->set_is_key_block(key_block);
+    add(handle);
+    return handle;
+  };
+  auto first = masterchain(1, 100000);
+  auto anchor = masterchain(20001, 200000, true);
+  auto shard = BlockHandleImpl::create_empty(
+      tos::BlockIdExt{tos::basechainId, tos::shardIdAll, 7, tos::RootHash::zero(), tos::FileHash::zero()});
+  shard->set_logical_time(1500);
+  shard->set_unix_time(150000);
+  shard->set_is_key_block(false);
+  shard->set_masterchain_ref_block(5);
+  add(shard);
+  auto start = [&](BlockHandle handle) {
+    return request<tos::UnixTime>(scheduler, [&](td::Promise<tos::UnixTime> promise) {
+      td::actor::send_closure(manager, &ArchiveManager::get_archive_package_start, handle, std::move(promise));
+    });
+  };
+  check(start(shard).is_error(), "files not yet moved to the archive are not governed by archive retention");
+  for (auto &handle : {first, anchor, shard}) {
+    handle->set_moved_to_archive();
+    add(handle);
+  }
+  auto shard_start = start(shard);
+  check(shard_start.is_ok() && shard_start.ok() == 100000,
+        "a block referencing masterchain 5 is served from package 0, aged from its first block");
+  auto anchor_start = start(anchor);
+  check(anchor_start.is_ok() && anchor_start.ok() == 200000, "the anchor's package is aged from masterchain 20001");
+  check(shard_start.ok() < anchor_start.ok(), "the older shard proof's package expires before the anchor's");
+
+  scheduler.run_in_context([&] {
+    td::actor::send_closure(manager, &ArchiveManager::run_gc, td::Ref<MasterchainState>{td::make_ref<GcState>()},
+                            200002U, 1.0);
+  });
+  pump_until(scheduler, [&] { return start(shard).is_error(); }, "deleted package must not report a start time");
+  check(start(anchor).is_ok(), "the newest package is retained");
+  scheduler.run_in_context([&] { manager.reset(); });
+  std::cout << "PASS: archive package start follows the package that serves each block" << std::endl;
+}
+
 void manager_held_reader(const std::string &root, bool shutdown_while_held) {
   const PackageId oldest{0, false, false};
   const auto prefix = root + oldest.path() + oldest.name();
@@ -340,6 +400,7 @@ int main(int argc, char **argv) {
   manager_prune(root + "/manager-sync", false);
   manager_prune(root + "/manager-async", true);
   manager_held_reader(root + "/held-release", false);
+  manager_package_start(root + "/package-start");
   td::rmrf(root).ensure();
   std::cout << "PASS: archive prune baseline" << std::endl;
 }
