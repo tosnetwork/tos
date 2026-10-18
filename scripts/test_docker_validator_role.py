@@ -943,35 +943,6 @@ class EntrypointTest(unittest.TestCase):
         self.assertNotIn("extraconfig", config)
         self.assertEqual(len(config["liteservers"]), 1)
 
-    def test_default_archive_retention_is_one_week(self) -> None:
-        # Observe the engine's start arguments, including entrypoint defaults.
-        # A one-day window can expire before the next persistent state is ready.
-        result = self.run_init()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue((self.log / "engine-started").exists())
-        self.assertIn("--archive-ttl 604800 ", self.engine_calls()[-1])
-
-    def test_explicit_archive_retention_is_preserved(self) -> None:
-        for ttl in ("86400", "1209600"):
-            with self.subTest(ttl=ttl):
-                result = self.run_init(ARCHIVE_TTL=ttl)
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn(f"--archive-ttl {ttl} ", self.engine_calls()[-1])
-
-    def test_kubernetes_archive_retention_is_one_week(self) -> None:
-        manifests = sorted((REPO / "docker").glob("tos-*.yaml"))
-        self.assertTrue(manifests, "no Kubernetes deployments were checked")
-        for manifest in manifests:
-            with self.subTest(manifest=manifest.name):
-                values = re.findall(
-                    r'(?m)^\s*- name: ARCHIVE_TTL\s*\n\s*value: "([0-9]+)"\s*$',
-                    manifest.read_text(),
-                )
-                self.assertEqual(len(values), 1, "deployment must declare one archive TTL")
-                result = self.run_init(ARCHIVE_TTL=values[0])
-                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertIn("--archive-ttl 604800 ", self.engine_calls()[-1])
-
     def test_lite_server_validator_stops_before_anything_is_created(self) -> None:
         result = self.run_init(**self.validator_env(LITESERVER="true"))
         self.assertEqual(result.returncode, 4, result.stdout + result.stderr)

@@ -60,27 +60,10 @@ Below is the list of supported arguments and their default values:
 | VALIDATOR_ID      | Validator role: the controller account's 256-bit id, 64 hex digits or `-1:<64 hex digits>`. Requires PQ_CONSENSUS_KEY_FILE. See [Run a validator](#run-a-validator).                    |     no     |                                                         |
 | PQ_CONSENSUS_KEY_FILE | Validator role: absolute path, inside the container, of the mounted 32-byte consensus seed. Requires VALIDATOR_ID.                                                                   |     no     |                                                         |
 | STATE_TTL         | Node's state will be gc'd after this time (in seconds).                                                                                                                                   |     no     |                          86400                          |
-| ARCHIVE_TTL       | Node's archived blocks will be deleted after this time (in seconds). See [Archive retention](#archive-retention).                                                                          |     no     |                          604800                         |
+| ARCHIVE_TTL       | Node's archived blocks will be deleted after this time (in seconds).                                                                                                                      |     no     |                          86400                          |
 | THREADS           | Number of threads used by validator-engine.                                                                                                                                               |     no     |                            8                            |
 | VERBOSITY         | Verbosity level.                                                                                                                                                                          |     no     |                            3                            |
 | CUSTOM_ARG        | validator-engine might have some undocumented arguments. This is reserved for the test purposes.<br/>For example you can pass **--logname /var/tos-work/log** in order to have log files. |     no     |                                                         |
-
-### Archive retention
-
-The container and Kubernetes manifests retain archived blocks for 604800 seconds
-(seven days), matching the engine's native default. Bootstrap providers need a
-continuous archive from the persistent state a new node downloads through to
-the current chain. Persistent-state boundaries are 131072 seconds apart (about
-36.4 hours), and serialization starts after a random delay of up to 21600 seconds
-(six hours). Retention must also leave time for serialization, state download,
-and the new node's catch-up, so a one-day archive window is too short.
-
-Keep at least the default on bootstrap providers, and increase it if state
-publication or catch-up needs more time. Longer retention requires more disk
-space. Explicit `ARCHIVE_TTL` settings are preserved: existing deployments that
-set `ARCHIVE_TTL=86400` must update that setting. Raising the TTL cannot recover
-archives already deleted; a bootstrap source must actually retain the history
-after the selected persistent state.
 
 ### Run the node - the quick way
 The below command runs docker container with a TOS node, that will start synchronization process.
@@ -392,18 +375,9 @@ specific to the image:
   `PQ_CONSENSUS_KEY_FILE` naming the new key: the entrypoint refuses a
   variable that differs from the binding in `config.json`. Rotation is safe
   only in the interval the guide describes.
-- `GLOBAL_CONFIG_URL` should serve the network's published, regularly
-  refreshed global config. Its `validator.init_block` is a trust anchor and
-  need not be a persistent block: by default a new node walks the key blocks
-  after it, chooses the newest persistent state with enough time left, and
-  retries until a peer serves that state. This needs peers that keep the block
-  archive after the anchor, which is what the seven-day `ARCHIVE_TTL` default
-  is for (see [Archive retention](#archive-retention)).
-- To start exactly at `init_block` instead, add `--skip-key-sync` to
-  `CUSTOM_ARG`. It is optional, affects only the first synchronization of an
-  empty database, and is only appropriate when that anchor's complete
-  persistent state is served, which `scripts/refresh-global-config-init-block.py`
-  checks when it selects the anchor.
+- `GLOBAL_CONFIG_URL` must serve a global config whose `validator.init_block`
+  is a recent key block; a stale one leaves a new node unable to prove its way
+  to the current chain.
 
 ## Kubernetes
 ### Deploy in a quick way (without load balancer)

@@ -80,8 +80,6 @@ set(VALIDATOR_HEADERS
   validator.h
 )
 set(VALIDATOR_SOURCE
-  bootstrap-state.cpp
-  bootstrap-state.h
   collation-manager.cpp
   collator-node/collator-node.cpp
   collator-node/collator-node-session.cpp

@@ -35,14 +35,11 @@ def main():
             raise RuntimeError("Expected exactly one proof RPC route")
         source.write_text(baseline.replace(needle, '{"getProofQueryRemoved", G,', 1))
         subprocess.run(compile_command, check=True)
-        # The engine's debug log can carry raw bytes, so the output is read as bytes,
-        # kept verbatim, and decoded only to look for the test's name.
-        result = subprocess.run(target, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        (build / "proof-query-route-control.log").write_bytes(result.stdout)
-        output = result.stdout.decode("utf-8", errors="backslashreplace")
+        result = subprocess.run(target, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        (build / "proof-query-route-control.log").write_text(result.stdout)
         if result.returncode == 0:
             raise RuntimeError("Proof route removal was not detected")
-        if "proof_relay_refuses_send_and_nested_queries_without_backend" not in output:
+        if "proof_relay_refuses_send_and_nested_queries_without_backend" not in result.stdout:
             raise RuntimeError("Named runtime test did not report failure")
         print("Compiled proof-route removal caused the named HTTP test to fail")
     finally:

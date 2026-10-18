@@ -41,7 +41,6 @@
 #include "tos/tos-types.h"
 
 #include "admission-work-profile.h"
-#include "bootstrap-state.h"
 #include "startup-catchup.h"
 #include "state-download-buffer.h"
 #include "types.h"
@@ -415,9 +414,6 @@ class ValidatorManagerInterface : public td::actor::Actor {
   // validator-set + live-key membership in one message handling avoids the cross-read
   // inconsistencies of composing several separate queries.
   virtual void get_node_consensus_status(td::Promise<NodeConsensusStatus> promise) = 0;
-  virtual void get_bootstrap_state(BlockIdExt id, td::Promise<BootstrapStateStatus> promise) {
-    promise.set_error(td::Status::Error(ErrorCode::notready, "bootstrap state readiness is not supported"));
-  }
 
   virtual void get_block_data(BlockHandle handle, td::Promise<td::BufferSlice> promise) = 0;
   virtual void check_zero_state_exists(BlockIdExt block_id, td::Promise<bool> promise) = 0;
