@@ -5,7 +5,6 @@ import re
 import subprocess
 import sys
 
-
 EXPECTED = {
     "Test_JsonRpcImportFee_storage_and_emulation_use_the_same_execution_time",
     "Test_JsonRpcImportFee_the_config_carries_the_genesis_forwarding_prices",
@@ -33,7 +32,9 @@ def main():
     try:
         result = subprocess.run(
             [sys.argv[1], "--filter", "+JsonRpcImportFee"],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=90,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=90,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         print(f"Import-fee regression runner failed: {error}", file=sys.stderr)
@@ -41,10 +42,17 @@ def main():
     sys.stdout.buffer.write(result.stdout)
     output = result.stdout.decode("utf-8", errors="replace")
     observed = re.findall(r"Running test (Test_JsonRpcImportFee_\w+)\.\.\.", output)
-    if (result.returncode != 0 or set(observed) != EXPECTED or len(observed) != len(EXPECTED)
-            or f"{len(EXPECTED)} test(s) passed" not in output):
-        print(f"Import-fee regressions incomplete: expected {len(EXPECTED)} passing cases; "
-              f"observed {len(observed)}, missing {sorted(EXPECTED - set(observed))}", file=sys.stderr)
+    if (
+        result.returncode != 0
+        or set(observed) != EXPECTED
+        or len(observed) != len(EXPECTED)
+        or f"{len(EXPECTED)} test(s) passed" not in output
+    ):
+        print(
+            f"Import-fee regressions incomplete: expected {len(EXPECTED)} passing cases; "
+            f"observed {len(observed)}, missing {sorted(EXPECTED - set(observed))}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
