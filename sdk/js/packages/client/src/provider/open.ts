@@ -83,6 +83,58 @@ export type OpenedContract<T extends ContractLike> = {
 };
 
 // ---------------------------------------------------------------------------
+// StateInit attachment for external messages
+// ---------------------------------------------------------------------------
+
+/** A contract's StateInit as wrappers expose it (`contract.init`). */
+export interface StateInitLike {
+  code?: CellLike;
+  data?: CellLike;
+}
+
+/** The sendQuery / estimateFee members that carry a StateInit. */
+export interface ExternalStateInitFields {
+  init_code?: CellLike;
+  init_data?: CellLike;
+}
+
+/**
+ * The StateInit members an external message to `address` should carry: the
+ * contract's `init` while the account is not active (not yet deployed, or
+ * frozen), and nothing once it is. The import fee is charged for every cell
+ * the message carries, and an active account ignores a StateInit, so sending
+ * it to an active wallet only costs more.
+ *
+ * Pass the same fields to `estimateFee` to price the message that
+ * `open(contract, provider).send…()` submits.
+ *
+ * Reads the account state with one `getAddressState` call when `init` is
+ * given (none otherwise); a failure of that call rejects with its error.
+ *
+ * @param provider - Provider used to read the account state
+ * @param address - The account the message goes to
+ * @param init - The contract's StateInit, if it has one
+ * @returns `{ init_code, init_data }` for an account that is not active, `{}` otherwise
+ */
+export async function externalStateInit(
+  provider: Pick<TosProvider, "getState">,
+  address: AddressLike | string,
+  init: StateInitLike | undefined,
+): Promise<ExternalStateInitFields> {
+  if (!init?.code && !init?.data) {
+    return {};
+  }
+  const state = await provider.getState(address);
+  if (state === "active") {
+    return {};
+  }
+  return {
+    ...(init.code ? { init_code: init.code } : {}),
+    ...(init.data ? { init_data: init.data } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // ContractProvider adapter (bridges TosProvider ↔ ContractProvider)
 // ---------------------------------------------------------------------------
 
@@ -145,14 +197,11 @@ function makeContractProvider(address: AddressLike, client: TosProvider, contrac
     async external(message: CellLike | Uint8Array | string): Promise<ExternalSendResult> {
       // Wrap the body into a full ext_in_msg_info external message via sendQuery.
       // sendQuery on the C++ side builds the external message envelope (address, init, body).
-      const init = (contract as Record<string, unknown>)?.["init"] as
-        | { code?: CellLike; data?: CellLike }
-        | undefined;
+      const init = (contract as Record<string, unknown>)?.["init"] as StateInitLike | undefined;
       const result = await client.sendQuery({
         address: addrString,
         body: message as CellLike | string,
-        ...(init?.code ? { init_code: init.code } : {}),
-        ...(init?.data ? { init_data: init.data } : {}),
+        ...(await externalStateInit(client, addrString, init)),
       });
       if (typeof result?.hash !== "string" || result.hash.length === 0) {
         throw new TosError("sendQuery accepted the message but returned no message hash", ErrorCodes.INVALID_RESPONSE);
@@ -173,6 +222,13 @@ function makeContractProvider(address: AddressLike, client: TosProvider, contrac
  * This is the primary way to use wallet and contract wrappers with a client.
  * After calling `open()`, you can call contract methods without manually
  * passing the provider.
+ *
+ * External messages: for a contract that has a StateInit (`contract.init`),
+ * every external send first reads the account state with one
+ * `getAddressState` call, to attach the StateInit only while the account is
+ * not active (see {@link externalStateInit}). That is one extra request per
+ * send, and if it fails the send fails with its error and nothing is
+ * submitted. A contract without a StateInit sends without the extra call.
  *
  * @param contract - A contract instance with an `address` property
  * @param provider - A TosProvider (typically a TosClient instance)

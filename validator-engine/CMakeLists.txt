@@ -25,6 +25,16 @@ add_library(json-rpc-storage STATIC
 target_include_directories(json-rpc-storage PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_link_libraries(json-rpc-storage PUBLIC tos_block tos_crypto tdutils)
 
+# The external message sendQuery submits and the import fee estimateFee prices
+# for it (see emulator/test/json-rpc-import-fee-fixture.cpp, which holds the fee
+# to the executor's import of the same message).
+add_library(json-rpc-fee STATIC
+  json-rpc-server-fee.h
+  json-rpc-server-fee.cpp
+)
+target_include_directories(json-rpc-fee PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
+target_link_libraries(json-rpc-fee PUBLIC smc-envelope tos_block tos_crypto tdutils)
+
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(TOS_EXPLORER_QUANTUM_NETWORK_TAG "4242424242424242424242424242424242424242424242424242424242424242" CACHE STRING "Registered review Quantum wallet network tag")
 file(GLOB EXPLORER_REGISTRY_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/crypto/smartcont/*.fc")
@@ -93,7 +103,7 @@ target_compile_options(validator-engine-json-rpc PRIVATE
 target_include_directories(validator-engine-json-rpc PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(validator-engine-json-rpc PUBLIC metrics overlay tdutils tdactor adnl tl_api dht
   rldp2 quic full-node validator tos_validator validator toshttp
-  fift-lib smc-envelope json-rpc-parse json-rpc-account-model json-rpc-storage json-rpc-explorer control-getter lite-client-common)
+  fift-lib smc-envelope json-rpc-parse json-rpc-account-model json-rpc-storage json-rpc-fee json-rpc-explorer control-getter lite-client-common)
 
 add_executable(validator-engine ${VALIDATOR_ENGINE_SOURCE})
 target_compile_options(validator-engine PRIVATE

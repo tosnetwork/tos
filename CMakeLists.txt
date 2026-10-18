@@ -1565,10 +1565,14 @@ add_executable(test-emulator
         # and order contracts.
         emulator/test/multisig-fee-profile-fixture.cpp
         # High-volume wallet requests through a real action phase.
-        emulator/test/highload-wallet-action-phase-fixture.cpp)
-target_link_libraries(test-emulator PRIVATE emulator fift-lib)
+        emulator/test/highload-wallet-action-phase-fixture.cpp
+        # The JSON-RPC estimateFee answer held to the executor: the import fee of
+        # the message sendQuery submits, and refusal where the executor rejects.
+        emulator/test/json-rpc-import-fee-fixture.cpp)
+target_link_libraries(test-emulator PRIVATE emulator fift-lib validator-engine-json-rpc)
 add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract smartcont_fixture_contracts)
 target_compile_definitions(test-emulator PRIVATE
+    TOS_GENESIS_ZEROSTATE_FIF="${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/gen-zerostate.fif"
     SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}"
     SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}"
     SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}"
@@ -2215,6 +2219,10 @@ if(TARGET proof-persisted-fsync-shim)
   add_dependencies(all-tests proof-persisted-fsync-shim)
 endif()
 tos_test(test-emulator)
+# Keep the fee regressions in the PR selection without running the full emulator suite.
+add_test(NAME json-rpc-import-fee
+  COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-jsonrpc-import-fee-tests.py $<TARGET_FILE:test-emulator>)
+set_tests_properties(json-rpc-import-fee PROPERTIES TIMEOUT 120)
 
 tos_test(test-fec)
 tos_regression_test(test-tddb)

@@ -20,9 +20,12 @@ export interface UseEstimateFeeArgs {
   address: Address | string;
   /** Message body (Cell or base64 string). */
   body: Cell | string;
-  /** Optional deploy init code. */
+  /**
+   * Init code, only for an account that is not active yet: the node prices a
+   * StateInit exactly when one is given.
+   */
   initCode?: Cell | string;
-  /** Optional deploy init data. */
+  /** Init data, only for an account that is not active yet. */
   initData?: Cell | string;
   /** Whether to skip signature verification. */
   ignoreChksig?: boolean;
@@ -49,10 +52,13 @@ export function useEstimateFee(
   const client = useClient();
   const addrStr = args?.address ? String(args.address) : "";
   const bodyStr = args?.body ? String(args.body) : "";
+  // A StateInit changes the priced message, so it is part of the key.
+  const initCodeStr = args?.initCode ? String(args.initCode) : "";
+  const initDataStr = args?.initData ? String(args.initData) : "";
   const enabled = (opts?.enabled ?? true) && !!args?.address && !!args?.body;
 
   return useQuery<FeeEstimate>({
-    queryKey: ["estimateFee", addrStr, bodyStr],
+    queryKey: ["estimateFee", addrStr, bodyStr, initCodeStr, initDataStr],
     queryFn: () =>
       client.estimateFee(
         args!.address,

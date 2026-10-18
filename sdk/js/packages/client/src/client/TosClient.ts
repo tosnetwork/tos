@@ -586,10 +586,15 @@ export class TosClient implements TosProvider {
   /**
    * Estimate the fee for a message without actually sending it.
    *
+   * The node prices the message `sendQuery` submits for the same arguments,
+   * which carries a StateInit exactly when `init_code` or `init_data` is
+   * given. Pass them only for an account that is not active yet, as
+   * {@link externalStateInit} decides for `open()` sends.
+   *
    * @param address - Target contract address
    * @param body - Message body as a Cell or base64 string
-   * @param init_code - Optional init code for deploy
-   * @param init_data - Optional init data for deploy
+   * @param init_code - Init code, for an account that is not active yet
+   * @param init_data - Init data, for an account that is not active yet
    * @param ignore_chksig - Whether to ignore signature verification
    * @returns Fee estimate
    */
