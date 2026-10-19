@@ -72,6 +72,10 @@ std::string ResolveCandidate::contents_to_string() const {
   return PSTRING() << "{id=" << id << "}";
 }
 
+std::string QueryConsensusRecoveryState::contents_to_string() const {
+  return "{}";
+}
+
 std::string QueryFinalizationState::contents_to_string() const {
   return PSTRING() << "{slot=" << slot << "}";
 }

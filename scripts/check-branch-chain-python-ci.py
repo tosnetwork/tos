@@ -61,6 +61,7 @@ BACKLOG_SKIP_MODES = (
     "notar-rearm",
     "repeated-toggle",
     "shutdown-pending",
+    "many-windows-behind",
     "race-refused-then-clear",
     "race-clear-before-refusal",
     "race-final-after-clear",

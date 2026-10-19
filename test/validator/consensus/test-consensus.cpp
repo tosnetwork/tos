@@ -1556,6 +1556,69 @@ class TestConsensus : public td::actor::Actor {
     return {};
   }
 
+  // What the backpressure exists for: the certificates a node holds unfinalized stay bounded
+  // while finality is held back, and drop back under the limit once it recovers. Each
+  // resolver reports the most it held at once, so the peak is exact rather than sampled.
+  //
+  // The bound is the limit plus K, both taken from this run. The count crosses the limit on
+  // the one attempt that leaves it at limit + 1; from then on no node casts a new vote and
+  // Pool refuses any still on its way, so further certificates can only complete from votes
+  // already past Pool's gate. Those belong to the leader window open at the edge -- the next
+  // window's leader does not produce while behind -- so at most one per slot of that window.
+  // K = slots per leader window + 1.
+  td::actor::Task<std::optional<std::string>> check_backlog_bound(td::Timestamp deadline) {
+    const size_t k = static_cast<size_t>(SLOTS_PER_LEADER_WINDOW) + 1;
+    auto query = [&](size_t node) -> td::actor::Task<std::optional<simplex::QueryFinalizationState::Result>> {
+      for (auto& instance : nodes_[node].instances) {
+        if (instance.status == Instance::Running) {
+          co_return co_await instance.bus.publish(std::make_shared<simplex::QueryFinalizationState>(0));
+        }
+      }
+      co_return std::nullopt;
+    };
+    // Recovery: every node back under the limit and no longer reporting the backlog.
+    std::vector<simplex::QueryFinalizationState::Result> states(N_NODES);
+    while (true) {
+      bool recovered = true;
+      for (size_t node = 0; node < N_NODES; ++node) {
+        auto state = co_await query(node);
+        if (!state.has_value()) {
+          co_return PSTRING() << "node " << node << " has no running instance to report its finalization backlog";
+        }
+        states[node] = *state;
+        recovered =
+            recovered && !state->backlog_over_limit && state->pending_finalizations <= state->pending_finalizations_max;
+      }
+      if (recovered) {
+        break;
+      }
+      if (deadline.is_in_past()) {
+        co_return std::string("a node's finalization backlog did not return under its limit after recovery");
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+    }
+    for (size_t node = 0; node < N_NODES; ++node) {
+      const auto& state = states[node];
+      const size_t bound = state.pending_finalizations_max + k;
+      LOG(WARNING) << "Finalization backlog bound: node " << node
+                   << " pending_peak=" << state.pending_finalizations_peak
+                   << " unfinalized_held_peak=" << state.unfinalized_held_peak
+                   << " limit=" << state.pending_finalizations_max << " bound=limit+" << k << "=" << bound
+                   << " pending_after_recovery=" << state.pending_finalizations;
+      if (state.pending_finalizations_max == 0 || state.pending_finalizations_peak <= state.pending_finalizations_max) {
+        co_return PSTRING() << "node " << node << " never went over its finalization limit ("
+                            << state.pending_finalizations_peak << " of " << state.pending_finalizations_max
+                            << "), so the bound was not exercised";
+      }
+      if (state.pending_finalizations_peak > bound || state.unfinalized_held_peak > bound) {
+        co_return PSTRING() << "BOUND: node " << node << " held " << state.pending_finalizations_peak << " pending and "
+                            << state.unfinalized_held_peak
+                            << " unfinalized certificates at once, over limit + K = " << bound;
+      }
+    }
+    co_return std::nullopt;
+  }
+
   // The proof the hold scenario needs and a count of backlog reports does not give: that the
   // skip deadline a node had armed expired while that node was over the limit, on more than
   // a third of the nodes, and that slots kept being finalized once the last of them cleared.
@@ -1686,6 +1749,16 @@ class TestConsensus : public td::actor::Actor {
       }
       if (!adversity.happened()) {
         fail(PSTRING() << "this scenario configures " << adversity.name << ", but it never happened");
+        co_return td::Unit{};
+      }
+    }
+
+    // Checked first, as soon as the backlog has gone over and cleared, so no later
+    // assertion can stand in front of it.
+    if (FINALIZATION_BACKPRESSURE_TEST) {
+      auto error = co_await check_backlog_bound(deadline);
+      if (error.has_value()) {
+        fail(std::move(*error));
         co_return td::Unit{};
       }
     }

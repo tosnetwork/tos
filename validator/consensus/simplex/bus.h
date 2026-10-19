@@ -165,6 +165,23 @@ struct QueryResolverTrackedStateCount {
   std::string contents_to_string() const;
 };
 
+// Read-only observability of what Consensus keeps to recover once a finalization backlog
+// clears: skip ranges whose timeout expired while behind, and votes Pool refused before
+// their intent. The sizes are what bounds that state; nothing here changes it.
+struct QueryConsensusRecoveryState {
+  struct Result {
+    size_t deferred_skip_windows = 0;
+    // Slots covered by the deferred ranges, summed over windows.
+    size_t deferred_skip_slots = 0;
+    size_t suppressed_votes = 0;
+    td::uint32 current_window = 0;
+  };
+
+  using ReturnType = Result;
+
+  std::string contents_to_string() const;
+};
+
 // Read-only observability of finalization attempts and backpressure.
 struct QueryFinalizationState {
   struct Result {
@@ -191,6 +208,14 @@ struct QueryFinalizationState {
     // how it is kept from growing.
     size_t pending_finalizations = 0;
     bool backlog_over_limit = false;
+    // The most certificates counted as pending at any one time since the resolver came up,
+    // the limit above which the group is told to stop, and the most certificates held
+    // unfinalized at once, including one whose first attempt is still running. Together
+    // they bound what the backpressure lets the backlog reach, which a reading taken now and
+    // then cannot.
+    size_t pending_finalizations_peak = 0;
+    size_t pending_finalizations_max = 0;
+    size_t unfinalized_held_peak = 0;
     // Held for a reason retrying cannot mend. Counted apart from the rest because it is the
     // one an operator has to act on rather than wait out.
     size_t finalizations_stalled_permanently = 0;
@@ -284,10 +309,11 @@ struct QueryValidatorGroupInfo {
 class Bus : public consensus::Bus {
  public:
   using Parent = consensus::Bus;
-  using Events = td::TypeList<BroadcastVote, PersistOwnVoteIntent, PersistOwnSignedVote, NotarizationObserved,
-                              FinalizationObserved, LeaderWindowObserved, WaitForParent, ResolveCandidate,
-                              StoreCandidate, ResolveState, SaveCertificate, QueryValidatorGroupInfo,
-                              QueryResolverTrackedStateCount, QueryFinalizationState, QueryVoteIngress>;
+  using Events =
+      td::TypeList<BroadcastVote, PersistOwnVoteIntent, PersistOwnSignedVote, NotarizationObserved,
+                   FinalizationObserved, LeaderWindowObserved, WaitForParent, ResolveCandidate, StoreCandidate,
+                   ResolveState, SaveCertificate, QueryValidatorGroupInfo, QueryResolverTrackedStateCount,
+                   QueryFinalizationState, QueryVoteIngress, QueryConsensusRecoveryState>;
 
   Bus() = default;
 

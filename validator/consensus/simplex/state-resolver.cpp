@@ -270,6 +270,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
                                           .finalizations_stalled = finalizations_stalled_,
                                           .pending_finalizations = pending_finalizations_,
                                           .backlog_over_limit = backlog_over_limit_,
+                                          .pending_finalizations_peak = pending_finalizations_peak_,
+                                          .pending_finalizations_max = pending_finalizations_max_,
+                                          .unfinalized_held_peak = unfinalized_held_peak_,
                                           .finalizations_stalled_permanently = finalizations_stalled_permanently_,
                                           .slot_attempts = 0};
     for (const auto& [id, state] : finalized_blocks_) {
@@ -647,6 +650,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   // Certificates held un-converted right now, and whether the group has been told to stop.
   size_t pending_finalizations_ = 0;
   bool backlog_over_limit_ = false;
+  // Observability only: the most of each held at once since the resolver came up.
+  size_t pending_finalizations_peak_ = 0;
+  size_t unfinalized_held_peak_ = 0;
   const size_t pending_finalizations_max_ =
       cache_limit_from_env("TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX", DEFAULT_PENDING_FINALIZATIONS_MAX);
   size_t finalized_db_hits_ = 0;
@@ -790,6 +796,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     if (!finalized_inflight_.try_admit()) {
       ++finalized_admission_rejections_;
       ++state.attempts;
+      note_unfinalized_held();
       auto rejection =
           td::Status::Error(ErrorCode::notready,
                             PSTRING() << "Simplex state-resolver: too many concurrent finalizations ("
@@ -802,6 +809,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     }
     state.state = Finalization::InFlight;
     ++state.attempts;
+    note_unfinalized_held();
     {
       SCOPE_EXIT {
         finalized_inflight_.release();
@@ -853,6 +861,17 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   // A pending finalization is a certificate this resolver is holding because converting it
   // has not succeeded: still being retried, or stopped for a reason retrying cannot mend.
   // Neither is dropped, so the only lever left is to stop adding to the pile.
+  //
+  // Observability only: records the most certificates held unfinalized at once, counting
+  // one whose first attempt is still running, which `pending` does not yet include.
+  void note_unfinalized_held() {
+    size_t held = 0;
+    for (const auto& [_, entry] : finalized_blocks_) {
+      held += entry.state == Finalization::Finalized ? 0 : 1;
+    }
+    unfinalized_held_peak_ = std::max(unfinalized_held_peak_, held);
+  }
+
   void update_finalization_backlog() {
     size_t pending = 0;
     size_t beyond_retrying = 0;
@@ -864,6 +883,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       beyond_retrying += entry.state == Finalization::StalledPermanently ? 1 : 0;
     }
     pending_finalizations_ = pending;
+    pending_finalizations_peak_ = std::max(pending_finalizations_peak_, pending);
+    note_unfinalized_held();
     // One certificate that can never be converted is enough on its own, whatever the limit
     // says. The limit exists to bound a queue that is still moving; a finalization beyond
     // retrying is not a queue, it is a chain that cannot pass this slot, and producing more

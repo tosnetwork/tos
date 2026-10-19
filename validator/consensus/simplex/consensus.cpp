@@ -137,6 +137,20 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     params_ = event->params;
   }
 
+  // Read-only: the size of the state kept for recovery after a finalization backlog.
+  template <>
+  td::actor::Task<QueryConsensusRecoveryState::Result> process(BusHandle,
+                                                               std::shared_ptr<QueryConsensusRecoveryState>) {
+    QueryConsensusRecoveryState::Result result{.deferred_skip_windows = deferred_skips_.size(),
+                                               .deferred_skip_slots = 0,
+                                               .suppressed_votes = suppressed_votes_.size(),
+                                               .current_window = current_window_};
+    for (const auto& [_, range] : deferred_skips_) {
+      result.deferred_skip_slots += range.end > range.begin ? range.end - range.begin : 0;
+    }
+    co_return result;
+  }
+
   template <>
   void handle(BusHandle, std::shared_ptr<const FinalizationObserved> event) {
     state_->notify_finalized(event->id.slot);

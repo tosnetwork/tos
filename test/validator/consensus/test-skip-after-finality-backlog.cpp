@@ -36,6 +36,11 @@
 //                        re-armed timeout does not duplicate them.
 //   repeated-toggle      repeated over/clear events create no duplicate requests.
 //   shutdown-pending     the group stops while deferred work is pending; nothing is cast.
+//   many-windows-behind  peers skip fifteen windows while this node stays behind; the kept
+//                        state never exceeds one superseded window plus the current one.
+//
+// In every mode a sampler queries the deferred-skip and refused-vote state throughout the run
+// and fails it the moment that state covers more than the slots of two windows.
 //
 // The modes below hold Pool's finality gate through the bus's test hook, so a backlog
 // transition lands exactly between a vote's request and Pool's refusal of it before its
@@ -136,6 +141,7 @@ enum class Mode {
   NotarRearm,
   RepeatedToggle,
   ShutdownPending,
+  ManyWindowsBehind,
   RaceRefusedThenClear,
   RaceClearBeforeRefusal,
   RaceFinalAfterClear,
@@ -596,6 +602,13 @@ class Driver : public td::actor::Actor {
   double first_block_timeout_ = 0.3;
   double multiplier_ = 1.2;
   double target_rate_ = 0.4;
+  // The recovery-state sampler: queried throughout the run, it fails the run the moment the
+  // state exceeds its bound, and a pass requires that it actually ran.
+  bool sampling_ = false;
+  bool sampler_running_ = false;
+  size_t samples_ = 0;
+  size_t peak_recovery_entries_ = 0;
+  size_t peak_deferred_windows_ = 0;
 
   td::BufferSlice sign(size_t signer, td::Slice inner) const {
     auto envelope =
@@ -825,9 +838,80 @@ class Driver : public td::actor::Actor {
         // No timeout of the node's own may cast a skip while these run.
         first_block_timeout_ = 600.0;
         break;
+      case Mode::ManyWindowsBehind:
+        // A fixed timeout, so every window's deadline is known.
+        multiplier_ = 1.0;
+        break;
       default:
         break;
     }
+  }
+
+  // The state Consensus keeps for recovery -- deferred skip ranges and votes refused before
+  // their intent -- may cover at most the slots of the current window and of one window it
+  // superseded. It must not grow with time spent behind or with windows observed meanwhile.
+  static constexpr size_t RECOVERY_STATE_BOUND = 2 * SLOTS_PER_LEADER_WINDOW;
+
+  td::actor::Task<> sample_recovery_state() {
+    sampler_running_ = true;
+    while (sampling_) {
+      auto state = co_await bus_.publish<simplex::QueryConsensusRecoveryState>().wrap();
+      if (state.is_error()) {
+        break;
+      }
+      ++samples_;
+      const auto& s = state.ok();
+      const size_t entries = s.deferred_skip_slots + s.suppressed_votes;
+      peak_recovery_entries_ = std::max(peak_recovery_entries_, entries);
+      peak_deferred_windows_ = std::max(peak_deferred_windows_, s.deferred_skip_windows);
+      if (entries > RECOVERY_STATE_BOUND || s.deferred_skip_windows > 2) {
+        finish(4, PSTRING() << "A142_RECOVERY_STATE_UNBOUNDED: " << s.deferred_skip_windows
+                            << " deferred windows covering " << s.deferred_skip_slots << " slots and "
+                            << s.suppressed_votes << " refused votes at window " << s.current_window
+                            << ", over the bound of " << RECOVERY_STATE_BOUND << " entries in 2 windows");
+      }
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.002));
+    }
+    sampler_running_ = false;
+    co_return td::Unit{};
+  }
+
+  td::actor::Task<> stop_sampling() {
+    sampling_ = false;
+    co_await wait_until([&] { return !sampler_running_; });
+    co_return td::Unit{};
+  }
+
+  // Modes in which recovery state must exist at some point, so a sampler reading zero
+  // throughout would be measuring nothing.
+  bool expects_recovery_state() const {
+    switch (mode_) {
+      case Mode::StallRecovers:
+      case Mode::FinalRedrive:
+      case Mode::SupersededDeferral:
+      case Mode::NotarRearm:
+      case Mode::RepeatedToggle:
+      case Mode::ShutdownPending:
+      case Mode::RaceRefusedThenClear:
+      case Mode::BootstrapSuppressed:
+      case Mode::ShutdownSuppressed:
+      case Mode::ManyWindowsBehind:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  [[noreturn]] void pass(const std::string& line) {
+    if (samples_ < 10) {
+      finish(1, PSTRING() << "A142_PRECONDITION_FAILED: the recovery-state sampler ran only " << samples_ << " times");
+    }
+    if (expects_recovery_state() && peak_recovery_entries_ == 0) {
+      finish(1, "A142_PRECONDITION_FAILED: this mode keeps recovery state, but the sampler never saw any");
+    }
+    emit(PSTRING() << "A142_RECOVERY_STATE samples=" << samples_ << " peak_entries=" << peak_recovery_entries_
+                   << " peak_deferred_windows=" << peak_deferred_windows_ << " bound=" << RECOVERY_STATE_BOUND);
+    finish(0, line);
   }
 
   td::actor::Task<> run_inner() {
@@ -835,6 +919,8 @@ class Driver : public td::actor::Actor {
     tos::health::consensus_enabled.store(true);
     configure();
     start_node();
+    sampling_ = true;
+    sample_recovery_state().start().detach();
     auto leader0 = bus_ptr_->collator_schedule->expected_collator_for(0);
     if (leader0.value() == target_) {
       finish(1, "A142_PRECONDITION_FAILED: the node under test leads window 0");
@@ -868,8 +954,42 @@ class Driver : public td::actor::Actor {
         co_return co_await run_bootstrap_suppressed();
       case Mode::ShutdownSuppressed:
         co_return co_await run_shutdown_suppressed();
+      case Mode::ManyWindowsBehind:
+        co_return co_await run_many_windows_behind();
     }
     co_return td::Unit{};
+  }
+
+  // Finality stays behind while peers skip window after window. Each window's timeout
+  // expires while behind and is deferred, and each new window supersedes the last deferral,
+  // so the kept state stays at one window however long this lasts. After the clear only the
+  // last, unskipped window is skipped.
+  td::actor::Task<> run_many_windows_behind() {
+    constexpr td::uint32 WINDOWS = 15;
+    co_await await_window(0);
+    backlog(true);
+    for (td::uint32 w = 0; w < WINDOWS; ++w) {
+      const td::uint32 start = w * SLOTS_PER_LEADER_WINDOW;
+      auto observed = co_await await_window(start);
+      co_await sleep_until(first_deadline(observed, first_block_timeout_) + 0.1);
+      for (td::uint32 i = start; i < start + SLOTS_PER_LEADER_WINDOW; ++i) {
+        deliver_cert(simplex::SkipVote{i});
+      }
+    }
+    const td::uint32 last = WINDOWS * SLOTS_PER_LEADER_WINDOW;
+    auto observed = co_await await_window(last);
+    co_await sleep_until(first_deadline(observed, first_block_timeout_) + 0.1);
+    require(total_records() == 0, "nothing is cast while finality is behind");
+    backlog(false);
+    auto final_window = skips(last, last + SLOTS_PER_LEADER_WINDOW);
+    co_await await_recovery(final_window, 3.0, "the last window's deferred skips were lost");
+    co_await settle(0.5);
+    for (const auto& id : final_window) {
+      require_cast_once(id);
+    }
+    require(count_kind(Stage::Request, 2) == SLOTS_PER_LEADER_WINDOW, "no superseded window was skipped late");
+    require_no_conflicts();
+    pass("A142_OK many-windows-behind");
   }
 
   // Pool handles bus messages in order, so once it has answered this, it has processed every
@@ -929,7 +1049,7 @@ class Driver : public td::actor::Actor {
     }
     require(applied(tos::health::Action::Skip) == SLOTS_PER_LEADER_WINDOW, "every skip was applied locally");
     require_no_conflicts();
-    finish(0, PSTRING() << "A142_OK " << mode);
+    pass(PSTRING() << "A142_OK " << mode);
   }
 
   td::actor::Task<> run_race_skips(bool clear_before_refusal) {
@@ -977,7 +1097,7 @@ class Driver : public td::actor::Actor {
     require(count_kind(Stage::Request, 2) == 0, "no skip was requested");
     require(applied(tos::health::Action::Finalize) == 1, "the final vote was applied locally");
     require_no_conflicts();
-    finish(0, "A142_OK race-final-after-clear");
+    pass("A142_OK race-final-after-clear");
   }
 
   td::actor::Task<> run_race_new_window() {
@@ -1006,7 +1126,7 @@ class Driver : public td::actor::Actor {
       require_cast_once(id);
     }
     require_no_conflicts();
-    finish(0, "A142_OK race-new-window");
+    pass("A142_OK race-new-window");
   }
 
   td::actor::Task<> run_race_notar_rearm() {
@@ -1028,7 +1148,7 @@ class Driver : public td::actor::Actor {
       require_cast_once(id);
     }
     require_no_conflicts();
-    finish(0, "A142_OK race-notar-rearm");
+    pass("A142_OK race-notar-rearm");
   }
 
   td::actor::Task<> run_bootstrap_suppressed() {
@@ -1055,13 +1175,14 @@ class Driver : public td::actor::Actor {
     co_await refuse_window0_skips_at_gate(/*hold_refusals=*/false);
     co_await settle(0.2);
     emit("A142_STOP with refused skips kept for recovery");
+    co_await stop_sampling();
     bus_.publish<StopRequested>();
     bus_ = {};
     bus_ptr_.reset();
     co_await std::move(*stopped_);
     co_await settle(0.3);
     require(total_records() == 0, "nothing was cast by a stopped group");
-    finish(0, "A142_OK shutdown-suppressed");
+    pass("A142_OK shutdown-suppressed");
   }
 
   // Goes over the limit before the window-0 deadline and returns that deadline.
@@ -1099,7 +1220,7 @@ class Driver : public td::actor::Actor {
     }
     require(applied(tos::health::Action::Skip) == 2 * SLOTS_PER_LEADER_WINDOW, "every skip was applied locally");
     require_no_conflicts();
-    finish(0, "A142_OK stall-recovers");
+    pass("A142_OK stall-recovers");
   }
 
   td::actor::Task<> run_short_hold() {
@@ -1120,7 +1241,7 @@ class Driver : public td::actor::Actor {
       require_cast_once(id);
     }
     require_no_conflicts();
-    finish(0, "A142_OK short-hold");
+    pass("A142_OK short-hold");
   }
 
   td::actor::Task<> run_final_redrive() {
@@ -1156,7 +1277,7 @@ class Driver : public td::actor::Actor {
     require_never(skip_id(0));
     require(applied(tos::health::Action::Finalize) == 1, "the final vote was applied locally");
     require_no_conflicts();
-    finish(0, "A142_OK final-redrive");
+    pass("A142_OK final-redrive");
   }
 
   td::actor::Task<> run_superseded_deferral() {
@@ -1182,7 +1303,7 @@ class Driver : public td::actor::Actor {
       require_cast_once(id);
     }
     require_no_conflicts();
-    finish(0, "A142_OK superseded-deferral");
+    pass("A142_OK superseded-deferral");
   }
 
   td::actor::Task<> run_notar_rearm() {
@@ -1206,7 +1327,7 @@ class Driver : public td::actor::Actor {
       require_cast_once(id);
     }
     require_no_conflicts();
-    finish(0, "A142_OK notar-rearm");
+    pass("A142_OK notar-rearm");
   }
 
   td::actor::Task<> run_repeated_toggle() {
@@ -1227,19 +1348,20 @@ class Driver : public td::actor::Actor {
     }
     require(count_kind(Stage::Request, 2) == SLOTS_PER_LEADER_WINDOW, "no duplicate skip request");
     require_no_conflicts();
-    finish(0, "A142_OK repeated-toggle");
+    pass("A142_OK repeated-toggle");
   }
 
   td::actor::Task<> run_shutdown_pending() {
     co_await hold_across_first_deadline();
     emit("A142_STOP with deferred skips pending");
+    co_await stop_sampling();
     bus_.publish<StopRequested>();
     bus_ = {};
     bus_ptr_.reset();
     co_await std::move(*stopped_);
     co_await settle(0.3);
     require(total_records() == 0, "nothing was cast by a stopped group");
-    finish(0, "A142_OK shutdown-pending");
+    pass("A142_OK shutdown-pending");
   }
 };
 
@@ -1255,6 +1377,7 @@ int main(int argc, char** argv) {
       {"notar-rearm", Mode::NotarRearm},
       {"repeated-toggle", Mode::RepeatedToggle},
       {"shutdown-pending", Mode::ShutdownPending},
+      {"many-windows-behind", Mode::ManyWindowsBehind},
       {"race-refused-then-clear", Mode::RaceRefusedThenClear},
       {"race-clear-before-refusal", Mode::RaceClearBeforeRefusal},
       {"race-final-after-clear", Mode::RaceFinalAfterClear},
