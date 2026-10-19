@@ -77,7 +77,7 @@ def replace_terms(text: str) -> str:
     # with that type when renaming the contract-specific five-field result.
     text = text.replace("JettonMinter", "TokenMaster")
     text = text.replace("JETTON_MINTER_CODE_HEX", "TOKEN_MASTER_CODE_HEX")
-    text = text.replace("JettonData", "FungibleTokenData")
+    text = re.sub(r"\bJettonData\b", "FungibleTokenData", text)
     text = text.replace("TokenKind::Jetton", "TokenKind::Fungible")
     text = text.replace("Jetton = 0, Nft = 1", "Fungible = 0, Nft = 1")
     text = LEGACY.sub(spelling, text)
@@ -98,7 +98,11 @@ def transform(path: str, text: str, retained_paths: tuple[str, ...] = ()) -> str
 
     def protect_url(match: re.Match[str]) -> str:
         value = match.group()
-        parsed = urlsplit(value)
+        try:
+            parsed = urlsplit(value)
+        except ValueError:
+            # Templates such as http://[HOST] are citations, not URLs to rewrite.
+            return protect(value)
         # Only live links into this repository move with the source. External
         # citations and links to immutable commits must remain truthful.
         live = parsed.netloc == "github.com" and (

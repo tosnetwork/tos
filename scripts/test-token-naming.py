@@ -31,6 +31,13 @@ class TextMigration(unittest.TestCase):
     def test_generic_token_data_does_not_collide(self):
         self.assertEqual(MIGRATION.transform("types.ts", 'TokenData JettonData JettonMasterData'), 'TokenData FungibleTokenData TokenMasterData')
 
+    def test_type_mapping_does_not_rename_methods(self):
+        self.assertEqual(MIGRATION.transform("x.ts", "getJettonData(): JettonData"), "getTokenData(): FungibleTokenData")
+
+    def test_placeholder_urls_preserved(self):
+        text = "http://[HOST]/jetton https://[::1]/jetton JettonWallet"
+        self.assertEqual(MIGRATION.transform("doc.md", text), "http://[HOST]/jetton https://[::1]/jetton TokenWallet")
+
     def test_scoped_kind_keeps_discriminants(self):
         before = 'enum class TokenKind { Jetton = 0, Nft = 1 }; TokenKind::Jetton;'
         self.assertEqual(MIGRATION.transform("index.h", before), 'enum class TokenKind { Fungible = 0, Nft = 1 }; TokenKind::Fungible;')

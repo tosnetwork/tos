@@ -5,6 +5,8 @@ on:
     branches: [refactor/token-naming]
     paths:
       - scripts/token-rename-workbench.py
+      - scripts/migrate-token-naming.py
+      - scripts/test-token-naming.py
       - .github/workflows/token-rename-workbench.yml
 
 permissions:
