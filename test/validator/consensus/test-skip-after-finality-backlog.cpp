@@ -174,20 +174,17 @@ GateControl gate;
 td::actor::StartedTask<> gate_hook(const simplex::Vote& vote, simplex::VoteGatePoint point) {
   auto [task, promise] = td::actor::StartedTask<>::make_bridge();
   const bool at_gate = point == simplex::VoteGatePoint::BeforeFinalityGate;
-  bool hold = false;
-  {
-    std::scoped_lock lock(gate.mutex);
-    hold = (at_gate ? gate.hold_before : gate.hold_after) &&
-           gate.held_once.emplace(static_cast<int>(point), identity(vote)).second;
-    if (hold) {
-      (at_gate ? gate.before : gate.after).push_back(std::move(promise));
-    }
-  }
-  if (hold) {
-    emit(PSTRING() << "A142_GATE_HELD " << (at_gate ? "before-gate " : "after-refusal ") << identity(vote));
-  } else {
+  std::unique_lock lock(gate.mutex);
+  const bool hold = (at_gate ? gate.hold_before : gate.hold_after) &&
+                    gate.held_once.emplace(static_cast<int>(point), identity(vote)).second;
+  if (!hold) {
+    lock.unlock();
     promise.set_value(td::Unit{});
+    return std::move(task);
   }
+  (at_gate ? gate.before : gate.after).push_back(std::move(promise));
+  lock.unlock();
+  emit(PSTRING() << "A142_GATE_HELD " << (at_gate ? "before-gate " : "after-refusal ") << identity(vote));
   return std::move(task);
 }
 
