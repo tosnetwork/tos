@@ -1,0 +1,15 @@
+TOS shielded pool, phase 2 -- contribution 1
+
+I drew a scalar from my machine's random generator, applied it, and destroyed
+it. I did not record it, copy it, or transmit it, and I do not have it.
+
+  built from     66fb007e7d3d6b509c32ad1b3ce4af470d96a53c
+  starting key   018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+  contribution   022598b65969aa9c76e89a9cdb39c9d9690c6915b864302ba3360cde956727f0
+  transcript     8c649286fc04e8c9eb1ebaed5b3fb74de9ab1d852d429b1dee4c1d9b3df41726
+
+The starting key says which ceremony this is: it is a function of the circuit
+and the phase-1 slice, so a contribution cannot be moved to a ceremony over a
+different circuit. The transcript names my position within it: every later
+contribution's challenge is derived from it, so this record cannot be
+reordered, shortened or substituted without invalidating what follows.

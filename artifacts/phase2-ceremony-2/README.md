@@ -1,8 +1,8 @@
 # Phase-2 ceremony 2 — announced; public opening
 
 **Status: announced on 2026-10-19; the public deterministic opening is published
-separately after the announcement. No contribution has been accepted here, no
-beacon applied, and no final parameters exist or may be deployed.**
+separately after the announcement. One independent contribution has been verified and accepted; no beacon has
+been applied, and no final parameters exist or may be deployed.**
 
 Read the immutable [announcement](https://github.com/tosnetwork/tos/blob/0fd773063b91833f287d435e82a60d4d2235f988/artifacts/phase2-ceremony-2/ANNOUNCEMENT.md)
 and [publication observations](PUBLICATION.json). Contributions close at Bitcoin
@@ -29,7 +29,7 @@ the ones before it are already public.
 | 4 | fix fresh beacon and closing heights | **operator** | close 972111; beacon 972112, fixed |
 | 5 | publish the announcement, archive it, record where and when | operator | announcement commit 0fd773063; push completed 05:21:59 UTC |
 | 6 | run `phase2-begin`, publish the starting digests | operator | public opening follows the announcement in a separate commit |
-| 7 | contributions, in any order, each signed | participant | awaiting independent contribution |
+| 7 | contributions, in any order, each signed | participant | contribution 1 accepted; see participant-contribution-1/RECEIPT.json |
 | 8 | close contributions at the close height; apply the later beacon; independent signed PASS before final publication | project and independent verifier | not started |
 
 ## If you are going to contribute
@@ -74,8 +74,9 @@ Each of those is a test that has been watched to fail.
 
 This section keeps project commands beside the existing opening checklist;
 there is no second runbook. The commands below are instructions for the test
-lead. Steps A/B/C have now been executed; see `PUBLICATION.json` and the
-separate announcement/opening commits. Steps D/E/F have not been executed.
+lead. Steps A/B/C/D have now been executed; see `PUBLICATION.json`,
+`participant-contribution-1/RECEIPT.json` and their separate commits.
+Steps E/F have not been executed.
 Do not rerun opening or alter the announced heights. No contribution secret
 was generated on the coordinator. Today's target is
 07:00 UTC / 16:00 JST. Bitcoin timing cannot guarantee it. If the beacon is
@@ -373,3 +374,18 @@ verification and its public source URL, both parties' verification outputs,
 publication/height observations and a complete SHA-256 manifest. Preserve the
 third party's own public links. No secret material is in that set. Deployment
 still requires the separate [acceptance gate](../../doc/shielded-pool-ceremony.md#the-acceptance-gate).
+
+## Contribution 1 receipt
+
+The [original participant publication](participant-contribution-1/) is preserved
+byte for byte, with its original SHA256SUMS and signed attestation. The active
+`ceremony/` directory now contains that verified extension. Both Bitcoin sources
+still reported tip 972109 when the fetched files were observed and checked,
+before close 972111. Historical push times supplied by the test lead and the
+independent source observations are distinguished in
+[RECEIPT.json](participant-contribution-1/RECEIPT.json).
+
+`OPENING-SHA256SUMS` describes the immutable opening commit
+`af64d98e629e3146f382da2aff9d74a9ec63d876`, not the subsequently extended active
+`ceremony/` directory. The participant snapshot's SHA256SUMS describes the
+pre-beacon contribution and remains unchanged after beacon application.

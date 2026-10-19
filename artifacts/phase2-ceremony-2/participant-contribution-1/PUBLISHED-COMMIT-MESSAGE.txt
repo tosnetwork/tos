@@ -1,0 +1,13 @@
+Ceremony 2 contribution 1 by ffreeofmoney-bit
+
+Ceremony 2 contribution 1 by ffreeofmoney-bit
+
+contribution  022598b65969aa9c76e89a9cdb39c9d9690c6915b864302ba3360cde956727f0
+transcript    8c649286fc04e8c9eb1ebaed5b3fb74de9ab1d852d429b1dee4c1d9b3df41726
+
+SHA-256:
+4424f460e897d85ad33bb434c3a000b4af3ecae066edc067acfcc7964fa60009  ceremony/key.bin
+022598b65969aa9c76e89a9cdb39c9d9690c6915b864302ba3360cde956727f0  ceremony/contributions.bin
+c792c0aba380a1ff484351f84cfff98a42ef1180fd9cb87fd48101f392052f16  ceremony/ceremony.json
+0f807de730c77abd074395bc31ef8e451a6ae11a34843f90d64c3e03bfb1860b  attestation-1.txt
+efcdcadd1d233ef704dd7f2b2f7f89186fd01335538bce4c7bb3225d0ce97612  attestation-1.txt.sig
