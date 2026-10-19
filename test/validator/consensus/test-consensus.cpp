@@ -150,6 +150,19 @@ bool FINALIZATION_RETRY_PROBE = false;
 // throttled are asserted separately, so the lower progress count cannot make the
 // scenario pass without exercising backpressure and recovery.
 bool FINALIZATION_BACKPRESSURE_TEST = false;
+// The backlog is held over its limit, by TOS_SIMPLEX_INJECT_FINALIZATION_HOLD_MS, for longer
+// than a skip timeout. The scenario requires a proof that a node's timeout actually expired
+// while it was over the limit -- on enough nodes that no certificate can form without them --
+// and then new finalized slots after the last node cleared. The adaptive timeout multiplier
+// is pinned to 1 so the deadline each window armed is known exactly.
+bool FINALIZATION_HOLD_STALL_TEST = false;
+struct HoldStallTimeline {
+  std::mutex mutex;
+  std::map<size_t, std::vector<std::pair<double, bool>>> backlog;  // node -> (time, over limit)
+  std::map<size_t, std::vector<double>> windows;                   // node -> leader window observed at
+  std::vector<std::pair<double, td::uint32>> finalized;            // (time, slot), any node
+};
+HoldStallTimeline HOLD_STALL_TIMELINE;
 bool EMPTY_CHAIN_RESTART_TEST = false;
 bool VOTE_JOURNAL_TEST = false;
 bool PQ_FINALITY_E2E_TEST = false;
@@ -693,6 +706,19 @@ class TestFinalityObserver : public td::actor::SpawnsWith<simplex::Bus>, public 
       return;
     }
     record_finalization(ObservedFinalization{bus->local_id->idx.value(), instance_idx_, event->id, event->certificate});
+    if (FINALIZATION_HOLD_STALL_TEST) {
+      std::scoped_lock lock(HOLD_STALL_TIMELINE.mutex);
+      HOLD_STALL_TIMELINE.finalized.emplace_back(td::Time::now(), event->id.slot);
+    }
+  }
+
+  template <>
+  void handle(simplex::BusHandle bus, std::shared_ptr<const simplex::LeaderWindowObserved>) {
+    if (!FINALIZATION_HOLD_STALL_TEST || !bus->local_id.has_value()) {
+      return;
+    }
+    std::scoped_lock lock(HOLD_STALL_TIMELINE.mutex);
+    HOLD_STALL_TIMELINE.windows[bus->local_id->idx.value()].push_back(td::Time::now());
   }
 
   // Candidates this network has put into the round, counted across every node. It is how the
@@ -726,13 +752,17 @@ class TestFinalityObserver : public td::actor::SpawnsWith<simplex::Bus>, public 
   // Whether this node is currently holding more agreed certificates than it will, which is
   // the state in which it is supposed to stop producing.
   template <>
-  void handle(simplex::BusHandle, std::shared_ptr<const FinalizationBacklog> event) {
+  void handle(simplex::BusHandle bus, std::shared_ptr<const FinalizationBacklog> event) {
     if (event->over_limit) {
       ++BACKLOG_OVER_LIMIT_REPORTS;
     } else if (backlogged_) {
       ++BACKLOG_CLEARED_REPORTS;
     }
     backlogged_ = event->over_limit;
+    if (FINALIZATION_HOLD_STALL_TEST && bus->local_id.has_value()) {
+      std::scoped_lock lock(HOLD_STALL_TIMELINE.mutex);
+      HOLD_STALL_TIMELINE.backlog[bus->local_id->idx.value()].emplace_back(td::Time::now(), event->over_limit);
+    }
   }
 
  private:
@@ -1189,6 +1219,9 @@ class TestConsensus : public td::actor::Actor {
         .slots_per_leader_window = SLOTS_PER_LEADER_WINDOW,
         .noncritical_params = {.target_rate{TARGET_RATE_MS}},
     };
+    if (FINALIZATION_HOLD_STALL_TEST) {
+      bus->config.noncritical_params.first_block_timeout_multiplier = 1.0;
+    }
     bus->session_id = SESSION_ID;
     bus->cc_seqno = CC_SEQNO;
     bus->validator_set_hash = validator_set_->get_validator_set_hash();
@@ -1523,6 +1556,103 @@ class TestConsensus : public td::actor::Actor {
     return {};
   }
 
+  // The proof the hold scenario needs and a count of backlog reports does not give: that the
+  // skip deadline a node had armed expired while that node was over the limit, on more than
+  // a third of the nodes, and that slots kept being finalized once the last of them cleared.
+  // Without the first, a hold that ended before the deadline would pass this scenario for a
+  // reason that has nothing to do with the deadline.
+  td::actor::Task<std::optional<std::string>> check_hold_stall(td::Timestamp deadline) {
+    const double timeout_offset =
+        std::chrono::duration<double>(NewConsensusConfig{}.noncritical_params.first_block_timeout).count() +
+        static_cast<double>(TARGET_RATE_MS) / 1000.0;
+    auto all_cleared = [] {
+      std::scoped_lock lock(HOLD_STALL_TIMELINE.mutex);
+      if (HOLD_STALL_TIMELINE.backlog.empty()) {
+        return false;
+      }
+      return std::all_of(HOLD_STALL_TIMELINE.backlog.begin(), HOLD_STALL_TIMELINE.backlog.end(),
+                         [](const auto& entry) { return !entry.second.empty() && !entry.second.back().second; });
+    };
+    while (!all_cleared() && !deadline.is_in_past()) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+    }
+    if (!all_cleared()) {
+      co_return std::string("a node held over the finalization limit never cleared");
+    }
+
+    size_t held_across_deadline = 0;
+    double first_over = std::numeric_limits<double>::max();
+    double last_clear = 0;
+    {
+      std::scoped_lock lock(HOLD_STALL_TIMELINE.mutex);
+      for (const auto& [node, transitions] : HOLD_STALL_TIMELINE.backlog) {
+        bool held = false;
+        for (size_t i = 0; i + 1 < transitions.size(); ++i) {
+          if (!transitions[i].second || transitions[i + 1].second) {
+            continue;
+          }
+          const double over_at = transitions[i].first;
+          const double clear_at = transitions[i + 1].first;
+          first_over = std::min(first_over, over_at);
+          last_clear = std::max(last_clear, clear_at);
+          const auto& windows = HOLD_STALL_TIMELINE.windows[node];
+          std::optional<double> armed;
+          for (double observed : windows) {
+            if (observed < clear_at) {
+              armed = observed;
+            }
+          }
+          if (!armed.has_value()) {
+            continue;
+          }
+          const double expires = *armed + timeout_offset;
+          LOG(WARNING) << "Finalization hold: node " << node << " over at +" << (over_at - *armed)
+                       << "s after its last window, deadline at +" << timeout_offset << "s, cleared at +"
+                       << (clear_at - *armed) << "s";
+          held = held || (over_at < expires && expires + 0.2 < clear_at);
+        }
+        held_across_deadline += held ? 1 : 0;
+      }
+    }
+    if (held_across_deadline * 3 <= N_NODES) {
+      co_return PSTRING() << "only " << held_across_deadline << " of " << N_NODES
+                          << " nodes were over the finalization limit when their skip deadline expired";
+    }
+
+    auto new_finalized_slots = [&] {
+      std::scoped_lock lock(HOLD_STALL_TIMELINE.mutex);
+      td::uint32 before = 0;
+      bool any_before = false;
+      for (const auto& [at, slot] : HOLD_STALL_TIMELINE.finalized) {
+        if (at <= last_clear) {
+          before = any_before ? std::max(before, slot) : slot;
+          any_before = true;
+        }
+      }
+      std::set<td::uint32> after;
+      for (const auto& [at, slot] : HOLD_STALL_TIMELINE.finalized) {
+        if (at > last_clear && (!any_before || slot > before)) {
+          after.insert(slot);
+        }
+      }
+      return after.size();
+    };
+    constexpr size_t required_new_slots = 3;
+    while (new_finalized_slots() < required_new_slots && !deadline.is_in_past()) {
+      co_await td::actor::coro_sleep(td::Timestamp::in(0.05));
+    }
+    const auto progressed = new_finalized_slots();
+    LOG(WARNING) << "Finalization hold: " << held_across_deadline << " of " << N_NODES
+                 << " nodes held across an expired skip deadline; held for " << (last_clear - first_over)
+                 << "s; new finalized slots after the last clear=" << progressed;
+    if (progressed < required_new_slots) {
+      co_return PSTRING() << "STALL: " << progressed
+                          << " new slots were finalized after the backlog cleared, expected at least "
+                          << required_new_slots;
+    }
+    co_return std::nullopt;
+  }
+
   td::actor::Task<> run_pq_finality_e2e_test() {
     auto fail = [&](std::string message) { pq_finality_error_ = std::move(message); };
 
@@ -1556,6 +1686,14 @@ class TestConsensus : public td::actor::Actor {
       }
       if (!adversity.happened()) {
         fail(PSTRING() << "this scenario configures " << adversity.name << ", but it never happened");
+        co_return td::Unit{};
+      }
+    }
+
+    if (FINALIZATION_HOLD_STALL_TEST) {
+      auto error = co_await check_hold_stall(deadline);
+      if (error.has_value()) {
+        fail(std::move(*error));
         co_return td::Unit{};
       }
     }
@@ -4006,6 +4144,9 @@ int main(int argc, char* argv[]) {
   p.add_option('\0', "finalization-backpressure-test",
                "require finalization backlog throttling, recovery, and one accepted block after recovery",
                [&]() { FINALIZATION_BACKPRESSURE_TEST = true; });
+  p.add_option('\0', "finalization-hold-stall-test",
+               "require a skip deadline to expire while finalization is held over its limit, then new finality",
+               [&]() { FINALIZATION_HOLD_STALL_TEST = true; });
   p.add_option('\0', "c04-health-test", "check actual native proposal, vote, storage and resolver observations", [&]() {
     C04_HEALTH_TEST = true;
     tos::health::enabled.store(true);

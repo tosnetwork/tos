@@ -92,6 +92,19 @@ size_t injected_permanent_finalization_failures() {
   return parsed.is_error() ? 0 : parsed.move_as_ok();
 }
 
+// A transient condition that lasts a fixed time rather than a fixed number of attempts: every
+// conversion attempt that starts within this many milliseconds of the first one fails with the
+// transient class of error. A count-based injection is used up by retries in well under a
+// skip timeout; this one holds the backlog over its limit across one. Unset outside tests.
+double injected_finalization_hold_seconds() {
+  const char* value = std::getenv("TOS_SIMPLEX_INJECT_FINALIZATION_HOLD_MS");
+  if (value == nullptr) {
+    return 0.0;
+  }
+  auto parsed = td::to_integer_safe<td::uint32>(td::Slice(value));
+  return parsed.is_error() ? 0.0 : static_cast<double>(parsed.ok()) / 1000.0;
+}
+
 size_t cache_limit_from_env(const char* name, size_t default_value) {
   const char* value = std::getenv(name);
   if (value == nullptr) {
@@ -641,6 +654,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   size_t finalized_db_skips_ = 0;
   size_t injected_transient_failures_remaining_ = injected_transient_finalization_failures();
   size_t injected_permanent_failures_remaining_ = injected_permanent_finalization_failures();
+  const double injected_hold_seconds_ = injected_finalization_hold_seconds();
+  std::optional<td::Timestamp> injected_hold_until_;
 
   void touch_finalized_cache(const CandidateId& id) {
     auto evicted = finalized_blocks_lru_.touch(id);
@@ -900,6 +915,14 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
                                           std::optional<CandidateRef> final_candidate) {
     auto& bus = *owning_bus();
 
+    if (injected_hold_seconds_ > 0.0) {
+      if (!injected_hold_until_.has_value()) {
+        injected_hold_until_ = td::Timestamp::in(injected_hold_seconds_);
+      }
+      if (!injected_hold_until_->is_in_past()) {
+        co_return td::Status::Error(ErrorCode::notready, "Simplex state-resolver: injected finalization hold");
+      }
+    }
     if (injected_transient_failures_remaining_ > 0) {
       --injected_transient_failures_remaining_;
       co_return td::Status::Error(ErrorCode::notready,

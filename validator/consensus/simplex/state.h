@@ -52,6 +52,14 @@ class ConsensusState {
     }
   }
 
+  // Visits the slots that are tracked and not finalized, in slot order, without creating any.
+  template <typename F>
+  void for_each_tracked_slot(F&& f) {
+    for (auto it = slots_.lower_bound(first_non_finalized_slot_); it != slots_.end(); ++it) {
+      f(SlotRef{.i = it->first, .state = it->second});
+    }
+  }
+
   struct TrackedSlotsInterval {
     td::uint32 begin;
     td::uint32 end;

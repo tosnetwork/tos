@@ -31,6 +31,7 @@ REQUIRED_NATIVE_TARGETS = {
     "test-n5-manager-db-fixture",
     "test-consensus",
     "test-notarize-after-transient-resolve",
+    "test-skip-after-finality-backlog",
     "test-state-resolver-teardown",
     "test-custom-overlay-relay-dedup",
     "test-pq-consensus-key-rotation",
@@ -48,6 +49,18 @@ REQUIRED_NATIVE_TARGETS = {
     "test-block-accepter",
     "test-rldp2-refusal-lifetime",
 }
+
+# The deterministic production-actor cases for a skip timeout that expires while finality
+# is behind. A registration that drops one still matches the '^a142-backlog-' selector.
+BACKLOG_SKIP_MODES = (
+    "stall-recovers",
+    "short-hold",
+    "final-redrive",
+    "superseded-deferral",
+    "notar-rearm",
+    "repeated-toggle",
+    "shutdown-pending",
+)
 
 # Each runs as its own anchored CTest that must exist (--no-tests=error).
 REFUSAL_AND_RETIREMENT_TESTS = (
@@ -407,6 +420,38 @@ def main() -> int:
             is not None,
             f"C05 four-node behavior CTest is absent or has wrong fault budget: {test_name}",
         )
+    for command in (
+        "ctest --test-dir build --output-on-failure --no-tests=error -R '^a142-backlog-'",
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^test-consensus-simplex2-pq-finality-backlog-stall$'",
+    ):
+        require(
+            re.search(rf"(?m)^\s*{re.escape(command)}\s*$", text) is not None,
+            f"Simplex skip-timeout-across-backlog behavior gate is absent: {command}",
+        )
+    backlog_modes = re.search(
+        r"foreach\(mode (?P<modes>[^)]*)\)\s*\n\s*add_test\(NAME a142-backlog-\$\{mode\} "
+        r"COMMAND test-skip-after-finality-backlog \$\{mode\}\)",
+        consensus_tests,
+    )
+    require(backlog_modes is not None, "skip-timeout-across-backlog CTest registration is absent")
+    missing_modes = sorted(set(BACKLOG_SKIP_MODES) - set(backlog_modes.group("modes").split()))
+    require(
+        not missing_modes,
+        f"skip-timeout-across-backlog CTest modes are not registered: {missing_modes}",
+    )
+    require(
+        re.search(
+            r"(?m)^\s*NAME test-consensus-simplex2-pq-finality-backlog-stall\s*$", consensus_tests
+        )
+        is not None
+        and re.search(
+            r'TOS_SIMPLEX_INJECT_FINALIZATION_HOLD_MS=10000;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"',
+            consensus_tests,
+        )
+        is not None,
+        "the four-node finalization hold CTest is absent or lost its hold or backlog limit",
+    )
     for test_name in RESTART_ORIGIN_TESTS:
         command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
         require(
@@ -478,6 +523,7 @@ def main() -> int:
         "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
         "the C05 parent-state retry CTest selector "
         "and its two named four-node fault controls, "
+        "the skip-timeout-across-backlog actor modes and four-node finalization hold, "
         "five named restart-origin controls, the six refusal, deadline, retirement and acceptance CTests, "
         "and the E04 Python negative-window tests; "
         "the Rust job compiles every test target and runs the E04 exact wallet confirmation group"

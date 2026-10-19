@@ -127,6 +127,32 @@ foreach(mode control genesis-notready genesis-timeout ancestor-notready permanen
     add_test(NAME c05-notarize-${mode} COMMAND test-notarize-after-transient-resolve ${mode})
 endforeach()
 
+# A skip timeout that expires while finality is behind, inside the production Consensus and
+# Pool actors: the backlog is toggled on the bus and every vote is observed by identity at
+# its committed intent, its committed signed record and its verified broadcast.
+add_executable(test-skip-after-finality-backlog test-skip-after-finality-backlog.cpp)
+target_link_libraries(test-skip-after-finality-backlog PRIVATE
+    validator
+    tos_validator
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+foreach(mode stall-recovers short-hold final-redrive superseded-deferral notar-rearm repeated-toggle
+             shutdown-pending)
+    add_test(NAME a142-backlog-${mode} COMMAND test-skip-after-finality-backlog ${mode})
+    set_tests_properties(a142-backlog-${mode} PROPERTIES TIMEOUT 60)
+endforeach()
+
 # A candidate that arrives after its slot is finalized, inside and outside the window in
 # which the candidate resolver still retains the slot; and the resolver's lifetime pin for a
 # resolve task that outlives the request it serves.
@@ -363,6 +389,22 @@ set_tests_properties(
     test-consensus-simplex2-pq-finality-backpressure
     PROPERTIES ENVIRONMENT
         "TOS_SIMPLEX_INJECT_TRANSIENT_FINALIZATION_FAILURES=12;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
+)
+# The same backpressure, held for longer than a skip timeout. A count of injected failures is
+# used up by retries in well under a timeout, so the hold here is time-based. The gate
+# requires proof that more than a third of the nodes were over the limit when their skip
+# deadline expired, and new finalized slots after the last of them cleared: a timeout that
+# expires while finality is behind must still be honoured once it catches up.
+add_test(
+    NAME test-consensus-simplex2-pq-finality-backlog-stall
+    COMMAND test-consensus --duration 80 --n-nodes 4 --target-rate-ms 100
+            --net-ping 0.005:0.02 --pq-finality-e2e-test
+            --finalization-backpressure-test --finalization-hold-stall-test
+)
+set_tests_properties(
+    test-consensus-simplex2-pq-finality-backlog-stall
+    PROPERTIES ENVIRONMENT
+        "TOS_SIMPLEX_INJECT_FINALIZATION_HOLD_MS=10000;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
 )
 # The other half of the same policy: a failure retrying cannot mend. Nothing before the
 # normal test traffic does not produce one, so it is injected -- and without that, the branch
