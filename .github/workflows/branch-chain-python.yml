@@ -396,6 +396,19 @@ jobs:
           uv run python test/integration/test_pq_consensus_key_rotation.py
           --build-dir build --artifact-dir test/integration/.pq-consensus-key-rotation-ci
 
+      - name: Collect disposable node failure logs
+        if: failure()
+        run: python3 scripts/collect-disposable-node-logs.py
+
+      - name: Retain disposable node failure logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: disposable-node-failure-${{ github.sha }}
+          path: build/disposable-node-logs/
+          if-no-files-found: warn
+          retention-days: 14
+
   # Package allowlists left chain_block_json's test target uncompilable for two
   # days. Compile every workspace test target on every branch push, separately
   # from the native chain fixture so neither job can silently stand in for the other.
