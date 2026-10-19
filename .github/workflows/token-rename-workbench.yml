@@ -1,0 +1,28 @@
+name: Token migration workbench
+
+on:
+  push:
+    branches: [refactor/token-naming]
+    paths:
+      - scripts/token-rename-workbench.py
+      - .github/workflows/token-rename-workbench.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: token-migration-workbench
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    if: github.repository == 'tosnetwork/tos' && github.ref == 'refs/heads/refactor/token-naming'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the migration branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Inspect the migration surface
+        run: python3 scripts/token-rename-workbench.py
