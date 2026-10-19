@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/prediction-market-release-scale.yml"
       - "crypto/smartcont/prediction-market-code.fc"
+      - "crypto/smartcont/prediction-market-v1.boc.base64"
       - "crypto/smartcont/prediction-market.tlb"
       - "tosctl/src/node-control/contracts/src/prediction_market.rs"
       - "tosctl/src/node-control/contracts/tests/prediction_market_sandbox.rs"
@@ -34,6 +35,21 @@ jobs:
 
       - name: Build FunC and Fift
         run: cmake --build build --target func fift -j2
+
+      - name: Verify source identity before scale execution
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: |
+          git rev-parse HEAD
+          build/crypto/func -V
+          cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts \
+            --test prediction_market_sandbox source_compiles_to_frozen_prediction_market_code \
+            -- --exact --list | grep -Fx 'source_compiles_to_frozen_prediction_market_code: test'
+          cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts \
+            --test prediction_market_sandbox source_compiles_to_frozen_prediction_market_code \
+            -- --exact --nocapture
 
       - name: Verify one, ten, and ten-thousand partial fills
         env:

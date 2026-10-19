@@ -37,6 +37,7 @@ pub mod components;
 pub mod frontier_probe;
 pub mod imt_probe;
 pub mod pool;
+pub mod public_client;
 pub mod stark_sketch_probe;
 pub mod transact;
 pub mod wire;

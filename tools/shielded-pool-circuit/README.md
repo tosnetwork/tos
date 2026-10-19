@@ -81,3 +81,15 @@ against six candidate sign and order patterns rather than recalled.
 toxic waste is therefore known and nothing produced here may verify a real
 transaction. Production keys come from the Phase-2 ceremony the profile
 requires.
+
+## Audited public-pool preparation
+
+The cross-check crate also exposes a transport-free `public_client` API and
+`prepare_public_pool` binary. Unlike the development fixtures, this path
+requires a finished audited ceremony, a pinned verifying key, a deployment
+execution domain and full-width OS entropy. It verifies every generated proof
+before canonical encoding. The binary freezes public StateInit material only
+after executing it locally with the captured fee configuration. It does not
+create funded wallets or submit messages. See the
+[offline candidate instructions](../../artifacts/shielded-pool/deployments/README.md)
+for reproduction, fee boundaries and the separate live acceptance gate.

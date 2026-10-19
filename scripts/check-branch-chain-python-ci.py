@@ -154,6 +154,31 @@ def validate_unconditional_steps(text: str) -> None:
             text = text.replace(
                 archive.group(0), archive.group(0).replace("        if: always()\n", ""), 1
             )
+    for name, command in (
+        ("Collect disposable node failure logs", "python3 scripts/collect-disposable-node-logs.py"),
+        ("Retain disposable node failure logs", None),
+    ):
+        step = re.search(
+            rf"(?ms)^      - name: {re.escape(name)}\n(?P<body>.*?)(?=^      - |^  #|\Z)",
+            text,
+        )
+        require(step is not None, "disposable node failure diagnostics are absent")
+        body = step.group("body")
+        require(body.count("        if: failure()\n") == 1, "node logs must be retained on failure")
+        if command is not None:
+            require(
+                body == f"        if: failure()\n        run: {command}\n\n",
+                "node log collector may only run its diagnostic command",
+            )
+        else:
+            require(
+                "run:" not in body
+                and "uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4"
+                in body
+                and "path: build/disposable-node-logs/" in body,
+                "node logs must use the pinned diagnostic archive",
+            )
+        text = text.replace(step.group(0), step.group(0).replace("        if: failure()\n", ""), 1)
     require("if:" not in text, "workflow makes a job or step conditional")
 
 

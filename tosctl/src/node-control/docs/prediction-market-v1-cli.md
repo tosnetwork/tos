@@ -187,6 +187,13 @@ flags `3`, one exact body reference, and no StateInit. The exact external BOC is
 persisted in custody before it is exposed. Prediction and Agreement actions use
 the same journal and therefore cannot reserve the same Agent Account seqno.
 
+Permissionless `prune_order` retains the nonce record until its key epoch is
+obsolete, its nonce is below the owner's current floor in that epoch, or trading
+has closed. Cancellation, full execution and expiry of one signed payload do
+not permit deletion: the record still binds every payload signed under that
+nonce. Only the owner can advance its floor or trading-key epoch. Cleanup
+credits remain liabilities until safe deletion and are released or paid once.
+
 The closed custody action mapping rejects pruning and account-force-close
 operations because no corresponding V1 semantic action is frozen for them.
 They remain permissionless/manual keeper operations; a future autonomous

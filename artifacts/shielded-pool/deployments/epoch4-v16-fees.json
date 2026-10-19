@@ -1,0 +1,64 @@
+{
+  "schema": "tos.shielded-pool.fee-snapshot.v1",
+  "global_id": 2,
+  "global_version": 16,
+  "runtime_commit": "85c679c3454f306eb867e25b1960ae3d757bd3dd",
+  "zero_state": {
+    "workchain": -1,
+    "shard": -9223372036854775808,
+    "seqno": 0,
+    "root_hash": "1pNiiHNcZuQEv2cIyaQHH+Zl8g5QV7ID9/o+8JV9kz4=",
+    "file_hash": "YWroZpqwuo+wlSS4NamKHRAOtukiJT2UQRz6gJYVigs="
+  },
+  "block": {
+    "workchain": -1,
+    "shard": "-9223372036854775808",
+    "seqno": 211750,
+    "root_hash": "6mfMvm1h0R8FD8PwH4BPr1XMZuKmW549+LcmphFMeB4=",
+    "file_hash": "veywiP/skU17lpnHPTNiJDhC5MxrPE6OLp7OEqGV3vE="
+  },
+  "chain_time": 1792402276,
+  "sources": [
+    "epoch-4 validator 1",
+    "epoch-4 validator 3"
+  ],
+  "evidence_scope": "Identical configuration cells read from two nodes at the same full block id. Proof bytes retained in coordinator receipts; offline pricing does not independently verify the proof chain. Revalidate before live use.",
+  "parameters": {
+    "8": {
+      "boc_hex": "b5ee9c7201010101000f00001ac40000001000000000000001ee",
+      "boc_sha256": "6777d9b267970f0763bc133aa1ca398f7e38e1c93efcd754578362db0dda2fe1"
+    },
+    "18": {
+      "boc_hex": "b5ee9c7201010101002900004dd06600000000000000000000000080000000000000fa00000000000001f4000000000003d09040",
+      "boc_sha256": "8130cac956053c329a156ce4feb56e36033656499b28ae4fd1a2180ee5f77328"
+    },
+    "19": {
+      "boc_hex": "b5ee9c7201010101000600000800000002",
+      "boc_sha256": "ffae101a1735578f92e048a7308214cd6d4c2c9d725fd43b0c0d7023c2916f98"
+    },
+    "20": {
+      "boc_hex": "b5ee9c7201010101004c000094d1000000000000006400000000000f4240de000000002710000000000000000f424000000000042c1d80000000000000271000000000002625a00000000005f5e100000000003b9aca00",
+      "boc_sha256": "993984002d18512b35221c1c362161c2cfcd4004cfcb1e43629587d02d3721c6"
+    },
+    "21": {
+      "boc_hex": "b5ee9c7201010101004c000094d10000000000000064000000000000029bde000000000006aaab00000000001e848000000000001e848000000000000027100000000001312d000000000005f5e100000000003b9aca00",
+      "boc_sha256": "cadec34fb39d3db13b07d2e26ebd9adc5aaf51c8161f8fbf821918e9b6f3f71a"
+    },
+    "24": {
+      "boc_hex": "b5ee9c72010101010023000042ea000000000098968000000000271000000000000f424000000001800055555555",
+      "boc_sha256": "c06feec400732bebd9027d125f9b77233773c7a3b8b0c606080d2a0b135a168e"
+    },
+    "25": {
+      "boc_hex": "b5ee9c72010101010023000042ea000000000001046b000000000042aaab000000001a0aaaab0001800055555555",
+      "boc_sha256": "c0fa8e647ab162ce84d88762e611b1f5f78b17cd346f42a05f5e44d9f7381aed"
+    },
+    "31": {
+      "boc_hex": "b5ee9c72010102010028000101c0010043a0066666666666666666666666666666666666666666666666666666666666666670",
+      "boc_sha256": "8ec6eee6965073ce3f3537cfec9da5b8a872ce679dddacb5a5e069c5b3d6e81f"
+    },
+    "43": {
+      "boc_hex": "b5ee9c7201010101003d000075030020000000002000000000c802000000ffff02000001000000000800000001000000010000000000080000001a80000001802800000000280040",
+      "boc_sha256": "4ff08ee2e8a95b2f895e0c3608401c3ce11c8d970354dd618581fd652e7a17a9"
+    }
+  }
+}
