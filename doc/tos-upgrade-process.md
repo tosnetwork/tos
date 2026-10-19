@@ -213,7 +213,17 @@ Validators upgrade one at a time, keeping the quorum, as described in [Validator
 
 **Global config:**
 
-A release that publishes a network's global config refreshes its `validator.init_block` to a recent key block with `scripts/refresh-global-config-init-block.py`, so that new nodes and clients can still prove their way forward from it. The refreshed file is authenticated by the release that carries it (digest and attestation), not by the tool.
+A release refreshes `validator.init_block` with
+`scripts/refresh-global-config-init-block.py` to the newest key block that starts
+a persistent-state period, is at least one hour old, and has more than eight
+hours of persistent-state life left. The first key block after genesis is
+compared with the zerostate time, not treated as having no predecessor; only
+the input config's init block is exempt from that comparison. If no eligible
+block or zerostate timestamp evidence is available, the tool refuses without
+writing. Timestamp eligibility does not establish snapshot availability. See
+[the operator procedure](validator-operator-guide.md#11-refresh-the-global-configs-init-block)
+for source checks and retry guidance. The release authenticates the refreshed
+file by digest and attestation; the tool does not authenticate its node.
 
 ### 4.5 Deprecation
 
