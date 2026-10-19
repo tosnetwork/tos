@@ -10,7 +10,7 @@
     "tosctl/src/node-control/contracts/src/validator_controller_tests.rs": "0228545b86822243ee769ebccaf96bc1af8a1f4647f96fea90a3e884a4845844",
     "tosctl/src/node-control/contracts/tests/agent_account_sandbox.rs": "56ad5ef3e1c144eaed3151a774e84fab4d5df64b341f0386a044eba7b7128f05",
     "tosctl/src/node-control/contracts/tests/elector_sandbox.rs": "c1d8c1e360d609280de82a6441319972d176598dcd33eb82ffa3a5bd1b686f2e",
-    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_accounting.rs": "86539c342822eebdc739febc291f7e83f69c149f55e16cc4ad6361859ff05203",
+    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_accounting.rs": "f045237bd7031ab52507ab040f6b8e06dc7276ab05b0477c82090f953d219c13",
     "tosctl/src/node-control/contracts/tests/task_escrow_sandbox.rs": "ad5585557d48717ad948a33444cc7a55f61d5076dc84d5c3ea6ec4b5ac521346",
     "test/regression-tests.ans": "2651d3c712f0b16176e79caea438a67dd8c0ed4e01eb7e401feafd7c4ea0f748"
   },
