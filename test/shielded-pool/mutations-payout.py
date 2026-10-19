@@ -94,7 +94,7 @@ CASES = [
     Case('fee-recovery-again', 'the floor pre-pays a whole bounded recovery again',
          '  throw_unless(243, withdrawal_fee >= payout_forward_fee(body));',
          '  throw_unless(243,\n    withdrawal_fee >= payout_forward_fee(body) '
-         '+ get_compute_fee(0, 220000));', FEE_TEST),
+         '+ get_compute_fee(0, 240000));', FEE_TEST),
     Case('forward-fee-cells', 'the forward fee ignores how many cells the message has',
          '  return get_forward_fee(0, bits, cells);', '  return get_forward_fee(0, bits, 0);',
          CHARGED_TEST),

@@ -65,15 +65,26 @@ if [ "$with_tests" = true ]; then
 ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
       validator-engine lite-client validator-engine-console blockchain-explorer \
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy dht-ping-servers dht-resolve \
- create-state emulator proxy-liteserver all-tests
+ create-state emulator proxy-liteserver tos-pq-consensus-key tos-pq-controller tos-pq-vote all-tests
       test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 else
 ninja storage-daemon storage-daemon-cli fift func tol toslib toslibjson toslib-cli \
       validator-engine lite-client validator-engine-console blockchain-explorer \
       generate-random-id json2tlo dht-server http-proxy rldp-http-proxy \
- create-state emulator proxy-liteserver dht-ping-servers dht-resolve
+ create-state emulator proxy-liteserver tos-pq-consensus-key tos-pq-controller tos-pq-vote dht-ping-servers dht-resolve
       test $? -eq 0 || { echo "Can't compile tos"; exit 1; }
 fi
+
+# The controller root key tool is a separate CMake project, so the root signer
+# stays out of every node target's link graph. It links the static OpenSSL the
+# main build just produced and therefore needs no system libcrypto.
+rm -rf pq-key
+cmake -GNinja -S ../crypto/pq/tools -B pq-key \
+-DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Release \
+-DOPENSSL_ROOT_DIR="$(pwd)/third-party/openssl" -DOPENSSL_USE_STATIC_LIBS=TRUE
+test $? -eq 0 || { echo "Can't configure tos-pq-key"; exit 1; }
+ninja -C pq-key tos-pq-key
+test $? -eq 0 || { echo "Can't compile tos-pq-key"; exit 1; }
 
 # simple binaries' test
 ./storage/storage-daemon/storage-daemon -V || exit 1
@@ -91,6 +102,11 @@ echo libtoslibjson.so
 ldd ./toslib/libtoslibjson.so.0.5 || exit 1
 echo libemulator.so
 ldd ./emulator/libemulator.so  || exit 1
+echo PQ key tools
+ldd ./crypto/pq/tos-pq-consensus-key || exit 1
+ldd ./crypto/tos-pq-controller || exit 1
+ldd ./crypto/tos-pq-vote || exit 1
+ldd ./pq-key/tos-pq-key || exit 1
 
 cd ..
 
@@ -105,6 +121,8 @@ if [ "$with_artifacts" = true ]; then
      build/dht-server/dht-server build/lite-client/lite-client build/validator-engine/validator-engine \
      build/utils/generate-random-id build/utils/json2tlo build/emulator/libemulator.so \
      build/dht/dht-ping-servers build/dht/dht-resolve \
+     build/crypto/pq/tos-pq-consensus-key build/crypto/tos-pq-controller build/crypto/tos-pq-vote \
+     build/pq-key/tos-pq-key \
      artifacts
   test $? -eq 0 || { echo "Can't copy final binaries"; exit 1; }
   cp -R crypto/smartcont artifacts

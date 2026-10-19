@@ -1,0 +1,11 @@
+[Unit]
+Description=Run local AURA process watch every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+Unit=nhm-aura-process-watch.service
+
+[Install]
+WantedBy=timers.target

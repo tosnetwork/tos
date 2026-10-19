@@ -13,7 +13,10 @@ mod pool_impl;
 /// Trait for multi-nominator pool contract
 mod wrapper;
 
-pub use pool_impl::NominatorPoolWrapperImpl;
+pub use pool_impl::{
+    NOMINATOR_POOL_SNAPSHOT_METHODS, NominatorPoolSnapshot, NominatorPoolSnapshotProof,
+    NominatorPoolWrapperImpl, PoolSnapshotSource, read_proven_nominator_pool_snapshot,
+};
 pub use wrapper::*;
 
 /// Message builders for multi-nominator pool operations

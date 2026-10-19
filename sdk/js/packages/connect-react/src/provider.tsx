@@ -21,7 +21,7 @@ import {
 } from "react";
 import { createTosConfig, TosProvider } from "@tos/react";
 import { SenderContext } from "@tos/react";
-import type { ConnectedWallet, WalletInfo, ConnectRequest } from "@tos/connect";
+import type { ConnectedWallet, WalletInfo } from "@tos/connect";
 import type { Sender } from "@tos/react";
 
 import { ConnectContext, ModalContext, ThemeContext, TranslationContext, DEFAULT_TRANSLATIONS } from "./context.js";
@@ -31,6 +31,7 @@ import type {
   ThemeProp,
   ResolvedTheme,
   ConnectContextValue,
+  ConnectOptions,
   ModalContextValue,
   TosConnectInstance,
   TranslationKeys,
@@ -260,6 +261,7 @@ export function TosConnectProvider({
   const [connector, setConnector] = useState<TosConnectInstance | null>(null);
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<Error | null>(null);
   const connectorRef = useRef<TosConnectInstance | null>(null);
 
   // Stable reference to config for the async init
@@ -319,7 +321,7 @@ export function TosConnectProvider({
 
   // ---- Connection actions ----
   const connect = useCallback(
-    (walletInfo?: WalletInfo, request?: ConnectRequest) => {
+    (walletInfo?: WalletInfo, request?: ConnectOptions) => {
       const c = connectorRef.current;
       if (!c) return;
       if (!walletInfo) {
@@ -328,12 +330,22 @@ export function TosConnectProvider({
       }
 
       setConnecting(true);
+      setConnectError(null);
       // TosConnect.connect() is synchronous — returns a universal link or null.
       // The actual wallet state arrives asynchronously via onStatusChange.
       try {
-        const items = request?.items;
-        c.connect(walletInfo, items ? { items } : undefined);
-      } catch {
+        const options: ConnectOptions = {};
+        if (request?.items) options.items = request.items;
+        if (request?.walletSessionPublicKey !== undefined) {
+          options.walletSessionPublicKey = request.walletSessionPublicKey;
+        }
+        c.connect(walletInfo, options);
+      } catch (err) {
+        // A refused connection (for example an HTTP-bridge wallet without a
+        // valid paired key) is reported, not swallowed.
+        const error = err instanceof Error ? err : new Error(String(err));
+        console.warn("[TOS Connect] Connection refused:", error);
+        setConnectError(error);
         setConnecting(false);
       }
     },
@@ -362,10 +374,11 @@ export function TosConnectProvider({
       connector,
       wallet,
       connecting,
+      connectError,
       disconnect,
       connect,
     }),
-    [connector, wallet, connecting, disconnect, connect],
+    [connector, wallet, connecting, connectError, disconnect, connect],
   );
 
   // ---- Modal state ----

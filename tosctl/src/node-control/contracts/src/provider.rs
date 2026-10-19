@@ -6,6 +6,7 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
+use crate::config_contract::{ProposalAnswer, ProposalRead};
 use anyhow::Context;
 use chain_block::MsgAddressInt;
 use chain_rpc_client::v2::{
@@ -59,6 +60,17 @@ pub trait ContractProvider: Send + Sync {
 
     /// Query the balance (in nanotos) of the given address.
     async fn balance(&self, address: &MsgAddressInt) -> anyhow::Result<u64>;
+
+    /// Reads configuration-contract proposals as flat results, on a bounded worker
+    /// (see [`crate::config_contract::proposal_transport`]). Fails closed: a provider
+    /// serves proposal reads only by implementing this, never through `get_method`.
+    async fn read_proposals(
+        &self,
+        _address: &MsgAddressInt,
+        _read: ProposalRead,
+    ) -> anyhow::Result<ProposalAnswer> {
+        anyhow::bail!("proposal reads are unsupported by this provider")
+    }
 }
 
 pub struct ContractProviderImpl {
@@ -104,5 +116,14 @@ impl ContractProvider for ContractProviderImpl {
             .await
             .context("Failed to get account info")?;
         Ok(info.balance)
+    }
+
+    async fn read_proposals(
+        &self,
+        address: &MsgAddressInt,
+        read: ProposalRead,
+    ) -> anyhow::Result<ProposalAnswer> {
+        crate::config_contract::proposal_transport::read_proposals(&self.rpc_client, address, read)
+            .await
     }
 }

@@ -10,16 +10,16 @@
 //! the version it starts at, what it refuses, and what it costs.
 
 use chain_block::{
-    BuilderData, Cell, ExceptionCode, IBitstring,
     poseidon2_kat::{HASH7, PERM8},
     poseidon2_params::MODULUS_BE,
+    BuilderData, Cell, ExceptionCode, IBitstring,
 };
-use tos_vm::stack::{Stack, StackItem, integer::IntegerData};
+use tos_vm::stack::{integer::IntegerData, Stack, StackItem};
 
 mod common;
 use common::*;
 
-const ACTIVE_VERSION: u32 = 17;
+const ACTIVE_VERSION: u32 = 16;
 /// The measured tariff, the cost of a 24-bit instruction, and the implicit
 /// return. Written as specification literals, not read from the
 /// implementation: a test that reads the constant it checks cannot catch that
@@ -195,8 +195,8 @@ fn both_instructions_cost_the_tariff() {
 
 // --- POSEIDON2_PATH7 --------------------------------------------------------
 
-/// The version PATH7 shipped in, which is one past the pair above.
-const PATH7_VERSION: u32 = 18;
+/// The unified development version shared by all Poseidon2 instructions.
+const PATH7_VERSION: u32 = 16;
 /// 500 base, 3,700 a level for twelve levels, and the twenty-four cells the
 /// path is made of at the VM's own first-load price, plus the instruction and
 /// the implicit return. Written as literals for the same reason as
@@ -249,7 +249,12 @@ fn path_cells(siblings: &[[[u8; 32]; 6]], short_level: Option<usize>, extra_ref:
 
 /// The same fold, done with HASH7 alone, so the instruction is checked against
 /// the primitive it is made of rather than against itself.
-fn fold_with_hash7(leaf: [u8; 32], domain: [u8; 32], siblings: &[[[u8; 32]; 6]], index: u64) -> [u8; 32] {
+fn fold_with_hash7(
+    leaf: [u8; 32],
+    domain: [u8; 32],
+    siblings: &[[[u8; 32]; 6]],
+    index: u64,
+) -> [u8; 32] {
     let mut carry = leaf;
     let mut remaining = index;
     for six in siblings {
@@ -299,7 +304,13 @@ fn a_path_is_the_same_fold_done_with_hash7() {
         let expected = fold_with_hash7(leaf, domain, &siblings, index);
         test_case("POSEIDON2_PATH7")
             .with_block_version(PATH7_VERSION)
-            .with_stack(path_stack(leaf, domain, path_cells(&siblings, None, false), index, DEPTH as u64))
+            .with_stack(path_stack(
+                leaf,
+                domain,
+                path_cells(&siblings, None, false),
+                index,
+                DEPTH as u64,
+            ))
             .expect_success_extended(Some(&format!("index {index}")))
             .expect_stack_extended(&stack_of(&[expected]), Some(&format!("index {index}")));
     }
@@ -348,11 +359,53 @@ fn the_vector_the_cpp_vm_is_pinned_to() {
 const CPP_VM_VECTOR: &str = "12d4dd5748fd48cd8a53067a28ca130a52134c5877c81426b8328cdacfa0ee35";
 
 #[test]
+/// An index that does not fit its depth is decided before any level is paid
+/// for.
+///
+/// Pinned by starving it rather than by reading a gas figure: given a budget
+/// that covers the base charge and no level, the refusal must still be a range
+/// check. A VM that walked the twelve levels first would run out of gas before
+/// it ever looked at the leftover digit, and would answer `OutOfGas` here.
+///
+/// This is the half that was missing. The malformed corpus below asserts the
+/// exception and says nothing about the price, and the two VMs disagreed about
+/// the price by twelve levels -- the C++ one charged more to refuse an
+/// oversized index than to walk a real path. An exception that is right at any
+/// price is not the same instruction.
+#[test]
+fn an_index_past_the_depth_is_refused_before_a_level_is_charged() {
+    let siblings = sample(DEPTH);
+    // 7^12: the smallest index needing a thirteenth base-seven digit.
+    const PAST_THE_DEPTH: u64 = 13_841_287_201;
+    // The base, and not one level. Enough slack for the surrounding
+    // continuation, nowhere near the 3,000 a level costs.
+    const ONLY_THE_BASE: i64 = 500 + 100;
+
+    test_case("POSEIDON2_PATH7")
+        .with_block_version(PATH7_VERSION)
+        .with_stack(path_stack(
+            small(1),
+            small(2),
+            path_cells(&siblings, None, false),
+            PAST_THE_DEPTH,
+            DEPTH as u64,
+        ))
+        .with_gas_limit(ONLY_THE_BASE)
+        .expect_failure(ExceptionCode::RangeCheckError);
+}
+
+#[test]
 fn a_path_costs_its_base_plus_a_level() {
     let siblings = sample(DEPTH);
     test_case("POSEIDON2_PATH7")
         .with_block_version(PATH7_VERSION)
-        .with_stack(path_stack(small(1), small(2), path_cells(&siblings, None, false), 5, DEPTH as u64))
+        .with_stack(path_stack(
+            small(1),
+            small(2),
+            path_cells(&siblings, None, false),
+            5,
+            DEPTH as u64,
+        ))
         .expect_success()
         .expect_gas_used(PATH7_EXPECTED_GAS);
 }
@@ -363,7 +416,13 @@ fn the_path_instruction_does_not_exist_before_its_version() {
     for version in 0..PATH7_VERSION {
         test_case("POSEIDON2_PATH7")
             .with_block_version(version)
-            .with_stack(path_stack(small(1), small(2), path_cells(&siblings, None, false), 5, DEPTH as u64))
+            .with_stack(path_stack(
+                small(1),
+                small(2),
+                path_cells(&siblings, None, false),
+                5,
+                DEPTH as u64,
+            ))
             .expect_failure_extended(
                 ExceptionCode::InvalidOpcode,
                 Some(&format!("POSEIDON2_PATH7 at version {version}")),
@@ -410,7 +469,11 @@ fn every_malformed_path_is_refused() {
         ExceptionCode::RangeCheckError,
         "a depth past the bound",
     );
-    run(path_stack(small(1), small(2), good(), 5, 0), ExceptionCode::RangeCheckError, "a zero depth");
+    run(
+        path_stack(small(1), small(2), good(), 5, 0),
+        ExceptionCode::RangeCheckError,
+        "a zero depth",
+    );
     // An index with a digit left over after the depth given.
     run(
         path_stack(small(1), small(2), good(), 13_841_287_201, DEPTH as u64),
@@ -419,7 +482,13 @@ fn every_malformed_path_is_refused() {
     );
     // A path shorter than the depth.
     run(
-        path_stack(small(1), small(2), path_cells(&sample(DEPTH - 1), None, false), 5, DEPTH as u64),
+        path_stack(
+            small(1),
+            small(2),
+            path_cells(&sample(DEPTH - 1), None, false),
+            5,
+            DEPTH as u64,
+        ),
         ExceptionCode::CellUnderflow,
         "a path shorter than its depth",
     );

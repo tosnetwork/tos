@@ -1,0 +1,90 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; TEST ONLY: exposes each pq-quorum-signatures.fc entry point as an internal message, so
+;; the library runs in real transactions with real gas. Not a contract to deploy.
+;;
+;; storage: verifiers:(Maybe ^Cell) count:uint8 quorum:uint8 checks:uint32 last_hash:uint256
+
+#include "../../crypto/smartcont/pq-quorum-signatures.fc";
+
+const int op::configure = 1;      ;; verifiers:(Maybe ^Cell) quorum:uint8
+const int op::add_verifier = 2;   ;; stored_key:^Cell
+const int op::check = 3;          ;; hash:uint256 signatures:(Maybe ^Cell)
+const int op::signing_hash = 4;   ;; domain:uint32 target:MsgAddress nonce:uint64 valid_until:uint32 payload:^Cell
+const int op::with_quorum = 5;    ;; quorum:uint8
+const int op::with_verifiers = 6; ;; verifiers:(Maybe ^Cell)
+const int op::expiry = 7;         ;; valid_until:uint32
+const int op::raw_store = 8;      ;; verifiers:(Maybe ^Cell) count:uint8 quorum:uint8, unchecked
+const int op::is_verifier = 9;    ;; key_id:uint256 -> last_hash = 1 or 0
+const int op::add_to_config = 10; ;; stored_key:^Cell
+const int op::remove = 11;        ;; key_id:uint256
+const int op::approve_rotation = 12; ;; hash:uint256 signatures:(Maybe ^Cell) add:^Cell remove:uint256
+
+(cell, int, int, int, int) load_state() inline {
+  slice ds = get_data().begin_parse();
+  return (ds~load_dict(), ds~load_uint(8), ds~load_uint(8), ds~load_uint(32), ds~load_uint(256));
+}
+
+() save_state(cell verifiers, int count, int quorum, int checks, int last_hash) impure inline {
+  set_data(begin_cell().store_dict(verifiers).store_uint(count, 8).store_uint(quorum, 8)
+      .store_uint(checks, 32).store_uint(last_hash, 256).end_cell());
+}
+
+() recv_internal(int balance, int value, cell full, slice body) impure {
+  if (full.begin_parse().preload_uint(4) & 1) { return (); }
+  if (body.slice_bits() < 32) { return (); }
+  int op = body~load_uint(32);
+  (cell verifiers, int count, int quorum, int checks, int last_hash) = load_state();
+  if (op == op::configure) {
+    [cell v, int c, int q] = pq_quorum::config(body~load_dict(), body~load_uint(8));
+    save_state(v, c, q, checks, last_hash);
+  } elseif (op == op::add_verifier) {
+    cell next = pq_quorum::add_verifier(verifiers, body~load_ref());
+    save_state(next, count + 1, quorum, checks, last_hash);
+  } elseif (op == op::check) {
+    int hash = body~load_uint(256);
+    pq_quorum::require_quorum([verifiers, count, quorum], hash, body~load_dict());
+    save_state(verifiers, count, quorum, checks + 1, last_hash);
+  } elseif (op == op::signing_hash) {
+    int domain = body~load_uint(32);
+    slice target = body~load_msg_addr();
+    int nonce = body~load_uint(64);
+    int valid_until = body~load_uint(32);
+    int hash = pq_quorum::signing_hash(domain, target, nonce, valid_until, body~load_ref());
+    save_state(verifiers, count, quorum, checks, hash);
+  } elseif (op == op::with_quorum) {
+    [cell v, int c, int q] = pq_quorum::with_quorum([verifiers, count, quorum], body~load_uint(8));
+    save_state(v, c, q, checks, last_hash);
+  } elseif (op == op::with_verifiers) {
+    [cell v, int c, int q] = pq_quorum::with_verifiers([verifiers, count, quorum], body~load_dict());
+    save_state(v, c, q, checks, last_hash);
+  } elseif (op == op::raw_store) {
+    cell raw = body~load_dict();
+    int raw_count = body~load_uint(8);
+    save_state(raw, raw_count, body~load_uint(8), checks, last_hash);
+  } elseif (op == op::is_verifier) {
+    int found = pq_quorum::verifier?([verifiers, count, quorum], body~load_uint(256));
+    save_state(verifiers, count, quorum, checks, found ? 1 : 0);
+  } elseif (op == op::add_to_config) {
+    [cell v, int c, int q] = pq_quorum::with_added_verifier([verifiers, count, quorum], body~load_ref());
+    save_state(v, c, q, checks, last_hash);
+  } elseif (op == op::remove) {
+    [cell v, int c, int q] = pq_quorum::with_removed_verifier([verifiers, count, quorum], body~load_uint(256));
+    save_state(v, c, q, checks, last_hash);
+  } elseif (op == op::approve_rotation) {
+    var config = [verifiers, count, quorum];
+    int hash = body~load_uint(256);
+    pq_quorum::require_quorum(config, hash, body~load_dict());
+    cell incoming = body~load_ref();
+    ;; remove first, so a full set has room for the key that replaces it
+    config = pq_quorum::with_removed_verifier(config, body~load_uint(256));
+    config = pq_quorum::with_added_verifier(config, incoming);
+    [cell v, int c, int q] = config;
+    save_state(v, c, q, checks + 1, last_hash);
+  } elseif (op == op::expiry) {
+    pq_quorum::require_not_expired(body~load_uint(32));
+    save_state(verifiers, count, quorum, checks + 1, last_hash);
+  } else {
+    throw(0xffff);
+  }
+}

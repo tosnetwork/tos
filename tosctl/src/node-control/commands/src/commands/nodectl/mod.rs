@@ -7,6 +7,8 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 pub(crate) mod account_cmd;
+#[cfg(test)]
+mod address_flag_tests;
 pub(crate) mod admin_cmd;
 pub(crate) mod agent_cmd;
 pub(crate) mod auth_cmd;
@@ -20,6 +22,7 @@ pub(crate) mod config_log_cmd;
 pub(crate) mod config_node_cmd;
 pub(crate) mod config_pool_cmd;
 pub(crate) mod config_wallet_cmd;
+pub(crate) mod controller_cmd;
 pub(crate) mod deploy_cmd;
 pub(crate) mod dispute_cmd;
 pub(crate) mod domain_cmd;
@@ -27,6 +30,8 @@ pub(crate) mod host_cmd;
 pub(crate) mod install_cmd;
 pub(crate) mod key_cmd;
 pub(crate) mod master_wallet_cmd;
+#[cfg(test)]
+mod negative_number_flag_tests;
 pub(crate) mod node_cmd;
 pub(crate) mod observe_cmd;
 pub(crate) mod output_format;
@@ -41,3 +46,6 @@ pub(crate) mod tx_cmd;
 mod utils;
 pub(crate) mod vote_cmd;
 pub(crate) mod wallet_cmd;
+
+#[cfg(feature = "pq-wallet")]
+mod wallet_pq_cmd;

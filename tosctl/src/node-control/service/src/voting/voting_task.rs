@@ -16,10 +16,7 @@ use crate::{
 use anyhow::Context;
 use chain_block::{ValidatorSet, write_boc};
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx};
-use contracts::{
-    ConfigContractImpl, ConfigContractWrapper, ConfigProposal, Wallet, config_contract,
-    contract_provider,
-};
+use contracts::{ConfigContractImpl, ConfigContractWrapper, Wallet, contract_provider};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 const SEND_VOTE_AMOUNT: u64 = 1_000_000_000;
@@ -29,10 +26,40 @@ struct Node {
     wallet: Arc<dyn Wallet>,
 }
 
+#[async_trait::async_trait]
+trait ProposalReader: Send + Sync {
+    async fn metadata(
+        &mut self,
+    ) -> anyhow::Result<Vec<control_client::operator_reads::ConfigProposalMeta>>;
+    async fn shutdown(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl ProposalReader for control_client::client_adnl::ControlClientAdnl {
+    async fn metadata(
+        &mut self,
+    ) -> anyhow::Result<Vec<control_client::operator_reads::ConfigProposalMeta>> {
+        use control_client::client_api::ClientAPI;
+        Ok(
+            self.get_config_proposals(
+                &control_client::operator_reads::ConfigProposalsRequest::default(),
+            )
+            .await?
+            .proposals,
+        )
+    }
+    async fn shutdown(&mut self) -> anyhow::Result<()> {
+        self.shutdown().await
+    }
+}
+
 struct VotingRunner {
     nodes: HashMap<String, Node>,
     config_contract: Arc<dyn ConfigContractWrapper>,
     tracked_proposals: Vec<[u8; 32]>,
+    proposal_reader: Box<dyn ProposalReader>,
 }
 
 pub(crate) async fn run(
@@ -43,6 +70,14 @@ pub(crate) async fn run(
     let Some(config) = app_config.voting.as_ref() else {
         anyhow::bail!("voting config is empty");
     };
+    let (_, read_node) = app_config
+        .nodes
+        .iter()
+        .min_by(|(a, _), (b, _)| a.cmp(b))
+        .context("no control node configured for proposal reads")?;
+    let read_config = read_node.to_node_adnl_config(runtime_cfg.vault()).await?;
+    let proposal_reader: Box<dyn ProposalReader> =
+        Box::new(control_client::client_adnl::ControlClientAdnl::new(read_config, 4));
     let adnl_configs = app_config.nodes.clone();
     let mut set = tokio::task::JoinSet::new();
     let mut nodes: Vec<_> = adnl_configs.into_iter().collect();
@@ -100,7 +135,7 @@ pub(crate) async fn run(
         })
         .collect::<Vec<_>>();
 
-    let mut runner = VotingRunner::new(nodes, config_contract, proposals);
+    let mut runner = VotingRunner::new(nodes, config_contract, proposals, proposal_reader);
     runner
         .run_loop(Duration::from_secs(config.tick_interval), cancellation_ctx)
         .await
@@ -112,8 +147,9 @@ impl VotingRunner {
         nodes: HashMap<String, Node>,
         config_contract: Arc<dyn ConfigContractWrapper>,
         tracked_proposals: Vec<[u8; 32]>,
+        proposal_reader: Box<dyn ProposalReader>,
     ) -> Self {
-        Self { nodes, config_contract, tracked_proposals }
+        Self { nodes, config_contract, tracked_proposals, proposal_reader }
     }
 
     async fn run_loop(
@@ -145,11 +181,7 @@ impl VotingRunner {
     }
 
     async fn run(&mut self) -> anyhow::Result<()> {
-        let proposals = self
-            .config_contract
-            .list_proposals()
-            .await
-            .map_err(|e| anyhow::anyhow!("get proposals error: {}", e))?;
+        let proposals = self.proposal_reader.metadata().await.context("get proposals error")?;
         tracing::info!(target: "voting", "active proposals: {} {}", proposals.len(), proposals.iter().map(|p| hex::encode(p.hash)).collect::<Vec<_>>().join(", "));
         let proposals: Vec<_> = proposals
             .into_iter()
@@ -179,10 +211,10 @@ impl VotingRunner {
     async fn vote_for_proposal(
         &mut self,
         node_id: &str,
-        proposal: &ConfigProposal,
+        proposal: &control_client::operator_reads::ConfigProposalMeta,
         vset: &ValidatorSet,
     ) -> anyhow::Result<()> {
-        let node = self.nodes.get_mut(node_id).expect("node not found");
+        let node = self.nodes.get_mut(node_id).context("node not found")?;
         let (validator_idx, validator_entry) = Self::find_validator_entry(node, vset).await?;
 
         if proposal.voters.contains(&validator_idx) {
@@ -203,20 +235,26 @@ impl VotingRunner {
             validator_idx
         );
 
-        // Build the data to sign
-        let signing_data = config_contract::messages::unsigned_vote(validator_idx, &proposal.hash)?;
+        // The vote itself is built by `config_contract::messages`, which speaks the
+        // post-quantum wire the configuration contract now requires. What is missing is
+        // upstream of it and is named in the error, so this fails where the gap is
+        // rather than by sending something the chain will refuse.
+        let _ = validator_entry;
+        anyhow::bail!(
+            "a configuration vote is authorised by the current post-quantum validator set, \
+             and producing one needs two things this node cannot yet supply: a signature \
+             from its ML-DSA-44 consensus key, and the hash of the stored ConfigParam 34 \
+             cell that the vote is bound to. The control protocol carries neither, so the \
+             vote is not sent rather than sent in a form the chain refuses"
+        );
 
-        // Sign the data with the validator key
-        let signature = node
-            .api
-            .sign(signing_data.data(), validator_entry.key_id.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("sign error: {}", e))?;
-
-        // Build the external message
+        #[allow(unreachable_code)]
+        let vote: chain_block::Cell = unreachable!();
+        #[allow(unreachable_code)]
         let config_addr = self.config_contract.address();
-        let query_id = 0;
-        let vote = config_contract::messages::signed_vote(query_id, &signing_data, &signature)?;
+        #[allow(unreachable_code)]
+        let query_id: u64 = 0;
+        let _ = query_id;
         let msg_cell = node
             .wallet
             .message(config_addr, SEND_VOTE_AMOUNT, vote)
@@ -278,7 +316,7 @@ impl VotingRunner {
             let vset_entry = vset
                 .list()
                 .iter()
-                .position(|item| item.public_key.as_slice() == &key)
+                .position(|item| item.public_key().is_ok_and(|pk| pk.as_slice() == &key))
                 .map(|idx| (idx as u16, entry.clone()));
             if let Some((idx, entry)) = vset_entry {
                 return Ok((idx, entry));
@@ -288,12 +326,159 @@ impl VotingRunner {
     }
 
     async fn shutdown(&mut self) -> anyhow::Result<()> {
+        let reader_shutdown = self.proposal_reader.shutdown().await;
         for (node_id, node) in self.nodes.iter_mut() {
             tracing::info!(target: "voting", "node [{}] shutdown provider", node_id);
             if let Err(e) = node.api.shutdown().await {
                 tracing::error!(target: "voting", "node [{}] shutdown error: {}", node_id, e);
             }
         }
+        reader_shutdown.context("proposal control reader shutdown")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chain_block::MsgAddressInt;
+    use common::tvm_stack_parser::TvmStackParser;
+    use tl_api::tos::tvm::StackEntry;
+
+    /// Answers `list_proposals` with the node's real two-proposal response.
+    #[derive(Default)]
+    struct ReadCounts {
+        control: std::sync::atomic::AtomicUsize,
+        public_list: std::sync::atomic::AtomicUsize,
+        public_detail: std::sync::atomic::AtomicUsize,
+    }
+    struct LiveListProvider(std::sync::Arc<ReadCounts>);
+
+    #[async_trait::async_trait]
+    impl contracts::ContractProvider for LiveListProvider {
+        async fn get_method(
+            &self,
+            _address: String,
+            method: &str,
+            _stack: Vec<StackEntry>,
+        ) -> anyhow::Result<TvmStackParser> {
+            match method {
+                "list_proposals" => {
+                    self.0.public_list.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                "get_proposal" => {
+                    self.0.public_detail.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                _ => anyhow::bail!("unexpected getter {method}"),
+            }
+            let response =
+                include_str!("../../../contracts/tests/fixtures/list_proposals/two-live.json");
+            let value: serde_json::Value = serde_json::from_str(response)?;
+            let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
+                serde_json::from_value(value["result"].clone())?;
+            Ok(contracts::chain_provider::stack_from_rpc(result.stack))
+        }
+
+        async fn balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            Ok(0)
+        }
+
+        /// Test-only: decodes the recorded answer in process.
+        async fn read_proposals(
+            &self,
+            address: &MsgAddressInt,
+            read: contracts::ProposalRead,
+        ) -> anyhow::Result<contracts::ProposalAnswer> {
+            anyhow::ensure!(read == contracts::ProposalRead::List, "unexpected read {read:?}");
+            let stack = self.get_method(address.to_string(), "list_proposals", vec![]).await?;
+            contracts::config_contract::decode_proposal_list(&stack)
+                .map(contracts::ProposalAnswer::List)
+        }
+    }
+
+    struct ControlReader {
+        counts: std::sync::Arc<ReadCounts>,
+        unsupported: bool,
+    }
+    #[async_trait::async_trait]
+    impl ProposalReader for ControlReader {
+        async fn metadata(
+            &mut self,
+        ) -> anyhow::Result<Vec<control_client::operator_reads::ConfigProposalMeta>> {
+            self.counts.control.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.unsupported {
+                return Err(control_client::UnsupportedControlQuery {
+                    query: "getConfigProposals",
+                }
+                .into());
+            }
+            let response =
+                include_str!("../../../contracts/tests/fixtures/list_proposals/two-live.json");
+            let value: serde_json::Value = serde_json::from_str(response)?;
+            let result: chain_rpc_client::v2::data_models::RunGetMethodRes =
+                serde_json::from_value(value["result"].clone())?;
+            let stack = contracts::chain_provider::stack_from_rpc(result.stack);
+            Ok(contracts::config_contract::decode_proposal_list(&stack)?
+                .into_iter()
+                .map(|p| control_client::operator_reads::ConfigProposalMeta {
+                    hash: p.hash,
+                    expires: p.expires,
+                    critical: p.is_critical,
+                    param_id: p.param.id,
+                    param_hash: p.param.hash,
+                    has_value: p.param.cell.is_some(),
+                    vset_id: p.vset_id,
+                    voters: p.voters,
+                    weight_remaining: p.weight_remaining,
+                    rounds_remaining: p.rounds_remaining,
+                    wins: p.wins,
+                    losses: p.losses,
+                })
+                .collect())
+        }
+    }
+    fn runner(
+        tracked: &str,
+        unsupported: bool,
+    ) -> anyhow::Result<(VotingRunner, std::sync::Arc<ReadCounts>)> {
+        let mut hash = [0u8; 32];
+        hex::decode_to_slice(tracked, &mut hash)?;
+        let counts = std::sync::Arc::new(ReadCounts::default());
+        let config = Arc::new(ConfigContractImpl::new(Arc::new(LiveListProvider(counts.clone()))));
+        let source = Box::new(ControlReader { counts: counts.clone(), unsupported });
+        Ok((VotingRunner::new(HashMap::new(), config, vec![hash], source), counts))
+    }
+
+    #[tokio::test]
+    async fn voting_task_never_reads_public_proposals() -> anyhow::Result<()> {
+        for unsupported in [false, true] {
+            let (mut runner, counts) = runner(&"11".repeat(32), unsupported)?;
+            let result = runner.run().await;
+            if unsupported {
+                let error = result.err().context("unsupported query accepted")?;
+                anyhow::ensure!(
+                    error.downcast_ref::<control_client::UnsupportedControlQuery>().is_some(),
+                    "upgrade error type lost: {error:#}"
+                );
+            } else {
+                result?;
+            }
+            assert_eq!(counts.control.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(counts.public_list.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(counts.public_detail.load(std::sync::atomic::Ordering::SeqCst), 0);
+        }
+        let (mut tracked, _) =
+            runner("caf342eb8fdd9adc97379f44c7740735097dd210430f79dc410a3690639888f0", false)?;
+        let error = tracked.run().await.err().context("missing validator-set refusal")?;
+        assert!(error.to_string().contains("get_current_vset"), "{error}");
+        Ok(())
+    }
+    #[tokio::test]
+    async fn voting_task_upgrade_error_never_reads_public_proposals() -> anyhow::Result<()> {
+        let (mut runner, counts) = runner(&"11".repeat(32), true)?;
+        let error = runner.run().await.err().context("unsupported query accepted")?;
+        assert!(error.downcast_ref::<control_client::UnsupportedControlQuery>().is_some());
+        assert_eq!(counts.public_list.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(counts.public_detail.load(std::sync::atomic::Ordering::SeqCst), 0);
         Ok(())
     }
 }

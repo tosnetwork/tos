@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "prometheus_version": "3.9.1",
+  "prometheus_required_argv": ["--rules.alert.resend-delay=15s"],
+  "alertmanager_group_wait": "0s",
+  "alertmanager_group_interval": "15s",
+  "alertmanager_repeat_interval": "30s",
+  "observer_process_deadline_seconds": 45,
+  "observer_pipeline_deadline_seconds": 100
+}

@@ -1,0 +1,34 @@
+{
+  "android_commit": "c8a1d03",
+  "scope": "Android Kotlin/platform callback instrumentation with captured public replies; not live network",
+  "validation": [
+    "Both prior checkpoint and new acquisition session cases pass",
+    "Native same-lock flow obtains three captured replies, verifies and commits",
+    "Platform exception preserved and checkpoint unchanged"
+  ],
+  "control": "Skip acquired native callback: named runtime assertion failed; restored both cases passed",
+  "artifacts": [
+    {
+      "file": "20261007-kotlin-acquisition-session-test.log",
+      "bytes": 33829,
+      "sha256": "587a40b2b4b29abccb99b5254ab168904f909f14a74f77035383550c3a6a21d4"
+    },
+    {
+      "file": "20261007-kotlin-acquisition-control.xml",
+      "bytes": 1178,
+      "sha256": "c26214d8dd7a4940f579f50bed912476a71f6371ee5bfab16f56045d705b5269"
+    },
+    {
+      "file": "20261007-kotlin-acquisition-restored.log",
+      "bytes": 25976,
+      "sha256": "e0e92749c3c57c3206630ca27bb0facf958ba0904aadf4fc544dc5eb871dc9a3"
+    }
+  ],
+  "remaining": [
+    "Real read-only lite transport adapter and network transaction tests",
+    "Independent anchor and wallet/code/configuration binding",
+    "iOS transport callback counterpart",
+    "Complete creation, dual POP, staged rotation, recovery and recipient delivery",
+    "Final-head all-ABI full builds/CI and physical/release acceptance"
+  ]
+}

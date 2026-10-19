@@ -1,0 +1,8 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s
+     Running unittests src/bin/tos-observability.rs (target/debug/deps/tos_observability-c72dc679981d3990)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+

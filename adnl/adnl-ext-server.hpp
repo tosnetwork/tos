@@ -29,6 +29,7 @@
 #include "td/utils/crypto.h"
 
 #include "adnl-ext-connection.hpp"
+#include "adnl-ext-query-failure.h"
 #include "adnl-ext-server-limits.h"
 #include "adnl-ext-server.h"
 #include "adnl-peer-table.h"
@@ -44,13 +45,23 @@ class AdnlInboundConnection : public AdnlExtConnection {
   AdnlInboundConnection(td::SocketFd fd, td::actor::ActorId<AdnlPeerTable> peer_table,
                         td::actor::ActorId<AdnlExtServerImpl> ext_server, AdnlNodeIdShort anonymous_remote_id,
                         std::string peer_ip, std::shared_ptr<ExtServerQueryLimits> server_query_limits,
-                        std::unique_ptr<Callback> callback)
+                        std::shared_ptr<ExtQueryFailurePolicy> failure_policy, std::unique_ptr<Callback> callback,
+                        std::shared_ptr<AdnlExtOutputBudget> server_output_budget,
+                        std::shared_ptr<AdnlExtByteBudget> server_input_budget,
+                        std::shared_ptr<SourceShareLedger> input_source_shares, ExtSourceKey source,
+                        std::shared_ptr<SourceShareLedger> output_source_shares)
       : AdnlExtConnection(std::move(fd), std::move(callback), false)
       , peer_table_(peer_table)
       , ext_server_(ext_server)
       , anonymous_remote_id_(anonymous_remote_id)
       , peer_ip_(std::move(peer_ip))
-      , server_query_limits_(std::move(server_query_limits)) {
+      , source_(std::move(source))
+      , server_query_limits_(std::move(server_query_limits))
+      , failure_policy_(std::move(failure_policy)) {
+    set_shared_output_budget(std::move(server_output_budget));
+    set_output_source_share(std::move(output_source_shares), source_.str());
+    set_input_limits(std::move(server_input_budget));
+    set_input_source_share(std::move(input_source_shares), source_.str());
   }
 
   td::Status process_packet(td::BufferSlice data) override;
@@ -59,11 +70,27 @@ class AdnlInboundConnection : public AdnlExtConnection {
   void inited_crypto(td::Result<td::BufferSlice> R);
   void query_finished(td::Bits256 query_id, td::Result<td::BufferSlice> result);
 
+  // Terminal counts for this connection, per failure kind, reported when it closes.
+  struct QueryOutcomes {
+    static constexpr size_t kKinds = 6;
+    td::uint64 accepted{0};
+    td::uint64 replied[kKinds]{};
+    td::uint64 closed[kKinds]{};
+    // Results that completed after the ordered close began, and were dropped.
+    td::uint64 dropped_while_closing{0};
+  };
+
  protected:
   void tear_down() override;
 
  private:
-  void log_dropped_query(td::Slice reason);
+  // Every query whose ID was parsed ends in an answer or a closed connection.
+  // Answers the original ID with the service's bounded failure payload when an
+  // encoder is installed and the failure-reply budget allows; otherwise returns an
+  // error so the caller closes the connection. Never leaves the ID unanswered.
+  td::Status reject_or_close(td::Bits256 query_id, ExtQueryFailure failure);
+  bool send_failure_answer(td::Bits256 query_id, const ExtQueryFailure &failure);
+  void note_failure(td::Bits256 query_id, ExtQueryFailureKind kind, bool replied);
 
   td::actor::ActorId<AdnlPeerTable> peer_table_;
   td::actor::ActorId<AdnlExtServerImpl> ext_server_;
@@ -72,21 +99,33 @@ class AdnlInboundConnection : public AdnlExtConnection {
   td::SecureString nonce_;
   AdnlNodeIdShort remote_id_ = AdnlNodeIdShort::zero();
   AdnlNodeIdShort anonymous_remote_id_;
+  // Exact peer address: the connection's identity and logging key.
   std::string peer_ip_;
+  // The source its server-wide query allowance and input share are counted under.
+  ExtSourceKey source_;
   std::shared_ptr<ExtServerQueryLimits> server_query_limits_;
+  std::shared_ptr<ExtQueryFailurePolicy> failure_policy_;
   ExtConnectionQueryLimits query_limits_{1.0, 64, 32};
-  td::uint64 dropped_queries_{0};
+  td::RateLimiterWindow failure_replies_{ExtQueryFailurePolicy::kReplyWindowSeconds,
+                                         ExtQueryFailurePolicy::kMaxRepliesPerConnection};
+  QueryOutcomes outcomes_;
+  td::uint64 failures_logged_{0};
 };
 
 class AdnlExtServerImpl : public AdnlExtServer {
  public:
   void add_tcp_port(td::uint16 port) override;
   void add_local_id(AdnlNodeIdShort id) override;
+  void wait_listening(td::Promise<td::Unit> promise) override;
+  void set_query_failure_encoder(std::shared_ptr<const ExtQueryFailureEncoder> encoder) override;
   void accepted(td::SocketFd fd);
-  void connection_closed(std::string peer_ip);
+  void tcp_port_listening(td::uint16 port, td::Status status);
+  // `source` is the key the connection was admitted under.
+  void connection_closed(std::string source);
   void decrypt_init_packet(AdnlNodeIdShort dst, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
 
   void start_up() override {
+    initial_ports_pending_ = ports_;
     for (auto &port : ports_) {
       add_tcp_port(port);
     }
@@ -111,11 +150,28 @@ class AdnlExtServerImpl : public AdnlExtServer {
   td::actor::ActorId<AdnlPeerTable> peer_table_;
   std::set<AdnlNodeIdShort> local_ids_;
   std::set<td::uint16> ports_;
+  std::set<td::uint16> initial_ports_pending_;
   std::map<td::uint16, td::actor::ActorOwn<td::TcpInfiniteListener>> listeners_;
+  std::vector<td::Promise<td::Unit>> listening_waiters_;
+  td::Status listening_status_;
+  // 1024 connections in all, 64 for any one source (IPv4 address or IPv6 /64).
   ExtServerConnectionLimits connection_limits_{1024, 64};
-  // Bound parked and executing requests across connections. The per-IP limit
-  // stays below the validator execution budget so one address cannot monopolize it.
+  // Unread output held by all of this server's connections.
+  std::shared_ptr<AdnlExtOutputBudget> output_bytes_ = std::make_shared<AdnlExtOutputBudget>();
+  std::shared_ptr<SourceShareLedger> output_source_shares_ =
+      std::make_shared<SourceShareLedger>(adnl_ext_max_source_pending_output_bytes);
+  // Received bytes of unfinished frames held by all of this server's connections.
+  std::shared_ptr<AdnlExtByteBudget> input_bytes_ =
+      std::make_shared<AdnlExtByteBudget>(adnl_ext_max_server_pending_input_bytes);
+  // Each source's part of `input_bytes_`, summed across its connections.
+  std::shared_ptr<SourceShareLedger> input_source_shares_ =
+      std::make_shared<SourceShareLedger>(adnl_ext_max_source_pending_input_bytes);
+  // Bound parked and executing requests across connections. The per-source
+  // limit (IPv4 address or IPv6 /64) stays below the validator execution budget
+  // so one source cannot monopolize it.
   std::shared_ptr<ExtServerQueryLimits> query_limits_ = std::make_shared<ExtServerQueryLimits>(4096, 256);
+  // Shared with every connection so an encoder installed later reaches existing ones.
+  std::shared_ptr<ExtQueryFailurePolicy> failure_policy_ = std::make_shared<ExtQueryFailurePolicy>();
 
   // A refused connection is the flood this limiter exists to absorb, so a
   // line per refusal is a line per packet the sender chose to send, into

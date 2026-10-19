@@ -34,6 +34,7 @@ export function useConnect(): UseConnectResult {
         disconnect: async () => {},
         connected: false,
         connecting: false,
+        connectError: null,
       };
     }
 
@@ -42,6 +43,7 @@ export function useConnect(): UseConnectResult {
       disconnect: ctx.disconnect,
       connected: ctx.wallet !== null,
       connecting: ctx.connecting,
+      connectError: ctx.connectError,
     };
   }, [ctx]);
 }

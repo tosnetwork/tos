@@ -28,9 +28,10 @@
  * protection.  Until then these records are telemetry, not proof.
  */
 
-#include "bus.h"
 #include "simplex/misbehavior.h"
 #include "td/utils/crypto.h"
+
+#include "bus.h"
 
 namespace tos::validator::consensus {
 
@@ -38,24 +39,24 @@ namespace {
 
 // One-byte tag that identifies the class of misbehavior in the evidence cell.
 enum class MisbehaviorKind : td::uint8 {
-  conflicting_votes                = 0x01,
-  conflicting_candidate_and_cert   = 0x02,
-  slot_inversion_candidate         = 0x03,  // V-018
-  conflicting_candidates           = 0x04,  // V-019
-  rejected_candidate               = 0x05,  // V-020
-  malformed_broadcast              = 0x06,  // V-025
-  unknown                          = 0xff,
+  conflicting_votes = 0x01,
+  conflicting_candidate_and_cert = 0x02,
+  slot_inversion_candidate = 0x03,  // V-018
+  conflicting_candidates = 0x04,    // V-019
+  rejected_candidate = 0x05,        // V-020
+  malformed_broadcast = 0x06,       // V-025
+  unknown = 0xff,
 };
 
 // Returns the kind tag and a concatenated byte string of all proof payloads.
 // The byte string is hashed to produce `evidence_hash` in the cell.
 std::pair<MisbehaviorKind, std::string> classify(const Misbehavior& proof) {
-  using simplex::ConflictingVotes;
   using simplex::ConflictingCandidateAndCertificate;
-  using simplex::SlotInversionCandidate;
   using simplex::ConflictingCandidates;
-  using simplex::RejectedCandidate;
+  using simplex::ConflictingVotes;
   using simplex::MalformedBroadcast;
+  using simplex::RejectedCandidate;
+  using simplex::SlotInversionCandidate;
 
   if (const auto* p = dynamic_cast<const ConflictingVotes*>(&proof)) {
     std::string ev;
@@ -93,13 +94,20 @@ std::pair<MisbehaviorKind, std::string> classify(const Misbehavior& proof) {
 
 static const char* kind_name(MisbehaviorKind k) {
   switch (k) {
-    case MisbehaviorKind::conflicting_votes:              return "ConflictingVotes";
-    case MisbehaviorKind::conflicting_candidate_and_cert: return "ConflictingCandidateAndCertificate";
-    case MisbehaviorKind::slot_inversion_candidate:       return "SlotInversionCandidate(V-018)";
-    case MisbehaviorKind::conflicting_candidates:         return "ConflictingCandidates(V-019)";
-    case MisbehaviorKind::rejected_candidate:             return "RejectedCandidate(V-020)";
-    case MisbehaviorKind::malformed_broadcast:            return "MalformedBroadcast(V-025)";
-    default:                                              return "Unknown";
+    case MisbehaviorKind::conflicting_votes:
+      return "ConflictingVotes";
+    case MisbehaviorKind::conflicting_candidate_and_cert:
+      return "ConflictingCandidateAndCertificate";
+    case MisbehaviorKind::slot_inversion_candidate:
+      return "SlotInversionCandidate(V-018)";
+    case MisbehaviorKind::conflicting_candidates:
+      return "ConflictingCandidates(V-019)";
+    case MisbehaviorKind::rejected_candidate:
+      return "RejectedCandidate(V-020)";
+    case MisbehaviorKind::malformed_broadcast:
+      return "MalformedBroadcast(V-025)";
+    default:
+      return "Unknown";
   }
 }
 
@@ -135,12 +143,9 @@ class MisbehaviorReporterImpl : public td::actor::SpawnsWith<Bus>, public td::ac
     // This is an allegation fingerprint for correlation between validator
     // logs.  It is not independently verifiable slashing evidence.
     LOG(ERROR) << "MISBEHAVIOR DETECTED"
-               << " kind=" << kind_name(kind)
-               << " validator=" << offender.short_id.bits256_value().to_hex()
-               << " adnl=" << offender.adnl_id.bits256_value().to_hex()
-               << " session=" << session_id_.to_hex()
-               << " allegation_bytes=" << evidence_bytes.size()
-               << " allegation_fingerprint=" << fingerprint.to_hex();
+               << " kind=" << kind_name(kind) << " validator=" << offender.validator_id.value.to_hex()
+               << " adnl=" << offender.adnl_id.bits256_value().to_hex() << " session=" << session_id_.to_hex()
+               << " allegation_bytes=" << evidence_bytes.size() << " allegation_fingerprint=" << fingerprint.to_hex();
   }
 
  private:

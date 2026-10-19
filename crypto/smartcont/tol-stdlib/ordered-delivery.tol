@@ -1,0 +1,366 @@
+// Bounded bookkeeping for a stream of nonces that arrive and complete out of
+// order: a completion window plus a fixed set of pending slots.
+//
+// `NonceWindow` answers "has nonce n been completed?" for every n without
+// growing: nonces below `nextPending` are all complete, nonces in the next
+// NONCE_WINDOW_WIDTH positions are tracked by one bit each, and anything
+// further ahead is refused until the head catches up. That refusal is the
+// back-pressure that keeps storage bounded.
+//
+// `PendingSlots` holds at most NONCE_WINDOW_WIDTH in-flight payloads, one per
+// slot `nonce mod NONCE_WINDOW_WIDTH`. Every in-window nonce therefore owns a
+// distinct slot. Each slot also stores the full nonce, and every read, write
+// and delete compares it, so a nonce one window apart can never read or
+// overwrite another nonce's entry.
+//
+// `FixedSlots` has the same interface and rules, stored as a complete 4-ary
+// tree of depth 4 (exactly NONCE_WINDOW_WIDTH leaves) instead of a
+// dictionary. Every operation walks and rebuilds the same four levels: the
+// same instructions and the same number of cell loads whichever slot is used
+// and however many are occupied, so its gas can be quoted before the call. `PendingSlots` stores
+// only occupied slots and is cheaper when few are in use.
+tol 1.3
+
+import "@stdlib/tvm-dicts"
+
+const ORDERED_DELIVERY_THROW_INVALID_NONCE = 0x1801
+const ORDERED_DELIVERY_THROW_ALREADY_COMPLETED = 0x1802
+const ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW = 0x1803
+const ORDERED_DELIVERY_THROW_SLOT_OCCUPIED = 0x1804
+const ORDERED_DELIVERY_THROW_INVALID_STATUS = 0x1805
+
+const NONCE_WINDOW_WIDTH = 256
+/// All NONCE_WINDOW_WIDTH bits set.
+const NONCE_WINDOW_FULL_MASK = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+const NONCE_WINDOW_SLOT_KEY_BITS = 8
+/// Largest nonce the stream may use, chosen so that `nextPending` (which can
+/// reach `nonce + 1`) still fits in 64 bits.
+const NONCE_WINDOW_MAX_NONCE = 0xfffffffffffffffe
+
+struct NonceWindow {
+    nextPending: uint64
+    /// Bit i set means nonce `nextPending + i` is complete. Bit 0 is always
+    /// clear between calls, since a complete head is folded into `nextPending`.
+    completed: uint256
+}
+
+struct PendingSlots {
+    slots: dict
+}
+
+@pure
+fun orderedDeliveryBitSize(x: int): int
+    asm "UBITSIZE"
+
+fun orderedDeliveryRequireNonce(nonce: int): void {
+    if (nonce < 0 || nonce > NONCE_WINDOW_MAX_NONCE) {
+        throw ORDERED_DELIVERY_THROW_INVALID_NONCE;
+    }
+}
+
+/// A window whose first expected nonce is `firstNonce`.
+fun nonceWindowNew(firstNonce: int): NonceWindow {
+    orderedDeliveryRequireNonce(firstNonce);
+    return NonceWindow { nextPending: firstNonce, completed: 0 };
+}
+
+/// Highest nonce [NonceWindow.complete] currently accepts.
+fun NonceWindow.lastAcceptable(self): int {
+    return self.nextPending + (NONCE_WINDOW_WIDTH - 1);
+}
+
+/// True for every nonce below the head and for tracked completed nonces.
+/// Nonces beyond the window are reported as not completed.
+fun NonceWindow.isCompleted(self, nonce: int): bool {
+    orderedDeliveryRequireNonce(nonce);
+    if (nonce < self.nextPending) {
+        return true;
+    }
+    val offset = nonce - self.nextPending;
+    if (offset >= NONCE_WINDOW_WIDTH) {
+        return false;
+    }
+    return ((self.completed >> offset) & 1) == 1;
+}
+
+/// Marks `nonce` complete and advances the head over every contiguous
+/// completed nonce. Throws ALREADY_COMPLETED for a nonce completed before
+/// (including any nonce below the head) and OUTSIDE_WINDOW for a nonce more
+/// than NONCE_WINDOW_WIDTH - 1 positions ahead of the head.
+/// Throws ALREADY_COMPLETED below the head and OUTSIDE_WINDOW more than
+/// NONCE_WINDOW_WIDTH - 1 positions ahead of it.
+fun NonceWindow.requireInWindow(self, nonce: int): void {
+    orderedDeliveryRequireNonce(nonce);
+    if (nonce < self.nextPending) {
+        throw ORDERED_DELIVERY_THROW_ALREADY_COMPLETED;
+    }
+    if (nonce - self.nextPending >= NONCE_WINDOW_WIDTH) {
+        throw ORDERED_DELIVERY_THROW_OUTSIDE_WINDOW;
+    }
+}
+
+/// Stores `marked` and advances the head over every completed nonce
+/// contiguous with it.
+fun NonceWindow.fold(mutate self, marked: int): void {
+    // The number of completed nonces contiguous with the head is the count
+    // of trailing ones. When every bit is set that count is the whole width;
+    // otherwise (~marked) & (marked + 1) isolates the lowest clear bit, and
+    // marked + 1 stays within 256 bits.
+    val run = (marked == NONCE_WINDOW_FULL_MASK)
+        ? NONCE_WINDOW_WIDTH
+        : orderedDeliveryBitSize((~marked) & (marked + 1)) - 1;
+    self.nextPending = self.nextPending + run;
+    self.completed = marked >> run;
+}
+
+/// Marks `nonce` complete and advances the head over every contiguous
+/// completed nonce. Throws ALREADY_COMPLETED for a nonce completed before
+/// (including any nonce below the head) and OUTSIDE_WINDOW for a nonce more
+/// than NONCE_WINDOW_WIDTH - 1 positions ahead of the head.
+fun NonceWindow.complete(mutate self, nonce: int): void {
+    self.requireInWindow(nonce);
+    val bit = 1 << (nonce - self.nextPending);
+    if ((self.completed & bit) != 0) {
+        throw ORDERED_DELIVERY_THROW_ALREADY_COMPLETED;
+    }
+    self.fold(self.completed | bit);
+}
+
+/// Marks every nonce in `first..last` complete at once, for skipping or
+/// burning a run of nonces. The whole range must lie in the window and none
+/// of it may be complete already; otherwise nothing changes.
+fun NonceWindow.completeRange(mutate self, first: int, last: int): void {
+    if (first > last) {
+        throw ORDERED_DELIVERY_THROW_INVALID_NONCE;
+    }
+    self.requireInWindow(first);
+    self.requireInWindow(last);
+    val count = last - first + 1;
+    val ones = (count == NONCE_WINDOW_WIDTH) ? NONCE_WINDOW_FULL_MASK : (1 << count) - 1;
+    val mask = ones << (first - self.nextPending);
+    if ((self.completed & mask) != 0) {
+        throw ORDERED_DELIVERY_THROW_ALREADY_COMPLETED;
+    }
+    self.fold(self.completed | mask);
+}
+
+fun pendingSlotsNew(): PendingSlots {
+    return PendingSlots { slots: createEmptyDict() };
+}
+
+@pure
+fun pendingSlotIndex(nonce: int): int {
+    return nonce & (NONCE_WINDOW_WIDTH - 1);
+}
+
+/// Returns (found, status, payload) for exactly `nonce`. A slot occupied by a
+/// different nonce reads as not found.
+fun PendingSlots.get(self, nonce: int): (bool, int, cell?) {
+    orderedDeliveryRequireNonce(nonce);
+    val (entry, found) = self.slots.uDictGet(NONCE_WINDOW_SLOT_KEY_BITS, pendingSlotIndex(nonce));
+    if (!found) {
+        return (false, 0, null);
+    }
+    var s = entry!;
+    val storedNonce = s.loadUint(64);
+    if (storedNonce != nonce) {
+        return (false, 0, null);
+    }
+    val status = s.loadUint(8);
+    return (true, status, s.loadRef());
+}
+
+/// Stores `payload` with an 8-bit `status` for `nonce`. Updating the same
+/// nonce is allowed; a slot held by another nonce throws SLOT_OCCUPIED.
+fun PendingSlots.put(mutate self, nonce: int, status: int, payload: cell): void {
+    orderedDeliveryRequireNonce(nonce);
+    if (status < 0 || status > 255) {
+        throw ORDERED_DELIVERY_THROW_INVALID_STATUS;
+    }
+    val slot = pendingSlotIndex(nonce);
+    val (entry, found) = self.slots.uDictGet(NONCE_WINDOW_SLOT_KEY_BITS, slot);
+    if (found && entry!.preloadUint(64) != nonce) {
+        throw ORDERED_DELIVERY_THROW_SLOT_OCCUPIED;
+    }
+    self.slots.uDictSetBuilder(
+        NONCE_WINDOW_SLOT_KEY_BITS,
+        slot,
+        beginCell().storeUint(nonce, 64).storeUint(status, 8).storeRef(payload)
+    );
+}
+
+/// Frees the slot of `nonce`. Returns false, changing nothing, when the slot
+/// is empty or belongs to another nonce.
+fun PendingSlots.remove(mutate self, nonce: int): bool {
+    orderedDeliveryRequireNonce(nonce);
+    val slot = pendingSlotIndex(nonce);
+    val (entry, found) = self.slots.uDictGet(NONCE_WINDOW_SLOT_KEY_BITS, slot);
+    if (!found || entry!.preloadUint(64) != nonce) {
+        return false;
+    }
+    self.slots.uDictDelete(NONCE_WINDOW_SLOT_KEY_BITS, slot);
+    return true;
+}
+
+/// The nonce currently holding `nonce`'s slot, if any.
+fun PendingSlots.occupant(self, nonce: int): (bool, int) {
+    orderedDeliveryRequireNonce(nonce);
+    val (entry, found) = self.slots.uDictGet(NONCE_WINDOW_SLOT_KEY_BITS, pendingSlotIndex(nonce));
+    if (!found) {
+        return (false, 0);
+    }
+    return (true, entry!.preloadUint(64));
+}
+
+/// [PendingSlots.put] bound to a window: `nonce` must be inside `window`,
+/// and a slot still held by a nonce below the window's head (completed but
+/// never removed) is reclaimed instead of blocking the stream. Every
+/// in-window nonce has its own slot, so no other occupant is possible when
+/// all writes go through here.
+fun PendingSlots.putInWindow(mutate self, window: NonceWindow, nonce: int, status: int, payload: cell): void {
+    window.requireInWindow(nonce);
+    val (occupied, holder) = self.occupant(nonce);
+    if (occupied && holder != nonce && holder < window.nextPending) {
+        self.slots.uDictDelete(NONCE_WINDOW_SLOT_KEY_BITS, pendingSlotIndex(nonce));
+    }
+    self.put(nonce, status, payload);
+}
+
+const FIXED_SLOTS_FANOUT = 4
+/// 4^4 leaves == NONCE_WINDOW_WIDTH, so every in-window nonce has its own leaf.
+const FIXED_SLOTS_DEPTH = 4
+
+struct FixedSlots {
+    root: cell
+}
+
+@pure
+fun fixedSlotsRefAt(s: slice, index: int): cell
+    asm "PLDREFVAR"
+
+@pure
+fun fixedSlotsLeaf(occupied: bool, nonce: int, status: int, payload: cell): cell {
+    return beginCell()
+        .storeBool(occupied)
+        .storeUint(nonce, 64)
+        .storeUint(status, 8)
+        .storeRef(payload)
+        .endCell();
+}
+
+@pure
+fun fixedSlotsEmptyLeaf(): cell {
+    return fixedSlotsLeaf(false, 0, 0, createEmptyCell());
+}
+
+/// An empty set. Identical empty subtrees share one cell each per level, so
+/// storing it costs five distinct cells, not 341.
+fun fixedSlotsNew(): FixedSlots {
+    var node = fixedSlotsEmptyLeaf();
+    var level = 0;
+    while (level < FIXED_SLOTS_DEPTH) {
+        node = beginCell().storeRef(node).storeRef(node).storeRef(node).storeRef(node).endCell();
+        level += 1;
+    }
+    return FixedSlots { root: node };
+}
+
+/// Child index taken at `level` (0 = root) on the way to `slot`.
+@pure
+fun fixedSlotsDigit(slot: int, level: int): int {
+    return (slot >> (2 * (FIXED_SLOTS_DEPTH - 1 - level))) & (FIXED_SLOTS_FANOUT - 1);
+}
+
+@pure
+fun fixedSlotsReplaceChild(node: cell, index: int, child: cell): cell {
+    val s = node.beginParse();
+    var b = beginCell();
+    var j = 0;
+    while (j < FIXED_SLOTS_FANOUT) {
+        b.storeRef(j == index ? child : fixedSlotsRefAt(s, j));
+        j += 1;
+    }
+    return b.endCell();
+}
+
+fun FixedSlots.leafOf(self, slot: int): cell {
+    var node = self.root;
+    var level = 0;
+    while (level < FIXED_SLOTS_DEPTH) {
+        node = fixedSlotsRefAt(node.beginParse(), fixedSlotsDigit(slot, level));
+        level += 1;
+    }
+    return node;
+}
+
+/// Writes `leaf` at `slot`, rebuilding the four nodes on its path.
+fun FixedSlots.writeLeaf(mutate self, slot: int, leaf: cell): void {
+    val n0 = self.root;
+    val n1 = fixedSlotsRefAt(n0.beginParse(), fixedSlotsDigit(slot, 0));
+    val n2 = fixedSlotsRefAt(n1.beginParse(), fixedSlotsDigit(slot, 1));
+    val n3 = fixedSlotsRefAt(n2.beginParse(), fixedSlotsDigit(slot, 2));
+    val r3 = fixedSlotsReplaceChild(n3, fixedSlotsDigit(slot, 3), leaf);
+    val r2 = fixedSlotsReplaceChild(n2, fixedSlotsDigit(slot, 2), r3);
+    val r1 = fixedSlotsReplaceChild(n1, fixedSlotsDigit(slot, 1), r2);
+    self.root = fixedSlotsReplaceChild(n0, fixedSlotsDigit(slot, 0), r1);
+}
+
+/// Same contract as [PendingSlots.get].
+fun FixedSlots.get(self, nonce: int): (bool, int, cell?) {
+    orderedDeliveryRequireNonce(nonce);
+    var s = self.leafOf(pendingSlotIndex(nonce)).beginParse();
+    val occupied = s.loadBool();
+    val storedNonce = s.loadUint(64);
+    val status = s.loadUint(8);
+    if (!occupied || storedNonce != nonce) {
+        return (false, 0, null);
+    }
+    return (true, status, s.loadRef());
+}
+
+/// Same contract as [PendingSlots.put].
+fun FixedSlots.put(mutate self, nonce: int, status: int, payload: cell): void {
+    orderedDeliveryRequireNonce(nonce);
+    if (status < 0 || status > 255) {
+        throw ORDERED_DELIVERY_THROW_INVALID_STATUS;
+    }
+    val slot = pendingSlotIndex(nonce);
+    var s = self.leafOf(slot).beginParse();
+    val occupied = s.loadBool();
+    if (occupied && s.loadUint(64) != nonce) {
+        throw ORDERED_DELIVERY_THROW_SLOT_OCCUPIED;
+    }
+    self.writeLeaf(slot, fixedSlotsLeaf(true, nonce, status, payload));
+}
+
+/// Same contract as [PendingSlots.remove].
+fun FixedSlots.remove(mutate self, nonce: int): bool {
+    orderedDeliveryRequireNonce(nonce);
+    val slot = pendingSlotIndex(nonce);
+    var s = self.leafOf(slot).beginParse();
+    val occupied = s.loadBool();
+    if (!occupied || s.loadUint(64) != nonce) {
+        return false;
+    }
+    self.writeLeaf(slot, fixedSlotsEmptyLeaf());
+    return true;
+}
+
+/// Same contract as [PendingSlots.occupant].
+fun FixedSlots.occupant(self, nonce: int): (bool, int) {
+    orderedDeliveryRequireNonce(nonce);
+    var s = self.leafOf(pendingSlotIndex(nonce)).beginParse();
+    val occupied = s.loadBool();
+    val holder = s.loadUint(64);
+    return (occupied, occupied ? holder : 0);
+}
+
+/// Same contract as [PendingSlots.putInWindow].
+fun FixedSlots.putInWindow(mutate self, window: NonceWindow, nonce: int, status: int, payload: cell): void {
+    window.requireInWindow(nonce);
+    val (occupied, holder) = self.occupant(nonce);
+    if (occupied && holder != nonce && holder < window.nextPending) {
+        self.writeLeaf(pendingSlotIndex(nonce), fixedSlotsEmptyLeaf());
+    }
+    self.put(nonce, status, payload);
+}

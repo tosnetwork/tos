@@ -1,0 +1,99 @@
+;; Bound, caller-funded stake relay. One request identifier is shared by all parties.
+const int sr::relay = 0x50517232;
+const int sr::stake = 0x50517332;
+const int sr::ok = 0x50516f32;
+const int sr::error_reply = 0x50516532;
+const int sr::result = 0x50516232;
+const int sr::ack = 0x50516132;
+const int sr::retry = 0x50516632;
+const int sr::return_retry = 0x50517433;
+const int sr::return_ack = 0x50516133;
+const int sr::retry_fees = 0x50517834;
+const int sr::excess = 0x50517833;
+const int sr::domain = 1 << 63;
+const int sr::error = 180;
+const int sr::confirmation = 1000000000;
+const int sr::relay_gas = 200000;
+const int sr::control_gas = 50000;
+const int sr::callback_gas = 200000;
+
+int sr::gas_fee(int wc, int gas) asm(gas wc) "GETGASFEE";
+int sr::forward_fee(int wc, int bits, int cells) asm(cells bits wc) "GETFORWARDFEE";
+int sr::coins(int value) inline {
+  throw_unless(sr::error, (value >= 0) & (value < (1 << 120)));
+  return value;
+}
+int sr::add(int a, int b) inline { return sr::coins(sr::coins(a) + sr::coins(b)); }
+int sr::sub(int a, int b) inline { return sr::coins(sr::coins(a) - sr::coins(b)); }
+int sr::mul(int a, int b) inline { return sr::coins(sr::coins(a) * sr::coins(b)); }
+slice sr::address(int id) inline {
+  return begin_cell().store_uint(4, 3).store_int(-1, 8).store_uint(id, 256).end_cell().begin_parse();
+}
+int sr::elector() inline {
+  slice cs = config_param(1).begin_parse();
+  int id = cs~load_uint(256); cs.end_parse();
+  throw_unless(sr::error, id);
+  return id;
+}
+cell sr::message(slice to, int amount, cell body, int bounce) inline_ref {
+  return begin_cell().store_uint(bounce ? 0x18 : 0x10, 6).store_slice(to)
+    .store_coins(sr::coins(amount)).store_uint(0, 1 + 4 + 4 + 64 + 32 + 1)
+    .store_uint(1, 1).store_ref(body).end_cell();
+}
+(int, int, int, int, cell, cell, cell) sr::terms(slice cs) inline_ref {
+  var fields = (cs~load_uint(32), cs~load_uint(32), cs~load_uint(256), cs~load_uint(16),
+                cs~load_ref(), cs~load_ref(), cs~load_maybe_ref());
+  cs.end_parse(); return fields;
+}
+cell sr::payload(cell terms, int owner) inline_ref {
+  var (at, factor, adnl, algorithm, key, signature, witness) = sr::terms(terms.begin_parse());
+  return begin_cell().store_uint(algorithm, 16).store_ref(key).store_uint(at, 32)
+    .store_uint(factor, 32).store_uint(adnl, 256).store_ref(signature)
+    .store_maybe_ref(witness).store_uint(1, 1).store_uint(owner, 256).end_cell();
+}
+int sr::request_hash(int controller, int query, cell payload) inline_ref {
+  return begin_cell().store_uint(sr::stake, 32).store_int(-1, 32).store_uint(controller, 256)
+    .store_uint(query, 64).store_ref(payload).end_cell().cell_hash();
+}
+int sr::commitment(int owner, int elector, int forwarded, cell terms, slice payer) inline_ref {
+  return begin_cell().store_uint(sr::relay, 32).store_uint(owner, 256)
+    .store_uint(elector, 256).store_coins(sr::coins(forwarded)).store_ref(terms)
+    .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell().cell_hash() >> 96;
+}
+cell sr::relay_body(int owner, int query, int elector, int forwarded, cell terms, slice payer) inline_ref {
+  return begin_cell().store_uint(sr::relay, 32).store_uint(query, 64)
+    .store_uint(sr::commitment(owner, elector, forwarded, terms, payer), 160)
+    .store_coins(sr::coins(forwarded)).store_uint(elector, 256).store_ref(terms)
+    .store_ref(begin_cell().store_slice(payer).end_cell()).end_cell();
+}
+cell sr::stake_body(int query, cell payload) inline_ref {
+  return begin_cell().store_uint(sr::stake, 32).store_uint(query, 64)
+    .store_uint(cell_hash(payload) >> 96, 160)
+    .store_slice(payload.begin_parse()).end_cell();
+}
+cell sr::control_body(int op, int query, int hash) inline {
+  return begin_cell().store_uint(op, 32).store_uint(query, 64).store_uint(hash, 256).end_cell();
+}
+int sr::control_value() inline { return sr::add(sr::gas_fee(-1, sr::control_gas), sr::forward_fee(-1, 4096, 8)); }
+int sr::callback_value() inline { return sr::add(sr::gas_fee(-1, sr::callback_gas), sr::forward_fee(-1, 4096, 8)); }
+int sr::relay_cost(cell outgoing) inline_ref {
+  (int cells, int bits, _) = compute_data_size(outgoing, 256);
+  return sr::add(sr::add(sr::add(sr::add(sr::gas_fee(-1, sr::relay_gas),
+    sr::forward_fee(-1, bits, cells)), sr::mul(2, sr::control_value())), sr::callback_value()), 100000000);
+}
+int sr::bounce_matches(slice body, int prefix) inline {
+  if (body.slice_bits() < 288) { return false; }
+  return (body~load_uint(32) == 0xffffffff) & (body~load_uint(256) == prefix);
+}
+int sr::reserved_op(int op) inline {
+  return (op == sr::relay) | (op == sr::ok) | (op == sr::error_reply)
+    | (op == sr::return_retry) | (op == sr::return_ack) | (op == sr::retry_fees) | (op == sr::excess) | (op == sr::result) | (op == sr::ack) | (op == sr::retry) | (op == 0xffffffff);
+}
+
+;; Current-price bounds, never a default deposit or an authorization.
+int sr::retry_value() inline { return sr::add(sr::control_value(), sr::callback_value()); }
+int sr::automatic_value() inline { return sr::add(sr::mul(3, sr::control_value()), sr::retry_value()); }
+;; Elector processing, a possible old fee-credit refund, and the terminal fee
+;; receipt are distinct from the controller's forwarding transaction.
+int sr::return_retry_value() inline { return sr::add(sr::automatic_value(), sr::mul(3, sr::control_value())); }
+int sr::wait_retry_value() inline { return sr::add(sr::return_retry_value(), sr::control_value()); }

@@ -164,3 +164,54 @@ export let hashData = (encoded: any) => {
 export let encodeOracleSet = (oracleSet: string[]) => {
   return ethers.utils.defaultAbiCoder.encode(["address[]"], [oracleSet]);
 };
+let signEncoded = (encoded: string, accounts: Account[]) => {
+  let signatures: Signature[] = accounts.map((account) => signHash(hashData(encoded), account));
+  signatures.sort(compareSignatures);
+  return signatures;
+};
+
+export let encodeRefundLock = (
+  n: any,
+  lockGeneration: number,
+  locker: string,
+  token: string,
+  amount: any,
+  target: any
+) => {
+  return ethers.utils.defaultAbiCoder.encode(
+    ["int", "address", "uint256", "uint64", "uint32", "address", "address", "uint256"],
+    [0x4ef0, target, CHAIN_ID, n, lockGeneration, locker, token, amount]
+  );
+};
+
+export let signRefundLock = (
+  n: any,
+  lockGeneration: number,
+  locker: string,
+  token: string,
+  amount: any,
+  accounts: Account[],
+  target: any
+) => signEncoded(encodeRefundLock(n, lockGeneration, locker, token, amount, target), accounts);
+
+export let encodeNewGeneration = (
+  generation: number,
+  tosBridge: string,
+  tosLife: any,
+  nonce: any,
+  target: any
+) => {
+  return ethers.utils.defaultAbiCoder.encode(
+    ["int", "address", "uint256", "uint32", "bytes32", "uint64", "uint256"],
+    [0x6e4e, target, CHAIN_ID, generation, tosBridge, tosLife, nonce]
+  );
+};
+
+export let signNewGeneration = (
+  generation: number,
+  tosBridge: string,
+  tosLife: any,
+  nonce: any,
+  accounts: Account[],
+  target: any
+) => signEncoded(encodeNewGeneration(generation, tosBridge, tosLife, nonce, target), accounts);

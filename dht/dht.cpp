@@ -690,7 +690,9 @@ void DhtMemberImpl::dump(td::StringBuilder &sb) const {
 }
 
 void DhtMemberImpl::send_store(DhtValue value, td::Promise<td::Unit> promise) {
-  value.check().ensure();
+  // Signed discovery records can age while queued or retained for republication.
+  // Reject them through the caller promise instead of terminating the node.
+  TRY_STATUS_PROMISE(promise, value.check());
   auto key_id = value.key_id();
 
   auto P = td::PromiseCreator::lambda([value = std::move(value), print_id = print_id(), id = id_,

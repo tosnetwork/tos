@@ -25,6 +25,7 @@ works, but a flag that does not exist is certainly broken, and that much is
 cheap to know.
 """
 
+import hashlib
 import importlib.util
 import re
 import subprocess
@@ -34,14 +35,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 DOCS = [
     "artifacts/phase2/README.md",
+    "artifacts/phase2/PARTICIPANT-GUIDE.md",
+    "artifacts/phase2/ANNOUNCEMENT.md",
+    "artifacts/phase2/OPERATOR-RUNBOOK.md",
     "artifacts/phase2/SUPERSEDED.md",
     "artifacts/phase2-ceremony-2/README.md",
     "artifacts/phase2-ceremony-2/PARTICIPANT-GUIDE.md",
+    "artifacts/phase2-ceremony-2/INDEPENDENT-PARTICIPANT.md",
+    "artifacts/phase2-ceremony-2/ANNOUNCEMENT.md",
     "artifacts/phase2-ceremony-2/ANNOUNCEMENT.draft.md",
-    "doc/shielded-pool-phase2-runbook.md",
 ]
 
 LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+
+# The published announcement is an immutable release asset. Its runbook link
+# names the original repository location; moving the runbook must not change
+# the announced bytes or the digest in the publication receipt.
+PUBLISHED_ANNOUNCEMENT_SHA256 = "43c8130141e1eca296fc5e1dafe9cf2b3ac577c3c42f45052fd7cf8f7433cbb1"
+HISTORICAL_RUNBOOK_LINK = "../../doc/shielded-pool-phase2-runbook.md"
 
 # Paths the documents name that do not exist yet because the ceremony has not
 # opened. Listed rather than pattern-matched away, so the set stays small and
@@ -49,7 +60,7 @@ LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 # entry that is still here once the ceremony is running is a bug. They are
 # printed on every run for that reason.
 CREATED_WHEN_THE_CEREMONY_OPENS = {
-    "artifacts/phase2-ceremony-2/beacon.bin",
+    "artifacts/phase2/beacon.bin",
 }
 
 
@@ -57,8 +68,16 @@ def links_resolve() -> list[str]:
     problems = []
     for name in DOCS:
         path = ROOT / name
+        if name == "artifacts/phase2/ANNOUNCEMENT.md":
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+            if actual != PUBLISHED_ANNOUNCEMENT_SHA256:
+                problems.append(f"{name}: published announcement digest changed")
         for text, target in LINK.findall(path.read_text()):
             if target.startswith(("http://", "https://", "#", "mailto:")):
+                continue
+            if name == "artifacts/phase2/ANNOUNCEMENT.md" and target == HISTORICAL_RUNBOOK_LINK:
+                if not (ROOT / "artifacts/phase2/OPERATOR-RUNBOOK.md").is_file():
+                    problems.append("current operator runbook is missing")
                 continue
             target = target.split("#")[0]
             if not target:
@@ -80,7 +99,9 @@ def quoted_paths_exist() -> list[str]:
     # participant copies. The second kind matters more: prose is read, but a
     # wrong path inside a `less ~/tos/...` line is pasted straight into a
     # terminal by someone with no way to tell whether the file should exist.
-    pattern = re.compile(r"[`\s(]((?:~/tos/)?(?:tools|test|scripts|doc|artifacts|crypto)/[A-Za-z0-9_./-]+)")
+    pattern = re.compile(
+        r"[`\s(]((?:~/tos/)?(?:tools|test|scripts|doc|artifacts|crypto)/[A-Za-z0-9_./-]+)"
+    )
     problems = []
     for name in DOCS:
         path = ROOT / name

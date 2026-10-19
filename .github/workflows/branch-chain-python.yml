@@ -1,0 +1,418 @@
+name: Branch PQ chain and Python tests
+
+# This job exists because compile/unit evidence cannot detect a chain fixture
+# that no longer forms a validator group. Keep one real PQ chain boot and the
+# complete Python suite on every pull request, whatever its base, and on every
+# push to main; do not move it behind workflow_dispatch-only triggers.
+#
+# Pushes to other branches do not trigger it: with an open pull request they
+# would run it a second time on the same change, since the two events fall in
+# different concurrency groups. A pull request run tests the synthetic merge
+# with its base, a branch push tests the branch head, so those runs are not of
+# the same commit, and a branch has no automatic run before it has a pull
+# request. Dispatch the workflow on a branch to test its head deliberately.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Explicit public namespace for disposable CI networks.
+  TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
+  REGISTRY: ghcr.io
+  CCACHE_DIR: /root/.ccache
+
+jobs:
+  python-and-pq-chain:
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/${{ github.repository }}-builder:ubuntu-24.04
+      credentials:
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up repository Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Restore native object cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: /root/.ccache
+          # A commit-specific key makes each successful push immutable; the
+          # prefix restores the newest prior entry. This deliberately spends
+          # about 32 MiB per push from the repository cache budget.
+          key: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-
+
+      - name: Verify tool pin tamper rejection
+        run: |
+          python3 scripts/test-build-tool-pins.py
+          python3 scripts/test-build-tool-pipelines.py
+          python3 scripts/test-linux-build-triggers.py
+          python3 scripts/test_container_platforms.py
+
+      - name: Configure the minimal native fixture build
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_C_COMPILER=clang-21
+          -DCMAKE_CXX_COMPILER=clang++-21
+          -DCMAKE_BUILD_TYPE=Release
+          -DTOS_ARCH=x86-64
+          -DTOS_USE_JEMALLOC=ON
+          -DTOS_PRODUCTION_BUILD=ON
+
+      - name: Build the chain fixtures and security regression targets
+        run: |
+          ccache --zero-stats
+          cmake --build build --parallel 4 --target \
+            gen_fif create-state toslibjson func fift emulator \
+            generate-random-id tos-pq-consensus-key tos-pq-controller \
+            dht-server validator-engine-console validator-engine \
+            create-hardfork test-tos-collator test-apply-block-readback-latency \
+            test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
+            tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport test-json-rpc-explorer \
+            test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
+            test-notarize-after-transient-resolve test-state-resolver-teardown test-late-candidate-window \
+            test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
+            test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
+            test-adnl-ext-input-budget test-adnl-ext-output-backpressure test-adnl-ext-refusal-close \
+            test-rate-limiter test-security-boundaries test-full-node-shard-admission test-full-node-master-admission \
+            test-rldp2-inbound-budget test-rldp2-inbound-transfer-bound test-rldp2-decoder-heap \
+            test-download-refusal-answers test-consensus-retry-backoff test-bridge-retirement \
+            test-block-accepter test-rldp2-refusal-lifetime \
+            test-startup-catchup-policy test-startup-catchup-importer test-startup-catchup-driver \
+            test-startup-catchup-probe test-startup-catchup-manager test-startup-orphan-reconcile
+          ccache --show-stats
+
+      # Answered capacity refusals through the download actors, their query
+      # deadlines in every phase, the consensus group's retry policy, prompt
+      # destruction of a group destroyed or retired while its initial state is
+      # still owed, the block accepter's publication of accepted blocks, and
+      # the RLDP lifetime of refusal answers over the production overlay path.
+      - name: Verify answered refusals, download deadlines and consensus retries
+        run: |
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-download-refusal-answers$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-consensus-retry-backoff$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-bridge-retirement$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-bridge-retirement-nonzero$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-block-accepter$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-rldp2-refusal-lifetime$'
+
+      # These security regressions previously ran only after merging to main.
+      # Check registration too: ctest must not silently pass a reduced set.
+      - name: Verify authenticated control-getter queries and transport
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^control-getter-(query-(service|boundary|admission|completion)|transport)$'
+
+      # Startup archive catch-up of a stale validator: the policy, the bounded
+      # import attempt, the mode loop, the successor probe, the manager wiring and
+      # the startup inventory of orphaned session directories.
+      - name: Check startup archive catch-up
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-startup-(catchup-(policy|importer|driver|probe|manager)|orphan-reconcile)$'
+
+      - name: Install repository-pinned Rust toolchain for engine integration
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Verify Rust operator reads against the actual engine
+        # The job runs in a container: the default sh has no pipefail, and the
+        # workspace path inside the container is $GITHUB_WORKSPACE, not the host's.
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: 4
+        run: |
+          set -euo pipefail
+          export TOS_SOURCE="$GITHUB_WORKSPACE"
+          export TOS_ENGINE_BUILD="$GITHUB_WORKSPACE/build"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p control-client \
+            --test engine_operator_reads real_engine_ -- --ignored --nocapture \
+            | tee build/operator-engine-tests.log
+          grep -F 'test result: ok. 3 passed; 0 failed; 0 ignored' build/operator-engine-tests.log
+
+      - name: Verify bounded control getters and their production-context budgets
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^control-getter-(executor|shutdown|limits|actor|vm|context|delete|budget)$'
+
+      - name: Verify the extracted getter context against its independent oracle
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^getter-context-(context|vm|libraries|liteserver)$'
+
+      - name: Run the network and wallet-index security regressions
+        run: |
+          ctest --test-dir build --show-only=json-v1 -L security-findings > security-tests.json
+          python3 - <<'PY'
+          import json
+
+          expected = {
+              "test-wallet-index", "test-wallet-index-apply", "test-candidate-data-cache",
+              "test-shard-block-confirmations",
+              "test-adnl-ext-input-budget", "test-adnl-ext-output-backpressure", "test-adnl-ext-refusal-close",
+              "test-rate-limiter", "test-security-boundaries", "test-full-node-shard-admission", "test-full-node-master-admission",
+              "full-node-master-startup",
+              "test-rldp2-inbound-budget", "test-rldp2-inbound-transfer-bound", "test-rldp2-decoder-heap",
+          }
+          actual = {test["name"] for test in json.load(open("security-tests.json"))["tests"]}
+          if expected - actual:
+              raise SystemExit(f"missing security regressions: {sorted(expected - actual)}")
+          print(f"all {len(expected)} security regressions are registered")
+          PY
+          ctest --test-dir build -L security-findings --no-tests=error --output-on-failure
+
+      - name: Check read-only proof relay and real HTTP ingress
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^(proof-readonly-query|test-json-rpc-transport|test-json-rpc-explorer)$'
+
+      - name: Remove and restore proof relay route control
+        run: python3 scripts/test-proof-query-rpc-controls.py --build-dir build
+
+      # A virtualized key-block proof must retain every PQ finality context
+      # field. This is a compiled behavior test, not a source-only guard.
+      - name: Check PQ key-block proof context
+        run: ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'
+
+      # The shared anchored proof verifier: real captured lite-server answers
+      # and a synthetic signed chain, plus the installed front end. Its
+      # binary is also what the C09 Config34 tests in full pytest call.
+      - name: Check the anchored proof verifier
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-proof-verify(-cli-verified|-cli-refused|-live-commit)?$'
+
+      # This manager actor test exercises the real proof producer and pending
+      # finality queue with bad evidence ahead of a valid certificate. It does
+      # not substitute for downstream AcceptBlock integration evidence.
+      - name: Check pending PQ finality proof queue
+        run: ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'
+
+      # Unverified or unbound broadcasts must never be remembered under a block
+      # id, or they would keep the genuine one from reaching custom overlays.
+      - name: Check custom overlay relay deduplication
+        run: ctest --test-dir build --output-on-failure -R '^test-custom-overlay-relay-dedup$'
+
+      - name: Check several PQ consensus keys held for one validator
+        run: ctest --test-dir build --output-on-failure -R '^test-pq-consensus-key-rotation$'
+
+      - name: Check the production PQ signer has no test clock seam
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^pq-signer-no-test-clock$'
+
+      # C04 exercises the real Manager proof/apply path and cold RootDb
+      # readback, including stale-context recovery and expiry controls.
+      - name: Check real PQ predecessor and BlockProof fixture
+        run: ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'
+
+      # N01's two short cuts are still narrower than the full persistence
+      # chain: one cold-reads the production FinalCert journal; the other
+      # cold-reads AcceptBlock's proof/state/bytes/next through RootDb.
+      - name: Check N5 FinalCert journal cold read
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-manager-db-fixture$'
+
+      - name: Check N5 PQ AcceptBlock cold read
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-accept-block$'
+
+      - name: Check N5 same-FinalCert actor and cold persistence path
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-joined-finalcert$'
+
+      # N02 stops with the exact FinalCert journal but no marker or target
+      # RootDb handle, then cold-restarts through production Db/Pool bootstrap.
+      - name: Check N5 FinalCert write-after recovery
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut1-finalcert-recovery$'
+
+      - name: Check N5 #13 signature write-after recovery
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut2-signatures-recovery$'
+
+      - name: Check N5 BlockProof write-after recovery
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut3-proof-recovery$'
+
+      - name: Check N5 finalized marker cold replay without duplicate acceptance
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut4-finalized-replay$'
+
+      - name: Check N5 DB/archive-only full-root rebuild
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut5-full-root-rebuild$'
+
+      - name: Check N5 cold persisted PQ CheckProof acceptance and tamper refusal
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cut6-check-proof$'
+
+      - name: Check N5 cold continuation through a second FinalCert
+        run: ctest --test-dir build --output-on-failure -R '^test-n5-cold-continuation$'
+
+
+      # C05: one transient parent-state miss must not cost a slot its local
+      # notarize vote; permanent/cancelled errors and an already cast SkipVote
+      # must never be retried into an unsafe late vote.
+      - name: Check Simplex parent-state retry voting
+        run: ctest --test-dir build --output-on-failure -R '^c05-notarize-'
+
+      # A candidate that arrives after its slot is finalized is still stored while the
+      # candidate resolver retains the slot, and nothing outside that window is; a resolve
+      # task keeps its resolver entry alive until it ends.
+      - name: Check Simplex late candidates for finalized slots
+        run: ctest --test-dir build --output-on-failure --no-tests=error -R '^test-late-candidate-window$'
+
+      # C10: a group that stops while a finalization is in flight and other
+      # callers wait on it must cancel them, make no further manager request,
+      # and let the bus destruct. The original teardown crashed or stranded
+      # a waiter here; the test is built and run in the same fixed tree.
+      - name: Check Simplex state-resolver teardown
+        run: ctest --test-dir build --output-on-failure -R '^c10-state-resolver-teardown$'
+
+      # C03's restart-origin failure only appeared when an anchor read first
+      # failed and the exact predecessor was then needed. Keep both positive
+      # and fail-closed controls in the fixed-tree native gate.
+      - name: Check Simplex restart origin replay
+        run: |
+          set -e
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-empty-chain-restart$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-subtest-error-ends-wait$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-transient-origin$'
+          ctest --test-dir build --output-on-failure -R '^test-consensus-simplex2-pq-restart-permanent-origin$'
+
+      - name: Prepare generated Python API and dependencies
+        run: |
+          uv sync --no-dev
+          uv run test/tostester/generate_tl.py
+
+      - name: Exercise explorer RPCs on candidate and ordinary version-16 networks
+        timeout-minutes: 10
+        run: |
+          uv run python scripts/test-explorer-pq-rpc.py --out build/explorer-rpc-candidate-v16
+          uv run python scripts/test-explorer-pq-rpc.py --ordinary-config --out build/explorer-rpc-ordinary-v16
+          uv run --with jsonschema==4.26.0 python scripts/validate-explorer-pq-receipt.py build/explorer-rpc-candidate-v16/*/rpc-evidence.json build/explorer-rpc-ordinary-v16/*/rpc-evidence.json
+
+      - name: Retain public explorer RPC response receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: explorer-rpc-${{ github.sha }}
+          path: |
+            build/explorer-rpc-candidate-v16/*/rpc-evidence.json
+            build/explorer-rpc-ordinary-v16/*/rpc-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Run the complete Python suite
+        run: uv run pytest
+
+      - name: Read back the disposable Quantum admission candidate
+        timeout-minutes: 5
+        run: |
+          uv run python scripts/test_quantum_candidate_network.py
+          uv run python scripts/check-quantum-candidate-network.py --build-dir build --out build/quantum-candidate-ci --sdk-fixture test/wallet-quantum/fixtures/public-genesis-accounts.json
+
+      - name: Broadcast disposable Quantum payment and verify execution linkage
+        timeout-minutes: 15
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+          SLH_TOOL: ${{ github.workspace }}/build-signers/slh_tool
+          MLDSA_TOOL: ${{ github.workspace }}/build-signers/mldsa_tool
+          LMS_TOOL: ${{ github.workspace }}/build-signers/lms_tool
+        run: |
+          sh test/rescue-fee-gate/tools/build.sh build-signers
+          signing_time=$(date +%s)
+          uv run --with cryptography==46.0.4 python test/wallet-quantum/test_fee_delivery.py \
+            --chain-config build/quantum-candidate-ci/candidate-config.boc \
+            --transaction-time "$signing_time" --export-network-input --output build/quantum-payment-input
+          uv run python scripts/test_quantum_transaction_chain.py --input build/quantum-payment-input
+          uv run python scripts/check-quantum-candidate-network.py --build-dir build \
+            --out build/quantum-payment-ci --network-input build/quantum-payment-input/PUBLIC-TEST-ONLY-network-input.json --broadcast
+
+      - name: Retain Quantum candidate configuration and boot evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: quantum-candidate-${{ github.sha }}
+          path: |
+            build/quantum-payment-ci/report.json
+            build/quantum-payment-ci/network.log
+            build/quantum-payment-ci/broadcast-result.json
+            build/quantum-payment-ci/transaction-observations.json
+            build/quantum-payment-ci/transaction-chain.json
+            build/quantum-payment-ci/anchor.json
+            build/quantum-payment-ci/*-proof-result.json
+            build/quantum-payment-ci/*-proof-verifier.log
+            build/quantum-candidate-ci/candidate-config.boc
+            build/quantum-candidate-ci/report.json
+            build/quantum-candidate-ci/network.log
+            build/quantum-candidate-ci/proof-result.json
+            build/quantum-candidate-ci/proof-verifier.log
+            build/quantum-candidate-ci/anchor.json
+            build/quantum-candidate-ci/proof-request.json
+            build/quantum-candidate-ci/proof-material/
+            build/quantum-candidate-ci/*-proof-request.json
+            build/quantum-candidate-ci/*-proof-result.json
+            build/quantum-candidate-ci/*-proof-verifier.log
+            build/quantum-candidate-ci/*-material/
+            build/quantum-candidate-ci/funded-accounts/accounts.json
+          if-no-files-found: ignore
+          retention-days: 14
+      # The e2e harnesses keep tosctl's configuration and vault outside the
+      # checkout, which tosctl refuses when it is group-writable.
+      - name: Check e2e harness private directories
+        run: uv run python scripts/test-e2e-private-dirs.py
+
+      # C09: X02 Config34 is accepted only through the anchored verifier built
+      # above. These production-path tests need that binary and fail without it.
+      - name: Check X02 Config34 authentication through the anchored verifier
+        env:
+          PYTHONPATH: scripts
+          TOS_PROOF_VERIFY: build/lite-client/proof-verify/tos-proof-verify
+        run: uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py test/pq-native/test_x02_stage_a_capture.py
+
+      # E04's negative controls are fast source-bound tests, not a replacement
+      # for the retained single-node real-chain lifecycle run.
+      - name: Check E04 exact cancellation and expiry controls
+        run: uv run pytest -q test/pq-native/test_e04_negative_windows.py
+
+      - name: Boot a four-validator PQ chain and exercise a transfer
+        run: uv run python test/integration/test_basic.py
+
+      # A local recovery tag must never become a PQ signing session. The
+      # process gate first proves zero rotation still records successful
+      # masterchain stats, then
+      # requires nonzero rotation to refuse before creating an active group.
+      - name: Refuse unsafe PQ session rotation before group creation
+        run: >-
+          uv run python test/integration/test_pq_unsafe_rotation_refusal.py
+          --build-dir build --artifact-dir test/integration/.pq-unsafe-rotation-ci
+
+      # A consensus key rotation without downtime: a real engine holding A and B signs
+      # for the set listing A, authorizes the next stake with B, and changes its keys
+      # through the console while producing blocks; without A (absent or expired) it
+      # creates no group.
+      - name: Rotate a PQ consensus key with both keys held
+        run: >-
+          uv run python test/integration/test_pq_consensus_key_rotation.py
+          --build-dir build --artifact-dir test/integration/.pq-consensus-key-rotation-ci
+
+  # Package allowlists left chain_block_json's test target uncompilable for two
+  # days. Compile every workspace test target on every branch push, separately
+  # from the native chain fixture so neither job can silently stand in for the other.
+  rust-workspace-tests-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: tosctl/src -> target
+      - name: Run private file persistence regressions
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p secrets-vault --lib --locked
+      - name: Compile every Rust workspace test target
+        run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked
+      - name: Run command tests including backup, secret input and wallet confirmation
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib --locked --no-default-features
+      - name: Exercise the real vault CLI secret import boundary
+        run: cargo test --manifest-path tosctl/src/Cargo.toml -p secrets-vault --features secrets-vault-cli --test cli_import_secret_input --locked

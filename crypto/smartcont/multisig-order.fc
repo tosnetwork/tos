@@ -1,0 +1,431 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; Multisig with one contract per proposal ("order").
+;;
+;; A single-contract multisig keeps every open proposal and every approval in its own
+;; storage, which grows with the number of proposals and lets one busy period make every
+;; later call more expensive. Here the parent contract only allocates a sequence number and
+;; deploys an order contract at an address derived from (order code, parent, seqno).
+;; Approvals accumulate in that order; when the threshold is reached the order sends one
+;; execute message to the parent.
+;;
+;; The parent trusts an execute message only if
+;;   * it comes from the address derived for the claimed seqno,
+;;   * the order was approved under the signer set the parent has *now* (orders opened
+;;     before a signer change cannot execute afterwards),
+;;   * the approvals reach the parent's *current* threshold, and
+;;   * the order has not expired.
+;; [multisig_order::require_execute] checks all four. Orders also refuse approvals after
+;; expiry, so an expired order can never fire. Expiry is always judged against `now()`,
+;; never a time supplied by a message.
+;;
+;; Proposals may come from a signer or from a separate proposer set: proposers can open
+;; orders but never approve them ([multisig_order::require_proposer]).
+;;
+;; Whoever opens an order prepays everything the order needs to reach execution, so it
+;; cannot be stranded half-way for lack of funds:
+;;   1. the parent's compute phase handling the proposal,
+;;   2. forwarding the init message (with the action and the signer set),
+;;   3. the order's initialisation,
+;;   4. the order's storage for its whole lifetime,
+;;   5. the order's compute phase on the approval that fires it,
+;;   6. forwarding the execute message back (with the action),
+;;   7. the parent's compute phase executing it.
+;; Gas units and fixed message/state overheads are measured per build in a fee profile (a
+;; 10-entry tuple in the field order of the Tol `MultisigOrderFeeProfile`); the action and
+;; signer sizes are counted at run time and every component is priced from the live fee
+;; configuration.
+;;
+;; FunC counterpart of the Tol `@stdlib/multisig-order`: same rules, opcodes, throw codes and
+;; order addresses; [multisig_order::pack] produces the same cell as the Tol
+;; `MultisigOrder.toCell()`. An order is the tuple
+;;   [parent, seqno, threshold, signers, approvals, approval_count, expires_at, executed, action]
+;; and an execute message the tuple [seqno, expires_at, approval_count, signers_hash, action].
+;;
+;; Requires stdlib.fc. Everything that can throw is `impure`: FunC deletes a call to a pure
+;; function whose result is unused, and a check called only for its exception would vanish.
+
+const int multisig_order::error::invalid_config = 0x1a01;
+const int multisig_order::error::invalid_seqno = 0x1a02;
+const int multisig_order::error::unknown_signer = 0x1a03;
+const int multisig_order::error::already_approved = 0x1a04;
+const int multisig_order::error::already_executed = 0x1a05;
+const int multisig_order::error::expired = 0x1a06;
+const int multisig_order::error::unauthorized_execute = 0x1a07;
+const int multisig_order::error::stale_signers = 0x1a08;
+const int multisig_order::error::insufficient_approvals = 0x1a09;
+const int multisig_order::error::unauthorized_proposer = 0x1a0a;
+const int multisig_order::error::invalid_profile = 0x1a0b;
+const int multisig_order::error::order_too_large = 0x1a0c;
+const int multisig_order::error::insufficient_value = 0x1a0d;
+const int multisig_order::error::not_reclaimable = 0x1a12;
+
+const int multisig_order::op::init = 0x16b7a4fb;
+const int multisig_order::op::approve = 0x9c205aee;
+const int multisig_order::op::execute = 0xe71e90bc;
+
+;; Signers are indexed 0..255; the approval set is a 256-bit mask.
+const int multisig_order::signer_index_bits = 8;
+const int multisig_order::max_signers = 255;
+;; Pass as the requested seqno to take the parent's next one.
+const int multisig_order::next_seqno = 0xffffffffffffffff;
+;; Size limits for the run-time size count. A full 255-signer dictionary has at most 509
+;; cells.
+const int multisig_order::max_signer_cells = 512;
+const int multisig_order::max_action_cells = 1024;
+const int multisig_order::basechain = 0;
+
+;; The immutable data an order is deployed with; it alone fixes the address.
+cell multisig_order::init_data(slice parent, int seqno) inline {
+  return begin_cell().store_slice(parent).store_uint(seqno, 64).end_cell();
+}
+
+cell multisig_order::state_init(cell order_code, slice parent, int seqno) inline {
+  return begin_cell()
+      .store_uint(0, 2)
+      .store_maybe_ref(order_code)
+      .store_maybe_ref(multisig_order::init_data(parent, seqno))
+      .store_uint(0, 1)
+      .end_cell();
+}
+
+slice multisig_order::address(cell order_code, slice parent, int seqno) inline {
+  return begin_cell()
+      .store_uint(4, 3)
+      .store_int(0, 8)
+      .store_uint(multisig_order::state_init(order_code, parent, seqno).cell_hash(), 256)
+      .end_cell()
+      .begin_parse();
+}
+
+;; Returns (seqno to use, parent's next seqno afterwards). The request must be exactly the
+;; parent's next seqno or multisig_order::next_seqno, so two proposals can never claim the
+;; same order address.
+(int, int) multisig_order::allocate_seqno(int requested, int next_seqno) impure inline {
+  throw_unless(multisig_order::error::invalid_seqno, (next_seqno >= 0) & (next_seqno < multisig_order::next_seqno));
+  throw_unless(multisig_order::error::invalid_seqno,
+               (requested == multisig_order::next_seqno) | (requested == next_seqno));
+  return (next_seqno, next_seqno + 1);
+}
+
+;; Approvals are recorded per index, so an address listed at two indices could approve
+;; twice. A signer set therefore lists each signer as a plain addr_std (267 bits, no
+;; references), in strictly increasing address order by index: workchain first, then
+;; account id. Two equal addresses can never both satisfy that, and checking it needs only
+;; the previous entry. Indices may be sparse.
+;;
+;; Checks `signer` against the previous entry's (workchain, account id) and returns its
+;; own; `first` is true for the set's lowest index. Throws invalid_config.
+(int, int) multisig_order::next_signer_key(slice signer, int previous_workchain, int previous_id,
+                                           int first) impure inline {
+  throw_unless(multisig_order::error::invalid_config, (signer.slice_bits() == 267) & (signer.slice_refs() == 0));
+  throw_unless(multisig_order::error::invalid_config, signer~load_uint(3) == 4); ;; addr_std, no anycast
+  int workchain = signer~load_int(8);
+  int id = signer~load_uint(256);
+  throw_unless(multisig_order::error::invalid_config,
+               first | (workchain > previous_workchain) | ((workchain == previous_workchain) & (id > previous_id)));
+  return (workchain, id);
+}
+
+;; Number of signers. Throws invalid_config if the dictionary is empty, larger than
+;; multisig_order::max_signers, or not ordered as multisig_order::next_signer_key requires.
+int multisig_order::signer_count(cell signers) impure inline {
+  int count = 0;
+  int workchain = 0;
+  int id = 0;
+  (int index, slice signer, int found) = signers.udict_get_min?(multisig_order::signer_index_bits);
+  while (found) {
+    count += 1;
+    throw_if(multisig_order::error::invalid_config, count > multisig_order::max_signers);
+    (workchain, id) = multisig_order::next_signer_key(signer, workchain, id, count == 1);
+    (index, signer, found) = signers.udict_get_next?(multisig_order::signer_index_bits, index);
+  }
+  throw_if(multisig_order::error::invalid_config, count == 0);
+  return count;
+}
+
+() multisig_order::require_valid_threshold(int threshold, int signer_count) impure inline {
+  throw_unless(multisig_order::error::invalid_config, (threshold > 0) & (threshold <= signer_count));
+}
+
+;; A fresh, unapproved order. Rejects an empty or oversized signer set, a threshold outside
+;; 1..signer_count, and an expiry not after the current time.
+[slice, int, int, cell, int, int, int, int, cell] multisig_order::new_with_count(slice parent, int seqno, int threshold,
+                                                                                 cell signers, int signer_count,
+                                                                                 int expires_at, cell action) impure inline {
+  throw_unless(multisig_order::error::invalid_config,
+               (signer_count > 0) & (signer_count <= multisig_order::max_signers));
+  multisig_order::require_valid_threshold(threshold, signer_count);
+  throw_unless(multisig_order::error::expired, expires_at > now());
+  return [parent, seqno, threshold, signers, 0, 0, expires_at, false, action];
+}
+
+;; [multisig_order::new_with_count] counting and checking the signers itself. An order whose
+;; init comes only from a parent that already validated the set should take the count from
+;; the parent: counting a 255-signer dictionary costs far more gas than the rest of
+;; initialisation. new_with_count trusts that the set satisfies
+;; multisig_order::signer_count; a count alone does not show the addresses are distinct.
+[slice, int, int, cell, int, int, int, int, cell] multisig_order::new(slice parent, int seqno, int threshold,
+                                                                      cell signers, int expires_at, cell action) impure inline {
+  return multisig_order::new_with_count(parent, seqno, threshold, signers, multisig_order::signer_count(signers),
+                                        expires_at, action);
+}
+
+;; An order may hand its balance back to the parent once it has expired without executing:
+;; no approval can fire it any more, and the funds would otherwise stay stranded in it.
+() multisig_order::require_reclaimable([slice, int, int, cell, int, int, int, int, cell] order) impure inline {
+  [_, _, _, _, _, _, int expires_at, int executed, _] = order;
+  throw_if(multisig_order::error::not_reclaimable, executed | (now() <= expires_at));
+}
+
+;; Index of `signer` in the order's signer set, and whether it was found.
+(int, int) multisig_order::find_signer([slice, int, int, cell, int, int, int, int, cell] order, slice signer) inline {
+  [_, _, _, cell signers, _, _, _, _, _] = order;
+  (int index, slice value, int found) = signers.udict_get_min?(multisig_order::signer_index_bits);
+  while (found) {
+    if (equal_slice_bits(value, signer)) {
+      return (index, true);
+    }
+    (index, value, found) = signers.udict_get_next?(multisig_order::signer_index_bits, index);
+  }
+  return (-1, false);
+}
+
+;; Records the approval of the signer at `signer_index`, whose address must be `sender`.
+;; Returns true exactly once: on the approval that reaches the threshold, which also marks
+;; the order executed. The caller sends [multisig_order::execute_body] to the parent when it
+;; returns true.
+([slice, int, int, cell, int, int, int, int, cell], int) ~multisig_order::approve(
+    [slice, int, int, cell, int, int, int, int, cell] order, int signer_index, slice sender) impure inline {
+  [slice parent, int seqno, int threshold, cell signers, int approvals, int approval_count,
+   int expires_at, int executed, cell action] = order;
+  throw_if(multisig_order::error::already_executed, executed);
+  throw_if(multisig_order::error::expired, now() > expires_at);
+  throw_unless(multisig_order::error::unknown_signer,
+               (signer_index >= 0) & (signer_index <= multisig_order::max_signers));
+  (slice expected, int found) = signers.udict_get?(multisig_order::signer_index_bits, signer_index);
+  throw_unless(multisig_order::error::unknown_signer, found);
+  throw_unless(multisig_order::error::unknown_signer, equal_slice_bits(expected, sender));
+  int bit = 1 << signer_index;
+  throw_if(multisig_order::error::already_approved, approvals & bit);
+  approvals |= bit;
+  approval_count += 1;
+  int fired = approval_count >= threshold;
+  if (fired) {
+    executed = true;
+  }
+  return ([parent, seqno, threshold, signers, approvals, approval_count, expires_at, executed, action], fired);
+}
+
+[int, int, int, int, cell] multisig_order::execute_message([slice, int, int, cell, int, int, int, int, cell] order) inline {
+  [_, int seqno, _, cell signers, _, int approval_count, int expires_at, _, cell action] = order;
+  return [seqno, expires_at, approval_count, signers.cell_hash(), action];
+}
+
+cell multisig_order::execute_body(int query_id, [int, int, int, int, cell] execute) inline {
+  [int seqno, int expires_at, int approval_count, int signers_hash, cell action] = execute;
+  return begin_cell()
+      .store_uint(multisig_order::op::execute, 32)
+      .store_uint(query_id, 64)
+      .store_uint(seqno, 64)
+      .store_uint(expires_at, 32)
+      .store_uint(approval_count, 8)
+      .store_uint(signers_hash, 256)
+      .store_ref(action)
+      .end_cell();
+}
+
+;; Parses an execute body (op and query id already consumed).
+[int, int, int, int, cell] multisig_order::parse_execute(slice body) impure inline {
+  int seqno = body~load_uint(64);
+  int expires_at = body~load_uint(32);
+  int approval_count = body~load_uint(8);
+  int signers_hash = body~load_uint(256);
+  cell action = body~load_ref();
+  body.end_parse();
+  return [seqno, expires_at, approval_count, signers_hash, action];
+}
+
+;; Parent-side admission of an execute message; see the file header for the four
+;; conditions.
+() multisig_order::require_execute([int, int, int, int, cell] execute, slice sender, cell order_code,
+                                   slice parent, cell current_signers, int current_threshold) impure inline {
+  [int seqno, int expires_at, int approval_count, int signers_hash, _] = execute;
+  throw_unless(multisig_order::error::unauthorized_execute,
+               equal_slice_bits(sender, multisig_order::address(order_code, parent, seqno)));
+  throw_unless(multisig_order::error::stale_signers, signers_hash == current_signers.cell_hash());
+  throw_unless(multisig_order::error::insufficient_approvals, approval_count >= current_threshold);
+  throw_if(multisig_order::error::expired, now() > expires_at);
+}
+
+;; Same layout as the Tol `MultisigOrder`.
+cell multisig_order::pack([slice, int, int, cell, int, int, int, int, cell] order) inline {
+  [slice parent, int seqno, int threshold, cell signers, int approvals, int approval_count,
+   int expires_at, int executed, cell action] = order;
+  return begin_cell()
+      .store_slice(parent)
+      .store_uint(seqno, 64)
+      .store_uint(threshold, 8)
+      .store_ref(signers)
+      .store_uint(approvals, 256)
+      .store_uint(approval_count, 8)
+      .store_uint(expires_at, 32)
+      .store_int(executed, 1)
+      .store_ref(action)
+      .end_cell();
+}
+
+[slice, int, int, cell, int, int, int, int, cell] multisig_order::unpack(cell packed) impure inline {
+  slice s = packed.begin_parse();
+  slice parent = s~load_msg_addr();
+  int seqno = s~load_uint(64);
+  int threshold = s~load_uint(8);
+  cell signers = s~load_ref();
+  int approvals = s~load_uint(256);
+  int approval_count = s~load_uint(8);
+  int expires_at = s~load_uint(32);
+  int executed = s~load_int(1);
+  cell action = s~load_ref();
+  s.end_parse();
+  return [parent, seqno, threshold, signers, approvals, approval_count, expires_at, executed, action];
+}
+
+;; Number of proposers; an empty (null) set is allowed.
+int multisig_order::proposer_count(cell proposers) impure inline {
+  int count = 0;
+  (int index, _, int found) = proposers.udict_get_min?(multisig_order::signer_index_bits);
+  while (found) {
+    count += 1;
+    throw_if(multisig_order::error::invalid_config, count > multisig_order::max_signers);
+    (index, _, found) = proposers.udict_get_next?(multisig_order::signer_index_bits, index);
+  }
+  return count;
+}
+
+;; Accepts a proposal only from the signer (`is_signer`) or the proposer at `index`, and only
+;; if that entry is `sender`.
+() multisig_order::require_proposer(cell signers, cell proposers, int is_signer, int index, slice sender) impure inline {
+  throw_unless(multisig_order::error::unauthorized_proposer,
+               (index >= 0) & (index <= multisig_order::max_signers));
+  cell set = is_signer ? signers : proposers;
+  (slice expected, int found) = set.udict_get?(multisig_order::signer_index_bits, index);
+  throw_unless(multisig_order::error::unauthorized_proposer, found);
+  throw_unless(multisig_order::error::unauthorized_proposer, equal_slice_bits(expected, sender));
+}
+
+;; Fee profile field indexes.
+const int multisig_order::parent_new_order_gas = 0;
+const int multisig_order::order_init_gas = 1;
+const int multisig_order::order_execute_gas = 2;
+const int multisig_order::parent_execute_gas = 3;
+const int multisig_order::init_message_bits = 4;
+const int multisig_order::init_message_cells = 5;
+const int multisig_order::order_state_bits = 6;
+const int multisig_order::order_state_cells = 7;
+const int multisig_order::execute_message_bits = 8;
+const int multisig_order::execute_message_cells = 9;
+;; Gas the parent spends per action when validating a proposal.
+const int multisig_order::parent_new_order_gas_per_action = 10;
+;; Gas the parent spends per action when executing an order.
+const int multisig_order::parent_execute_gas_per_action = 11;
+;; Gas per signer of a set an update action installs (validated at both proposal and execution).
+const int multisig_order::parent_gas_per_updated_signer = 12;
+const int multisig_order::profile_size = 13;
+
+int multisig_order::field(tuple profile, int index) asm "INDEXVAR";
+tuple multisig_order::set_field(tuple profile, int value, int index) asm "SETINDEXVAR";
+int multisig_order::tuple_length(tuple t) asm "TLEN";
+int multisig_order::gas_consumed() asm "GASCONSUMED";
+(int, int, int, int) multisig_order::data_size?(cell c, int max_cells) asm "CDATASIZEQ NULLSWAPIFNOT2 NULLSWAPIFNOT";
+
+;; Measured, configuration-independent cost inputs of one parent/order build. Overheads
+;; exclude the action and the signer set, which are sized at run time. Re-measure whenever
+;; either contract changes.
+tuple multisig_order::fee_profile(int parent_new_order_gas, int order_init_gas, int order_execute_gas,
+                                  int parent_execute_gas, int init_message_bits, int init_message_cells,
+                                  int order_state_bits, int order_state_cells,
+                                  int execute_message_bits, int execute_message_cells,
+                                  int parent_new_order_gas_per_action, int parent_execute_gas_per_action,
+                                  int parent_gas_per_updated_signer) inline {
+  tuple p = empty_tuple();
+  p~tpush(parent_new_order_gas);
+  p~tpush(order_init_gas);
+  p~tpush(order_execute_gas);
+  p~tpush(parent_execute_gas);
+  p~tpush(init_message_bits);
+  p~tpush(init_message_cells);
+  p~tpush(order_state_bits);
+  p~tpush(order_state_cells);
+  p~tpush(execute_message_bits);
+  p~tpush(execute_message_cells);
+  p~tpush(parent_new_order_gas_per_action);
+  p~tpush(parent_execute_gas_per_action);
+  p~tpush(parent_gas_per_updated_signer);
+  return p;
+}
+
+() multisig_order::require_valid_profile(tuple profile) impure inline {
+  throw_unless(multisig_order::error::invalid_profile,
+               profile.multisig_order::tuple_length() == multisig_order::profile_size);
+  int i = 0;
+  while (i < multisig_order::profile_size) {
+    throw_unless(multisig_order::error::invalid_profile, profile.multisig_order::field(i) > 0);
+    i += 1;
+  }
+}
+
+;; The seven-component cost for an order whose action and signer set have the given sizes,
+;; living `lifetime_seconds`. The parent's two compute phases grow with the number of actions
+;; and with the size of any signer set an update action installs; `extra_parent_gas` is gas
+;; the parent spends beyond the profile, such as counting sizes.
+int multisig_order::required_value_for_sizes(tuple profile, int action_bits, int action_cells,
+                                             int signer_bits, int signer_cells,
+                                             int action_count, int updated_signer_count,
+                                             int lifetime_seconds, int extra_parent_gas) impure inline {
+  multisig_order::require_valid_profile(profile);
+  throw_unless(multisig_order::error::expired, lifetime_seconds > 0);
+  throw_unless(multisig_order::error::invalid_config, (action_count > 0) & (updated_signer_count >= 0));
+  int signer_gas = profile.multisig_order::field(multisig_order::parent_gas_per_updated_signer) * updated_signer_count;
+  int compute = get_compute_fee(multisig_order::basechain,
+                                profile.multisig_order::field(multisig_order::parent_new_order_gas)
+                                + profile.multisig_order::field(multisig_order::parent_new_order_gas_per_action) * action_count
+                                + signer_gas + extra_parent_gas)
+      + get_compute_fee(multisig_order::basechain, profile.multisig_order::field(multisig_order::order_init_gas))
+      + get_compute_fee(multisig_order::basechain, profile.multisig_order::field(multisig_order::order_execute_gas))
+      + get_compute_fee(multisig_order::basechain,
+                        profile.multisig_order::field(multisig_order::parent_execute_gas)
+                        + profile.multisig_order::field(multisig_order::parent_execute_gas_per_action) * action_count
+                        + signer_gas);
+  int forward = get_forward_fee(multisig_order::basechain,
+                                profile.multisig_order::field(multisig_order::init_message_bits) + action_bits + signer_bits,
+                                profile.multisig_order::field(multisig_order::init_message_cells) + action_cells + signer_cells)
+      + get_forward_fee(multisig_order::basechain,
+                        profile.multisig_order::field(multisig_order::execute_message_bits) + action_bits,
+                        profile.multisig_order::field(multisig_order::execute_message_cells) + action_cells);
+  int storage = get_storage_fee(multisig_order::basechain, lifetime_seconds,
+                                profile.multisig_order::field(multisig_order::order_state_bits) + action_bits + signer_bits,
+                                profile.multisig_order::field(multisig_order::order_state_cells) + action_cells + signer_cells);
+  return compute + forward + storage;
+}
+
+;; Value a proposal must carry for `action` under `signers`, living `lifetime_seconds`.
+;; `action_count` and `updated_signer_count` describe the action, whose format belongs to the
+;; parent contract. Counts both sizes now and adds the gas the count took.
+int multisig_order::required_new_order_value(tuple profile, cell signers, cell action, int action_count,
+                                             int updated_signer_count, int lifetime_seconds) impure inline {
+  int before = multisig_order::gas_consumed();
+  (int action_cells, int action_bits, _, int action_ok) = multisig_order::data_size?(action, multisig_order::max_action_cells);
+  (int signer_cells, int signer_bits, _, int signer_ok) = multisig_order::data_size?(signers, multisig_order::max_signer_cells);
+  int counting_gas = multisig_order::gas_consumed() - before;
+  throw_unless(multisig_order::error::order_too_large, action_ok & signer_ok);
+  return multisig_order::required_value_for_sizes(profile, action_bits, action_cells, signer_bits, signer_cells,
+                                                  action_count, updated_signer_count, lifetime_seconds, counting_gas);
+}
+
+;; Throws unless `msg_value` covers [multisig_order::required_new_order_value].
+() multisig_order::require_new_order_value(tuple profile, int msg_value, cell signers, cell action, int action_count,
+                                           int updated_signer_count, int lifetime_seconds) impure inline {
+  throw_if(multisig_order::error::insufficient_value,
+           msg_value < multisig_order::required_new_order_value(profile, signers, action, action_count,
+                                                                updated_signer_count, lifetime_seconds));
+}

@@ -60,6 +60,15 @@ against source, not against memory.
 
 ## Conventions
 
+- Keep documentation in this repository in English. Store Chinese plans,
+  design notes, and audit reports in the `memo` repository.
+- For node-health-monitor work, use the existing `node-health-monitor` branch
+  when the shared tree is available. If concurrent changes require an isolated
+  worktree, make one short-lived branch, merge only reviewed changes into
+  `node-health-monitor`, then remove its local and remote branch and worktree.
+  Reuse an active isolation branch instead of creating successors for each
+  test or receipt. Never merge a withdrawn or unreviewed candidate just to
+  reduce branch count.
 - Financial arithmetic uses `checked_*`, never raw `+ - * /`. A bound that
   holds "because of a limit declared elsewhere" is not a checked operation —
   it is a dependency on a constant nobody will remember to re-check.
@@ -69,6 +78,76 @@ against source, not against memory.
   nothing; all state change happens in `apply`.
 - Do not reference external project names or issue trackers in comments or
   commit messages. Comments explain intent, not history.
+
+## Static analysis gates new C++, not old debt
+
+The tree carries hundreds of inherited analyzer findings. Fixing them is
+tracked work; it is not a reason to let a change add more. Before opening or
+updating a PR that touches C/C++, run the gate. It needs two builds: one of the
+checkout under review, and one of a separate, clean checkout of the merge base,
+for example a worktree of `main` that you keep built:
+
+```
+uv tool install codechecker==6.29.1    # once; LLVM 21 comes from install-llvm-toolchain.sh
+git worktree add --detach ../tos-main origin/main   # once; then configure and build it
+scripts/static-analysis.py --build-dir build --base-build-dir ../tos-main/build
+```
+
+The gate has ninja build the generated files each side reads, then compares
+the two sides' generated files, so a change to a schema or a contract is
+analysed through the code generated from it.
+
+Exit 0 means no new blocking finding, 1 lists the new blocking findings, and 2
+means the gate could not establish a result. A new finding in a blocking check
+fails the change.
+
+- The tier tables in the script are the rule set. `.clang-tidy` at the
+  repository root is what clangd reads while you edit, and the script refuses
+  to run if its checks or options disagree with the tables. Change the rule set
+  in its own reviewed commit, with the measurement that justifies the change.
+- A check blocks only when its findings on this tree are mostly real.
+  Advisory checks are printed and do not fail. Checks whose findings here were
+  all false are not run at all. Promote a check with evidence, not by default.
+- "New" means new against a fresh analysis of the merge base, run in the same
+  invocation with the same tools and options. There is no stored baseline to
+  go stale, and no allowance to spend: a defect fixed on main and brought back
+  is new again.
+- A false positive is suppressed in the source, naming the exact check and the
+  reason. A suppression without a reason, or one that silences a whole file or
+  every check, is refused. The reviewer sees every suppression the change adds.
+- `td::Status` and `td::Result` returned from a call are handled. An intentional
+  discard, including `(void)` or `static_cast<void>`, needs an exact
+  `NOLINT(bugprone-unused-return-value): reason` on that line, or a reasoned
+  `NOLINTNEXTLINE(bugprone-unused-return-value)` immediately above it. A cast
+  or an ordinary comment alone does not suppress this check. A dropped status
+  is how a failed database write or a failed validation goes unnoticed.
+- The script must prove it ran: it reports how many compilations it analysed
+  and fails if any failed to parse, if the enabled checks differ from the rule
+  set, if a positive control in `test/static-analysis/gate/` stops reporting
+  its marked line, or if a changed file is missing from the compilation
+  database. "No new findings" from an analysis that did not run is not a
+  result. A new blocking check comes with a control the check must flag.
+
+## Keep evidence reviewable without filling Git with run output
+
+Commit the smallest durable set that lets another person check a claim and
+reproduce the relevant control: the test or runner, required frozen fixtures or
+schemas, the exact source/commit and command, and a concise result index with
+exit status and hashes. Preserve a targeted red/green sensitivity result when
+it is needed to show that the test can fail.
+
+Do not commit every build log, repeated successful run, temporary binary,
+database snapshot, or continuous sampling stream. Keep bulky raw output in a
+separate retained artifact location and put its path, SHA-256, size, and
+retention period in the committed index. If raw output is essential and no
+durable external location exists, commit only the bounded excerpt or minimal
+raw file needed to audit the claim, and explain why it cannot be regenerated.
+Never commit credentials, private runtime data, or unredacted live payloads.
+
+Review new evidence files before staging them. A passing summary must not
+replace a required failure receipt, and a hash without access to the retained
+raw artifact is not independent proof. Do not rewrite published Git history
+merely to remove old evidence; handle any such cleanup as a coordinated task.
 
 ## Wait for relevant CI, not every CI job
 

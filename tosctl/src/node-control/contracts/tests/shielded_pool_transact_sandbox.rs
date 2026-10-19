@@ -36,7 +36,7 @@ use std::collections::BTreeMap;
 mod shielded_pool_library;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 const DEPTH: usize = 12;
 const ARITY: u64 = 7;
 const CAPACITY: u64 = 1 << 32;
@@ -48,14 +48,16 @@ const EPOCH_NONE: u32 = 0xffff_ffff;
 const OP_TRANSACT: u32 = 0x5348_5002;
 const RESERVE_FLOOR: u64 = 5 * TOS;
 /// Section 14.1, frozen by the production rule
-/// C = max(10,000, round_up_10,000(ceil(M * 5 / 4))). A sender funds the
+/// C = max(10,000, round_up_10,000(ceil(B * 5 / 4))). A sender funds the
 /// ceiling, not what the path will use.
 ///
-/// The maximum is measured on the deployed configuration, at the dearest
-/// state a pool can be in: full anchor rings on the youngest tree that can
-/// have them. Full rings make a transact dearer and a higher leaf index makes
-/// it slightly cheaper, so the maximum is at neither end of a pool's life --
-/// 1,175,034 there, against 1,171,462 in a pool with nothing in it.
+/// `B` is a derived upper bound, not a measured maximum. The dearest state a
+/// pool can *reach* is full anchor rings on the youngest tree that can have
+/// them -- full rings make a transact dearer and a higher leaf index makes it
+/// slightly cheaper, so it is at neither end of a pool's life -- but the
+/// dearest state a transact can be *in* is not reachable at all, and that is
+/// what the ceiling has to cover. `gas_ceiling_bound.rs` derives it by walking
+/// each variable call's whole domain and adding the spans.
 ///
 /// Read out of the contract, never written down here. A ceiling copied into a
 /// test is a number this file can check against itself while the deployed
@@ -63,7 +65,13 @@ const RESERVE_FLOOR: u64 = 5 * TOS;
 fn transact_gas_ceiling() -> i64 {
     shielded_pool_library::gas_ceiling("transact_gas_ceiling")
 }
-const TRANSACT_MEASURED_MAX_GAS: i64 = 1_175_034;
+/// The upper bound `gas_ceiling_bound.rs` derives for a withdrawal, which is
+/// the dearer of the two transact modes. It is not a measurement: no
+/// transaction anybody can build sits at the dearest denomination, the
+/// dearest anchor kind, full rings, a turning epoch, the leaf index whose
+/// base-seven digits are all zero and the more expensive nullifier order at
+/// once. The bound adds each of those spans to one real withdrawal.
+const TRANSACT_DERIVED_BOUND_GAS: i64 = 1_204_845;
 /// The basechain compute fee for `gas`, priced as ConfigParam21 prices it: a
 /// flat 667 for the first hundred gas, then 436,907 per 65,536 gas with the
 /// division rounded up.
@@ -596,6 +604,7 @@ fn genesis_state(nullifier_root: Field) -> Cell {
     builder.append_u16(VERSION).unwrap();
     builder.append_raw(&EMPTY_ROOTS[DEPTH], 256).unwrap();
     builder.append_u64(0).unwrap();
+    builder.append_u32(0).unwrap(); // no recovery leaves reserved
     builder.append_raw(&nullifier_root, 256).unwrap();
     builder.append_u64(1).unwrap();
     builder.append_u32(EPOCH_NONE).unwrap();
@@ -649,12 +658,12 @@ impl Pool {
     /// `limit` replaces the network's per-transaction gas ceiling. This chain
     /// grants 30,000,000, so the only use left for this is the opposite of
     /// what it was built for: starving a transaction on a network configured
-    /// like TON's basechain, to show what the contract's own ceiling is
-    /// protecting against.
+    /// like the reference implementation's basechain, to show what the
+    /// contract's own ceiling is protecting against.
     fn deploy_with_gas_limit(nullifier_root: Field, limit: Option<u64>) -> Self {
         let mut bc = match limit {
             None => Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-                .expect("blockchain at version 17"),
+                .expect("blockchain at version 16"),
             Some(limit) => {
                 let base =
                     tos_executor::BlockchainConfig::default_with_global_version(ACTIVE_VERSION)
@@ -1077,16 +1086,17 @@ fn what_a_transact_spends_and_where() {
     // The total is what the suite reports elsewhere; this test's claim is the
     // shape of the breakdown, not the total.
     //
-    // It used to assert this was above a million, because it was. At global
-    // version 18 the two insertions stopped walking their paths in FunC and
-    // the whole path to the proof came to 825,393 -- under the 1,000,000 a
-    // TON basechain grants a transaction, which is the figure the gas budget
-    // work spent a day being wrong about. The bound is kept, pointing the
+    // It used to assert this was above a million, because it was. With
+    // POSEIDON2_PATH7 the two insertions stopped walking their paths in FunC and
+    // the whole path to the proof came to 825,393 -- under the 1,000,000 the
+    // reference implementation's basechain grants a transaction, which is the
+    // figure the gas budget work spent a day being wrong about. The bound is kept, pointing the
     // other way, so that losing the saving is loud.
     assert!(
         reached_proof < 1_000_000,
-        "the path to the proof costs {reached_proof} gas, back above the million a TON \
-         basechain grants; POSEIDON2_PATH7 brought it to 825,393 and something has undone that"
+        "the path to the proof costs {reached_proof} gas, back above the million the \
+         reference implementation's basechain grants; POSEIDON2_PATH7 brought it to 825,393 \
+         and something has undone that"
     );
 }
 
@@ -1094,9 +1104,9 @@ fn what_a_transact_spends_and_where() {
 /// limits that actually bound it.
 ///
 /// This test used to assert that the path did not fit "the network", having
-/// measured it against the executor's default table -- which carried TON's
-/// basechain limit of 1,000,000 while this chain's zero state grants
-/// 30,000,000. The claim was false for this chain by a factor of twenty-seven.
+/// measured it against the executor's default table -- which carried the
+/// reference implementation's basechain limit of 1,000,000 while this chain's
+/// zero state grants 30,000,000. The claim was false for this chain by a factor of twenty-seven.
 /// `chain_gas_envelope_sandbox.rs` now generates the zero state and holds the
 /// two tables together, and what is left to say here is what the path costs
 /// and how much room it has.
@@ -1149,11 +1159,11 @@ fn a_transact_fits_its_ceiling_and_the_gas_this_chain_grants() {
     );
 
     // And the middle term is the one the production rule gives, applied to the
-    // maximum that was actually measured:
+    // derived bound rather than to a measurement:
     //
     //     C = max(10,000, round_up_10,000(ceil(M * 5 / 4)))
     //
-    // `TRANSACT_MEASURED_MAX_GAS` carried that measurement and nothing read
+    // `TRANSACT_DERIVED_BOUND_GAS` carried that measurement and nothing read
     // it -- a number written down, never compared to anything, free to drift
     // away from both the contract and the measurement it came from. The
     // crosscheck crate holds the same rule against a pool it has aged, which
@@ -1165,17 +1175,17 @@ fn a_transact_fits_its_ceiling_and_the_gas_this_chain_grants() {
     };
     assert_eq!(
         ceiling,
-        by_rule(TRANSACT_MEASURED_MAX_GAS),
+        by_rule(TRANSACT_DERIVED_BOUND_GAS),
         "the transact ceiling is {ceiling}, not the {} the production rule gives for a \
-         measured maximum of {TRANSACT_MEASURED_MAX_GAS}",
-        by_rule(TRANSACT_MEASURED_MAX_GAS)
+         derived bound of {TRANSACT_DERIVED_BOUND_GAS}",
+        by_rule(TRANSACT_DERIVED_BOUND_GAS)
     );
 
     // And a network that grants less than the path needs stops it, which is
     // what the ceiling is protecting against on a chain configured otherwise.
     //
     // This used to starve the path at 1,000,000. It no longer starves there:
-    // since global version 18 the whole path to the proof is 825,393, so the
+    // with POSEIDON2_PATH7 the whole path to the proof is 825,393, so the
     // figure has to be one that is actually short of it.
     let mut starved = Pool::deploy_with_gas_limit(RefState::genesis().root(), Some(500_000));
     let now = starved.bc.now();

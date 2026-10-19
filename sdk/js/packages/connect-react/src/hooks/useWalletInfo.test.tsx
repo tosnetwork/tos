@@ -39,6 +39,7 @@ function createMockConnectContext(
     connector: null,
     wallet: null,
     connecting: false,
+    connectError: null,
     disconnect: vi.fn(async () => {}),
     connect: vi.fn(),
     ...overrides,

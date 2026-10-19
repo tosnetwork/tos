@@ -9,7 +9,7 @@
  */
 
 import { bytesToHex } from "./utils.js";
-import { encryptMessage, decryptMessage, type SessionKeypair } from "./session.js";
+import { encryptMessage, decryptMessage, isSafePeerPublicKey, type SessionKeypair } from "./session.js";
 import { bridgeUnreachableError, TosConnectError } from "./errors.js";
 import { toBase64Url, fromBase64Url } from "./utils.js";
 
@@ -66,7 +66,8 @@ export class BridgeClient {
   ) {
     this.bridgeUrl = options.bridgeUrl.replace(/\/+$/, "");
     this.keypair = options.keypair;
-    this.walletPublicKey = options.walletPublicKey ?? null;
+    this.walletPublicKey = null;
+    if (options.walletPublicKey) this.setWalletPublicKey(options.walletPublicKey);
     this.defaultTtl = options.defaultTtl ?? 300;
     this.reconnectEnabled = reconnect?.enabled ?? true;
     this.maxRetries = reconnect?.maxRetries ?? 5;
@@ -80,7 +81,11 @@ export class BridgeClient {
 
   /** Set the wallet's public key (known after connect handshake). */
   setWalletPublicKey(key: Uint8Array): void {
-    this.walletPublicKey = key;
+    if (!isSafePeerPublicKey(key, this.keypair.secretKey) ||
+        (this.walletPublicKey && bytesToHex(this.walletPublicKey) !== bytesToHex(key))) {
+      throw new TosConnectError("Invalid or replaced wallet session key", "WALLET_NOT_FOUND");
+    }
+    this.walletPublicKey = key.slice();
   }
 
   // -----------------------------------------------------------------------
@@ -180,7 +185,8 @@ export class BridgeClient {
         };
 
         const senderPk = hexToBytesSafe(raw.from);
-        if (!senderPk) return;
+        if (!senderPk || !this.walletPublicKey ||
+            bytesToHex(senderPk) !== bytesToHex(this.walletPublicKey)) return;
 
         const encryptedBytes = fromBase64Url(raw.message);
         const decrypted = decryptMessage(

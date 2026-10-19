@@ -1,0 +1,84 @@
+{
+  "scope": "Swift native-produced proof capability and account/configuration/live-clock binding, public proof fixtures",
+  "ios_revision": "192b675",
+  "native_revision": "2edbeb6d1",
+  "validation": [
+    "Actual 24-test CoreComponents suite passes before controls and after restoration",
+    "Address/code/config hash mismatch, historical-live use, expiry and local clock rollback refused",
+    "Non-public JSON constructor; public factories perform native verification, live factory commits under the checkpoint lock",
+    "Full TosWallet make compile passes at 192b675"
+  ],
+  "controls": "All four address/code/freshness/config mutants compile and fail their corresponding XCTest assertions. Expiry mutation preserves timestamp use while removing only the upper age bound.",
+  "excluded": [
+    "Prefix suite filter executed zero tests",
+    "Initial freshness mutation stopped at an unused-variable compiler error; not semantic evidence"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-ios-bound-baseline-raw.log",
+      "bytes": 475331,
+      "sha256": "3a805c555468234200e653f443898fa2eb95b26f7255ef2bdbed7a1fd241ef27"
+    },
+    {
+      "file": "20261007-ios-bound-restored.log",
+      "bytes": 16255,
+      "sha256": "6b5bca98cd4fe17b6d771d7fb1cdd1d7c6eb22001d8deb8d6c73f55cf1cc0534"
+    },
+    {
+      "file": "20261007-ios-bound-restored-raw.log",
+      "bytes": 118788,
+      "sha256": "7509fd797dff89a3eee859ed568c9b8143c11f0e682d7d3b8dcf1f11c9b9b98f"
+    },
+    {
+      "file": "20261007-ios-bound-address-control.log",
+      "bytes": 40660,
+      "sha256": "7ea0ac7359380fc7b2bdd3beefbd290ffae0733c3e157deaf1e6c51610fc977d"
+    },
+    {
+      "file": "20261007-ios-bound-address-control-raw.log",
+      "bytes": 465579,
+      "sha256": "8b1d366f7ec5e378c07eff662f740df9ec52f7d678005392fc89978e61aa7338"
+    },
+    {
+      "file": "20261007-ios-bound-code-control.log",
+      "bytes": 11954,
+      "sha256": "91708394b9ae66907f0b569474f29828e56ee79f2a857647b6105ae7e9e31bb5"
+    },
+    {
+      "file": "20261007-ios-bound-code-control-raw.log",
+      "bytes": 92198,
+      "sha256": "39d05e08da370ddd5bd16825833a2645d0d40e8c51b724ed649afc5a13cc00b2"
+    },
+    {
+      "file": "20261007-ios-bound-freshness-runtime-control.log",
+      "bytes": 12257,
+      "sha256": "8940f40fa820df88d787f3f01af4ab57b3c6fa7d40824c2f0144b19f458e8ab8"
+    },
+    {
+      "file": "20261007-ios-bound-freshness-runtime-control-raw.log",
+      "bytes": 94180,
+      "sha256": "dfdbc8a6b05c2545d1c57e1ee97fc63829552dbdb189ee49e96974bf2856fc74"
+    },
+    {
+      "file": "20261007-ios-bound-config-control.log",
+      "bytes": 12054,
+      "sha256": "b58febd6f57cf81dcd4494a7f52cc8751219374b7321b040101841b62c89542e"
+    },
+    {
+      "file": "20261007-ios-bound-config-control-raw.log",
+      "bytes": 89613,
+      "sha256": "787dba3f96b32b9139ac550352f82c15310f0de56f563ba411f26d5a6e91cd1f"
+    },
+    {
+      "file": "20261007-ios-bound-full-compile.log",
+      "bytes": 250789,
+      "sha256": "61c2b80006e19bd8e84ba710f0ef666c14ca7ae3cce1f62280b046314824a5fb"
+    }
+  ],
+  "pending": [
+    "Distinct actual checkpoint mismatch fixtures and independent configuration-positive bindings",
+    "Full installed wallet/module/vault tuple and authority decoding",
+    "Live endpoint and funded lifecycle with transaction-bound recipient delivery",
+    "Physical-device runtime testing"
+  ]
+}

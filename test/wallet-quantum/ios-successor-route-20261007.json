@@ -1,0 +1,73 @@
+{
+  "scope": "Swift locally reconstructed successor route and typed installed-state binding; no funded/deployed migration acceptance",
+  "ios_revision": "e7b656b",
+  "native_revision": "67d7b2598",
+  "validation": [
+    "Two baseline/restored successor tests pass",
+    "Three mutants compile and trigger named runtime assertions",
+    "New vault retains original wallet address, module/vault code and namespace compatibility enforced",
+    "Full app make compile passes at e7b656b"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-ios-successor-route.log",
+      "bytes": 157526,
+      "sha256": "957b3816b4aee15b72cc2919229679ffc2ee9deb3f5f8ce03a3afff3ac6ed736"
+    },
+    {
+      "file": "20261007-ios-route-baseline-raw.log",
+      "bytes": 2715913,
+      "sha256": "afe7459801777a0fa1e366982d645f14c19c5d104b04bbfbdfca41b3581313f9"
+    },
+    {
+      "file": "20261007-ios-route-restored.log",
+      "bytes": 11698,
+      "sha256": "e3a8de4565094b27f2d8389aeaf8335df0302240d816b7dc09497435976b60c1"
+    },
+    {
+      "file": "20261007-ios-route-restored-raw.log",
+      "bytes": 75388,
+      "sha256": "cd98b7163e0f1d1f2ece3b1e9ef221c8b30d6f4c5fd6ae7d6551afe78786ca45"
+    },
+    {
+      "file": "20261007-ios-route-wallet-control.log",
+      "bytes": 12425,
+      "sha256": "6ea2d2b786fe21f10a7e23ce5422c010f5ef85ff7cdf46730c56a8afde6b90e9"
+    },
+    {
+      "file": "20261007-ios-route-wallet-control-raw.log",
+      "bytes": 81610,
+      "sha256": "f7200f5dd43bdb2f1f23011ceefa99f7f616aa08233359980647f7da5fd5b841"
+    },
+    {
+      "file": "20261007-ios-route-namespace-control.log",
+      "bytes": 40683,
+      "sha256": "b3d0e72f4ac9e9f0b64ec9dcb3a2f5969e3138da722d748523c5b04374fff4cc"
+    },
+    {
+      "file": "20261007-ios-route-namespace-control-raw.log",
+      "bytes": 451152,
+      "sha256": "192885e06783d767958b01f8fa1b4504775a5de2a94e480fb15e18fc5802fd03"
+    },
+    {
+      "file": "20261007-ios-route-code-control.log",
+      "bytes": 40683,
+      "sha256": "c545d50151f278304573891add1624aa861721c639288899532a7364ed89697b"
+    },
+    {
+      "file": "20261007-ios-route-code-control-raw.log",
+      "bytes": 451152,
+      "sha256": "c960d06823f5f321ef7862ea0dd0485bcc80b21ddf9b214dbe86a8feae42fafe"
+    },
+    {
+      "file": "20261007-ios-successor-route-full-compile.log",
+      "bytes": 252272,
+      "sha256": "46ed67e34617f8ca0d834746a2017899aed08b9dcfb056d5def5e55343b34910"
+    }
+  ],
+  "pending": [
+    "iOS multi-account coordinator",
+    "Deployed successor proofs, funded dual POP/staging/current enrollment and repeated migration",
+    "Signer, broadcast and recipient finality workflow"
+  ]
+}

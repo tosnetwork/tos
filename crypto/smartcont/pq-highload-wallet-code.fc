@@ -1,0 +1,315 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; ML-DSA-44 high-volume wallet. TVM v16+, workchain 0, PQ.fif required.
+;; No external handler or ACCEPT: the relayer's internal value pays compute.
+;; submit#50514857 relayer_query_id:uint64 request:^Request signature:^StoredSignature
+;; Request = global_id:int32 wallet:MsgAddressInt subwallet_id:uint32 query_id:uint23
+;;           created_at:uint64 timeout:uint22 actions:^OutList
+;; Sign the 32-byte big-endian request hash under "TOS-PQ-HIGHLOAD-v1".
+;; Network, address, subwallet, timeout and all actions are bound. Only refund routing
+;; is unsigned. No early COMMIT; failures roll back state, including the replay id.
+;; Refund first (64+2), then 1..254 sends in signed order, with +2 forced. Delivery is
+;; best effort, not atomic. +32 is forbidden: redeployment would erase replay history.
+;;
+;; Extra currencies have two independent limits: live ConfigParam 43 encoded entries
+;; per message, and at most 8 encoded entries across the whole batch. Shared dictionaries
+;; count on every use. Amounts must be positive and minimally encoded: the executor's
+;; CurrencyCollection validator uses VarUIntegerPos_32 before its zero-filter helper.
+;; Omit zero entries. The batch cap bounds compute, not asset supply; split larger batches.
+;;
+;; Storage and signing layout are unchanged. Code changes require new deployment BoCs
+;; and addresses. Storage rent and action-phase size/balance limits still apply.
+
+#include "replay-guard.fc";
+#include "pq-bytes.fc";
+#include "pq.fc";
+
+const int op::submit = 0x50514857;
+const int op::excesses = 0xd53276db;
+const int action::send_msg = 0x0ec3c86d;
+
+const int error::wrong_workchain = 0x1c02;
+const int error::bad_submission = 0x1c03;
+const int error::wrong_network = 0x1c04;
+const int error::wrong_wallet = 0x1c05;
+const int error::wrong_subwallet = 0x1c06;
+const int error::wrong_timeout = 0x1c07;
+const int error::invalid_action = 0x1c08;
+const int error::invalid_mode = 0x1c09;
+const int error::invalid_message = 0x1c0a;
+const int error::insufficient_value = 0x1c0b;
+const int error::invalid_signature = 0x1c0c;
+
+const int basechain = 0;
+const int max_actions = 254;
+const int SEND_MODE_IGNORE_ERRORS = 2;
+const int SEND_MODE_CARRY_INBOUND_VALUE = 64;
+;; +1 pay fees separately, +2 ignore errors, +128 carry the remaining balance
+const int SEND_MODES_ALLOWED = 0x83;
+;; Matches tol/extra-flags-constants.h: new bounce format (+1), full bounce body (+2).
+const int MESSAGE_EXTRA_FLAGS_ALLOWED = 3;
+const int BATCH_MAX_EXTRA_ENTRIES = 8;
+const int SUBWALLET_ID_BITS = 32;
+const int QUERY_ID_BITS = 23;
+const int CREATED_AT_BITS = 64;
+const int TIMEOUT_BITS = 22;
+
+;; Historical empty-extra measurement: 79,546 base + 2,708/action at afb2e27f9.
+;; Per-action allowance includes preflight bookkeeping. A fixed reserve covers all
+;; eight extra entries and live-config reads. It is refunded when unused, not charged
+;; as a flat fee. Real-executor profile and exact-quote tests gate these allowances.
+const int fee::base_gas = 87600;
+const int fee::gas_per_action = 3300;
+const int fee::extra_gas = 60000;
+
+() set_actions(cell actions) impure asm "c5 POP";
+
+(cell, int, [cell, cell, int, int]) load_data() inline {
+  slice ds = get_data().begin_parse();
+  cell public_key = ds~load_ref();
+  int subwallet_id = ds~load_uint(SUBWALLET_ID_BITS);
+  cell old_queries = ds~load_dict();
+  cell queries = ds~load_dict();
+  int last_clean_time = ds~load_uint(64);
+  int timeout = ds~load_uint(TIMEOUT_BITS);
+  ds.end_parse();
+  return (public_key, subwallet_id, [old_queries, queries, last_clean_time, timeout]);
+}
+
+() save_data(cell public_key, int subwallet_id, [cell, cell, int, int] guard) impure inline {
+  set_data(begin_cell()
+      .store_ref(public_key)
+      .store_uint(subwallet_id, SUBWALLET_ID_BITS)
+      .store_slice(replay_guard::pack(guard).begin_parse())
+      .end_cell());
+}
+
+int required_value(int action_count) inline {
+  return get_compute_fee(basechain, fee::base_gas + fee::gas_per_action * action_count + fee::extra_gas)
+       + get_forward_fee(basechain, 0, 0);
+}
+
+;; SizeLimitsConfig #01/#02/#03, crypto/block/block.tlb. Absent/#01 defaults to 2.
+;; An explicit zero is NOT a missing value. Unknown constructors fail closed.
+int message_extra_currency_limit() impure inline {
+  cell config = config_param(43);
+  if (cell_null?(config)) {
+    return 2;
+  }
+  slice limits = config.begin_parse();
+  int tag = limits~load_uint(8);
+  if (tag == 1) {
+    limits~skip_bits(160);
+    limits.end_parse();
+    return 2;
+  }
+  throw_unless(error::invalid_message, (tag == 2) | (tag == 3));
+  ;; Six common fields occupy 160 bits, followed by four uint32 fields.
+  limits~skip_bits(288);
+  int count = limits~load_uint(32);
+  limits~skip_bits(8 + 32);
+  if (tag == 3) {
+    if (limits~load_uint(1)) {
+      limits~skip_bits(32);
+    }
+    limits~skip_bits(64);
+  }
+  limits.end_parse();
+  return count;
+}
+
+;; Non-null Hashmap 32 (VarUInteger 32). Count every leaf toward BOTH limits.
+;; CurrencyCollection::remove_zero_extra_currencies checks count before the amount.
+;; At most one lookahead follows the last permitted leaf; key width bounds traversal
+;; depth. Every amount must have non-zero length and a non-zero leading byte, matching
+;; VarUIntegerPos::validate_skip and ExtraCurrencyCollection::validate. A later
+;; zero-filter helper does not make zero-valued entries admissible at this earlier gate.
+int require_valid_extra_currencies(cell extra, int remaining) impure inline {
+  throw_unless(error::invalid_message, remaining > 0);
+  int limit = message_extra_currency_limit();
+  int visited = 0;
+  (int id, slice value, int found) = extra.udict_get_min?(32);
+  while (found) {
+    throw_unless(error::invalid_message, visited < remaining);
+    visited += 1;
+    throw_if(error::invalid_message, visited > limit);
+    int bytes = value~load_uint(5);
+    if (bytes) {
+      throw_unless(error::invalid_message, value.preload_uint(8) != 0);
+      value~skip_bits(bytes * 8);
+    }
+    value.end_parse();
+    throw_unless(error::invalid_message, bytes > 0);
+    (id, value, found) = extra.udict_get_next?(32, id);
+  }
+  return visited;
+}
+
+;; Return extra entries visited. Empty maps bypass the dictionary/config walk.
+;; Destination deliverability and available balance remain action-phase decisions.
+int require_valid_message(cell message, int extra_left) impure inline {
+  slice m = message.begin_parse();
+  throw_if(error::invalid_message, m~load_uint(1)); ;; int_msg_info$0
+  int flags = m~load_uint(3); ;; ihr_disabled bounce bounced
+  throw_if(error::invalid_message, flags & 1);
+  throw_unless(error::invalid_message, m~load_uint(2) == 0); ;; src: addr_none
+  m~load_msg_addr(); ;; dest
+  m~load_coins(); ;; value
+  cell extra = m~load_dict();
+  int entries = 0;
+  ifnot (cell_null?(extra)) {
+    entries = require_valid_extra_currencies(extra, extra_left);
+  }
+  int extra_flags = m~load_coins(); ;; extra_flags since global version 12, not ihr_fee
+  throw_unless(error::invalid_message, (extra_flags & MESSAGE_EXTRA_FLAGS_ALLOWED) == extra_flags);
+  m~load_coins(); ;; fwd_fee
+  m~skip_bits(64 + 32); ;; created_lt created_at
+  throw_if(error::invalid_message, m~load_uint(1)); ;; no StateInit
+  if (m~load_int(1)) {
+    m~load_ref();
+    m.end_parse();
+  }
+  return entries;
+}
+
+;; OutList heads are newest first; collecting with cons yields signed execution order.
+(tuple, int) checked_batch(cell actions) impure inline {
+  tuple batch = null();
+  int count = 0;
+  int extra_left = BATCH_MAX_EXTRA_ENTRIES;
+  slice node = actions.begin_parse();
+  while (node.slice_refs()) {
+    count += 1;
+    throw_if(error::invalid_action, count > max_actions);
+    cell prev = node~load_ref();
+    throw_unless(error::invalid_action, node~load_uint(32) == action::send_msg);
+    int mode = node~load_uint(8);
+    cell message = node~load_ref();
+    node.end_parse();
+    throw_unless(error::invalid_mode, (mode & SEND_MODES_ALLOWED) == mode);
+    extra_left -= require_valid_message(message, extra_left);
+    batch = cons([mode, message], batch);
+    node = prev.begin_parse();
+  }
+  node.end_parse(); ;; the empty terminator
+  throw_unless(error::invalid_action, count > 0);
+  return (batch, count);
+}
+
+() recv_internal(int balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  slice in_msg = in_msg_full.begin_parse();
+  if (in_msg~load_uint(4) & 1) {
+    return (); ;; bounced
+  }
+  if (in_msg_body.slice_bits() < 32) {
+    return (); ;; a plain deposit
+  }
+  if (in_msg_body~load_uint(32) != op::submit) {
+    return (); ;; anything else is a deposit as well
+  }
+  slice relayer = in_msg~load_msg_addr();
+  (int relayer_workchain, _) = parse_std_addr(relayer);
+  throw_unless(error::wrong_workchain, relayer_workchain == basechain);
+  (int my_workchain, _) = parse_std_addr(my_address());
+  throw_unless(error::wrong_workchain, my_workchain == basechain);
+
+  int relayer_query_id = in_msg_body~load_uint(64);
+  cell request = in_msg_body~load_ref();
+  cell signature = in_msg_body~load_ref();
+  in_msg_body.end_parse();
+
+  (cell public_key, int subwallet_id, [cell, cell, int, int] guard) = load_data();
+
+  ;; Everything that can refuse the request, cheapest first and before verification.
+  slice r = request.begin_parse();
+  throw_unless(error::wrong_network, r~load_int(32) == pq::global_id());
+  throw_unless(error::wrong_wallet, equal_slice_bits(r~load_msg_addr(), my_address()));
+  throw_unless(error::wrong_subwallet, r~load_uint(SUBWALLET_ID_BITS) == subwallet_id);
+  int query_id = r~load_uint(QUERY_ID_BITS);
+  int created_at = r~load_uint(CREATED_AT_BITS);
+  [_, _, _, int timeout] = guard;
+  throw_unless(error::wrong_timeout, r~load_uint(TIMEOUT_BITS) == timeout);
+  cell actions = r~load_ref();
+  r.end_parse();
+  guard~replay_guard::check(query_id, created_at);
+  (tuple batch, int count) = checked_batch(actions);
+  throw_unless(error::insufficient_value, msg_value >= required_value(count));
+
+  ;; The signature: a stored signature (len:uint32 ^chain) of the request hash.
+  slice stored = signature.pq::parse_ordinary();
+  throw_unless(error::bad_submission, (stored.slice_bits() == 32) & (stored.slice_refs() == 1));
+  throw_unless(error::bad_submission, stored.preload_uint(32) == pq::mldsa44_signature_bytes);
+  cell message = begin_cell().store_uint(request.cell_hash(), 256).end_cell();
+  cell context = begin_cell().store_slice("TOS-PQ-HIGHLOAD-v1").end_cell();
+  cell key = public_key.begin_parse().preload_ref();
+  throw_unless(error::invalid_signature, pq_check_mldsa44(message, context, stored.preload_ref(), key));
+
+  guard~replay_guard::record(query_id);
+  save_data(public_key, subwallet_id, guard);
+
+  ;; The relayer's remainder first, best effort; then the signed batch, oldest first.
+  send_raw_message(begin_cell()
+      .store_uint(0x10, 6) ;; non-bounceable
+      .store_slice(relayer)
+      .store_coins(0)
+      .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+      .store_uint(op::excesses, 32)
+      .store_uint(relayer_query_id, 64)
+      .end_cell(), SEND_MODE_CARRY_INBOUND_VALUE | SEND_MODE_IGNORE_ERRORS);
+  while (~ null?(batch)) {
+    [int mode, cell outbound] = batch~list_next();
+    send_raw_message(outbound, mode | SEND_MODE_IGNORE_ERRORS);
+  }
+}
+
+int get_key_id() method_id {
+  (cell public_key, _, _) = load_data();
+  return pq::key_id(pq::algorithm::mldsa44, public_key);
+}
+
+int get_subwallet_id() method_id {
+  (_, int subwallet_id, _) = load_data();
+  return subwallet_id;
+}
+
+int get_timeout() method_id {
+  (_, _, [cell, cell, int, int] guard) = load_data();
+  [_, _, _, int timeout] = guard;
+  return timeout;
+}
+
+int get_last_clean_time() method_id {
+  (_, _, [cell, cell, int, int] guard) = load_data();
+  [_, _, int last_clean_time, _] = guard;
+  return last_clean_time;
+}
+
+;; Whether query_id is remembered, optionally applying the next request's rotation.
+int processed?(int query_id, int need_clean) method_id {
+  if ((query_id < 0) | (query_id >= (1 << QUERY_ID_BITS)) | ((query_id & 1023) == 1023)) {
+    return false;
+  }
+  (_, _, [cell, cell, int, int] guard) = load_data();
+  if (need_clean) {
+    guard~replay_guard::rotate();
+  }
+  return replay_guard::processed?(guard, query_id);
+}
+
+;; Conservative value quote including the entire extra-entry compute reserve.
+int get_required_value(int action_count) method_id {
+  throw_unless(error::invalid_action, (action_count > 0) & (action_count <= max_actions));
+  return required_value(action_count);
+}
+
+(int, int) get_extra_currency_limits() method_id {
+  return (message_extra_currency_limit(), BATCH_MAX_EXTRA_ENTRIES);
+}
+
+;; Deployment check needs only c4, so it runs before an address has been derived.
+int get_checked_config() method_id {
+  (cell public_key, _, [cell, cell, int, int] guard) = load_data();
+  [_, _, _, int timeout] = guard;
+  throw_unless(replay_guard::error::invalid_timeout, (timeout > 0) & (timeout <= replay_guard::max_timeout));
+  return pq::key_id(pq::algorithm::mldsa44, public_key);
+}

@@ -1,0 +1,11 @@
+;; Attacker-owned account execution probe; not a wallet or authorization scheme.
+() recv_internal(slice body) impure { }
+() recv_external(slice body) impure {
+  int accepted = body~load_uint(1);
+  int count = body~load_uint(32);
+  body.end_parse();
+  if (accepted) { accept_message(); }
+  int value = 0;
+  repeat (count) { value += 1; }
+  set_data(begin_cell().store_uint(value, 32).end_cell());
+}

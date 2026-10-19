@@ -1,0 +1,2 @@
+import "../../crypto/smartcont/pq"
+fun main(message: cell, signature: cell, publicKey: cell): bool { return pqCheckFalcon512Padded(message, signature, publicKey); }

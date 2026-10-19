@@ -28,7 +28,16 @@ on:
       - "crypto/smartcont/tos-shielded-pool-v1.fc"
       - "tools/shielded-pool-circuit/**"
       - "tools/shielded-pool-genesis/**"
+      - "tools/shielded-pool-wallet/**"
+      # The genesis tests build against the ceremony crate and read the
+      # committed ceremony transcript, the phase-1 inputs, the profile and
+      # the genesis manifest.
+      - "tools/shielded-pool-ceremony/**"
+      - "artifacts/phase1/**"
+      - "artifacts/phase2/ceremony/**"
+      - "artifacts/shielded-pool/**"
       - ".github/workflows/shielded-pool-crosscheck.yml"
+      - ".github/actions/native-cache/**"
     types: [opened, reopened, synchronize, ready_for_review]
   push:
     branches: [main, master, testnet]
@@ -37,7 +46,16 @@ on:
       - "crypto/smartcont/tos-shielded-pool-v1.fc"
       - "tools/shielded-pool-circuit/**"
       - "tools/shielded-pool-genesis/**"
+      - "tools/shielded-pool-wallet/**"
+      # The genesis tests build against the ceremony crate and read the
+      # committed ceremony transcript, the phase-1 inputs, the profile and
+      # the genesis manifest.
+      - "tools/shielded-pool-ceremony/**"
+      - "artifacts/phase1/**"
+      - "artifacts/phase2/ceremony/**"
+      - "artifacts/shielded-pool/**"
       - ".github/workflows/shielded-pool-crosscheck.yml"
+      - ".github/actions/native-cache/**"
   workflow_dispatch:
 
 concurrency:
@@ -55,10 +73,28 @@ jobs:
     # constraint system in debug is not worth waiting for either.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
+
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: shielded-pool-crosscheck-release
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: shielded-release-${{ steps.native-cache.outputs.host-key }}
+          cache-bin: false
+          workspaces: |
+            tools/shielded-pool-circuit/crosscheck -> target
+            tools/shielded-pool-circuit -> target
+            tools/shielded-pool-wallet -> target
+            tools/shielded-pool-genesis -> target
 
       - name: Configure compiler toolchain
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -87,21 +123,51 @@ jobs:
           cargo test --release --locked --no-fail-fast
           --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml
 
-      # `tools/shielded-pool-genesis` gets no step of its own: it has no tests
-      # of its own. What it produces -- the genesis state, its hash, the
-      # frontier store -- is checked by `genesis_vs_vm` in the suites above,
-      # which builds the state with that crate and requires a VM to agree. A
-      # `cargo test` on a crate with no tests is a green box that measures
-      # nothing, and a green box is worse than an absent one.
+      # The three crates the step above does not reach.
+      #
+      # `cargo test` on the cross-check crate runs the cross-check crate. The
+      # circuit, the wallet and the genesis builder each have their own tests
+      # -- 48, 11 and 6 -- and no workflow had ever run one of them.
+      #
+      # This step used to say `shielded-pool-genesis` "has no tests of its
+      # own", and that nothing would therefore be measured by running it. It
+      # had six, and three of them were red: doc comments whose indented
+      # formula blocks rustdoc compiles as Rust. Nobody saw it because the
+      # comment explaining why not to look was believed instead of checked.
+      #
+      # The circuit and wallet suites finish in seconds. The genesis suite's
+      # `ceremony_binding.rs` rebuilds the ceremony's starting key from the
+      # committed phase-1 slice once and audits a real ceremony with it:
+      # about ninety seconds on sixteen threads, a few minutes on a hosted
+      # runner. That is the cost of a production gate tested against a real
+      # audited ceremony rather than a fixture that agrees with itself.
+      - name: The crates the cross-check does not reach
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: |
+          for crate in shielded-pool-circuit shielded-pool-wallet shielded-pool-genesis; do
+            echo "::group::$crate"
+            cargo test --release --locked --no-fail-fast \
+              --manifest-path "tools/$crate/Cargo.toml"
+            echo "::endgroup::"
+          done
 
       # The mutation batteries are deliberately NOT here. They are the real
-      # evidence -- 200-odd deletions from the contract, each required to turn
-      # one named test red -- but each one rebuilds and re-runs a suite, and
-      # the set takes over an hour on a developer's machine. Putting that on
-      # every PR would buy a slower gate and a strong temptation to skip it.
-      # Run them by hand before freezing anything:
+      # evidence -- 297 deletions across thirteen batteries, each required to
+      # turn one named test red -- but each case rebuilds and re-runs a suite.
+      # Measured end to end on 2026-09-22: about 45 minutes, of which the
+      # ceremony battery alone is 25. Putting that on every PR would buy a
+      # slower gate and a strong temptation to skip it. Run them by hand before
+      # freezing anything, one at a time -- they edit source in place, so two
+      # at once mutate each other's tree:
       #
+      #     python3 test/poseidon2/mutations.py --build build
       #     for m in test/shielded-pool/mutations*.py; do python3 "$m"; done
       #
       # If that ever becomes cheap enough, it belongs in a scheduled job
       # rather than this one.
+      - name: Compile cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi

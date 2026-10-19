@@ -1,0 +1,90 @@
+Using Python 3.14.4 environment at: tools/node-health-monitor/.contract-venv
+Checked 17 packages in 2ms
+PASS: 20 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running tests/http.rs (tools/node-health-monitor/target/debug/deps/http-15f8b4e229fe1bc0)
+
+running 1 test
+test all_six_success_handlers_emit_runtime_dtos ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.01s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/http.rs (tools/node-health-monitor/target/debug/deps/http-15f8b4e229fe1bc0)
+
+running 1 test
+test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.02s
+
+PASS: 20 closed schemas; six tool input/error fixtures; six actual handler successes; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+PASS: production doctor refused 11 unverified gates (exit nonzero)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.23s
+     Running unittests src/lib.rs (tools/node-health-monitor/target/debug/deps/tos_health_core-e3e7906239b52817)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contracts.rs (tools/node-health-monitor/target/debug/deps/contracts-0d72820d45401d98)
+
+running 30 tests
+test absence_never_becomes_zero ... ok
+test block_comparison_requires_full_identity ... ok
+test broker_expires_backlog_and_bounds_queue ... ok
+test cancellation_keeps_model_resource_exclusive ... ok
+test duties_deduplicate_retry_and_late_completion ... ok
+test diagnosis_cannot_invent_evidence_or_change_severity ... ok
+test duties_do_not_hide_pending_or_incomplete_population ... ok
+test freshness_is_original_observation_not_poll_time ... ok
+test diagnosis_rejects_trailing_instructions_and_unapproved_runbooks ... ok
+test cache_miss_does_not_create_evidence ... ok
+test guard_requires_continuous_recovery ... ok
+test grants_expire_and_revoke ... ok
+test missing_source_does_not_recover_incident ... ok
+test not_required_needs_protocol_evidence ... ok
+test partial_cannot_prove_complete_duties ... ok
+test profile_arithmetic_cannot_overflow_into_validity ... ok
+test recovery_does_not_count_missing_guard_intervals ... ok
+test scheduler_rejects_overflow ... ok
+test scheduler_skips_missed_ticks ... ok
+test repeated_deadman_does_not_keep_monitor_alive ... ok
+test query_authentication_and_run_are_independent ... ok
+test stale_guard_signals_shed_work ... ok
+test timeout_does_not_release_actual_work ... ok
+test unapproved_profile_cannot_pass_declaration_checks ... ok
+test failed_calls_consume_budget ... ok
+test utc_requires_z_and_real_calendar ... ok
+test repeated_relay_receipt_keeps_original_evidence_identity ... ok
+test unknown_fields_and_force_refresh_are_rejected ... ok
+test snapshot_does_not_return_future_ingestion_or_another_node ... ok
+test evidence_is_immutable_deduplicated_and_bounded ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/native_contract.rs (tools/node-health-monitor/target/debug/deps/native_contract-2a1ebb43d7e70356)
+
+running 4 tests
+test age_and_quality_cannot_be_fabricated ... ok
+test required_nullable_and_unknown_fields_are_enforced ... ok
+test immutable_identity_excludes_only_receipt_and_age ... ok
+test exact_pairing_rejects_changed_generation_and_content ... FAILED
+
+failures:
+
+---- exact_pairing_rejects_changed_generation_and_content stdout ----
+
+thread 'exact_pairing_rejects_changed_generation_and_content' (537725) panicked at crates/health-core/tests/native_contract.rs:13:5:
+assertion failed: pair(&value, "1", body).is_ok()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    exact_pairing_rejects_changed_generation_and_content
+
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p tos-health-core --test native_contract`
+EXIT=101

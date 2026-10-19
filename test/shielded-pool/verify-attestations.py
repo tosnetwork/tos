@@ -7,8 +7,8 @@ ceremony run entirely by one person under nine invented names, because the
 arithmetic of a contribution is identical whoever made it. The security
 argument is not arithmetic -- it is that **at least one participant destroyed
 a scalar without the others being able to compel or observe them** -- and the
-only evidence for that is a statement by someone who existed before the
-ceremony and can be asked afterwards.
+signed statements provide accountability, not proof of secret destruction or
+independence. Newly generated signing keys are permitted.
 
 This checks those statements. It is the half that was missing: contributions
 could be signed since the script was written, and nothing anywhere verified a
@@ -27,12 +27,23 @@ reader cannot do reliably:
    -- the canonical verifiers, run as subprocesses. A signature parser
    written here could accept something they would reject, and a home-made
    parser that is wrong in the permissive direction is worse than no check;
-3. **the signer is on the roster that was pinned before the ceremony
-   opened.** A signature from a key minted for the occasion is worth what no
-   signature is worth while looking like more, so the key must appear in a
-   roster published in advance, with the public key material inline. Keys are
-   imported into a throwaway keyring: the verifier never consults the
-   operator's own, or "did it verify" would depend on whose machine ran it.
+3. **the signer is on the published participant register.** Registration is
+   open during the contribution window, and new signing keys are allowed.
+   Each accepted contribution publishes the register revision used to verify
+   it. Public key material is inline; verification uses a throwaway keyring,
+   never the operator's personal keyring. This tool does not verify publication
+   times or the append-only history of the register.
+
+A signature is only as good as the identity behind it, so the register entry
+is also reported: whether it carries **public identity evidence** -- somewhere
+outside this repository where a reader can see that the key is that person's.
+An entry without it passes every other check exactly as a well-evidenced one
+does, because a name, a boolean and a parseable key are all the other checks
+look at. That is reported rather than refused: it is a weakness in an entry,
+not a broken ceremony, and the ceremony this tool guards currently has one.
+Refusing would be the wrong instrument; staying silent was the wrong one too,
+and staying silent is what it did until a contributor wrote the absence into
+their own attestation because no tool would.
 
 And one property of the ceremony as a whole:
 
@@ -119,6 +130,11 @@ def load_roster(path: Path) -> dict:
             raise Refused(
                 f"the roster does not say whether {name!r} is independent of the "
                 "operator, and that is the question the roster exists to answer"
+            )
+        if not isinstance(who["independent_of_operator"], bool):
+            raise Refused(
+                f"{name!r}'s independent_of_operator must be a JSON boolean, not "
+                f"{type(who['independent_of_operator']).__name__}"
             )
         key = who.get("key")
         if not isinstance(key, dict):
@@ -314,6 +330,11 @@ def verify_gpg(document: Path, signature: Path, roster: dict, keyring: Path) -> 
     """
     home = keyring / "gnupg"
     home.mkdir(mode=0o700, exist_ok=True)
+    # Resolve before restricting the child environment; installations outside
+    # the system binary directories must still use the selected verifier.
+    gpg = shutil.which("gpg")
+    if gpg is None:
+        raise Refused("gpg is not installed; it is required to verify a pgp signature")
     env = {"GNUPGHOME": str(home), "PATH": "/usr/bin:/bin", "LC_ALL": "C"}
 
     fingerprints = {}
@@ -322,7 +343,7 @@ def verify_gpg(document: Path, signature: Path, roster: dict, keyring: Path) -> 
         if key["type"] != "gpg":
             continue
         imported = subprocess.run(
-            ["gpg", "--batch", "--import"],
+            [gpg, "--batch", "--import"],
             input=key["public_key"],
             capture_output=True,
             text=True,
@@ -339,7 +360,7 @@ def verify_gpg(document: Path, signature: Path, roster: dict, keyring: Path) -> 
     # Status on fd 2, payload on fd 1, so the machine-readable verdict and the
     # bytes that were signed come back from one run without being interleaved.
     checked = subprocess.run(
-        ["gpg", "--batch", "--status-fd", "2", "--output", "-", "--decrypt", str(signature)],
+        [gpg, "--batch", "--status-fd", "2", "--output", "-", "--decrypt", str(signature)],
         capture_output=True,
         text=True,
         env=env,
@@ -365,6 +386,26 @@ def verify_gpg(document: Path, signature: Path, roster: dict, keyring: Path) -> 
             f"{document.name}"
         )
     return fingerprints[fingerprint]
+
+
+def has_identity_evidence(who: dict) -> bool:
+    """Whether a register entry points anywhere a reader could check the key.
+
+    `published_at` is a list of places outside this repository where the key
+    can be seen to be that person's -- an account page, a keyserver, a
+    personal domain. It is not fetched: whether a URL resolves today says
+    little, and a verifier that depended on fetching would fail differently on
+    every machine. What is checked is that the entry names somewhere at all.
+
+    Deliberately not a refusal. An entry without evidence is a weak entry, not
+    a broken ceremony, and refusing would fail a published ceremony over a
+    field its own announcement introduced late. But it was silent before, and
+    silence is the failure this repository keeps paying for: it took a
+    contributor writing "no tool in this repository reports that absence" into
+    their own attestation for the gap to be visible at all.
+    """
+    where = who.get("published_at")
+    return isinstance(where, list) and any(str(item).strip() for item in where)
 
 
 def find_signature(directory: Path, index: int) -> Path | None:
@@ -474,14 +515,26 @@ def main() -> int:
                 if who["independent_of_operator"]
                 else "NOT independent of the operator"
             )
-            print(f"  {index}  signed by {name} -- {independence}")
+            evidence = "" if has_identity_evidence(who) else ", NO PUBLIC IDENTITY EVIDENCE"
+            print(f"  {index}  signed by {name} -- {independence}{evidence}")
             standing.append((index, name))
 
     signed = [name for _, name in standing if name]
     independent = [n for n in signed if by_name[n]["independent_of_operator"]]
+    unevidenced = sorted({n for n in signed if not has_identity_evidence(by_name[n])})
 
     print()
     print(f"{len(contributions)} contribution(s), {len(signed)} verified against the roster")
+
+    if unevidenced:
+        print()
+        print(
+            f"NO PUBLIC IDENTITY EVIDENCE for: {', '.join(unevidenced)}. The register "
+            "carries no published_at for these keys, so a reader cannot trace the "
+            "signature to anyone who can be asked afterwards, and being able to ask is "
+            "the whole of what an attestation is worth. Their signatures still verify: "
+            "what is missing is the person, not the cryptography."
+        )
 
     if not independent:
         complaint = (

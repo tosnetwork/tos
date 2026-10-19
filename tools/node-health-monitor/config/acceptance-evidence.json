@@ -1,0 +1,12 @@
+{
+  "source_admission_tested": false,
+  "per_path_disabled_at_source": false,
+  "independent_watchdog_receipt": false,
+  "mtls_acl_tested": false,
+  "cgroup_effective_verified": false,
+  "validator_core_tested": false,
+  "observer_coverage_tested": false,
+  "performance_profile_passed": false,
+  "ai_zero_upstream_tested": false,
+  "host_domains_verified": false
+}

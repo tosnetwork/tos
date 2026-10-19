@@ -12,7 +12,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-TESTDATA_DIR="$SCRIPT_DIR/testdata"
+# tosctl writes its configuration and vault only into a directory no other
+# user can modify, so this run's files live in a fresh private directory
+# rather than under the (possibly group-writable) checkout.
+TESTDATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tosctl-e2e.XXXXXX")"
 
 TOSCTL="${TOSCTL:-cargo run --manifest-path $SCRIPT_DIR/../src/Cargo.toml -p tosctl --}"
 RPC_URL="${RPC_URL:-http://127.0.0.1:8011}"
@@ -47,7 +50,7 @@ cleanup() {
     echo ""
     echo "Cleaning up temporary artifacts..."
     $TOSCTL wallet rm -c "$CONFIG" -n test-wallet --yes 2>/dev/null || true
-    rm -f "$CONFIG" "$TESTDATA_DIR/e2e-vault.json" "$TESTDATA_DIR"/tosctl_backup_*.tar.gz
+    rm -rf "$TESTDATA_DIR"
 }
 trap cleanup EXIT
 

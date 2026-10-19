@@ -9,7 +9,8 @@
 use crate::commands::nodectl::utils::save_config;
 use colored::Colorize;
 use common::app_config::{AppConfig, EndpointEntry};
-use std::path::Path;
+use secrets_vault::secret_input::{read_secret, select_source, trim_ascii};
+use std::path::{Path, PathBuf};
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Manage chain RPC endpoint configuration")]
@@ -31,8 +32,8 @@ pub enum ChainRpcAction {
 pub struct ChainRpcSetCmd {
     #[arg(short = 'u', long = "url")]
     url: String,
-    #[arg(short = 'k', long = "api-key")]
-    api_key: Option<String>,
+    #[command(flatten)]
+    secret: ApiKeyInput,
 }
 
 #[derive(clap::Args, Clone)]
@@ -42,8 +43,40 @@ pub struct ChainRpcAddCmd {
     urls: Vec<String>,
     /// Per-endpoint API key applied to all URLs in this invocation.
     /// When omitted, the endpoints inherit the global api_key.
-    #[arg(short = 'k', long = "api-key")]
-    api_key: Option<String>,
+    #[command(flatten)]
+    secret: ApiKeyInput,
+}
+
+#[derive(clap::Args, Clone)]
+pub struct ApiKeyInput {
+    /// Read the API key from an operator-owned mode-0600 file.
+    #[arg(long, conflicts_with_all = ["api_key_fd", "api_key_prompt"])]
+    api_key_file: Option<PathBuf>,
+    /// Read the API key from a protected file descriptor or pipe.
+    #[arg(long, conflicts_with = "api_key_prompt")]
+    api_key_fd: Option<i32>,
+    /// Read the API key with terminal echo disabled.
+    #[arg(long)]
+    api_key_prompt: bool,
+}
+
+impl ApiKeyInput {
+    fn read(&self) -> anyhow::Result<Option<String>> {
+        if self.api_key_file.is_none() && self.api_key_fd.is_none() && !self.api_key_prompt {
+            return Ok(None);
+        }
+        let source = select_source(
+            self.api_key_file.as_deref(),
+            self.api_key_fd,
+            "--api-key-file",
+            "--api-key-fd",
+            "Chain RPC API key: ",
+        )?;
+        let bytes = read_secret(&source)?;
+        let key = std::str::from_utf8(trim_ascii(&bytes))
+            .map_err(|_| anyhow::anyhow!("API key must be UTF-8"))?;
+        Ok(Some(key.to_owned()))
+    }
 }
 
 impl ChainRpcCmd {
@@ -64,11 +97,15 @@ impl ChainRpcSetCmd {
         }
 
         config.chain_rpc.urls = vec![EndpointEntry::Url(url)];
-        config.chain_rpc.api_key = self.api_key.clone();
+        config.chain_rpc.api_key = self.secret.read()?;
         save_config(&config, path)?;
 
-        let api_key_info =
-            self.api_key.as_deref().map(|_| ", api_key=***").unwrap_or(", api_key=none");
+        let api_key_info = config
+            .chain_rpc
+            .api_key
+            .as_deref()
+            .map(|_| ", api_key=***")
+            .unwrap_or(", api_key=none");
         println!(
             "\n{} chain-rpc set: url='{}'{}\n",
             "OK".green().bold(),
@@ -89,10 +126,11 @@ impl ChainRpcAddCmd {
             anyhow::bail!("At least one non-empty --url value is required");
         }
 
+        let api_key = self.secret.read()?;
         let mut existing = config.chain_rpc.endpoints();
         for url in &new_urls {
             if !existing.iter().any(|e| e == url) {
-                let entry = match &self.api_key {
+                let entry = match &api_key {
                     Some(key) => EndpointEntry::WithKey { url: url.clone(), api_key: key.clone() },
                     None => EndpointEntry::Url(url.clone()),
                 };
@@ -108,5 +146,62 @@ impl ChainRpcAddCmd {
             config.chain_rpc.endpoints().join(", "),
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod secret_channel_tests {
+    use super::*;
+    use clap::Parser;
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        set: ChainRpcSetCmd,
+    }
+    #[test]
+    fn literal_secret_is_refused_and_protected_sources_are_exclusive() {
+        assert!(
+            Cli::try_parse_from([
+                "test",
+                "--url",
+                "https://rpc.example",
+                "--api-key",
+                "fake-token"
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "test",
+                "--url",
+                "https://rpc.example",
+                "--api-key-file",
+                "/private/key"
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "test",
+                "--url",
+                "https://rpc.example",
+                "--api-key-fd",
+                "3",
+                "--api-key-prompt"
+            ])
+            .is_err()
+        );
+    }
+    #[test]
+    fn protected_file_is_read_without_logging_secret() {
+        use std::io::Write;
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(b"fake-token\n").unwrap();
+        let input = ApiKeyInput {
+            api_key_file: Some(file.path().to_owned()),
+            api_key_fd: None,
+            api_key_prompt: false,
+        };
+        assert_eq!(input.read().unwrap().as_deref(), Some("fake-token"));
     }
 }

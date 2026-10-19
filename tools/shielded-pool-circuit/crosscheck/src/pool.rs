@@ -21,12 +21,12 @@ use crate::{library_dir, stdlib_path, CrossCheckError, Result, ACTIVE_VERSION, T
 
 pub const OP_DEPOSIT: u32 = 0x5348_5001;
 pub const OP_TRANSACT: u32 = 0x5348_5002;
+pub const OP_RESERVE_TOPUP: u32 = 0x5348_5003;
 
 /// Section 13.2.
 const MAGIC: u32 = 0x5350_5631;
 const VERSION: u16 = 1;
 const EPOCH_NONE: u32 = 0xffff_ffff;
-const RESERVE_FLOOR: u64 = 5 * TOS;
 /// The one configured denomination, and the fee section 14.2 fixes.
 pub const DENOMINATION: u64 = TOS;
 /// Section 14.2's fee, from the crate that puts it in the genesis store
@@ -227,7 +227,26 @@ impl Pool {
     /// A different key is a different genesis state and therefore a different
     /// address, which is not a side effect to work around -- it is the reason
     /// the ceremony has to finish before an address can be published.
+    /// Deploy with a chosen balance instead of a comfortable one.
+    ///
+    /// Every other deployment here starts with 100 TOS against a 5 TOS floor,
+    /// which is ninety-five TOS of headroom -- enough that no check near the
+    /// floor is ever reached. The one case that distinguishes a backing check
+    /// made before this transaction's fee from one made after it only exists
+    /// close to the floor, so it needs a pool that starts there.
+    pub fn deploy_with_balance(denominations: &[u64], balance: u64) -> Result<Self> {
+        Self::deploy_inner(denominations, None, balance)
+    }
+
     pub fn deploy_with(denominations: &[u64], verifying_key: Option<&[u8]>) -> Result<Self> {
+        Self::deploy_inner(denominations, verifying_key, 100 * TOS)
+    }
+
+    fn deploy_inner(
+        denominations: &[u64],
+        verifying_key: Option<&[u8]>,
+        deploy_value: u64,
+    ) -> Result<Self> {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)?;
         bc.set_workchain(0);
         let payer = bc.treasury("relay", 1_000_000 * TOS)?;
@@ -255,7 +274,7 @@ impl Pool {
         let addr = MsgAddressInt::with_params(0, addr_hash)
             .map_err(|error| CrossCheckError::Sandbox(format!("address: {error}")))?;
         bc.send_message(
-            MessageBuilder::internal(payer.address(), &addr, 100 * TOS)
+            MessageBuilder::internal(payer.address(), &addr, deploy_value)
                 .bounce(false)
                 .state_init(si)
                 .body(Cell::default())
@@ -302,6 +321,38 @@ impl Pool {
         Ok(self.bc.send_message(msg)?)
     }
 
+    /// The exit code, the gas, and how many messages the pool sent.
+    ///
+    /// The count is the half that distinguishes a transfer from a withdrawal.
+    /// Both move every root the same way -- the same two nullifier insertions
+    /// and the same three commitment appends run before the withdrawal branch
+    /// is even reached -- so no root can tell them apart. What a transfer must
+    /// do is send nothing, and a message the pool sends is public: it says a
+    /// transfer happened and who it went to, which is the whole of what this
+    /// pool exists to hide.
+    pub fn run_counting_sends(&mut self, value: u64, body: Cell) -> Result<(i32, i64, usize)> {
+        let result = self.send(value, body)?;
+        let sent = result
+            .first_transaction()
+            .ok_or_else(|| CrossCheckError::Vm("the pool did not run at all".into()))?
+            .out_msgs
+            .len()
+            .map_err(|error| CrossCheckError::Vm(format!("counting outbound messages: {error}")))?;
+        match result.read_primary_description().compute_ph {
+            chain_block::TrComputePhase::Vm(vm) => Ok((
+                vm.exit_code,
+                vm.gas_used
+                    .to_string()
+                    .parse()
+                    .map_err(|error| CrossCheckError::Vm(format!("gas used: {error}")))?,
+                sent,
+            )),
+            chain_block::TrComputePhase::Skipped(s) => {
+                Err(CrossCheckError::Vm(format!("compute skipped: {:?}", s.reason)))
+            }
+        }
+    }
+
     /// The exit code and the gas it took to get there.
     pub fn run(&mut self, value: u64, body: Cell) -> Result<(i32, i64)> {
         let result = self.send(value, body)?;
@@ -317,6 +368,32 @@ impl Pool {
                 Err(CrossCheckError::Vm(format!("compute skipped: {:?}", s.reason)))
             }
         }
+    }
+
+    /// The configuration cell section 13 keeps at reference two.
+    ///
+    /// The denomination walk's cost is a property of the list a pool was
+    /// deployed with, so pricing it against a list assembled in a test would
+    /// price a pool nobody deploys. This hands the real one to the probe.
+    pub fn config_cell(&self) -> Result<Cell> {
+        self.bc
+            .get_account(&self.addr)
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no account".to_string()))?
+            .get_data()
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no data".to_string()))?
+            .reference(2)
+            .map_err(|error| CrossCheckError::Sandbox(format!("config ref: {error}")))
+    }
+
+    /// The verifying key cell section 13 keeps at reference three.
+    pub fn vk_cell(&self) -> Result<Cell> {
+        self.bc
+            .get_account(&self.addr)
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no account".to_string()))?
+            .get_data()
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no data".to_string()))?
+            .reference(3)
+            .map_err(|error| CrossCheckError::Sandbox(format!("vk ref: {error}")))
     }
 
     /// The two anchor rings as the pool actually holds them, each entry the
@@ -472,6 +549,58 @@ impl Pool {
         Ok(())
     }
 
+    /// Set how many recovery leaves the pool holds back, changing nothing
+    /// else.
+    ///
+    /// A reservation is what an accepted withdrawal leaves behind for its
+    /// payout's bounce. A test that delivers a bounce for a withdrawal it did
+    /// not send through this pool has to stand in for that half too, or the
+    /// pool rightly refuses a recovery nobody reserved room for.
+    pub fn set_reserved_recovery_leaves(&mut self, reserved: u32) -> Result<()> {
+        let mut account = self
+            .bc
+            .get_account(&self.addr)
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no account".to_string()))?
+            .clone();
+        let data = account
+            .get_data()
+            .ok_or_else(|| CrossCheckError::Sandbox("the pool has no data".to_string()))?;
+        let mut slice = chain_block::SliceData::load_cell(data.clone())
+            .map_err(|error| CrossCheckError::Sandbox(format!("state slice: {error}")))?;
+        // magic, version, commitment root and leaf counter: copied. Then the
+        // reservation count, replaced.
+        let head_bits = 32 + 16 + 256 + 64;
+        let head = slice
+            .get_next_bits(head_bits)
+            .map_err(|error| CrossCheckError::Sandbox(format!("state head: {error}")))?;
+        slice
+            .get_next_int(32)
+            .map_err(|error| CrossCheckError::Sandbox(format!("reservations: {error}")))?;
+        let tail_bits = slice.remaining_bits();
+        let tail = slice
+            .get_next_bits(tail_bits)
+            .map_err(|error| CrossCheckError::Sandbox(format!("state tail: {error}")))?;
+        let mut builder = BuilderData::new();
+        builder
+            .append_raw(&head, head_bits)
+            .and_then(|b| b.append_u32(reserved))
+            .and_then(|b| b.append_raw(&tail, tail_bits))
+            .map_err(|error| CrossCheckError::Sandbox(format!("reserved state bits: {error}")))?;
+        for index in 0..data.references_count() {
+            let reference = data
+                .reference(index)
+                .map_err(|error| CrossCheckError::Sandbox(format!("state ref: {error}")))?;
+            builder
+                .checked_append_reference(reference)
+                .map_err(|error| CrossCheckError::Sandbox(format!("state ref: {error}")))?;
+        }
+        if !account.set_data(cell_of(builder)?) {
+            return Err(CrossCheckError::Sandbox("the pool refused new data".to_string()));
+        }
+        self.bc.set_account(self.addr.clone(), account);
+        Ok(())
+    }
+
     /// Move only the leaf counter, keeping the frontier and both anchor
     /// rings exactly as the pool built them.
     ///
@@ -566,6 +695,7 @@ impl Pool {
         for method in [
             "commitment_root",
             "commitment_next_index",
+            "reserved_recovery_leaves",
             "nullifier_root",
             "nullifier_next_index",
             "native_liability",
@@ -627,6 +757,17 @@ impl Pool {
             failed_action: description.action.as_ref().and_then(|phase| phase.result_arg),
             aborted: description.aborted,
         })
+    }
+
+    /// Section 12.3's top-up body: the operation and a query id, and nothing
+    /// else at all.
+    pub fn topup_body(query_id: u64) -> Result<Cell> {
+        let mut builder = BuilderData::new();
+        builder
+            .append_u32(OP_RESERVE_TOPUP)
+            .and_then(|b| b.append_u64(query_id))
+            .map_err(|error| CrossCheckError::Sandbox(format!("top-up body: {error}")))?;
+        cell_of(builder)
     }
 
     /// Section 12.1's deposit body.

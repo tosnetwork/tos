@@ -412,7 +412,7 @@ void run_server(Config config) {
       exporter = tos::PrometheusExporter::create();
       td::actor::send_closure(exporter, &tos::PrometheusExporter::listen, addr);
       td::actor::send_closure(exporter, &tos::PrometheusExporter::register_collector<tos::PrometheusExporter>,
-                              exporter.get());
+                              "exporter", exporter.get());
     }
     keyring = tos::keyring::Keyring::create(db_root);
     network_manager = tos::adnl::AdnlNetworkManager::create(static_cast<td::uint16>(config.local_addr.get_port()));
@@ -454,7 +454,7 @@ void run_server(Config config) {
     // Use send_lambda to properly start the coroutine task
     td::actor::send_closure(quic_sender, &tos::quic::QuicSender::add_id, local_id);
     if (config.prometheus)
-      td::actor::send_closure(exporter, &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>,
+      td::actor::send_closure(exporter, &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>, "quic",
                               quic_sender.get());
 
     td::actor::send_closure(adnl, &tos::adnl::Adnl::subscribe, local_id, "B",
@@ -495,7 +495,7 @@ void run_client(Config config) {
       exporter = tos::PrometheusExporter::create();
       td::actor::send_closure(exporter, &tos::PrometheusExporter::listen, addr);
       td::actor::send_closure(exporter, &tos::PrometheusExporter::register_collector<tos::PrometheusExporter>,
-                              exporter.get());
+                              "exporter", exporter.get());
     }
 
     keyring = tos::keyring::Keyring::create(db_root);
@@ -539,7 +539,7 @@ void run_client(Config config) {
     // Use send_lambda to properly start the coroutine task
     td::actor::send_closure(quic_sender, &tos::quic::QuicSender::add_id, src);
     if (config.prometheus)
-      td::actor::send_closure(exporter, &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>,
+      td::actor::send_closure(exporter, &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>, "quic",
                               quic_sender.get());
 
     stats_reporter = td::actor::create_actor<StatsReporter>("quic-stats-client", quic_sender.get(), "client-periodic",

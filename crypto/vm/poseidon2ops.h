@@ -8,10 +8,9 @@ class OpcodeTable;
 inline constexpr unsigned poseidon2_perm8_opcode = 0xf93200;
 inline constexpr unsigned poseidon2_hash7_opcode = 0xf93201;
 inline constexpr unsigned poseidon2_path7_opcode = 0xf93202;
-inline constexpr int poseidon2_min_version = 17;
-// PATH7 is newer than the two above. A node built for 17 implements them and
-// not it, so it carries its own floor rather than sharing theirs.
-inline constexpr int poseidon2_path7_min_version = 18;
+inline constexpr int poseidon2_min_version = 16;
+// All Poseidon2 instructions belong to the unified development version 16.
+inline constexpr int poseidon2_path7_min_version = 16;
 
 // The deepest path the instruction will walk. A level is two 768-bit cells,
 // so 64 levels is 128 cells -- far past any plausible tree and far inside the
@@ -42,11 +41,28 @@ inline constexpr long long poseidon2_hash7_gas_price = 2800;
 // in, so it is priced as exactly that and nothing is being bought cheaply by
 // moving the loop into the VM. The base covers popping five operands.
 //
-// These two are NOT measured. The permutation's 3,500 is, and the 200 is the
-// VM's own price for two cell loads; the sum is an assembly of prices rather
-// than an instruction that was benchmarked. Before this leaves a testnet it
-// wants the same treatment POSEIDON2_PERM8 got: measured against instructions
-// that already have a price, on target hardware, quoted as a bracket.
+// These two were an assembly of prices rather than a benchmark. They have now
+// had the treatment POSEIDON2_PERM8 got: both VMs running the same compiled
+// probe, each depth timed against a loop that builds the same operands and
+// does not run the instruction, anchored to instructions that already have a
+// price. PATH7 is two numbers, so it was measured at depths 1, 12 and 32 and a
+// line fitted; 12 is what both trees use. The three fits agree to about a
+// percent, so the cost really is linear in depth.
+//
+//   implied by measurement        base        per level
+//   Rust VM (the slower one)    24..88       1509..2616
+//   C++ VM                      25..74       1349..2358
+//
+// Both numbers below sit above the slower implementation's bracket, which is
+// the safe side and where a rounded-up tariff belongs: overpricing costs users
+// money, underpricing is a denial-of-service surface. The base is far above it
+// -- 500 against 88 -- and is left alone, because 500 is noise beside a
+// level's 3,000 and because every gas ceiling this pool has measured was
+// measured with these two numbers in place.
+//
+// One host. The record, and what it was measured on, are in the memo
+// repository under `privacy/measurements/path7-tariff-20260922/`. The profile
+// still wants the target CPU before a freeze.
 inline constexpr long long poseidon2_path7_base_gas_price = 500;
 inline constexpr long long poseidon2_path7_level_gas_price = 3000;
 

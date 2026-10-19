@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "TEMPLATE. Copy to roster.json and register participants as they join.",
+    "The register is open during the announced contribution window.",
+    "Existing and newly generated signing keys are allowed; no minimum key age.",
+    "Publish public keys under the participant identity before acceptance.",
+    "Record the register revision and digest with each accepted contribution.",
+    "Append new identities; do not rewrite accepted identities or keys.",
+    "Key material is inline so verification does not depend on fetching it.",
+    "published_at records public identity evidence for human review.",
+    "independent_of_operator is a JSON boolean declaration, not verified fact.",
+    "An agent on the operator machine must be declared non-independent.",
+    "Independent participation is a final acceptance gate, not an opening gate.",
+    "Delete this _comment before publishing."
+  ],
+  "protocol": "tos-shielded-pool-v1-phase2",
+  "ceremony": "ceremony-2",
+  "participants": [
+    {
+      "name": "TO FIX -- the name this person is publicly known by",
+      "affiliation": "TO FIX -- organisation, or 'independent'",
+      "independent_of_operator": false,
+      "key": {
+        "type": "ssh",
+        "principal": "TO FIX -- an identifier they are known by, e.g. an email or handle",
+        "public_key": "TO FIX -- ssh-ed25519 AAAA... the full public key line"
+      },
+      "published_at": [
+        "TO FIX -- e.g. https://github.com/<user>.keys"
+      ]
+    },
+    {
+      "name": "TO FIX -- at least one participant must be independent",
+      "affiliation": "TO FIX",
+      "independent_of_operator": true,
+      "key": {
+        "type": "gpg",
+        "fingerprint": "TO FIX -- 40 hex characters, no spaces",
+        "public_key": "TO FIX -- -----BEGIN PGP PUBLIC KEY BLOCK-----\n...\n-----END PGP PUBLIC KEY BLOCK-----\n"
+      },
+      "published_at": [
+        "TO FIX -- e.g. https://keys.openpgp.org/search?q=<fingerprint>"
+      ]
+    }
+  ]
+}

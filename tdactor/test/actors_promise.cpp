@@ -17,13 +17,17 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <array>
+#include <atomic>
+#include <stdexcept>
+#include <thread>
+#include <vector>
+
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
 #include "td/utils/MovableValue.h"
 #include "td/utils/tests.h"
-
-#include <stdexcept>
 
 template <class T>
 class X {
@@ -400,4 +404,83 @@ TEST(Actor2, MultiPromise) {
     }
     ASSERT_EQ("OK;", str);
   }
+}
+
+TEST(Actor2, MultiPromise_ignore_errors_completes_ok_despite_input_errors) {
+  using namespace td;
+  MultiPromise::Options ignore_errors;
+  ignore_errors.ignore_errors = true;
+  MultiPromise mp(ignore_errors);
+
+  constexpr int kOutputs = 3;
+  std::array<int, kOutputs> ok_calls{};
+  std::array<int, kOutputs> error_calls{};
+  {
+    auto guard = mp.init_guard();
+    for (int i = 0; i < kOutputs; i++) {
+      guard.add_promise([&ok_calls, &error_calls, i](Result<Unit> result) {
+        if (result.is_ok()) {
+          ok_calls[i]++;
+        } else {
+          error_calls[i]++;
+        }
+      });
+    }
+    guard.get_promise().set_error(Status::Error(1));
+    guard.get_promise().set_error(Status::Error(2));
+    guard.get_promise().set_value(Unit());
+    guard.get_promise().set_error(Status::Error(3));
+    for (int i = 0; i < kOutputs; i++) {
+      ASSERT_EQ(0, ok_calls[i] + error_calls[i]);
+    }
+  }
+  // Releasing the guard completes every registered output exactly once, with OK.
+  for (int i = 0; i < kOutputs; i++) {
+    ASSERT_EQ(1, ok_calls[i]);
+    ASSERT_EQ(0, error_calls[i]);
+  }
+}
+
+// Registration on an ignore-errors guard must happen under the guard's lock: the
+// unlocked push raced on the shared vector. A short count or a crash here shows the
+// race, but only probabilistically in a plain build; built with TOS_USE_TSAN,
+// ThreadSanitizer reports the race deterministically.
+TEST(Actor2, MultiPromise_ignore_errors_concurrent_registration) {
+  using namespace td;
+  MultiPromise::Options ignore_errors;
+  ignore_errors.ignore_errors = true;
+  MultiPromise mp(ignore_errors);
+
+  constexpr int kThreads = 8;
+  constexpr int kPerThread = 10000;
+  std::atomic<int> ok_calls{0};
+  std::atomic<int> error_calls{0};
+  {
+    auto guard = mp.init_guard();
+    std::atomic<int> ready{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; t++) {
+      threads.emplace_back([&] {
+        ready.fetch_add(1);
+        while (ready.load() < kThreads) {
+          std::this_thread::yield();
+        }
+        for (int i = 0; i < kPerThread; i++) {
+          guard.add_promise([&ok_calls, &error_calls](Result<Unit> result) {
+            if (result.is_ok()) {
+              ok_calls.fetch_add(1);
+            } else {
+              error_calls.fetch_add(1);
+            }
+          });
+        }
+      });
+    }
+    for (auto &thread : threads) {
+      thread.join();
+    }
+    ASSERT_EQ(0, ok_calls.load() + error_calls.load());
+  }
+  ASSERT_EQ(kThreads * kPerThread, ok_calls.load());
+  ASSERT_EQ(0, error_calls.load());
 }

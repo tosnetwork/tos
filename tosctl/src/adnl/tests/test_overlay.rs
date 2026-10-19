@@ -44,8 +44,8 @@ use tl_api::{
     tos::{
         overlay::{
             broadcast::Broadcast as BroadcastOrd, membercertificate::MemberCertificate,
-            node::Node as NodeV1, nodev2::NodeV2, Certificate as OverlayCertificate,
-            Node as NodeV1Boxed,
+            node::Node as NodeDescriptor, Certificate as OverlayCertificate,
+            Node as NodeDescriptorBoxed,
         },
         rpc::{overlay::Ping as OverlayPing, tos_node::GetCapabilities},
         tos_node::capabilities::Capabilities,
@@ -125,7 +125,7 @@ fn init_overlay_compatibility_test(
     local_ip_template: &str,
     min_peers: Option<usize>,
     #[cfg(feature = "dump")] dump_path: Option<&str>,
-) -> (TestContext, Vec<(IpAddress, NodeV1)>, OverlayNodesSearchContext) {
+) -> (TestContext, Vec<(IpAddress, NodeDescriptor)>, OverlayNodesSearchContext) {
     let mut ctx_test = init_overlay_simple_compatibility_test(
         local_ip_template,
         #[cfg(feature = "dump")]
@@ -296,7 +296,7 @@ fn test_random_peers(ctx_test: &TestContext) {
         assert!(!overlay_peers.is_empty());
         for node in overlay_peers {
             println!("{:?}", node);
-            let OverlayNodeInfo::V1(node) = node else { panic!("Unexpected V2 node info") };
+            let OverlayNodeInfo(node) = node;
             let key: Arc<dyn KeyOption> = (&node.id).try_into().unwrap();
             let mut ctx_search =
                 AddressSearchContext::with_params(key.id(), DhtSearchPolicy::FastSearch(5))
@@ -365,10 +365,8 @@ fn test_overlay_broadcast_receive(ctx_test: &TestContext) {
                 if is_completed() {
                     break;
                 }
-                let OverlayNodeInfo::V1(node_v1) = &node else {
-                    panic!("Unexpected V2 overlay node info")
-                };
-                let key: Arc<dyn KeyOption> = (&node_v1.id).try_into().unwrap();
+                let OverlayNodeInfo(node_descriptor) = &node;
+                let key: Arc<dyn KeyOption> = (&node_descriptor.id).try_into().unwrap();
                 let key_id = key.id();
                 if !known_nodes.contains(key_id) {
                     let mut ctx_search =
@@ -843,7 +841,7 @@ fn test_broadcast(
         for j in 0..min(min_neighbours, n - 1) {
             let j = (j + i + 1) % n;
             assert!(j != i);
-            let signed_node = nodes[j].overlay.get_signed_node(overlay_id, false).unwrap();
+            let signed_node = nodes[j].overlay.get_signed_node(overlay_id).unwrap();
             let ip = IpAddress::from_versioned_string(nodes[j].ip.as_str(), None).unwrap();
             let dst =
                 nodes[i].overlay.add_public_peer(&ip, &signed_node, overlay_id).unwrap().unwrap();
@@ -912,7 +910,7 @@ fn test_overlay_ping() {
             fail!("Bad saved peer {}", peer)
         }
         let node = deserialize_boxed(&base64_decode(data[0])?)?
-            .downcast::<NodeV1Boxed>()
+            .downcast::<NodeDescriptorBoxed>()
             .map_err(|_| error!("Bad node in saved peer {}", peer))?;
         let ip = IpAddress::from_versioned_string(data[1], None)?;
         test_peer(overlay, overlay_id, &ip, node).await
@@ -922,13 +920,11 @@ fn test_overlay_ping() {
         overlay: &Arc<OverlayNode>,
         overlay_id: &Arc<OverlayShortId>,
         ip: &IpAddress,
-        node: NodeV1Boxed,
+        node: NodeDescriptorBoxed,
     ) -> Result<Arc<KeyId>> {
-        if let Some(peer) = overlay.add_public_peer(
-            ip,
-            &OverlayNodeInfo::<_, NodeV2>::V1(node.only()),
-            &overlay_id,
-        )? {
+        if let Some(peer) =
+            overlay.add_public_peer(ip, &OverlayNodeInfo(node.only()), &overlay_id)?
+        {
             if overlay.wait_for_peers(overlay_id).await?.is_some() {
                 return Ok(peer);
             }
@@ -973,9 +969,7 @@ fn test_overlay_ping() {
             println!("received {} overlay peers:", overlay_peers.len());
             for node in overlay_peers {
                 println!("{:?}", node);
-                let OverlayNodeInfo::V1(node) = node else {
-                    panic!("Unexpected V2 overlay node info")
-                };
+                let OverlayNodeInfo(node) = node;
                 let key: Arc<dyn KeyOption> = (&node.id).try_into().unwrap();
                 let mut ctx_search =
                     AddressSearchContext::with_params(key.id(), DhtSearchPolicy::FastSearch(5))
@@ -1509,7 +1503,7 @@ async fn test_overlay_semiprivate() -> Result<()> {
         for pi2 in peers.iter() {
             if pi.id != pi2.id {
                 println!("Adding peer {} -> {}", pi.id, pi2.id);
-                let node = pi2.overlay.as_ref().unwrap().get_signed_node(&overlay_id, true)?;
+                let node = pi2.overlay.as_ref().unwrap().get_signed_node(&overlay_id)?;
                 let ip = IpAddress::from_versioned_string(pi2.ip, None).unwrap();
                 overlay.add_public_peer(&ip, &node, &overlay_id)?;
             }
@@ -1561,7 +1555,7 @@ async fn test_overlay_semiprivate() -> Result<()> {
     println!("New slave node {} with id {}", SLAVE4, pi.id);
     let root = peers[2].clone();
     create_slave(cfg, &root_ids, &zero_state_file_hash, &overlay_id, &root, &mut pi).await?;
-    let node = pi.overlay.as_ref().unwrap().get_signed_node(&overlay_id, true)?;
+    let node = pi.overlay.as_ref().unwrap().get_signed_node(&overlay_id)?;
     for pi1 in peers.iter() {
         let overlay = pi1.overlay.as_ref().unwrap();
         println!("Adding peer {} to {}", pi.id, pi1.id);
@@ -1569,7 +1563,7 @@ async fn test_overlay_semiprivate() -> Result<()> {
         overlay.add_public_peer(&ip, &node, &overlay_id)?;
         println!("Adding peer {} to {}", pi1.id, pi.id);
         let overlay = pi.overlay.as_ref().unwrap();
-        let node1 = pi1.overlay.as_ref().unwrap().get_signed_node(&overlay_id, true)?;
+        let node1 = pi1.overlay.as_ref().unwrap().get_signed_node(&overlay_id)?;
         let ip = IpAddress::from_versioned_string(pi1.ip, None).unwrap();
         overlay.add_public_peer(&ip, &node1, &overlay_id)?;
     }
@@ -1704,7 +1698,7 @@ fn test_overlay_raptorq() {
                     .map(|&i| &source_packets[i])
                     .chain(repair_indices.iter().map(|&i| &repair_packets[i]));
                 for (seq, chunk) in base.chain(extras.iter()) {
-                    if let Some(result) = decoder.decode(*seq, chunk) {
+                    if let Some(result) = decoder.decode(*seq, chunk).unwrap() {
                         return Some(result);
                     }
                 }
@@ -1830,12 +1824,12 @@ fn test_raptorq_large_symbol_size() {
         );
 
         // Decode using exactly source_count symbols (minimum required)
-        let mut decoder = RaptorqDecoder::with_params(params.clone())
+        let mut decoder = RaptorqDecoder::with_two_step_params(params.clone())
             .expect("decoder creation must succeed for large symbol_size");
 
         let mut decoded = None;
         for (seq, chunk) in packets.iter().take(source_count + 2) {
-            if let Some(result) = decoder.decode(*seq, chunk) {
+            if let Some(result) = decoder.decode(*seq, chunk).unwrap() {
                 decoded = Some(result);
                 break;
             }
@@ -1845,6 +1839,186 @@ fn test_raptorq_large_symbol_size() {
         assert_eq!(result.len(), DATA_SIZE, "decoded size mismatch");
         assert_eq!(result, data, "decoded data mismatch");
         println!("  OK: encode/decode verified for symbol_size={part_size}");
+    }
+}
+
+/// FEC parameters arrive from a peer before any signature is checked (the
+/// broadcast receive path builds its decoder from the first part), so they are
+/// bounded like the C++ side bounds FEC broadcasts, and refused before the
+/// decoder allocates. Accepted parameters always describe one source block and
+/// one sub-block, the only layout the C++ implementation produces.
+#[test]
+fn test_raptorq_decoder_bounds_peer_parameters() {
+    use adnl::RaptorqDecoder;
+    use tl_api::tos::fec::type_::RaptorQ as FecTypeRaptorQ;
+
+    // symbols_count as an honest sender sets it.
+    let params = |data_size: i32, symbol_size: i32| FecTypeRaptorQ {
+        data_size,
+        symbol_size,
+        symbols_count: if symbol_size > 0 && data_size > 0 {
+            ((i64::from(data_size) + i64::from(symbol_size) - 1) / i64::from(symbol_size)) as i32
+        } else {
+            0
+        },
+    };
+    let max = RaptorqDecoder::MAX_DATA_SIZE;
+    assert_eq!(max, 16 << 20);
+    // Refused by both constructors: bad or unbounded object sizes.
+    for (data_size, symbol_size) in [
+        (max + 1, 768),
+        (i32::MAX, 768),
+        (i32::MAX, i32::MAX - 1),
+        (0, 768),
+        (-1, 768),
+        (1000, 0),
+        (1000, -768),
+        // 2^20 one-byte symbols: more than K'_max = 56403 source symbols.
+        (1 << 20, 1),
+    ] {
+        let p = params(data_size, symbol_size);
+        assert!(RaptorqDecoder::with_params(p.clone()).is_err(), "{p:?} accepted");
+        assert!(RaptorqDecoder::with_two_step_params(p.clone()).is_err(), "{p:?} accepted");
+    }
+    // Ordinary FEC objects (RLDP, FEC broadcast): 768..=2048-byte symbols,
+    // as the C++ FecType::create() admits them.
+    for symbol_size in [1, 77, 767, 2049, 136_534] {
+        let p = params(100_000, symbol_size);
+        assert!(RaptorqDecoder::with_params(p.clone()).is_err(), "{p:?} accepted");
+    }
+    for symbol_size in [768, 771, 2048] {
+        assert!(RaptorqDecoder::with_params(params(100_000, symbol_size)).is_ok());
+    }
+    // A two-step part must be smaller than the object.
+    for (data_size, symbol_size) in [(1000, 1000), (1000, 1001), (1, 1)] {
+        let p = params(data_size, symbol_size);
+        assert!(RaptorqDecoder::with_two_step_params(p.clone()).is_err(), "{p:?} accepted");
+    }
+    // symbols_count must be ceil(data_size / symbol_size), for both kinds.
+    for (data_size, symbol_size, symbols_count) in
+        [(3000, 768, 0), (3000, 768, 3), (3000, 768, 5), (3000, 768, -4), (3000, 77, 38)]
+    {
+        let p = FecTypeRaptorQ { data_size, symbol_size, symbols_count };
+        assert!(RaptorqDecoder::with_params(p.clone()).is_err(), "{p:?} accepted");
+        assert!(RaptorqDecoder::with_two_step_params(p.clone()).is_err(), "{p:?} accepted");
+    }
+    // Accepted parameters describe one source block and one sub-block.
+    for (data_size, symbol_size) in [(max, 768), (11 << 20, 768), (1, 768), (max, 2048)] {
+        let config = RaptorqDecoder::config(data_size, symbol_size).unwrap();
+        assert_eq!(config.source_blocks(), 1, "data_size {data_size}");
+        assert_eq!(config.sub_blocks(), 1, "data_size {data_size}");
+        assert_eq!(config.symbol_size(), symbol_size as u32);
+        assert!(RaptorqDecoder::with_params(params(data_size, symbol_size)).is_ok());
+    }
+    for (data_size, symbol_size) in [(max, 136_534), (3000, 77), (2, 1)] {
+        let config = RaptorqDecoder::config(data_size, symbol_size).unwrap();
+        assert_eq!((config.source_blocks(), config.sub_blocks()), (1, 1));
+        assert!(RaptorqDecoder::with_two_step_params(params(data_size, symbol_size)).is_ok());
+    }
+}
+
+/// A two-step part implies its FEC parameters from the declared object size
+/// and the part length. The declared size is checked before anything is
+/// computed from it: i32::MAX with a 2-byte part overflowed i32 when the
+/// symbol count was derived.
+#[test]
+fn test_raptorq_two_step_fec_type_from_peer_part() {
+    use adnl::RaptorqDecoder;
+
+    for (data_size, part_len) in [
+        (i32::MAX, 2),
+        (i32::MAX, 1),
+        (RaptorqDecoder::MAX_DATA_SIZE + 1, 2),
+        (0, 1),
+        (-5, 1),
+        (1000, 0),
+        (1000, 1000),
+        (1000, 5000),
+        (1000, usize::MAX),
+    ] {
+        assert_eq!(
+            RaptorqDecoder::two_step_fec_type(data_size, part_len),
+            None,
+            "data_size {data_size}, part {part_len}"
+        );
+    }
+    let fec = RaptorqDecoder::two_step_fec_type(3000, 77).unwrap();
+    assert_eq!((fec.data_size, fec.symbol_size, fec.symbols_count), (3000, 77, 39));
+    assert!(RaptorqDecoder::with_two_step_params(fec).is_ok());
+    let max = RaptorqDecoder::MAX_DATA_SIZE;
+    let fec = RaptorqDecoder::two_step_fec_type(max, max as usize - 1).unwrap();
+    assert_eq!(fec.symbols_count, 2);
+}
+
+/// Above about 10 MiB the default parameters used sub-blocks, a layout the
+/// C++ side neither produces nor decodes. An 11 MiB object now round-trips
+/// with one source block and one sub-block, through repair symbols.
+#[test]
+fn test_raptorq_large_object_single_block_round_trip() {
+    use adnl::{RaptorqDecoder, RaptorqEncoder};
+
+    let data: Vec<u8> =
+        (0..(11u32 << 20)).map(|i| (i.wrapping_mul(2_654_435_761) >> 11) as u8).collect();
+    let mut encoder = RaptorqEncoder::with_data(&data, None);
+    let params = encoder.params().clone();
+    assert_eq!(params.symbol_size, 768);
+    let mut decoder = RaptorqDecoder::with_params(params.clone()).unwrap();
+    let mut seqno = 0u32;
+    let mut decoded = None;
+    for _ in 0..(params.symbols_count as usize + 20) {
+        let chunk = encoder.encode(&mut seqno).unwrap();
+        // Lose the first 10 source symbols.
+        if seqno >= 10 {
+            decoded = decoder.decode(seqno, &chunk).unwrap();
+            if decoded.is_some() {
+                break;
+            }
+        }
+        seqno += 1;
+    }
+    assert!(decoded.as_deref() == Some(data.as_slice()), "11 MiB object did not round-trip");
+}
+
+/// A peer chooses the seqno and the length of every RLDP or broadcast symbol.
+/// One that is not exactly the negotiated symbol size, or whose seqno does not
+/// fit in 24 bits, is refused with an error and leaves the decoder usable.
+#[test]
+fn test_raptorq_decoder_refuses_malformed_symbols() {
+    use adnl::{RaptorqDecoder, RaptorqEncoder};
+
+    let data: Vec<u8> = (0..3000u32).map(|i| (i * 7) as u8).collect();
+    for symbol in [None, Some(77u32)] {
+        let mut encoder = RaptorqEncoder::with_data(&data, symbol);
+        let params = encoder.params().clone();
+        let symbol_size = params.symbol_size as usize;
+        let mut decoder = if symbol.is_some() {
+            RaptorqDecoder::with_two_step_params(params.clone()).unwrap()
+        } else {
+            RaptorqDecoder::with_params(params.clone()).unwrap()
+        };
+
+        for len in [0, 1, symbol_size - 1, symbol_size + 1] {
+            assert!(decoder.decode(0, &vec![0; len]).is_err(), "length {len} accepted");
+            assert!(decoder.decode(1 << 20, &vec![0; len]).is_err(), "length {len} accepted");
+        }
+        for seqno in [1u32 << 24, (1 << 24) + 5, u32::MAX] {
+            assert!(decoder.decode(seqno, &vec![0; symbol_size]).is_err(), "seqno {seqno:#x}");
+        }
+
+        // Skip source symbol 0 so repair symbols are needed, then decode.
+        let mut seqno = 0u32;
+        let mut decoded = None;
+        for _ in 0..(params.symbols_count as usize * 2 + 10) {
+            let chunk = encoder.encode(&mut seqno).unwrap();
+            if seqno != 0 {
+                decoded = decoder.decode(seqno, &chunk).unwrap();
+                if decoded.is_some() {
+                    break;
+                }
+            }
+            seqno += 1;
+        }
+        assert_eq!(decoded.as_deref(), Some(data.as_slice()), "symbol size {symbol_size}");
     }
 }
 
@@ -1862,11 +2036,15 @@ fn test_twostep_fec_encoder_large_symbols() {
         assert_eq!(params.data_size, data.len() as i32);
         assert_eq!(params.symbol_size, part_size as i32);
 
-        // Generate one symbol per neighbour (like broadcast-twostep.cpp)
+        // Generate one symbol per neighbour (like broadcast-twostep.cpp). The
+        // seqno advances per symbol as the broadcast sender advances it; a
+        // repair symbol is never requested under a source symbol's seqno.
         let mut seqno = 0u32;
         for _ in 0..neighbours {
             let chunk = encoder.encode(&mut seqno).unwrap();
             assert_eq!(chunk.len(), part_size, "symbol size mismatch");
+            seqno += 1;
         }
+        assert_eq!(seqno, neighbours, "every symbol carries its own seqno");
     }
 }

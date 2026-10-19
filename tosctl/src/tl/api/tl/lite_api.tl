@@ -50,6 +50,9 @@ liteServer.signature node_id_short:int256 signature:bytes = liteServer.Signature
 liteServer.signatureSet.ordinary#f644a6e6 validator_set_hash:int catchain_seqno:int signatures:(vector liteServer.signature) = liteServer.SignatureSet;
 liteServer.signatureSet.simplex cc_seqno:int validator_set_hash:int signatures:(vector liteServer.signature)
  session_id:int256 slot:int candidate:bytes = liteServer.SignatureSet;
+liteServer.pqSignature validator_id:int256 algorithm_id:int signature:bytes = liteServer.PqSignature;
+liteServer.signatureSet.simplexPq cc_seqno:int validator_set_hash:int signatures:(vector liteServer.pqSignature)
+ session_id:int256 slot:int candidate:bytes = liteServer.SignatureSet;
 liteServer.blockLinkBack to_key_block:Bool from:tosNode.blockIdExt to:tosNode.blockIdExt dest_proof:bytes proof:bytes state_proof:bytes = liteServer.BlockLink;
 liteServer.blockLinkForward to_key_block:Bool from:tosNode.blockIdExt to:tosNode.blockIdExt dest_proof:bytes config_proof:bytes signatures:liteServer.SignatureSet = liteServer.BlockLink;
 liteServer.partialBlockProof complete:Bool from:tosNode.blockIdExt to:tosNode.blockIdExt steps:(vector liteServer.BlockLink) = liteServer.PartialBlockProof;

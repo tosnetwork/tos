@@ -21,10 +21,8 @@ use std::{
 };
 use tl_api::{
     tos::{
-        adnl::addresslist::AddressList,
-        dht::node::Node,
-        overlay::{node::Node as OverlayNodeInfoV1, nodev2::NodeV2 as OverlayNodeInfoV2},
-        pub_::publickey::Ed25519,
+        adnl::addresslist::AddressList, dht::node::Node,
+        overlay::node::Node as OverlayNodeDescriptor, pub_::publickey::Ed25519,
     },
     IntoBoxed,
 };
@@ -260,21 +258,18 @@ pub fn init_compatibility_test(
 // Not all tests use overlay peers
 #[allow(dead_code)]
 pub fn find_overlay_peer(
-    peers: &mut Vec<(IpAddress, OverlayNodeInfoV1)>,
+    peers: &mut Vec<(IpAddress, OverlayNodeDescriptor)>,
     ctx_search: &mut OverlayNodesSearchContext,
     ctx_test: &mut TestContext,
     log_target: &str,
-) -> (IpAddress, OverlayNodeInfoV1) {
+) -> (IpAddress, OverlayNodeDescriptor) {
     loop {
         while peers.is_empty() {
             log::info!(target: log_target, "---- Search overlay peer...");
             let nodes = ctx_test.rt.block_on(ctx_test.dht.find_overlay_nodes(ctx_search)).unwrap();
             for node in nodes {
                 match node {
-                    (ip, OverlayNodeInfo::V1(value)) => peers.push((ip, value)),
-                    (ip, OverlayNodeInfo::V2(_value)) => {
-                        log::info!(target: log_target, "---- Skip overlay peer V2 {ip}")
-                    }
+                    (ip, OverlayNodeInfo(value)) => peers.push((ip, value)),
                 }
             }
         }
@@ -289,11 +284,7 @@ pub fn find_overlay_peer(
         );
         let peer = ctx_test
             .overlay
-            .add_public_peer(
-                &ip,
-                &OverlayNodeInfo::<_, &OverlayNodeInfoV2>::V1(&node),
-                &ctx_test.overlay_id,
-            )
+            .add_public_peer(&ip, &OverlayNodeInfo(&node), &ctx_test.overlay_id)
             .unwrap()
             .unwrap();
         let found =

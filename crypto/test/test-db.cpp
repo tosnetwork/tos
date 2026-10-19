@@ -303,7 +303,7 @@ void bench_threaded(F &&f) {
   };
   bench(Threaded(std::forward<F>(f)));
 }
-TEST(Cell, sha_benchmark) {
+TEST(Cell, BenchSha) {
   for (size_t n : {4, 64, 128}) {
     bench(BenchSha256Tdlib(n));
     bench(BenchSha256Low(n));
@@ -311,7 +311,7 @@ TEST(Cell, sha_benchmark) {
     bench(BenchSha256(n));
   }
 }
-TEST(Cell, sha_benchmark_threaded) {
+TEST(Cell, BenchShaThreaded) {
   for (size_t n : {4, 64, 128}) {
     bench_threaded([n] { return BenchSha256Tdlib(n); });
     bench_threaded([n]() { return BenchSha256Low(n); });

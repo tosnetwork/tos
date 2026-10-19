@@ -1,0 +1,3 @@
+COMMAND: .contract-venv/bin/python scripts/check-contracts.py
+PASS: 20 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+EXIT=0

@@ -214,10 +214,13 @@ void BufferedFd<FdT>::close() {
 
 template <class FdT>
 Result<size_t> BufferedFd<FdT>::flush_read(size_t max_read) {
-  TRY_RESULT(result, Parent::flush_read(max_read));
+  auto r_result = Parent::flush_read(max_read);
+  // Sync even when the read ended in an error: the bytes read before it (for
+  // example frames that arrived together with a reset) are in the buffer and
+  // must be visible to the reader. The error is still returned.
+  input_reader_.sync_with_writer();
+  TRY_RESULT(result, std::move(r_result));
   if (result) {
-    // TODO: faster sync is possible if you owns writer.
-    input_reader_.sync_with_writer();
     LOG(DEBUG) << "Flush read: +" << format::as_size(result) << tag("total", format::as_size(input_reader_.size()));
   }
   return result;

@@ -6,35 +6,58 @@
  */
 //! Builds the genesis state and writes the frozen manifest.
 //!
-//! Usage: `genesis <repo root> <output manifest> [<source commit> <source blob>]`
-//!          `[--verifying-key <file>]`
+//! ```text
+//! genesis <repo root> <output manifest> <source commit> <source blob>
+//!         --ceremony <ceremony directory>
+//!         [--verifying-key <file>] [--ceremony-transcript <digest>]
+//! genesis <repo root> <output manifest> [<source commit> <source blob>] --development
+//! ```
 //!
-//! The parameters are `development_parameters`, which lives in the library
-//! because the on-chain fixture deploys the same state to a real node, and a
-//! second copy of the constants would be a second deployment.
+//! A pool's genesis carries its verifying key for good, so which key it gets
+//! is never a default, and never a file taken on its word. `--ceremony` names
+//! a phase-2 ceremony directory: the generator rebuilds the starting key from
+//! the committed slice, runs the same audit `phase2-verify` runs, refuses a
+//! ceremony no beacon has closed, and takes the key out of that audit.
+//! `--verifying-key` and `--ceremony-transcript` are optional cross-checks --
+//! the bytes `phase2-verify --vk-out` wrote and the transcript digest that was
+//! announced -- and each must match what the audit found. The profile's
+//! source commit and blob are required as git object ids. Before anything is
+//! written the rendered manifest is put through `manifest::require_production`.
 //!
-//! `--verifying-key` takes the 1,248 bytes a phase-2 ceremony produced --
-//! `phase2-verify --vk-out` writes them -- and builds the genesis state around
-//! those instead of the development key. It is also how a candidate key's
-//! deployment address is found *before* anyone commits to it, since the key is
-//! part of the state and therefore part of the address.
+//! The development key -- fixed seed, toxic waste in the source -- is only
+//! used with `--development`, and the manifest then says so, which
+//! `manifest::require_production` refuses.
+//!
+//! Building around a candidate ceremony is also how its deployment address is
+//! found before anyone commits to it, since the key is part of the state and
+//! therefore part of the address.
 
 use std::path::PathBuf;
 
-use shielded_pool_genesis::manifest::{self, Provenance};
-use shielded_pool_genesis::{build, development_parameters, parameters_with_verifying_key};
+use shielded_pool_genesis::{
+    audit, manifest, plan, CeremonyDirectory, KeyClass, Request, StartingKey,
+};
 
-const USAGE: &str = "usage: genesis <repo root> <output> [commit blob] [--verifying-key <file>]";
+const USAGE: &str = "usage: genesis <repo root> <output> <commit> <blob> --ceremony <directory> \
+                     [--verifying-key <file>] [--ceremony-transcript <digest>]\n   or: genesis \
+                     <repo root> <output> [commit blob] --development";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut positional: Vec<String> = Vec::new();
-    let mut verifying_key: Option<PathBuf> = None;
+    let mut request = Request::default();
+    let mut ceremony: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
         match argument.as_str() {
+            "--ceremony" => ceremony = Some(PathBuf::from(args.next().ok_or(USAGE)?)),
             "--verifying-key" => {
-                verifying_key = Some(PathBuf::from(args.next().ok_or(USAGE)?));
+                let path = PathBuf::from(args.next().ok_or(USAGE)?);
+                request.verifying_key = Some(std::fs::read(&path)?);
             }
+            "--ceremony-transcript" => {
+                request.ceremony_transcript = Some(args.next().ok_or(USAGE)?)
+            }
+            "--development" => request.development = true,
             other if other.starts_with("--") => {
                 return Err(format!("{USAGE}\nunknown option {other}").into())
             }
@@ -44,38 +67,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut positional = positional.into_iter();
     let root = PathBuf::from(positional.next().ok_or(USAGE)?);
     let output = PathBuf::from(positional.next().ok_or(USAGE)?);
-    let source_commit = positional.next().unwrap_or_else(|| "unknown".to_string());
-    let source_blob = positional.next().unwrap_or_else(|| "unknown".to_string());
+    request.source_commit = positional.next();
+    request.source_blob = positional.next();
+    if positional.next().is_some() {
+        return Err(USAGE.into());
+    }
 
-    let parameters = match &verifying_key {
-        None => development_parameters(&root)?,
-        Some(path) => {
-            let bytes = std::fs::read(path)?;
-            eprintln!(
-                "verifying key from {} ({} bytes, sha256 {})",
-                path.display(),
-                bytes.len(),
-                hex(&sha256(&bytes))
-            );
-            parameters_with_verifying_key(&root, bytes)?
+    if let Some(path) = ceremony {
+        if request.development {
+            return Err("a development genesis takes no verifying key or ceremony".into());
         }
-    };
-    let genesis = build(parameters)?;
+        let directory = CeremonyDirectory::at(&path);
+        shielded_pool_genesis::preflight(&directory)?;
+        eprintln!("auditing the ceremony in {}", path.display());
+        eprintln!("rebuilding the starting key from the committed slice (a couple of minutes)");
+        let start = StartingKey::rebuild()?;
+        let audited = audit(&directory, &start)?;
+        eprintln!(
+            "ceremony audits: {} step(s), transcript {}, verifying key sha256 {}",
+            audited.steps(),
+            audited.transcript(),
+            audited.vk_sha256()
+        );
+        request.ceremony = Some(audited);
+    }
 
-    let rendered = manifest::render(&genesis, &Provenance { source_commit, source_blob }, None)?;
+    let planned = plan(&root, request)?;
+    let genesis = planned.build()?;
+    let rendered = manifest::render(&genesis, planned.provenance(), planned.key(), None)?;
+    if let KeyClass::Ceremony(_) = planned.key() {
+        manifest::require_production(&root, &rendered, &planned, None)?;
+    }
     std::fs::write(&output, &rendered)?;
     eprintln!("state hash {}", hex(&manifest::cell_hash(&genesis.state)));
+    match planned.key() {
+        KeyClass::Development => eprintln!("key class development"),
+        KeyClass::Ceremony(ceremony) => {
+            eprintln!("key class ceremony, transcript {}", ceremony.transcript())
+        }
+    }
     eprintln!("wrote {}", output.display());
     Ok(())
 }
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn sha256(bytes: &[u8]) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hasher.finalize().into()
 }

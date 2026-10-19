@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <algorithm>
+
 #include "td/utils/overloaded.h"
 #include "tos/quorum.h"
 #include "validator/consensus/bus.h"
@@ -90,22 +92,80 @@ td::BufferSlice Certificate<T>::serialize() const {
 }
 
 template <ValidVote T>
-td::Ref<block::BlockSignatureSet> Certificate<T>::to_signature_set(const CandidateRef& candidate, const Bus& bus) const
+td::Result<td::Ref<block::BlockSignatureSet>> Certificate<T>::to_signature_set(const CandidateRef& candidate,
+                                                                               const Bus& bus) const
   requires td::OneOf<T, NotarizeVote, FinalizeVote>
 {
-  CHECK(candidate->id == vote.id);
-
-  std::vector<tos::BlockSignature> block_signatures;
-  for (const auto& [validator, signature] : signatures) {
-    block_signatures.emplace_back(validator.get_using(bus).short_id.bits256_value(), signature.clone());
+  if (candidate.is_null()) {
+    return td::Status::Error("pq certificate conversion: missing candidate");
+  }
+  if (candidate->id != vote.id) {
+    return td::Status::Error("pq certificate conversion: vote id does not match candidate id");
+  }
+  if (candidate->hash_data().build_id_with(vote.id.slot) != vote.id) {
+    return td::Status::Error("pq certificate conversion: candidate hash data does not reconstruct candidate id");
+  }
+  if (candidate->hash_data().block() != candidate->block_id()) {
+    return td::Status::Error("pq certificate conversion: candidate hash data does not reconstruct block id");
   }
 
-  auto fn = block::BlockSignatureSet::create_simplex_approve;
+  std::vector<const VoteSignature*> ordered;
+  ordered.reserve(signatures.size());
+  for (const auto& signature : signatures) {
+    ordered.push_back(&signature);
+  }
+  std::sort(ordered.begin(), ordered.end(),
+            [](const auto* lhs, const auto* rhs) { return lhs->validator.value() < rhs->validator.value(); });
+
+  std::vector<bool> seen(bus.validator_set.size(), false);
+  std::vector<block::PQBlockSignature> carried;
+  carried.reserve(ordered.size());
+  ValidatorWeight weight = 0;
+  for (const auto* item : ordered) {
+    const auto index = item->validator.value();
+    if (index >= bus.validator_set.size()) {
+      return td::Status::Error(PSTRING() << "pq certificate conversion: validator index " << index
+                                         << " is outside the trusted set");
+    }
+    if (seen[index]) {
+      return td::Status::Error(PSTRING() << "pq certificate conversion: duplicate validator index " << index);
+    }
+    seen[index] = true;
+    const auto& descriptor = bus.validator_set[index];
+    if (!tos::pq::valid_public_key(descriptor.consensus_key.algorithm_id, descriptor.consensus_key.public_key)) {
+      return td::Status::Error(PSTRING() << "pq certificate conversion: validator " << index
+                                         << " has a malformed or unadmitted consensus descriptor");
+    }
+    auto derived_key_id =
+        tos::pq::derive_key_id(descriptor.consensus_key.algorithm_id, descriptor.consensus_key.public_key);
+    if (!derived_key_id || *derived_key_id != descriptor.consensus_key.key_id) {
+      return td::Status::Error(PSTRING() << "pq certificate conversion: validator " << index
+                                         << " consensus key id disagrees with its public key");
+    }
+    if (!tos::pq::valid_signature(descriptor.consensus_key.algorithm_id,
+                                  std::string_view(item->signature.data(), item->signature.size()))) {
+      return td::Status::Error(PSTRING() << "pq certificate conversion: validator " << index
+                                         << " has a signature of the wrong length");
+    }
+    if (!tos::checked_add_validator_weight(weight, descriptor.weight)) {
+      return td::Status::Error("pq certificate conversion: validator weight sum exceeds protocol cap");
+    }
+    carried.push_back(block::PQBlockSignature{descriptor.validator_id, descriptor.consensus_key.algorithm_id,
+                                              item->signature.clone()});
+  }
+  if (weight < tos::quorum_threshold(bus.total_weight)) {
+    return td::Status::Error("pq certificate conversion: certificate is below weighted quorum");
+  }
+
   if constexpr (std::same_as<T, FinalizeVote>) {
-    fn = block::BlockSignatureSet::create_simplex;
+    return block::BlockSignatureSet::create_simplex_pq_final(std::move(carried), bus.cc_seqno, bus.validator_set_hash,
+                                                             bus.session_id, vote.id.slot,
+                                                             candidate->hash_data().to_tl());
+  } else {
+    return block::BlockSignatureSet::create_simplex_pq_approve(std::move(carried), bus.cc_seqno, bus.validator_set_hash,
+                                                               bus.session_id, vote.id.slot,
+                                                               candidate->hash_data().to_tl());
   }
-  return fn(std::move(block_signatures), bus.cc_seqno, bus.validator_set_hash, bus.session_id, vote.id.slot,
-            candidate->hash_data().to_tl());
 }
 
 template <ValidVote T>

@@ -24,6 +24,7 @@
 #include "auto/tl/tos_api.hpp"
 #include "td/actor/actor.h"
 #include "td/actor/common.h"
+#include "td/actor/coro_utils.h"
 #include "td/db/RocksDb.h"
 #include "td/utils/Random.h"
 #include "td/utils/Status.h"
@@ -67,7 +68,7 @@ void OverlayManager::RequestBuffer::evict_oldest() {
 
 void OverlayManager::RequestBuffer::add_request(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                                                 OverlayIdShort overlay_id, td::BufferSlice data,
-                                                std::optional<td::Promise<td::BufferSlice>> promise) {
+                                                std::optional<td::Promise<adnl::AdnlQueryAnswer>> promise) {
   OverlayBufferKey key{dst, overlay_id};
 
   requests.push_back(BufferedRequest{src, dst, overlay_id, std::move(data), std::move(promise), requests.end()});
@@ -160,7 +161,7 @@ void OverlayManager::register_overlay(adnl::AdnlNodeIdShort local_id, OverlayIdS
                        << local_id;
     for (auto &req : buffered) {
       if (req.promise.has_value()) {
-        receive_query(req.src, req.dst, std::move(req.data), std::move(req.promise.value()));
+        receive_query_ex(req.src, req.dst, std::move(req.data), std::move(req.promise.value()));
       } else {
         receive_message(req.src, req.dst, std::move(req.data));
       }
@@ -172,22 +173,20 @@ void OverlayManager::register_overlay(adnl::AdnlNodeIdShort local_id, OverlayIdS
   }
   auto P =
       td::PromiseCreator::lambda([id = overlays_[local_id][overlay_id].overlay.get()](td::Result<DbType::GetResult> R) {
-        R.ensure();
-        auto value = R.move_as_ok();
-        if (value.status == td::KeyValue::GetStatus::Ok) {
-          auto F = fetch_tl_object<tos_api::overlay_db_Nodes>(std::move(value.value), true);
-          F.ensure();
-          tos_api::downcast_call(
-              *F.move_as_ok(), td::overloaded(
-                                   [&](tos_api::overlay_db_nodes &V) {
-                                     auto nodes = std::move(V.nodes_);
-                                     td::actor::send_closure(id, &Overlay::receive_nodes_from_db, std::move(nodes));
-                                   },
-                                   [&](tos_api::overlay_db_nodesV2 &V) {
-                                     auto nodes = std::move(V.nodes_);
-                                     td::actor::send_closure(id, &Overlay::receive_nodes_from_db_v2, std::move(nodes));
-                                   }));
+        if (R.is_error()) {
+          VLOG(OVERLAY_WARNING) << "Cannot read overlay discovery cache: " << R.move_as_error();
+          return;
         }
+        auto value = R.move_as_ok();
+        if (value.status != td::KeyValue::GetStatus::Ok) {
+          return;
+        }
+        auto decoded = fetch_tl_object<tos_api::overlay_db_nodes>(std::move(value.value), true);
+        if (decoded.is_error()) {
+          VLOG(OVERLAY_WARNING) << "Discarding invalid overlay discovery cache: " << decoded.move_as_error();
+          return;
+        }
+        td::actor::send_closure(id, &Overlay::receive_nodes_from_db, std::move(decoded.move_as_ok()->nodes_));
       });
   auto key = create_hash_tl_object<tos_api::overlay_db_key_nodes>(local_id.bits256_value(), overlay_id.bits256_value());
   db_.get(key, std::move(P));
@@ -307,6 +306,14 @@ void OverlayManager::receive_message(adnl::AdnlNodeIdShort src, adnl::AdnlNodeId
 
 void OverlayManager::receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                                    td::Promise<td::BufferSlice> promise) {
+  receive_query_ex(src, dst, std::move(data), adnl::ignore_answer_metadata(std::move(promise)));
+}
+
+// The answer is forwarded whole, delivery metadata included, through the
+// buffer as well: its delivery deadline is set once, by whoever answers, and
+// nothing on the way restarts it.
+void OverlayManager::receive_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
+                                      td::Promise<adnl::AdnlQueryAnswer> promise) {
   OverlayIdShort overlay_id;
   tl_object_ptr<tos_api::overlay_messageExtra> extra;
   td::Slice parsed_data = data;
@@ -352,9 +359,9 @@ void OverlayManager::receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdSh
   data.confirm_read(data.size() - parsed_data.size());
   td::actor::send_closure(it2->second.overlay, &Overlay::update_throughput_in_ctr, src, data.size(), true, false);
   promise = [overlay = it2->second.overlay.get(), promise = std::move(promise),
-             src](td::Result<td::BufferSlice> R) mutable {
+             src](td::Result<adnl::AdnlQueryAnswer> R) mutable {
     if (R.is_ok()) {
-      td::actor::send_closure(overlay, &Overlay::update_throughput_out_ctr, src, R.ok().size(), false, true);
+      td::actor::send_closure(overlay, &Overlay::update_throughput_out_ctr, src, R.ok().data.size(), false, true);
     }
     promise.set_result(std::move(R));
   };
@@ -438,6 +445,7 @@ void OverlayManager::send_broadcast(adnl::AdnlNodeIdShort local_id, OverlayIdSho
 void OverlayManager::send_broadcast_ex(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id, PublicKeyHash send_as,
                                        td::uint32 flags, td::BufferSlice object) {
   CHECK(object.size() <= Overlays::max_simple_broadcast_size());
+  broadcasts_out_.account(object.as_slice());
   auto it = overlays_.find(local_id);
   if (it != overlays_.end()) {
     auto it2 = it->second.find(overlay_id);
@@ -461,6 +469,7 @@ void OverlayManager::send_broadcast_fec_with_extra(adnl::AdnlNodeIdShort local_i
                                                    PublicKeyHash send_as, td::uint32 flags, td::BufferSlice object,
                                                    td::BufferSlice extra) {
   CHECK(object.size() <= Overlays::max_fec_broadcast_size());
+  broadcasts_out_.account(object.as_slice());
   auto it = overlays_.find(local_id);
   if (it != overlays_.end()) {
     auto it2 = it->second.find(overlay_id);
@@ -474,6 +483,7 @@ void OverlayManager::send_broadcast_fec_with_extra(adnl::AdnlNodeIdShort local_i
 void OverlayManager::send_broadcast_plumtree_fec(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id,
                                                  PublicKeyHash send_as, td::uint32 flags, td::BufferSlice object) {
   CHECK(object.size() <= Overlays::max_fec_broadcast_size());
+  broadcasts_out_.account(object.as_slice());
   auto it = overlays_.find(local_id);
   if (it != overlays_.end()) {
     auto it2 = it->second.find(overlay_id);
@@ -488,6 +498,7 @@ void OverlayManager::send_broadcast_plumtree(adnl::AdnlNodeIdShort local_id, Ove
                                              PublicKeyHash send_as, td::uint32 flags, td::Bits256 broadcast_id,
                                              td::BufferSlice object) {
   CHECK(object.size() <= Overlays::max_fec_broadcast_size());
+  broadcasts_out_.account(object.as_slice());
   auto it = overlays_.find(local_id);
   if (it != overlays_.end()) {
     auto it2 = it->second.find(overlay_id);
@@ -692,6 +703,58 @@ void OverlayManager::forget_peer(adnl::AdnlNodeIdShort local_id, OverlayIdShort 
     return;
   }
   td::actor::send_closure(it2->second.overlay, &Overlay::forget_peer, peer_id);
+}
+
+void OverlayManager::collect(metrics::MetricsPromise promise) {
+  connect(std::move(promise), collect_coro());
+}
+
+std::optional<metrics::CollectionReservation> OverlayManager::reservation() const {
+  std::size_t drains = 0;
+  for (const auto &[_, by_overlay] : overlays_) {
+    if (by_overlay.size() > metrics::kTrafficDrainLimit - drains)
+      return std::nullopt;
+    drains += by_overlay.size();
+  }
+  return metrics::traffic_collection_reservation(
+      broadcasts_in_.cells() + broadcasts_out_.cells(), drains,
+      std::max(broadcasts_in_.label_capacity(), broadcasts_out_.label_capacity()));
+}
+
+void OverlayManager::collect_with_budget(metrics::MetricsPromise promise, metrics::CollectionBudget budget) {
+  connect(std::move(promise), collect_coro(budget));
+}
+
+td::actor::Task<metrics::MetricSet> OverlayManager::collect_coro(metrics::CollectionBudget budget) {
+  std::size_t count = 0;
+  if (budget.bounded) {
+    for (const auto &[_, by_overlay] : overlays_) {
+      if (by_overlay.size() > metrics::kTrafficDrainLimit - count)
+        co_return metrics::shed_status("collector_drain_limit");
+      count += by_overlay.size();
+    }
+    const auto declared = metrics::traffic_collection_reservation(
+        broadcasts_in_.cells() + broadcasts_out_.cells(), count,
+        std::max(broadcasts_in_.label_capacity(), broadcasts_out_.label_capacity()));
+    if (!declared || !budget.admits(*declared) || budget.expired())
+      co_return metrics::shed_status(metrics::kShedOverBudget);
+  }
+  std::vector<td::actor::StartedTask<td::Unit>> drains;
+  if (budget.bounded)
+    drains.reserve(count);
+  for (const auto &[_, by_overlay] : overlays_) {
+    for (const auto &[__, desc] : by_overlay) {
+      drains.push_back(td::actor::ask(desc.overlay.get(), &Overlay::collect_metrics));
+    }
+  }
+  // Child deltas may add named cells while this actor awaits their drains.
+  co_await td::actor::all_wrap(std::move(drains));
+  co_return metrics::collect_traffic_with_budget(broadcasts_in_, broadcasts_out_, count, budget);
+}
+
+void OverlayManager::absorb_broadcasts(metrics::TlTrafficBucket delta, td::Promise<td::Unit> done) {
+  broadcasts_in_ += delta;
+  done.set_value(td::Unit{});
 }
 
 Certificate::Certificate(PublicKey issued_by, td::int32 expire_at, td::uint32 max_size, td::uint32 flags,

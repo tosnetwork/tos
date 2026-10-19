@@ -1,0 +1,4 @@
+$ $HOME/tos-node-health-c01-build/test-health-core-registry
+[1;31m[ 0][t 0][2026-09-29 07:23:07.839352908][test-health-core-registry.cpp:12]	Check `Registry::max_update_attempts == 8` failed[0m
+
+EXIT=-6

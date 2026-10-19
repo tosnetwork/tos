@@ -1,5 +1,6 @@
 #!/usr/bin/fift -s
-"Asm.fif" include
+"PQ.fif" include   // includes Asm.fif; the governed contracts assemble a
+                   // post-quantum verification instruction Asm.fif does not know
 "TosUtil.fif" include
 "Proposal.fif" include
 "GetOpt.fif" include

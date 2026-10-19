@@ -11,6 +11,15 @@ chain_block = { path = "../../tosctl/src/block" }
 ark-ff = "=0.5.0"
 sha2 = "=0.10.9"
 hex = "=0.4.3"
+# A production genesis takes its verifying key from an audit of the ceremony
+# that produced it, run through the ceremony's own audit rather than a second
+# copy of it. Every crate this pulls in is already locked here at the same
+# version through the circuit crate.
+shielded-pool-ceremony = { path = "../shielded-pool-ceremony" }
+# The production gate reads a manifest as typed JSON rather than searching it
+# for strings, and the renderer escapes every string it interpolates.
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
 
 [lints.clippy]
 unwrap_used = "deny"

@@ -76,5 +76,8 @@ ctypes.CDLL(os.path.join(os.environ['TOS_BUILD_DIR'], 'toslib', 'libtoslibjson.s
 os.environ.pop('LD_PRELOAD', None)
 
 sys.argv = ['scripts/localnet-jsonrpc.py', '--validators', '${VALIDATORS}']
+# Running the file directly would put its directory first on the path; its sibling
+# imports need the same here.
+sys.path.insert(0, os.path.abspath('scripts'))
 runpy.run_path('scripts/localnet-jsonrpc.py', run_name='__main__')
 "

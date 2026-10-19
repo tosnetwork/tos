@@ -31,6 +31,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 VERIFIER = HERE / "verify-attestations.py"
 PROTOCOL = "tos-shielded-pool-v1-phase2"
+GPG = shutil.which("gpg")
 
 START = "a" * 64
 C1 = "1" * 64
@@ -108,7 +109,7 @@ def gpg_keygen(home: Path, uid: str) -> tuple:
     env = {"GNUPGHOME": str(home), "PATH": "/usr/bin:/bin", "LC_ALL": "C"}
     subprocess.run(
         [
-            "gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+            GPG, "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
             "--quick-generate-key", uid, "ed25519", "sign", "0",
         ],
         check=True,
@@ -118,7 +119,7 @@ def gpg_keygen(home: Path, uid: str) -> tuple:
         env=env,
     )
     listed = subprocess.run(
-        ["gpg", "--list-secret-keys", "--with-colons"],
+        [GPG, "--list-secret-keys", "--with-colons"],
         check=True,
         capture_output=True,
         text=True,
@@ -128,7 +129,7 @@ def gpg_keygen(home: Path, uid: str) -> tuple:
         line.split(":")[9] for line in listed.stdout.splitlines() if line.startswith("fpr:")
     )
     armoured = subprocess.run(
-        ["gpg", "--armor", "--export", fingerprint],
+        [GPG, "--armor", "--export", fingerprint],
         check=True,
         capture_output=True,
         text=True,
@@ -141,7 +142,7 @@ def gpg_clearsign(home: Path, fingerprint: str, document_path: Path) -> None:
     env = {"GNUPGHOME": str(home), "PATH": "/usr/bin:/bin", "LC_ALL": "C"}
     subprocess.run(
         [
-            "gpg", "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
+            GPG, "--batch", "--pinentry-mode", "loopback", "--passphrase", "",
             "--local-user", fingerprint, "--clearsign",
             "--output", str(document_path) + ".asc", str(document_path),
         ],
@@ -476,6 +477,22 @@ def case_shared_key(scratch: Path) -> tuple:
     )
 
 
+def case_independence_must_be_boolean(scratch: Path) -> tuple:
+    setup = build(scratch, outsider_independent=False)
+    control = run(setup)
+    if control.returncode == 0 or "no verified contribution" not in control.stderr:
+        raise RuntimeError("the all-dependent control must fail the independence rule")
+    roster_data = json.loads(setup["roster"].read_text())
+    roster_data["participants"][1]["independent_of_operator"] = "false"
+    setup["roster"].write_text(json.dumps(roster_data))
+    return (
+        "a string false cannot declare an independent participant",
+        "must be a JSON boolean",
+        run(setup),
+        None,
+    )
+
+
 def case_shared_principal(scratch: Path) -> tuple:
     setup = build(scratch)
     roster_data = json.loads(setup["roster"].read_text())
@@ -580,8 +597,66 @@ def case_in_progress_still_catches_a_stranger(scratch: Path) -> tuple:
     )
 
 
+def case_missing_identity_evidence_is_reported(scratch: Path) -> tuple:
+    """A register entry with nowhere to check the key is named in the output.
+
+    The default fixture roster carries no `published_at` at all, so this case
+    would pass for the wrong reason if it only asserted the warning appears.
+    The companion case below adds evidence and requires the warning to go
+    away, which is what makes this pair mean anything.
+    """
+    setup = build(scratch)
+    result = run(setup, "--in-progress")
+    if result.returncode != 0:
+        return "a key with no identity evidence is reported", None, result, "accepted"
+    # Both the per-contribution marker and the summary, asserted separately.
+    # Matching the bare phrase is not enough: it appears on each contribution
+    # line too, so deleting the entire summary block left this green until a
+    # falsification trial removed the block and nothing went red.
+    if ", NO PUBLIC IDENTITY EVIDENCE" not in result.stdout:
+        return "a key with no identity evidence is reported", None, result, "marked on its line"
+    summary = result.stdout.split("NO PUBLIC IDENTITY EVIDENCE for:")
+    if len(summary) < 2:
+        return "a key with no identity evidence is reported", None, result, "summarised"
+    if "the outside participant" not in summary[1]:
+        return "a key with no identity evidence is reported", None, result, "named in the summary"
+    return "a key with no identity evidence is reported", None, result, None
+
+
+def case_identity_evidence_silences_it(scratch: Path) -> tuple:
+    setup = build(scratch)
+    roster_data = json.loads(setup["roster"].read_text())
+    for who in roster_data["participants"]:
+        who["published_at"] = ["https://example.invalid/" + who["key"]["principal"]]
+    setup["roster"].write_text(json.dumps(roster_data, indent=2))
+    result = run(setup, "--in-progress")
+    if result.returncode != 0:
+        return "identity evidence silences the warning", None, result, "accepted"
+    if "NO PUBLIC IDENTITY EVIDENCE" in result.stdout:
+        return "identity evidence silences the warning", None, result, "silent"
+    return "identity evidence silences the warning", None, result, None
+
+
+def case_empty_published_at_is_not_evidence(scratch: Path) -> tuple:
+    """An empty list, or a list of blanks, is not somewhere to look."""
+    setup = build(scratch)
+    roster_data = json.loads(setup["roster"].read_text())
+    roster_data["participants"][0]["published_at"] = []
+    roster_data["participants"][1]["published_at"] = ["   "]
+    setup["roster"].write_text(json.dumps(roster_data, indent=2))
+    result = run(setup, "--in-progress")
+    if result.returncode != 0:
+        return "an empty published_at is not evidence", None, result, "accepted"
+    if "NO PUBLIC IDENTITY EVIDENCE" not in result.stdout:
+        return "an empty published_at is not evidence", None, result, "reported"
+    return "an empty published_at is not evidence", None, result, None
+
+
 CASES = [
     case_script_template_parses,
+    case_missing_identity_evidence_is_reported,
+    case_identity_evidence_silences_it,
+    case_empty_published_at_is_not_evidence,
     case_in_progress_reports_independence,
     case_in_progress_still_catches_a_forgery,
     case_in_progress_still_catches_a_stranger,
@@ -597,6 +672,7 @@ CASES = [
     case_waiver_does_not_rescue_independence,
     case_fingerprint_only_roster,
     case_roster_silent_on_independence,
+    case_independence_must_be_boolean,
     case_shared_key,
     case_shared_principal,
     case_gpg_intact,
@@ -609,7 +685,8 @@ CASES = [
 def main() -> int:
     failures = 0
     for case in CASES:
-        with tempfile.TemporaryDirectory(prefix="tos-attest-test-") as scratch:
+        # Keep room for the agent's Unix socket names on long system temp paths.
+        with tempfile.TemporaryDirectory(prefix="tos-at-") as scratch:
             description, expected, result, positive_failure = case(Path(scratch))
 
         if expected is None:
@@ -645,5 +722,8 @@ def main() -> int:
 if __name__ == "__main__":
     if shutil.which("ssh-keygen") is None:
         print("ssh-keygen is not installed", file=sys.stderr)
+        sys.exit(2)
+    if GPG is None:
+        print("gpg is not installed", file=sys.stderr)
         sys.exit(2)
     sys.exit(main())

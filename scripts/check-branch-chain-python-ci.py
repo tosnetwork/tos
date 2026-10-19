@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+"""Pin branch CI coverage for the Python suite and a real PQ chain boot."""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+REQUIRED_NATIVE_TARGETS = {
+    "gen_fif",
+    "create-state",
+    "toslibjson",
+    "generate-random-id",
+    "tos-pq-consensus-key",
+    "tos-pq-controller",
+    "dht-server",
+    "validator-engine-console",
+    "validator-engine",
+    "test-pq-lite-forward-proof",
+    "test-pending-finality-cache",
+    "test-c04-real-state-proof",
+    "tos-proof-verify",
+    "test-proof-verify",
+    "test-get-method-context",
+    "test-control-getter",
+    "test-control-getter-budget",
+    "test-control-getter-query",
+    "test-control-getter-transport",
+    "proof-verify-fs-shim",
+    "test-n5-manager-db-fixture",
+    "test-consensus",
+    "test-notarize-after-transient-resolve",
+    "test-state-resolver-teardown",
+    "test-custom-overlay-relay-dedup",
+    "test-pq-consensus-key-rotation",
+    "test-fsync-dir-failure-shim",
+    # Executables that link the consensus custody through validator-disk and
+    # validator-hardfork; the full-tree build runs only for pull requests into main.
+    "create-hardfork",
+    "test-tos-collator",
+    "test-apply-block-readback-latency",
+    # Answered refusals, download deadlines, consensus retries, group
+    # retirement and block acceptance.
+    "test-download-refusal-answers",
+    "test-consensus-retry-backoff",
+    "test-bridge-retirement",
+    "test-block-accepter",
+    "test-rldp2-refusal-lifetime",
+}
+
+# Each runs as its own anchored CTest that must exist (--no-tests=error).
+REFUSAL_AND_RETIREMENT_TESTS = (
+    "test-download-refusal-answers",
+    "test-consensus-retry-backoff",
+    "test-bridge-retirement",
+    "test-bridge-retirement-nonzero",
+    "test-block-accepter",
+    "test-rldp2-refusal-lifetime",
+)
+
+# The registrations, with the mode argument and the token each case prints, so
+# a registration that loses or swaps its argument cannot pass as the other
+# case.
+REFUSAL_AND_RETIREMENT_REGISTRATIONS = (
+    (
+        r"tos_test\(test-download-refusal-answers\)",
+        "download refusal and deadline CTest",
+    ),
+    (
+        r"tos_test\(test-bridge-retirement zerostate-destroy\)\s*\n"
+        r'set_tests_properties\(test-bridge-retirement PROPERTIES PASS_REGULAR_EXPRESSION "BRIDGE_RETIREMENT_ZEROSTATE_OK"\)',
+        "zero-state group destruction CTest, its mode argument or its pass token",
+    ),
+    (
+        r"add_test\(NAME test-bridge-retirement-nonzero COMMAND test-bridge-retirement nonzero-retirement\)\s*\n"
+        r"set_tests_properties\(test-bridge-retirement-nonzero PROPERTIES "
+        r'PASS_REGULAR_EXPRESSION "BRIDGE_RETIREMENT_NONZERO_OK"\)',
+        "non-zero-state group retirement CTest, its mode argument or its pass token",
+    ),
+    (
+        r"add_executable\(test-block-accepter test/validator/consensus/test-block-accepter\.cpp\)",
+        "block accepter test executable",
+    ),
+    (
+        r"tos_test\(test-block-accepter\)\s*\n"
+        r'set_tests_properties\(test-block-accepter PROPERTIES PASS_REGULAR_EXPRESSION "BLOCK_ACCEPTER_OK"\)',
+        "block accepter CTest or its pass token",
+    ),
+)
+
+RESTART_ORIGIN_TESTS = (
+    "test-consensus-simplex2-pq-empty-chain-restart",
+    "test-consensus-simplex2-pq-restart-transient-anchor",
+    "test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control",
+    "test-consensus-simplex2-pq-restart-transient-origin",
+    "test-consensus-simplex2-pq-restart-permanent-origin",
+)
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise RuntimeError(f"BRANCH_CHAIN_PYTHON_CI_FAILURE: {message}")
+
+
+def validate_unconditional_steps(text: str) -> None:
+    # Always-on evidence upload cannot skip a test. All jobs and runtime gates
+    # retain the unconditional coverage rule, including any other upload step.
+    for archive_name in (
+        "Retain Quantum candidate configuration and boot evidence",
+        "Retain public explorer RPC response receipts",
+    ):
+        archive = re.search(
+            rf"(?ms)^      - name: {re.escape(archive_name)}\n"
+            r"(?P<body>.*?)(?=^      - |\Z)",
+            text,
+        )
+        if archive is not None:
+            body = archive.group("body")
+            require(
+                re.search(
+                    r"(?m)^        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02(?: # v4)?$",
+                    body,
+                )
+                is not None,
+                "evidence archive is not the pinned upload action",
+            )
+            require(
+                body.count("        if: always()\n") == 1 and "run:" not in body,
+                "evidence archive must run always and cannot execute tests",
+            )
+            text = text.replace(
+                archive.group(0), archive.group(0).replace("        if: always()\n", ""), 1
+            )
+    require("if:" not in text, "workflow makes a job or step conditional")
+
+
+TRIGGERS = "on:\n  push:\n    branches: [main]\n  pull_request:\n  workflow_dispatch:\n"
+
+
+def validate_triggers(text: str) -> None:
+    # Every pull request, with no base, path or type filter, and every push to
+    # main. Pushes to other branches would duplicate the pull request run.
+    head = text.split("\npermissions:", 1)[0]
+    match = re.search(r"(?ms)^on:\n.*", head)
+    require(match is not None, "workflow has no trigger map")
+    require(
+        match.group(0).rstrip("\n") + "\n" == TRIGGERS,
+        "triggers are not exactly: every pull request, pushes to main, and dispatch",
+    )
+
+
+def main() -> int:
+    root = Path(__file__).resolve().parents[1]
+    workflow = root / ".github/workflows/branch-chain-python.yml"
+    text = workflow.read_text(encoding="utf-8")
+    validate_triggers(text)
+    # This workflow's purpose is to run on every pull request and push to main.
+    # Refuse runtime conditions: a job- or step-level `if:` is
+    # how the existing real-chain job became a green-looking skipped check.
+    validate_unconditional_steps(text)
+    require("uv sync --no-dev" in text, "workflow does not install repository Python dependencies")
+    require(
+        "test/tostester/generate_tl.py" in text,
+        "workflow does not generate the ignored Python TL API",
+    )
+    require(re.search(r"(?m)^\s*run: uv run pytest\s*$", text) is not None, "full pytest is absent")
+    require(
+        re.search(
+            r"(?m)^\s*run: uv run pytest -q test/pq-native/test_e04_negative_windows\.py\s*$",
+            text,
+        )
+        is not None,
+        "E04 exact cancellation and expiry behavior gate is absent",
+    )
+    require(
+        "uv run python test/integration/test_basic.py" in text,
+        "four-validator PQ chain regression is absent",
+    )
+    require(
+        "ctest --test-dir build --output-on-failure -R '^test-pq-lite-forward-proof$'" in text,
+        "PQ key-block proof context behavior gate is absent",
+    )
+    verifier_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^test-proof-verify(-cli-verified|-cli-refused|-live-commit)?$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(verifier_ctest)}\s*$", text) is not None,
+        "anchored proof verifier behavior gate is absent",
+    )
+    require(
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^getter-context-(context|vm|libraries|liteserver)$'" in text,
+        "getter-context independent parity gate is absent",
+    )
+    require(
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^control-getter-(executor|shutdown|limits|actor|vm|context|delete|budget)$'" in text,
+        "bounded control-getter behavior and budget gate is absent",
+    )
+    require(
+        "ctest --test-dir build --output-on-failure --no-tests=error "
+        "-R '^control-getter-(query-(service|boundary|admission|completion)|transport)$'" in text,
+        "authenticated control-getter query and transport gate is absent",
+    )
+    c09_pytest = (
+        "uv run pytest -q -p no:cacheprovider test/pq-native/test_x02_config34_verifier.py "
+        "test/pq-native/test_x02_stage_a_capture.py"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(c09_pytest)}\s*$", text) is not None
+        and "TOS_PROOF_VERIFY: build/lite-client/proof-verify/tos-proof-verify" in text,
+        "C09 Config34 anchored-verifier behavior gate is absent",
+    )
+    cmake_text = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    require(
+        "add_test(NAME branch-chain-python-ci-source-conditions" in cmake_text
+        and "scripts/test_branch_chain_conditions.py)" in cmake_text
+        and 'set_tests_properties(branch-chain-python-ci-source-conditions PROPERTIES LABELS "source-guard")'
+        in cmake_text,
+        "branch condition refusal regression is absent from the source-guard suite",
+    )
+    require(
+        "foreach(context_case context vm libraries liteserver)" in cmake_text
+        and "FIXTURES_REQUIRED getter-context-state" in cmake_text,
+        "getter-context CTest registrations or fixture dependency are absent",
+    )
+    require(
+        "foreach(core_case executor shutdown limits actor vm context delete)" in cmake_text
+        and "add_test(NAME control-getter-budget" in cmake_text,
+        "bounded control-getter CTest registrations are absent",
+    )
+    for registration in (
+        r"tos_test\(test-proof-verify\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data\)",
+        r"add_test\(NAME test-proof-verify-cli-verified\s",
+        r"add_test\(NAME test-proof-verify-cli-refused\s",
+        r"add_test\(NAME test-proof-verify-live-commit\s",
+    ):
+        require(
+            re.search(registration, cmake_text) is not None,
+            f"anchored proof verifier CTest registration is absent: {registration}",
+        )
+    manager_ctest = "ctest --test-dir build --output-on-failure -R '^test-pending-finality-cache$'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(manager_ctest)}\s*$", text) is not None,
+        "pending PQ finality manager actor behavior gate is absent",
+    )
+    relay_ctest = (
+        "ctest --test-dir build --output-on-failure -R '^test-custom-overlay-relay-dedup$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(relay_ctest)}\s*$", text) is not None,
+        "custom overlay relay deduplication gate is absent",
+    )
+    rotation_ctest = (
+        "ctest --test-dir build --output-on-failure -R '^test-pq-consensus-key-rotation$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(rotation_ctest)}\s*$", text) is not None,
+        "multi-key PQ consensus custody and key schedule gate is absent",
+    )
+    seam_ctest = (
+        "ctest --test-dir build --output-on-failure --no-tests=error -R '^pq-signer-no-test-clock$'"
+    )
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(seam_ctest)}\s*$", text) is not None,
+        "production PQ signer test-clock seam gate is absent",
+    )
+    require(
+        "uv run python test/integration/test_pq_consensus_key_rotation.py" in text,
+        "real-engine PQ consensus key rotation gate is absent",
+    )
+    real_state_ctest = "ctest --test-dir build --output-on-failure -R '^test-c04-real-state-proof$'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(real_state_ctest)}\s*$", text) is not None,
+        "real PQ predecessor and BlockProof component gate is absent",
+    )
+    for test_name, boundary in (
+        ("test-n5-manager-db-fixture", "FinalCert journal cold read"),
+        ("test-n5-accept-block", "PQ AcceptBlock cold read"),
+        ("test-n5-joined-finalcert", "same-FinalCert actor and cold persistence path"),
+        ("test-n5-cut1-finalcert-recovery", "FinalCert write-after bootstrap recovery"),
+        ("test-n5-cut2-signatures-recovery", "#13 signature write-after bootstrap recovery"),
+        ("test-n5-cut3-proof-recovery", "BlockProof write-after bootstrap recovery"),
+        (
+            "test-n5-cut4-finalized-replay",
+            "finalized marker cold replay without duplicate acceptance",
+        ),
+        ("test-n5-cut5-full-root-rebuild", "DB/archive-only full-root rebuild"),
+        ("test-n5-cut6-check-proof", "cold persisted PQ CheckProof acceptance and tamper refusal"),
+        ("test-n5-cold-continuation", "cold continuation through a second FinalCert"),
+    ):
+        command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
+        require(
+            re.search(rf"(?m)^\s*run: {re.escape(command)}\s*$", text) is not None,
+            f"N5 {boundary} behavior gate is absent: {test_name}",
+        )
+    cmake = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-accept-block COMMAND test-c04-real-state-proof "
+            r"--n5-accept\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 AcceptBlock CTest is absent or no longer invokes the production-fixture mode",
+    )
+    require(
+        re.search(
+            r"tos_test\(test-n5-manager-db-fixture\s+"
+            r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 FinalCert journal CTest is absent",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-joined-finalcert COMMAND test-c04-real-state-proof "
+            r"--n5-joined\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 same-FinalCert actor CTest is absent or no longer invokes its joined mode",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cut1-finalcert-recovery COMMAND test-c04-real-state-proof "
+            r"--n5-cut1\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 write-after recovery CTest is absent or no longer invokes its cut1 mode",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cut2-signatures-recovery COMMAND test-c04-real-state-proof "
+            r"--n5-cut2\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 #13 write-after recovery CTest is absent or no longer invokes its cut2 mode",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cut3-proof-recovery COMMAND test-c04-real-state-proof "
+            r"--n5-cut3\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 BlockProof write-after recovery CTest is absent or no longer invokes its cut3 mode",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cut4-finalized-replay COMMAND test-c04-real-state-proof "
+            r"--n5-cut4\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 finalized marker replay CTest is absent or no longer invokes its cut4 mode",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cut5-full-root-rebuild COMMAND test-c04-real-state-proof "
+            r"--n5-cut5\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 DB/archive-only full-root rebuild CTest is absent or no longer invokes its cut5 mode",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cut6-check-proof COMMAND test-c04-real-state-proof "
+            r"--n5-cut6\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 CheckProof CTest is absent or no longer invokes its cut6 mode",
+    )
+    require(
+        re.search(
+            r"(?s)add_test\(NAME test-n5-cold-continuation COMMAND test-c04-real-state-proof "
+            r"--n5-continue\s+\$\{CMAKE_CURRENT_SOURCE_DIR\}/test/pq-native/data/c04-pq-genesis\.boc\)",
+            cmake,
+        )
+        is not None,
+        "N5 cold continuation CTest is absent or no longer invokes its seq2 mode",
+    )
+    c05_ctest = "ctest --test-dir build --output-on-failure -R '^c05-notarize-'"
+    require(
+        re.search(rf"(?m)^\s*run: {re.escape(c05_ctest)}\s*$", text) is not None,
+        "Simplex parent-state retry voting behavior gate is absent",
+    )
+    consensus_tests = (root / "test/validator/consensus/CMakeLists.txt").read_text(encoding="utf-8")
+    for test_name, fault_count in (
+        ("c05-notarize-simultaneous-recovery", 3),
+        ("c05-notarize-simultaneous-overbudget", 24),
+    ):
+        require(
+            re.search(rf"(?m)^\s*NAME {re.escape(test_name)}\s*$", consensus_tests) is not None
+            and re.search(
+                rf"(?m)^set_tests_properties\({re.escape(test_name)} PROPERTIES\s*\n"
+                rf'\s*ENVIRONMENT "TOS_TEST_C05_SIMULTANEOUS_FAULTS={fault_count}"\)\s*$',
+                consensus_tests,
+            )
+            is not None,
+            f"C05 four-node behavior CTest is absent or has wrong fault budget: {test_name}",
+        )
+    for test_name in RESTART_ORIGIN_TESTS:
+        command = f"ctest --test-dir build --output-on-failure -R '^{test_name}$'"
+        require(
+            re.search(rf"(?m)^\s*{re.escape(command)}\s*$", text) is not None,
+            f"Simplex restart-origin behavior gate is absent: {test_name}",
+        )
+    for test_name in REFUSAL_AND_RETIREMENT_TESTS:
+        command = f"ctest --test-dir build --output-on-failure --no-tests=error -R '^{test_name}$'"
+        require(
+            re.search(rf"(?m)^\s*{re.escape(command)}\s*$", text) is not None,
+            f"refusal, deadline, retirement or acceptance behavior gate is absent: {test_name}",
+        )
+    for registration, what in REFUSAL_AND_RETIREMENT_REGISTRATIONS:
+        require(re.search(registration, cmake) is not None, f"{what} is absent from CMakeLists.txt")
+    rust_job = re.search(
+        r"(?ms)^  rust-workspace-tests-compile:\s*\n(?P<body>.*?)(?=^  [\w-]+:\s*$|\Z)",
+        text,
+    )
+    require(rust_job is not None, "all-crate Rust test compilation job is absent")
+    require(
+        re.search(
+            r"(?m)^\s*run: cargo check --manifest-path tosctl/src/Cargo.toml --workspace --tests --locked\s*$",
+            rust_job.group("body"),
+        )
+        is not None,
+        "all-crate Rust test compilation is absent or scoped to an allowlist",
+    )
+    require(
+        re.search(
+            # Either the E04 group alone or the whole commands library, which includes it.
+            r"(?m)^\s*run: cargo test --manifest-path tosctl/src/Cargo.toml -p commands --lib "
+            r"(?:exact_deploy_wallet_transaction_tests )?--locked --no-default-features\s*$",
+            rust_job.group("body"),
+        )
+        is not None,
+        "E04 exact wallet confirmation behavior gate is absent",
+    )
+    zero_stats = text.find("ccache --zero-stats")
+    native_build = text.find("cmake --build build --parallel 4 --target")
+    show_stats = text.find("ccache --show-stats")
+    require(
+        -1 < zero_stats < native_build < show_stats,
+        "native cache statistics do not bracket the fixture build",
+    )
+    cache_key = "${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-${{ github.sha }}"
+    restore_prefix = "${{ runner.os }}-${{ runner.arch }}-branch-pq-chain-"
+    require(f"key: {cache_key}" in text, "native cache key is not commit-specific")
+    require(
+        f"restore-keys: {restore_prefix}" in text,
+        "native cache cannot restore the newest prior branch entry",
+    )
+    require("continue-on-error" not in text, "workflow permits a guarded step to fail")
+
+    target_command = re.search(
+        r"cmake --build build --parallel 4 --target\s+\\?\s*(?P<targets>(?:\s*[\w-]+\s*\\?\s*)+)",
+        text,
+    )
+    require(target_command is not None, "minimal native target command is missing")
+    observed_targets = set(target_command.group("targets").replace("\\", "").split())
+    require(
+        REQUIRED_NATIVE_TARGETS <= observed_targets,
+        f"native fixture targets are missing: {sorted(REQUIRED_NATIVE_TARGETS - observed_targets)}",
+    )
+    print(
+        "BRANCH_CHAIN_PYTHON_CI_OK: every pull request and push to main runs full pytest, "
+        "boots the four-validator PQ chain, checks PQ key-block proof context, "
+        "the pending-finality manager actor and real PQ predecessor/BlockProof component, "
+        "the anchored proof verifier, its CLI and the C09 Config34 path, "
+        "N5 FinalCert-journal, AcceptBlock, same-FinalCert, five recovery CTests, cold CheckProof and seq2 continuation, "
+        "the C05 parent-state retry CTest selector "
+        "and its two named four-node fault controls, "
+        "five named restart-origin controls, the six refusal, deadline, retirement and acceptance CTests, "
+        "and the E04 Python negative-window tests; "
+        "the Rust job compiles every test target and runs the E04 exact wallet confirmation group"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, RuntimeError) as error:
+        print(error, file=sys.stderr)
+        raise SystemExit(1) from error

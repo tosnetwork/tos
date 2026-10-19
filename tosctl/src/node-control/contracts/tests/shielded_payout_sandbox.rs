@@ -22,8 +22,10 @@ use tos_sandbox::{Blockchain, MessageBuilder, compile_func_with_stdlib};
 use tos_vm::stack::StackItem;
 use tos_vm::stack::integer::IntegerData;
 
+mod shielded_pool_library;
+
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 /// Section 3: the canonical outer payload is exactly this many bytes.
 const PAYLOAD_BYTES: usize = 1233;
 
@@ -166,11 +168,14 @@ struct Probe {
 impl Probe {
     fn deploy() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         bc.set_workchain(0);
         let payer = bc.treasury("deployer", 100_000 * TOS).expect("treasury");
         let library = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont/shielded");
-        let probe_path = std::env::temp_dir().join("tos_shielded_payout_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+        let probe_path = probe_dir.path().join("tos_shielded_payout_probe.fc");
         std::fs::write(&probe_path, PROBE).expect("write probe");
         let code = compile_func_with_stdlib(&[format!("{library}/payout.fc").into(), probe_path])
             .expect("compile the shielded library (needs build/crypto/func)");
@@ -367,9 +372,12 @@ fn the_fee_must_cover_the_message_and_not_the_recovery() {
     let digest = small(0x31337);
     let record = record_of(&probe, &digest, &data);
     let body = probe.cell("p_body", vec![int(&digest), StackItem::cell(record)]);
-    // The frozen bounce ceiling. It is no longer part of the floor; it is
-    // measured below so the test can say how much was taken out of it.
-    let ceiling = 220_000u32;
+    // The frozen bounce ceiling, read out of the contract rather than copied:
+    // it is no longer part of the floor, and it is priced below only so the
+    // test can say how much was taken out of it. A copy here would go stale
+    // the next time the ceiling is re-derived, and say nothing when it did.
+    let ceiling = u32::try_from(shielded_pool_library::gas_ceiling("bounce_gas_ceiling"))
+        .expect("the bounce ceiling fits a uint32");
 
     let forward = probe.int("p_forward_fee", vec![StackItem::cell(body.clone())]);
     assert!(forward > 0, "the forward fee of a real message is zero");
@@ -386,8 +394,10 @@ fn the_fee_must_cover_the_message_and_not_the_recovery() {
         )
     };
 
-    // The fee on the wire is not the fee the configuration fixed.
-    assert_eq!(solvent(50_000_000, 50_000_001), Err(242), "a fee the config did not fix passed");
+    // The fee on the wire is not the fee the configuration fixed. The pair is
+    // synthetic and only has to differ; what it checks is that the contract
+    // compares them rather than trusting the wire.
+    assert_eq!(solvent(20_000_000, 20_000_001), Err(242), "a fee the config did not fix passed");
 
     // The smallest fee that covers the message, found rather than assumed: the
     // fee one nanotos below it must fail, which is what makes it the boundary
@@ -485,8 +495,8 @@ fn the_configured_fee_clears_the_price_this_chain_used_to_charge() {
         );
     }
 
-    let size = probe.call("p_body_size", vec![StackItem::cell(body.clone())])
-        .expect("the body's size");
+    let size =
+        probe.call("p_body_size", vec![StackItem::cell(body.clone())]).expect("the body's size");
     assert_eq!(size.len(), 2, "p_body_size returned {} values", size.len());
     let number = |item: &StackItem| -> i128 {
         item.as_integer().expect("an integer").to_string().parse().expect("a number")
@@ -518,7 +528,7 @@ fn the_configured_fee_clears_the_price_this_chain_used_to_charge() {
     );
 
     let restoration = at(BEFORE_ALIGNMENT);
-    let configured: i128 = 50_000_000;
+    let configured = shielded_pool_library::configured_withdrawal_fee();
     eprintln!(
         "the payout body is {bits} bits in {cells} cells; it forwards for {live} today and \
          would for {restoration} at the prices this chain charged before {}",

@@ -87,6 +87,24 @@ fn the_smallest_recoverable_bounce_is_measured_rather_than_assumed() {
         low.reserve,
         low.holds
     );
+    // A nanotos cannot carry a bounce back that pays for its authentication,
+    // if it carries one back at all, so nothing authentic reaches the pool's
+    // state. The reservation is kept: releasing a leaf on a bounce the pool
+    // never read is the same guess as releasing it on a payout that went
+    // quiet.
+    assert!(
+        low.bounced_from.is_none() || low.recovery_exit != 0,
+        "a one-nanotos payout came back as a bounce that ran to completion (from {:?})",
+        low.bounced_from
+    );
+    assert_eq!(
+        low.reserved_recovery_leaves, "1",
+        "a bounce that could not be authenticated released its withdrawal's reservation"
+    );
+    assert_eq!(
+        high.reserved_recovery_leaves, "0",
+        "a recovered bounce left its withdrawal's reservation behind"
+    );
 
     // Bisect on the withdrawn amount. Each probe is a whole proved withdrawal
     // whose payout is really sent and really refused, so the bounce it
@@ -135,6 +153,15 @@ fn the_smallest_recoverable_bounce_is_measured_rather_than_assumed() {
     );
     assert!(fails_outcome.bounced_value > 0, "the bounce one below the boundary carried nothing");
     assert!(!recovered(&fails_outcome), "the bisection put a recovered case on the failing side");
+    // Authenticated and too small to mint: the bounce its withdrawal reserved
+    // a leaf for has arrived and cannot arrive again, so the reservation is
+    // spent even though no note is. Keeping it would hold a leaf back for
+    // ever for a bounce that is already over.
+    assert_eq!(fails_outcome.recovery_exit, 0, "the bounce one below the boundary was refused");
+    assert_eq!(
+        fails_outcome.reserved_recovery_leaves, "0",
+        "a bounce too small to mint left its withdrawal's reservation behind"
+    );
 
     // And *which* threshold this is, which the bisection alone cannot say.
     //

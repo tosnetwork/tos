@@ -1,0 +1,763 @@
+use crate::{
+    authorized, decode_token, hex,
+    query_ledger::{Attempt, QueryLedger},
+    random_token, Inventory,
+};
+use axum::{
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Instant,
+};
+use tos_health_core::{
+    evidence::{Evidence, EvidenceStore},
+    query::{Grant, QueryService, TOOLS},
+};
+
+/// Resident bound of the query service's evidence store, in bytes of real
+/// decoded footprint. 32 MiB holds about eight minutes of seven nodes'
+/// native and process rows at their actual in-memory size.
+pub const QUERY_RESIDENT_EVIDENCE_BYTES: usize = 32 * 1024 * 1024;
+
+pub struct Data {
+    pub store: EvidenceStore,
+    pub grants: BTreeMap<String, Grant>,
+    pub manager_conflicted: bool,
+    pub manager_caught_up: bool,
+    /// Last failure of the read-only verdict copy, if any. A failed verdict
+    /// read never revokes grants; the snapshot reports the verdict as missing.
+    pub verdict_import_error: Option<String>,
+}
+#[derive(Clone)]
+pub struct ObservabilityState {
+    pub data: Arc<Mutex<Data>>,
+    pub inventory: Arc<Inventory>,
+    pub operator_token: Arc<Vec<u8>>,
+    pub ingest_token: Arc<Vec<u8>>,
+    pub service_token: Arc<Vec<u8>>,
+    pub metrics: Arc<BTreeSet<String>>,
+    pub query_ledger: Option<Arc<Mutex<QueryLedger>>>,
+    pub manager_evidence_db: Option<PathBuf>,
+    /// M's control database, opened read-only only by broker-side imports to
+    /// copy the deterministic health-state verdict per node.
+    pub manager_control_db: Option<PathBuf>,
+    /// Counts actual broker-side M archive read attempts. Query handlers must
+    /// not increment this witness even under a call storm or cache miss.
+    pub manager_projection_reads: Arc<AtomicU64>,
+    pub started: Instant,
+    pub epoch: String,
+    /// Resident bound of the evidence store, applied again when a durable
+    /// ledger is restored into it.
+    resident_evidence_bytes: usize,
+}
+impl ObservabilityState {
+    pub fn new(
+        inventory: Inventory,
+        operator: Vec<u8>,
+        ingest: Vec<u8>,
+        service: Vec<u8>,
+    ) -> Result<Self, String> {
+        inventory.validate()?;
+        if operator == ingest || operator == service || ingest == service {
+            return Err("identities must use distinct credentials".into());
+        }
+        Ok(Self {
+            data: Arc::new(Mutex::new(Data {
+                // Charged by real capacity (a decoded record is about eight
+                // times its wire size), so this is the resident bound it says.
+                store: EvidenceStore::new(QUERY_RESIDENT_EVIDENCE_BYTES),
+                grants: BTreeMap::new(),
+                manager_conflicted: false,
+                manager_caught_up: true,
+                verdict_import_error: None,
+            })),
+            inventory: Arc::new(inventory),
+            operator_token: Arc::new(operator),
+            ingest_token: Arc::new(ingest),
+            service_token: Arc::new(service),
+            // The only metric ids are the fixed native catalog; nothing here
+            // accepts PromQL, SQL or an operator-supplied series name.
+            metrics: Arc::new(
+                tos_health_core::native_metrics::catalog_ids().map(str::to_owned).collect(),
+            ),
+            query_ledger: None,
+            manager_evidence_db: None,
+            manager_control_db: None,
+            manager_projection_reads: Arc::new(AtomicU64::new(0)),
+            started: Instant::now(),
+            resident_evidence_bytes: QUERY_RESIDENT_EVIDENCE_BYTES,
+            epoch: hex(&random_token()?),
+        })
+    }
+    fn now(&self) -> u64 {
+        // Match the durable grant ledger's restart-stable clock domain.
+        crate::query_ledger::boot_millis().unwrap_or(u64::MAX)
+    }
+    /// Use a different resident bound for the evidence store. Must be called
+    /// before `with_query_ledger`, which restores the ledger into a store of
+    /// this size; a bound below one maximal record would refuse legitimate
+    /// rows and is rejected.
+    pub fn with_resident_evidence_bytes(self, bytes: usize) -> Result<Self, String> {
+        if bytes < tos_health_core::evidence::MAX_RECORD_RESIDENT_BYTES {
+            return Err("resident evidence bound below one maximal record".into());
+        }
+        if self.query_ledger.is_some() {
+            return Err("resident evidence bound must be set before the query ledger".into());
+        }
+        {
+            let mut data = self.data.lock().map_err(|_| "query state unavailable")?;
+            if data.store.entries().next().is_some() {
+                return Err("resident evidence bound must be set on an empty store".into());
+            }
+            data.store = EvidenceStore::new(bytes);
+        }
+        Ok(Self { resident_evidence_bytes: bytes, ..self })
+    }
+    pub fn with_query_ledger(mut self, path: &std::path::Path) -> Result<Self, String> {
+        let ledger = QueryLedger::open(path)?;
+        let active = ledger.load_active_all(self.now())?;
+        let mut data = self.data.lock().map_err(|_| "query state unavailable")?;
+        let floor = active.iter().map(|g| g.watermark).max().unwrap_or(0);
+        let mut restored = ledger.load_evidence(self.resident_evidence_bytes)?;
+        if restored.watermark() < floor && restored.entries().next().is_none() {
+            restored.advance_watermark_floor(floor).map_err(str::to_owned)?;
+        } else if restored.watermark() < floor {
+            return Err("query evidence watermark behind active grants".into());
+        }
+        data.store = restored;
+        data.grants = active.into_iter().map(|g| (g.run_id.clone(), g)).collect();
+        drop(data);
+        self.query_ledger = Some(Arc::new(Mutex::new(ledger)));
+        Ok(self)
+    }
+    pub fn with_manager_evidence(mut self, path: PathBuf) -> Result<Self, String> {
+        if self.query_ledger.is_none() {
+            return Err("M projection requires durable query ledger".into());
+        }
+        self.manager_evidence_db = Some(path);
+        match import_manager(&self) {
+            Ok(_) => {}
+            Err(_)
+                if self
+                    .data
+                    .lock()
+                    .is_ok_and(|data| !data.manager_conflicted && !data.manager_caught_up) =>
+            {
+                // A bounded-capacity pause leaves old fixed-W grants usable.
+                // The 15-second owner retries; new grants stay 503.
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(self)
+    }
+    /// Copy M's deterministic verdicts read-only at each broker import. The
+    /// query layer never evaluates a rule; it only carries the verdict row.
+    pub fn with_manager_control(mut self, path: PathBuf) -> Result<Self, String> {
+        if self.query_ledger.is_none() {
+            return Err("verdict projection requires durable query ledger".into());
+        }
+        self.manager_control_db = Some(path);
+        let mut data = self.data.lock().map_err(|_| "query state unavailable")?;
+        import_verdicts_into(&self, &mut data);
+        if let Some(error) = &data.verdict_import_error {
+            return Err(format!("M control verdict read failed at startup: {error}"));
+        }
+        drop(data);
+        Ok(self)
+    }
+}
+/// Refresh the per-node verdict rows when M's evaluation sequence moved or the
+/// newest copy is older than two minutes. Failures are recorded, never fatal,
+/// and never touch grants: a stale or missing verdict is reported as missing
+/// evidence by the snapshot handler rather than hidden behind a refusal.
+fn import_verdicts_into(state: &ObservabilityState, data: &mut Data) {
+    const REFRESH_MS: i64 = 120_000;
+    let Some(path) = &state.manager_control_db else { return };
+    let result = (|| -> Result<(), String> {
+        let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
+        let (sequence, nodes) = crate::manager_query_source::read_health_verdicts(
+            path,
+            &state.inventory.network_id,
+            &state.inventory.nodes,
+        )?;
+        let import_ms = chrono::Utc::now().timestamp_millis();
+        for node in nodes {
+            let newest = data
+                .store
+                .entries()
+                .filter(|e| {
+                    e.record.node_id == node.node_id
+                        && e.record.source_id == crate::manager_query_source::VERDICT_SOURCE
+                })
+                .max_by_key(|e| (e.record.observed_at_ms, e.watermark))
+                .map(|e| (e.record.quality.source_sequence.clone(), e.record.observed_at_ms));
+            let fresh = newest.is_some_and(|(seq, at)| {
+                seq == sequence.to_string() && import_ms.saturating_sub(at) < REFRESH_MS
+            });
+            if fresh {
+                continue;
+            }
+            let record = crate::manager_query_source::verdict_evidence(sequence, &node, import_ms);
+            ledger
+                .lock()
+                .map_err(|_| "query ledger unavailable")?
+                .insert_evidence(&mut data.store, record)?;
+        }
+        Ok(())
+    })();
+    data.verdict_import_error = result.err();
+}
+fn block_manager_queries(state: &ObservabilityState, data: &mut Data) -> Result<(), String> {
+    // Set the in-memory refusal before touching SQLite. A partial I/O failure
+    // must never leave an apparently usable run in this process.
+    data.manager_conflicted = true;
+    data.manager_caught_up = false;
+    let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
+    let mut ledger = ledger.lock().map_err(|_| "query ledger unavailable")?;
+    for run in data.grants.keys() {
+        ledger.revoke(run)?;
+    }
+    for grant in data.grants.values_mut() {
+        grant.revoke();
+    }
+    Ok(())
+}
+fn import_manager_into(
+    state: &ObservabilityState,
+    data: &mut Data,
+) -> Result<(u64, usize), String> {
+    let Some(path) = &state.manager_evidence_db else {
+        return Ok((0, 0));
+    };
+    if data.manager_conflicted {
+        return Err("M projection conflict requires operator review".into());
+    }
+    let ledger = state.query_ledger.as_ref().ok_or("query ledger unavailable")?;
+    state.manager_projection_reads.fetch_add(1, Ordering::Relaxed);
+    let cursor_and_retained = {
+        let guard = ledger.lock().map_err(|_| "query ledger unavailable")?;
+        guard
+            .manager_cursor()
+            .and_then(|cursor| guard.retained_origin_rows().map(|retained| (cursor, retained)))
+    };
+    let (previous, retained) = match cursor_and_retained {
+        Ok(value) => value,
+        Err(error) => {
+            block_manager_queries(state, data)?;
+            return Err(error);
+        }
+    };
+    let source = crate::manager_query_source::read_process_projection_page(
+        path,
+        &state.inventory.network_id,
+        previous.as_ref(),
+        &retained,
+    );
+    let page = match source {
+        Ok(value) => value,
+        Err(error) => {
+            block_manager_queries(state, data)?;
+            return Err(error);
+        }
+    };
+    if !page.expired_retained.is_empty() {
+        // Parents M expired under a retention seal are a bounded, legitimate
+        // loss of history, not a changed source: drop their derived rows and
+        // keep serving. Ledger first, so a crash here never leaves a derived
+        // row whose parent is gone from both M and Q. While a grant of this
+        // boot is active the ledger defers instead, so the grant keeps the
+        // fixed watermark it was issued at; the parents stay retained and the
+        // next pass offers them again.
+        let expired: Vec<String> = page.expired_retained.iter().cloned().collect();
+        let outcome = ledger
+            .lock()
+            .map_err(|_| "query ledger unavailable")?
+            .evict_expired_origins(&expired, state.now());
+        let outcome = match outcome {
+            Ok(value) => value,
+            Err(error) => {
+                block_manager_queries(state, data)?;
+                return Err(error);
+            }
+        };
+        for evidence_id in &outcome.evicted {
+            data.store.remove(evidence_id);
+        }
+    }
+    if !page.quarantined_retained.is_empty() {
+        block_manager_queries(state, data)?;
+        return Err("retained M parent was quarantined".into());
+    }
+    let count = page.records.len();
+    for (_, record) in &page.records {
+        if !state.inventory.nodes.contains(&record.node_id)
+            || !state.inventory.scopes.contains(&record.scope_id)
+        {
+            block_manager_queries(state, data)?;
+            return Err("M projection outside inventory".into());
+        }
+    }
+    let inserted = ledger
+        .lock()
+        .map_err(|_| "query ledger unavailable")?
+        .insert_projection_page(&mut data.store, &page.records);
+    if let Err(error) = inserted {
+        if error.is_proven_recoverable() {
+            // Capacity or Q storage availability is not evidence that an
+            // earlier fixed-W source changed. No page/cursor is published.
+            data.manager_caught_up = false;
+        } else {
+            // Unknown errors include malformed metadata, Q corruption, and
+            // constraint violations. Never keep grants usable by default.
+            block_manager_queries(state, data)?;
+        }
+        return Err(error.to_string());
+    }
+    let committed = ledger.lock().map_err(|_| "query ledger unavailable")?.commit_manager_cursor(
+        previous.as_ref(),
+        &page.cursor,
+        page.boundary_witness.as_ref(),
+    );
+    if let Err(error) = committed {
+        if error.is_proven_recoverable() {
+            // The page is already durable; replay at the old cursor is
+            // idempotent. Existing grants still see only their fixed W.
+            data.manager_caught_up = false;
+        } else {
+            block_manager_queries(state, data)?;
+        }
+        return Err(error.to_string());
+    }
+    data.manager_caught_up = page.caught_up;
+    Ok((page.cursor.watermark, count))
+}
+/// This is a broker-control operation, not a query handler fallback.
+pub fn import_manager(state: &ObservabilityState) -> Result<(u64, usize), String> {
+    let mut data = state.data.lock().map_err(|_| "query state unavailable")?;
+    let imported = import_manager_into(state, &mut data);
+    import_verdicts_into(state, &mut data);
+    imported
+}
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers.get("authorization").and_then(|v| v.to_str().ok())
+}
+async fn monitor_heartbeat(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, StatusCode> {
+    if !authorized(bearer(&headers), &state.service_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let epoch = &state.epoch;
+    Ok(Json(
+        json!({"schema_version":1,"sequence":(state.started.elapsed().as_secs()/15).to_string(),"process_epoch":epoch}),
+    ))
+}
+async fn healthz() -> Json<Value> {
+    Json(json!({"service":"available","validator_health":"unknown"}))
+}
+/// Authenticated, read-only control-socket witness. This is not a grant and
+/// does not import M, so a failing projection cannot be hidden by the probe.
+async fn projection_health(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+) -> Result<Response, StatusCode> {
+    if !authorized(bearer(&headers), &state.service_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let ledger = state.query_ledger.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let path = state.manager_evidence_db.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    // Import holds Data while reading Q and M and while latching a conflict.
+    // Keep the same lock through all three probe reads so the response cannot
+    // combine a pre-conflict flag with a post-conflict cursor or source head.
+    let data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let (manager_conflicted, caught_up_at_last_import, query_watermark) =
+        (data.manager_conflicted, data.manager_caught_up, data.store.watermark());
+    let (cursor, disk) = {
+        let ledger = ledger.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        (
+            ledger.manager_cursor().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+            ledger.disk_usage().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+        )
+    };
+    let head = crate::manager_query_source::read_projection_head(path, &state.inventory.network_id);
+    let (source_global_m_seq, source_identity_match, lag_global_m_seq) = match (&head, &cursor) {
+        (Ok(head), Some(cursor)) => (
+            Some(head.global_m_seq.to_string()),
+            Some(
+                cursor.network == state.inventory.network_id
+                    && cursor.device == head.device
+                    && cursor.inode == head.inode,
+            ),
+            head.global_m_seq.checked_sub(cursor.watermark).map(|lag| lag.to_string()),
+        ),
+        (Ok(head), None) => (Some(head.global_m_seq.to_string()), None, None),
+        (Err(_), _) => (None, None, None),
+    };
+    let status = if manager_conflicted {
+        "conflict"
+    } else if head.is_err() {
+        "source_unavailable"
+    } else if cursor.is_none() {
+        "uninitialized"
+    } else if source_identity_match != Some(true) || lag_global_m_seq.is_none() {
+        "identity_or_watermark_mismatch"
+    } else if !caught_up_at_last_import || lag_global_m_seq.as_deref() != Some("0") {
+        "lagging"
+    } else {
+        "caught_up"
+    };
+    let code =
+        if matches!(status, "conflict" | "source_unavailable" | "identity_or_watermark_mismatch") {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::OK
+        };
+    let response = (
+        code,
+        Json(json!({
+            "schema_version":1,
+            "projection_status":status,
+            "manager_conflicted":manager_conflicted,
+            "caught_up_at_last_import":caught_up_at_last_import,
+            "query_watermark":query_watermark.to_string(),
+            "cursor_global_m_seq":cursor.map(|value| value.watermark.to_string()),
+            "source_global_m_seq":source_global_m_seq,
+            "lag_global_m_seq":lag_global_m_seq,
+            "source_identity_match":source_identity_match,
+            "verdict_source_configured":state.manager_control_db.is_some(),
+            "verdict_import_error":data.verdict_import_error,
+            "disk_backpressure":disk.backpressure,
+            "disk_backpressure_refusals":disk.backpressure_refusals.to_string(),
+            "ledger_main_bytes":disk.main_bytes.to_string(),
+            "ledger_wal_bytes":disk.wal_bytes.to_string(),
+            "ledger_main_quota_bytes":disk.main_quota_bytes.to_string(),
+            "ledger_wal_high_water_bytes":disk.wal_high_water_bytes.to_string(),
+            "ledger_checkpoint_busy":disk.checkpoint_busy.to_string(),
+            "ledger_checkpoint_pinned":disk.checkpoint_pinned.to_string(),
+        })),
+    )
+        .into_response();
+    drop(data);
+    Ok(response)
+}
+async fn ingest(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+    Json(mut record): Json<Evidence>,
+) -> Result<Json<Value>, StatusCode> {
+    if !authorized(bearer(&headers), &state.ingest_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if !state.inventory.nodes.contains(&record.node_id)
+        || !state.inventory.scopes.contains(&record.scope_id)
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    record.received_at_ms = chrono::Utc::now().timestamp_millis();
+    let id = if let Some(ledger) = &state.query_ledger {
+        ledger
+            .lock()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .insert_evidence(&mut data.store, record)
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+    } else {
+        data.store.insert(record).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?
+    };
+    Ok(Json(json!({"evidence_id":id,"watermark":data.store.watermark().to_string()})))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrantRequest {
+    node_ids: BTreeSet<String>,
+    scope_ids: BTreeSet<String>,
+    start: String,
+    end: String,
+}
+async fn grant(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+    Json(request): Json<GrantRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    if !authorized(bearer(&headers), &state.operator_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if !request.node_ids.is_subset(&state.inventory.nodes)
+        || !request.scope_ids.is_subset(&state.inventory.scopes)
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let start =
+        tos_health_core::query::utc_ms(&request.start).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let end = tos_health_core::query::utc_ms(&request.end).map_err(|_| StatusCode::BAD_REQUEST)?;
+    if end > chrono::Utc::now().timestamp_millis() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let token = random_token().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let mut identity = random_token().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    identity[6] = (identity[6] & 0x0f) | 0x40;
+    identity[8] = (identity[8] & 0x3f) | 0x80;
+    let value = hex(&identity[..16]);
+    let run = format!(
+        "{}-{}-{}-{}-{}",
+        &value[..8],
+        &value[8..12],
+        &value[12..16],
+        &value[16..20],
+        &value[20..]
+    );
+    let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if data.manager_conflicted {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    data.grants.retain(|_, g| g.expires_monotonic_ms > state.now());
+    if data.grants.len() >= 32 {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+    let (manager_watermark, _) =
+        import_manager_into(&state, &mut data).map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if !data.manager_caught_up {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    // The verdict copy is fixed under this grant's W together with the
+    // evidence page; a failed copy leaves the verdict missing, not stale.
+    import_verdicts_into(&state, &mut data);
+    let mut g = Grant::new(
+        run.clone(),
+        "aura".into(),
+        state.inventory.network_id.clone(),
+        &token,
+        request.node_ids,
+        request.scope_ids,
+        start,
+        end,
+        state.now(),
+        data.store.watermark(),
+    )
+    .map_err(|_| StatusCode::BAD_REQUEST)?;
+    if state.manager_evidence_db.is_some() {
+        g.manager_watermark = Some(manager_watermark);
+    }
+    if let Some(ledger) = &state.query_ledger {
+        ledger
+            .lock()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .create(&g, state.now())
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    }
+    data.grants.insert(run.clone(), g);
+    Ok(Json(json!({"run_id":run,"run_token":hex(&token),"expires_in_seconds":200})))
+}
+async fn revoke(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+    Path(run): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    if !authorized(bearer(&headers), &state.operator_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if let Some(ledger) = &state.query_ledger {
+        ledger
+            .lock()
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+            .revoke(&run)
+            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    }
+    if let Some(mut grant) = data.grants.remove(&run) {
+        grant.revoke();
+    }
+    Ok(Json(json!({"revoked":true})))
+}
+async fn ledger_view(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+    Path(run): Path<String>,
+) -> Result<Json<Value>, StatusCode> {
+    if !authorized(bearer(&headers), &state.operator_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let ledger = state.query_ledger.as_ref().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let row = ledger
+        .lock()
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .inspect(&run)
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(row))
+}
+async fn query(
+    State(state): State<ObservabilityState>,
+    headers: HeaderMap,
+    Path(tool): Path<String>,
+    Json(input): Json<Value>,
+) -> Result<Response, StatusCode> {
+    if !authorized(bearer(&headers), &state.service_token) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let token = headers
+        .get("x-tos-run-token")
+        .and_then(|v| v.to_str().ok())
+        .and_then(decode_token)
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let run =
+        input.get("run_id").and_then(Value::as_str).ok_or(StatusCode::BAD_REQUEST)?.to_owned();
+    let mut data = state.data.lock().map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    if data.manager_conflicted {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    }
+    let Data { store, grants, .. } = &mut *data;
+    let grant = grants.get(&run).ok_or(StatusCode::UNAUTHORIZED)?;
+    let name = match tool.as_str() {
+        "capabilities" => TOOLS[0],
+        "node-snapshot" => TOOLS[1],
+        "metric-window" => TOOLS[2],
+        "event-window" => TOOLS[3],
+        "change-history" => TOOLS[4],
+        "block-evidence" => TOOLS[5],
+        _ => return Err(StatusCode::NOT_FOUND),
+    };
+    let mut next_grant = grant.clone();
+    let prior_calls = grant.calls();
+    let prior_bytes = grant.returned_bytes();
+    let now = state.now();
+    let result = QueryService { store, metrics: &state.metrics }.call(
+        &mut next_grant,
+        "aura",
+        &token,
+        now,
+        name,
+        input,
+    );
+    if next_grant.calls() > prior_calls {
+        let commit_now = state.now();
+        if commit_now >= next_grant.expires_monotonic_ms() {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+        if let Some(ledger) = &state.query_ledger {
+            let code = result["error"]["code"].as_str().unwrap_or(if result.is_null() {
+                "RUN_BUDGET_EXHAUSTED"
+            } else {
+                "ok"
+            });
+            ledger
+                .lock()
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+                .advance(
+                    &next_grant,
+                    commit_now,
+                    Attempt {
+                        tool: name,
+                        result_code: code,
+                        returned_bytes: next_grant.returned_bytes().saturating_sub(prior_bytes),
+                    },
+                )
+                .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+        }
+        *grants.get_mut(&run).ok_or(StatusCode::SERVICE_UNAVAILABLE)? = next_grant;
+    }
+    if result.is_null() {
+        return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());
+    }
+    let status = match result["error"]["code"].as_str() {
+        None => StatusCode::OK,
+        Some("INVALID_ARGUMENT") => StatusCode::BAD_REQUEST,
+        Some("UNAUTHENTICATED" | "RUN_TOKEN_EXPIRED") => StatusCode::UNAUTHORIZED,
+        Some("OUT_OF_SCOPE") => StatusCode::FORBIDDEN,
+        Some("UNKNOWN_NODE" | "UNKNOWN_REFERENCE" | "UNKNOWN_METRIC") => StatusCode::NOT_FOUND,
+        Some("CURSOR_MISMATCH" | "SOURCE_CONFLICT") => StatusCode::CONFLICT,
+        Some("CURSOR_EXPIRED" | "EVIDENCE_EXPIRED") => StatusCode::GONE,
+        Some("RESULT_TOO_LARGE") => StatusCode::PAYLOAD_TOO_LARGE,
+        Some("CAPABILITY_UNSUPPORTED" | "CAPABILITY_DISABLED" | "SCHEMA_MISMATCH") => {
+            StatusCode::UNPROCESSABLE_ENTITY
+        }
+        Some("SERIES_LIMIT" | "RUN_BUDGET_EXHAUSTED" | "RATE_LIMITED") => {
+            StatusCode::TOO_MANY_REQUESTS
+        }
+        Some("QUERY_TIMEOUT") => StatusCode::GATEWAY_TIMEOUT,
+        Some(_) => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    Ok((status, Json(result)).into_response())
+}
+pub fn router(state: ObservabilityState) -> Router {
+    let mut router = Router::new()
+        .route("/healthz", get(healthz))
+        .route("/v1/monitor/heartbeat", get(monitor_heartbeat))
+        .route("/v1/ingest", post(ingest))
+        .route("/v1/query/{tool}", post(query));
+    // Legacy in-memory test state retains the historical test routes. A
+    // configured durable service cannot expose grant management on TCP.
+    if state.query_ledger.is_none() {
+        router = router
+            .route("/v1/control/grants", post(grant))
+            .route("/v1/control/grants/{run}/revoke", post(revoke));
+    }
+    router
+        .layer(axum::extract::DefaultBodyLimit::max(16_384))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::new(tokio::sync::Semaphore::new(8)),
+            crate::limit_requests,
+        ))
+        .with_state(state)
+}
+/// Bind this router exclusively to a private Unix-domain socket. The HTTP
+/// listener never exposes it when the durable ledger is configured.
+pub fn control_router(state: ObservabilityState) -> Router {
+    Router::new()
+        .route("/v1/control/projection-health", get(projection_health))
+        .route("/v1/control/grants", post(grant))
+        .route("/v1/control/grants/{run}/revoke", post(revoke))
+        .route("/v1/control/grants/{run}/ledger", get(ledger_view))
+        .layer(axum::extract::DefaultBodyLimit::max(16_384))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::new(tokio::sync::Semaphore::new(8)),
+            crate::limit_requests,
+        ))
+        .with_state(state)
+}
+/// Offline cache import, bounded independently of JSON deserialization. Input
+/// comes from the monitoring host, never from a live validator request.
+pub fn import_cache(state: &ObservabilityState, path: PathBuf) -> Result<usize, String> {
+    use std::io::{BufRead, BufReader};
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    if file.metadata().map_err(|e| e.to_string())?.len() > 8 * 1024 * 1024 {
+        return Err("cache import too large".into());
+    }
+    let mut data = state.data.lock().map_err(|_| "cache unavailable")?;
+    let mut count = 0;
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        if line.len() > 32_768 {
+            return Err("record too large".into());
+        }
+        let record: Evidence = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        if !state.inventory.nodes.contains(&record.node_id)
+            || !state.inventory.scopes.contains(&record.scope_id)
+        {
+            return Err("record outside inventory".into());
+        }
+        if let Some(ledger) = &state.query_ledger {
+            ledger
+                .lock()
+                .map_err(|_| "query ledger unavailable")?
+                .insert_evidence(&mut data.store, record)?;
+        } else {
+            data.store.insert(record).map_err(str::to_owned)?;
+        }
+        count += 1;
+    }
+    Ok(count)
+}

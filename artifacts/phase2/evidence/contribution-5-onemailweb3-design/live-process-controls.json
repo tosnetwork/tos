@@ -1,0 +1,7 @@
+{
+  "observed_at": "2026-09-23T06:46:58.607227+00:00",
+  "process_core_limit": "Max core file size        0                    0                    bytes     ",
+  "process_swap": "VmSwap:\t       0 kB",
+  "active_swap_devices": 0,
+  "core_pattern": "core"
+}

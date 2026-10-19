@@ -1,0 +1,24 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)
+
+running 1 test
+diagnostic row scalar/value owned upper bound 14928
+diagnostic row body capacity 2048 total owned upper bound 17040
+diagnostic row scalar/value owned upper bound 14928
+diagnostic row body capacity 2048 total owned upper bound 17040
+diagnostic row scalar/value owned upper bound 14928
+diagnostic row body capacity 2048 total owned upper bound 17040
+
+thread 'diagnostic_ingest::tests::conflict_quarantines_without_committing_an_earlier_new_record' (2661055) panicked at crates/health-services/src/diagnostic_ingest.rs:409:50:
+called `Result::unwrap_err()` on an `Ok` value: Ack { batch_id: "51b4ee898e219c5027574d0adb7c0ce5a896b00728b76336ee4cf8a6702790c0", accepted_through_sequence: U64(2), duplicate_count: U64(1) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostic_ingest::tests::conflict_quarantines_without_committing_an_earlier_new_record ... FAILED
+
+failures:
+
+failures:
+    diagnostic_ingest::tests::conflict_quarantines_without_committing_an_earlier_new_record
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p tos-health-services --lib`

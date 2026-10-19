@@ -21,6 +21,7 @@
 
 #include "validator/interfaces/block-handle.h"
 
+#include "full-node-master-limiter.h"
 #include "full-node.h"
 
 namespace tos {
@@ -28,6 +29,8 @@ namespace tos {
 namespace validator {
 
 namespace fullnode {
+
+using FullNodeMasterLimiter = MasterIngressLimiter<adnl::AdnlNodeIdShort>;
 
 class FullNodeMaster : public td::actor::Actor {
  public:
@@ -37,7 +40,8 @@ class FullNodeMaster : public td::actor::Actor {
                                                     FileHash zero_state_file_hash,
                                                     td::actor::ActorId<keyring::Keyring> keyring,
                                                     td::actor::ActorId<adnl::Adnl> adnl,
-                                                    td::actor::ActorId<ValidatorManagerInterface> validator_manager);
+                                                    td::actor::ActorId<ValidatorManagerInterface> validator_manager,
+                                                    std::shared_ptr<FullNodeMasterLimiter> limiter);
 };
 
 }  // namespace fullnode

@@ -1,0 +1,9 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.12s
+     Running tests/witness_cache.rs (target/debug/deps/witness_cache-762553f12edb8887)
+
+running 1 test
+test actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensions ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.01s
+

@@ -169,7 +169,7 @@ else()
         AUTOMAKE=:
         AUTOCONF=:
         AUTOHEADER=:
-        make -j16
+        make -j2
       COMMAND ${CMAKE_COMMAND} -E chdir ${MHD_BUILD_DIR} ${CMAKE_COMMAND} -E env
         CC=${MHD_CC}
         CXX=${MHD_CXX}

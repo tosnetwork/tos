@@ -1,0 +1,60 @@
+{
+  "base": "0aacb85c1",
+  "ruling": "memo/main@398a6049291b sections 10-14",
+  "status": "R4 capability-action guard tested; R3 remains open",
+  "sources": [
+    {
+      "path": "crypto/smartcont/elector-code.fc",
+      "bytes": 67657,
+      "sha256": "58842b980f0c56b56246aee6a4edb6c6da3a9d8e3f6a3067332ac0351ddeefa2"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_recovery_upgrade_sandbox.rs",
+      "bytes": 14710,
+      "sha256": "815bda17ac247b5095af10e1952104ab84f35b7f55a402f7506d46e81fae5d64"
+    }
+  ],
+  "checks": {
+    "native_upgrade_suite": {
+      "passed": 6,
+      "failed": 0,
+      "log": {
+        "path": ".git/elector-security-audit-artifacts/r3-r4/ruling-controls/r4-restored-suite.log",
+        "bytes": 4195,
+        "sha256": "5b3a7c98d1111ee5cdf7feb5ec6586c4971696194b197720e4384f5ead6e582d"
+      }
+    }
+  },
+  "sensitivity": {
+    "name": "capability-actions",
+    "test": "matching_recovery_capability_cannot_enqueue_actions",
+    "meaning": "R4 protection",
+    "baseline": {
+      "exit": 0,
+      "source_sha256": "58842b980f0c56b56246aee6a4edb6c6da3a9d8e3f6a3067332ac0351ddeefa2",
+      "log": ".git/elector-security-audit-artifacts/r3-r4/ruling-controls/capability-actions-baseline.log",
+      "bytes": 3742,
+      "sha256": "52fbb259f7e41dc92db1b9d1c8b4b3036d899d820634e9afa1e38746d0c0658c"
+    },
+    "mutant": {
+      "exit": 101,
+      "source_sha256": "87acb45d9b25dc265acdcdd2e2dc5708c486b7369be466ce726eb69a088d9297",
+      "log": ".git/elector-security-audit-artifacts/r3-r4/ruling-controls/capability-actions-mutant.log",
+      "bytes": 4203,
+      "sha256": "321539d3701eeece67e3d1ce3b85cbd2a5270e038f4d135069f9e5228972e583"
+    },
+    "restored": {
+      "exit": 0,
+      "source_sha256": "58842b980f0c56b56246aee6a4edb6c6da3a9d8e3f6a3067332ac0351ddeefa2",
+      "log": ".git/elector-security-audit-artifacts/r3-r4/ruling-controls/capability-actions-restored.log",
+      "bytes": 3742,
+      "sha256": "2367e1457814ce42924c93f1ab340291c8cc42488d0a80b3214a65dcfdfeeef5"
+    }
+  },
+  "limits": [
+    "No merge, live migration or deployment.",
+    "R4 full pool/new-election recovery and final release artifacts remain separate acceptance gates.",
+    "Capability checking does not defend against arbitrary malicious governance code."
+  ],
+  "retention": "Raw artifacts remain under the listed TOS .git paths for at least 90 days after resolution; reviewers need access to bytes, not only hashes."
+}

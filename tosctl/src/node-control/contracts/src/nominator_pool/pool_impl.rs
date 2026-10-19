@@ -8,8 +8,9 @@
  */
 use super::{NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPosition};
 use crate::contract_codes::NOMINATOR_POOL_CODE;
+use crate::proven_getters::{GetMethodCall, ProvenGetterProvider, ProvenGetterResults, ReadPolicy};
 use crate::stack_utils::bytes_to_stack_entry;
-use crate::{ContractProvider, SmartContract};
+use crate::{ContractProvider, MasterchainCheckpoint, SmartContract};
 use anyhow::Context;
 use chain_block::UnixTime;
 use chain_block::{
@@ -89,21 +90,30 @@ fn parse_pool_data(stack: &TvmStackParser) -> anyhow::Result<NominatorPoolData> 
         array.copy_from_slice(&stack.number_bytes(4, 32).context("parse validator_address")?);
         array
     };
-    let validator_reward_share = stack.u64(5).context("parse validator_reward_share")? as u16;
-    let max_nominators_count = stack.u64(6).context("parse max_nominators_count")? as u16;
-    let min_validator_stake = stack.u64(7).context("parse min_validator_stake")?;
-    let min_nominator_stake = stack.u64(8).context("parse min_nominator_stake")?;
-    let stake_at = stack.u64(11).context("parse stake_at")? as u32;
+    // The config tuple carries two accounts now: who the pool validates for, and
+    // the controller its stake is relayed through. Everything after it moved by
+    // one slot, so reading the old positions would report a controller address
+    // as a reward share.
+    let controller_address = {
+        let mut array = [0u8; 32];
+        array.copy_from_slice(&stack.number_bytes(5, 32).context("parse controller_address")?);
+        array
+    };
+    let validator_reward_share = stack.u64(6).context("parse validator_reward_share")? as u16;
+    let max_nominators_count = stack.u64(7).context("parse max_nominators_count")? as u16;
+    let min_validator_stake = stack.u64(8).context("parse min_validator_stake")?;
+    let min_nominator_stake = stack.u64(9).context("parse min_nominator_stake")?;
+    let stake_at = stack.u64(12).context("parse stake_at")? as u32;
     let saved_validator_set_hash = {
-        let bytes = stack.number_bytes(12, 32).context("parse saved_validator_set_hash")?;
+        let bytes = stack.number_bytes(13, 32).context("parse saved_validator_set_hash")?;
         let mut array = [0u8; 32];
         array.copy_from_slice(&bytes);
         array
     };
     let validator_set_changes_count =
-        stack.i64(13).context("parse validator_set_changes_count")? as i32;
-    let validator_set_change_time = stack.u64(14).context("parse validator_set_change_time")?;
-    let stake_held_for = stack.u64(15).context("parse stake_held_for")?;
+        stack.i64(14).context("parse validator_set_changes_count")? as i32;
+    let validator_set_change_time = stack.u64(15).context("parse validator_set_change_time")?;
+    let stake_held_for = stack.u64(16).context("parse stake_held_for")?;
 
     Ok(NominatorPoolData {
         state,
@@ -111,6 +121,7 @@ fn parse_pool_data(stack: &TvmStackParser) -> anyhow::Result<NominatorPoolData> 
         stake_amount_sent,
         validator_amount,
         validator_address,
+        controller_address,
         validator_reward_share,
         max_nominators_count,
         min_validator_stake,
@@ -120,6 +131,100 @@ fn parse_pool_data(stack: &TvmStackParser) -> anyhow::Result<NominatorPoolData> 
         validator_set_changes_count,
         validator_set_change_time,
         stake_held_for,
+    })
+}
+
+/// The two get-methods a pool snapshot is made of, run on one proven state.
+pub const NOMINATOR_POOL_SNAPSHOT_METHODS: [&str; 2] = ["get_pool_data", "list_nominators"];
+
+/// A pool's state and depositor positions, computed locally from the pool's
+/// proven account state at one authenticated masterchain block.
+#[derive(Debug, Clone)]
+pub struct NominatorPoolSnapshot {
+    /// The authenticated masterchain block the snapshot was taken at.
+    pub checkpoint: MasterchainCheckpoint,
+    pub pool: NominatorPoolData,
+    pub nominators: Vec<NominatorPosition>,
+    /// How the snapshot is bound to the chain.
+    pub proof: NominatorPoolSnapshotProof,
+}
+
+/// What a snapshot was derived from, so a consumer can show or re-check it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NominatorPoolSnapshotProof {
+    /// True for a live read, false for an explicitly historical one.
+    pub live: bool,
+    pub block_gen_utime: u32,
+    /// Hash of the proven account state both get-methods ran on.
+    pub account_state_hash: String,
+    pub account_balance: String,
+    /// SHA-256 of the verifier request this snapshot answers.
+    pub request_sha256: String,
+}
+
+/// Source of authoritative pool snapshots. The production implementation is
+/// [`ProvenGetterProvider`]: both get-methods run locally on the same proven
+/// account state, never on an endpoint's report.
+#[async_trait::async_trait]
+pub trait PoolSnapshotSource: Send + Sync {
+    async fn nominator_pool_snapshot(
+        &self,
+        address: &MsgAddressInt,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<NominatorPoolSnapshot>;
+}
+
+#[async_trait::async_trait]
+impl PoolSnapshotSource for ProvenGetterProvider {
+    async fn nominator_pool_snapshot(
+        &self,
+        address: &MsgAddressInt,
+        policy: &ReadPolicy,
+    ) -> anyhow::Result<NominatorPoolSnapshot> {
+        read_proven_nominator_pool_snapshot(self, address, policy).await
+    }
+}
+
+/// Runs `get_pool_data` and `list_nominators` on the pool's proven account
+/// state at the block `policy` names, through the trusted verifier, and
+/// decodes them with the wrapper's own decoders. A missing proof, a missing
+/// execution dependency, a local execution failure or any mismatch between the
+/// verifier's answer and this request yields no snapshot.
+pub async fn read_proven_nominator_pool_snapshot(
+    provider: &ProvenGetterProvider,
+    address: &MsgAddressInt,
+    policy: &ReadPolicy,
+) -> anyhow::Result<NominatorPoolSnapshot> {
+    let calls = NOMINATOR_POOL_SNAPSHOT_METHODS.map(GetMethodCall::new);
+    let proven = provider.run(address, &calls, policy).await.context("pool snapshot")?;
+    nominator_pool_snapshot_from(proven)
+}
+
+fn nominator_pool_snapshot_from(
+    proven: ProvenGetterResults,
+) -> anyhow::Result<NominatorPoolSnapshot> {
+    let [pool_stack, nominators_stack] = proven.results.as_slice() else {
+        anyhow::bail!("pool snapshot needs exactly the two pool get-methods");
+    };
+    anyhow::ensure!(
+        pool_stack.method == NOMINATOR_POOL_SNAPSHOT_METHODS[0]
+            && nominators_stack.method == NOMINATOR_POOL_SNAPSHOT_METHODS[1],
+        "pool snapshot get-methods arrived out of order"
+    );
+    let pool = parse_pool_data(&pool_stack.stack).context("decode get_pool_data")?;
+    let nominators =
+        parse_nominator_positions(&nominators_stack.stack).context("decode list_nominators")?;
+    Ok(NominatorPoolSnapshot {
+        checkpoint: proven.checkpoint,
+        pool,
+        nominators,
+        proof: NominatorPoolSnapshotProof {
+            live: proven.live,
+            block_gen_utime: proven.block_gen_utime,
+            account_state_hash: proven.account.state_hash,
+            account_balance: proven.account.balance,
+            request_sha256: proven.request_sha256,
+        },
     })
 }
 
@@ -143,8 +248,9 @@ impl NominatorPoolWrapperImpl {
     /// - nominators_count: uint16 (0)
     /// - stake_amount_sent: Coins (0)
     /// - validator_amount: Coins (0)
-    /// - config: ref cell { validator_address: uint256, validator_reward_share: uint16,
-    ///           max_nominators_count: uint16, min_validator_stake: Coins, min_nominator_stake: Coins }
+    /// - config: ref cell { validator_address: uint256, controller_address: uint256,
+    ///           validator_reward_share: uint16, max_nominators_count: uint16,
+    ///           min_validator_stake: Coins, min_nominator_stake: Coins }
     /// - nominators: dict (empty)
     /// - withdraw_requests: dict (empty)
     /// - stake_at: uint32 (0)
@@ -155,6 +261,7 @@ impl NominatorPoolWrapperImpl {
     /// - config_proposal_votings: dict (empty)
     pub fn build_state_init(
         validator_address: &[u8; 32],
+        controller_address: &[u8; 32],
         validator_reward_share: u16,
         max_nominators_count: u16,
         min_validator_stake: u64,
@@ -163,6 +270,7 @@ impl NominatorPoolWrapperImpl {
         // Build config sub-cell
         let mut config_builder = BuilderData::new();
         config_builder.append_raw(validator_address, 256)?; // validator_address: uint256
+        config_builder.append_raw(controller_address, 256)?; // controller_address: uint256
         config_builder.append_u16(validator_reward_share)?; // validator_reward_share: uint16
         config_builder.append_u16(max_nominators_count)?; // max_nominators_count: uint16
         Coins::new(min_validator_stake).write_to(&mut config_builder)?; // min_validator_stake: Coins
@@ -200,6 +308,7 @@ impl NominatorPoolWrapperImpl {
     pub fn calculate_address(
         wc: i32,
         validator_address: &[u8; 32],
+        controller_address: &[u8; 32],
         validator_reward_share: u16,
         max_nominators_count: u16,
         min_validator_stake: u64,
@@ -207,6 +316,7 @@ impl NominatorPoolWrapperImpl {
     ) -> anyhow::Result<MsgAddressInt> {
         let state_init = Self::build_state_init(
             validator_address,
+            controller_address,
             validator_reward_share,
             max_nominators_count,
             min_validator_stake,
@@ -238,6 +348,21 @@ impl SmartContract for NominatorPoolWrapperImpl {
 /// those live with the caller.
 #[async_trait::async_trait]
 impl crate::nominator::NominatorWrapper for NominatorPoolWrapperImpl {
+    async fn next_relay_query(&self) -> anyhow::Result<u64> {
+        let roles =
+            self.provider.get_method(self.pool_addr.to_string(), "get_pool_data", vec![]).await?;
+        let controller = MsgAddressInt::with_standart(
+            None,
+            -1,
+            chain_block::UInt256::from_slice(&roles.number_bytes(5, 32)?).into(),
+        )?;
+        let stack =
+            self.provider.get_method(controller.to_string(), "next_relay_query", vec![]).await?;
+        let query = stack.u64(0)?;
+        anyhow::ensure!(query > (1_u64 << 63), "invalid relay query domain");
+        Ok(query)
+    }
+
     async fn get_roles(&self) -> anyhow::Result<crate::nominator::NominatorRoles> {
         // pool.fc records a validator address but has no owner: the funds
         // belong to the nominators, and no single account can withdraw them.
@@ -468,6 +593,7 @@ mod tests {
             number("3000"),
             number("2000"),
             number("0xabc"),
+            number("0xdef"), // the controller the stake is relayed through
             number("4000"),
             number("40"),
             number("1000"),
@@ -487,6 +613,12 @@ mod tests {
         assert_eq!(parsed.nominators_count, 1);
         assert_eq!(parsed.stake_amount_sent, 3000);
         assert_eq!(parsed.validator_amount, 2000);
+        // Two accounts, read from two slots. Reading the old positions would take the
+        // controller for a reward share and report every later field one slot early.
+        assert_eq!(parsed.validator_address[31], 0xbc);
+        assert_eq!(parsed.validator_address[30], 0x0a);
+        assert_eq!(parsed.controller_address[31], 0xef);
+        assert_eq!(parsed.controller_address[30], 0x0d);
         assert_eq!(parsed.validator_reward_share, 4000);
         assert_eq!(parsed.max_nominators_count, 40);
         assert_eq!(parsed.min_validator_stake, 1000);
@@ -543,6 +675,7 @@ mod tests {
                     number("0"),
                     number("2000"),
                     number("0xabc"),
+                    number("0xdef"),
                     number("4000"),
                     number("40"),
                     number("1000"),
@@ -610,6 +743,7 @@ mod tests {
         let addr = NominatorPoolWrapperImpl::calculate_address(
             -1,
             &[0xAB; 32],
+            &[0xCD; 32],
             4000,
             40,
             5_000_000_000_000,
@@ -618,7 +752,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             addr.to_string(),
-            "-1:f551c09c2533d56aad15ef67cd72d4d2b79ef93f447d49e76eda9b09a8bd4382"
+            "-1:81523b9dd1dacde37d4d7d8339c38f7ad4b065eb73cb8a8fb79d4dfbc175bdc7"
         );
     }
 

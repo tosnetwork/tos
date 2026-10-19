@@ -18,6 +18,8 @@ use contracts::{ProofAttestationContract, ProofAttestationInit};
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, Treasury};
 
+mod weak_ed25519;
+
 const TOS: u64 = 1_000_000_000;
 const ERR_REVOKED: i32 = 2100;
 const ERR_BAD_SIGNATURE: i32 = 2101;
@@ -42,15 +44,24 @@ impl Fixture {
     /// addresses, which is what makes the cross-instance replay test below
     /// meaningful (`calculate_address` hashes the full `StateInit`).
     fn with_subject_hash(funding: u64, signing_key: SigningKey, subject_hash: [u8; 32]) -> Self {
+        let public_key = signing_key.verifying_key().to_bytes();
+        Self::with_public_key(funding, signing_key, public_key, subject_hash)
+    }
+
+    /// Deploys with `public_key` as stored, whatever `signing_key` is: how a
+    /// hand-built StateInit would carry a key the contract never admitted.
+    fn with_public_key(
+        funding: u64,
+        signing_key: SigningKey,
+        public_key: [u8; 32],
+        subject_hash: [u8; 32],
+    ) -> Self {
         let mut bc = Blockchain::new().expect("blockchain");
         bc.set_workchain(-1);
         let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");
         let outsider = bc.treasury("outsider", 1_000 * TOS).expect("outsider");
-        let init = ProofAttestationInit {
-            owner: owner.address().clone(),
-            public_key: signing_key.verifying_key().to_bytes(),
-            subject_hash,
-        };
+        let init =
+            ProofAttestationInit { owner: owner.address().clone(), public_key, subject_hash };
         let attestation = ProofAttestationContract::calculate_address(-1, &init).expect("address");
         let state_init = ProofAttestationContract::build_state_init(&init).expect("state init");
         let deploy = MessageBuilder::internal(owner.address(), &attestation, funding)
@@ -133,8 +144,12 @@ fn deploy_records_initial_state() {
 fn valid_signature_from_the_registered_key_is_accepted() {
     let mut f = Fixture::new(TOS / 10);
     let attested_hash = [0xAA; 32];
-    let hash_to_sign =
-        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
+        sandbox_global_id(&f.bc),
+        &f.attestation,
+        &attested_hash,
+    )
+    .unwrap();
     let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     let outsider = f.outsider.address().clone();
 
@@ -150,8 +165,12 @@ fn valid_signature_from_the_registered_key_is_accepted() {
 fn signature_from_a_different_key_is_rejected() {
     let mut f = Fixture::new(TOS / 10);
     let attested_hash = [0xBB; 32];
-    let hash_to_sign =
-        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
+        sandbox_global_id(&f.bc),
+        &f.attestation,
+        &attested_hash,
+    )
+    .unwrap();
     let wrong_key = SigningKey::from_bytes(&[0x99; 32]);
     let bad_signature = wrong_key.sign(&hash_to_sign).to_bytes();
     let outsider = f.outsider.address().clone();
@@ -169,8 +188,12 @@ fn signature_from_a_different_key_is_rejected() {
 fn tampered_hash_invalidates_an_otherwise_valid_signature() {
     let mut f = Fixture::new(TOS / 10);
     let signed_hash = [0xCC; 32];
-    let hash_to_sign =
-        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &signed_hash).unwrap();
+    let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
+        sandbox_global_id(&f.bc),
+        &f.attestation,
+        &signed_hash,
+    )
+    .unwrap();
     let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     let tampered_hash = [0xDD; 32];
     let outsider = f.outsider.address().clone();
@@ -188,8 +211,12 @@ fn attest_is_permissionless_any_sender_may_relay_a_valid_signature() {
     // `owner`), asserted explicitly here for clarity.
     let mut f = Fixture::new(TOS / 10);
     let attested_hash = [0xEE; 32];
-    let hash_to_sign =
-        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
+        sandbox_global_id(&f.bc),
+        &f.attestation,
+        &attested_hash,
+    )
+    .unwrap();
     let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     let outsider = f.outsider.address().clone();
     assert_ne!(outsider, f.owner.address().clone());
@@ -202,8 +229,12 @@ fn attest_is_permissionless_any_sender_may_relay_a_valid_signature() {
 fn owner_can_rotate_key_resetting_attestation_others_rejected() {
     let mut f = Fixture::new(TOS / 10);
     let attested_hash = [0x01; 32];
-    let hash_to_sign =
-        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
+        sandbox_global_id(&f.bc),
+        &f.attestation,
+        &attested_hash,
+    )
+    .unwrap();
     let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     let outsider = f.outsider.address().clone();
     f.send_from(&outsider, ProofAttestationContract::attest(1, attested_hash, &signature).unwrap())
@@ -256,8 +287,12 @@ fn owner_can_revoke_blocking_further_attestations_others_rejected() {
     assert!(f.data().revoked);
 
     let attested_hash = [0x02; 32];
-    let hash_to_sign =
-        ProofAttestationContract::attest_hash_to_sign(&f.attestation, &attested_hash).unwrap();
+    let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
+        sandbox_global_id(&f.bc),
+        &f.attestation,
+        &attested_hash,
+    )
+    .unwrap();
     let signature = f.signing_key.sign(&hash_to_sign).to_bytes();
     f.send_from(&outsider, ProofAttestationContract::attest(3, attested_hash, &signature).unwrap())
         .expect_aborted()
@@ -278,8 +313,12 @@ fn attest_signature_is_bound_to_the_attestation_address_and_rejected_across_inst
     let outsider_a = a.outsider.address().clone();
     let outsider_b = b.outsider.address().clone();
 
-    let hash_for_a =
-        ProofAttestationContract::attest_hash_to_sign(&a.attestation, &attested_hash).unwrap();
+    let hash_for_a = ProofAttestationContract::attest_hash_to_sign(
+        sandbox_global_id(&a.bc),
+        &a.attestation,
+        &attested_hash,
+    )
+    .unwrap();
     let signature_for_a = a.signing_key.sign(&hash_for_a).to_bytes();
 
     // Valid against instance a...
@@ -300,8 +339,12 @@ fn attest_signature_is_bound_to_the_attestation_address_and_rejected_across_inst
     assert!(!b.data().has_attestation);
 
     // A freshly-signed message for instance b succeeds.
-    let hash_for_b =
-        ProofAttestationContract::attest_hash_to_sign(&b.attestation, &attested_hash).unwrap();
+    let hash_for_b = ProofAttestationContract::attest_hash_to_sign(
+        sandbox_global_id(&b.bc),
+        &b.attestation,
+        &attested_hash,
+    )
+    .unwrap();
     let signature_for_b = b.signing_key.sign(&hash_for_b).to_bytes();
     b.send_from(
         &outsider_b,
@@ -321,4 +364,64 @@ fn unknown_operation_is_rejected() {
     f.send_from(&owner, body.into_cell().unwrap())
         .expect_aborted()
         .expect_exit_code(ERR_UNKNOWN_OP);
+}
+
+/// The network the sandbox runs, as GLOBALID reads it from ConfigParam 19.
+fn sandbox_global_id(bc: &Blockchain) -> i32 {
+    match bc.config_params().config(19).expect("parameter 19") {
+        Some(chain_block::ConfigParamEnum::ConfigParam19(id)) => id as i32,
+        other => panic!("parameter 19 is not the global id: {other:?}"),
+    }
+}
+
+const ERR_WEAK_KEY: i32 = 2104;
+
+/// An attestor key anyone could sign for is refused when the owner rotates to
+/// it, and refused at attestation when it arrived in a hand-built StateInit.
+#[test]
+fn weak_attestor_keys_are_refused_when_set_and_when_used() {
+    let mut f = Fixture::new(TOS / 10);
+    let owner = f.owner.address().clone();
+    let before = f.data().public_key;
+    for weak in weak_ed25519::weak_keys() {
+        f.send_from(&owner, ProofAttestationContract::rotate_key(1, weak).unwrap())
+            .expect_aborted()
+            .expect_exit_code(ERR_WEAK_KEY);
+    }
+    assert_eq!(f.data().public_key, before, "a refused key must not be stored");
+
+    let weak = weak_ed25519::weak_keys()[0];
+    let mut f =
+        Fixture::with_public_key(TOS / 10, SigningKey::from_bytes(&[0x42; 32]), weak, [0x11; 32]);
+    let outsider = f.outsider.address().clone();
+    f.send_from(&outsider, ProofAttestationContract::attest(1, [0xAB; 32], &[0u8; 64]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_WEAK_KEY);
+    assert!(!f.data().has_attestation);
+}
+
+/// An attestation signed for another network does not attest here.
+#[test]
+fn an_attestation_signed_for_another_network_is_refused() {
+    let mut f = Fixture::new(TOS / 10);
+    let outsider = f.outsider.address().clone();
+    let attested_hash = [0xAB; 32];
+    let here = sandbox_global_id(&f.bc);
+    let elsewhere = ProofAttestationContract::attest_hash_to_sign(
+        here.wrapping_add(1),
+        &f.attestation,
+        &attested_hash,
+    )
+    .unwrap();
+    let signature = f.signing_key.sign(&elsewhere).to_bytes();
+    f.send_from(&outsider, ProofAttestationContract::attest(1, attested_hash, &signature).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_BAD_SIGNATURE);
+    let this_network =
+        ProofAttestationContract::attest_hash_to_sign(here, &f.attestation, &attested_hash)
+            .unwrap();
+    let signature = f.signing_key.sign(&this_network).to_bytes();
+    f.send_from(&outsider, ProofAttestationContract::attest(2, attested_hash, &signature).unwrap())
+        .expect_success();
+    assert!(f.data().has_attestation);
 }

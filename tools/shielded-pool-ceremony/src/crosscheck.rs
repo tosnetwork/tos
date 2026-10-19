@@ -30,7 +30,7 @@
 //! purpose, because that encoding is normative -- ruling A1 fixes it and the
 //! chain reads the same bytes. An error in *what should be checked* is
 //! reproduced here faithfully, and this cannot find it. That is the reason
-//! `doc/shielded-pool-ceremony.md` still asks for a verifier outside this
+//! `artifacts/shielded-pool/CEREMONY.md` still asks for a verifier outside this
 //! repository: this narrows the gap and does not close it.
 //!
 //! # The checks

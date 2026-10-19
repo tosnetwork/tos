@@ -1,14 +1,21 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
-#include "mldsa44.h"
+#include <atomic>
 #include <cstdint>
+
+#include "mldsa44.h"
 #include "mldsa_native.h"
 
 namespace tos::pq {
 static_assert(MLDSA44_PUBLICKEYBYTES == mldsa44_public_key_bytes);
 static_assert(MLDSA44_BYTES == mldsa44_signature_bytes);
 
+namespace {
+std::atomic<std::uint64_t> verification_calls{0};
+}
+
 VerifyResult verify_mldsa44(std::string_view message, std::string_view context,
                           std::string_view signature, std::string_view public_key) noexcept {
+  verification_calls.fetch_add(1, std::memory_order_relaxed);
   if (message.size() > mldsa44_max_message_bytes || context.size() > mldsa44_max_context_bytes ||
       signature.size() != mldsa44_signature_bytes || public_key.size() != mldsa44_public_key_bytes) {
     return VerifyResult::malformed_input;
@@ -30,5 +37,13 @@ VerifyResult verify_mldsa44(std::string_view message, std::string_view context,
   }
   // A backend failure must not masquerade as a mathematical rejection.
   return VerifyResult::backend_error;
+}
+
+std::uint64_t mldsa44_verification_calls_for_test() noexcept {
+  return verification_calls.load(std::memory_order_relaxed);
+}
+
+void reset_mldsa44_verification_calls_for_test() noexcept {
+  verification_calls.store(0, std::memory_order_relaxed);
 }
 }  // namespace tos::pq

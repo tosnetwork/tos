@@ -41,7 +41,7 @@ use std::{
 };
 
 const OPERATION_BUDGET: u64 = 1_000_000_000;
-const AUDITED_GLOBAL_VERSIONS: [u32; 2] = [14, 15];
+const AUDITED_GLOBAL_VERSIONS: [u32; 3] = [14, 15, 16];
 
 #[derive(clap::Args, Clone)]
 #[command(about = "PredictionMarket V1 operations")]
@@ -529,12 +529,17 @@ impl PredictionShowCmd {
         let provider = DefaultChainProvider::new(rpc.clone());
         let state = PredictionMarketContractV1::decode_state(
             &provider
-                .run_get_method_at(address.to_string(), "get_prediction_state", vec![], &checkpoint)
+                .run_get_method_at_unverified(
+                    address.to_string(),
+                    "get_prediction_state",
+                    vec![],
+                    &checkpoint,
+                )
                 .await?,
         )?;
         let accounting = PredictionMarketContractV1::decode_accounting(
             &provider
-                .run_get_method_at(
+                .run_get_method_at_unverified(
                     address.to_string(),
                     "get_prediction_accounting",
                     vec![],
@@ -544,12 +549,17 @@ impl PredictionShowCmd {
         )?;
         let phase = PredictionMarketContractV1::decode_phase(
             &provider
-                .run_get_method_at(address.to_string(), "get_market_phase", vec![], &checkpoint)
+                .run_get_method_at_unverified(
+                    address.to_string(),
+                    "get_market_phase",
+                    vec![],
+                    &checkpoint,
+                )
                 .await?,
         )?;
         let contexts = PredictionMarketContractV1::decode_resolution_contexts(
             &provider
-                .run_get_method_at(
+                .run_get_method_at_unverified(
                     address.to_string(),
                     "get_resolution_contexts",
                     vec![],
@@ -1242,7 +1252,12 @@ async fn preflight_market(
     };
     let state = PredictionMarketContractV1::decode_state(
         &provider
-            .run_get_method_at(address.to_string(), "get_prediction_state", vec![], &checkpoint)
+            .run_get_method_at_unverified(
+                address.to_string(),
+                "get_prediction_state",
+                vec![],
+                &checkpoint,
+            )
             .await?,
     )?;
     anyhow::ensure!(
@@ -1277,7 +1292,12 @@ async fn validate_autonomous_operation_at_checkpoint(
     let provider = DefaultChainProvider::new(rpc.clone());
     let phase = PredictionMarketContractV1::decode_phase(
         &provider
-            .run_get_method_at(market.to_string(), "get_market_phase", vec![], checkpoint)
+            .run_get_method_at_unverified(
+                market.to_string(),
+                "get_market_phase",
+                vec![],
+                checkpoint,
+            )
             .await?,
     )?;
     validate_autonomous_operation_phase(source, init, operation, &phase, now)
@@ -2162,7 +2182,9 @@ mod tests {
         assert!(validate_global_version(13, false).is_err());
         assert!(validate_global_version(14, true).is_ok());
         assert!(validate_global_version(15, true).is_ok());
-        assert!(validate_global_version(16, true).is_err());
+        assert!(validate_global_version(16, true).is_ok());
+        assert!(validate_global_version(17, true).is_err());
+        assert!(validate_global_version(17, false).is_ok());
         assert!(validate_global_version(16, false).is_ok());
     }
 

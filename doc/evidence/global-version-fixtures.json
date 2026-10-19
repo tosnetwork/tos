@@ -1,0 +1,121 @@
+{
+  "parent": "81a6d621d89c45d3ee2b352b2ee897627da078e4",
+  "platform": "macOS arm64; target Linux CI is still required",
+  "invariants": [
+    "ConfigParam 8 selects network behavior. The VM support ceiling does not activate a newer network version.",
+    "Current Rust fixtures read the canonical Genesis template. Native Python defaults are checked against that template and both VM capability ceilings.",
+    "PredictionMarket risk-increasing operations use the same explicit 14/15/16 allowlist in the frozen contract and CLI; future versions retain exits.",
+    "Genesis AUTH namespace refusal remains intact. Offline emulator/mock fixtures are not Genesis admission or real proof-verification evidence.",
+    "Old-version compatibility, future-version rejection tests and historical receipts retain their actual versions."
+  ],
+  "sources_sha256": {
+    "crypto/smartcont/prediction-market-code.fc": "1eff56312f05a883396e414c82460404a1581c16a2498a4dd40254ac55226870",
+    "crypto/smartcont/prediction-market-v1.boc.base64": "d16869f6bd89ba0d7bb4a8d2caa2018a299121ff538030047052906cfd5e30e7",
+    "doc/GlobalVersions.md": "dcf7d9f9eedc98b3a3145131440c5511882ce0b2727dd0672654a1a73f52b666",
+    "test/auth-extensions/native.py": "b32dfb791ec13030bee78cb6ab89a8ff795ce38a6b7d5c9cdba90e5401dc0a82",
+    "test/auth-extensions/test_auth.py": "e346cdd405cbdbbc5c3e66f04b4d21ed2f2032ceae13d18c1fce37c6d58f2e2b",
+    "test/auth-extensions/test_sdk_wallet_vectors.py": "909533c7b9986b3835fd4f6c6028497b8f221e6ae972df8a858f2e4a6ad3a1b2",
+    "test/pq-contracts/test_pq_highload_policy.py": "7e8d9caa1497776cb15fd4256aec3e49e66a7dd0194e39e2177d44b11c41dad9",
+    "test/pq-native/account-limit-parity.py": "4589de7e0778a991017889b1175838d7c492227afd244a112703a25c90ca8a46",
+    "test/shielded-pool/mutations-imt.py": "fef8be4203c221758bf75c70c2e6312b1cdb6bb900e22cf240979fb8c798f554",
+    "test/wallet-quantum/test_benchmark_transactions.py": "f1900ddf667a7b80f1d37ffd26341ff7ec4b9035d2716117c5e1517b17d14efc",
+    "test/weak-ed25519/test_native_aliases.py": "8d899c82f2276e7fb881ba332eeb0b82b55e085b1605278dab9b42fd0cbeb254",
+    "tools/shielded-pool-circuit/crosscheck/tests/tree_overhead.rs": "3d87eabc6d4438a2d284dcffe9efdef8d46b623c50a06eeb641bf4934b60cc39",
+    "tosctl/src/node-control/commands/src/commands/nodectl/prediction_cmd.rs": "9af3bd54f598762a979483963d16f0641d743e138580fe37bc4bbf79b55730d8",
+    "tosctl/src/node-control/contracts/tests/fixtures/proven-reads/fake_verifier.py": "ca45d261440917b2def41c7b9eae01296a55d560703410be67af50d3dcd12a63",
+    "tosctl/src/node-control/contracts/tests/highload_wallet_v3_sandbox.rs": "6f9daf305b2ef6c41ed88973360c5480b1893fa0aab5fdb03df530778cea1f83",
+    "tosctl/src/node-control/contracts/tests/legacy_wallet_key_sandbox.rs": "b3025593ec649851a02b09ab0e1916a744f0c43d2bc542bfc8bfbfb58e250063",
+    "tosctl/src/node-control/contracts/tests/multisig_wallet_sandbox.rs": "16a1167cbe7c2c0b4d4817807409851381a7b4177ea7d85a648b7a22f00766e1",
+    "tosctl/src/node-control/contracts/tests/native_registry_sandbox.rs": "fa3879f6481834369c4a03befff4bffac4717b18ef9516dc58802be341b6eeeb",
+    "tosctl/src/node-control/contracts/tests/prediction_market_sandbox.rs": "1e22b35d74af3a1c9f54c0d647109d20934748d16c37bf30e828d17d0377273b",
+    "tosctl/src/node-control/contracts/tests/proven_pool_snapshot.rs": "aa9b76b5e5ffcb393449551b35ccf1e077ad6faa093b7398c73a69d36e8ac741",
+    "tosctl/src/node-control/contracts/tests/task_escrow_sandbox.rs": "1da836477e27190c78691651be49a6e24a71c46b8e20e90af341204cc2101672",
+    "tosctl/src/node-control/contracts/tests/token_bridge/harness.rs": "50a486a0ad154a0fc019124aabf0c26a6c7bfdff5f4145a8b82097b9d2b03268",
+    "tosctl/src/node-control/contracts/tests/token_bridge_sandbox.rs": "a9dbbbbce8a376768bf4c18cdd864c06cdb328fd47387fd405fb0211bd7c0620",
+    "tosctl/src/node-control/contracts/tests/tos_service_stablecoin_escrow_v2_sandbox.rs": "85554ba9a0c15e3756ada661c7809fd4af619983bac9509a99f8963a70099b56",
+    "tosctl/src/node-control/contracts/tests/fixtures/current_network.rs": "f74abd1c9a7375e156b074500a7eb095c706ba7f7df1e61816546e6a0f00dc27"
+  },
+  "checks": {
+    "current_sandboxes": {
+      "command": "cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --test prediction_market_sandbox --test highload_wallet_v3_sandbox --test legacy_wallet_key_sandbox --test multisig_wallet_sandbox --test native_registry_sandbox --test task_escrow_sandbox --test token_bridge_sandbox --test tos_service_stablecoin_escrow_v2_sandbox",
+      "exit": 0,
+      "passed": 240,
+      "ignored": 2
+    },
+    "release_scale": {
+      "command": "cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --test prediction_market_sandbox --test legacy_wallet_key_sandbox -- --include-ignored",
+      "exit": 0,
+      "passed": 44,
+      "scope": "Includes 10,011 real match transactions with identical economic results for 1/10/10,000 partial fills; 332.10 seconds for the PredictionMarket target."
+    },
+    "release_scale_revision_boundary": "The same frozen code and ConfigParam 8=16 were tested before replacing the test constructor's advertised-version reference (also 16) with Genesis parsing. Final constructors and unchanged transaction tests passed in current_sandboxes.",
+    "prediction_cli": {
+      "command": "cargo test --locked --manifest-path tosctl/src/Cargo.toml -p commands prediction_cmd::tests",
+      "exit": 0,
+      "passed": 11
+    },
+    "native_auth_sdk_alias_benchmark": {
+      "commands": [
+        "test/auth-extensions/test_auth.py",
+        "test/auth-extensions/test_sdk_wallet_vectors.py",
+        "test/weak-ed25519/test_native_aliases.py",
+        "test/wallet-quantum/test_benchmark_transactions.py"
+      ],
+      "exit": 0,
+      "passed": [
+        16,
+        7,
+        2,
+        4
+      ]
+    },
+    "native_auth_mutations": {
+      "command": "python test/auth-extensions/mutations.py",
+      "exit": 0,
+      "killed_nonce_mutations": 3
+    },
+    "proof_fixture": {
+      "command": "cargo test --locked --manifest-path tosctl/src/Cargo.toml -p contracts --test proven_pool_snapshot a_bound_answer_becomes_a_pool_snapshot -- --exact",
+      "exit": 0,
+      "passed": 1,
+      "scope": "Simulated verifier answer at the Genesis version; not a fresh proof or live chain."
+    },
+    "sensitivity": {
+      "commands": [
+        "uv run --with cryptography==46.0.4 python <artifact>/default-version-controls.py",
+        "python <artifact>/prediction-controls.py",
+        "python <artifact>/capability-controls.py"
+      ],
+      "exit": 0,
+      "result": "Eight mutations failed at intended behavioral assertions, all restored baselines passed; source and frozen artifact restored."
+    },
+    "hygiene": {
+      "exit": 0,
+      "result": "Ruff check/format on 79 changed PR Python files; rustfmt on changed Rust including fixture module; C++ formatting against origin/main; whitespace checks; three CI-efficiency contract tests; frozen BOC/source equality."
+    },
+    "shielded_comment_edit": {
+      "exit": 0,
+      "result": "AST identical after excluding standard-library import ordering; no mutation case or execution behavior changed."
+    },
+    "final_scan": {
+      "exit": 0,
+      "workflow_files": 47,
+      "result": "No current Python scalar or workflow chain-version setting above 16. Future-version tests and historical receipts are explicitly excluded from default-setting claims."
+    }
+  },
+  "prediction_code_hash": {
+    "before": "43bc3e88149fcf9cbb6a2c3b964f6ec3e59f4be5ab8d98f85882f62da6f1595d",
+    "after": "d9ba9e9938b257eafef576413469c824de46449442d096077ae9cec6d7b55a7a"
+  },
+  "unavailable_checks": {
+    "static_analysis": "Actual pinned CodeChecker 6.29.1 / LLVM 21.1.8 two-build gate attempted: exit 2 REFUSED at macOS SDK clang-scan-deps; all ten positive controls reported. Not a pass.",
+    "full_recorded_proof_suite": "Attempted before the final fixture refactor: 7 passed, 38 failed, 1 ignored. All 38 failures report the absent local tos-proof-verify executable. The touched simulated response path passed separately; full proof execution remains a Linux gate."
+  },
+  "raw_artifact": {
+    "path": "/Users/tomisetsu/.codex/artifacts/tos-pr226-version-audit-20261016-logs.tar.gz",
+    "bytes": 38224,
+    "sha256": "febf535d91b8df210844501dc90216cc4afdb4381fcbee273455013804588724",
+    "retain_through": "2026-11-16"
+  },
+  "remaining": "Relevant Linux/ARM64 PR CI and Linux differential static analysis; no merge or deployment acceptance is claimed."
+}

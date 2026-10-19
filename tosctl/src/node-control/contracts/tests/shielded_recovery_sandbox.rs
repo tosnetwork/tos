@@ -35,7 +35,7 @@ use tos_vm::stack::integer::IntegerData;
 mod shielded_pool_library;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 const MAGIC: u32 = 0x5350_5631;
 const VERSION: u16 = 1;
 const EPOCH_NONE: u32 = 0xffff_ffff;
@@ -200,7 +200,10 @@ fn library() -> &'static str {
 }
 
 fn deploy_source(bc: &mut Blockchain, name: &str, source: &str, extra: &[&str]) -> MsgAddressInt {
-    let path = std::env::temp_dir().join(format!("tos_shielded_{name}.fc"));
+    // A directory of this call's own. These probes are written from several tests at
+    // once, and a shared path is truncated under a concurrent `func` reading it.
+    let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+    let path = probe_dir.path().join(format!("tos_shielded_{name}.fc"));
     std::fs::write(&path, source).expect("write probe");
     let mut sources: Vec<std::path::PathBuf> =
         extra.iter().map(|f| format!("{}/{f}", library()).into()).collect();
@@ -230,7 +233,7 @@ struct Probe {
 impl Probe {
     fn deploy() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         bc.set_workchain(0);
         let addr = deploy_source(
             &mut bc,
@@ -371,6 +374,9 @@ fn empty_ring_holder() -> Cell {
     builder.into_cell().unwrap()
 }
 
+/// A pool that has accepted one withdrawal whose payout is still in flight:
+/// it owes `liability` and holds back the one commitment leaf that payout's
+/// recovery note would need.
 fn genesis_state(liability: u64) -> Cell {
     let empty_root = chain_block::poseidon2_kat::EMPTY_ROOTS[DEPTH];
     let mut builder = BuilderData::new();
@@ -378,6 +384,7 @@ fn genesis_state(liability: u64) -> Cell {
     builder.append_u16(VERSION).unwrap();
     builder.append_raw(&empty_root, 256).unwrap();
     builder.append_u64(0).unwrap();
+    builder.append_u32(1).unwrap(); // the in-flight withdrawal's recovery leaf
     builder.append_raw(&[0x5a; 32], 256).unwrap();
     builder.append_u64(1).unwrap();
     builder.append_u32(EPOCH_NONE).unwrap();
@@ -430,10 +437,16 @@ impl Pool {
     }
 
     fn snapshot(&self) -> Vec<String> {
-        ["commitment_root", "commitment_next_index", "native_liability", "reserve_floor"]
-            .iter()
-            .map(|m| self.get(m))
-            .collect()
+        [
+            "commitment_root",
+            "commitment_next_index",
+            "native_liability",
+            "reserve_floor",
+            "reserved_recovery_leaves",
+        ]
+        .iter()
+        .map(|m| self.get(m))
+        .collect()
     }
 
     /// Delivers a bounce body to the pool as if it had come from `src`. The
@@ -735,14 +748,14 @@ fn a_bounced_payout_becomes_a_note_for_what_came_back() {
         probe.int_of("p_template_hash", vec![int(&owner), StackItem::cell(data.clone())]);
 
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     bc.set_workchain(0);
     // The record has to name the address the bounce will come from, which is
     // the refuser's, so it is deployed on a throwaway chain first just to
     // learn it. Code determines the address, so the one that matters later is
     // the same address.
     let mut scratch = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     scratch.set_workchain(0);
     let refuser = deploy_source(&mut scratch, "recovery_refuser", REFUSER, &[]);
     let recipient_hash = probe
@@ -765,6 +778,19 @@ fn a_bounced_payout_becomes_a_note_for_what_came_back() {
     let after = pool.snapshot();
     assert_ne!(after[0], before[0], "the recovery minted no note");
     assert_eq!(after[1], "1", "the recovery did not take exactly one leaf");
+    assert_eq!(before[4], "1", "the pool did not start with the withdrawal's reservation");
+    assert_eq!(after[4], "0", "the recovery did not consume the reservation it was held for");
+
+    // The same bounce again. On a real chain it cannot arrive twice; if it
+    // somehow did, there is no reservation left for it, and the pool refuses
+    // rather than appending into a leaf it never held back.
+    let body = bounce.body().expect("the bounce has a body").clone();
+    assert_eq!(
+        pool.deliver_bounce(&from, body, returned),
+        191,
+        "a second recovery ran with no reservation left to consume"
+    );
+    assert_eq!(pool.snapshot(), after, "a refused second recovery moved the state");
 
     // Section 15.4: what came back **less what putting it back costs**. The
     // charge is asked of the contract rather than recomputed here, because a
@@ -798,10 +824,10 @@ fn a_bounce_from_the_wrong_address_recovers_nothing() {
         probe.int_of("p_template_hash", vec![int(&owner), StackItem::cell(data.clone())]);
 
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     bc.set_workchain(0);
     let mut scratch = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     scratch.set_workchain(0);
     let refuser = deploy_source(&mut scratch, "recovery_refuser", REFUSER, &[]);
     let recipient_hash = probe
@@ -828,7 +854,7 @@ fn a_bounce_from_the_wrong_address_recovers_nothing() {
 #[test]
 fn a_bounce_that_is_not_a_payout_is_reserve() {
     let bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     let mut pool = Pool::deploy(bc, 0);
     let before = pool.snapshot();
     let from = MsgAddressInt::with_params(0, SliceData::from_raw(vec![0x11u8; 32], 256)).unwrap();

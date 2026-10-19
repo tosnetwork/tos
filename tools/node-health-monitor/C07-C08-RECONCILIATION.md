@@ -1,0 +1,87 @@
+# C07/C08 reconciliation (development scope)
+
+Baseline: `35ba59c111dd74518e6e661bcd1984598d493907` (C05 scoped acceptance). Starbridge's reviewed C06 candidate was cherry-picked into the implementation branch as `900bcb894` and `1f1c634ef`; the combined source still requires exact integrated review. C09 local-node lifecycle belongs to the supervisor. This document records gaps, not acceptance.
+
+| Contract | Existing implementation | C07/C08 closure work |
+| --- | --- | --- |
+| Six cache-only tools | `health-core/query.rs` and typed `query_output.rs`; actual HTTP router tests | Preserve source/scope/window/W behavior; test MCP and HTTP parity and error semantics |
+| 256-bit grant token | Random token and SHA-256 digest in `Grant`; 200-second in-process TTL | Durable grant/call/byte/delivered-ID ledger with conservative restart handling; broker-only control socket; service credential remains separate |
+| Evidence and watermark | Baseline 8 MiB bounded in-memory `EvidenceStore`; read-only QueryService | SQLite WAL/FULL write-through, exact restoration, active-grant W pinning, and a narrow read-only projection of M's archived `process` source now exist. M original sequence and query-package sequence are separate; original M body/hash is retained and checked on query-ledger restart, and derived evidence names its parent and converter version. A bounded broker-side 15-second refresh detects quarantine of retained M parents, durably revokes active grants and refuses new grants; the detection interval is not instantaneous and no query handler reads M. Native/cgroup/diagnostic/other M adapters and production source claims remain open. |
+| Per-run limits | 16 calls, 16 KiB input, 32 KiB response, 128 KiB returned bytes in HTTP service; feature-gated MCP now holds at most two simultaneous tool requests per admitted run and applies one five-second deadline to route plus body drain. Busy calls consume a durable attempt but do not dispatch. A compiled 2→3 mutant is killed by the actual bridge call assertion. | Actual AURA model subprocess and MCP task cancellation/termination, whole-run isolation and independent zero-upstream storm counters remain open; service-side permits do not prove model child lifecycle. |
+| Pagination | Event/change queries now sort by `(store_seq,evidence_id)` and return bounded pages with a standard HMAC-SHA256 cursor bound to principal/run/tool/filters/window/W/key/expiry | Core and actual HTTP event/change pages pass, including equal-time change rows, fixed-W late-row exclusion, changed-filter, changed-run, changed-tool and tampered-cursor refusals. A compiled observed-time/hash-order mutant fails actual change HTTP order, and a compiled run-binding mutant fails the cross-run HTTP assertion. A real HTTP event cursor resumes after durable ledger restart without revealing a later row. RFC 4231 HMAC and principal/expiry/lexeme negatives have separate controls; C08 is not accepted. |
+| MCP | Exact `rmcp` 3.5.0 remains opt-in; six published schemas use the existing HTTP QueryService; private Unix transport binds one durable grant to one connection and refuses replay. A feature-gated, bounded stdio-to-private-Unix adapter now interoperates with pinned AURA `1000f119…` (`rmcp` 0.12.0): its real `McpManager` discovers and calls all six tools in an isolated synthetic fixture. | This is actual AURA client compatibility, not AURA model judgment, local-node monitoring or production enablement. Supervised AURA child termination, production credential handoff/sandbox and approved provider/node access remain open. |
+| C07 fixed package | `Broker` queue/cooldown skeleton plus a development-only, 16-KiB deterministic process package from verified retained M parents at fixed M/query watermarks; private QueryLedger now single-writes and checks its exact bytes under an 8-MiB total cap. Typed save/restore validation checks the grant-bound source partition and item bounds; it is structural validation, not independent proof of recomputed payload provenance. Diagnosis syntax/delivered-ID checks exist; no model wiring. | Account actual tokenizer/context cost, retention cleanup, semantic entailment and approved AURA/provider behavior; other source classes remain unavailable |
+| AURA/provider | Pinned commit `1000f119d38f4c4656ced0ae883c90f6f7610890`; the bounded stdio adapter closes the local Unix transport mismatch in an isolated real-client test. Its successor adds a synthetic warning/unknown deterministic control and normal AURA-child reap witness. The model/provider and external egress remain disabled. | C09 read-only local-node access is authorized, but its current M archive has `edge_probe` reachability only while this C08 projection admits only `process`; do not relabel it. A concrete provider profile and production execution evidence remain open, so no actual model or live-node AURA diagnosis claim. |
+| Zero upstream | QueryService has no upstream client. An internal M archive-read attempt counter now witnesses that 1000 actual HTTP query requests after an approved grant yield 16 successes/984 budget refusals without another M read; a compiled mutation inserting M import in the query path raises the counter to 1002 and fails the assertion. | This is M cache-only evidence only, not actual V/O network counters or all miss/depth/redirect/replay controls; no on-demand refresh may be added. |
+
+Implementation sequence: (1) durable grant and evidence ledger with crash/restart negatives; (2) broker-only control and shared HTTP/MCP service with exact SDK/protocol; (3) fixed evidence package and offline broker validation/cancellation; (4) isolated AURA and provider tests only after explicit owner choice. Preserve historical scoped C00–C05 claims; neither this plan nor unit tests promote production capabilities.
+
+Checkpoint note: `tos-observability` now requires a private ledger DB and Unix control socket. An optional ninth argument (after a cache JSONL path or `-`) configures M's retained evidence DB. The broker-only grant operation imports eligible archived process observations from one bounded read-only M transaction before fixing the query-package W; no query handler reads M or calls V/O/Prometheus. The process still uses an 8 MiB clone-on-insert candidate to commit SQLite before publishing a cache row; measure or replace this copy before any production cost claim. The old in-memory-only router remains solely for existing isolated tests. This is a process-only development adapter, not C08 acceptance or a complete M evidence/query integration.
+
+C06 integration boundary: the process projection scans only M rows declared as
+`source='process'`, so a full population of diagnostic archives cannot consume
+its 4096-row/8 MiB cap or revoke unrelated process runs. Diagnostic phases are
+persisted by M, but source-reported wall time (when present) lacks a verified
+clock basis; genuinely unknown time remains `observed_at=null`. The six-tool event
+window is defined over trustworthy observed time, so it
+explicitly returns `CAPABILITY_UNSUPPORTED` for the C06 diagnostic source or
+kind. It does not substitute M receipt time or the compatibility zero sentinel
+for an observation. A separately approved time-basis contract and a retained
+parent adapter would be required for diagnostic event-window success.
+For direct C06 typed projection, unverified diagnostic clock quality emits
+`uncertain` (never `valid` or a claimed proven-invalid clock); a truly absent
+source observation emits `observed_at=null`. Other sources with known invalid
+clock still emit `invalid`. Neither form makes a diagnostic event selectable by
+the observed-time window.
+
+Control socket follow-up: admission is now limited to eight connections before
+task spawn; permits last through response transmission and a five-second
+connection deadline bounds idle/header/slow clients. Real Unix-socket tests
+exercise eight idle holders, ninth refusal, expiry/recovery, and an overlapping
+slow request. This is a C08 connection-budget control, not Unix peer identity
+or production broker isolation; deployment must enforce dedicated ownership
+and credentials separately.
+The scoped test's natural-exit-0 raw log is
+`$HOME/nhm-c07c08-build/edge-epoch-proof/control-socket.log`
+(SHA-256 `af4f7286500b9721aca7dcf229b9c906f458b83c62e920de2915ef99690d7806`);
+source `tos-observability.rs` SHA-256 is
+`6fd00293b04e2a4ac988d161269dcec9821666b2f1b126cf18f8ee89b1d6d93e`.
+
+Pinned AURA adapter follow-up: `C07-C08-AURA-INTEGRATION-PLAN.md` fixes the
+development-only credential and transport boundary. The actual pinned AURA
+`McpManager` test starts an isolated NHM service, uses a synthetic process
+cache row, discovers the six exact names and calls each over one adapter-owned
+private Unix connection. Capabilities, node snapshot, event window and change
+history return `ok`; metric window and block evidence truthfully return
+`error` without those source records. `C08-PINNED-AURA-ADAPTER-CHECKPOINT.md`
+indexes the raw green/red logs and exact hashes. This does not show a model
+interpreting evidence, an abnormal live node, or a supervised production
+subprocess. The feature remains disabled by default.
+
+MCP transport correction: the first draft exposed `run_token` in every
+model-visible tool schema; the supervisor's retained red control and
+`C08-MCP-REVIEW-HOLD.md` document that failure. The current draft restores the
+six published input schemas verbatim and rejects a token supplied as a tool
+argument. Service authorization, run ID and the opaque token are admitted in
+private Unix HTTP headers, validated against the active grant, then claimed
+once in the durable ledger. The bridge holds the token only in connection-owned
+server state, rechecks the grant on each call through the original HTTP route,
+and another connection cannot claim the same run even after ledger reopen.
+Only one HTTP connection may carry a run; disconnect fails closed and requires
+a new grant. That strict transport profile still needs AURA client compatibility
+and disconnect/cancel/timeout controls before C08 acceptance. The MCP result
+contains only one charged JSON text representation, not a second uncharged
+structured copy. Feature `mcp` and production enablement remain off by default.
+
+Watermark retention follow-up: while any durable grant is active, an evidence
+insert that would evict a row at or before its fixed W is refused before the
+SQLite commit and before the in-memory candidate replaces the current store.
+The restart/revoke test confirms the original page remains visible across
+reopen and eviction resumes only after revoke. This is a fail-closed 8 MiB
+cache policy, not an increase in retention. The later cursor slice adds
+event/change pagination in the isolated query service, while M's main
+EvidenceDb import, MCP and whole-run accounting remain open C08 items.
+The focused 16 HTTP + 3 ledger test raw log is
+`$HOME/nhm-c07c08-build/edge-epoch-proof/query-pinning.log`
+(SHA-256 `e4a25bc34af84c4e6655e9c3d38493b209fa617e1e112f93f5b4ed334a494157`);
+strict workspace clippy/fmt/diff checks also exited 0.

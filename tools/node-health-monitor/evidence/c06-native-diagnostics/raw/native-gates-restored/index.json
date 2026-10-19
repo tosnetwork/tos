@@ -1,0 +1,152 @@
+[
+  {
+    "name": "diagnostic-action",
+    "exit": 0,
+    "binary_sha256": "50919920230332a86c96c4b2e2c2c4ce362f3d62290512d2e7bafba39c7c83a2"
+  },
+  {
+    "name": "diagnostic-producer",
+    "exit": 0,
+    "binary_sha256": "61bef7e95bbeea2e8649e82b83376a82037f5492c3c45ffdf51fefab4d6dd1bd"
+  },
+  {
+    "name": "diagnostic-ipc",
+    "exit": 0,
+    "binary_sha256": "3015ea09dd2eb6e118177f3f0f9b8739be93fc4ccb77c37a7679abf82adb412e"
+  },
+  {
+    "name": "diagnostic-peer",
+    "exit": 0,
+    "binary_sha256": "3015ea09dd2eb6e118177f3f0f9b8739be93fc4ccb77c37a7679abf82adb412e"
+  },
+  {
+    "name": "registry",
+    "exit": 0,
+    "binary_sha256": "09dfcfb45c27f5409b3cd3d6de668b666df8ec8912e91372a2747b6954ee6dce"
+  },
+  {
+    "name": "native-publisher",
+    "exit": 0,
+    "binary_sha256": "b177228ebc521c7a79233929c5f5f818abe05a70436a660b3446163f7c7c148d"
+  },
+  {
+    "name": "c04-publisher",
+    "exit": 0,
+    "binary_sha256": "2afb76f7658582cb928de8a0d76c157e5b20734ae44ac9574d6d0d26881f826e"
+  },
+  {
+    "name": "publisher-nested",
+    "exit": 0,
+    "binary_sha256": "2afb76f7658582cb928de8a0d76c157e5b20734ae44ac9574d6d0d26881f826e"
+  },
+  {
+    "name": "publisher-oversize",
+    "exit": 0,
+    "binary_sha256": "2afb76f7658582cb928de8a0d76c157e5b20734ae44ac9574d6d0d26881f826e"
+  },
+  {
+    "name": "publisher-family",
+    "exit": 0,
+    "binary_sha256": "2afb76f7658582cb928de8a0d76c157e5b20734ae44ac9574d6d0d26881f826e"
+  },
+  {
+    "name": "publisher-parent-family",
+    "exit": 0,
+    "binary_sha256": "2afb76f7658582cb928de8a0d76c157e5b20734ae44ac9574d6d0d26881f826e"
+  },
+  {
+    "name": "publisher-deadline",
+    "exit": 0,
+    "binary_sha256": "2afb76f7658582cb928de8a0d76c157e5b20734ae44ac9574d6d0d26881f826e"
+  },
+  {
+    "name": "publisher-v1",
+    "exit": 0,
+    "binary_sha256": "2afb76f7658582cb928de8a0d76c157e5b20734ae44ac9574d6d0d26881f826e"
+  },
+  {
+    "name": "action-success",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-duplicate",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-finalize",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-skip",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-intent-failure",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-signed-failure",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-no-signer",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-sign-failure",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-replay-signed",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-replay-intent",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-replay-intent-sign-failure",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-replay-intent-signed-failure",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-apply-false",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-journal-suppressed",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-finality-suppressed",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-post-terminal",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  },
+  {
+    "name": "action-lease",
+    "exit": 0,
+    "binary_sha256": "d6992e78195d606559e3ce37fd2ea88affd0b91e710f95ba1e065747e18d39c0"
+  }
+]

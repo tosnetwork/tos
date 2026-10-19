@@ -1,0 +1,35 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.60s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 22 tests
+test live_read_only_projection_cost_witness ... ignored, requires explicit read-only local M path and network
+test synthetic_1500_and_4000_process_cold_start_cost_witness ... ignored, opt-in synthetic cold-start timing witness
+wide=false parent_bytes=1411 query_charge=3224
+wide=true parent_bytes=8094 query_charge=9544
+test production_process_parent_bound_is_below_query_resident_charge ... ok
+test real_m_writer_process_row_projects_with_parent_and_fixed_query_watermark ... ok
+test projection_refuses_wrong_origin_hash_and_unknown_source_fields ... ok
+test persisted_cursor_rejects_malformed_identity_and_unwitnessed_anchor ... ok
+test non_anchor_retained_parent_body_change_is_refused_by_sequence_lookup ... ok
+test fixed_package_marks_unmaterialized_process_missing_without_promoting_direct_cache ... ok
+test durable_projection_requires_exact_retained_parent_on_insert_and_reopen ... ok
+test private_projection_health_exposes_lag_and_conflict_without_grant_or_import ... ok
+test diagnostic_only_boundary_is_anchored_and_tampered_cursor_refuses_startup ... ok
+test durable_parent_before_cursor_replays_exactly_once_after_restart ... ok
+test grant_refuses_quarantine_without_new_m_row_until_background_validation ... ok
+test cursor_refuses_missing_or_rewritten_retained_parent_and_invalid_middle_row ... ok
+test broker_parent_index_overflow_latches_refusal_without_deadlocking_ledger ... ok
+test broker_grant_imports_actual_m_row_once_and_routes_derived_snapshot ... ok
+test projection_or_cursor_commit_failure_revokes_old_grant_and_replays_on_restart ... ok
+test thousand_real_query_requests_do_not_read_manager_archive ... ok
+test unsupported_diagnostic_population_does_not_consume_process_scan_or_quarantine_cap ... ok
+test incremental_projection_pages_4097_history_and_sparse_global_sequence ... ok
+test partial_projection_restart_replays_cursor_and_refuses_uncaught_grant ... ok
+retained=2561 contended_grant=2.102174ms
+real_peak_import=557.013471ms concurrent_grant=2.168258ms control_health=1.539984ms
+retained_peak_grant=2.699018ms
+test pre_cursor_ledger_with_active_grant_catches_up_over_4096_history ... ok
+
+test result: ok. 20 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 8.41s
+

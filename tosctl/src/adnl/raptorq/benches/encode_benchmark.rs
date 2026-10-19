@@ -35,7 +35,9 @@ fn benchmark(symbol_size: u16, pre_plan: bool) -> u64 {
             } else {
                 SourceBlockEncoder::new2(1, &config, &data)
             };
-            let packets = encoder.repair_packets(0, 1);
+            let packets = encoder
+                .repair_packets(encoder.source_symbol_count(), 1)
+                .expect("repair symbol ids fit in 24 bits");
             black_box_value += packets[0].data()[0] as u64;
         }
         let elapsed = now.elapsed();

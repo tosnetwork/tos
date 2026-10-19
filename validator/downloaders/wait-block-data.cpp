@@ -20,6 +20,7 @@
 #include "adnl/utils.hpp"
 #include "common/delay.h"
 #include "crypto/block/mc-config.h"
+#include "metrics/node-state-snapshot.h"
 #include "tos/tos-io.hpp"
 #include "vm/cells/MerkleProof.h"
 
@@ -37,6 +38,8 @@ namespace {
 struct BlockProofRoot {
   td::Ref<vm::Cell> proof;
   UnixTime gen_utime;
+  td::uint32 validator_set_hash;
+  td::uint32 catchain_seqno;
 };
 
 td::Result<BlockProofRoot> generate_block_proof_root_impl(BlockIdExt id, td::Ref<vm::Cell> block_root) {
@@ -114,7 +117,7 @@ td::Result<BlockProofRoot> generate_block_proof_root_impl(BlockIdExt id, td::Ref
     }
   }
 
-  return BlockProofRoot{std::move(proof), info.gen_utime};
+  return BlockProofRoot{std::move(proof), info.gen_utime, info.gen_validator_list_hash_short, info.gen_catchain_seqno};
 }
 
 td::Result<td::BufferSlice> serialize_block_proof(BlockIdExt id, td::Ref<vm::Cell> proof, bool has_signatures,
@@ -220,16 +223,20 @@ void WaitBlockData::start() {
                                 td::actor::send_closure(SelfId, &WaitBlockData::start);
                               } else {
                                 td::actor::send_closure(SelfId, &WaitBlockData::loaded_data,
-                                                        ReceivedBlock{id, R.move_as_ok()});
+                                                        ReceivedBlock{id, R.move_as_ok()},
+                                                        BlockDataSource::LocalCandidate);
                               }
                             });
   } else {
+    // The manager answers from its candidate cache only with bytes that pass
+    // the same full block check as loaded_data() and evicts any that fail, so
+    // a parse failure on this path is the network's.
     auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<ReceivedBlock> R) {
       if (R.is_error()) {
-        td::actor::send_closure(SelfId, &WaitBlockData::failed_to_get_block_data_from_net,
-                                R.move_as_error_prefix("net error: "));
+        td::actor::send_closure(SelfId, &WaitBlockData::failed_to_get_block_data, R.move_as_error_prefix("net error: "),
+                                BlockDataSource::Network);
       } else {
-        td::actor::send_closure(SelfId, &WaitBlockData::loaded_data, R.move_as_ok());
+        td::actor::send_closure(SelfId, &WaitBlockData::loaded_data, R.move_as_ok(), BlockDataSource::Network);
       }
     });
 
@@ -243,23 +250,37 @@ void WaitBlockData::got_block_data_from_db(td::Ref<BlockData> data) {
   finish_query();
 }
 
-void WaitBlockData::failed_to_get_block_data_from_net(td::Status reason) {
-  if (reason.code() == ErrorCode::notready) {
-    LOG(DEBUG) << "failed to get block " << handle_->id() << " data from net: " << reason;
+void WaitBlockData::failed_to_get_block_data(td::Status reason, BlockDataSource source) {
+  // "Not ready" is routine while a block propagates, so a single one stays at
+  // DEBUG; a block that keeps failing is a stall and is reported at WARNING,
+  // rate-limited, whatever the error. A bad local candidate is reported once
+  // and is not counted as a network failure; the retry goes to the network.
+  const auto report = net_failures_.on_failure(source, reason.code() == ErrorCode::notready, td::Timestamp::now().at(),
+                                               health::node_state.block_data_net_failures);
+  if (report.stall_warning) {
+    LOG(WARNING) << "still cannot get block " << handle_->id() << " data from net after " << report.consecutive
+                 << " consecutive failures: " << reason;
+  }
+  if (report.failure_warning) {
+    LOG(WARNING) << "failed to get block " << handle_->id() << " data from " << block_data_source_name(source) << ": "
+                 << reason;
   } else {
-    LOG(WARNING) << "failed to get block " << handle_->id() << " data from net: " << reason;
+    LOG(DEBUG) << "failed to get block " << handle_->id() << " data from " << block_data_source_name(source) << ": "
+               << reason;
   }
 
   delay_action([SelfId = actor_id(this)]() mutable { td::actor::send_closure(SelfId, &WaitBlockData::start); },
                td::Timestamp::in(0.1));
 }
 
-void WaitBlockData::loaded_data(ReceivedBlock block) {
+void WaitBlockData::loaded_data(ReceivedBlock block, BlockDataSource source) {
   auto X = create_block(std::move(block));
   if (X.is_error()) {
-    failed_to_get_block_data_from_net(X.move_as_error_prefix("bad block from net: "));
+    failed_to_get_block_data(
+        X.move_as_error_prefix(PSTRING() << "bad block from " << block_data_source_name(source) << ": "), source);
     return;
   }
+  net_failures_.on_delivered();
   loaded_block_data(X.move_as_ok());
 }
 
@@ -378,28 +399,49 @@ void WaitBlockData::got_static_file(td::BufferSlice data) {
 
 td::Result<td::BufferSlice> WaitBlockData::generate_proof(BlockIdExt id, td::Ref<vm::Cell> block_root,
                                                           td::Ref<block::BlockSignatureSet> signatures,
-                                                          td::Ref<MasterchainState> state) {
+                                                          td::Ref<MasterchainState> state,
+                                                          PendingBlockProofFailureSource &failure_source) {
+  failure_source = PendingBlockProofFailureSource::BlockBytes;
   if (!id.is_masterchain()) {
     return td::Status::Error("cannot create proof for non-masterchain block");
   }
   if (signatures.is_null()) {
+    failure_source = PendingBlockProofFailureSource::FinalityEvidence;
     return td::Status::Error("block signatures are null");
   }
   if (!signatures->is_final()) {
+    failure_source = PendingBlockProofFailureSource::FinalityEvidence;
     return td::Status::Error("cannot create masterchain proof with non-final signatures");
   }
   if (state.is_null()) {
+    failure_source = PendingBlockProofFailureSource::TrustedContext;
     return td::Status::Error(ErrorCode::notready, "masterchain state is not ready");
   }
 
   TRY_RESULT(proof_root, generate_block_proof_root_impl(id, std::move(block_root)));
+  failure_source = PendingBlockProofFailureSource::TrustedContext;
   TRY_RESULT(config, state->get_config_holder());
-  auto vset =
-      config->get_validator_set(id.shard_full(), proof_root.gen_utime, signatures->get_catchain_seqno());
+  auto vset = config->get_validator_set(id.shard_full(), proof_root.gen_utime, proof_root.catchain_seqno);
   if (vset.is_null()) {
     return td::Status::Error(ErrorCode::notready, "failed to compute validator set for masterchain proof");
   }
+  // A set derived from a stale local state must not make us discard an honest
+  // certificate. Conversely, once the trusted set agrees with the block
+  // header, a differing carrier set identifies the independently received
+  // evidence as the bad input.
+  const auto identity_verdict =
+      pending_block_proof_identity_verdict({proof_root.catchain_seqno, proof_root.validator_set_hash},
+                                           {vset->get_catchain_seqno(), vset->get_validator_set_hash()},
+                                           {signatures->get_catchain_seqno(), signatures->get_validator_set_hash()});
+  if (identity_verdict == PendingBlockProofIdentityVerdict::ContextMismatch) {
+    return td::Status::Error(ErrorCode::notready, "validator set context does not match block header");
+  }
+  failure_source = PendingBlockProofFailureSource::FinalityEvidence;
+  if (identity_verdict == PendingBlockProofIdentityVerdict::EvidenceMismatch) {
+    return td::Status::Error(ErrorCode::protoviolation, "finality evidence set does not match block header");
+  }
   TRY_RESULT(signatures_cell, signatures->serialize(vset));
+  failure_source = PendingBlockProofFailureSource::BlockBytes;
   return serialize_block_proof(id, std::move(proof_root.proof), true, std::move(signatures_cell));
 }
 

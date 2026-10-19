@@ -1,0 +1,38 @@
+# Accrued storage fees, as the node's block::StoragePrices::compute_storage_fees computes them.
+#
+# test-storage-fee-vectors (crypto/block) checks every row against that function, so the
+# expected column is the node's answer, not anybody's model of it. The tosctl executor and
+# its shared helper (chain_block::accrued_storage_fee) read this same file and must agree.
+#
+# Columns, tab-separated:
+#   name  now  last_paid  cells  bits  special  masterchain  periods  expected
+# periods: comma-separated since:bit_price:cell_price:mc_bit_price:mc_cell_price, or - for none.
+# Prices are per second in 2^-16 nanotomi; expected is in nanotomi.
+#
+# P4 is four periods with distinct masterchain and basechain prices:
+#   0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000
+# F2 is a period in force now and one that starts after now.
+#
+# Per-period rounding charges 14 for several-periods-mc, 3 for several-periods-bc, 9 and 2
+# for the clipped rows; not clipping at now charges 2997 and 30 for the future-period rows.
+several-periods-mc	350	150	2	10	0	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	13
+several-periods-bc	350	150	2	10	0	0	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	1
+clipped-inside-period-mc	250	150	2	10	0	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	5
+clipped-inside-period-bc	250	150	2	10	0	0	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	1
+future-period-mc	100	1	1	1	0	1	0:655:1310:65536:131072,1000:6550:13100:655360:1310720	297
+future-period-bc	100	1	1	1	0	0	0:655:1310:65536:131072,1000:6550:13100:655360:1310720	3
+last-paid-on-boundary-mc	350	200	2	10	0	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	12
+now-at-next-start-mc	300	150	2	10	0	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	9
+last-paid-before-first-start	600	10	1	0	0	1	500:0:0:0:65536	100
+now-before-first-start	400	10	1	0	0	1	500:0:0:0:65536	0
+now-equal-first-start	500	10	1	0	0	1	500:0:0:0:65536	0
+now-one-after-first-start	501	10	1	0	0	1	500:0:0:0:65536	1
+exact-multiple-of-2^16	20	10	1	0	0	1	0:0:0:0:65536	10
+one-above-multiple-of-2^16	11	10	1	1	0	1	0:0:0:1:65536	2
+special-account	350	150	2	10	1	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	0
+now-before-last-paid	140	150	2	10	0	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	0
+now-equal-last-paid	150	150	2	10	0	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	0
+never-paid	350	0	2	10	0	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	0
+no-prices	350	150	2	10	0	1	-	0
+year-at-genesis-prices-mc	31536001	1	100000	50000000	0	1	0:1:500:1000:500000	48120117187500
+transaction-account-mc	350	150	2	115	0	1	0:1000000:1000000:1000000:1000000,100:1:50:10:1000,200:2:100:20:2000,300:3:150:30:3000	20

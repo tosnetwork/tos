@@ -25,6 +25,7 @@ mod dump;
 mod exceptions;
 pub mod gas;
 mod globals;
+mod lms_fee;
 mod math;
 mod null;
 mod poseidon2;

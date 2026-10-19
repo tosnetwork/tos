@@ -1,0 +1,20 @@
+time=2026-09-29T09:39:25.246Z level=INFO source=app.go:194 msg="Starting Alertmanager" version="(version=0.34.1, branch=HEAD, revision=73c6bfe7393929211294c1954f30d8ed78e4d0ad)"
+time=2026-09-29T09:39:25.247Z level=INFO source=app.go:196 msg="Build context" build_context="(go=go1.26.8, platform=linux/amd64, user=root@68a5f2da6323, date=20260917-07:53:02, tags=netgo)"
+time=2026-09-29T09:39:25.250Z level=INFO source=cluster.go:682 msg="Waiting for gossip to settle..." component=cluster interval=2s
+time=2026-09-29T09:39:25.293Z level=INFO source=tls_config.go:372 msg="Listening on" address=127.0.0.1:34631
+time=2026-09-29T09:39:25.293Z level=INFO source=tls_config.go:375 msg="TLS is disabled." http2=false address=127.0.0.1:34631
+time=2026-09-29T09:39:27.251Z level=INFO source=cluster.go:707 msg="gossip not settled" component=cluster polls=0 before=0 now=1 elapsed=2.001019785s
+time=2026-09-29T09:39:35.254Z level=INFO source=cluster.go:699 msg="gossip settled; proceeding" component=cluster elapsed=10.003754095s
+time=2026-09-29T09:44:10.338Z level=INFO source=lifecycle.go:290 msg="Shutting down gracefully"
+time=2026-09-29T09:44:10.341Z level=INFO source=main.go:201 msg="Received shutdown signal, exiting gracefully..."
+time=2026-09-29T09:45:55.404Z level=INFO source=app.go:194 msg="Starting Alertmanager" version="(version=0.34.1, branch=HEAD, revision=73c6bfe7393929211294c1954f30d8ed78e4d0ad)"
+time=2026-09-29T09:45:55.404Z level=INFO source=app.go:196 msg="Build context" build_context="(go=go1.26.8, platform=linux/amd64, user=root@68a5f2da6323, date=20260917-07:53:02, tags=netgo)"
+time=2026-09-29T09:45:55.408Z level=INFO source=cluster.go:682 msg="Waiting for gossip to settle..." component=cluster interval=2s
+time=2026-09-29T09:45:55.454Z level=INFO source=tls_config.go:372 msg="Listening on" address=127.0.0.1:34631
+time=2026-09-29T09:45:55.454Z level=INFO source=tls_config.go:375 msg="TLS is disabled." http2=false address=127.0.0.1:34631
+time=2026-09-29T09:45:57.408Z level=INFO source=cluster.go:707 msg="gossip not settled" component=cluster polls=0 before=0 now=1 elapsed=2.00015526s
+time=2026-09-29T09:46:05.411Z level=INFO source=cluster.go:699 msg="gossip settled; proceeding" component=cluster elapsed=10.003244059s
+time=2026-09-29T09:47:11.266Z level=INFO source=lifecycle.go:290 msg="Shutting down gracefully"
+time=2026-09-29T09:47:11.266Z level=ERROR source=nflog.go:450 msg="Creating shutdown snapshot failed" component=nflog err="open /tmp/nhm-c03-runtime-38c33f7n/am-data/nflog.5c45d99e191464fe: no such file or directory"
+time=2026-09-29T09:47:11.266Z level=ERROR source=silence.go:650 msg="Creating shutdown snapshot failed" component=silences err="open /tmp/nhm-c03-runtime-38c33f7n/am-data/silences.16f50504fc470cb8: no such file or directory"
+time=2026-09-29T09:47:11.267Z level=INFO source=main.go:201 msg="Received shutdown signal, exiting gracefully..."

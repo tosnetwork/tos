@@ -9,7 +9,7 @@
 $# 1- -2 and ' usage if
 
 -1 =: wc
-$1 parse-pubkey =: PubKey
+$1 parse-owner-pubkey =: PubKey
 def? $2 { @' $2 } { "rwallet" } cond constant file-base
 
 ."Creating new restricted wallet in workchain " wc . ."controlled by public key " PubKey .pubkey cr

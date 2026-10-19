@@ -1,0 +1,25 @@
+groups:
+  - name: health-state-authority
+    interval: 5s
+    rules:
+      - alert: NodeHealthIncident
+        expr: tos_health_incident_active == 1
+        labels:
+          authority: health_state
+        annotations:
+          summary: 'Persistent {{ $labels.rule }} on {{ $labels.node }}/{{ $labels.scope }}'
+          resolution_policy: 'Only a persisted health-state recovery transition is authoritative; missing series or resolved webhooks are not recovery.'
+      - alert: Watchdog
+        expr: tos_health_evaluation_sequence >= 0
+        labels:
+          monitor_id: monitor1
+        annotations:
+          monitor_epoch: '{{ $labels.monitor_epoch }}'
+          evaluation_sequence: '{{ printf "%.0f" $value }}'
+      - alert: HealthStateUnavailable
+        expr: up{job="health-state"} == 0 or absent(up{job="health-state"})
+        for: 45s
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Rule authority is unavailable; existing incidents are not cleared.'

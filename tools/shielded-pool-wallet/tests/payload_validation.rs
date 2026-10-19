@@ -65,7 +65,7 @@ fn chain_slot(instance: &PoolInstance, plaintext: &Plaintext) -> ChainSlot {
     );
     let note_body =
         notes::note_body_commitment(owner, Fr::from(plaintext.amount), output_data_hash);
-    ChainSlot { output_data_hash, note_body }
+    ChainSlot { output_data_hash, note_body, recovered: None }
 }
 
 fn refusal(instance: &PoolInstance, plaintext: &Plaintext, slot: &ChainSlot) -> Rejection {

@@ -15,8 +15,10 @@
     along with TOS Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-#include "collator-node-session.hpp"
+#include "block/validator-session-members.h"
+
 #include "collator-node-limits.h"
+#include "collator-node-session.hpp"
 #include "collator-node.hpp"
 #include "fabric.h"
 #include "utils.hpp"
@@ -313,17 +315,19 @@ void CollatorNodeSession::process_result(std::shared_ptr<CacheEntry> cache_entry
 }
 
 void CollatorNodeSession::process_request(adnl::AdnlNodeIdShort src, std::vector<BlockIdExt> prev_blocks,
-                                          BlockCandidatePriority priority, Ed25519_PublicKey creator,
-                                          td::Timestamp timeout, td::Promise<BlockCandidate> promise) {
+                                          BlockCandidatePriority priority, ValidatorId creator, td::Timestamp timeout,
+                                          td::Promise<BlockCandidate> promise) {
   // The requester chooses the block's created_by (creator); the response path
   // rewrites the candidate to it and persists a record keyed by the resulting
   // block id. An arbitrary creator would let one authorized validator mint
   // unbounded distinct records (and pay the rewrite cost) for a single block.
   // Require the creator to be a member of this group's validator set, which
   // bounds the distinct creators -- and thus the stored records -- to the set.
-  auto creator_id = PublicKey(pubkeys::Ed25519(creator)).compute_short_id();
-  if (validator_set_->get_validator(creator_id.bits256_value()) == nullptr) {
-    promise.set_error(td::Status::Error(ErrorCode::error, "collate query: creator is not in the validator set"));
+  // Membership and the transport identity the request arrived on have to agree; the
+  // rule itself lives next to the set so a test can exercise this exact decision.
+  if (auto status = block::authorise_collate_request(*validator_set_, creator, src.bits256_value());
+      status.is_error()) {
+    promise.set_error(td::Status::Error(ErrorCode::error, status.message()));
     return;
   }
   generate_block(std::move(prev_blocks), priority, timeout, std::move(promise));

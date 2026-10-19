@@ -13,14 +13,16 @@
 
     Copyright 2025-2026 TOS Blockchain Teams
 */
-#include "json-rpc-server-parse.h"
-
 #include "td/utils/SharedSlice.h"
+#include "td/utils/StringBuilder.h"
+#include "td/utils/base64.h"
 #include "td/utils/misc.h"
 #include "vm/boc.h"
 #include "vm/cells/CellSlice.h"
 #include "vm/dict.h"
 #include "vm/excno.hpp"
+
+#include "json-rpc-server-parse.h"
 
 namespace tos {
 
@@ -59,6 +61,47 @@ bool is_valid_json_number(const std::string &s) {
   return i == s.size();
 }
 
+td::Result<std::string> reflected_request_id(const td::JsonValue& id) {
+  switch (id.type()) {
+    case td::JsonValue::Type::Null:
+      return std::string("null");
+    case td::JsonValue::Type::String: {
+      const auto& raw = id.get_string();
+      // The serialized form adds two quotes to at least every raw byte, so a
+      // raw string this long cannot fit; refuse it without escaping it.
+      if (raw.size() > kMaxReflectedIdBytes) {
+        return td::Status::Error("request id is too long");
+      }
+      td::StringBuilder sb;
+      sb << td::JsonString(td::Slice(raw));
+      if (sb.is_error()) {
+        return td::Status::Error("request id cannot be serialized");
+      }
+      auto literal = sb.as_cslice().str();
+      if (literal.size() > kMaxReflectedIdBytes) {
+        return td::Status::Error("request id is too long");
+      }
+      return literal;
+    }
+    case td::JsonValue::Type::Number: {
+      const auto& raw = id.get_number();
+      if (raw.size() > kMaxReflectedIdBytes) {
+        return td::Status::Error("request id is too long");
+      }
+      auto literal = raw.str();
+      if (!is_valid_json_number(literal)) {
+        return td::Status::Error("request id is not a valid JSON number");
+      }
+      return literal;
+    }
+    case td::JsonValue::Type::Boolean:
+    case td::JsonValue::Type::Array:
+    case td::JsonValue::Type::Object:
+      return td::Status::Error("request id must be a string, a number or null");
+  }
+  return td::Status::Error("request id has an unknown type");
+}
+
 namespace {
 
 // Runs `f` and converts every VM-level exception into a td::Status so that
@@ -95,6 +138,16 @@ td::Result<td::Ref<vm::Stack>> parse_get_method_result_stack(td::Slice result_bo
     }
     return stk;
   });
+}
+
+td::Result<td::Ref<vm::Stack>> resolve_run_method_result_stack(td::int32 exit_code, td::Slice result_boc) {
+  if (result_boc.empty()) {
+    if (exit_code == kInactiveAccountExitCode) {
+      return td::make_ref<vm::Stack>();
+    }
+    return td::Status::Error(PSTRING() << "liteserver returned no result stack for exit code " << exit_code);
+  }
+  return parse_get_method_result_stack(result_boc);
 }
 
 td::Result<std::vector<std::string>> parse_multisig_public_keys(td::Ref<vm::Cell> dict_root) {
@@ -142,6 +195,45 @@ td::Result<td::uint32> parse_restricted_wallet_start_at(td::Ref<vm::Cell> data_c
     cs.advance(320);
     return static_cast<td::uint32>(cs.fetch_ulong(32));
   });
+}
+
+td::Result<std::string> render_masterchain_block_signatures_json(const lite_api::liteServer_SignatureSet* signatures,
+                                                                 td::Slice id_json) {
+  auto emit_sig_array = [](td::StringBuilder& out, const auto& sig_vec) {
+    bool first = true;
+    for (const auto& signature : sig_vec) {
+      if (!first) {
+        out << ',';
+      }
+      first = false;
+      out << "{\"@type\":\"blocks.signature\",\"node_id_short\":\""
+          << td::base64_encode(signature->node_id_short_.as_slice()) << "\",\"signature\":\""
+          << td::base64_encode(signature->signature_.as_slice()) << "\"}";
+    }
+  };
+
+  td::StringBuilder out;
+  if (!signatures || signatures->get_id() == lite_api::liteServer_signatureSet_ordinary::ID) {
+    out << "{\"@type\":\"blocks.blockSignatures\",\"id\":" << id_json << ",\"signatures\":[";
+    if (signatures) {
+      emit_sig_array(out, static_cast<const lite_api::liteServer_signatureSet_ordinary*>(signatures)->signatures_);
+    }
+    out << "]}";
+    return out.as_cslice().str();
+  }
+  if (signatures->get_id() == lite_api::liteServer_signatureSet_simplex::ID) {
+    const auto* simplex = static_cast<const lite_api::liteServer_signatureSet_simplex*>(signatures);
+    out << "{\"@type\":\"blocks.blockSignatures.simplex\",\"id\":" << id_json << ",\"session_id\":\""
+        << td::base64_encode(simplex->session_id_.as_slice()) << "\",\"slot\":" << simplex->slot_ << ",\"candidate\":\""
+        << td::base64_encode(simplex->candidate_.as_slice()) << "\",\"signatures\":[";
+    emit_sig_array(out, simplex->signatures_);
+    out << "]}";
+    return out.as_cslice().str();
+  }
+  if (signatures->get_id() == lite_api::liteServer_signatureSet_simplexPq::ID) {
+    return td::Status::Error("post-quantum block signatures are not supported by JSON-RPC yet");
+  }
+  return td::Status::Error("unsupported block signature carrier in JSON-RPC");
 }
 
 }  // namespace tos

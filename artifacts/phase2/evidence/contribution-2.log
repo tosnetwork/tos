@@ -1,0 +1,33 @@
+building from f7f141589a788c8aa06bee32d7799c25cbfab356
+    Finished `release` profile [optimized] target(s) in 0.76s
+
+rebuilding the starting key from the committed slice (a couple of minutes)
+starting key rebuilt and matches: 018853105392e4e0ef82ae59514f137b
+auditing 1 contribution(s) already in the chain
+the chain audits
+
+contribution 2 added.
+  contribution   035ea5be0dd986d6cd4b3688e9e88edac22a1bd07937953d553a0ecfc0f7966c
+  transcript     f4e542800d0484cabdf226bdaa7bbbe1239aea894e90ed59a9ed65b8ec06d54c
+
+Publish those two lines, signed, saying you drew a scalar and destroyed it.
+They name your position in a way nobody can move it afterwards.
+
+Nothing was written to this machine to shred: the scalar existed only in this
+process's memory and was wiped. Swap, if this host has any, is yours to think
+about.
+
+attestation written to /root/ceremony/../attestation-2.txt
+
+NOT SIGNED. Pass --sign-with gpg:<key-id> or ssh:<private-key-file>,
+or publish the text above from an account that is already publicly
+yours -- the identity has to come from somewhere, and this script
+will not invent one for you.
+
+Publish the attestation, then hand the ceremony directory to the next
+participant. It is about 6 MB and carries no secret, so any transport
+will do.
+
+Nothing on this machine holds your scalar. It existed only in the
+contributor's memory and was wiped; there is no file to shred. Swap, if
+this host has any, is yours to think about.

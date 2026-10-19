@@ -364,7 +364,7 @@ void CellDbIn::start_up() {
         .use_arena = false,
         .use_less_memory_during_creation = true,
     };
-    LOG(WARNING) << "Using InMemory DynamicBagOfCells with options " << *boc_v2_options;
+    LOG(WARNING) << "Using InMemory DynamicBagOfCells with options " << *boc_in_memory_options;
   } else {
     boc_v1_options = vm::DynamicBagOfCellsDb::CreateV1Options{};
     LOG(WARNING) << "Using V1 DynamicBagOfCells with options " << *boc_v1_options;
@@ -1636,16 +1636,15 @@ struct StreamingImportJob {
   std::shared_ptr<StreamingImportSpool> spool;
   std::shared_ptr<StreamingImportSpool> rollback_spool;
   std::shared_ptr<std::atomic<bool>> cancel_requested = std::make_shared<std::atomic<bool>>(false);
+  std::shared_ptr<std::atomic<bool>> worker_done = std::make_shared<std::atomic<bool>>(false);
+  td::actor::ActorOwn<td::actor::Actor> completion_actor;
   std::shared_ptr<fullnode::PersistentStateSpoolReservation> spool_reservation;
   td::uint64 spool_budget_bytes = 0;
   vm::Cell::Hash expected_hash{};
 
-  // Off-actor result fields. The worker writes these before posting
-  // the completion message; the actor reads them after join. Using
-  // plain members (not atomics) is safe because the actor's
-  // continuation runs strictly AFTER the worker has finished
-  // populating them — the send_closure -> message dispatch ordering
-  // synchronizes the writes.
+  // The worker publishes these fields with a release store to worker_done.
+  // The completion actor observes that store with acquire ordering before
+  // requesting the continuation, which joins the worker before reading them.
   td::Status worker_status = td::Status::OK();
   td::Ref<vm::Cell> hash_only_root;
   td::uint64 cells_persisted = 0;
@@ -1681,6 +1680,33 @@ struct StreamingImportJob {
   // message before the StreamingImportJob is destroyed.
   td::thread worker;
 };
+
+namespace {
+// Plain threads have no SchedulerContext, so send_closure from the import
+// worker would silently discard its message. An owned actor polls the shared
+// completion flag and sends the continuation from the scheduler's context.
+class StreamingImportCompletion final : public td::actor::Actor {
+ public:
+  StreamingImportCompletion(std::shared_ptr<std::atomic<bool>> done, td::actor::ActorId<CellDbIn> owner)
+      : done_(std::move(done)), owner_(owner) {
+  }
+  void start_up() override {
+    alarm_timestamp() = td::Timestamp::now();
+  }
+  void alarm() override {
+    if (done_->load(std::memory_order_acquire)) {
+      td::actor::send_closure_later(owner_, &CellDbIn::continue_import_after_worker);
+      stop();
+      return;
+    }
+    alarm_timestamp() = td::Timestamp::in(0.01);
+  }
+
+ private:
+  std::shared_ptr<std::atomic<bool>> done_;
+  td::actor::ActorId<CellDbIn> owner_;
+};
+}  // namespace
 
 struct StreamingImportRollbackJob {
   std::string path;
@@ -1757,8 +1783,7 @@ CellDbIn::~CellDbIn() {
 
 namespace {
 
-constexpr td::uint32 kStreamingImportSpoolRecordHeaderBytes =
-    static_cast<td::uint32>(vm::Cell::hash_bytes + sizeof(td::uint32));
+constexpr td::uint32 kStreamingImportSpoolRecordHeaderBytes = fullnode::kPersistentStateSpoolRecordHeaderBytes;
 constexpr td::uint32 kMaxStreamingImportSerializedCellBytes = 1U << 20;
 constexpr const char* kStreamingImportRollbackManifestMarker = ".celldb-rollback.";
 constexpr const char* kStreamingImportPartialSuffix = ".partial";
@@ -2559,8 +2584,8 @@ td::Result<td::uint64> CellDbIn::recover_streaming_import_rollbacks_at_startup()
 //   5. Allocate a StreamingImportJob and spawn a `td::thread` worker
 //      that runs `run_streaming_import_worker(job, sink)`. The worker
 //      drives parse + verify + spool sealing off-actor.
-//   6. The worker's last action is `send_closure(self, &continue_import_after_worker)`
-//      which queues a single message into the actor's mailbox.
+//   6. The worker publishes completion to an owned polling actor, which
+//      queues a single continuation from the scheduler's context.
 //   7. `continue_import_after_worker` runs on the actor's loop, joins
 //      the worker thread, and starts `commit_streaming_import_spool_batch`.
 //   8. Actor-side spool draining writes bounded CellDb batches, publishes
@@ -2628,6 +2653,21 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
     return;
   }
   auto spool_reservation_bytes = r_spool_reservation_bytes.move_as_ok();
+  // The spool files are created next to the source file. Refuse before any
+  // budget, spool file or GC pause exists, so the downloader's ordinary
+  // failure path retries without anything to clean up.
+  {
+    auto spool_dir = td::PathView{td::Slice(request.tempfile_path)}.parent_dir_noslash().str();
+    if (spool_dir.empty()) {
+      spool_dir = request.tempfile_path.front() == '/' ? "/" : ".";
+    }
+    auto space = fullnode::check_persistent_state_spool_free_space(spool_dir, spool_reservation_bytes);
+    if (space.is_error()) {
+      LOG(WARNING) << "CellDbIn::import_persistent_state_streaming: refusing import: " << space;
+      promise.set_error(space.move_as_error_prefix("CellDbIn::import_persistent_state_streaming: "));
+      return;
+    }
+  }
   if (!fullnode::try_reserve_persistent_state_spool_disk(spool_reservation_bytes)) {
     auto cfg = fullnode::persistent_state_budget_config();
     promise.set_error(td::Status::Error(
@@ -2704,19 +2744,20 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
   // free to interleave any other operation while the worker runs.
   auto* job_ptr = streaming_job_.get();
   auto self_actor = actor_id(this);
-  streaming_job_->worker = td::thread([job_ptr, sink_keepalive = std::move(shared_sink), self_actor]() mutable {
+  auto worker_done = streaming_job_->worker_done;
+  streaming_job_->completion_actor =
+      td::actor::create_actor<StreamingImportCompletion>("streaming-import-completion", worker_done, self_actor);
+  streaming_job_->worker = td::thread([job_ptr, sink_keepalive = std::move(shared_sink), worker_done]() mutable {
     // The worker drives begin / parse / verify / spool-seal against
     // `sink_keepalive`. On any error path the worker calls sink->abort()
     // before stashing worker_status; the continuation handles
     // resume_gc + promise.set_* on the actor.
     run_streaming_import_worker(job_ptr, sink_keepalive.get());
-    // Post a single completion message back to the actor. The
-    // continuation will join this thread and tear down the job.
-    td::actor::send_closure(self_actor, &CellDbIn::continue_import_after_worker);
+    worker_done->store(true, std::memory_order_release);
   });
 }
 
-// tos27/tos29: completion message posted by the worker thread.
+// Completion message posted by the polling actor after the worker publishes.
 // Runs on the CellDbIn actor's serialized loop; joins the worker and
 // starts the actor-side CellDb write stage. The promise is resolved only
 // by finish_streaming_import_after_actor_commit / fail_streaming_import.
@@ -2725,8 +2766,7 @@ void CellDbIn::import_persistent_state_streaming(PersistentStateImportRequest re
 // and (on success) `hash_only_root`, `cells_persisted`, `parsed_hash`,
 // `committed`. We read those without synchronization because the
 // actor message dispatch happens-after the worker's last write to
-// these fields (the worker's final action is `send_closure` which
-// crosses the synchronization barrier).
+// these fields through the completion flag's release/acquire synchronization.
 void CellDbIn::continue_import_after_worker() {
   if (streaming_job_ == nullptr) {
     LOG(ERROR) << "CellDbIn::continue_import_after_worker: no streaming job in flight; "
@@ -2735,7 +2775,7 @@ void CellDbIn::continue_import_after_worker() {
   }
 
   // Join the worker thread. The worker's final action was
-  // send_closure to this method, so the thread is done with all its
+  // publication to the completion flag, so it is done with all its
   // observable side-effects and we can join without blocking on
   // useful work. td::thread::join() is safe to call on an
   // already-joined / uninitialized thread (no-ops).

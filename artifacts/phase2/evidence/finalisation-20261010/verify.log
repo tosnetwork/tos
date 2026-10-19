@@ -1,0 +1,35 @@
+ceremony   artifacts/phase2/ceremony
+steps      6
+
+rebuilding the starting key from the committed slice (a couple of minutes)
+starting key matches: 018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+phase 1    zcash (1bfd7acdb3ecbfaa)
+circuit    18107 constraints, 19 instance variables
+the chain audits: 6 contribution(s)
+the finalising step is the one beacon ff995f8c4b2cc550 determines
+transcript e1d308592ebc6d8720682a0255c857a648ab8c39ded2b013314ae403f2f8e5f2
+
+verifying key
+  length     1248 bytes
+  IC points  19
+  sha256     3675550c26b589d295a079adfbb48ecf38b094262a2eec2e40edc41fc8867b31
+  written to artifacts/phase2/ceremony/vk.bin
+
+This ceremony is finished: 6 step(s), ending in its beacon.
+
+Still unchecked, by anything, ever:
+  * that any participant drew their scalar unpredictably and destroyed it;
+  * that the beacon was named before this ceremony opened.
+Both rest on what people published about themselves, not on these artifacts.
+
+Before deploying, put this key through the acceptance gate -- which deploys a
+pool carrying exactly these bytes and requires it to accept a real transfer:
+  TOS_ROOT=<a checkout with a built func/fift> cargo run --release \
+    --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml \
+    --example ceremony-gate -- artifacts/phase2/ceremony
+
+Then, for the state hash and the address: the genesis generator re-runs this
+audit itself and takes the key from it, refusing an unfinished ceremony:
+  cargo run --release --manifest-path tools/shielded-pool-genesis/Cargo.toml \
+    --bin genesis -- . out/manifest.json <profile commit> <profile blob> \
+    --ceremony artifacts/phase2/ceremony

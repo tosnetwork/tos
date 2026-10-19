@@ -1,0 +1,176 @@
+# HELP tos_consensus_actions_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_actions_total counter
+tos_consensus_actions_total{action="proposal",phase="requested",origin="live"} 0
+tos_consensus_actions_total{action="proposal",phase="signed",origin="live"} 0
+tos_consensus_actions_total{action="proposal",phase="candidate_published",origin="live"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="requested",origin="live"} 1
+tos_consensus_actions_total{action="notarize_vote",phase="intent_committed",origin="live"} 1
+tos_consensus_actions_total{action="notarize_vote",phase="signed",origin="live"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="signed_committed",origin="live"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="local_applied",origin="live"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="broadcast_enqueued",origin="live"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="requested",origin="replay"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="signed",origin="replay"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="signed_committed",origin="replay"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="restored_signed",origin="replay"} 0
+tos_consensus_actions_total{action="notarize_vote",phase="local_applied",origin="replay"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="requested",origin="live"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="intent_committed",origin="live"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="signed",origin="live"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="signed_committed",origin="live"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="local_applied",origin="live"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="broadcast_enqueued",origin="live"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="requested",origin="replay"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="signed",origin="replay"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="signed_committed",origin="replay"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="restored_signed",origin="replay"} 0
+tos_consensus_actions_total{action="finalize_vote",phase="local_applied",origin="replay"} 0
+tos_consensus_actions_total{action="skip_vote",phase="requested",origin="live"} 0
+tos_consensus_actions_total{action="skip_vote",phase="intent_committed",origin="live"} 0
+tos_consensus_actions_total{action="skip_vote",phase="signed",origin="live"} 0
+tos_consensus_actions_total{action="skip_vote",phase="signed_committed",origin="live"} 0
+tos_consensus_actions_total{action="skip_vote",phase="local_applied",origin="live"} 0
+tos_consensus_actions_total{action="skip_vote",phase="broadcast_enqueued",origin="live"} 0
+tos_consensus_actions_total{action="skip_vote",phase="requested",origin="replay"} 0
+tos_consensus_actions_total{action="skip_vote",phase="signed",origin="replay"} 0
+tos_consensus_actions_total{action="skip_vote",phase="signed_committed",origin="replay"} 0
+tos_consensus_actions_total{action="skip_vote",phase="restored_signed",origin="replay"} 0
+tos_consensus_actions_total{action="skip_vote",phase="local_applied",origin="replay"} 0
+# HELP tos_consensus_action_outcomes_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_action_outcomes_total counter
+tos_consensus_action_outcomes_total{action="proposal",outcome="enqueued"} 0
+tos_consensus_action_outcomes_total{action="proposal",outcome="failed"} 0
+tos_consensus_action_outcomes_total{action="proposal",outcome="cancelled"} 0
+tos_consensus_action_outcomes_total{action="proposal",outcome="suppressed"} 0
+tos_consensus_action_outcomes_total{action="proposal",outcome="unknown"} 0
+tos_consensus_action_outcomes_total{action="notarize_vote",outcome="enqueued"} 0
+tos_consensus_action_outcomes_total{action="notarize_vote",outcome="failed"} 1
+tos_consensus_action_outcomes_total{action="notarize_vote",outcome="cancelled"} 0
+tos_consensus_action_outcomes_total{action="notarize_vote",outcome="suppressed"} 0
+tos_consensus_action_outcomes_total{action="notarize_vote",outcome="unknown"} 0
+tos_consensus_action_outcomes_total{action="finalize_vote",outcome="enqueued"} 0
+tos_consensus_action_outcomes_total{action="finalize_vote",outcome="failed"} 0
+tos_consensus_action_outcomes_total{action="finalize_vote",outcome="cancelled"} 0
+tos_consensus_action_outcomes_total{action="finalize_vote",outcome="suppressed"} 0
+tos_consensus_action_outcomes_total{action="finalize_vote",outcome="unknown"} 0
+tos_consensus_action_outcomes_total{action="skip_vote",outcome="enqueued"} 0
+tos_consensus_action_outcomes_total{action="skip_vote",outcome="failed"} 0
+tos_consensus_action_outcomes_total{action="skip_vote",outcome="cancelled"} 0
+tos_consensus_action_outcomes_total{action="skip_vote",outcome="suppressed"} 0
+tos_consensus_action_outcomes_total{action="skip_vote",outcome="unknown"} 0
+# HELP tos_consensus_action_pending Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_action_pending gauge
+tos_consensus_action_pending{action="proposal"} 0
+tos_consensus_action_pending{action="notarize_vote"} 0
+tos_consensus_action_pending{action="finalize_vote"} 0
+tos_consensus_action_pending{action="skip_vote"} 0
+# HELP tos_consensus_action_accounting_complete Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_action_accounting_complete gauge
+tos_consensus_action_accounting_complete{action="proposal"} 1
+tos_consensus_action_accounting_complete{action="notarize_vote"} 1
+tos_consensus_action_accounting_complete{action="finalize_vote"} 1
+tos_consensus_action_accounting_complete{action="skip_vote"} 1
+# HELP tos_consensus_action_failures_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_action_failures_total counter
+tos_consensus_action_failures_total{action="proposal",reason="missing_signer"} 0
+tos_consensus_action_failures_total{action="proposal",reason="sign_backend"} 0
+tos_consensus_action_failures_total{action="proposal",reason="finality_behind"} 0
+tos_consensus_action_failures_total{action="proposal",reason="superseded"} 0
+tos_consensus_action_failures_total{action="proposal",reason="cancelled"} 0
+tos_consensus_action_failures_total{action="notarize_vote",reason="intent_storage"} 0
+tos_consensus_action_failures_total{action="notarize_vote",reason="missing_signer"} 0
+tos_consensus_action_failures_total{action="notarize_vote",reason="sign_backend"} 1
+tos_consensus_action_failures_total{action="notarize_vote",reason="signed_storage"} 0
+tos_consensus_action_failures_total{action="notarize_vote",reason="duplicate_or_stale"} 0
+tos_consensus_action_failures_total{action="notarize_vote",reason="finality_behind"} 0
+tos_consensus_action_failures_total{action="notarize_vote",reason="journal_unusable"} 0
+tos_consensus_action_failures_total{action="notarize_vote",reason="cancelled"} 0
+tos_consensus_action_failures_total{action="finalize_vote",reason="intent_storage"} 0
+tos_consensus_action_failures_total{action="finalize_vote",reason="missing_signer"} 0
+tos_consensus_action_failures_total{action="finalize_vote",reason="sign_backend"} 0
+tos_consensus_action_failures_total{action="finalize_vote",reason="signed_storage"} 0
+tos_consensus_action_failures_total{action="finalize_vote",reason="duplicate_or_stale"} 0
+tos_consensus_action_failures_total{action="finalize_vote",reason="finality_behind"} 0
+tos_consensus_action_failures_total{action="finalize_vote",reason="journal_unusable"} 0
+tos_consensus_action_failures_total{action="finalize_vote",reason="cancelled"} 0
+tos_consensus_action_failures_total{action="skip_vote",reason="intent_storage"} 0
+tos_consensus_action_failures_total{action="skip_vote",reason="missing_signer"} 0
+tos_consensus_action_failures_total{action="skip_vote",reason="sign_backend"} 0
+tos_consensus_action_failures_total{action="skip_vote",reason="signed_storage"} 0
+tos_consensus_action_failures_total{action="skip_vote",reason="duplicate_or_stale"} 0
+tos_consensus_action_failures_total{action="skip_vote",reason="finality_behind"} 0
+tos_consensus_action_failures_total{action="skip_vote",reason="journal_unusable"} 0
+tos_consensus_action_failures_total{action="skip_vote",reason="cancelled"} 0
+# HELP tos_consensus_proposal_retries_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_proposal_retries_total counter
+tos_consensus_proposal_retries_total 0
+# HELP tos_consensus_proposal_empty_candidates_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_proposal_empty_candidates_total counter
+tos_consensus_proposal_empty_candidates_total 0
+# HELP tos_consensus_sessions Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_sessions gauge
+tos_consensus_sessions{state="active"} 1
+tos_consensus_sessions{state="stopping"} 0
+# HELP tos_consensus_sessions_started_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_sessions_started_total counter
+tos_consensus_sessions_started_total 1
+# HELP tos_consensus_session_stop_started_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_session_stop_started_total counter
+tos_consensus_session_stop_started_total 0
+# HELP tos_consensus_leader_windows_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_consensus_leader_windows_total counter
+tos_consensus_leader_windows_total{result="observed"} 0
+tos_consensus_leader_windows_total{result="started"} 0
+# HELP tos_storage_operations_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_storage_operations_total counter
+tos_storage_operations_total{operation="own_vote_intent",result="success"} 0
+tos_storage_operations_total{operation="own_vote_intent",result="failure"} 0
+tos_storage_operations_total{operation="own_vote_intent",result="cancelled"} 0
+tos_storage_operations_total{operation="own_vote_intent",result="duplicate"} 0
+tos_storage_operations_total{operation="own_signed_vote",result="success"} 0
+tos_storage_operations_total{operation="own_signed_vote",result="failure"} 0
+tos_storage_operations_total{operation="own_signed_vote",result="cancelled"} 0
+tos_storage_operations_total{operation="own_signed_vote",result="duplicate"} 0
+# HELP tos_storage_operation_duration_seconds Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_storage_operation_duration_seconds histogram
+tos_storage_operation_duration_seconds_bucket{operation="own_vote_intent",result="success",le="1"} 0
+tos_storage_operation_duration_seconds_bucket{operation="own_vote_intent",result="success",le="+Inf"} 0
+tos_storage_operation_duration_seconds_count{operation="own_vote_intent",result="success"} 0
+tos_storage_operation_duration_seconds_sum{operation="own_vote_intent",result="success"} 0
+tos_storage_operation_duration_seconds_bucket{operation="own_vote_intent",result="failure",le="1"} 0
+tos_storage_operation_duration_seconds_bucket{operation="own_vote_intent",result="failure",le="+Inf"} 0
+tos_storage_operation_duration_seconds_count{operation="own_vote_intent",result="failure"} 0
+tos_storage_operation_duration_seconds_sum{operation="own_vote_intent",result="failure"} 0
+tos_storage_operation_duration_seconds_bucket{operation="own_signed_vote",result="success",le="1"} 0
+tos_storage_operation_duration_seconds_bucket{operation="own_signed_vote",result="success",le="+Inf"} 0
+tos_storage_operation_duration_seconds_count{operation="own_signed_vote",result="success"} 0
+tos_storage_operation_duration_seconds_sum{operation="own_signed_vote",result="success"} 0
+tos_storage_operation_duration_seconds_bucket{operation="own_signed_vote",result="failure",le="1"} 0
+tos_storage_operation_duration_seconds_bucket{operation="own_signed_vote",result="failure",le="+Inf"} 0
+tos_storage_operation_duration_seconds_count{operation="own_signed_vote",result="failure"} 0
+tos_storage_operation_duration_seconds_sum{operation="own_signed_vote",result="failure"} 0
+# HELP tos_state_resolver_waiters Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_state_resolver_waiters gauge
+tos_state_resolver_waiters{kind="state"} 0
+tos_state_resolver_waiters{kind="finalization"} 0
+# HELP tos_state_resolver_results_total Fixed C04 native observations; concurrent bounded snapshot.
+# TYPE tos_state_resolver_results_total counter
+tos_state_resolver_results_total{operation="state",result="success"} 0
+tos_state_resolver_results_total{operation="state",result="failure"} 0
+tos_state_resolver_results_total{operation="state",result="cancelled"} 0
+tos_state_resolver_results_total{operation="finalization",result="success"} 0
+tos_state_resolver_results_total{operation="finalization",result="failure"} 0
+tos_state_resolver_results_total{operation="finalization",result="cancelled"} 0
+# TYPE tos_health_core_registry_instrumentation_complete gauge
+tos_health_core_registry_instrumentation_complete 1
+# TYPE tos_health_core_registry_dropped_updates_total counter
+tos_health_core_registry_dropped_updates_total 0
+# TYPE tos_exporter_snapshot_generation gauge
+tos_exporter_snapshot_generation 1
+# HELP tos_pq_operations_total Actual isolated production PQ operations.
+# TYPE tos_pq_operations_total counter
+tos_pq_operations_total{operation="sign",suite="mldsa44",result="success"} 0
+tos_pq_operations_total{operation="sign",suite="mldsa44",result="failure"} 1
+tos_pq_operations_total{operation="verify",suite="mldsa44",result="success"} 0
+tos_pq_operations_total{operation="verify",suite="mldsa44",result="failure"} 0
+# EOF

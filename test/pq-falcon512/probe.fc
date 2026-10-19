@@ -1,0 +1,2 @@
+#include "../../crypto/smartcont/pq.fc";
+int main(cell message, cell signature, cell public_key) { return pq_check_falcon512_padded(message, signature, public_key); }

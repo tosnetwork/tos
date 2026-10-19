@@ -11,8 +11,9 @@ use crate::client_api::{
     AddValidatorPermKeyRq, AddValidatorTempKeyRq, BlockchainConfigInfo, ClientAPI, CollatorEntry,
     CollatorNodeWhitelist, CollatorNodeWhitelistRq, CollatorsList, CollatorsListShard,
     CustomOverlayConfig, CustomOverlayNode, CustomOverlaysConfig, EngineValidatorConfig, NodeStats,
-    ShardAccountState, ShardDescriptor, Shutdown, SignRq,
+    PqStakeAuthorization, ShardAccountState, ShardDescriptor, Shutdown, SignRq,
 };
+use crate::{operator_reads::*, operator_requests::*};
 use adnl::client::{AdnlClient, AdnlClientConfig, AdnlClientConfigJson};
 use anyhow::Context;
 use chain_block::{BlockIdExt, Deserializable, ShardAccount, UInt256, UnixTime, write_boc};
@@ -29,11 +30,35 @@ pub trait ToFromTL {
     type Rq;
     type Rs;
 
+    fn query_name() -> Option<&'static str> {
+        None
+    }
+
     fn serialize(rq: &Self::Rq) -> anyhow::Result<TLObject>;
     fn deserialize(answer: TLObject) -> anyhow::Result<Self::Rs>;
+    fn deserialize_response(_: &Self::Rq, answer: TLObject) -> anyhow::Result<Self::Rs> {
+        Self::deserialize(answer)
+    }
 }
 
-fn downcast<T: tl_api::AnyBoxedSerialize>(data: TLObject) -> anyhow::Result<T> {
+pub(crate) fn decode_control_reply<T: ToFromTL>(
+    request: &T::Rq,
+    query: &TLObject,
+    answer: TLObject,
+) -> anyhow::Result<T::Rs> {
+    match answer.downcast::<ControlQueryError>() {
+        Err(answer) => T::deserialize_response(request, answer)
+            .with_context(|| format!("Wrong response to {query:?}")),
+        Ok(error) => {
+            if let Some(name) = T::query_name() {
+                return Err(control_query_error(name, *error.code(), error.message()));
+            }
+            anyhow::bail!("Error response to {query:?}: {error:?}")
+        }
+    }
+}
+
+pub(crate) fn downcast<T: tl_api::AnyBoxedSerialize>(data: TLObject) -> anyhow::Result<T> {
     match data.downcast::<T>() {
         Ok(result) => Ok(result),
         Err(obj) => anyhow::bail!("Wrong downcast {:?} to {}", obj, std::any::type_name::<T>()),
@@ -154,6 +179,45 @@ impl ToFromTL for SignRqRs {
         let signature = answer.signature().clone();
 
         Ok(signature)
+    }
+}
+
+struct CreatePqStakeAuthorizationRqRs {}
+
+#[derive(Clone)]
+struct CreatePqStakeAuthorizationRq {
+    election_date: u32,
+    max_factor: u32,
+    adnl_addr: Vec<u8>,
+    stake_owner: Vec<u8>,
+}
+
+impl ToFromTL for CreatePqStakeAuthorizationRqRs {
+    type Rq = CreatePqStakeAuthorizationRq;
+    type Rs = PqStakeAuthorization;
+
+    fn serialize(rq: &Self::Rq) -> anyhow::Result<TLObject> {
+        anyhow::ensure!(rq.adnl_addr.len() == 32, "PQ stake ADNL address must be 32 bytes");
+        anyhow::ensure!(rq.stake_owner.len() == 32, "PQ stake owner must be 32 bytes");
+        Ok(tos::rpc::engine::validator::CreatePqStakeAuthorization {
+            election_date: i32::try_from(rq.election_date)?,
+            max_factor: i32::try_from(rq.max_factor)?,
+            adnl_addr: UInt256::from_raw(rq.adnl_addr.clone(), 256),
+            stake_owner: UInt256::from_raw(rq.stake_owner.clone(), 256),
+        }
+        .into_tl_object())
+    }
+
+    fn deserialize(rs: TLObject) -> anyhow::Result<Self::Rs> {
+        let answer = downcast::<tl_api::tos::engine::validator::PqStakeAuthorization>(rs)?;
+        let answer = answer.only();
+        Ok(PqStakeAuthorization {
+            validator_id: answer.validator_id.as_slice().to_vec(),
+            key_id: answer.key_id.as_slice().to_vec(),
+            algorithm_id: answer.algorithm_id,
+            public_key: answer.public_key.clone(),
+            signature: answer.signature.clone(),
+        })
     }
 }
 
@@ -751,10 +815,10 @@ impl ControlClientAdnl {
     }
 
     pub async fn reconnect(&mut self) -> anyhow::Result<()> {
-        if let Some(adnl) = self.adnl.take() {
-            if let Err(e) = adnl.shutdown().await {
-                tracing::error!(target: "control-client", "failed to shut down ADNL client: {}", e)
-            }
+        if let Some(adnl) = self.adnl.take()
+            && let Err(e) = adnl.shutdown().await
+        {
+            tracing::error!(target: "control-client", "failed to shut down ADNL client: {}", e)
         }
 
         self.adnl = Some(AdnlClient::connect(&self.config).await?);
@@ -779,15 +843,7 @@ impl ControlClientAdnl {
             let res = adnl.query(&tl_object_rq_boxed).await;
 
             match res {
-                Ok(tl_object) => match tl_object.downcast::<ControlQueryError>() {
-                    Err(tl_object_rs) => match T::deserialize(tl_object_rs) {
-                        Err(err) => {
-                            anyhow::bail!("Wrong response to {:?}: {:?}", tl_object_rq, err)
-                        }
-                        Ok(result) => return Ok(result),
-                    },
-                    Ok(error) => anyhow::bail!("Error response to {:?}: {:?}", tl_object_rq, error),
-                },
+                Ok(answer) => return decode_control_reply::<T>(rq, &tl_object_rq, answer),
                 Err(err) => {
                     tracing::debug!(target: "control-client", "control query error: {}", err);
                     if attempt >= self.max_rq_attempts {
@@ -812,6 +868,25 @@ impl ControlClientAdnl {
 
 #[async_trait::async_trait]
 impl ClientAPI for ControlClientAdnl {
+    async fn get_elector_state(
+        &mut self,
+        request: &ElectorStateRequest,
+    ) -> anyhow::Result<ElectorState> {
+        self.do_rq::<GetElectorStateRqRs>(request).await
+    }
+    async fn get_config_proposals(
+        &mut self,
+        request: &ConfigProposalsRequest,
+    ) -> anyhow::Result<ConfigProposals> {
+        self.do_rq::<GetConfigProposalsRqRs>(request).await
+    }
+    async fn get_config_proposal(
+        &mut self,
+        request: &ConfigProposalRequest,
+    ) -> anyhow::Result<ConfigProposalDetail> {
+        self.do_rq::<GetConfigProposalRqRs>(request).await
+    }
+
     async fn get_account_state(&mut self, address: &str) -> anyhow::Result<Account> {
         self.do_rq::<GetAccountRqRs>(&address.to_string()).await
     }
@@ -830,6 +905,22 @@ impl ClientAPI for ControlClientAdnl {
 
     async fn sign(&mut self, rq: &SignRq) -> anyhow::Result<Vec<u8>> {
         self.do_rq::<SignRqRs>(rq).await
+    }
+
+    async fn create_pq_stake_authorization(
+        &mut self,
+        election_date: u32,
+        max_factor: u32,
+        adnl_addr: &[u8],
+        stake_owner: &[u8],
+    ) -> anyhow::Result<PqStakeAuthorization> {
+        self.do_rq::<CreatePqStakeAuthorizationRqRs>(&CreatePqStakeAuthorizationRq {
+            election_date,
+            max_factor,
+            adnl_addr: adnl_addr.to_vec(),
+            stake_owner: stake_owner.to_vec(),
+        })
+        .await
     }
 
     async fn generate_key_pair(&mut self) -> anyhow::Result<Vec<u8>> {

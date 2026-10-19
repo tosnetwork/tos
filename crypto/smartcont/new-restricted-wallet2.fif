@@ -9,7 +9,7 @@
 $# 2- -2 and ' usage if
 
 -1 =: wc
-$1 parse-pubkey =: PubKey
+$1 parse-owner-pubkey =: PubKey
 $2 $>TM =: amount
 def? $3 { @' $3 } { "rwallet" } cond constant file-base
 

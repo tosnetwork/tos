@@ -1,19 +1,47 @@
 #!/usr/bin/env fift -s
-"Asm.fif" include 
-"TosUtil.fif" include 
+"Asm.fif" include
+"TosUtil.fif" include
+
+// Usage: new-bridge.fif <evm-chain-id> <evm-bridge-address>
+//
+// Includes the code that scripts/build-token-bridge.sh compiles for one network:
+// jetton-bridge.fif, jetton-minter.fif, jetton-wallet.fif, votes-collector.fif.
+// The storage below must match jetton-bridge.fc's load_data field for field;
+// token_bridge_sandbox runs this script and takes its output through a mint.
+//
+// The counterparty namespace is fixed here for the life of the bridge. The
+// source generation is not: an oracle vote naming this bridge's address and
+// life activates it once.
+
+$# 2 <> abort"usage: new-bridge.fif <evm-chain-id> <evm-bridge-address (0x + 40 hex digits)>"
+$1 parse-int constant evm-chain-id
+$2 parse-int constant evm-bridge-address
+evm-chain-id 0 < evm-chain-id 1 32 << >= or abort"the EVM chain id must fit 32 bits"
+evm-bridge-address 0 <= evm-bridge-address 1 160 << >= or abort"the EVM bridge address must be a non-zero 160-bit value"
 
 <{ SETCP0 ACCEPT
-   "bridge_code2.fif" include PUSHREF SETCODE
+   "jetton-bridge.fif" include PUSHREF SETCODE
 }>c constant code
 
 "jetton-wallet.fif" include constant jetton_wallet_code
 "jetton-minter.fif" include constant jetton_minter_code
 
 <b
+   0 64 u,                     // born_lt: set by the bridge's first transaction
+   evm-chain-id 32 u,
+   evm-bridge-address 160 u,
+   0 32 u,                     // generation: pinned by activation
+   0 64 u,                     // generation_start
+   0 2 u,                      // generation_state: unset
    0 "votes-collector.fif" include hashu Addr, // collector_address
    jetton_minter_code ref,
    jetton_wallet_code ref,
-   b{0} s,                 // paid_swaps: empty until a fee is paid
+   <b
+      0 64 u,                  // swap_watermark
+      b{0} s,                  // swaps
+      b{0} s,                  // channels
+      0 32 u,                  // channels_count
+   b> ref,
 b> constant storage
 
 code storage null <b b{0011} s, 3 roll ref, rot ref, swap dict, b> constant StateInit

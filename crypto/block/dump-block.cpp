@@ -240,8 +240,10 @@ td::Status test_vset() {
                                        << cc_seqno << " returned empty list");
   }
   for (auto& x : nodes) {
-    std::cout << "weight=" << x.weight << " key=" << x.key.as_bits256().to_hex() << " addr=" << x.addr.to_hex()
-              << std::endl;
+    // Both identities, not a key: a post-quantum descriptor has no classical key, and the
+    // identities are what the set commits to in either case.
+    std::cout << "weight=" << x.weight << " validator_id=" << x.validator_id.value.to_hex()
+              << " key_id=" << x.key_id.value.to_hex() << " addr=" << x.addr.to_hex() << std::endl;
   }
   // ...
   return td::Status::OK();

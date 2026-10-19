@@ -23,6 +23,7 @@
 #include "tos/tos-shard.h"
 #include "tos/tos-tl.hpp"
 
+#include "download-deadline.h"
 #include "download-proof.hpp"
 #include "full-node.h"
 #include "get-next-key-blocks.hpp"
@@ -126,6 +127,11 @@ void GetNextKeyBlocks::got_download_token(std::unique_ptr<ActionToken> token) {
 
 void GetNextKeyBlocks::got_node_to_download(adnl::AdnlNodeIdShort node) {
   download_from_ = node;
+  auto deadline = download_query_deadline(timeout_, 1.0);
+  if (deadline.is_error()) {
+    abort_query(deadline.move_as_error());
+    return;
+  }
   VLOG(FULL_NODE_DEBUG) << "downloading proof for " << block_id_;
 
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) mutable {
@@ -138,11 +144,11 @@ void GetNextKeyBlocks::got_node_to_download(adnl::AdnlNodeIdShort node) {
   auto query = create_serialize_tl_object<tos_api::tosNode_getNextKeyBlockIds>(create_tl_block_id(block_id_), limit_);
   if (client_.empty()) {
     td::actor::send_closure(overlays_, &overlay::Overlays::send_query, download_from_, local_id_, overlay_id_,
-                            "get_prepare", std::move(P), td::Timestamp::in(1.0), std::move(query));
+                            "get_prepare", std::move(P), deadline.ok(), std::move(query));
   } else {
     td::actor::send_closure(client_, &adnl::AdnlExtClient::send_query, "get_prepare",
-                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)),
-                            td::Timestamp::in(1.0), std::move(P));
+                            create_serialize_tl_object_suffix<tos_api::tosNode_query>(std::move(query)), deadline.ok(),
+                            std::move(P));
   }
 }
 

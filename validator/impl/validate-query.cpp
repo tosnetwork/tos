@@ -29,14 +29,15 @@
 #include "block/workchain-execution-dispatch.h"
 #include "common/errorlog.h"
 #include "td/utils/format.h"
+#include "tol/extra-flags-constants.h"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
-#include "tol/extra-flags-constants.h"
 #include "vm/boc.h"
 #include "vm/cells/MerkleProof.h"
 #include "vm/cells/MerkleUpdate.h"
 
 #include "collator-impl.h"
+#include "dispatch-progress.h"
 #include "fabric.h"
 #include "storage-stat-cache.hpp"
 #include "top-shard-descr.hpp"
@@ -285,7 +286,7 @@ void ValidateQuery::finish_query() {
 void ValidateQuery::start_up() {
   LOG(WARNING) << "validate query for " << block_candidate.id.to_str() << " started";
   alarm_timestamp() = timeout;
-  created_by_ = block_candidate.pubkey;
+  created_by_ = block_candidate.producer.value;
 
   REJECT_UNLESS_VOID(id_ == block_candidate.id);
   if (ShardIdFull(id_) != shard_) {
@@ -780,7 +781,7 @@ void ValidateQuery::request_latest_mc_state() {
 void ValidateQuery::after_get_latest_mc_state(td::Result<std::pair<Ref<MasterchainState>, BlockIdExt>> res,
                                               td::PerfLogAction token) {
   token.finish(res);
-  LOG(WARNING) << "in ValidateQuery::after_get_latest_mc_state()";
+  LOG(DEBUG) << "in ValidateQuery::after_get_latest_mc_state()";
   --pending;
   if (res.is_error()) {
     fatal_error(res.move_as_error());
@@ -1265,8 +1266,8 @@ bool ValidateQuery::check_this_shard_mc_info() {
   if (!wc_info_->active) {
     return reject_query(PSTRING() << "cannot create new block for disabled workchain " << workchain());
   }
-  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(
-      config_->get_workchain_list(), workchain(), *config_);
+  auto execution_res = block::default_workchain_execution_registry().resolve_workchain(config_->get_workchain_list(),
+                                                                                       workchain(), *config_);
   if (execution_res.is_error()) {
     return reject_query(execution_res.move_as_error_prefix("cannot validate configured workchain: ").to_string());
   }
@@ -1764,7 +1765,7 @@ void ValidateQuery::got_neighbor_out_queue(int i, td::Result<Ref<MessageQueue>> 
     }
     Ref<MessageQueue> outq_descr = res.move_as_ok();
     block::McShardDescr& descr = neighbors_.at(i);
-    LOG(WARNING) << "obtained outbound queue for neighbor #" << i << " : " << descr.shard().to_str();
+    LOG(DEBUG) << "obtained outbound queue for neighbor #" << i << " : " << descr.shard().to_str();
     if (outq_descr->get_block_id() != descr.blk_) {
       LOG(DEBUG) << "outq_descr->id = " << outq_descr->get_block_id().to_str()
                  << " ; descr.id = " << descr.blk_.to_str();
@@ -1899,6 +1900,37 @@ bool ValidateQuery::request_aux_mc_state(BlockSeqno seqno, Ref<MasterchainStateQ
                                       std::move(token));
       });
   state.clear();
+  return true;
+}
+
+bool ValidateQuery::request_top_descr_governing_states() {
+  if (top_descr_governing_states_requested_ || !top_shard_descr_dict_) {
+    return true;
+  }
+  td::Status error;
+  bool ok = top_shard_descr_dict_->check_for_each([&](Ref<vm::CellSlice> value, td::ConstBitPtr, int) {
+    auto root = value->prefetch_ref();
+    auto parsed = ShardTopBlockDescrQ::fetch(std::move(root), is_fake_);
+    if (parsed.is_error()) {
+      error = parsed.move_as_error_prefix("cannot unpack ShardTopBlockDescr while loading governing state: ");
+      return false;
+    }
+    auto governing_id = parsed.ok()->governing_masterchain_block_id();
+    if (governing_id == mc_blkid_) {
+      return true;
+    }
+    Ref<MasterchainStateQ> state;
+    if (!request_aux_mc_state(governing_id.seqno(), state)) {
+      error = td::Status::Error("cannot request governing masterchain state");
+      return false;
+    }
+    return true;
+  });
+  if (!ok) {
+    return error.is_error() ? reject_query(error.to_string())
+                            : reject_query("cannot enumerate TopBlockDescrSet governing states");
+  }
+  top_descr_governing_states_requested_ = true;
   return true;
 }
 
@@ -2071,7 +2103,19 @@ bool ValidateQuery::check_one_shard(const block::McShardHash& info, const block:
       }
       // following checks are similar to those of Collator::import_new_shard_top_blocks()
       int res_flags = 0;
-      auto chk_res = sh_bd->prevalidate(mc_blkid_, mc_state_,
+      Ref<MasterchainState> governing_state;
+      if (sh_bd->governing_masterchain_block_id() == mc_blkid_) {
+        governing_state = mc_state_;
+      } else {
+        auto auxiliary = get_aux_mc_state(sh_bd->governing_masterchain_block_id().seqno());
+        if (auxiliary.is_null() || auxiliary->get_block_id() != sh_bd->governing_masterchain_block_id()) {
+          return reject_query(PSTRING() << "governing masterchain state for ShardTopBlockDescr "
+                                        << sh_bd->block_id().to_str() << " is unavailable or does not match "
+                                        << sh_bd->governing_masterchain_block_id().to_str());
+        }
+        governing_state = std::move(auxiliary);
+      }
+      auto chk_res = sh_bd->prevalidate(mc_blkid_, mc_state_, std::move(governing_state),
                                         ShardTopBlockDescrQ::fail_new | ShardTopBlockDescrQ::fail_too_new, res_flags);
       if (chk_res.is_error()) {
         return reject_query(PSTRING() << "ShardTopBlockDescr for " << sh_bd->block_id().to_str()
@@ -2955,8 +2999,7 @@ bool ValidateQuery::unpack_precheck_value_flow(Ref<vm::Cell> value_flow_root) {
                         " has a non-zero minted value, but there is no mint InMsg");
   }
   if (value_flow_.minted.is_zero() && mint_msg_.not_null()) {
-    return reject_query("ValueFlow of block "s + id_.to_str() +
-                        " has a zero minted value, but there is a mint InMsg");
+    return reject_query("ValueFlow of block "s + id_.to_str() + " has a zero minted value, but there is a mint InMsg");
   }
   if (is_masterchain()) {
     block::CurrencyCollection to_mint;
@@ -3613,6 +3656,14 @@ bool ValidateQuery::precheck_one_message_queue_update(td::ConstBitPtr out_msg_id
     return reject_query("OutMsgQueue entry with key "s + out_msg_id.to_hex(352) +
                         " contains a MsgEnvelope that should have been stored under different key " + key.to_hex());
   }
+  if (is_pre_dispatch_cleanup(mode, tag)) {
+    // Only deq/deq_short records are emitted by pre-dispatch cleanup.
+    // deq_imm and tr_req are later imports and must not lower this snapshot.
+    if (out_msg_queue_size_known_ && cleanup_out_msg_count_ >= old_out_msg_queue_size_) {
+      return reject_query("cleanup count exceeds old outbound queue size");
+    }
+    ++cleanup_out_msg_count_;
+  }
   return true;
 }
 
@@ -3628,6 +3679,7 @@ bool ValidateQuery::precheck_message_queue_update() {
     REJECT_UNLESS(ns_.out_msg_queue_);
     REJECT_UNLESS(out_msg_dict_);
     new_out_msg_queue_size_ = old_out_msg_queue_size_;
+    cleanup_out_msg_count_ = 0;
     if (!ps_.out_msg_queue_->scan_diff(
             *ns_.out_msg_queue_,
             [this](td::ConstBitPtr key, int key_len, Ref<vm::CellSlice> old_val_extra,
@@ -3803,48 +3855,14 @@ bool ValidateQuery::unpack_dispatch_queue_update() {
       return reject_query("invalid DispatchQueue dictionary in the new state");
     }
 
-    // Round 147 LOW fix: mirror the collator's skip condition.
-    // Collator (collator.cpp:4514) services AccountDispatchQueue
-    // entries unless BOTH new_out_msg_queue_size_ > collator_soft
-    // AND old_out_msg_queue_size_ > chain_hard.  The validator
-    // previously fired the progress check only when old <=
-    // chain_defer, ignoring the post-update new_out_msg_queue_
-    // size_ it had already computed; the case "old > chain_defer
-    // AND new <= chain_defer" was a hole — collator did the work,
-    // validator did not verify it, so a malicious producer could
-    // skip the per-account dispatch progress and validators
-    // would still accept the block.  collator_soft is a node-
-    // local config (max of collator_opts and chain_defer), so
-    // collator_soft >= chain_defer; "new <= chain_defer" therefore
-    // implies "new <= collator_soft" implies collator should have
-    // serviced messages.  Fire the check on either
-    // new <= chain_defer or old <= chain_defer.
-    //
-    // Round 148 LOW (deferred): there is a residual zone the
-    // round-147 fix does not cover.  The collator's actual skip
-    // decision uses the queue size IMMEDIATELY AFTER
-    // out_msg_queue_cleanup() and BEFORE dispatch processing
-    // (collator.cpp:2455 → 4514), which equals old -
-    // cleanup_drops.  If old > chain_defer, post-cleanup <=
-    // chain_defer (collator must service dispatch), and later
-    // tick/tock/transaction phases add enough out-messages that
-    // final new > chain_defer too, then both old and new exceed
-    // chain_defer and this validator gate skips the progress
-    // check even though the collator was required to service it.
-    // Closing this cleanly requires either (a) committing the
-    // post-cleanup queue size in the block or (b) reconstructing
-    // cleanup_drops from the OutMsgDescr / DispatchQueue diffs
-    // that validate-query already iterates.  Both are larger
-    // refactors; tracked as a follow-up.  Exposure is
-    // liveness/fairness only (not state-integrity), and the
-    // attack window requires a specific cleanup_drops + post-
-    // cleanup-add ratio.
-    const auto chain_defer_limit =
-        compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
+    // Reconstruct the state point used by production from validated cleanup
+    // removals. Later additions and same-shard imports cannot hide dispatch.
+    const auto chain_defer_limit = compute_phase_cfg_.size_limits.defer_out_queue_size_limit;
+    const auto post_cleanup_size =
+        have_out_msg_queue_size_in_state_ ? old_out_msg_queue_size_ - cleanup_out_msg_count_ : 0;
     const bool need_dispatch_progress_check =
         have_out_msg_queue_size_in_state_ &&
-        (old_out_msg_queue_size_ <= chain_defer_limit ||
-         new_out_msg_queue_size_ <= chain_defer_limit);
+        dispatch_progress_required(old_out_msg_queue_size_, post_cleanup_size, chain_defer_limit, chain_defer_limit);
     if (need_dispatch_progress_check) {
       // Check that at least one message was taken from each AccountDispatchQueue
       try {
@@ -6176,8 +6194,8 @@ bool ValidateQuery::CheckAccountTxs::check_one_transaction(block::Account& accou
   }
   if (!trs->compute_phase->accepted) {
     if (external) {
-      return reject_query(PSTRING() << "inbound external message claimed to be processed by ordinary transaction "
-                                    << lt << " of account " << addr.to_hex()
+      return reject_query(PSTRING() << "inbound external message claimed to be processed by ordinary transaction " << lt
+                                    << " of account " << addr.to_hex()
                                     << " was in fact rejected (such transaction cannot appear in valid blocks)");
     } else if (trs->compute_phase->skip_reason == block::ComputePhase::sk_none) {
       return reject_query(PSTRING() << "inbound internal message processed by ordinary transaction " << lt
@@ -7594,6 +7612,12 @@ bool ValidateQuery::try_validate() {
   try {
     if (stage_ == 0) {
       LOG(WARNING) << "try_validate stage 0";
+      if (!request_top_descr_governing_states()) {
+        return false;
+      }
+      if (pending) {
+        return true;
+      }
       {
         td::RealCpuTimer timer;
         SCOPE_EXIT {

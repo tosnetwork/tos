@@ -28,6 +28,7 @@
 #include "block/block-parse.h"
 #include "block/block.h"
 #include "common/bigint.hpp"
+#include "crypto/pq/consensus-pq-signer.h"
 #include "fift/Fift.h"
 #include "fift/utils.h"
 #include "fift/words.h"
@@ -41,8 +42,8 @@
 #include "smc-envelope/SmartContractCode.h"
 #include "smc-envelope/WalletV3.h"
 #include "smc-envelope/WalletV4.h"
-#include "td/utils/PathView.h"
 #include "td/utils/JsonBuilder.h"
+#include "td/utils/PathView.h"
 #include "td/utils/Random.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/StringBuilder.h"
@@ -78,24 +79,13 @@ namespace {
 constexpr td::uint32 kDeterministicZerostateNow = 1789434000;
 constexpr td::Slice kMainWalletPkHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 constexpr td::Slice kConfigMasterPkHex = "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f";
-constexpr td::Slice kGenesisValidatorPkHex[] = {
-    "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
-    "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
-    "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
-    "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
-};
+// The canonical genesis takes exactly four post-quantum validators.
+constexpr int kGenesisValidatorCount = 4;
 constexpr td::uint32 kFixedFiftNow = 1700000000;
 constexpr td::uint32 kValidatorElectTime = 1234567890;
 constexpr td::uint32 kValidatorMaxFactor = 2u << 16;
-constexpr td::uint32 kConfigVoteSeqno = 25;
-constexpr td::uint32 kRelativeExpireAt = 10;
-constexpr td::uint16 kValidatorIndex = 9;
-constexpr td::uint32 kProposalHash = 0x10203040;
-constexpr td::uint32 kComplaintHash = 0x20304050;
-constexpr td::uint32 kElectId = 0x89ABCDEF;
 constexpr td::Slice kValidatorPrivKeyHex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 constexpr td::Slice kScriptWalletAddrHex = "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf";
-constexpr td::Slice kScriptConfigAddrHex = "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef";
 constexpr td::Slice kScriptAdnlAddrHex = "c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedf";
 
 class FixedOsTime : public fift::OsTime {
@@ -185,11 +175,6 @@ std::string hex_bytes(td::Slice hex) {
   return td::hex_decode(hex).move_as_ok();
 }
 
-void append_u16_be(std::string& out, td::uint16 value) {
-  out.push_back(static_cast<char>((value >> 8) & 0xff));
-  out.push_back(static_cast<char>(value & 0xff));
-}
-
 void append_u32_be(std::string& out, td::uint32 value) {
   out.push_back(static_cast<char>((value >> 24) & 0xff));
   out.push_back(static_cast<char>((value >> 16) & 0xff));
@@ -205,14 +190,6 @@ std::string make_masterchain_address_file(td::Slice addr_hex) {
 
 void write_masterchain_address_file(fift::SourceLookup& source_lookup, td::Slice name, td::Slice addr_hex) {
   source_lookup.write_file(name.str(), make_masterchain_address_file(addr_hex)).ensure();
-}
-
-td::uint32 normalize_vote_expire(td::uint32 raw_expire, td::uint32 now) {
-  if (raw_expire < (1u << 30)) {
-    auto sum = static_cast<td::uint64>(now) + raw_expire + 1000;
-    raw_expire = static_cast<td::uint32>(((sum + 1999) / 2000) * 2000);
-  }
-  return raw_expire;
 }
 
 std::string make_validator_pubkey_b64(const td::Ed25519::PublicKey& public_key) {
@@ -247,34 +224,6 @@ std::string build_validator_elect_request(td::uint32 elect_time, td::uint32 max_
   return out;
 }
 
-std::string build_config_vote_ext_request(td::uint32 seqno, td::uint32 expire_at, td::uint16 validator_idx,
-                                          td::uint32 proposal_hash) {
-  std::string out = "\x56\x6f\x74\x65";
-  append_u32_be(out, seqno);
-  append_u32_be(out, expire_at);
-  append_u16_be(out, validator_idx);
-  out.resize(out.size() + 28, '\0');
-  append_u32_be(out, proposal_hash);
-  return out;
-}
-
-std::string build_config_vote_int_request(td::uint16 validator_idx, td::uint32 proposal_hash) {
-  std::string out = "\x56\x6f\x74\x45";
-  append_u16_be(out, validator_idx);
-  out.resize(out.size() + 28, '\0');
-  append_u32_be(out, proposal_hash);
-  return out;
-}
-
-std::string build_complaint_vote_request(td::uint16 validator_idx, td::uint32 elect_id, td::uint32 complaint_hash) {
-  std::string out = "\x56\x74\x43\x50";
-  append_u16_be(out, validator_idx);
-  append_u32_be(out, elect_id);
-  out.resize(out.size() + 28, '\0');
-  append_u32_be(out, complaint_hash);
-  return out;
-}
-
 std::string cell_boc(td::Ref<vm::Cell> cell) {
   return vm::std_boc_serialize(std::move(cell), 2).move_as_ok().as_slice().str();
 }
@@ -286,12 +235,22 @@ std::string cell_root_hash_hex(td::Slice boc) {
 void write_deterministic_zerostate_keys(const std::string& dir) {
   td::write_file(dir + TD_DIR_SLASH + "main-wallet.pk", td::hex_decode(kMainWalletPkHex).move_as_ok()).ensure();
   td::write_file(dir + TD_DIR_SLASH + "config-master.pk", td::hex_decode(kConfigMasterPkHex).move_as_ok()).ensure();
-  std::string validator_public_keys;
-  for (auto private_key_hex : kGenesisValidatorPkHex) {
-    auto private_key = td::Ed25519::PrivateKey(td::SecureString(td::hex_decode(private_key_hex).move_as_ok()));
-    validator_public_keys += private_key.get_public_key().move_as_ok().as_octet_string().as_slice().str();
+  // validator-pq.pub: one 1376-byte record per validator, controller id (32) || ADNL id
+  // (32) || ML-DSA-44 public key (1312). The same derivation as the zerostate tests'
+  // disposable manifest, so both fixtures describe the same validators.
+  std::string manifest;
+  for (int index = 0; index < kGenesisValidatorCount; index++) {
+    auto seed = td::sha256(PSLICE() << "disposable-genesis-" << index);
+    auto store = tos::pq::ValidatorPQKeyStore::from_seed(seed);
+    CHECK(store.has_value());
+    const auto& public_key = store->consensus_key().public_key;
+    CHECK(public_key.size() == 1312);
+    manifest += td::sha256(PSLICE() << "controller-" << index);
+    manifest += td::sha256(PSLICE() << "adnl-" << index);
+    manifest += public_key;
   }
-  td::write_file(dir + TD_DIR_SLASH + "validator-keys.pub", validator_public_keys).ensure();
+  CHECK(manifest.size() == 1376 * kGenesisValidatorCount);
+  td::write_file(dir + TD_DIR_SLASH + "validator-pq.pub", manifest).ensure();
 }
 
 void append_state_hash_summary(std::string& summary, const std::string& dir, const std::string& state_name,
@@ -330,6 +289,12 @@ std::string run_zerostate_regression(td::Slice script_name) {
 
   auto patched_script = replace_word_token(load_source(PSTRING() << "smartcont/" << script_name), "now",
                                            td::Slice(td::to_string(kDeterministicZerostateNow)));
+  // Keep the interpreter shebang first; supply a public test namespace explicitly.
+  auto header_end = patched_script.find('\n');
+  CHECK(header_end != std::string::npos);
+  patched_script.insert(header_end + 1,
+                        "0x4343434343434343434343434343434343434343434343434343434343434343 "
+                        "constant quantum-network-tag\n");
   auto script_path = temp_dir + TD_DIR_SLASH + script_name.str();
   td::write_file(script_path, patched_script).ensure();
 
@@ -364,7 +329,13 @@ std::string run_zerostate_regression(td::Slice script_name) {
   return summary;
 }
 
-std::string run_validator_fift_script_regression() {
+fift::SourceLookup create_legacy_validator_fixture_lookup(const std::string& fixture) {
+  auto lookup = fift::create_mem_source_lookup(load_source(fixture)).move_as_ok();
+  lookup.write_file("/ValidatorLegacy.fif", load_source("test/fift/fixtures/ValidatorLegacy.fif")).ensure();
+  return lookup;
+}
+
+std::string run_legacy_validator_fift_script_regression() {
   auto private_key = td::Ed25519::PrivateKey(td::SecureString(hex_bytes(kValidatorPrivKeyHex)));
   auto public_key = private_key.get_public_key().move_as_ok();
   auto pubkey_b64 = make_validator_pubkey_b64(public_key);
@@ -374,7 +345,9 @@ std::string run_validator_fift_script_regression() {
   auto request_expected = build_validator_elect_request(kValidatorElectTime, kValidatorMaxFactor,
                                                         hex_bytes(kScriptWalletAddrHex), hex_bytes(kScriptAdnlAddrHex));
 
-  auto request_lookup = fift::create_mem_source_lookup(load_source("smartcont/validator-elect-req.fif")).move_as_ok();
+  // Historical Ed25519 byte parity only. Neither fixture is an operator
+  // command or evidence that a PQ stake was accepted.
+  auto request_lookup = create_legacy_validator_fixture_lookup("test/fift/fixtures/validator-legacy-elect-req.fif");
   request_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(request_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto request_run =
@@ -384,7 +357,7 @@ std::string run_validator_fift_script_regression() {
   auto signature_b64 = sign_b64(private_key, request);
   check_signature_b64(public_key, request, signature_b64);
 
-  auto signed_lookup = fift::create_mem_source_lookup(load_source("smartcont/validator-elect-signed.fif")).move_as_ok();
+  auto signed_lookup = create_legacy_validator_fixture_lookup("test/fift/fixtures/validator-legacy-elect-signed.fif");
   signed_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(signed_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto signed_run = fift::mem_run_fift(std::move(signed_lookup),
@@ -393,9 +366,9 @@ std::string run_validator_fift_script_regression() {
   auto signed_boc = signed_run.source_lookup.read_file("validator-query.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(signed_boc).move_as_ok().not_null());
 
+  // Historical Ed25519 byte parity only. This path is not a PQ pool operator.
   auto single_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/single-nominator-pool/validator-elect-signed.fif"))
-          .move_as_ok();
+      create_legacy_validator_fixture_lookup("test/fift/fixtures/single-nominator-legacy-elect-signed.fif");
   single_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(single_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto single_run = fift::mem_run_fift(std::move(single_lookup), {"aba", wallet_arg, elect_time, "2", adnl_hex,
@@ -404,8 +377,10 @@ std::string run_validator_fift_script_regression() {
   auto single_boc = single_run.source_lookup.read_file("single-query.boc").move_as_ok().data;
   CHECK(vm::std_boc_deserialize(single_boc).move_as_ok().not_null());
 
+  // Historical Ed25519 byte parity only; the current liquid controller
+  // requires a PQ-shaped pool order and this is not an operator command.
   auto controller_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/liquid-staking/controller-elect-signed.fif")).move_as_ok();
+      create_legacy_validator_fixture_lookup("test/fift/fixtures/liquid-controller-legacy-elect-signed.fif");
   controller_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
   write_masterchain_address_file(controller_lookup, "wallet.addr", kScriptWalletAddrHex);
   auto controller_run =
@@ -420,93 +395,6 @@ std::string run_validator_fift_script_regression() {
   summary += PSTRING() << "validator_query_root_hash=" << cell_root_hash_hex(signed_boc) << "\n";
   summary += PSTRING() << "single_nominator_query_root_hash=" << cell_root_hash_hex(single_boc) << "\n";
   summary += PSTRING() << "controller_query_root_hash=" << cell_root_hash_hex(controller_boc) << "\n";
-  return summary;
-}
-
-std::string run_governance_vote_fift_script_regression() {
-  auto private_key = td::Ed25519::PrivateKey(td::SecureString(hex_bytes(kValidatorPrivKeyHex)));
-  auto public_key = private_key.get_public_key().move_as_ok();
-  auto pubkey_b64 = make_validator_pubkey_b64(public_key);
-  auto config_arg = std::string("@config.addr");
-  auto expire_at = normalize_vote_expire(kRelativeExpireAt, kFixedFiftNow);
-  auto proposal_hash_arg = "0x10203040";
-  auto complaint_hash_arg = "0x20304050";
-  auto elect_id_arg = "0x89ABCDEF";
-
-  auto config_req_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-req.fif")).move_as_ok();
-  config_req_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
-  auto config_req_run = fift::mem_run_fift(std::move(config_req_lookup),
-                                           {"aba", td::to_string(kConfigVoteSeqno), td::to_string(kRelativeExpireAt),
-                                            td::to_string(kValidatorIndex), proposal_hash_arg})
-                            .move_as_ok();
-  auto config_req = config_req_run.source_lookup.read_file("validator-to-sign.req").move_as_ok().data;
-  CHECK(config_req == build_config_vote_ext_request(kConfigVoteSeqno, expire_at, kValidatorIndex, kProposalHash));
-  auto config_signature_b64 = sign_b64(private_key, config_req);
-  check_signature_b64(public_key, config_req, config_signature_b64);
-
-  auto config_int_req_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-req.fif")).move_as_ok();
-  config_int_req_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
-  auto config_int_req_run = fift::mem_run_fift(std::move(config_int_req_lookup),
-                                               {"aba", "-i", td::to_string(kValidatorIndex), proposal_hash_arg})
-                                .move_as_ok();
-  auto config_int_req = config_int_req_run.source_lookup.read_file("validator-to-sign.req").move_as_ok().data;
-  CHECK(config_int_req == build_config_vote_int_request(kValidatorIndex, kProposalHash));
-  auto config_int_signature_b64 = sign_b64(private_key, config_int_req);
-  check_signature_b64(public_key, config_int_req, config_int_signature_b64);
-
-  auto config_signed_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-signed.fif")).move_as_ok();
-  config_signed_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
-  write_masterchain_address_file(config_signed_lookup, "config.addr", kScriptConfigAddrHex);
-  auto config_signed_run =
-      fift::mem_run_fift(std::move(config_signed_lookup),
-                         {"aba", config_arg, td::to_string(kConfigVoteSeqno), td::to_string(kRelativeExpireAt),
-                          td::to_string(kValidatorIndex), proposal_hash_arg, pubkey_b64, config_signature_b64})
-          .move_as_ok();
-  auto config_signed_boc = config_signed_run.source_lookup.read_file("vote-query.boc").move_as_ok().data;
-  CHECK(vm::std_boc_deserialize(config_signed_boc).move_as_ok().not_null());
-
-  auto config_internal_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/config-proposal-vote-signed.fif")).move_as_ok();
-  config_internal_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
-  write_masterchain_address_file(config_internal_lookup, "config.addr", kScriptConfigAddrHex);
-  auto config_internal_run =
-      fift::mem_run_fift(std::move(config_internal_lookup), {"aba", "-i", td::to_string(kValidatorIndex),
-                                                             proposal_hash_arg, pubkey_b64, config_int_signature_b64})
-          .move_as_ok();
-  auto config_internal_boc = config_internal_run.source_lookup.read_file("vote-msg-body.boc").move_as_ok().data;
-  CHECK(vm::std_boc_deserialize(config_internal_boc).move_as_ok().not_null());
-
-  auto complaint_req_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/complaint-vote-req.fif")).move_as_ok();
-  complaint_req_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
-  auto complaint_req_run = fift::mem_run_fift(std::move(complaint_req_lookup),
-                                              {"aba", td::to_string(kValidatorIndex), elect_id_arg, complaint_hash_arg})
-                               .move_as_ok();
-  auto complaint_req = complaint_req_run.source_lookup.read_file("validator-to-sign.req").move_as_ok().data;
-  CHECK(complaint_req == build_complaint_vote_request(kValidatorIndex, kElectId, kComplaintHash));
-  auto complaint_signature_b64 = sign_b64(private_key, complaint_req);
-  check_signature_b64(public_key, complaint_req, complaint_signature_b64);
-
-  auto complaint_signed_lookup =
-      fift::create_mem_source_lookup(load_source("smartcont/complaint-vote-signed.fif")).move_as_ok();
-  complaint_signed_lookup.set_os_time(std::make_unique<FixedOsTime>(kFixedFiftNow));
-  auto complaint_signed_run =
-      fift::mem_run_fift(std::move(complaint_signed_lookup), {"aba", td::to_string(kValidatorIndex), elect_id_arg,
-                                                              complaint_hash_arg, pubkey_b64, complaint_signature_b64})
-          .move_as_ok();
-  auto complaint_signed_boc = complaint_signed_run.source_lookup.read_file("vote-query.boc").move_as_ok().data;
-  CHECK(vm::std_boc_deserialize(complaint_signed_boc).move_as_ok().not_null());
-
-  std::string summary;
-  summary += PSTRING() << "config_vote_req=" << td::buffer_to_hex(config_req) << "\n";
-  summary += PSTRING() << "config_vote_int_req=" << td::buffer_to_hex(config_int_req) << "\n";
-  summary += PSTRING() << "config_vote_ext_root_hash=" << cell_root_hash_hex(config_signed_boc) << "\n";
-  summary += PSTRING() << "config_vote_int_root_hash=" << cell_root_hash_hex(config_internal_boc) << "\n";
-  summary += PSTRING() << "complaint_vote_req=" << td::buffer_to_hex(complaint_req) << "\n";
-  summary += PSTRING() << "complaint_vote_root_hash=" << cell_root_hash_hex(complaint_signed_boc) << "\n";
   return summary;
 }
 
@@ -1050,6 +938,165 @@ TEST(Toslib, AutoDnsFiftScript) {
   CHECK(vm::std_boc_deserialize(boc).move_as_ok().not_null());
 }
 
+namespace {
+// The fourteen encodings of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs:
+// the eight torsion points, y >= 2^255 - 19 with either sign bit, and the identity and
+// order-2 point with the sign bit set: the prohibited weak and non-canonical set.
+const char* const kForgeableEd25519Keys[] = {
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+};
+
+std::string strong_owner_key_hex() {
+  auto key = td::Ed25519::PrivateKey(td::SecureString(32, 's')).get_public_key().move_as_ok().as_octet_string();
+  return td::buffer_to_hex(key.as_slice());
+}
+
+std::string serialized_pubkey(const std::string& hex) {
+  block::PublicKey key;
+  key.key = td::hex_decode(hex).move_as_ok();
+  return key.serialize(true);
+}
+
+// Runs a restricted-wallet creation script on the given public key; returns its
+// error, if any.
+td::Status run_restricted_wallet_script(const std::string& script, const std::string& public_key) {
+  auto lookup = fift::create_mem_source_lookup(load_source(PSTRING() << "smartcont/" << script)).move_as_ok();
+  for (auto code : {"restricted-wallet-code.fif", "restricted-wallet2-code.fif", "restricted-wallet3-code.fif"}) {
+    lookup.write_file(PSTRING() << "/auto/" << code, load_source(PSTRING() << "smartcont/auto/" << code)).ensure();
+  }
+  lookup.write_file("creator.pk", std::string(32, 'c')).ensure();
+  std::vector<std::string> args{"aba"};
+  if (script == "new-restricted-wallet3.fif") {
+    args.push_back("creator");
+  }
+  args.push_back(public_key);
+  if (script != "new-restricted-wallet.fif") {
+    args.push_back("100");
+  }
+  auto result = fift::mem_run_fift(std::move(lookup), args);
+  if (result.is_error()) {
+    return result.move_as_error();
+  }
+  return td::Status::OK();
+}
+}  // namespace
+
+TEST(Toslib, ForgeableKeysFiftPredicate) {
+  std::string script;
+  for (auto hex : kForgeableEd25519Keys) {
+    script += PSTRING() << "0x" << hex << " weak-ed25519-pubkey? not abort\"weak key not refused\"\n";
+  }
+  script += PSTRING() << "0x" << strong_owner_key_hex() << " weak-ed25519-pubkey? abort\"strong key refused\"\n";
+  // Neighbours: one bit away inside the comparison, and just outside the y range.
+  script += "0x26e8958fc2b227b045c3f489f2ef98f0d4dfac05d3c63339b13802886d53fc85 weak-ed25519-pubkey? abort\"n1\"\n";
+  script += "0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7e weak-ed25519-pubkey? abort\"n2\"\n";
+  script += "0xedfffffffffffffffffffffffffffffffffffffffffffffffffffffffeffff7f weak-ed25519-pubkey? abort\"n3\"\n";
+  script = "\"TosUtil.fif\" include\n" + script;
+  fift::mem_run_fift(script, {"aba"}).ensure();
+}
+
+TEST(Toslib, RestrictedWalletScriptsRefuseForgeableKeys) {
+  auto strong = serialized_pubkey(strong_owner_key_hex());
+  for (auto script : {"new-restricted-wallet.fif", "new-restricted-wallet2.fif", "new-restricted-wallet3.fif"}) {
+    run_restricted_wallet_script(script, strong).ensure();
+    for (auto hex : kForgeableEd25519Keys) {
+      auto status = run_restricted_wallet_script(script, serialized_pubkey(hex));
+      LOG_IF(ERROR, status.is_ok()) << script << " accepted " << hex;
+      CHECK(status.is_error());
+      CHECK(status.message().str().find("weak or non-canonical Ed25519") != std::string::npos);
+    }
+  }
+}
+
+// The zerostate builders refuse a weak owner key before registering the wallet.
+TEST(Toslib, CreateStateWalletsRefuseForgeableKeys) {
+  auto temp_dir = td::mkdtemp("/tmp", "tos-create-state-keys").move_as_ok();
+  SCOPE_EXIT {
+    td::rmrf(temp_dir).ignore();
+  };
+  auto include_path = PSTRING() << fift_lib_dir() << ":" << generated_smartcont_dir() << ":" << smartcont_dir();
+  auto run = [&](const std::string& body) {
+    auto script_path = temp_dir + TD_DIR_SLASH + "wallet.fif";
+    td::write_file(script_path, "wc_master setworkchain 1 setglobalid ' make-rdict1 'make-rdict !\n" + body).ensure();
+    auto stderr_path = temp_dir + TD_DIR_SLASH + "stderr.txt";
+    auto command = PSTRING() << "cd " << shell_quote(temp_dir) << " && " << shell_quote(create_state_binary()) << " -I "
+                             << shell_quote(include_path) << " " << shell_quote(script_path) << " > /dev/null 2> "
+                             << shell_quote(stderr_path);
+    auto rc = std::system(command.c_str());
+    return std::make_pair(rc, td::read_file_str(stderr_path).move_as_ok());
+  };
+  auto strong = PSTRING() << "0x" << strong_owner_key_hex();
+  auto words = {"create-wallet0", "create-wallet0a", "create-wallet1", "create-wallet2", "create-wallet3"};
+  for (auto word : words) {
+    auto ok = run(PSTRING() << strong << " rwallet-init-pubkey ! " << strong << " 1000000000 " << word << "\n");
+    LOG_IF(ERROR, ok.first != 0) << word << ": " << ok.second;
+    CHECK(ok.first == 0);
+    for (auto hex : kForgeableEd25519Keys) {
+      auto refused = run(PSTRING() << strong << " rwallet-init-pubkey ! 0x" << hex << " 1000000000 " << word << "\n");
+      CHECK(refused.first != 0);
+      CHECK(refused.second.find("weak or non-canonical Ed25519") != std::string::npos);
+    }
+  }
+  // The restricted wallet v3 initializer key is an owner key too.
+  for (auto hex : kForgeableEd25519Keys) {
+    auto refused =
+        run(PSTRING() << "0x" << hex << " rwallet-init-pubkey ! " << strong << " 1000000000 create-wallet3\n");
+    CHECK(refused.first != 0);
+    CHECK(refused.second.find("weak or non-canonical Ed25519") != std::string::npos);
+  }
+}
+
+// create-wallet2 registers a restricted lockup wallet whose data holds the owner key and
+// a vesting schedule over the amount, with the amount as its balance. The address it
+// prints must be that of a StateInit whose data is built here independently from the
+// same key and amount.
+TEST(Toslib, CreateStateWallet2EncodesKeyAndAmount) {
+  auto temp_dir = td::mkdtemp("/tmp", "tos-create-wallet2").move_as_ok();
+  SCOPE_EXIT {
+    td::rmrf(temp_dir).ignore();
+  };
+  auto include_path = PSTRING() << fift_lib_dir() << ":" << generated_smartcont_dir() << ":" << smartcont_dir();
+  auto key = PSTRING() << "0x" << strong_owner_key_hex();
+  auto script = PSTRING() << "wc_master setworkchain 1 setglobalid ' make-rdict1 'make-rdict !\n"
+                          << key << " 777000000000 create-wallet2\n"
+                          << "<b 1 32 u, " << key << " 256 u, rwallet-start-at @ 32 u, "
+                          << "777000000000 make-rdict1 dict, b> =: expected-data\n"
+                          << "<b b{0011} s, RWCode2 ref, expected-data ref, null dict, b> hashu\n"
+                          << ".\"expected \" Masterchain swap 6 .Addr cr\n";
+  auto script_path = temp_dir + TD_DIR_SLASH + "wallet2.fif";
+  td::write_file(script_path, script).ensure();
+  auto stdout_path = temp_dir + TD_DIR_SLASH + "stdout.txt";
+  auto command = PSTRING() << "cd " << shell_quote(temp_dir) << " && " << shell_quote(create_state_binary()) << " -I "
+                           << shell_quote(include_path) << " " << shell_quote(script_path) << " > "
+                           << shell_quote(stdout_path) << " 2>&1";
+  auto rc = std::system(command.c_str());
+  auto out = td::read_file_str(stdout_path).move_as_ok();
+  LOG_IF(ERROR, rc != 0) << out;
+  CHECK(rc == 0);
+  // "Key <pubkey> -> <address>" from create-wallet2, then "expected <address>".
+  auto registered_at = out.find(" -> ");
+  auto expected_at = out.find("expected ");
+  CHECK(registered_at != std::string::npos && expected_at != std::string::npos);
+  auto registered = td::trim(td::Slice(out).substr(registered_at + 4, 48)).str();
+  auto expected = td::trim(td::Slice(out).substr(expected_at + 9, 48)).str();
+  LOG_IF(ERROR, registered != expected) << out;
+  CHECK(registered.size() == 48);
+  CHECK(registered == expected);
+}
+
 TEST(Toslib, ManualDnsFiftScript) {
   auto source_lookup = fift::create_mem_source_lookup(load_source("smartcont/manual-dns-manage.fif")).move_as_ok();
   auto priv_key = td::Ed25519::generate_private_key().move_as_ok();
@@ -1068,11 +1115,7 @@ TEST(Toslib, ManualDnsFiftScript) {
 }
 
 TEST(Toslib, ValidatorFiftScriptRegression) {
-  REGRESSION_VERIFY(run_validator_fift_script_regression());
-}
-
-TEST(Toslib, GovernanceVoteFiftScriptRegression) {
-  REGRESSION_VERIFY(run_governance_vote_fift_script_regression());
+  REGRESSION_VERIFY(run_legacy_validator_fift_script_regression());
 }
 
 TEST(Toslib, GovernanceProposalFiftScriptRegression) {
@@ -1671,7 +1714,7 @@ TEST(Smartcon, Multisig) {
 
   {
     td::uint64 query_id = 123 | ((now + 10 * 60ull) << 32);
-    tos::MultisigWallet::QueryBuilder qb(wallet_id, query_id, vm::CellBuilder().finalize());
+    tos::MultisigWallet::QueryBuilder qb(wallet_id, 1, query_id, vm::CellBuilder().finalize());
     auto query = qb.create(0, keys[0]);
     auto res = ms.write().send_external_message(query, args());
     CHECK(!res.accepted);
@@ -1680,7 +1723,7 @@ TEST(Smartcon, Multisig) {
   {
     for (int i = 1; i <= 11; i++) {
       td::uint64 query_id = i | ((now + 100 * 60ull) << 32);
-      tos::MultisigWallet::QueryBuilder qb(wallet_id, query_id, vm::CellBuilder().finalize());
+      tos::MultisigWallet::QueryBuilder qb(wallet_id, 1, query_id, vm::CellBuilder().finalize());
       auto query = qb.create(5, keys[5]);
       auto res = ms.write().send_external_message(query, args());
       if (i <= 10) {
@@ -1693,7 +1736,7 @@ TEST(Smartcon, Multisig) {
     now += 100 * 60 + 100;
     {
       td::uint64 query_id = 200 | ((now + 100 * 60ull) << 32);
-      tos::MultisigWallet::QueryBuilder qb(wallet_id, query_id, vm::CellBuilder().finalize());
+      tos::MultisigWallet::QueryBuilder qb(wallet_id, 1, query_id, vm::CellBuilder().finalize());
       auto query = qb.create(6, keys[6]);
       auto res = ms.write().send_external_message(query, args());
       CHECK(res.accepted);
@@ -1701,7 +1744,7 @@ TEST(Smartcon, Multisig) {
 
     {
       td::uint64 query_id = 300 | ((now + 100 * 60ull) << 32);
-      tos::MultisigWallet::QueryBuilder qb(wallet_id, query_id, vm::CellBuilder().finalize());
+      tos::MultisigWallet::QueryBuilder qb(wallet_id, 1, query_id, vm::CellBuilder().finalize());
       auto query = qb.create(5, keys[5]);
       auto res = ms.write().send_external_message(query, args());
       CHECK(res.accepted);
@@ -1709,7 +1752,7 @@ TEST(Smartcon, Multisig) {
   }
 
   td::uint64 query_id = 123 | ((now + 100 * 60ull) << 32);
-  tos::MultisigWallet::QueryBuilder qb(wallet_id, query_id, vm::CellBuilder().finalize());
+  tos::MultisigWallet::QueryBuilder qb(wallet_id, 1, query_id, vm::CellBuilder().finalize());
   for (int i = 0; i < 10; i++) {
     auto query = qb.create(i, keys[i]);
     auto ans = ms.write().send_external_message(query, args());
@@ -1731,7 +1774,7 @@ TEST(Smartcon, Multisig) {
   ASSERT_EQ(0, ms->processed(query_id));
 
   {
-    tos::MultisigWallet::QueryBuilder qb(wallet_id, query_id, vm::CellBuilder().finalize());
+    tos::MultisigWallet::QueryBuilder qb(wallet_id, 1, query_id, vm::CellBuilder().finalize());
     for (int i = 25; i + 1 < 50; i++) {
       qb.sign(i, keys[i]);
     }
@@ -1808,7 +1851,7 @@ TEST(Smartcont, MultisigStress) {
   };
 
   auto sign_query = [&](Query& query, Mask mask) {
-    auto qb = tos::MultisigWallet::QueryBuilder(wallet_id, query.id, query.message);
+    auto qb = tos::MultisigWallet::QueryBuilder(wallet_id, 1, query.id, query.message);
     int first_i = -1;
     for (int i = 0; i < (int)mask.size(); i++) {
       if (mask.test(i)) {

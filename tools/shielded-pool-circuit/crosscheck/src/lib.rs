@@ -28,10 +28,12 @@ use tos_vm::stack::integer::IntegerData;
 use tos_vm::stack::StackItem;
 
 pub(crate) const TOS: u64 = 1_000_000_000;
-pub const ACTIVE_VERSION: u32 = 18;
+pub const ACTIVE_VERSION: u32 = 16;
 
 pub mod acceptance;
 pub mod anchor_probe;
+pub mod ceiling;
+pub mod components;
 pub mod frontier_probe;
 pub mod imt_probe;
 pub mod pool;
@@ -111,7 +113,7 @@ pub fn stdlib_path() -> PathBuf {
 }
 
 impl Probe {
-    /// Compiles the library with the probe and deploys it at global version 17.
+    /// Compiles the library with the probe and deploys it at global version 16.
     pub fn deploy() -> Result<Self> {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)?;
         let payer = bc.treasury("deployer", 1_000 * TOS)?;
@@ -123,7 +125,11 @@ impl Probe {
             "shielded FunC library under test: {}",
             library.canonicalize().unwrap_or(library.clone()).display()
         );
-        let probe_path = std::env::temp_dir().join("tos_shielded_circuit_crosscheck_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir()
+            .map_err(|error| CrossCheckError::Sandbox(format!("probe directory: {error}")))?;
+        let probe_path = probe_dir.path().join("tos_shielded_circuit_crosscheck_probe.fc");
         std::fs::write(&probe_path, PROBE)
             .map_err(|error| CrossCheckError::Sandbox(format!("write probe: {error}")))?;
 

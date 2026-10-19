@@ -393,6 +393,8 @@ struct Transaction {
   bool was_created{false};
   bool bounce_enabled{false};
   bool in_msg_extern{false};
+  // Version-17 context: complete external import statistics, including root.
+  Ref<vm::Tuple> incoming_storage_stats;
   gen::CommonMsgInfo::Record_int_msg_info in_msg_info;
   td::RefInt256 in_msg_extra_flags = td::zero_refint();
   bool new_bounce_format{false};

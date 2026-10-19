@@ -16,7 +16,7 @@ use super::service_actor_cmd::ServiceActorCmd;
 use super::utils::{
     DEPLOY_TIMEOUT, SEND_TIMEOUT, calculate_wallet_address, get_wallet_config, load_config_vault,
     load_config_vault_rpc_client, load_config_vault_rpc_client_fd, make_wallet, save_config,
-    try_create_rpc_client, wait_for_deploy, wait_for_seqno_change, wallet_info,
+    try_create_rpc_client, wait_for_deploy, wallet_info,
 };
 use anyhow::Context;
 use base64::Engine;
@@ -29,7 +29,8 @@ use chain_rpc_client::v2::client_json_rpc::{
     canonicalize_chain_rpc_endpoint, validate_exact_boc_before_broadcast,
 };
 use chain_rpc_client::v2::data_models::{
-    AccountState, ExactBocSubmissionResult, ExactBocSubmissionStatus, RelayNetworkDomainPin,
+    AccountState, ExactBocSubmissionResult, ExactBocSubmissionStatus, RawTransaction,
+    RelayNetworkDomainPin,
 };
 use clap::ValueEnum;
 use colored::Colorize;
@@ -163,7 +164,7 @@ pub struct AgentTaskCapabilitiesCmd {
 pub struct AgentTaskSendCmd {
     #[arg(long, value_enum)]
     operation: AgentTaskOperation,
-    #[arg(long, conflicts_with = "name", help = "Task Escrow address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, conflicts_with = "name", help = "Task Escrow address")]
     address: Option<String>,
     #[arg(long, help = "Local task record name from `agent task ls`")]
     name: Option<String>,
@@ -242,7 +243,7 @@ pub struct AgentTaskSendCmd {
     #[arg(
         long,
         conflicts_with = "amount_nanotos",
-        help = "Message value in TOS; defaults to 0.01"
+        help = "Message value in TOS; defaults to the gas allowance of any Task Escrow action, priced from the chain's config"
     )]
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact message value in nanoTOS")]
@@ -254,7 +255,7 @@ pub struct AgentTaskSendCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show Task Escrow state by address or local record name")]
 pub struct AgentTaskShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Task Escrow address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, conflicts_with = "name", help = "Task Escrow address")]
     address: Option<String>,
     #[arg(long, help = "Local task record name from `agent task ls`")]
     name: Option<String>,
@@ -318,6 +319,13 @@ pub struct AgentTaskCreateCmd {
     deadline: u64,
     #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
     review_period: u32,
+    #[arg(
+        long,
+        default_value_t = TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+        value_parser = clap::value_parser!(u16).range(0..=10_000),
+        help = "Agent's share of the budget, in basis points, if a dispute is still unresolved 7 days after it is raised; the creator receives the rest"
+    )]
+    dispute_fallback_agent_bps: u16,
     #[arg(long)]
     policy_hash: String,
     #[arg(
@@ -375,7 +383,8 @@ pub struct AgentTaskCreateCmd {
     #[arg(
         long,
         conflicts_with = "amount_nanotos",
-        help = "Funding amount in TOS; defaults to 0.2"
+        help = "Funding amount in TOS; at least the budget plus 0.05; defaults to the budget plus 0.2 \
+                (recommended)"
     )]
     amount: Option<f64>,
     #[arg(long, conflicts_with = "amount", help = "Exact funding amount in nanoTOS")]
@@ -383,6 +392,7 @@ pub struct AgentTaskCreateCmd {
     #[arg(
         short = 'w',
         long = "workchain",
+        allow_negative_numbers = true,
         help = "Deployment workchain; defaults to the Agent Account workchain, or -1 with --from"
     )]
     workchain: Option<i32>,
@@ -403,6 +413,13 @@ enum AgentTaskOperation {
     Settle,
     Cancel,
     Timeout,
+    /// Ends a dispute left unresolved past its deadline with the fallback split.
+    /// The escrow must still hold the whole budget: the default message value
+    /// pays this call's gas and forwarding, not storage rent that has eaten
+    /// into the budget. If it has, top the escrow up first (a plain transfer,
+    /// with headroom for further rent); a larger value on this call does not
+    /// count towards the budget.
+    DisputeTimeout,
     RotateAttestorKey,
     RevokeAttestor,
 }
@@ -412,7 +429,7 @@ impl AgentTaskOperation {
         match self {
             Self::Accept | Self::Claim => Ok(status == 1),
             Self::Result => Ok(status == 2),
-            Self::Settle | Self::Resolve => Ok(status == 3),
+            Self::Settle | Self::Resolve | Self::DisputeTimeout => Ok(status == 3),
             Self::Cancel => Ok(status == 4),
             Self::Timeout => Ok(matches!(status, 3 | 5)),
             Self::Reject => Ok(status == 6),
@@ -434,6 +451,7 @@ impl AgentTaskOperation {
             Self::Settle => "settle",
             Self::Cancel => "cancel",
             Self::Timeout => "timeout",
+            Self::DisputeTimeout => "dispute-timeout",
             Self::RotateAttestorKey => "rotate-attestor-key",
             Self::RevokeAttestor => "revoke-attestor",
         }
@@ -536,6 +554,13 @@ pub struct AgentTaskBuildStateCmd {
     deadline: u64,
     #[arg(long, default_value_t = 86_400, help = "Result review window in seconds")]
     review_period: u32,
+    #[arg(
+        long,
+        default_value_t = TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+        value_parser = clap::value_parser!(u16).range(0..=10_000),
+        help = "Agent's share of the budget, in basis points, if a dispute is still unresolved 7 days after it is raised; the creator receives the rest"
+    )]
+    dispute_fallback_agent_bps: u16,
     #[arg(long, help = "32-byte settlement policy hash")]
     policy_hash: String,
     #[arg(
@@ -543,7 +568,7 @@ pub struct AgentTaskBuildStateCmd {
         help = "Optional 32-byte ed25519 public key; when set, settle also requires a signature over result_hash"
     )]
     attestor_pubkey: Option<String>,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -643,7 +668,13 @@ pub struct AgentAccountBuildStateCmd {
     #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
     wallet: String,
 
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Agent Account workchain"
+    )]
     workchain: i32,
 
     #[arg(short, long, default_value = "table")]
@@ -659,7 +690,13 @@ pub struct AgentAccountDeployCmd {
     #[arg(long = "from", help = "Funding wallet name from config, or master_wallet")]
     from: String,
 
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Agent Account workchain"
+    )]
     workchain: i32,
 
     #[arg(long = "amount", default_value_t = 0.2, help = "Initial Agent Account balance, in TOS")]
@@ -684,7 +721,7 @@ pub struct AgentAccountShowCmd {
     // A canonical masterchain raw address starts with `-1:`.  Accept it as
     // the value of this option instead of letting clap reinterpret it as a
     // second option.
-    #[arg(short, long, allow_hyphen_values = true, help = "Agent Account address")]
+    #[arg(short, long, allow_hyphen_values = true, value_parser = super::utils::address_arg, help = "Agent Account address")]
     address: String,
 
     #[arg(short, long, default_value = "table")]
@@ -697,7 +734,13 @@ pub struct AgentAccountStatusCmd {
     #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
     wallet: String,
 
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Agent Account workchain")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Agent Account workchain"
+    )]
     workchain: i32,
 
     #[arg(short, long, default_value = "table")]
@@ -755,7 +798,7 @@ pub struct AgentAccountRotateControllerCmd {
 pub struct AgentAccountTaskSendCmd {
     #[arg(short = 'n', long = "wallet", help = "Agent Wallet profile name")]
     wallet: String,
-    #[arg(long, help = "Destination address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Destination address")]
     target: String,
     #[arg(long, help = "Transfer amount in TOS")]
     value: f64,
@@ -804,7 +847,7 @@ pub struct AgentAccountTaskSendResolveCmd {
 pub struct AgentAccountNativePrepareCmd {
     #[arg(short = 'n', long = "wallet")]
     wallet: String,
-    #[arg(long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     target: String,
     #[arg(long, help = "Exact native TOS amount in nanoTOS")]
     amount_nanotos: u64,
@@ -863,7 +906,7 @@ pub struct AgentAccountNativeResolveCmd {
 pub struct AgentAccountEconomicPaymentPrepareCmd {
     #[arg(short = 'n', long = "wallet")]
     wallet: String,
-    #[arg(long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     target: String,
     #[arg(long, help = "Exact native TOS amount in nanoTOS")]
     amount_nanotos: u64,
@@ -896,7 +939,7 @@ pub struct AgentAccountEconomicPaymentBroadcastCmd {
 pub struct AgentAccountEconomicEffectPrepareCmd {
     #[arg(short = 'n', long = "wallet")]
     wallet: String,
-    #[arg(long)]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long)]
     target: String,
     #[arg(long, help = "Native TOS attached to the contract call, in nanoTOS")]
     amount_nanotos: u64,
@@ -1053,7 +1096,7 @@ pub struct AgentAccountEconomicPaymentCorroborationProfileCmd {
     zero_state_root_hash: String,
     #[arg(long)]
     zero_state_file_hash: String,
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     workchain_id: i32,
     #[arg(
         long = "quorum-config",
@@ -1139,7 +1182,7 @@ pub enum AgentWalletAction {
 pub struct AgentWalletSendCmd {
     #[arg(short = 'n', long = "name", help = "Agent Wallet profile name")]
     name: String,
-    #[arg(long, help = "Destination address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Destination address")]
     to: String,
     #[arg(long, help = "Amount in TOS (e.g. 1.5)")]
     amount: f64,
@@ -1163,7 +1206,13 @@ pub struct AgentWalletCreateCmd {
     )]
     version: String,
 
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Workchain ID")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Workchain ID"
+    )]
     workchain: i32,
 
     #[arg(short = 'i', long = "subwallet-id", default_value = "4242", help = "Subwallet ID")]
@@ -1814,6 +1863,13 @@ fn validate_controller_task_action(
             validate_controller_task_payout(task, context)?;
             validate_controller_task_attestation(operation, task, context)?;
         }
+        AgentTaskOperation::DisputeTimeout => {
+            require_task_status(task, 7, "disputed")?;
+            if context.now < task.dispute_deadline {
+                anyhow::bail!("Task Escrow dispute deadline has not passed");
+            }
+            validate_dispute_timeout_principal(task, context)?;
+        }
         AgentTaskOperation::RotateAttestorKey | AgentTaskOperation::RevokeAttestor => {
             anyhow::bail!("this Task operation is not supported through Agent Account custody")
         }
@@ -1822,12 +1878,18 @@ fn validate_controller_task_action(
 }
 
 struct ControllerTaskActionContext<'a> {
+    global_id: i32,
     task_address: &'a MsgAddressInt,
     now: u64,
     payout: Option<u64>,
     dispute_hash: Option<[u8; 32]>,
     attestation_signature: Option<&'a [u8; 64]>,
+    /// The escrow's balance as the contract sees it while handling this
+    /// message: what it held plus the value attached to the message.
     available_balance: u64,
+    /// The value attached to this message, already counted in
+    /// `available_balance`.
+    attached_value: u64,
 }
 
 fn require_task_status(
@@ -1859,6 +1921,35 @@ fn validate_controller_task_payout(
     Ok(())
 }
 
+/// dispute_timeout refuses with exit 126 unless the escrow still holds the
+/// whole budget without the caller's attached value
+/// (`budget <= balance - msg_value`). The attached value pays the call's fees,
+/// so a larger one cannot make up a missing principal; only a separate
+/// transfer to the escrow can.
+fn validate_dispute_timeout_principal(
+    task: &TaskEscrowData,
+    context: &ControllerTaskActionContext<'_>,
+) -> anyhow::Result<()> {
+    let principal = context
+        .available_balance
+        .checked_sub(context.attached_value)
+        .context("Task Escrow balance is smaller than the value attached to this message")?;
+    if task.budget > principal {
+        let shortfall = task
+            .budget
+            .checked_sub(principal)
+            .context("Task Escrow principal shortfall underflowed")?;
+        anyhow::bail!(
+            "Task Escrow holds {principal} nanoTOS of its {} nanoTOS budget, so dispute-timeout \
+             would be refused (exit 126); top up the escrow first with a separate transfer of at \
+             least {shortfall} nanoTOS (attaching more value to this message does not count \
+             toward the principal)",
+            task.budget
+        );
+    }
+    Ok(())
+}
+
 fn validate_controller_task_attestation(
     operation: &AgentTaskOperation,
     task: &TaskEscrowData,
@@ -1874,11 +1965,13 @@ fn validate_controller_task_attestation(
         context.attestation_signature.context("Task Escrow requires an attestation signature")?;
     let domain_hash = match operation {
         AgentTaskOperation::Settle => contracts::settle_domain_hash(
+            context.global_id,
             context.task_address,
             &task.result_hash,
             context.payout.context("settle requires payout")?,
         )?,
         AgentTaskOperation::Resolve => contracts::resolve_domain_hash(
+            context.global_id,
             context.task_address,
             &task.result_hash,
             &task.dispute_hash,
@@ -1894,8 +1987,11 @@ fn validate_controller_task_attestation(
 
 impl AgentTaskSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let amount_nanotos =
-            resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.01))?;
+        let explicit_amount = if self.amount.is_some() || self.amount_nanotos.is_some() {
+            Some(resolve_nanotos("amount", self.amount, self.amount_nanotos, None)?)
+        } else {
+            None
+        };
         let mut payout_nanotos = None;
         let mut dispute_hash = None;
         let mut attestation_signature = None;
@@ -1946,6 +2042,9 @@ impl AgentTaskSendCmd {
             }
             AgentTaskOperation::Cancel => Some(TaskEscrowContract::cancel(self.query_id)?),
             AgentTaskOperation::Timeout => Some(TaskEscrowContract::timeout(self.query_id)?),
+            AgentTaskOperation::DisputeTimeout => {
+                Some(TaskEscrowContract::dispute_timeout(self.query_id)?)
+            }
             AgentTaskOperation::RotateAttestorKey => {
                 match parse_optional_hash("new-attestor-pubkey", &self.new_attestor_pubkey)? {
                     Some(pubkey) => {
@@ -1965,6 +2064,30 @@ impl AgentTaskSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_task_address(&config, &self.address, &self.name)?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &destination,
+            contracts::VersionedContract::TaskEscrow,
+        )
+        .await?;
+        let amount_nanotos = match explicit_amount {
+            Some(amount) => amount,
+            None => {
+                let schedule = load_agent_deploy_fee_schedule(&rpc_client, &destination).await?;
+                // A payout to a masterchain account is forwarded at masterchain
+                // rates even from a workchain escrow.
+                let masterchain_forwarding = match rpc_client.get_config_param(24).await? {
+                    ConfigParamEnum::ConfigParam24(value) => value,
+                    _ => anyhow::bail!(
+                        "chain config parameter 24 is not masterchain forwarding pricing"
+                    ),
+                };
+                TaskEscrowContract::action_value(
+                    &schedule.gas,
+                    &[&schedule.forwarding, &masterchain_forwarding],
+                )?
+            }
+        };
         if body.is_none() {
             let vault_key = self
                 .signer_vault_key
@@ -1979,6 +2102,7 @@ impl AgentTaskSendCmd {
                         .await?;
                     let chain_task = TaskEscrowContract::decode_data(&stack)?;
                     let domain_hash = contracts::settle_domain_hash(
+                        super::utils::network_global_id(&rpc_client).await?,
                         &destination,
                         &chain_task.result_hash,
                         payout,
@@ -1997,6 +2121,7 @@ impl AgentTaskSendCmd {
                         .await?;
                     let chain_task = TaskEscrowContract::decode_data(&stack)?;
                     let domain_hash = contracts::resolve_domain_hash(
+                        super::utils::network_global_id(&rpc_client).await?,
                         &destination,
                         &chain_task.result_hash,
                         &chain_task.dispute_hash,
@@ -2083,6 +2208,7 @@ impl AgentTaskSendCmd {
                 AgentTaskOperation::Settle
                     | AgentTaskOperation::Timeout
                     | AgentTaskOperation::Dispute
+                    | AgentTaskOperation::DisputeTimeout
             ) {
                 let master = rpc_client.get_masterchain_info().await?;
                 let header = rpc_client
@@ -2101,7 +2227,9 @@ impl AgentTaskSendCmd {
             };
             let available_balance = if matches!(
                 self.operation,
-                AgentTaskOperation::Settle | AgentTaskOperation::Resolve
+                AgentTaskOperation::Settle
+                    | AgentTaskOperation::Resolve
+                    | AgentTaskOperation::DisputeTimeout
             ) {
                 provider
                     .balance(&destination)
@@ -2112,12 +2240,14 @@ impl AgentTaskSendCmd {
                 u64::MAX
             };
             let validation_context = ControllerTaskActionContext {
+                global_id: super::utils::network_global_id(&rpc_client).await?,
                 task_address: &destination,
                 now: validation_now,
                 payout: payout_nanotos,
                 dispute_hash,
                 attestation_signature: attestation_signature.as_ref(),
                 available_balance,
+                attached_value: amount_nanotos,
             };
             validate_controller_task_action(
                 &self.operation,
@@ -2206,6 +2336,13 @@ struct AgentTaskDataView {
     settlement_policy_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     attestor_pubkey: Option<String>,
+    /// The agent's share, in basis points, if a dispute outlives its deadline.
+    dispute_fallback_agent_bps: u16,
+    /// When the fallback may end an open dispute; zero until one is raised.
+    dispute_deadline: u64,
+    balance: String,
+    /// Whether the escrow holds its budget; claim and accept refuse until it does.
+    budget_held: bool,
 }
 
 impl AgentTaskShowCmd {
@@ -2213,9 +2350,15 @@ impl AgentTaskShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_task_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        let info = rpc_client.get_address_information(&address).await?;
+        contracts::VersionedContract::TaskEscrow
+            .require_supported_code_boc(info.code.as_deref())
+            .map_err(|e| anyhow::anyhow!("{address}: {e}"))?;
+        let balance = info.balance;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_task_data", vec![]).await?;
         let data = TaskEscrowContract::decode_data(&stack)?;
+        let shortfall = data.budget.saturating_sub(balance);
         let permission_id = config
             .agent_tasks
             .values()
@@ -2238,6 +2381,10 @@ impl AgentTaskShowCmd {
             dispute_hash: hex::encode(data.dispute_hash),
             settlement_policy_hash: hex::encode(data.settlement_policy_hash),
             attestor_pubkey: data.attestor_pubkey.map(hex::encode),
+            dispute_fallback_agent_bps: data.dispute_fallback_agent_bps,
+            dispute_deadline: data.dispute_deadline,
+            balance: display_tos(balance),
+            budget_held: shortfall == 0,
         };
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&view)?);
@@ -2252,6 +2399,13 @@ impl AgentTaskShowCmd {
             println!("Review period: {}s", view.review_period);
             println!("Review deadline: {}", view.review_deadline);
             println!("Status: {}", view.status);
+            println!("Balance: {} TOS", view.balance);
+            if shortfall > 0 && data.status == 0 {
+                println!(
+                    "Not claimable yet: the escrow holds less than its budget; top it up by at least {} TOS",
+                    display_tos(shortfall)
+                );
+            }
             println!("Attestor pubkey: {}", view.attestor_pubkey.as_deref().unwrap_or("none"));
         }
         Ok(())
@@ -2508,9 +2662,13 @@ async fn verify_task_deploy_quorum_network(
 
 impl AgentTaskCreateCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let amount_nanotos =
-            resolve_nanotos("amount", self.amount, self.amount_nanotos, Some(0.2))?;
         let budget_nanotos = resolve_nanotos("budget", self.budget, self.budget_nanotos, None)?;
+        let explicit_amount = if self.amount.is_some() || self.amount_nanotos.is_some() {
+            Some(resolve_nanotos("amount", self.amount, self.amount_nanotos, None)?)
+        } else {
+            None
+        };
+        let amount_nanotos = task_escrow_funding_nanotos(budget_nanotos, explicit_amount)?;
         let path = Path::new(config_path);
         let (mut config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let agent_account = self
@@ -2574,6 +2732,7 @@ impl AgentTaskCreateCmd {
             settlement_policy_hash: policy_hash,
             permission_hash,
             attestor_pubkey,
+            dispute_fallback_agent_bps: self.dispute_fallback_agent_bps,
         };
         let address = TaskEscrowContract::calculate_address(deployment_workchain, &init)?;
         let state_init = TaskEscrowContract::build_state_init(&init)?;
@@ -3457,6 +3616,9 @@ impl AgentTaskEncodeCmd {
             }
             AgentTaskOperation::Cancel => TaskEscrowContract::cancel(self.query_id)?,
             AgentTaskOperation::Timeout => TaskEscrowContract::timeout(self.query_id)?,
+            AgentTaskOperation::DisputeTimeout => {
+                TaskEscrowContract::dispute_timeout(self.query_id)?
+            }
             AgentTaskOperation::RotateAttestorKey => TaskEscrowContract::rotate_attestor_key(
                 self.query_id,
                 parse_required_hash("new-attestor-pubkey", &self.new_attestor_pubkey)?,
@@ -3526,6 +3688,7 @@ impl AgentTaskBuildStateCmd {
             settlement_policy_hash: policy_hash,
             permission_hash,
             attestor_pubkey,
+            dispute_fallback_agent_bps: self.dispute_fallback_agent_bps,
         };
         let state_init = TaskEscrowContract::build_state_init(&init)?;
         let address = TaskEscrowContract::calculate_address(self.workchain, &init)?;
@@ -7087,6 +7250,10 @@ fn sponsorship_rpc_temporarily_unavailable(failure: &str) -> bool {
         || failure.contains("RPC temporarily unavailable:")
         || failure.contains("rpc_error_category=timeout")
         || failure.contains("rpc_error_category=transport_unavailable")
+        // Typed JSON-RPC errors the server marks retryable.
+        || failure.contains("rpc_error_category=upstream_unavailable")
+        || failure.contains("rpc_error_category=rate_limit")
+        || failure.contains("rpc_error_category=verification_backend_failure")
 }
 
 fn rpc_failure_category(error: &anyhow::Error) -> &'static str {
@@ -9689,15 +9856,24 @@ async fn run_agent_account_owner_action(
     let wallet = make_wallet(rpc_client.clone(), &agent_wallet.wallet, owner_secret, wallet_name)
         .await
         .context("create Agent Account owner wallet")?;
-    send_wallet_message(
+    // A short seqno poll can expire while the shard is still including this
+    // exact wallet message. Confirm the submitted BOC and destination before
+    // reading the Agent Account effect; never broadcast it a second time.
+    let boc = build_wallet_message_boc(
         &wallet,
-        rpc_client.clone(),
         address.clone(),
         amount_nanotos,
         body,
         true,
         owner_info.seqno,
+    )
+    .await?;
+    confirm_prepared_wallet_message(
+        rpc_client.clone(),
+        &boc,
         &owner_address,
+        &address,
+        DEPLOY_TIMEOUT,
     )
     .await?;
     wait_for_agent_account_match(rpc_client, &address, &init, matches).await?;
@@ -9729,16 +9905,14 @@ pub(crate) async fn send_wallet_message(
     seqno: Option<u32>,
     owner_address: &MsgAddressInt,
 ) -> anyhow::Result<()> {
-    let msg = wallet.build_message(destination, amount, body, bounce, seqno, None, None).await?;
-    rpc_client.send_boc(&write_boc(&msg)?).await?;
-    wait_for_seqno_change(
-        rpc_client,
-        owner_address,
-        seqno,
-        &common::task_cancellation::CancellationCtx::default(),
-        SEND_TIMEOUT,
-    )
-    .await
+    // All retained callers use this shared send path. A short seqno poll can
+    // misreport a successful shard transaction as a failed operation. Sign
+    // once and confirm that exact external message and destination; never
+    // rebroadcast on an ambiguous observation timeout.
+    let boc =
+        build_wallet_message_boc(wallet, destination.clone(), amount, body, bounce, seqno).await?;
+    confirm_prepared_wallet_message(rpc_client, &boc, owner_address, &destination, DEPLOY_TIMEOUT)
+        .await
 }
 
 /// Build and sign a wallet message without broadcasting it. Returns the
@@ -9766,18 +9940,486 @@ pub(crate) async fn send_wallet_message_with_state_init(
     owner_address: &MsgAddressInt,
     state_init: chain_block::StateInit,
 ) -> anyhow::Result<()> {
+    let destination_for_confirmation = destination.clone();
     let msg = wallet
         .build_message(destination, amount, body, false, seqno, None, Some(state_init))
         .await?;
-    rpc_client.send_boc(&write_boc(&msg)?).await?;
-    wait_for_seqno_change(
+    let boc = write_boc(&msg)?;
+    confirm_prepared_wallet_message(
         rpc_client,
+        &boc,
         owner_address,
-        seqno,
-        &common::task_cancellation::CancellationCtx::default(),
-        SEND_TIMEOUT,
+        &destination_for_confirmation,
+        DEPLOY_TIMEOUT,
     )
     .await
+}
+
+/// Confirm a fee-bearing wallet send by its exact external-message hash and
+/// destination, not by an unrelated seqno increment. This also serves the
+/// Nominator Pool deposit path, whose shard inclusion can outlast the old
+/// 15-second seqno poll. It never rebroadcasts the prepared BOC.
+pub(crate) async fn confirm_prepared_wallet_message(
+    rpc_client: std::sync::Arc<chain_rpc_client::v2::client_json_rpc::ClientJsonRpc>,
+    boc: &Vec<u8>,
+    owner_address: &MsgAddressInt,
+    destination: &MsgAddressInt,
+    deadline: tokio::time::Duration,
+) -> anyhow::Result<()> {
+    // Capture the source cursor before broadcast. A message can execute in a
+    // shard after the current masterchain view; a short seqno poll would be
+    // an ambiguous negative. Keep the exact hash on every error path.
+    let before = rpc_client.get_address_information(owner_address).await?;
+    let exact_hash = read_single_root_boc(boc)?.hash(0);
+    rpc_client.send_boc(boc).await.map_err(|error| {
+        anyhow::anyhow!(
+            "wallet message sha256:{} may have been submitted: {error}; inspect it before retrying",
+            hex::encode(exact_hash.as_slice())
+        )
+    })?;
+    await_deploy_confirmation(
+        deadline,
+        tokio::time::Duration::from_secs(2),
+        || {
+            let rpc_client = rpc_client.clone();
+            let exact_hash = exact_hash.clone();
+            let destination_for_confirmation = destination.clone();
+            async move {
+                let current = rpc_client.get_address_information(owner_address).await?;
+                if current.last_transaction_id.lt <= before.last_transaction_id.lt {
+                    return Ok(false);
+                }
+                let cursor_hash = base64::engine::general_purpose::STANDARD
+                    .encode(&current.last_transaction_id.hash);
+                scan_deploy_wallet_history(
+                    current.last_transaction_id.lt,
+                    cursor_hash,
+                    before.last_transaction_id.lt,
+                    &exact_hash,
+                    &destination_for_confirmation,
+                    |lt, hash| {
+                        let rpc_client = rpc_client.clone();
+                        async move {
+                            Ok(rpc_client.get_transactions(owner_address, lt, &hash, 10)
+                                .await?.transactions)
+                        }
+                    },
+                ).await
+            }
+        },
+    ).await.map_err(|last_error| anyhow::anyhow!(
+        "wallet message sha256:{} was submitted but its exact wallet transaction is not visible; last read error: {last_error}; inspect it before retrying",
+        hex::encode(exact_hash.as_slice())))
+}
+
+async fn await_deploy_confirmation<F, Fut>(
+    deadline: tokio::time::Duration,
+    poll_interval: tokio::time::Duration,
+    mut observe: F,
+) -> Result<(), String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    let mut last_error = None;
+    let result = tokio::time::timeout(deadline, async {
+        loop {
+            tokio::time::sleep(poll_interval).await;
+            match observe().await {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(error) => last_error = Some(error.to_string()),
+            }
+        }
+    })
+    .await;
+    match result {
+        Ok(()) => Ok(()),
+        Err(_) => Err(last_error.unwrap_or_else(|| "none".to_owned())),
+    }
+}
+
+async fn scan_deploy_wallet_history<F, Fut>(
+    mut cursor_lt: u64,
+    mut cursor_hash: String,
+    baseline_lt: u64,
+    expected_external_hash: &chain_block::UInt256,
+    destination: &MsgAddressInt,
+    mut fetch_page: F,
+) -> anyhow::Result<bool>
+where
+    F: FnMut(u64, String) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Vec<RawTransaction>>>,
+{
+    loop {
+        let page = fetch_page(cursor_lt, cursor_hash).await?;
+        match scan_deploy_wallet_page(&page, baseline_lt, expected_external_hash, destination)? {
+            DeployWalletPage::Confirmed => return Ok(true),
+            DeployWalletPage::ReachedBaseline => return Ok(false),
+            DeployWalletPage::Next { lt, hash } => {
+                anyhow::ensure!(lt < cursor_lt, "wallet transaction pagination did not advance");
+                cursor_lt = lt;
+                cursor_hash = hash;
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum DeployWalletPage {
+    Confirmed,
+    ReachedBaseline,
+    Next { lt: u64, hash: String },
+}
+
+fn scan_deploy_wallet_page(
+    transactions: &[RawTransaction],
+    baseline_lt: u64,
+    expected_external_hash: &chain_block::UInt256,
+    destination: &MsgAddressInt,
+) -> anyhow::Result<DeployWalletPage> {
+    anyhow::ensure!(!transactions.is_empty(), "wallet transaction page was empty above baseline");
+    for raw in transactions {
+        if raw.lt <= baseline_lt {
+            return Ok(DeployWalletPage::ReachedBaseline);
+        }
+        if exact_deploy_wallet_transaction(raw, expected_external_hash, destination)? {
+            return Ok(DeployWalletPage::Confirmed);
+        }
+    }
+    let last = transactions.last().unwrap();
+    let boc = base64::engine::general_purpose::STANDARD.decode(&last.data)?;
+    let transaction = Transaction::construct_from_cell(read_single_root_boc(&boc)?)?;
+    anyhow::ensure!(
+        transaction.logical_time() == last.lt,
+        "wallet transaction page identity differs from its BOC"
+    );
+    let next_lt = transaction.prev_trans_lt();
+    if next_lt <= baseline_lt {
+        return Ok(DeployWalletPage::ReachedBaseline);
+    }
+    Ok(DeployWalletPage::Next {
+        lt: next_lt,
+        hash: base64::engine::general_purpose::STANDARD
+            .encode(transaction.prev_trans_hash().as_slice()),
+    })
+}
+
+fn exact_deploy_wallet_transaction(
+    raw: &RawTransaction,
+    expected_external_hash: &chain_block::UInt256,
+    destination: &MsgAddressInt,
+) -> anyhow::Result<bool> {
+    if raw.data.is_empty() {
+        return Ok(false);
+    }
+    let boc = base64::engine::general_purpose::STANDARD.decode(&raw.data)?;
+    let transaction = Transaction::construct_from_cell(read_single_root_boc(&boc)?)?;
+    let Some(inbound) = transaction.in_msg_cell() else {
+        return Ok(false);
+    };
+    if &inbound.hash(0) != expected_external_hash {
+        return Ok(false);
+    }
+    let TransactionDescr::Ordinary(ordinary) = transaction.read_description()? else {
+        anyhow::bail!("exact deployment wallet transaction is not ordinary");
+    };
+    anyhow::ensure!(
+        !ordinary.aborted && ordinary.compute_ph.is_success().is_some(),
+        "exact deployment wallet transaction aborted or failed compute"
+    );
+    anyhow::ensure!(
+        ordinary.action.as_ref().is_some_and(|action| action.success),
+        "exact deployment wallet transaction did not complete its send action"
+    );
+    let mut sent_to_destination = false;
+    transaction.iterate_out_msgs(|message| {
+        if message.dst().as_ref() == Some(destination) {
+            sent_to_destination = true;
+        }
+        Ok(true)
+    })?;
+    anyhow::ensure!(
+        sent_to_destination,
+        "exact deployment wallet transaction omitted the destination message"
+    );
+    Ok(true)
+}
+
+#[cfg(test)]
+mod exact_deploy_wallet_transaction_tests {
+    use super::*;
+
+    #[test]
+    fn shared_task_wallet_send_confirms_one_prepared_boc_by_exact_hash() {
+        let source = include_str!("agent_cmd.rs");
+        let shared = source
+            .split_once("pub(crate) async fn send_wallet_message(")
+            .unwrap()
+            .1
+            .split_once("pub(crate) async fn build_wallet_message_boc(")
+            .unwrap()
+            .0;
+        assert!(
+            shared.find("build_wallet_message_boc(").unwrap()
+                < shared.find("confirm_prepared_wallet_message(").unwrap()
+        );
+        assert_eq!(shared.matches("confirm_prepared_wallet_message(").count(), 1);
+        assert!(!shared.contains("wait_for_seqno_change("));
+        assert!(!shared.contains("rpc_client.send_boc("));
+    }
+
+    #[test]
+    fn agent_account_owner_action_uses_exact_wallet_confirmation_before_effect_poll() {
+        let source = include_str!("agent_cmd.rs");
+        let action = source
+            .split_once("async fn run_agent_account_owner_action(")
+            .unwrap()
+            .1
+            .split_once("pub(crate) async fn send_wallet_message(")
+            .unwrap()
+            .0;
+        let built = action.find("build_wallet_message_boc(").unwrap();
+        let confirmed = action.find("confirm_prepared_wallet_message(").unwrap();
+        let effect = action.find("wait_for_agent_account_match(").unwrap();
+        assert!(built < confirmed && confirmed < effect);
+        assert!(!action.contains("send_wallet_message("));
+    }
+
+    #[test]
+    fn agent_wallet_fund_confirms_the_single_prepared_send_by_exact_hash() {
+        let source = include_str!("agent_cmd.rs");
+        let funding = source
+            .rsplit_once("impl AgentWalletFundCmd {")
+            .unwrap()
+            .1
+            .split_once("impl AgentWalletSendCmd {")
+            .unwrap()
+            .0;
+        let built = funding.find("wallet.build_message(").unwrap();
+        let confirmed = funding.find("confirm_prepared_wallet_message(").unwrap();
+        assert!(built < confirmed);
+        assert_eq!(funding.matches("confirm_prepared_wallet_message(").count(), 1);
+        assert!(!funding.contains("wait_for_seqno_change("));
+        assert!(!funding.contains("rpc_client.send_boc("));
+    }
+
+    #[test]
+    fn agent_wallet_owner_transfer_confirms_the_single_prepared_send_by_exact_hash() {
+        let source = include_str!("agent_cmd.rs");
+        let owner_send = source
+            .rsplit_once("impl AgentWalletSendCmd {")
+            .unwrap()
+            .1
+            .split_once("impl AgentWalletStatusCmd {")
+            .unwrap()
+            .0;
+        assert!(
+            owner_send.find(".build_message(").unwrap()
+                < owner_send.find("confirm_prepared_wallet_message(").unwrap()
+        );
+        assert_eq!(owner_send.matches("confirm_prepared_wallet_message(").count(), 1);
+        assert!(!owner_send.contains("wait_for_seqno_change("));
+        assert!(!owner_send.contains("rpc_client.send_boc("));
+    }
+
+    fn retained_wallet_transaction() -> (RawTransaction, chain_block::UInt256, MsgAddressInt) {
+        // Public transaction BOC from the retained E03 6f6 registry deployment.
+        // The signed external message is already on chain; this fixture contains no secret key.
+        let data = include_str!("fixtures/e03_wallet_deploy_tx.b64").trim().to_owned();
+        let boc = base64::engine::general_purpose::STANDARD.decode(&data).unwrap();
+        let transaction =
+            Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
+        let hash = transaction.in_msg_cell().unwrap().hash(0);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.encode(hash.as_slice()),
+            "kIx5sD49hxRJWLetkhehLWSqLq8wmnLHVSwoSJm02Wg="
+        );
+        let destination = "EQA10So_O5wULv6_jIzeG63TFAiV3Ebv40vRtfxG6XGVQOrU".parse().unwrap();
+        (
+            RawTransaction {
+                r#type: None,
+                block_id: None,
+                data,
+                lt: 137000001,
+                utime: 1790299931,
+                hash: String::new(),
+            },
+            hash,
+            destination,
+        )
+    }
+
+    #[test]
+    fn exact_broadcast_confirms_only_its_own_successful_destination_send() {
+        let (raw, hash, destination) = retained_wallet_transaction();
+        assert!(exact_deploy_wallet_transaction(&raw, &hash, &destination).unwrap());
+        assert!(
+            !exact_deploy_wallet_transaction(&raw, &chain_block::UInt256::default(), &destination)
+                .unwrap()
+        );
+        let wrong_destination =
+            "0:1111111111111111111111111111111111111111111111111111111111111111".parse().unwrap();
+        assert!(exact_deploy_wallet_transaction(&raw, &hash, &wrong_destination).is_err());
+    }
+
+    #[test]
+    fn retained_pool_deposit_uses_the_same_exact_confirmation_gate() {
+        // E03 75eaae8ab: seven legacy seqno polls saw 2 through shard 187;
+        // this wallet transaction appeared in shard 189 and sent to the pool.
+        let data = include_str!("fixtures/e03_pool_deposit_tx.b64").trim().to_owned();
+        let boc = base64::engine::general_purpose::STANDARD.decode(&data).unwrap();
+        let transaction =
+            Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
+        let hash = transaction.in_msg_cell().unwrap().hash(0);
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD.encode(hash.as_slice()),
+            "whMwAX/fDlc6OpkJfkz/fH2ePi6wKWCC/PbwjUl1zoU="
+        );
+        let destination =
+            "-1:9f95d890f745a6ad6b87144d57f6b07b144ca9451a6229dd62d7d9a389d5b011".parse().unwrap();
+        let raw = RawTransaction {
+            r#type: None,
+            block_id: None,
+            data,
+            lt: 190000001,
+            utime: 1790303930,
+            hash: String::new(),
+        };
+        assert_eq!(
+            scan_deploy_wallet_page(&[raw.clone()], 189000000, &hash, &destination).unwrap(),
+            DeployWalletPage::Confirmed
+        );
+        assert_eq!(
+            scan_deploy_wallet_page(
+                &[raw.clone()],
+                189000000,
+                &chain_block::UInt256::default(),
+                &destination
+            )
+            .unwrap(),
+            DeployWalletPage::ReachedBaseline
+        );
+        let wrong_destination =
+            "-1:1111111111111111111111111111111111111111111111111111111111111111".parse().unwrap();
+        assert!(scan_deploy_wallet_page(&[raw], 189000000, &hash, &wrong_destination).is_err());
+    }
+
+    #[test]
+    fn exact_broadcast_rejects_a_matched_but_aborted_wallet_transaction() {
+        let (mut raw, hash, destination) = retained_wallet_transaction();
+        let boc = base64::engine::general_purpose::STANDARD.decode(&raw.data).unwrap();
+        let mut transaction =
+            Transaction::construct_from_cell(read_single_root_boc(&boc).unwrap()).unwrap();
+        let TransactionDescr::Ordinary(mut ordinary) = transaction.read_description().unwrap()
+        else {
+            panic!("E03 fixture is not an ordinary wallet transaction");
+        };
+        ordinary.aborted = true;
+        transaction.write_description(&TransactionDescr::Ordinary(ordinary)).unwrap();
+        raw.data = base64::engine::general_purpose::STANDARD
+            .encode(write_boc(&transaction.serialize().unwrap()).unwrap());
+        assert!(exact_deploy_wallet_transaction(&raw, &hash, &destination).is_err());
+    }
+
+    #[tokio::test]
+    async fn exact_broadcast_pages_past_ten_newer_wallet_transactions() {
+        let (target, hash, destination) = retained_wallet_transaction();
+        let target_boc = base64::engine::general_purpose::STANDARD.decode(&target.data).unwrap();
+        let target_cell = read_single_root_boc(&target_boc).unwrap();
+        let target_transaction = Transaction::construct_from_cell(target_cell.clone()).unwrap();
+        let mut decoys = Vec::new();
+        for offset in (1..=10).rev() {
+            let mut transaction = target_transaction.clone();
+            let lt = target.lt + offset;
+            transaction.set_logical_time(lt);
+            transaction.set_in_msg_cell(chain_block::Cell::default());
+            transaction.set_prev_trans_lt(lt - 1);
+            if offset == 1 {
+                transaction.set_prev_trans_hash(target_cell.hash(0));
+            }
+            decoys.push(RawTransaction {
+                lt,
+                data: base64::engine::general_purpose::STANDARD
+                    .encode(write_boc(&transaction.serialize().unwrap()).unwrap()),
+                ..target.clone()
+            });
+        }
+        assert_eq!(
+            scan_deploy_wallet_page(&decoys, 69_000_003, &hash, &destination).unwrap(),
+            DeployWalletPage::Next {
+                lt: target.lt,
+                hash: base64::engine::general_purpose::STANDARD
+                    .encode(target_cell.hash(0).as_slice()),
+            }
+        );
+        assert_eq!(
+            scan_deploy_wallet_page(&[target], 69_000_003, &hash, &destination).unwrap(),
+            DeployWalletPage::Confirmed
+        );
+        let (target, hash, destination) = retained_wallet_transaction();
+        let page_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let visited = page_count.clone();
+        assert!(
+            scan_deploy_wallet_history(
+                decoys[0].lt,
+                "newest-hash".to_owned(),
+                69_000_003,
+                &hash,
+                &destination,
+                move |_lt, _hash| {
+                    let index = visited.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let page = if index == 0 { decoys.clone() } else { vec![target.clone()] };
+                    async move { Ok(page) }
+                },
+            )
+            .await
+            .unwrap()
+        );
+        assert_eq!(page_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn exact_broadcast_read_error_is_not_a_false_confirmation() {
+        let (raw, hash, destination) = retained_wallet_transaction();
+        let mut invalid = raw.clone();
+        invalid.data = "not a BOC".to_owned();
+        assert!(scan_deploy_wallet_page(&[invalid], 69_000_003, &hash, &destination).is_err());
+        assert_eq!(
+            scan_deploy_wallet_page(&[raw], 69_000_003, &hash, &destination).unwrap(),
+            DeployWalletPage::Confirmed
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_broadcast_retries_read_errors_without_reporting_false_success() {
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = attempts.clone();
+        await_deploy_confirmation(
+            tokio::time::Duration::from_millis(100),
+            tokio::time::Duration::from_millis(1),
+            move || {
+                let attempt = observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    if attempt == 0 {
+                        anyhow::bail!("temporary RPC read error")
+                    }
+                    Ok(true)
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let error = await_deploy_confirmation(
+            tokio::time::Duration::from_millis(10),
+            tokio::time::Duration::from_millis(1),
+            || async { anyhow::bail!("persistent BOC read error") },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error, "persistent BOC read error");
+    }
 }
 
 async fn wait_for_agent_account_match(
@@ -10261,16 +10903,16 @@ impl AgentWalletFundCmd {
             .context("create funding wallet")?;
         let body =
             if let Some(msg) = &self.message { build_comment_cell(msg)? } else { Cell::default() };
+        let confirmation_destination = dest_addr.clone();
         let msg =
             wallet.build_message(dest_addr, amount_nanotos, body, false, None, None, None).await?;
         let msg_boc = write_boc(&msg)?;
-        rpc_client.send_boc(&msg_boc).await?;
-        wait_for_seqno_change(
-            rpc_client.clone(),
+        confirm_prepared_wallet_message(
+            rpc_client,
+            &msg_boc,
             &from_wallet_address,
-            from_wallet_info.seqno,
-            &common::task_cancellation::CancellationCtx::default(),
-            SEND_TIMEOUT,
+            &confirmation_destination,
+            DEPLOY_TIMEOUT,
         )
         .await?;
 
@@ -10355,13 +10997,12 @@ impl AgentWalletSendCmd {
             .build_message(dest_addr.clone(), amount_nanotos, body, false, None, None, None)
             .await?;
         let msg_boc = write_boc(&msg)?;
-        rpc_client.send_boc(&msg_boc).await?;
-        wait_for_seqno_change(
-            rpc_client.clone(),
+        confirm_prepared_wallet_message(
+            rpc_client,
+            &msg_boc,
             &from_address,
-            from_info.seqno,
-            &common::task_cancellation::CancellationCtx::default(),
-            SEND_TIMEOUT,
+            &dest_addr,
+            DEPLOY_TIMEOUT,
         )
         .await?;
 
@@ -10804,6 +11445,36 @@ pub(crate) fn parse_optional_signature(
     Ok(Some(signature))
 }
 
+/// Recommended margin over the budget when no funding amount is given. The
+/// escrow pays its deployment and storage out of the excess; this is a default
+/// that covers deployment with room for storage, not a guarantee for every fee
+/// configuration or holding period (`agent task show` reports a shortfall).
+const TASK_ESCROW_FUNDING_RESERVE_NANOTOS: u64 = 200_000_000;
+/// Smallest margin over the budget an explicit amount may leave. Below it,
+/// deployment fees alone can bring the balance under the budget, and the task
+/// can then not be claimed until it is topped up.
+const TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS: u64 = 50_000_000;
+
+/// The value a new Task Escrow is funded with. The contract refuses claim and
+/// accept until it holds the full budget, so funding must cover the budget and
+/// the escrow's own fees.
+fn task_escrow_funding_nanotos(budget: u64, explicit_amount: Option<u64>) -> anyhow::Result<u64> {
+    let minimum = budget.checked_add(TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS).ok_or_else(|| {
+        anyhow::anyhow!("budget {budget} nanoTOS plus the funding margin overflows")
+    })?;
+    match explicit_amount {
+        Some(amount) if amount < minimum => anyhow::bail!(
+            "funding amount {amount} nanoTOS must be at least the budget {budget} nanoTOS plus \
+             {TASK_ESCROW_MIN_FUNDING_MARGIN_NANOTOS} nanoTOS: the escrow must hold the whole budget \
+             before an agent can take the task, and pays its own fees from the excess"
+        ),
+        Some(amount) => Ok(amount),
+        None => budget.checked_add(TASK_ESCROW_FUNDING_RESERVE_NANOTOS).ok_or_else(|| {
+            anyhow::anyhow!("budget {budget} nanoTOS plus the funding reserve overflows")
+        }),
+    }
+}
+
 fn resolve_nanotos(
     name: &str,
     value_tos: Option<f64>,
@@ -11021,7 +11692,7 @@ mod tests {
         relay_network_domain_digest, resolve_nanotos, resolve_payout_nanotos,
         rpc_failure_diagnostic, rpc_locator_identity_digest, select_exact_finalized_output,
         sponsorship_rpc_not_found, sponsorship_rpc_temporarily_unavailable,
-        task_deploy_valid_until, task_deployment_workchain,
+        task_deploy_valid_until, task_deployment_workchain, task_escrow_funding_nanotos,
         validate_agent_account_task_create_funding, validate_controller_task_action,
         validate_destination_credit_semantics, validate_exact_sponsorship_top_up_boc,
         validate_release_profile_rpc_locator, validate_sponsorship_custody_evidence_context,
@@ -11065,6 +11736,24 @@ mod tests {
     struct TaskActionParser {
         #[command(subcommand)]
         action: AgentTaskAction,
+    }
+
+    #[test]
+    fn task_escrow_funding_must_exceed_the_budget() {
+        // Default: the budget plus the fee reserve.
+        assert_eq!(task_escrow_funding_nanotos(5_000_000_000, None).unwrap(), 5_200_000_000);
+        // An explicit amount at or below the budget creates a task no agent
+        // can take: the contract refuses claim/accept until it holds the budget.
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(200_000_000)).is_err());
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_000)).is_err());
+        // A sliver over the budget is consumed by deployment fees.
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_000_000_001)).is_err());
+        assert!(task_escrow_funding_nanotos(5_000_000_000, Some(5_049_999_999)).is_err());
+        assert_eq!(
+            task_escrow_funding_nanotos(5_000_000_000, Some(5_050_000_000)).unwrap(),
+            5_050_000_000
+        );
+        assert!(task_escrow_funding_nanotos(u64::MAX, None).is_err());
     }
 
     #[test]
@@ -11450,17 +12139,24 @@ mod tests {
             permission_hash: permission_id_hash(Some("bounded-task")),
             dispute_hash: [0; 32],
             attestor_pubkey: None,
+            dispute_fallback_agent_bps:
+                contracts::TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+            dispute_deadline: 0,
         }
     }
 
+    const TEST_GLOBAL_ID: i32 = 42;
+
     fn controller_task_context(task_address: &MsgAddressInt) -> ControllerTaskActionContext<'_> {
         ControllerTaskActionContext {
+            global_id: TEST_GLOBAL_ID,
             task_address,
             now: 100,
             payout: Some(500_000_000),
             dispute_hash: Some([7; 32]),
             attestation_signature: None,
             available_balance: 1_000_000_000,
+            attached_value: 0,
         }
     }
 
@@ -13512,6 +14208,97 @@ mod tests {
     }
 
     #[test]
+    fn controller_dispute_timeout_requires_the_principal_without_the_attached_value() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let mut disputed = controller_task(7);
+        disputed.dispute_deadline = 100;
+        let mut context = controller_task_context(&task_address);
+        // The escrow held exactly its budget before this message.
+        context.attached_value = 50_000_000;
+        context.available_balance = disputed.budget + context.attached_value;
+        validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+
+        // One nanoTOS short of the budget is refused with the exact top-up.
+        context.available_balance = disputed.budget - 1 + context.attached_value;
+        let error = validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("top up the escrow first"), "{error}");
+        assert!(error.contains("at least 1 nanoTOS"), "{error}");
+
+        // Attaching more value does not count toward the principal.
+        context.attached_value = 5_000_000_000;
+        context.available_balance = disputed.budget - 1 + context.attached_value;
+        let error = validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("at least 1 nanoTOS"), "{error}");
+    }
+
+    #[test]
+    fn controller_dispute_timeout_waits_for_the_dispute_deadline_and_has_no_sender_restriction() {
+        let permission_hash = permission_id_hash(Some("bounded-task"));
+        let task_address = address(9);
+        let mut disputed = controller_task(7);
+        disputed.dispute_deadline = 100;
+        let mut context = controller_task_context(&task_address);
+        context.now = 99;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::DisputeTimeout,
+                &disputed,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("dispute deadline has not passed")
+        );
+        context.now = 100;
+        validate_controller_task_action(
+            &AgentTaskOperation::DisputeTimeout,
+            &disputed,
+            &address(55),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
+        let mut submitted = controller_task(2);
+        submitted.dispute_deadline = 100;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::DisputeTimeout,
+                &submitted,
+                &address(55),
+                permission_hash,
+                &context,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn controller_timeout_matches_contract_deadlines_and_has_no_sender_restriction() {
         let permission_hash = permission_id_hash(Some("bounded-task"));
         let task_address = address(9);
@@ -13781,8 +14568,13 @@ mod tests {
         task.review_deadline = 100;
         task.result_hash = [8; 32];
         task.attestor_pubkey = Some(signing_key.verifying_key().to_bytes());
-        let domain =
-            contracts::settle_domain_hash(&task_address, &task.result_hash, 500_000_000).unwrap();
+        let domain = contracts::settle_domain_hash(
+            TEST_GLOBAL_ID,
+            &task_address,
+            &task.result_hash,
+            500_000_000,
+        )
+        .unwrap();
         let signature = signing_key.sign(&domain).to_bytes();
         let mut context = controller_task_context(&task_address);
         context.attestation_signature = Some(&signature);
@@ -13853,6 +14645,7 @@ mod tests {
         disputed.verifier = Some(address(3));
         disputed.dispute_hash = [11; 32];
         let resolve_domain = contracts::resolve_domain_hash(
+            TEST_GLOBAL_ID,
             &task_address,
             &disputed.result_hash,
             &disputed.dispute_hash,
@@ -13892,6 +14685,7 @@ mod tests {
             (AgentTaskOperation::Settle, vec![3]),
             (AgentTaskOperation::Cancel, vec![4]),
             (AgentTaskOperation::Timeout, vec![3, 5]),
+            (AgentTaskOperation::DisputeTimeout, vec![3]),
         ] {
             for status in 0..=7 {
                 assert_eq!(

@@ -21,6 +21,8 @@
 
 #include "interfaces/block-handle.h"
 #include "interfaces/validator-manager.h"
+#include "validator/finality-cache-policy.h"
+#include "validator/sync-stall-alerts.h"
 
 namespace tos {
 
@@ -59,16 +61,17 @@ class WaitBlockData : public td::actor::Actor {
   void set_is_hardfork(bool value);
   void start();
   void got_block_data_from_db(td::Ref<BlockData> data);
-  void loaded_data(ReceivedBlock data);
+  void loaded_data(ReceivedBlock data, BlockDataSource source);
   void loaded_block_data(td::Ref<BlockData> block);
   void checked_proof_link();
-  void failed_to_get_block_data_from_net(td::Status reason);
+  void failed_to_get_block_data(td::Status reason, BlockDataSource source);
 
   void got_static_file(td::BufferSlice data);
 
   static td::Result<td::BufferSlice> generate_proof(BlockIdExt id, td::Ref<vm::Cell> block_root,
                                                     td::Ref<block::BlockSignatureSet> signatures,
-                                                    td::Ref<MasterchainState> state);
+                                                    td::Ref<MasterchainState> state,
+                                                    PendingBlockProofFailureSource &failure_source);
   static td::Result<td::BufferSlice> generate_proof_link(BlockIdExt id, td::Ref<vm::Cell> block_root);
   static td::Result<td::Ref<vm::Cell>> generate_block_proof_root(BlockIdExt id,
                                                                  td::Ref<vm::Cell> block_root);
@@ -88,6 +91,9 @@ class WaitBlockData : public td::actor::Actor {
   bool reading_from_db_ = false;
   bool is_hardfork_ = false;
   td::Timestamp try_read_static_file_ = td::Timestamp::now();
+  // Consecutive failed network attempts for this block, reset when the
+  // block is delivered; drives the stall warnings.
+  BlockDataNetFailures net_failures_;
 
   td::PerfWarningTimer perf_timer_;
 };

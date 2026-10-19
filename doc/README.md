@@ -4,10 +4,9 @@ What belongs here: the base-layer **specifications**, the formal **papers**, and
 the **manuals** for running and testing a node — documents you read to answer a
 question about how the chain works or how to operate it.
 
-What does not: proposals, implementation plans, roadmaps, draft RFCs and
-use-case explorations. Those record where a line of work was going rather than
-what the chain does, and they live in <https://github.com/tosnetwork/doc>, which
-is already where the source comments in this repository point.
+What does not: implementation receipts, test fixtures, runbooks for individual
+projects, readiness snapshots, proposals or draft plans. Test inputs belong
+with tests; deployment records and their frozen profiles belong in `artifacts/`.
 
 ## Specifications
 
@@ -26,9 +25,7 @@ is already where the source comments in this repository point.
 | Document | What it covers |
 | --- | --- |
 | [tvm-mldsa44.md](tvm-mldsa44.md) | The native ML-DSA-44 verification instruction: opcode, ABI, canonical operand encoding, gas, version gating, vendored backend |
-| [tvm-mldsa44-validation.md](tvm-mldsa44-validation.md) | Acceptance matrix, calibration method, and the limits of what the public vectors prove |
 | [mldsa44-auth-module.md](mldsa44-auth-module.md) | The immutable authentication module: exact signed bytes, funding failure classes, deployment and rotation boundary |
-| [pq-v16-readiness.md](pq-v16-readiness.md) | The Rust implementation's execution contract against the native one, the build and test commands, the wallet, key and relayer tooling, and what readiness does not yet cover |
 
 ## Running and testing a node
 
@@ -37,9 +34,7 @@ is already where the source comments in this repository point.
 | [FullNode.md](FullNode.md) | Running a full node |
 | [LiteClient.md](LiteClient.md) | Using the lite client |
 | [Validator.md](Validator.md) | Running a validator |
-| [Validator-Local.md](Validator-Local.md) | A local four-node testnet |
-| [validator-genesis-bootstrap.md](validator-genesis-bootstrap.md) | Genesis validator bootstrap and `validator-keys.pub` |
-| [macos-local-node.md](macos-local-node.md) | Running a local chain on macOS, where the systemd setup script does not apply |
+| [validator-genesis-bootstrap.md](validator-genesis-bootstrap.md) | Post-quantum genesis validator bootstrap and `validator-pq.pub` |
 
 ## Release process
 
@@ -54,6 +49,7 @@ Each is kept with its TeX source where one exists.
 
 | Paper | Subject |
 | --- | --- |
+| [pq.pdf](pq.pdf) ([tex](pq.tex)) | Current overview: post-quantum authentication, shielded transfers, and deployment boundaries |
 | [The-TOS-Protocol.pdf](The-TOS-Protocol.pdf) ([docx](The-TOS-Protocol.docx)) | The protocol |
 | [tblkch.tex](tblkch.tex) | The block chain |
 | [tvm.tex](tvm.tex) | The virtual machine |
@@ -63,4 +59,12 @@ Each is kept with its TeX source where one exists.
 | [func_v0.4.6.pdf](func_v0.4.6.pdf) ([tex](func_v0.4.6.tex)) | The FunC language |
 | [tol.pdf](tol.pdf) ([tex](tol.tex)) | The Tol language |
 
-`examples/` holds data files referenced by the documents above.
+The shielded pool's byte-frozen implementation profile and genesis manifest
+are in [`artifacts/shielded-pool/`](../artifacts/shielded-pool/). Its ceremony
+operator runbook is in [`artifacts/phase2/`](../artifacts/phase2/).
+
+## Compiler guidance
+
+| Document | What it covers |
+| --- | --- |
+| [tol-compiler-diagnostics.md](tol-compiler-diagnostics.md) | Fixed getter IDs, query correlation warnings, and symbolic inline assembly |

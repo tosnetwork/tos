@@ -27,7 +27,7 @@ use chain_block::{tos_method_id, Cell, MsgAddressInt, Serializable, StateInit};
 use tos_sandbox::{compile_func, Blockchain, MessageBuilder};
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 
 /// An instruction, and the price it already carries if it has one.
 struct Subject {
@@ -60,6 +60,36 @@ fn subjects() -> Vec<Subject> {
             price: None,
             body: "p_hash7(a, a, a, a, a, a, a, a)",
             baseline: "p_eight_drop7(a, a, a, a, a, a, a, a)",
+        },
+        // POSEIDON2_PATH7, at three depths.
+        //
+        // Unlike the two above, this instruction does not have one cost: it
+        // is a base plus a per-level cost, and the two are priced separately.
+        // Measuring one depth cannot separate them, so three are measured and
+        // a line is fitted -- the third is there to show the line is straight
+        // rather than to fit it, because a per-level cost read off two points
+        // that happen to sit on a curve is a number with no error bar.
+        //
+        // Depth 12 is what both the note tree and the nullifier tree use, so
+        // it is measured directly rather than interpolated. 1 and 32 bracket
+        // it far enough apart that the base does not hide inside the noise.
+        Subject {
+            name: "POSEIDON2_PATH7_D1",
+            price: None,
+            body: "p_path7(a, 7, path1, 3, 1)",
+            baseline: "p_path7_base(a, 7, path1, 3, 1)",
+        },
+        Subject {
+            name: "POSEIDON2_PATH7_D12",
+            price: None,
+            body: "p_path7(a, 7, path12, 3, 12)",
+            baseline: "p_path7_base(a, 7, path12, 3, 12)",
+        },
+        Subject {
+            name: "POSEIDON2_PATH7_D32",
+            price: None,
+            body: "p_path7(a, 7, path32, 3, 32)",
+            baseline: "p_path7_base(a, 7, path32, 3, 32)",
         },
         Subject {
             name: "BLS_G1_ADD",
@@ -143,6 +173,40 @@ int p_chksignu_base(int hash, slice signature, int key) impure asm "2 BLKDROP";
 slice g1() asm "BLS_G1_ZERO";
 slice g2() asm "BLS_G2_ZERO";
 
+;; POSEIDON2_PATH7 and a baseline of the same arity. The baseline drops the
+;; four operands above the leaf and returns the leaf, so the accumulator stays
+;; an integer and the operand building is subtracted the same way it is for
+;; the other subjects.
+int p_path7(int leaf, int domain, cell path, int index, int depth) impure
+  asm "POSEIDON2_PATH7";
+int p_path7_base(int leaf, int domain, cell path, int index, int depth) impure
+  asm "4 BLKDROP";
+
+;; A witness is two cells a level -- three field elements in each, six
+;; siblings a level -- chained by a reference, with no reference in the last.
+;; The instruction rejects any other shape, so this builds the shape it
+;; accepts rather than something that merely has the right size.
+cell path_link(cell next, int last) {
+  builder b = begin_cell().store_uint(1, 256).store_uint(2, 256).store_uint(3, 256);
+  if (last == 0) {
+    b = b.store_ref(next);
+  }
+  return b.end_cell();
+}
+
+;; Built from the far end backwards, because a cell cannot be given a
+;; reference after it is sealed.
+cell build_path(int depth) {
+  int n = depth + depth;
+  cell c = path_link(begin_cell().end_cell(), -1);
+  int i = 1;
+  while (i < n) {
+    c = path_link(c, 0);
+    i = i + 1;
+  }
+  return c;
+}
+
 "#,
     );
     for subject in subjects() {
@@ -154,6 +218,13 @@ int {name}{suffix}(int rounds) method_id {{
   slice g1 = g1();
   slice g2 = g2();
   slice sig = begin_cell().store_uint(0, 256).store_uint(0, 256).end_cell().begin_parse();
+  ;; Built once, outside the timed loop, and reused. The witness is an operand
+  ;; the caller already holds in the real path too: a withdrawal arrives with
+  ;; it in the message, so building it is not part of what the instruction
+  ;; costs. The baseline receives the same cell, so even this is subtracted.
+  cell path1 = build_path(1);
+  cell path12 = build_path(12);
+  cell path32 = build_path(32);
   int i = 0;
   while (i < rounds) {{
     a = {code};
@@ -194,7 +265,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)?;
     bc.set_workchain(0);
     let payer = bc.treasury("bench", 1_000 * TOS)?;
-    let path = std::env::temp_dir().join("tos_poseidon2_bench.fc");
+    // A directory of this run's own. A fixed name under the shared temporary
+    // directory is truncated by a second run of this tool while the first is
+    // still compiling from it.
+    let probe_dir = tempfile::tempdir()?;
+    let path = probe_dir.path().join("tos_poseidon2_bench.fc");
     std::fs::write(&path, probe_source())?;
     let stdlib = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../crypto/smartcont/stdlib.fc");
@@ -404,10 +479,75 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         println!("{name:<18}{low:>14.0}{high:>14.0}{current_price:>10}  {verdict}");
     }
+    report_path7_fit(&unpriced, &usable);
+
     println!("\nThis is one host and one VM. The profile requires the target CPU,");
     println!("and a tariff must cover the slower of the two implementations, so");
     println!("this is a candidate and a method rather than a number to freeze.");
     Ok(())
+}
+
+/// PATH7 is two numbers, so it needs a line rather than a bracket.
+///
+/// `cost(d) = base + d * level`. Two depths determine the line; the third says
+/// whether it is one, and at 2,000 rounds over 15 repeats it is: the three
+/// fits agree on the per-level cost to within a percent.
+///
+/// A first run at 300 rounds over 3 repeats did not agree, and the
+/// disagreement was large enough to look like real curvature -- a witness
+/// growing out of cache is exactly what that would have been. It was sampling
+/// noise. The fits are printed side by side so that a future run showing real
+/// curvature is visible rather than averaged into one number.
+fn report_path7_fit(
+    unpriced: &[(&'static str, f64)],
+    usable: &[&(&'static str, f64, i64)],
+) {
+    let at = |depth: u32| -> Option<f64> {
+        let wanted = format!("POSEIDON2_PATH7_D{depth}");
+        unpriced.iter().find(|(name, _)| *name == wanted).map(|(_, ns)| *ns)
+    };
+    let (Some(d1), Some(d12), Some(d32)) = (at(1), at(12), at(32)) else {
+        return;
+    };
+
+    println!("\nPOSEIDON2_PATH7, as a base plus a per-level cost:");
+    println!(
+        "{:<26}{:>12}{:>12}{:>14}",
+        "fitted over", "base gas", "gas/level", "at depth 12"
+    );
+
+    // One fit per anchor, so the spread below is the anchors' disagreement and
+    // not a second source of error introduced here.
+    let mut summarise = |label: &str, lo_d: u32, lo_ns: f64, hi_d: u32, hi_ns: f64| {
+        let mut bases = Vec::new();
+        let mut levels = Vec::new();
+        for (_, anchor_ns, anchor_price) in usable {
+            let gas = |ns: f64| ns / anchor_ns * (*anchor_price as f64);
+            let level = (gas(hi_ns) - gas(lo_ns)) / f64::from(hi_d - lo_d);
+            bases.push(gas(lo_ns) - level * f64::from(lo_d));
+            levels.push(level);
+        }
+        let lo_base = bases.iter().cloned().fold(f64::MAX, f64::min);
+        let hi_base = bases.iter().cloned().fold(f64::MIN, f64::max);
+        let lo_level = levels.iter().cloned().fold(f64::MAX, f64::min);
+        let hi_level = levels.iter().cloned().fold(0.0, f64::max);
+        println!(
+            "{label:<26}{:>12}{:>12}{:>14}",
+            format!("{lo_base:.0}..{hi_base:.0}"),
+            format!("{lo_level:.0}..{hi_level:.0}"),
+            format!("{:.0}..{:.0}", lo_base + 12.0 * lo_level, hi_base + 12.0 * hi_level),
+        );
+    };
+
+    summarise("depth 1 and 12", 1, d1, 12, d12);
+    summarise("depth 12 and 32", 12, d12, 32, d32);
+    summarise("depth 1 and 32 (widest)", 1, d1, 32, d32);
+
+    println!(
+        "\nthree fits that agree mean the cost really is linear in depth here. If a\n\
+         future run makes them disagree, that is a real effect and the depth-12 pair\n\
+         is the one to price from: production uses depth 12 and nothing else."
+    );
 }
 
 // --- the permutation on its own ---------------------------------------------

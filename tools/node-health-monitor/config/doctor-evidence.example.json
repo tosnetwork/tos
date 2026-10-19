@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "gates": {
+    "physical_separation": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "M and O share this development host; separation has not been established"
+    },
+    "performance_round_a": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "no accepted round A receipt"
+    },
+    "performance_round_b": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "no accepted round B receipt"
+    },
+    "performance_round_c": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "no accepted round C receipt"
+    },
+    "performance_round_d": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "no accepted round D receipt"
+    },
+    "performance_round_e": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "no accepted round E receipt"
+    },
+    "performance_round_f": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "no accepted round F receipt"
+    },
+    "soak_72h": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "72-hour soak not yet run"
+    },
+    "token_rotation": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "rotation drill not yet run"
+    },
+    "cert_rotation": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "rotation drill not yet run"
+    },
+    "rollback_drill": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "rollback drill not yet run"
+    },
+    "notification_delivery": {
+      "status": "not_run",
+      "evidence_path": "",
+      "at": "",
+      "note": "optional: a receiver-side delivery receipt when the live state has none within 24 h"
+    }
+  }
+}

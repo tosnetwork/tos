@@ -1,0 +1,80 @@
+[
+  {
+    "name": "enabled",
+    "header": "diagnostic-producer.h",
+    "baseline_sha256": "265814b8a33c29c90d22a08ce2ba6e42b72cf86ba7e84d06882b8dc25b83bcb7",
+    "mutant_sha256": "78442a70e0ff3fb9038cf161806b980cd715ff5a59b871eba63d3bd973b2a59d",
+    "patch_sha256": "288118155ac19a14137704c2da19de9e97e3d2034e520c83b793036b89c5d9c5",
+    "mutant_binary_sha256": "d40f04327f563e9186a8ca94cc2e59c954af679e79f6cfeba79ad6c6335352c5",
+    "restored_binary_sha256": "c82ca92e6f635551766c6f0385447c35b28301d06605f9e5a04024d629d596d6",
+    "compiled": true,
+    "red_exit": -6,
+    "intended_assertion": "stats.dropped == 0",
+    "restored_exit": 0
+  },
+  {
+    "name": "sample",
+    "header": "diagnostic-producer.h",
+    "baseline_sha256": "265814b8a33c29c90d22a08ce2ba6e42b72cf86ba7e84d06882b8dc25b83bcb7",
+    "mutant_sha256": "45849e3f9bdf9a4ce31ddfba3d5f626b2d324d5a79cf780584dfcaa74ecd7aeb",
+    "patch_sha256": "2467c2a607140270a8ce76c903f0141669d041ff5c8fd5520b6bf1bbea95ae1c",
+    "mutant_binary_sha256": "30b33e0e56300cf5c60d43c0b1fa85653a72e67f1d18833c4f2dae8da1a781a7",
+    "restored_binary_sha256": "c82ca92e6f635551766c6f0385447c35b28301d06605f9e5a04024d629d596d6",
+    "compiled": true,
+    "red_exit": -6,
+    "intended_assertion": "stats.sampled_out == 4096",
+    "restored_exit": 0
+  },
+  {
+    "name": "capacity",
+    "header": "diagnostic-producer.h",
+    "baseline_sha256": "265814b8a33c29c90d22a08ce2ba6e42b72cf86ba7e84d06882b8dc25b83bcb7",
+    "mutant_sha256": "096e9c98e3436607f5da23d2a0aa64ccf6d410e4f4427efa2cfb237dcaecde8f",
+    "patch_sha256": "d3826e5badfe27c493cd86d613f19e7885088ecefb75af73047aa8f1ba1c5cf6",
+    "mutant_binary_sha256": "074f5eff5c043dbffd3338bd0aebdcc61411ed4728846539f69f396e60c654c9",
+    "restored_binary_sha256": "c82ca92e6f635551766c6f0385447c35b28301d06605f9e5a04024d629d596d6",
+    "compiled": true,
+    "red_exit": -6,
+    "intended_assertion": "!p->emit(builder) && built == 4096",
+    "restored_exit": 0
+  },
+  {
+    "name": "sequence",
+    "header": "diagnostic-producer.h",
+    "baseline_sha256": "265814b8a33c29c90d22a08ce2ba6e42b72cf86ba7e84d06882b8dc25b83bcb7",
+    "mutant_sha256": "563d5aeb7d4697e11cce896550750782ac2c1a78b9025c91b10f55f56e1db52f",
+    "patch_sha256": "d795b370468851e2d908536657ebc6f68c544389274bd44530a7c8b55f73f086",
+    "mutant_binary_sha256": "6a6d8a97ac0219734cd7868fe196c2e600f3b777a54dc9b4912e9abdb7969c53",
+    "restored_binary_sha256": "c82ca92e6f635551766c6f0385447c35b28301d06605f9e5a04024d629d596d6",
+    "compiled": true,
+    "red_exit": -6,
+    "intended_assertion": "contention.reasons[2]==1",
+    "restored_exit": 0
+  },
+  {
+    "name": "peer-pid",
+    "header": "diagnostic-ipc.h",
+    "baseline_sha256": "c9ec9c5abc27f65ba1f787c9bf4d5a850c76fd3804085340167ab9fc7035ddda",
+    "mutant_sha256": "e9919e6caa77cd1c1fd6251ca7d09fe7b369cd060ff5a1510891c88141be3250",
+    "patch_sha256": "065b21ffafa9e0fb11f586c73415cb98712b4937ec016804e89b1efc8cbd8dad",
+    "mutant_binary_sha256": "cc9cdd76b57fbc40ad24994b3e3e6ce63b7f7134e4ddd74f88d3e7470b9f647b",
+    "restored_binary_sha256": "2671702b0fb16758c023fd8cbc3be9dc506c7e6281dcc404af95b1a0726b0d2e",
+    "compiled": true,
+    "red_exit": -6,
+    "intended_assertion": "diagnostic_stats.sent==0 && diagnostic_stats.dropped>0",
+    "restored_exit": 0
+  },
+  {
+    "name": "socket-accounting",
+    "header": "diagnostic-ipc.h",
+    "baseline_sha256": "c9ec9c5abc27f65ba1f787c9bf4d5a850c76fd3804085340167ab9fc7035ddda",
+    "mutant_sha256": "b0409e148ac2f08099f3bb10c9b37261cf1cd2860c2a09d21f76fc8669b4856f",
+    "patch_sha256": "92c2152bbfc58128ad4a151ba402b567c778db3ac6e826698d5b31bb8fe6c074",
+    "mutant_binary_sha256": "dfa1ea63c253aa1dc106b7f43b554c8c2d75b1d88db04ebed9dbba23c7d10b24",
+    "restored_binary_sha256": "2671702b0fb16758c023fd8cbc3be9dc506c7e6281dcc404af95b1a0726b0d2e",
+    "compiled": true,
+    "red_exit": -6,
+    "intended_assertion": "DiagnosticProducer::Drop::Socket)]>0",
+    "restored_exit": 0
+  }
+]

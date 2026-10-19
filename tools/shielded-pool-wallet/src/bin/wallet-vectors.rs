@@ -135,6 +135,7 @@ fn recovery_vector(seed: &[u8; 32], other_seed: &[u8; 32], domain: Fr) -> String
             chain: ChainSlot {
                 output_data_hash: entry.output_data_hash,
                 note_body: entry.note_body,
+            recovered: None,
             },
         })
         .collect();
@@ -315,6 +316,7 @@ fn main() {
                 }
                 _ => note_body,
             },
+            recovered: None,
         };
         let imported = import(&instance, &plaintext, &slot_view)
             .expect("import")

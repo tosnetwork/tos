@@ -25,6 +25,8 @@ on:
       - 'test/test-json-rpc-*'
       - 'test/json-rpc/**'
       - 'scripts/asan-jsonrpc-corpus.py'
+      - 'scripts/check-jsonrpc-spec.py'
+      - 'doc/openapi.yaml'
       - '.github/workflows/jsonrpc-asan.yml'
   workflow_dispatch:
   workflow_call:
@@ -39,12 +41,15 @@ env:
   # stop the run at the first one, with its trace intact.
   ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
 
+permissions:
+  contents: read
+
 jobs:
   unit:
     name: instrumented unit tests
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install system libraries
       run: |
@@ -53,9 +58,7 @@ jobs:
 
     - name: Install Clang 21
       run: |
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 all
+        sudo scripts/install-llvm-toolchain.sh 21 all
 
     - name: Configure with AddressSanitizer
       run: |
@@ -80,29 +83,38 @@ jobs:
         ninja -C build-asan \
           test-json-rpc-rate-gate \
           test-json-rpc-parse \
+          test-json-rpc-explorer \
           test-json-rpc-handler-guard \
           test-json-rpc-payload-waiter \
           test-json-rpc-signing-payload \
-          test-json-rpc-source-ip
+          test-json-rpc-source-ip \
+          test-json-rpc-listen-policy \
+          test-json-rpc-account-capability
 
     - name: Run under AddressSanitizer
       run: |
         ./build-asan/test-json-rpc-rate-gate
         ./build-asan/test-json-rpc-parse
+        ./build-asan/test-json-rpc-explorer
         ./build-asan/test-json-rpc-handler-guard
         ./build-asan/test-json-rpc-payload-waiter
         ./build-asan/test-json-rpc-signing-payload
         ./build-asan/test-json-rpc-source-ip
+        ./build-asan/test-json-rpc-listen-policy
+        ./build-asan/test-json-rpc-account-capability
 
     - name: Check JSON-RPC route gating
       run: python3 scripts/check-jsonrpc-route-gating.py
+
+    - name: Check the OpenAPI spec against the method table and error kinds
+      run: python3 scripts/check-jsonrpc-spec.py
 
   corpus:
     name: instrumented node vs corpus
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install system libraries
       run: |
@@ -111,14 +123,16 @@ jobs:
 
     - name: Install Clang 21
       run: |
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 all
+        sudo scripts/install-llvm-toolchain.sh 21 all
 
     - name: Install uv
       run: |
-        curl -LsSf https://astral.sh/uv/install.sh | sh
-        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        tool_dir="$(mktemp -d)"
+        trap 'rm -rf "$tool_dir"' EXIT
+        curl -fsSL "$(python3 scripts/verify-build-tool.py --url uv-x86_64)" -o "$tool_dir/uv.tar.gz"
+        python3 scripts/verify-build-tool.py uv-x86_64 "$tool_dir/uv.tar.gz"
+        tar -xzf "$tool_dir/uv.tar.gz" -C "$tool_dir"
+        sudo install -m 0755 "$tool_dir/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
 
     - name: Configure with AddressSanitizer
       # QUIC stays on: with it off the adnl and overlay libraries still
@@ -141,18 +155,23 @@ jobs:
       run: |
         export FUNC_BIN="$PWD/build-asan/crypto/func"
         export FIFT_BIN="$PWD/build-asan/crypto/fift"
-        ninja -C build-asan validator-engine create-state generate-random-id toslibjson
+        ninja -C build-asan validator-engine dht-server create-state generate-random-id toslibjson \
+          tos-pq-consensus-key
 
     - name: Prepare the harness environment
       # The harness needs the tostester dependencies; a bare system
-      # python does not have them. tosapi is generated and untracked, so
-      # a fresh checkout has to produce it before anything can import.
+      # python does not have them. They are installed exactly as uv.lock
+      # pins them (tostester is a workspace member). tosapi is generated and
+      # untracked, so a fresh checkout has to produce it before anything can
+      # import.
       run: |
-        uv venv .venv
-        uv pip install --python .venv/bin/python -e test/tostester
+        uv sync --frozen --no-dev
         .venv/bin/python test/tostester/generate_tl.py
 
     - name: Bring up an instrumented local chain
+      env:
+        # Explicit public namespace for the disposable ASan test network.
+        TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
       run: |
         chmod +x scripts/asan-jsonrpc-localnet.sh
         tmux new-session -d -s asan "./scripts/asan-jsonrpc-localnet.sh > /tmp/localnet.log 2>&1"
@@ -164,7 +183,7 @@ jobs:
 
     - name: Drive the corpus
       run: |
-        uv run --with requests python scripts/asan-jsonrpc-corpus.py http://127.0.0.1:18545/
+        uv run --frozen --no-dev python scripts/asan-jsonrpc-corpus.py http://127.0.0.1:18545/
 
     - name: Fail on any sanitizer report
       # The corpus itself asserts little on purpose: most of these

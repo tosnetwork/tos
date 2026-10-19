@@ -1,0 +1,22 @@
+# Every place that asks a validator descriptor for a classical consensus key.
+#
+# A post-quantum descriptor has no such key and refuses rather than inventing one, so a
+# site that is not guarded stops the node the moment PQ descriptors become authoritative.
+# That is why Genesis activation waits for these to be converted, and why the inventory
+# has to be a thing that fails rather than a paragraph someone remembers to update:
+# adding a site, removing one, or converting one without saying so here fails the check.
+#
+# status:
+#   definition   the accessor itself
+#   guarded      a post-quantum descriptor cannot reach it
+#
+# file	sites	status	why
+tos/tos-types.h	2	definition	the accessor, and the comment stating that a post-quantum descriptor refuses
+crypto/block/signature-set.cpp	1	guarded	classical signature verification; a post-quantum validator is rejected before the key is read; the post-quantum path comes with the carrier
+crypto/block/validator-set.cpp	1	guarded	identity backfill for sets built directly by tests and tooling, classical descriptors only
+crypto/block/validator-session-members.cpp	2	guarded	the classical session member form, and the implicit ADNL address a post-quantum descriptor can never have
+utils/show-validator-set.cpp	1	guarded	display fallback for a tooling-built classical descriptor that carries no identity
+# validator/consensus/bridge.cpp closed when the Simplex bus now reads the post-quantum
+# consensus key from the descriptor and refuses a classical one, so it no longer calls
+# classical_key(). The full-node and fast-sync overlay certificate roots now use the
+# descriptor's explicit validator ADNL identity, so no aborts-on-pq site remains.

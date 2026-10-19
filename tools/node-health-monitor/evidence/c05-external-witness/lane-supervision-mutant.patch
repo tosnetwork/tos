@@ -1,0 +1,12 @@
+diff --git a/tools/node-health-monitor/crates/health-services/src/bin/health-watchdog.rs b/tools/node-health-monitor/crates/health-services/src/bin/health-watchdog.rs
+--- a/tools/node-health-monitor/crates/health-services/src/bin/health-watchdog.rs
++++ b/tools/node-health-monitor/crates/health-services/src/bin/health-watchdog.rs
+@@ -57,7 +57,7 @@ async fn supervise_tick<F>(
+             eprintln!("witness cache listener stopped: {result:?}");
+             Err("witness cache listener unavailable".into())
+         }
+-        result = async { source.as_mut().unwrap().await }, if source.is_some() => {
++        result = async { std::future::pending::<Result<Result<(), &'static str>, tokio::task::JoinError>>().await }, if source.is_some() => {
+             eprintln!("witness source owner stopped: {result:?}; remote completion remains unknown");
+             Err("witness source owner unavailable".into())
+         }

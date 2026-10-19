@@ -1,0 +1,6 @@
+COMMAND: python3 tools/node-health-monitor/tests/native-snapshot-http.py $HOME/tos-node-health-c01-build/test-health-native-snapshot --mode fast --write-fixtures
+Traceback (most recent call last):
+  File "$HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py", line 5, in <module>
+    from jsonschema import Draft202012Validator
+ModuleNotFoundError: No module named 'jsonschema'
+EXIT=0

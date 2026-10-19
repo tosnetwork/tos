@@ -851,7 +851,13 @@ impl Handlers {
                 .set(0x01, Loader::hashsu)
                 .set(0x02, Loader::sha256u)
                 .set(0x03, Loader::sha256c)
-                .add_subset(0x31, Handlers::new().set(0x00, Loader::pq_mldsa44))
+                .add_subset(
+                    0x31,
+                    Handlers::new()
+                        .set(0x00, Loader::pq_mldsa44)
+                        .set(0x01, Loader::pq_falcon512)
+                        .set(0x03, Loader::lms_fee_hash),
+                )
                 .add_subset(
                     0x32,
                     Handlers::new()

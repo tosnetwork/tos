@@ -1,0 +1,9 @@
+[1/63] Checking the git repository for changes...
+[2/9] Building CXX object CMakeFiles/test-health-source-policy.dir/test/test-health-source-policy.cpp.o
+[3/9] Linking CXX executable test-health-source-policy
+[4/9] Building CXX object CMakeFiles/test-health-collector-completion.dir/test/test-health-collector-completion.cpp.o
+[5/9] Linking CXX executable test-health-collector-completion
+[6/9] Building CXX object CMakeFiles/test-health-collector-timestamps.dir/test/test-health-collector-timestamps.cpp.o
+[7/9] Linking CXX executable test-health-collector-timestamps
+[8/9] Building CXX object test/validator/consensus/CMakeFiles/test-consensus.dir/test-consensus.cpp.o
+[9/9] Linking CXX executable test/validator/consensus/test-consensus

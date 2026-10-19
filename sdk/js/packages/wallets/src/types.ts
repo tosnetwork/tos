@@ -16,7 +16,7 @@ import type {
 import type {
   ContractProvider,
   Signer,
-  SendConfirmation,
+  PendingTransfer,
 } from "@tos/client";
 
 // ---------------------------------------------------------------------------
@@ -38,7 +38,12 @@ export interface OutMessage {
   bounce?: boolean;
   /** Optional StateInit for deploying the destination contract. */
   init?: StateInit;
-  /** Send mode flags. Defaults to SendMode.PAY_GAS_SEPARATELY | SendMode.IGNORE_ERRORS (3). */
+  /**
+   * Send mode flags. Defaults to the transfer's `sendMode`, else
+   * PAY_GAS_SEPARATELY | IGNORE_ERRORS (3). With IGNORE_ERRORS a message the
+   * wallet cannot pay is skipped while the transaction still succeeds; confirm
+   * with `waitForTransfer`, which detects the missing outgoing message.
+   */
   mode?: SendMode;
 }
 
@@ -53,13 +58,16 @@ export interface OutMessage {
 export interface CreateTransferArgs {
   /** Current sequence number of the wallet. */
   seqno: number;
-  /** List of outgoing messages (up to 4 for standard wallets, 254 for highload). */
+  /** List of outgoing messages (up to 4 for V3R2/V4R2, 255 for V5R1). */
   messages: OutMessage[];
-  /** UNIX timestamp after which the message expires. Defaults to now + 60s. */
+  /**
+   * UNIX time (seconds) after which the wallet refuses the message. Defaults
+   * to now + 60 s; a value not after the current time is refused before signing.
+   */
   validUntil?: number;
   /** Ed25519 secret key (64 bytes) used to sign the transfer body. */
   secretKey: Uint8Array;
-  /** Send mode override applied to all messages (if not set per-message). */
+  /** Send mode for every message that sets no `mode` of its own (default 3). */
   sendMode?: SendMode;
 }
 
@@ -73,11 +81,14 @@ export interface CreateTransferAsyncArgs {
   seqno: number;
   /** List of outgoing messages. */
   messages: OutMessage[];
-  /** UNIX timestamp after which the message expires. Defaults to now + 60s. */
+  /**
+   * UNIX time (seconds) after which the wallet refuses the message. Defaults
+   * to now + 60 s; a value not after the current time is refused before signing.
+   */
   validUntil?: number;
   /** Async signing function: receives the hash to sign, returns 64-byte signature. */
   signer: (message: Uint8Array) => Promise<Uint8Array>;
-  /** Send mode override applied to all messages (if not set per-message). */
+  /** Send mode for every message that sets no `mode` of its own (default 3). */
   sendMode?: SendMode;
 }
 
@@ -88,9 +99,12 @@ export interface CreateTransferAsyncArgs {
 export interface SendTransferArgs {
   /** List of outgoing messages. */
   messages: OutMessage[];
-  /** UNIX timestamp after which the message expires. Defaults to now + 60s. */
+  /**
+   * UNIX time (seconds) after which the wallet refuses the message. Defaults
+   * to now + 60 s; a value not after the current time is refused before signing.
+   */
   validUntil?: number;
-  /** Send mode override applied to all messages (if not set per-message). */
+  /** Send mode for every message that sets no `mode` of its own (default 3). */
   sendMode?: SendMode;
 }
 
@@ -105,6 +119,8 @@ export interface SendTransferArgs {
 export interface Wallet extends Contract {
   /**
    * Query the on-chain sequence number.
+   *
+   * @throws TosNotDeployedError when the wallet is not deployed
    */
   getSeqno(provider: ContractProvider): Promise<number>;
 
@@ -131,20 +147,31 @@ export interface Wallet extends Contract {
   createTransferAsync(args: CreateTransferAsyncArgs): Promise<Cell>;
 
   /**
-   * High-level: query seqno, build, sign, and submit a transfer.
+   * High-level: query seqno and balance, build, sign, and submit a transfer.
+   *
+   * Refuses before signing when the wallet is not deployed, when the message
+   * values are not below the balance, or when `validUntil` is not in the
+   * future. The result only means the node accepted the message; pass it to
+   * `waitForTransfer` to learn whether the transfer was delivered.
+   *
+   * A never-deployed wallet has no seqno to read, so this throws
+   * `TosNotDeployedError` for it: its first message must be signed with seqno
+   * 0 and carry the StateInit, which is what `sendDeploy` sends. Deploy first,
+   * confirm with `waitForTransfer`, then transfer.
    */
   sendTransfer(
     provider: ContractProvider,
     via: Signer,
     args: SendTransferArgs,
-  ): Promise<SendConfirmation>;
+  ): Promise<PendingTransfer>;
 
   /**
-   * Deploy the wallet contract on-chain.
+   * Deploy the wallet contract on-chain. Returns the external message hash
+   * with no outgoing messages expected; pass it to `waitForTransfer`.
    */
   sendDeploy(
     provider: ContractProvider,
     via: Signer,
     value: bigint,
-  ): Promise<void>;
+  ): Promise<PendingTransfer>;
 }

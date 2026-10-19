@@ -8,8 +8,12 @@
  * - Message expiration (validUntil)
  *
  * Signing message format:
- *   walletId:uint32  validUntil:uint32  seqno:uint32
+ *   networkGlobalId:int32  walletId:uint32  validUntil:uint32  seqno:uint32
  *   [mode:uint8 message:^Cell]*
+ *
+ * The wallet code (crypto/smartcont/wallet3-code.fc) refuses a message whose
+ * networkGlobalId differs from the executing network's GLOBALID (exit 36), so a
+ * signature never replays on another network.
  *
  * External message body:
  *   signature:bits512  signingMessage
@@ -30,7 +34,7 @@ import { sign } from "@tos/crypto";
 import type {
   ContractProvider,
   Signer,
-  SendConfirmation,
+  PendingTransfer,
 } from "@tos/client";
 import { WALLET_V3R2_CODE } from "./codes.js";
 import type {
@@ -39,7 +43,7 @@ import type {
   CreateTransferAsyncArgs,
   SendTransferArgs,
 } from "./types.js";
-import { storeOutMessages, defaultValidUntil } from "./utils.js";
+import { storeOutMessages, requireAffordable, requireWalletPublicKey, resolveValidUntil } from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -50,6 +54,20 @@ const DEFAULT_WALLET_ID_BASE = 698983191;
 
 /** Maximum number of outgoing messages per transfer */
 const MAX_MESSAGES = 4;
+
+/**
+ * Validate an explicitly supplied network global ID (ConfigParam 19, int32).
+ *
+ * The wallet code compares the leading int32 of every signed message with the
+ * GLOBALID of the network executing it, so a message signed for one network is
+ * refused on every other. There is deliberately no default.
+ */
+function requireNetworkGlobalId(value: number, wallet: string): number {
+  if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) {
+    throw new Error(`${wallet}: networkGlobalId must be an explicitly supplied signed int32 integer`);
+  }
+  return value;
+}
 
 // ---------------------------------------------------------------------------
 // WalletV3R2
@@ -68,7 +86,8 @@ const MAX_MESSAGES = 4;
  * import { mnemonicToPrivateKey } from "@tos/crypto";
  *
  * const keys = await mnemonicToPrivateKey(mnemonic);
- * const wallet = WalletV3R2.create({ publicKey: keys.publicKey });
+ * const networkGlobalId = await client.getNetworkGlobalId();
+ * const wallet = WalletV3R2.create({ publicKey: keys.publicKey, networkGlobalId });
  * console.log(wallet.address.toString());
  * ```
  */
@@ -76,6 +95,7 @@ export class WalletV3R2 implements Wallet {
   readonly address: Address;
   readonly init: StateInit;
   readonly walletId: number;
+  readonly networkGlobalId: number;
   readonly publicKey: Uint8Array;
 
   private constructor(
@@ -83,35 +103,42 @@ export class WalletV3R2 implements Wallet {
     init: StateInit,
     publicKey: Uint8Array,
     walletId: number,
+    networkGlobalId: number,
   ) {
     this.address = address;
     this.init = init;
     this.publicKey = publicKey;
     this.walletId = walletId;
+    this.networkGlobalId = networkGlobalId;
   }
 
   /**
    * Create a new WalletV3R2 instance from a public key.
    *
    * The wallet address is computed deterministically from the code cell
-   * and initial data (seqno=0, walletId, publicKey).
+   * and initial data (seqno=0, walletId, publicKey); it does not depend on the
+   * network, only the signed messages do.
    *
    * @param args.publicKey - 32-byte Ed25519 public key
+   * @param args.networkGlobalId - Required network global ID (ConfigParam 19, int32)
    * @param args.workchain - Workchain ID (default 0)
    * @param args.walletId - Custom wallet ID (default auto-computed)
    * @returns A new WalletV3R2 instance with computed address and init
    *
    * @example
    * ```typescript
-   * const wallet = WalletV3R2.create({ publicKey: keys.publicKey });
+   * const wallet = WalletV3R2.create({ publicKey: keys.publicKey, networkGlobalId });
    * console.log(wallet.address.toString());
    * ```
    */
   static create(args: {
     publicKey: Uint8Array;
+    networkGlobalId: number;
     workchain?: number;
     walletId?: number;
   }): WalletV3R2 {
+    requireWalletPublicKey(args.publicKey, "WalletV3R2");
+    const networkGlobalId = requireNetworkGlobalId(args.networkGlobalId, "WalletV3R2");
     const workchain = args.workchain ?? 0;
     const walletId = args.walletId ?? DEFAULT_WALLET_ID_BASE + workchain;
 
@@ -127,7 +154,7 @@ export class WalletV3R2 implements Wallet {
     const init: StateInit = { code, data };
     const address = contractAddress(workchain, init);
 
-    return new WalletV3R2(address, init, args.publicKey, walletId);
+    return new WalletV3R2(address, init, args.publicKey, walletId, networkGlobalId);
   }
 
   // -------------------------------------------------------------------------
@@ -139,6 +166,7 @@ export class WalletV3R2 implements Wallet {
    *
    * @param provider - Injected by `open()`
    * @returns The current seqno
+   * @throws TosNotDeployedError when the wallet is not deployed
    */
   async getSeqno(provider: ContractProvider): Promise<number> {
     const result = await provider.get("seqno", []);
@@ -179,6 +207,7 @@ export class WalletV3R2 implements Wallet {
     seqno: number,
     messages: CreateTransferArgs["messages"],
     validUntil?: number,
+    sendMode?: number,
   ): Cell {
     if (messages.length < 1 || messages.length > MAX_MESSAGES) {
       throw new Error(
@@ -186,13 +215,14 @@ export class WalletV3R2 implements Wallet {
       );
     }
 
-    const until = validUntil ?? defaultValidUntil();
+    const until = resolveValidUntil(validUntil, "WalletV3R2");
     const builder = beginCell()
+      .storeInt(this.networkGlobalId, 32)
       .storeUint(this.walletId, 32)
       .storeUint(until, 32)
       .storeUint(seqno, 32);
 
-    storeOutMessages(messages, builder);
+    storeOutMessages(messages, builder, sendMode);
 
     return builder.endCell();
   }
@@ -217,6 +247,7 @@ export class WalletV3R2 implements Wallet {
       args.seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = sign(signingMessage.hash(), args.secretKey);
@@ -238,6 +269,7 @@ export class WalletV3R2 implements Wallet {
       args.seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = await args.signer(signingMessage.hash());
@@ -249,30 +281,42 @@ export class WalletV3R2 implements Wallet {
   }
 
   /**
-   * Query seqno, build, sign, and submit a transfer in one call.
+   * Query seqno and balance, build, sign, and submit a transfer in one call.
+   *
+   * Refuses before signing when the wallet is not deployed
+   * (`TosNotDeployedError`), when the values sent are not below the balance
+   * (`INSUFFICIENT_BALANCE`; fees come out of the balance too), or when
+   * `validUntil` is not in the future. The result only says the node accepted
+   * the message: pass it to `waitForTransfer` to learn whether the transfer was
+   * delivered. Messages go out with the ignore-errors flag by default, so one
+   * the wallet cannot pay is skipped on chain while the seqno still advances.
    *
    * @param provider - Injected by `open()`
    * @param via - Signer (e.g., KeyPairSigner)
    * @param args - Transfer arguments (messages, validUntil)
-   * @returns Send confirmation
+   * @returns The message hash and the number of outgoing messages to expect
    *
    * @example
    * ```typescript
-   * await wallet.sendTransfer(signer, {
+   * const sent = await wallet.sendTransfer(signer, {
    *   messages: [{ to: addr, value: toNano("1.5"), body: comment("Hello") }],
    * });
+   * await waitForTransfer(client, wallet.address, sent);
    * ```
    */
   async sendTransfer(
     provider: ContractProvider,
     via: Signer,
     args: SendTransferArgs,
-  ): Promise<SendConfirmation> {
+  ): Promise<PendingTransfer> {
     const seqno = await this.getSeqno(provider);
+    const state = await provider.getState();
+    requireAffordable(args.messages, state.balance, args.sendMode, "WalletV3R2");
     const signingMessage = this.buildSigningMessage(
       seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = await via.sign(signingMessage.hash());
@@ -282,7 +326,11 @@ export class WalletV3R2 implements Wallet {
       .storeSlice(signingMessage.beginParse())
       .endCell();
 
-    return provider.external(body);
+    const { hash } = await provider.external(body);
+    // Where the wallet's history stood before this message: waitForTransfer
+    // pages back no further than that.
+    const outMessages = args.messages.length;
+    return state.last === null ? { hash, outMessages } : { hash, outMessages, afterLt: state.last.lt };
   }
 
   /**
@@ -291,15 +339,18 @@ export class WalletV3R2 implements Wallet {
    * @param provider - Injected by `open()`
    * @param via - Signer
    * @param _value - Unused (kept for interface compatibility)
+   * @returns The external message hash, with no outgoing messages expected;
+   *   confirm with `waitForTransfer`
    */
   async sendDeploy(
     provider: ContractProvider,
     via: Signer,
     _value: bigint,
-  ): Promise<void> {
+  ): Promise<PendingTransfer> {
     // For external deploy: send an external message with seqno=0
     // For deploy, the signing message is just the header with no outgoing messages
     const deployMessage = beginCell()
+      .storeInt(this.networkGlobalId, 32)
       .storeUint(this.walletId, 32)
       .storeUint(0xFFFFFFFF, 32) // validUntil = max (for initial deploy)
       .storeUint(0, 32)          // seqno = 0
@@ -312,7 +363,8 @@ export class WalletV3R2 implements Wallet {
       .storeSlice(deployMessage.beginParse())
       .endCell();
 
-    await provider.external(body);
+    const { hash } = await provider.external(body);
+    return { hash, outMessages: 0 };
   }
 }
 

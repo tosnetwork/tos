@@ -4,15 +4,26 @@ version = "0.3.0"
 edition = "2024"
 license = 'GPL-3.0'
 
+[features]
+native-wallet-signer = ["dep:wallet-pq-signer"]
+native-wallet-vault = ["native-wallet-signer", "wallet-pq-signer/vault", "dep:secrets-vault", "dep:tos-native-mnemonic"]
+
 [dependencies]
+tos-native-mnemonic = { path = "../../tos-native-mnemonic", optional = true }
+secrets-vault = { path = "../../secrets-vault", optional = true }
+wallet-pq-signer = { path = "../../wallet-pq-signer", optional = true }
+control-client = { path = "../control-client" }
 anyhow = "1.0"
 async-trait = "0.1.89"
 common = { path = "../common" }
 chain_block = { path = "../../block" }
 hex = "0.4.3"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `unbounded_depth`: the proposal reads lift the parser's recursion limit behind
+# their own depth preflight, on a worker whose stack is sized for that depth.
+serde_json = { version = "1", features = ["unbounded_depth"] }
 sha2 = "0.10"
+zeroize = "1"
 tl_api = { version = "0.4.32", path = "../../tl/api" }
 tracing = "0.1"
 chain-rpc-client = { path = "../chain-rpc-client" }
@@ -20,9 +31,14 @@ fs2 = "0.4"
 libc = "0.2"
 ed25519-dalek = "2"
 errno = "0.3"
+base64 = "0.22"
+# Proven reads run the trusted verifier in a private request directory, with a
+# deadline, without blocking the caller's runtime.
+tempfile = "3"
+tokio = { version = "1.48.0", features = ["process", "time", "io-util", "sync"] }
 
 [dev-dependencies]
-tokio = "1.48.0"
+tokio = { version = "1.48.0", features = ["net", "macros", "rt-multi-thread", "io-util", "time", "sync"] }
 tos_sandbox = { path = '../../sandbox' }
 # Test-only: raising the network gas limit to measure a path the default
 # configuration cannot run to completion.

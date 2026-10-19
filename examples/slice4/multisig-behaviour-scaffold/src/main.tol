@@ -1,3 +1,22 @@
+// Multisig proposal scaffold.
+//
+// What it does: records a proposal under its query id when the submission is
+// signed by one of the configured signers. The signature (Ed25519, by the key
+// in `signer`) covers [multisigSubmitSigningHash]: a versioned domain tag, the
+// network's global id, this contract's address, the query id, the expiry and
+// the actions cell. Anyone may relay the message; only the signature decides
+// who is speaking.
+//
+// What it does not do: it never executes the actions, does not record which
+// signer proposed or approved, does not count approvals toward the threshold,
+// and has no way to change the signer set or remove a proposal. It is a
+// starting point, not a wallet: do not hold funds with it.
+//
+// To grow it into a wallet, store a `MultisigProposal` per query id (actions
+// and approvals), add an approve message authenticated the same way, count
+// approvals with `MultisigProposal.recordApproval`, and execute only after
+// `multisigRequireThresholdReached`, marking the proposal executed in the same
+// transaction.
 import "@stdlib/multisig"
 
 struct Slice4MultisigBehaviourStorage {
@@ -9,11 +28,31 @@ struct (0x4d534947) Slice4MultisigBehaviourSubmit {
     queryId: uint64;
     validUntil: uint32;
     signer: uint256;
+    signature: bits512;
     actions: cell;
 }
 
 fun scaffoldPatternId(): int {
     return multisigPatternManifestHeader().patternId;
+}
+
+/// Returns the storage that records `msg` as a pending proposal, or throws.
+/// Network, contract address and time come from the chain, never from the
+/// message. Cheap checks run first, the signature before anything is
+/// recorded, and the actions walk only for an authenticated signer.
+fun Slice4MultisigBehaviourStorage.acceptSubmit(self, msg: Slice4MultisigBehaviourSubmit): Slice4MultisigBehaviourStorage {
+    multisigRequireValidThreshold(self.config.threshold, self.config.signerCount);
+    multisigRequireNotExpired(msg.validUntil, blockchain.now());
+    // Membership, and refusal of a weak key anyone could sign for.
+    multisigRequireSigner(self.config.signers, msg.signer);
+    val hash = multisigSubmitSigningHash(contract.getAddress(), msg.queryId, msg.validUntil, msg.actions);
+    multisigRequireSubmitSignature(hash, msg.signature, msg.signer);
+    multisigRequireNewProposal(self.pending, msg.queryId);
+    multisigValidateActions(msg.actions, false);
+    return Slice4MultisigBehaviourStorage {
+        config: self.config,
+        pending: multisigAddPendingProposal(self.pending, msg.queryId),
+    };
 }
 
 contract Slice4MultisigBehaviour {
@@ -22,14 +61,6 @@ contract Slice4MultisigBehaviour {
 
     @disclaim_query_id
     receive(msg: Slice4MultisigBehaviourSubmit) {
-        multisigRequireValidThreshold(storage.config.threshold, storage.config.signerCount);
-        multisigRequireSigner(storage.config.signers, msg.signer);
-        multisigRequireNewProposal(storage.pending, msg.queryId);
-        multisigRequireNotExpired(msg.validUntil, blockchain.now());
-        multisigValidateActions(msg.actions, false);
-        save(Slice4MultisigBehaviourStorage {
-            config: storage.config,
-            pending: multisigAddPendingProposal(storage.pending, msg.queryId),
-        });
+        save(storage.acceptSubmit(msg));
     }
 }

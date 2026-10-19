@@ -3,14 +3,24 @@
 The signing interface accepts public commitment bytes only. Secret material stays
 in the caller's keystore adapter. A submitted message is not a delivery receipt.
 """
+
+import subprocess
+from abc import ABC
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
-import subprocess
 
-from pytosiq_core import (Address, Cell, Builder, StateInit, MessageAny,
-                           InternalMsgInfo, CurrencyCollection)
-from .contract import Blueprint
+from pytosiq_core import (
+    Address,
+    Builder,
+    Cell,
+    CurrencyCollection,
+    InternalMsgInfo,
+    MessageAny,
+    StateInit,
+)
+
+from .contract import Blueprint, ContractState
 
 CONTEXT = b"TOS-AUTH-ML-DSA-44-v1"
 MAX_COINS = (1 << 120) - 1
@@ -28,7 +38,7 @@ def network_id(value: int) -> int:
     return value
 
 
-def address(value: Address) -> Address:
+def address(value: object) -> Address:
     if not isinstance(value, Address) or value.anycast is not None:
         raise ValueError("canonical internal address required")
     if type(value.wc) is not int or not -128 <= value.wc < 128 or len(value.hash_part) != 32:
@@ -52,7 +62,7 @@ def byte_chain(data: bytes) -> Cell:
         raise TypeError("bytes required")
     if not data:
         return Cell.empty()
-    parts = [data[i:i+127] for i in range(0, len(data), 127)]
+    parts = [data[i : i + 127] for i in range(0, len(data), 127)]
     tail = Builder().store_bytes(parts[-1]).end_cell()
     for part in reversed(parts[:-1]):
         tail = Builder().store_bytes(part).store_ref(tail).end_cell()
@@ -69,9 +79,14 @@ class AuthState:
     def serialize(self) -> Cell:
         if self.mode not in (1, 2, 3):
             raise ValueError("invalid authorization mode")
-        return (Builder().store_uint(self.mode, 2).store_uint(uint(self.epoch, 64), 64)
-                .store_uint(uint(self.nonce, 64), 64)
-                .store_bytes(key_bytes(self.module_hash, 32)).end_cell())
+        return (
+            Builder()
+            .store_uint(self.mode, 2)
+            .store_uint(uint(self.epoch, 64), 64)
+            .store_uint(uint(self.nonce, 64), 64)
+            .store_bytes(key_bytes(self.module_hash, 32))
+            .end_cell()
+        )
 
     @classmethod
     def parse(cls, cell: Cell):
@@ -95,37 +110,82 @@ class AuthRequest:
     def serialize(self) -> Cell:
         if self.kind not in (0, 1, 2):
             raise ValueError("unsupported authorization operation")
-        return (Builder().store_int(network_id(self.network), 32).store_address(address(self.account))
-                .store_uint(uint(self.epoch, 64), 64).store_uint(uint(self.nonce, 64), 64)
-                .store_uint(uint(self.valid_until, 32), 32).store_uint(self.kind, 8)
-                .store_ref(self.payload).end_cell())
+        return (
+            Builder()
+            .store_int(network_id(self.network), 32)
+            .store_address(address(self.account))
+            .store_uint(uint(self.epoch, 64), 64)
+            .store_uint(uint(self.nonce, 64), 64)
+            .store_uint(uint(self.valid_until, 32), 32)
+            .store_uint(self.kind, 8)
+            .store_ref(self.payload)
+            .end_cell()
+        )
 
     @property
     def commitment(self) -> bytes:
         return Builder().store_bytes(b"TOS-AUTH").store_ref(self.serialize()).end_cell().hash
 
     def envelope(self, classical_signature: bytes | None = None) -> Cell:
-        co = None if classical_signature is None else Builder().store_bytes(key_bytes(classical_signature, 64)).end_cell()
-        return Builder().store_uint(0x41555448, 32).store_ref(self.serialize()).store_maybe_ref(co).end_cell()
+        co = (
+            None
+            if classical_signature is None
+            else Builder().store_bytes(key_bytes(classical_signature, 64)).end_cell()
+        )
+        return (
+            Builder()
+            .store_uint(0x41555448, 32)
+            .store_ref(self.serialize())
+            .store_maybe_ref(co)
+            .end_cell()
+        )
 
-    def submission(self, signature: bytes, classical_signature: bytes | None = None, query_id: int = 0) -> Cell:
-        return (Builder().store_uint(0x4d4c4434, 32).store_uint(uint(query_id, 64), 64)
-                .store_ref(self.envelope(classical_signature))
-                .store_ref(byte_chain(key_bytes(signature, 2420))).end_cell())
+    def submission(
+        self, signature: bytes, classical_signature: bytes | None = None, query_id: int = 0
+    ) -> Cell:
+        return (
+            Builder()
+            .store_uint(0x4D4C4434, 32)
+            .store_uint(uint(query_id, 64), 64)
+            .store_ref(self.envelope(classical_signature))
+            .store_ref(byte_chain(key_bytes(signature, 2420)))
+            .end_cell()
+        )
 
 
-def transfer_message(sender: Address, destination: Address, value: int, body: Cell | None = None,
-                     init: StateInit | None = None, bounce: bool = False) -> MessageAny:
-    return MessageAny(info=InternalMsgInfo(ihr_disabled=True, bounce=bounce, bounced=False,
-        src=address(sender), dest=address(destination), value=CurrencyCollection(tomis=uint(value, 120)),
-        ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0), init=init,
-        body=Cell.empty() if body is None else body)
+def transfer_message(
+    sender: Address,
+    destination: Address,
+    value: int,
+    body: Cell | None = None,
+    init: StateInit | None = None,
+    bounce: bool = False,
+) -> MessageAny:
+    return MessageAny(
+        info=InternalMsgInfo(
+            ihr_disabled=True,
+            bounce=bounce,
+            bounced=False,
+            src=address(sender),
+            dest=address(destination),
+            value=CurrencyCollection(tomis=uint(value, 120)),
+            ihr_fee=0,
+            fwd_fee=0,
+            created_lt=0,
+            created_at=0,
+        ),
+        init=init,
+        body=Cell.empty() if body is None else body,
+    )
 
 
-class FundedBlueprint(Blueprint):
+class FundedBlueprint[S: ContractState](Blueprint[S], ABC):
     """No free external deployment and no implicit acknowledgement of delivery."""
+
     async def deploy(self, provider):
-        raise ValueError("use a funded internal StateInit message and confirm the resulting account")
+        raise ValueError(
+            "use a funded internal StateInit message and confirm the resulting account"
+        )
 
     def deployment_message(self, sender: Address, value: int) -> MessageAny:
         if value <= 0:
@@ -139,15 +199,18 @@ class MldsaModuleState:
     public_key: bytes
 
     def serialize(self) -> Cell:
-        return (Builder().store_int(network_id(self.network), 32)
-                .store_ref(byte_chain(key_bytes(self.public_key, 1312))).end_cell())
+        return (
+            Builder()
+            .store_int(network_id(self.network), 32)
+            .store_ref(byte_chain(key_bytes(self.public_key, 1312)))
+            .end_cell()
+        )
 
 
-class Mldsa44ModuleBlueprint(FundedBlueprint):
+class Mldsa44ModuleBlueprint(FundedBlueprint[MldsaModuleState]):
     def __init__(self, code: Cell, workchain: int, network: int, public_key: bytes):
         address(Address((workchain, bytes(32))))
-        self.CODE_BOC = code
-        super().__init__(workchain, MldsaModuleState(network, public_key))
+        super().__init__(workchain, MldsaModuleState(network, public_key), code=code)
 
     def materialize(self, provider):
         # The module has no owner, withdrawal or mutation API.
@@ -165,8 +228,13 @@ class NativeMldsa44Signer:
     key_file: Path
 
     def _run(self, *args: str) -> bytes:
-        result = subprocess.run([str(self.executable.resolve()), *args], capture_output=True,
-                                text=True, timeout=30, check=False)
+        result = subprocess.run(
+            [str(self.executable.resolve()), *args],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
         if result.returncode:
             raise RuntimeError("PQ keystore operation failed: " + result.stderr.strip())
         return bytes.fromhex(result.stdout.strip())
@@ -178,4 +246,6 @@ class NativeMldsa44Signer:
         key_bytes(commitment, 32)
         if context != CONTEXT:
             raise ValueError("unsupported authorization signing profile")
-        return key_bytes(self._run("sign", str(self.key_file.absolute()), commitment.hex(), context.hex()), 2420)
+        return key_bytes(
+            self._run("sign", str(self.key_file.absolute()), commitment.hex(), context.hex()), 2420
+        )

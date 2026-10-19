@@ -1,0 +1,44 @@
+{
+  "scope": "C09 local workload startup controls",
+  "source_commit": "0d33e2887",
+  "nodes": 6,
+  "seed": 20260929,
+  "sampler_performance_accepted": false,
+  "c09_accepted": false,
+  "ordinary": {
+    "terminal": {
+      "Result": "success",
+      "ExecMainStatus": "0",
+      "ActiveState": "inactive"
+    },
+    "raw_log_sha256": "625f02559176b210cedab71ccf4f4c97704a617040b855e25b34d2d101d1451a",
+    "completed": 10
+  },
+  "privacy": {
+    "terminal": {
+      "Result": "success",
+      "ExecMainStatus": "0",
+      "ActiveState": "inactive"
+    },
+    "raw_log_sha256": "ed7a0c3f0f4c31f811c85aa4a871cc98900f0158d0b1d350050119740377e044",
+    "completed": {
+      "deposit": 2,
+      "transfer": 1,
+      "withdraw": 1
+    }
+  },
+  "pool_deploy": {
+    "terminal": {
+      "Result": "success",
+      "ExecMainStatus": "0",
+      "ActiveState": "inactive"
+    },
+    "raw_log_sha256": "cf4651e536ceb5515c7f576489bfec30fb48f528846eb661741d638e43997e7e"
+  },
+  "old_privacy_control": "exit1 before first submission; missing pool manifest; original preserved",
+  "source_sha256": {
+    "scripts/local-pq-transfers.py": "7a65592e6a56a6a2d1044ab5d92e44f7d8973bc154041fc9967ac24154a44dd5",
+    "scripts/local-pq-privacy.py": "096927af194940cfdb05de8e4579a53bae7e4e36bc3123ae165438dbde7c7aa8"
+  },
+  "generator_sha256": "62782bb2653fc44580af3019373528b6e7490a484ecfa8d2c7b59b4e1137b041"
+}

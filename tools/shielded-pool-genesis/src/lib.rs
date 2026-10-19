@@ -23,6 +23,9 @@ use sha2::{Digest, Sha256};
 use shielded_pool_circuit::field::Fr;
 use shielded_pool_circuit::{imt, tree};
 
+pub use shielded_pool_ceremony::audit::{audit, preflight, Audited, StartingKey};
+pub use shielded_pool_ceremony::record::Directory as CeremonyDirectory;
+
 pub mod manifest;
 
 /// Section 13.1.
@@ -61,7 +64,7 @@ fn encoding<E: std::fmt::Display>(error: E) -> Error {
 /// What a deployment chooses. Everything else in the state is derived.
 #[derive(Clone, Debug)]
 pub struct Parameters {
-    /// The exact bytes of `doc/shielded-pool-v1-profile.md`, LF-normalised.
+    /// The exact bytes of `artifacts/shielded-pool/PROFILE.md`, LF-normalised.
     pub profile_bytes: Vec<u8>,
     /// The exact bytes of `crypto/poseidon2/manifest.bin`.
     pub poseidon_manifest_bytes: Vec<u8>,
@@ -292,6 +295,8 @@ pub fn build(parameters: Parameters) -> Result<Genesis> {
         .and_then(|b| b.append_u16(STATE_VERSION))
         .and_then(|b| b.append_raw(&fr_be32(commitment_root), 256))
         .and_then(|b| b.append_u64(0))
+        // No withdrawal has been accepted, so no recovery leaf is reserved.
+        .and_then(|b| b.append_u32(0))
         .and_then(|b| b.append_raw(&fr_be32(nullifier_root), 256))
         .and_then(|b| b.append_u64(1))
         .and_then(|b| b.append_u32(EPOCH_NONE))
@@ -328,10 +333,32 @@ pub fn address(code: &Cell, state: &Cell) -> Result<[u8; 32]> {
 // a different state hash and a different address while still calling itself
 // the state the manifest freezes.
 
-/// Section 14.2's measured floor for a bounded recovery is well under this at
-/// the current fee schedule, so it clears it; production must choose with
-/// explicit headroom and its own measurement.
-pub const RESERVE_FLOOR: u128 = 5_000_000_000;
+/// The unencumbered balance a pool holds above what it owes note-holders.
+///
+/// Its job is what the chain takes whether or not anybody uses the pool: this
+/// workchain charges storage rent per cell and per bit per second, so a pool
+/// nobody touches is losing money the whole time, and the rent is collected in
+/// one go by whatever message finally arrives.
+///
+/// Derived rather than picked, on 2026-09-23. A pool in its steady state --
+/// both anchor rings full, which is where they are within an hour of traffic
+/// and stay for the rest of its life -- occupies 8,369 cells and 1,279,364
+/// bits, which at the zerostate's `1 / 500` basechain storage prices is
+/// 2.631 TOS a year. 50 TOS therefore pays for **19 years** of complete
+/// silence. `storage_rent.rs` measures both halves of that and fails if the
+/// account it prices is not this one.
+///
+/// It only has to cover the rent. This transaction's own compute is subtracted
+/// separately by the backing checks, and a bounce's recovery compute is
+/// charged to the money being recovered by section 15.4.
+///
+/// The horizon is the choice, not the arithmetic: a pool taking about three
+/// transacts a day funds itself, because every message pays
+/// `get_compute_fee(ceiling)` and what the path does not spend stays here.
+/// The floor is for the quiet, and how much quiet to survive unattended is a
+/// deployment decision. Production must re-derive it against production
+/// storage prices, which are an activation decision of their own.
+pub const RESERVE_FLOOR: u128 = 50_000_000_000;
 
 /// Section 14.2's fee, and the one constant here whose size is decided by a
 /// price nobody has chosen yet.
@@ -340,7 +367,9 @@ pub const RESERVE_FLOOR: u128 = 5_000_000_000;
 /// nothing else. Section 14.2 requires, and `payout_require_solvent` enforces
 /// at run time:
 ///
+/// ```text
 ///     withdrawal_fee >= payout_forward_fee(body)
+/// ```
 ///
 /// That term reads the chain's **live** configuration and this constant is
 /// **immutable**, so the check is on the deployment rather than on the
@@ -373,10 +402,12 @@ pub const RESERVE_FLOOR: u128 = 5_000_000_000;
 /// ones divided by six and rounded up, so six times today's is two nanotos
 /// over each).
 ///
+/// ```text
 ///     forwarding prices                 floor    20,000,000 covers it
-///     today (TON's live)              885,601             22.6x
+///     today (upstream live)           885,601             22.6x
 ///     6x    (this chain, until        5,313,600            3.76x
 ///            2026-09-21)
+/// ```
 ///
 /// # Why 20,000,000
 ///
@@ -394,18 +425,39 @@ pub const RESERVE_FLOOR: u128 = 5_000_000_000;
 ///
 /// The alternatives, for a deployment that wants to weigh it again:
 ///
+/// ```text
 ///     fee            TOS   x today  x the 6x this chain ran at
 ///     50,000,000   0.050     56.5x                      9.41x
 ///     25,000,000   0.025     28.2x                      4.70x
 ///     20,000,000   0.020     22.6x                      3.76x   <- here
 ///     10,000,000   0.010     11.3x                      1.88x
 ///      5,313,601   0.0053     6.0x                      1.00x   at the cliff
+/// ```
 ///
-/// The profile still makes the mainnet fee an activation decision, and
-/// activation is when the price policy will be known.
+/// **Weighed again and kept on 2026-09-23**, against the floor measured rather
+/// than recalled: `payout_forward_fee` of a real payout body is 885,601
+/// nanotos, and the contract's figure and what the action phase charged agree
+/// to the nanoton. The profile still frames the mainnet fee as an activation
+/// decision, which it remains for any other deployment; this one has chosen.
 pub const WITHDRAWAL_FEE: u128 = 20_000_000;
 
 /// Section 12.1's immutable list, sorted and positive.
+///
+/// **Weighed again and kept on 2026-09-23.** Powers of ten across four rungs
+/// is the shape the most-studied production pool settled on, which is the
+/// strongest argument for it, and the alternatives were priced rather than
+/// argued: the contract walks this list, so each extra rung costs about 432
+/// gas, and section 14.1's ceiling rounds to ten thousand -- **the gas cost
+/// does not reach a ceiling step even at the sixteen-rung maximum**, so
+/// length is not what constrains the choice.
+///
+/// What constrains it is that a coarse ladder forces many transactions, and a
+/// long series of them is itself a leak: moving 3,456 TOS takes 18 exits here
+/// against 7 on a 1/2/5 ladder, because an exit's `public_amount_out` must
+/// *be* a rung and consolidating inside the pool does not change that. The
+/// counterweight is that fewer rungs mean a larger set on each. Which way
+/// that trade falls depends on what a TOS is worth and on the sizes people
+/// actually move, neither of which this repository knows.
 pub const DENOMINATIONS: [u128; 4] =
     [1_000_000_000, 10_000_000_000, 100_000_000_000, 1_000_000_000_000];
 
@@ -450,7 +502,7 @@ pub fn development_parameters(root: &std::path::Path) -> Result<Parameters> {
             .map_err(|error| Error::Parameter(format!("{}: {error}", path.display())))
     };
 
-    let profile_bytes = normalise(&read(root.join("doc/shielded-pool-v1-profile.md"))?);
+    let profile_bytes = normalise(&read(root.join("artifacts/shielded-pool/PROFILE.md"))?);
     let poseidon_manifest_bytes = read(root.join("crypto/poseidon2/manifest.bin"))?;
 
     // The development verifying key. Section 19 gate 5 requires a production
@@ -467,6 +519,234 @@ pub fn development_parameters(root: &std::path::Path) -> Result<Parameters> {
         reserve_floor: RESERVE_FLOOR,
         withdrawal_fee: WITHDRAWAL_FEE,
         denominations: DENOMINATIONS.to_vec(),
+    })
+}
+
+/// A ceremony's identity as a genesis records it: everything the audit
+/// established about the key, so the manifest can be held against it.
+///
+/// Fields are private and the only constructor reads an [`Audited`], which
+/// only the ceremony's own audit produces. A transcript digest typed in by
+/// hand cannot become one of these.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CeremonyKey {
+    protocol: String,
+    steps: usize,
+    transcript: String,
+    beacon_sha256: String,
+    phase1_transcript: String,
+    phase1_slice_sha256: String,
+    starting_key_sha256: String,
+    constraints: usize,
+    instance_variables: usize,
+    key_sha256: String,
+    vk_sha256: String,
+}
+
+impl CeremonyKey {
+    /// Refuses a ceremony no beacon has closed: its `delta` depends on nothing
+    /// the participants could not all have known in advance.
+    fn from_audit(audited: &Audited) -> Result<Self> {
+        let beacon_sha256 =
+            match (audited.is_finished(), audited.beacon_sha256()) {
+                (true, Some(beacon)) => beacon.to_string(),
+                (false, _) | (true, None) => return Err(Error::Parameter(
+                    "that ceremony is not finished -- no beacon has closed it -- and a genesis \
+                     carries only a finished ceremony's key"
+                        .into(),
+                )),
+            };
+        let record = audited.record();
+        Ok(Self {
+            protocol: record.protocol.clone(),
+            steps: audited.steps(),
+            transcript: audited.transcript().to_string(),
+            beacon_sha256,
+            phase1_transcript: record.phase1_transcript.clone(),
+            phase1_slice_sha256: record.phase1_slice_sha256.clone(),
+            starting_key_sha256: record.starting_key_sha256.clone(),
+            constraints: record.constraints,
+            instance_variables: record.instance_variables,
+            key_sha256: record.key_sha256.clone(),
+            vk_sha256: audited.vk_sha256().to_string(),
+        })
+    }
+
+    pub fn protocol(&self) -> &str {
+        &self.protocol
+    }
+    pub fn steps(&self) -> usize {
+        self.steps
+    }
+    pub fn transcript(&self) -> &str {
+        &self.transcript
+    }
+    pub fn beacon_sha256(&self) -> &str {
+        &self.beacon_sha256
+    }
+    pub fn phase1_transcript(&self) -> &str {
+        &self.phase1_transcript
+    }
+    pub fn phase1_slice_sha256(&self) -> &str {
+        &self.phase1_slice_sha256
+    }
+    pub fn starting_key_sha256(&self) -> &str {
+        &self.starting_key_sha256
+    }
+    pub fn constraints(&self) -> usize {
+        self.constraints
+    }
+    pub fn instance_variables(&self) -> usize {
+        self.instance_variables
+    }
+    pub fn key_sha256(&self) -> &str {
+        &self.key_sha256
+    }
+    pub fn vk_sha256(&self) -> &str {
+        &self.vk_sha256
+    }
+}
+
+/// Where the verifying key in a genesis state came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyClass {
+    /// The fixed-seed development key. Its toxic waste is in the source, so a
+    /// pool built around it protects nothing; it exists for test chains.
+    Development,
+    /// The key an audited, finished ceremony produced.
+    Ceremony(Box<CeremonyKey>),
+}
+
+/// What the caller asked the generator for.
+#[derive(Clone, Debug, Default)]
+pub struct Request {
+    /// Build around the development key. Must be asked for; it is never the
+    /// fallback for a missing key.
+    pub development: bool,
+    /// The ceremony's audit. The verifying key comes out of it.
+    pub ceremony: Option<Audited>,
+    /// Optional: the bytes `phase2-verify --vk-out` wrote. When given they
+    /// must be the audited ceremony's key, byte for byte.
+    pub verifying_key: Option<Vec<u8>>,
+    /// Optional: the transcript digest the operator expects, typically the
+    /// one announced. When given it must be the audited transcript.
+    pub ceremony_transcript: Option<String>,
+    /// The memo commit and blob the profile was copied from.
+    pub source_commit: Option<String>,
+    pub source_blob: Option<String>,
+}
+
+/// What [`plan`] decided: the parameters, where their key came from, and the
+/// profile's provenance. Only [`plan`] makes one.
+#[derive(Clone, Debug)]
+pub struct Plan {
+    parameters: Parameters,
+    key: KeyClass,
+    provenance: manifest::Provenance,
+}
+
+impl Plan {
+    pub fn parameters(&self) -> &Parameters {
+        &self.parameters
+    }
+    pub fn key(&self) -> &KeyClass {
+        &self.key
+    }
+    pub fn provenance(&self) -> &manifest::Provenance {
+        &self.provenance
+    }
+    /// The genesis state these parameters produce.
+    pub fn build(&self) -> Result<Genesis> {
+        build(self.parameters.clone())
+    }
+}
+
+/// 64 lowercase hexadecimal digits.
+pub fn is_digest(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// A git object id: 40 (SHA-1) or 64 (SHA-256) lowercase hexadecimal digits.
+pub fn is_object_id(value: &str) -> bool {
+    (value.len() == 40 || value.len() == 64)
+        && value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// The parameters, key class and provenance a request may be built with.
+///
+/// The development key has to be asked for by name and is marked as such.
+/// Anything else needs an audited, finished ceremony -- the key is taken from
+/// that audit, so it cannot be a different key wearing the ceremony's
+/// transcript -- and the git ids of the profile's source.
+pub fn plan(root: &std::path::Path, request: Request) -> Result<Plan> {
+    if request.development {
+        if request.verifying_key.is_some()
+            || request.ceremony_transcript.is_some()
+            || request.ceremony.is_some()
+        {
+            return Err(Error::Parameter(
+                "a development genesis takes no verifying key or ceremony".into(),
+            ));
+        }
+        let unknown = || "unknown".to_string();
+        let provenance = manifest::Provenance {
+            source_commit: request.source_commit.unwrap_or_else(unknown),
+            source_blob: request.source_blob.unwrap_or_else(unknown),
+        };
+        return Ok(Plan {
+            parameters: development_parameters(root)?,
+            key: KeyClass::Development,
+            provenance,
+        });
+    }
+
+    let audited = request.ceremony.ok_or_else(|| {
+        Error::Parameter(
+            "a production genesis needs an audited ceremony; the development key is only used \
+             when asked for by name"
+                .into(),
+        )
+    })?;
+    let ceremony = CeremonyKey::from_audit(&audited)?;
+    if let Some(supplied) = &request.verifying_key {
+        if supplied.as_slice() != audited.verifying_key() {
+            return Err(Error::Parameter(format!(
+                "the verifying key supplied (sha256 {}) is not the key the audited ceremony \
+                 produced (sha256 {})",
+                hex::encode(sha256(supplied)),
+                audited.vk_sha256()
+            )));
+        }
+    }
+    if let Some(expected) = &request.ceremony_transcript {
+        if !is_digest(expected) {
+            return Err(Error::Parameter(format!(
+                "a ceremony transcript digest is 64 lowercase hex digits, not {expected:?}"
+            )));
+        }
+        if expected != audited.transcript() {
+            return Err(Error::Parameter(format!(
+                "the ceremony's transcript is {} and {expected} was expected",
+                audited.transcript()
+            )));
+        }
+    }
+    let (source_commit, source_blob) = match (request.source_commit, request.source_blob) {
+        (Some(commit), Some(blob)) if is_object_id(&commit) && is_object_id(&blob) => {
+            (commit, blob)
+        }
+        (commit, blob) => {
+            return Err(Error::Parameter(format!(
+                "a production genesis needs the profile's source commit and blob as git object \
+                 ids, not {commit:?} and {blob:?}"
+            )))
+        }
+    };
+    let parameters = parameters_with_verifying_key(root, audited.verifying_key().to_vec())?;
+    Ok(Plan {
+        parameters,
+        key: KeyClass::Ceremony(Box::new(ceremony)),
+        provenance: manifest::Provenance { source_commit, source_blob },
     })
 }
 

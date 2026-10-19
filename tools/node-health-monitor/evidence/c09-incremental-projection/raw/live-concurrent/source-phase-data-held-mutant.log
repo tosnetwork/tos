@@ -1,0 +1,20 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.61s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+retained=2561 contended_grant=2.309897ms
+
+thread 'pre_cursor_ledger_with_active_grant_catches_up_over_4096_history' (4008464) panicked at crates/health-services/tests/manager_query_source.rs:1288:9:
+peak M importer never released Data during its real source read
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test pre_cursor_ledger_with_active_grant_catches_up_over_4096_history ... FAILED
+
+failures:
+
+failures:
+    pre_cursor_ledger_with_active_grant_catches_up_over_4096_history
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 21 filtered out; finished in 6.01s
+
+error: test failed, to rerun pass `-p tos-health-services --test manager_query_source`

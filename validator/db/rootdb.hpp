@@ -57,7 +57,7 @@ class RootDb : public Db {
   void get_block_proof_link(ConstBlockHandle handle, td::Promise<td::Ref<ProofLink>> promise) override;
 
   void store_block_candidate(BlockCandidate candidate, td::Promise<td::Unit> promise) override;
-  void get_block_candidate(PublicKey source, BlockIdExt id, FileHash collated_data_file_hash,
+  void get_block_candidate(ValidatorId source, BlockIdExt id, FileHash collated_data_file_hash,
                            td::Promise<BlockCandidate> promise) override;
   void get_block_candidate_by_block_id(BlockIdExt id, td::Promise<BlockCandidate> promise) override;
 
@@ -134,8 +134,11 @@ class RootDb : public Db {
                                                      td::Promise<td::Unit> promise) override;
   void erase_pending_validator_consensus_db_cleanup(ValidatorSessionId session_id,
                                                     td::Promise<td::Unit> promise) override;
-  void get_pending_validator_consensus_db_cleanup(
-      td::Promise<std::vector<consensus::PendingValidatorConsensusDbCleanup>> promise) override;
+  void get_pending_validator_consensus_db_cleanup_page(std::string after_key, size_t max_keys,
+                                                       td::Promise<consensus::ValidatorCleanupPage> promise) override;
+  void get_pending_validator_consensus_db_cleanup_record(
+      ValidatorSessionId session_id,
+      td::Promise<std::optional<consensus::PendingValidatorConsensusDbCleanup>> promise) override;
 
   void update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) override;
   void get_async_serializer_state(td::Promise<AsyncSerializerState> promise) override;

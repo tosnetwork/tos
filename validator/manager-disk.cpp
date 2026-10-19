@@ -153,8 +153,10 @@ void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
   if (local_id_.is_zero()) {
     //td::as<td::uint32>(created_by_.data() + 32 - 4) = ((unsigned)std::time(nullptr) >> 8);
   }
-  Ed25519_PublicKey created_by{td::Bits256::zero()};
-  td::as<td::uint32>(created_by.as_bits256().data() + 32 - 4) = ((unsigned)std::time(nullptr) >> 8);
+  // Offline replay has no validator behind it, so this is a synthetic producer
+  // identity, distinct per run rather than derived from any key.
+  ValidatorId created_by;
+  td::as<td::uint32>(created_by.value.data() + 32 - 4) = ((unsigned)std::time(nullptr) >> 8);
   run_collate_query(CollateParams{.shard = shard_id,
                                   .min_masterchain_block_id = last_masterchain_block_id_,
                                   .prev = prev,
@@ -639,7 +641,7 @@ void ValidatorManagerImpl::get_shard_state_from_db_short(BlockIdExt block_id,
   get_block_handle(block_id, false, std::move(P));
 }
 
-void ValidatorManagerImpl::get_block_candidate_from_db(PublicKey source, BlockIdExt id,
+void ValidatorManagerImpl::get_block_candidate_from_db(ValidatorId source, BlockIdExt id,
                                                        FileHash collated_data_file_hash,
                                                        td::Promise<BlockCandidate> promise) {
   td::actor::send_closure(db_, &Db::get_block_candidate, source, id, collated_data_file_hash, std::move(promise));
@@ -1090,11 +1092,6 @@ void ValidatorManagerImpl::update_shard_blocks() {
       }
     }
   }
-}
-
-ValidatorSessionId ValidatorManagerImpl::get_validator_set_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set) {
-  return create_hash_tl_object<tos_api::tosNode_sessionId>(shard.workchain, shard.shard, val_set->get_catchain_seqno(),
-                                                           td::Bits256::zero());
 }
 
 void ValidatorManagerImpl::update_shard_client_state(BlockIdExt masterchain_block_id, td::Promise<td::Unit> promise) {

@@ -31,6 +31,16 @@ const int purpose::capability_control = 8;
 const int purpose::known_mask = 15;
 const int max::controller_weight = 1000000;
 const int max::recovery_timelock = 31536000;
+;; The widest policy the registry admits. Every path that walks a policy --
+;; registration, policy update, recovery initiation and completion, and
+;; capability authorization -- has been measured with this many controllers,
+;; all signing, and stays within 80% of one masterchain transaction's gas.
+;; The costliest is recovery initiation from one maximum-width policy to
+;; another. A wider policy could register yet be unable to recover, so it is
+;; refused wherever a policy is validated, before any controller is read.
+;; native_registry_sandbox.rs pins every path's gas under that ceiling; the
+;; client builder (contracts::native_registry) carries the same limit.
+const int max::policy_controllers = 20;
 
 const int err::bad_message = 2200;
 const int err::wrong_network = 2201;
@@ -46,6 +56,13 @@ const int err::bad_transition = 2210;
 const int err::immutable_version = 2211;
 const int err::timelock = 2212;
 const int err::duplicate_signature = 2213;
+;; A policy names a controller key anyone can sign for (strong-ed25519-key.fc).
+;; Such a key would add weight to every threshold and prove possession of
+;; nothing, so the whole policy is refused wherever it is validated.
+const int err::weak_key = 2214;
+const int err::policy_too_wide = 2215;
+
+#include "strong-ed25519-key.fc";
 
 ;; data = magic:uint32 schema:uint16 object_kind:uint8 object_id:uint256
 ;;        ^config has_state:Bool [^state]
@@ -200,6 +217,7 @@ int required_purpose(int kind) inline {
 
 ;; policy = magic:uint32 schema:uint16 threshold:uint32 recovery_threshold:uint32
 ;;          recovery_timelock:uint64 count:uint8 ^controllers
+;;          (1 <= count <= max::policy_controllers)
 ;; controller = key_hash:uint256 public_key:uint256 weight:uint32
 ;;              purposes:uint16 recovery:Bool [^next]
 (int, int, int) validate_policy(cell policy) impure inline_ref {
@@ -210,8 +228,9 @@ int required_purpose(int kind) inline {
   int recovery_threshold = ps~load_uint(32);
   int timelock = ps~load_uint(64);
   int count = ps~load_uint(8);
+  throw_unless(err::policy_too_wide, count <= max::policy_controllers);
   throw_unless(err::bad_policy, (threshold > 0) & (recovery_threshold > 0) &
-    (count > 0) & (count <= 64) & (timelock <= max::recovery_timelock) & (ps.slice_refs() == 1));
+    (count > 0) & (timelock <= max::recovery_timelock) & (ps.slice_refs() == 1));
   cell cursor = ps~load_ref();
   ps.end_parse();
   cell pub_seen = null();
@@ -232,6 +251,7 @@ int required_purpose(int kind) inline {
     throw_unless(err::bad_policy, (key_hash > previous_key) & (key_hash == public_key) & (public_key != 0) &
       (weight > 0) & (weight <= max::controller_weight) & (purposes != 0) & ((purposes & (~ purpose::known_mask)) == 0) &
       (~ duplicate_pub));
+    throw_if(err::weak_key, weak_ed25519_key?(public_key));
     throw_unless(err::bad_policy,
       (recovery != 0) == ((purposes & purpose::recovery) != 0));
     pub_seen~udict_set_builder(256, public_key, begin_cell().store_uint(1, 1));
@@ -282,7 +302,10 @@ int required_purpose(int kind) inline {
   int wanted = recovery_mode ? recovery_threshold : threshold;
   slice root = signatures.begin_parse();
   int count = root~load_uint(8);
-  throw_unless(err::threshold, (count > 0) & (count <= 64) & (root.slice_refs() == 1));
+  ;; At most one signature per controller; a longer list is refused before
+  ;; any entry is looked up.
+  throw_unless(err::threshold, (count > 0) & (count <= max::policy_controllers) &
+    (root.slice_refs() == 1));
   cell cursor = root~load_ref();
   root.end_parse();
   int total = 0;

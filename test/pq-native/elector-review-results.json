@@ -1,0 +1,433 @@
+{
+  "schema_version": 1,
+  "reviewed_base": "5df2222c1049e165560637a85a3dd1ae5aa32bbf",
+  "binding": "The enclosing commit and source SHA-256 map identify the tested follow-up; no self-referential commit hash.",
+  "scope": "P1 recovery confirmation lifetime, P2 exact controller sequence, caller allocation, single-pool bounce rollback, CI and regenerated artifacts.",
+  "limits": [
+    "Local sandbox results only; no deployment, funded-state migration or production acceptance.",
+    "The original 95-control audit index remains historical; this revision reruns the complete functional packages and five targeted compiled mutations, not all earlier mutations.",
+    "Five existing ignored contract/doc cases remain ignored; they are not counted as passes.",
+    "GitHub CI status must be checked separately on the pushed revision."
+  ],
+  "raw_retention": {
+    "location": ".git/elector-security-audit-artifacts/review",
+    "period": "At least 90 days after integration",
+    "access": "Local checkout artifacts; request these files from the maintainer or reproduce. Hashes alone are not independent access.",
+    "bulky_raw_committed": false
+  },
+  "sources": {
+    ".github/workflows/contract-sandboxes.yml": "5dce04dc2200f83dc93a06b970facea9058d22c6dc90479ac28572d39ce4f748",
+    "crypto/smartcont/elector-code.fc": "399ca514b15968a8f3613cd2aa6dea265405017360e9e9d9aba07143b8d39fe5",
+    "crypto/smartcont/nominator-pool/pool.fc": "e1ea13026c538dbb51b298b147b984df67b3f09b44f5a7aa5f1e2f1be155a600",
+    "crypto/smartcont/single-nominator-pool/single-nominator-code.fc": "396db3bba89afe760ccae50874706f3bebbd861c54e1f40ca7d256c64ac4e734",
+    "crypto/smartcont/single-nominator-pool/single-nominator-code.hex": "b47192a37b62fad8e29e4a1cad96555d9ddf3e9d5b59a1d784f997a87207863c",
+    "crypto/smartcont/validator-controller-v1.fc": "9a45373779ec658c1eef455c59f667cd766800029a5c8f4a8fdf5f457abfb582",
+    "scripts/build-nominator-pool-v1.sh": "222fe9290ebb9edbea7653833acf7d33a86abbfac1a9b0c499a05246e103ffed",
+    "scripts/check-nominator-pool-pq-route.py": "2269179c6d1ef1b65273fbf03a34fa9f1ecda0e2816a5e21c683703c632e78f4",
+    "scripts/check-tosctl-pq-stake-builder.py": "6112601416f1c2b7b902ab0f77f5900063ae17c600b62c9c1ac5946a0ca8a563",
+    "scripts/local-pq-elections.py": "4d257dc3073fb723d23d2d3c96bc65e9d62cb42bc549fab1bbcbd6437709f5e1",
+    "scripts/nominator-pool-lifecycle-e2e.py": "148f7e3514d3d8b9200c69ea86177f3a9884ad862f7d20f461eb92c75bcd7e8b",
+    "scripts/pq-config-wallet-first-stake-e2e.py": "9416a4279d37ec9b9569baae00e9aef95d99bf0c533412499256bddcc774b665",
+    "test/pq-native/contract-guard-mutations.py": "173dd66d9581875f6a19682d388a55dc1919d8b88d1590ba16197c26079f538f",
+    "test/pq-native/elector-relay-mutations.py": "689872a67886d055323461b566b4e5b7c6d244913e39fbff52773c7a2a3b6295",
+    "test/pq-native/elector-review-followup.md": "9922fd4f126359957ba8245591227b2751cbe92a78ec4dbe9070fb61cbb28d80",
+    "test/pq-native/elector-review-mutations.py": "d305e70af75e735d987dbc4d0811b7878899606bb2cafff3c77c8aafc862ffe6",
+    "test/pq-native/elector-security-audit.md": "332fa22559199bc010e0dd1bbb07c7cda9f15258392ea873753a92fc62e557a3",
+    "test/pq-native/elector-selection-mutations.py": "7ae6b0aa81501458ee1f12eecfd34da9087d85233a626b05f34076ddc09350f4",
+    "test/regression-tests.ans": "53ebcdbbeb515dc0a24ae15790dcb39da94c04478a02a91b3f52d3bfb9ef7b1d",
+    "test/test-account-model-detection.cpp": "8c1db531836e2f3a72e0e4967549443f6e5a85ead256b5f7971ebc909ca9db5b",
+    "test/tostester/src/tostester/pq_election_fixture.py": "a1adc60dc337da7073a382438971eecf026320cafa0dda265605e2e4ee3b8b74",
+    "test/tostester/tests/tostester/test_nominator_pool_encoding.py": "a04736734bd02aed9959a6d191156d419792052d910738dae9e0fcafb02f1d72",
+    "test/tostester/tests/tostester/test_pq_election_fixture.py": "5b5457a48af7fa0310e355fcab0b3047e44a06a19e6f8d51175624207b37e4ee",
+    "tosctl/src/node-control/contracts/src/contract_codes.rs": "35422447145d2cf9d56e466c9b4f35cf94c970fa9fc5294669acf2ca056bc208",
+    "tosctl/src/node-control/contracts/src/nominator/single_nominator.rs": "fedb8a675d53919c7570b22fb0a5101db63335fc4a90d27a10619d1901225136",
+    "tosctl/src/node-control/contracts/src/nominator/wrapper.rs": "ddfd730e1ebe0a7ef1b591fe1489fd03a759c859a01cf372dfd2390b5f8c2c63",
+    "tosctl/src/node-control/contracts/src/nominator_pool/pool_impl.rs": "9f4cbba1f62bec4362ed715fc39772e352804ebc5e6b1325bb977af6a75060a2",
+    "tosctl/src/node-control/contracts/tests/elector_sandbox.rs": "cf2b6994c8caca147859ed5d46f24332670c693c8b7b2b9df81e89476082e0be",
+    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay.rs": "4745ae7e5a12fdedfc2ce4768c260f521d5bfa59a648bc002141f05a946fff58",
+    "tosctl/src/node-control/contracts/tests/nominator_pool_sandbox.rs": "53db767bbd57168d12693d7eb12086a0f02992615f0fd7edf60658f423443818",
+    "tosctl/src/node-control/contracts/tests/validator_controller_sandbox.rs": "4c436f2d0a875f6663b4e0cd939b21f91c1993cdd8793c4d3dca8001e2e7aa3a",
+    "tosctl/src/node-control/elections/src/runner.rs": "04d763d8d857bc754779085b1f730745bfdfcf25c90736cd2ab3ea7360336b53",
+    "tosctl/src/node-control/elections/src/runner_tests.rs": "a3e121b9527277c3588c8bf407826449a1f1dea8d661e2f12ebea3a36d3f81ab",
+    "validator-engine/json-rpc-account-model.cpp": "12d0cf44807aee099ece9e5f23d01fe88794225c03e8685183fd3f3c96894d41"
+  },
+  "checks": [
+    {
+      "name": "contracts and elections",
+      "command": "TOS_ROOT=$PWD CARGO_TARGET_DIR=$PWD/.git/elector-security-audit-artifacts/cargo-target cargo test --manifest-path tosctl/src/Cargo.toml -p contracts -p elections --locked --no-fail-fast -j64",
+      "exit": 0,
+      "result": {
+        "contracts_passed": 651,
+        "elections_passed": 43,
+        "ignored": 5
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-full.log",
+        "sha256": "1c0bef9ef0c74a2288ec9acd79e147194ed70981a995a70ddc5778051f29b7b0",
+        "bytes": 79893
+      }
+    },
+    {
+      "name": "Python callers and codecs",
+      "command": "PYTHONPATH=test/tostester/src:scripts .venv/bin/python -m pytest -q test/tostester/tests/tostester/test_nominator_pool_encoding.py test/tostester/tests/tostester/test_pq_election_fixture.py scripts/test_local_pq_elections.py",
+      "exit": 0,
+      "result": {
+        "passed": 100
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-python.log",
+        "sha256": "82783bbb56a937fe0ba3bd563cc74a8872c052f7e9c457d4ad5b55f8057a5d94",
+        "bytes": 180
+      }
+    },
+    {
+      "name": "all registered source guards",
+      "command": "ctest --test-dir build -L source-guard --no-tests=error --output-on-failure -j8",
+      "exit": 0,
+      "result": {
+        "passed": 39
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-source-guards.log",
+        "sha256": "a3465287df0ef93b0f6c69b5d6fe5c5977663a7325eb9f3644034266eb1fdbcc",
+        "bytes": 5410
+      }
+    },
+    {
+      "name": "native build",
+      "command": "cmake --build build --target gen_fif test-account-model-detection test-fift test-cells test-vm test-smartcont -j64",
+      "exit": 0,
+      "result": {},
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-native-build.log",
+        "sha256": "3cf9838feb1713cc3cd26bdce720b2d10a530b283d4a00b20dbeed1e428b57f7",
+        "bytes": 2157
+      }
+    },
+    {
+      "name": "native account recognition",
+      "command": "build/test-account-model-detection",
+      "exit": 0,
+      "result": {
+        "passed": 7
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-account.log",
+        "sha256": "2168c9a23c349fbddeb64450586d6a649ef87d1e5b3f4df9bf60e464a34e71b5",
+        "bytes": 722
+      }
+    },
+    {
+      "name": "multi-pool artifact",
+      "command": "scripts/check-nominator-pool-code-lock.sh",
+      "exit": 0,
+      "result": {},
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-multi-lock.log",
+        "sha256": "cd26045104b02353c457a9bdd1ddc2ae9242e4efee4227371fbcb01a00f37528",
+        "bytes": 100
+      }
+    },
+    {
+      "name": "single-pool artifact",
+      "command": "scripts/check-single-nominator-code-lock.sh",
+      "exit": 0,
+      "result": {},
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-single-lock.log",
+        "sha256": "39a07bbcb1d84fcf60bf675ecfdeac334157631d34da571cb6a7fbc5fd65ee43",
+        "bytes": 48
+      }
+    },
+    {
+      "name": "Rust formatting",
+      "command": "make -C tosctl/src fmt-check",
+      "exit": 0,
+      "result": {},
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-fmt.log",
+        "sha256": "70d2bece00e118a8345b19bc989d7942cb7dc532115d082370018b9cbf85cccf",
+        "bytes": 105
+      }
+    },
+    {
+      "name": "Python hygiene",
+      "command": "uv run ruff check <changed Python paths relative to origin/main>; uv run ruff format --check <same paths including elector-review-mutations.py>",
+      "exit": 0,
+      "result": {
+        "files": 10
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-ruff.log",
+        "sha256": "dbbc151b04b61d60452d8e21226a32e1c497fc1ec16d7f6e70245ef7ea4a6993",
+        "bytes": 46
+      }
+    },
+    {
+      "name": "complete recorded-answer inventory",
+      "command": "scripts/check-regression-db.sh . build",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/review/final-regression-green.log",
+        "sha256": "96db7d96f9e379cd531b400f9dee34f3abca4a55365bca29c15372ff0c343e70",
+        "bytes": 75
+      }
+    }
+  ],
+  "mutations": [
+    {
+      "case": "cross-round-ack",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--test",
+        "elector_sandbox",
+        "-j64",
+        "security_audit::relay::recovery_ack_survives_accepted_and_rejected_later_stakes",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "source": "crypto/smartcont/nominator-pool/pool.fc",
+      "source_sha256": "e1ea13026c538dbb51b298b147b984df67b3f09b44f5a7aa5f1e2f1be155a600",
+      "baseline": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/cross-round-ack-baseline.log",
+        "sha256": "0c944969b52c6e5c87cae8e264b3739b4aa8897a1e65d944f2105410f3651cb3",
+        "source_sha256": "e1ea13026c538dbb51b298b147b984df67b3f09b44f5a7aa5f1e2f1be155a600",
+        "bytes": 9129
+      },
+      "mutant": {
+        "exit": 101,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/cross-round-ack-mutant.log",
+        "sha256": "4ad9af6bff3abcf0ebf3da18f6d25bd6e734d4dda01d3fb164c9518c4996c985",
+        "source_sha256": "5936b85787ca7241482acfe6b4998b626e23c02704772ce475aa9217a34b76d2",
+        "bytes": 10576
+      },
+      "restored": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/cross-round-ack-restored.log",
+        "sha256": "d58c3041da02879abfc95c67457cbfa8184c3a8d29b8cbf4ad0ce6983664adec",
+        "source_sha256": "e1ea13026c538dbb51b298b147b984df67b3f09b44f5a7aa5f1e2f1be155a600",
+        "bytes": 9048
+      }
+    },
+    {
+      "case": "query-allocation",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--test",
+        "elector_sandbox",
+        "-j64",
+        "security_audit::relay::relay_query_allocation_refuses_large_jumps_without_burning_the_next_id",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "source": "crypto/smartcont/validator-controller-v1.fc",
+      "source_sha256": "9a45373779ec658c1eef455c59f667cd766800029a5c8f4a8fdf5f457abfb582",
+      "baseline": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/query-allocation-baseline.log",
+        "sha256": "c232415fa5957cec77ea0ad0e31606eae70f96bc753a9d0d1f178b9bce6f743f",
+        "source_sha256": "9a45373779ec658c1eef455c59f667cd766800029a5c8f4a8fdf5f457abfb582",
+        "bytes": 9062
+      },
+      "mutant": {
+        "exit": 101,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/query-allocation-mutant.log",
+        "sha256": "155d5572ceed72508ea823d817b50590394d284d7b2738ee5a2851796fc26e1b",
+        "source_sha256": "ca03afdbb3f189215b0118d720295255d8868ce71f6f8648f9706ea790e11d46",
+        "bytes": 9588
+      },
+      "restored": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/query-allocation-restored.log",
+        "sha256": "4d9c4627788021cbb2733fb4a248c30c06bdb3cae0e4bbebe7762065ab67793f",
+        "source_sha256": "9a45373779ec658c1eef455c59f667cd766800029a5c8f4a8fdf5f457abfb582",
+        "bytes": 9062
+      }
+    },
+    {
+      "case": "single-bounce-retry",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--test",
+        "elector_sandbox",
+        "-j64",
+        "security_audit::relay::single_pool_reuses_the_authoritative_query_after_a_real_controller_bounce",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "source": "crypto/smartcont/single-nominator-pool/single-nominator-code.fc",
+      "source_sha256": "396db3bba89afe760ccae50874706f3bebbd861c54e1f40ca7d256c64ac4e734",
+      "baseline": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/single-bounce-retry-baseline.log",
+        "sha256": "5c4f732bc4334ba622b3d2c38c733d5cc5743e83f65af048cf24c74dbe5ef55a",
+        "source_sha256": "396db3bba89afe760ccae50874706f3bebbd861c54e1f40ca7d256c64ac4e734",
+        "bytes": 9065
+      },
+      "mutant": {
+        "exit": 101,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/single-bounce-retry-mutant.log",
+        "sha256": "2cd59d6072ad8bcc9fc9db6385c876f9f7dfc5d2262cc27f54300b7603fc4474",
+        "source_sha256": "48716893bf6aa046481f45104544aa2dc236ec18842df622048c5866cc082a80",
+        "bytes": 10577
+      },
+      "restored": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/single-bounce-retry-restored.log",
+        "sha256": "4b5c84780b5e3b92c933931a4809fa55fef47f8c7d6d46bbdb545baea653265e",
+        "source_sha256": "396db3bba89afe760ccae50874706f3bebbd861c54e1f40ca7d256c64ac4e734",
+        "bytes": 9065
+      }
+    },
+    {
+      "case": "single-prior-result",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--test",
+        "elector_sandbox",
+        "-j64",
+        "security_audit::relay::single_pool_bounce_preserves_a_previous_unacknowledged_result",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "source": "crypto/smartcont/single-nominator-pool/single-nominator-code.fc",
+      "source_sha256": "396db3bba89afe760ccae50874706f3bebbd861c54e1f40ca7d256c64ac4e734",
+      "baseline": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/single-prior-result-baseline.log",
+        "sha256": "5e90f17ab6e0a7826fe92f4cce21bc70ddd6ba71d69bcdc8980fdfab95ab11dd",
+        "source_sha256": "396db3bba89afe760ccae50874706f3bebbd861c54e1f40ca7d256c64ac4e734",
+        "bytes": 9053
+      },
+      "mutant": {
+        "exit": 101,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/single-prior-result-mutant.log",
+        "sha256": "bf7844326663b4b4c9ba2e077569d666a9761522d12563759e6da76b52ccdcb3",
+        "source_sha256": "1baaa53011976cf43ea8d5ad5ce1a69ab76787a6619ff933834c441fbbb73390",
+        "bytes": 9743
+      },
+      "restored": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/single-prior-result-restored.log",
+        "sha256": "fb65692feb15d6cd3ef47bb088b0d7fcaad65455bc8dbed20f3038a109158ebf",
+        "source_sha256": "396db3bba89afe760ccae50874706f3bebbd861c54e1f40ca7d256c64ac4e734",
+        "bytes": 9053
+      }
+    },
+    {
+      "case": "recovery-confirmation-binding",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "tosctl/src/Cargo.toml",
+        "--locked",
+        "-p",
+        "contracts",
+        "--test",
+        "elector_sandbox",
+        "-j64",
+        "security_audit::relay::recovery_ack_survives_accepted_and_rejected_later_stakes",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "source": "crypto/smartcont/nominator-pool/pool.fc",
+      "source_sha256": "e1ea13026c538dbb51b298b147b984df67b3f09b44f5a7aa5f1e2f1be155a600",
+      "baseline": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/recovery-confirmation-binding-baseline.log",
+        "sha256": "02fef6b2790a41e0dc46fae05a0e0ad542a36a37a35abd66fad9ebc699779e15",
+        "source_sha256": "e1ea13026c538dbb51b298b147b984df67b3f09b44f5a7aa5f1e2f1be155a600",
+        "bytes": 9048
+      },
+      "mutant": {
+        "exit": 101,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/recovery-confirmation-binding-mutant.log",
+        "sha256": "f39a348a779b981bb80025e6f51af96efecc61b4f12a1efb3fc608f3f87a7ff3",
+        "source_sha256": "1fd0a412b4ce41f06ed1c87a13ba2d21163ea51565c4198406f32c56c86533e5",
+        "bytes": 9733
+      },
+      "restored": {
+        "exit": 0,
+        "log": ".git/elector-security-audit-artifacts/review/final-mutations/recovery-confirmation-binding-restored.log",
+        "sha256": "8c1868b1894c23382dbd5d28a229c84c2e049ed08a1080b05b19d0f91d29c94d",
+        "source_sha256": "e1ea13026c538dbb51b298b147b984df67b3f09b44f5a7aa5f1e2f1be155a600",
+        "bytes": 9048
+      }
+    }
+  ],
+  "artifacts": {
+    "multi_pool": {
+      "path": ".git/elector-security-audit-artifacts/review/multi.boc",
+      "sha256": "ee045e57aad87615c63bc2286a81fedc9cf5c5d24d475ae866878068b4141493",
+      "bytes": 4896,
+      "tvm_code_hash": "9cce536f3d093fe56681ab37017bf094368dcc507b965141f6a78598dfde5dc3",
+      "fixture_address": "-1:5d78980307adfc43eb8e18a487305b51fa5fb76116dde11343193f5eaed18024"
+    },
+    "single_pool": {
+      "path": ".git/elector-security-audit-artifacts/review/single.boc",
+      "sha256": "b28a2540b2989efbf6c979c46cbebf75ce1cf964484d6aa0bcb0030e6c3637e6",
+      "bytes": 1734
+    }
+  },
+  "recorded_answer_changes": [
+    {
+      "case": "governance",
+      "old": {
+        "path": ".git/elector-security-audit-artifacts/review/old-governance.cache/a32b3ed4f6abea07a39ad88a6a12c347c980df1766817a462ad0b63acfefa9c4",
+        "sha256": "a32b3ed4f6abea07a39ad88a6a12c347c980df1766817a462ad0b63acfefa9c4",
+        "bytes": 366
+      },
+      "new": {
+        "path": ".git/elector-security-audit-artifacts/review/new-governance.cache/7d3db88762264c20a343259dbf831e93de4428df4b62009e280053ef4bd464e4",
+        "sha256": "7d3db88762264c20a343259dbf831e93de4428df4b62009e280053ef4bd464e4",
+        "bytes": 366
+      },
+      "cause": "Only the generated elector code was substituted; the old code reproduced the previous answer."
+    },
+    {
+      "case": "zerostate",
+      "old": {
+        "path": ".git/elector-security-audit-artifacts/review/old-zerostate.cache/c30f3b913032bab8513c65233347d4ab32f8e74538a1011540d962a6e7b22bf5",
+        "sha256": "c30f3b913032bab8513c65233347d4ab32f8e74538a1011540d962a6e7b22bf5",
+        "bytes": 684
+      },
+      "new": {
+        "path": ".git/elector-security-audit-artifacts/review/new-zerostate.cache/972e925ecdb12c11596d77faf8583b03092eb0217ad8284dd3b9f01b307fe8af",
+        "sha256": "972e925ecdb12c11596d77faf8583b03092eb0217ad8284dd3b9f01b307fe8af",
+        "bytes": 684
+      },
+      "cause": "Only the generated elector code was substituted; the old code reproduced the previous answer."
+    }
+  ]
+}

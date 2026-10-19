@@ -1,0 +1,407 @@
+Script started on 2026-09-29 12:18:36+00:00 [<not executed on terminal>]
+Using Python 3.14.4 environment at: .contract-venv
+Checked 17 packages in 2ms
+PASS: 23 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.02s
+     Running tests/http.rs (target/debug/deps/http-7c4505374c50d567)
+
+running 1 test
+test all_six_success_handlers_emit_runtime_dtos ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/http.rs (target/debug/deps/http-7c4505374c50d567)
+
+running 1 test
+test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.02s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running tests/http.rs (target/debug/deps/http-7c4505374c50d567)
+
+running 1 test
+test edge_heartbeat_and_capabilities_emit_bounded_typed_wire ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.00s
+
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.46s
+     Running tests/native_typed.rs (target/debug/deps/native_typed-acac3394dd104135)
+
+running 1 test
+test typed_sampler_and_edge_read_only_cache ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.29s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running tests/native_typed.rs (target/debug/deps/native_typed-acac3394dd104135)
+
+running 1 test
+test v2_edge_route_and_collector_keep_incomplete_consensus_typed ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s
+
+PASS: 23 closed schemas; six tool input/error fixtures; six actual handler successes; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+PASS: production doctor refused 11 unverified gates (exit nonzero)
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.08s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_core-e3846bc9b8175440)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/contracts.rs (target/debug/deps/contracts-c98906b30e8391b0)
+
+running 30 tests
+test absence_never_becomes_zero ... ok
+test broker_expires_backlog_and_bounds_queue ... ok
+test block_comparison_requires_full_identity ... ok
+test cancellation_keeps_model_resource_exclusive ... ok
+test duties_deduplicate_retry_and_late_completion ... ok
+test duties_do_not_hide_pending_or_incomplete_population ... ok
+test cache_miss_does_not_create_evidence ... ok
+test diagnosis_cannot_invent_evidence_or_change_severity ... ok
+test diagnosis_rejects_trailing_instructions_and_unapproved_runbooks ... ok
+test freshness_is_original_observation_not_poll_time ... ok
+test guard_requires_continuous_recovery ... ok
+test missing_source_does_not_recover_incident ... ok
+test grants_expire_and_revoke ... ok
+test partial_cannot_prove_complete_duties ... ok
+test not_required_needs_protocol_evidence ... ok
+test profile_arithmetic_cannot_overflow_into_validity ... ok
+test recovery_does_not_count_missing_guard_intervals ... ok
+test repeated_deadman_does_not_keep_monitor_alive ... ok
+test scheduler_rejects_overflow ... ok
+test scheduler_skips_missed_ticks ... ok
+test stale_guard_signals_shed_work ... ok
+test repeated_relay_receipt_keeps_original_evidence_identity ... ok
+test timeout_does_not_release_actual_work ... ok
+test query_authentication_and_run_are_independent ... ok
+test unapproved_profile_cannot_pass_declaration_checks ... ok
+test utc_requires_z_and_real_calendar ... ok
+test unknown_fields_and_force_refresh_are_rejected ... ok
+test failed_calls_consume_budget ... ok
+test snapshot_does_not_return_future_ingestion_or_another_node ... ok
+test evidence_is_immutable_deduplicated_and_bounded ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/native_contract.rs (target/debug/deps/native_contract-4738a835d60541ef)
+
+running 5 tests
+test age_and_quality_cannot_be_fabricated ... ok
+test required_nullable_and_unknown_fields_are_enforced ... ok
+test edge_wire_requires_bound_process_native_and_cgroup_epochs ... ok
+test immutable_identity_excludes_only_receipt_and_age ... ok
+test exact_pairing_rejects_changed_generation_and_content ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/native_v2_contract.rs (target/debug/deps/native_v2_contract-519cd6330bf5b30e)
+
+running 9 tests
+test synthetic_consensus_shape_is_exact ... ok
+test duplicate_raw_keys_refuse_before_hash_or_value_normalization ... ok
+test exact_v2_and_v1_coexist_without_fallback ... ok
+test pair_hash_generation_and_eof_refuse ... ok
+test unapproved_scope_and_post_terminal_progress_cannot_stay_green ... ok
+test unknown_phase_replay_and_integer_overflow_refuse ... ok
+test disabled_null_and_inventory_overflow_are_not_complete ... ok
+test overall_quality_may_degrade_but_cannot_promote_incomplete_components ... ok
+test incomplete_capability_and_context_mismatch_refuse ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/r4.rs (target/debug/deps/r4-8626ded16cda70cb)
+
+running 16 tests
+test bad_after_unknown_preserves_episode ... ok
+test freshness_conflict_quarantines_epoch ... ok
+test exact_uint64 ... ok
+test block_shard_is_unsigned_and_hashes_are_canonical ... ok
+test ipc_rejects_malformed_header ... ok
+test freshness_same_generation_does_not_renew ... ok
+test ipc_frozen_bytes ... ok
+test freshness_regression_and_overflow ... ok
+test multi_source_recovery_requires_every_source ... ok
+test recovery_requires_distinct_good_and_hold ... ok
+test unknown_epoch_and_restart_reset_recovery ... ok
+test vote_order_and_replay_are_preserved ... ok
+test vote_trace_and_normal_return_are_not_success ... ok
+test production_placeholders_and_claims_do_not_pass ... ok
+test sparse_histograms_count_all_series ... ok
+test diagnostic_limits_are_independent ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/rules.rs (target/debug/deps/rules-920fa7c27f3126f7)
+
+running 8 tests
+test facts_cannot_escape_catalog_or_network ... ok
+test retired_heartbeat_and_repeats_cannot_extend_deadlines ... ok
+test bad_hold_and_distinct_samples_are_both_required ... ok
+test cache_duplicates_do_not_renew_rule_quality ... ok
+test telemetry_inventory_detects_never_seen_source ... ok
+test missing_and_conflicting_sources_are_unknown ... ok
+test counter_rule_needs_baseline_and_does_not_recount ... ok
+test scalar_rules_use_only_their_frozen_facts ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/witness_contract.rs (target/debug/deps/witness_contract-c02181082b5477a3)
+
+running 6 tests
+test comparison_requires_exact_context_and_never_upgrades_reported_finality ... ok
+test strict_source_preserves_stale_and_unknown_age_without_proof_promotion ... ok
+test unknown_candidate_is_not_a_positive_comparison ... ok
+test plan_and_source_cardinality_and_body_caps_are_literal ... ok
+test strict_source_refuses_unapproved_target_context_and_extra_fields ... ok
+test strict_plan_refuses_dynamic_and_unreferenced_endpoints ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-17f2082aba49570c)
+
+running 2 tests
+test collector::witness_tests::wrong_archive_ack_cannot_suppress_next_real_collector_post ... ok
+test native_cache::tests::actual_run_waits_full_interval_after_source_misses_tick ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.52s
+
+     Running unittests src/bin/health-collector.rs (target/debug/deps/health_collector-2a3ab3dd66794fe3)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-contract-check.rs (target/debug/deps/health_contract_check-05f595c09dc1a6be)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-edge.rs (target/debug/deps/health_edge-819d2e673edf8630)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-ingress.rs (target/debug/deps/health_ingress-dad79105059d44df)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-native-poll.rs (target/debug/deps/health_native_poll-0e27a6673207e974)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-probe.rs (target/debug/deps/health_probe-d5f792585d218a96)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-state.rs (target/debug/deps/health_state-d1a4afd7475a7a48)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/health-watchdog.rs (target/debug/deps/health_watchdog-ad784523c5f0d393)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/tos-observability.rs (target/debug/deps/tos_observability-e48944d9517d7b14)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cgroup.rs (target/debug/deps/cgroup-b77aef5e0011849b)
+
+running 4 tests
+test descendant_quota_symlink_and_zero_are_refused ... ok
+test effective_quota_uses_tightest_ancestor_and_keeps_pressure_sample ... ok
+test unlimited_parent_and_finite_child_resolve_to_child ... ok
+test discovery_keeps_unsupported_and_invalid_profiles_distinct ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/durable.rs (target/debug/deps/durable-9a66524f5ca408dd)
+
+running 12 tests
+test whole_round_rolls_back_when_any_outbox_change_fails ... ok
+test future_schema_and_invalid_page_are_rejected ... ok
+test outbox_capacity_failure_cannot_advance_recovery_or_sequence ... ok
+test incident_and_outbox_commit_together ... ok
+test restart_does_not_resolve_or_continue_old_hold ... ok
+test conflict_is_persistent_and_scope_is_identity ... ok
+test immutable_sequence_survives_restart_and_late_arrival ... ok
+test legacy_pending_outbox_migrates_without_ack_and_retry_metadata_is_durable ... ok
+test ordered_episode_timeline_is_persisted_and_outboxed ... ok
+test both_databases_verify_wal_full_and_passive_checkpoint_is_bounded_by_reader ... ok
+test evidence_disk_limit_does_not_consume_control_capacity ... ok
+test immutable_inventory_revision_is_enforced ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/edge_lifecycle.rs (target/debug/deps/edge_lifecycle-1be52b48823056f7)
+
+running 1 test
+test edge_exit_does_not_signal_or_restart_configured_source_process ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+     Running tests/http.rs (target/debug/deps/http-7c4505374c50d567)
+
+running 15 tests
+test direct_listener_must_be_local ... ok
+test inventory_and_secret_domains_are_enforced ... ok
+test private_token_validation_and_randomness ... ok
+test edge_rejects_refresh_and_enforces_burst ... ok
+test edge_reads_are_cached_and_authenticated ... ok
+test oversized_requests_fail_before_handler ... ok
+test ingest_checks_bound_identity ... ok
+test service_identities_do_not_cross_roles ... ok
+test grant_query_and_revocation_round_trip ... ok
+test edge_heartbeat_and_capabilities_emit_bounded_typed_wire ... ok
+test edge_router_reserves_burst_token_for_approved_heartbeat ... ok
+test query_rejections_are_not_http_success ... ok
+test all_six_success_handlers_emit_runtime_dtos ... ok
+test runtime_coverage_aggregation_is_bounded_and_schema_ready ... ok
+test runtime_output_reflects_unknown_quality_and_rejects_conflicts ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/ingress.rs (target/debug/deps/ingress-a55282e3fd65ffeb)
+
+running 5 tests
+test scheduled_probe_uses_mtls_and_never_claims_consensus_health ... ok
+test mtls_acl_rejects_missing_expired_and_unapproved_before_upstream ... ok
+test scheduled_native_poll_checks_inventory_over_mtls ... ok
+test eight_idle_authenticated_readers_are_bounded_then_release ... ok
+test seven_slow_regular_requests_leave_classified_heartbeat_capacity ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.25s
+
+     Running tests/manager.rs (target/debug/deps/manager-3ec85bc0fa55bb29)
+
+running 9 tests
+test pending_c04_c05_rule_inputs_cannot_be_enabled_on_manager ... ok
+test queued_observation_cannot_be_rejuvenated ... ok
+test database_aliases_cannot_defeat_isolation ... ok
+test partial_archive_failure_has_no_receipt_and_replay_preserves_committed_record ... ok
+test typed_snapshot_archive_commits_exact_refs_without_creating_healthy_facts ... ok
+test full_evidence_writer_queue_refuses_without_receipt_or_green ... ok
+test source_reference_write_failure_cannot_publish_green ... ok
+test killed_process_reopens_active_incident_as_unknown ... ok
+test conflict_quarantines_live_rule_and_receipt_controls_outbox ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.08s
+
+     Running tests/native_cache.rs (target/debug/deps/native_cache-93b0c333672cffd2)
+
+running 6 tests
+test duplicate_native_sample_keeps_original_age ... ok
+test native_conflict_cannot_recover_in_same_epoch ... ok
+test cold_metrics_and_query_rejected_without_sampler ... ok
+test metrics_route_refuses_stale_conflicted_and_restarted_cache ... ok
+test native_bounds_and_loopback_are_enforced ... ok
+test thousand_cache_reads_never_call_native ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/native_typed.rs (target/debug/deps/native_typed-acac3394dd104135)
+
+running 9 tests
+test scheduler_skips_a_tick_missed_by_a_slow_source ... ok
+test native_adapter_does_not_turn_missing_pq_into_zero ... ok
+test mismatched_pair_has_no_retry_and_no_publication ... ok
+test r4_collector_preserves_source_identity_and_immutable_payload ... ok
+test v2_cache_epoch_switch_retires_old_pair_without_counter_merge ... ok
+test v2_edge_route_and_collector_keep_incomplete_consensus_typed ... ok
+test typed_cache_duplicate_age_and_conflict_are_sticky ... ok
+test snapshot_route_refuses_conflicted_and_restarted_typed_cache ... ok
+test typed_sampler_and_edge_read_only_cache ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+     Running tests/native_v2_producer_pair.rs (target/debug/deps/native_v2_producer_pair-6c1ef8e3149b5218)
+
+running 1 test
+test actual_cpp_publisher_pairs_and_negatives ... ignored, requires indexed native C++ publisher pair; run with NHM_C04_PAIR_DIR
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/watchdog.rs (target/debug/deps/watchdog-c7ea31bd9affe5ee)
+
+running 3 tests
+test pipeline_requires_own_firing_new_evaluation ... ok
+test own_observer_heartbeat_and_notice_delivery_are_distinct_from_monitor_fault ... ok
+test direct_observer_notice_has_stable_timestamp_key_and_bounded_retry ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/witness_archive.rs (target/debug/deps/witness_archive-ce8de4363e10ff3c)
+
+running 4 tests
+test actual_observer_cache_to_manager_retained_archive_dedups_without_rule_fact ... ok
+test manager_refuses_oversized_or_uninventoried_witness_plan_before_activation ... ok
+test historical_dedup_and_conflict_quarantine_survive_manager_restart ... ok
+test witness_archive_quota_refusal_has_no_success_ack_or_partial_row ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/witness_cache.rs (target/debug/deps/witness_cache-80217fc798bb02c3)
+
+running 13 tests
+test owned_capacity_not_only_length_is_charged_at_startup ... ok
+test malformed_or_late_source_never_materializes_on_handler ... ok
+test four_read_permits_live_until_cached_response_bodies_drain ... ok
+test originally_unknown_row_remains_unknown_after_newer_finite_report ... ok
+test new_generation_of_same_old_row_does_not_renew_age_or_receipt ... ok
+test actual_read_handler_is_cache_only_and_duplicate_cannot_renew ... ok
+test cache_retains_at_most_four_generations_without_revival ... ok
+test canonical_duplicate_ignores_raw_whitespace_and_escaped_response_overflow_keeps_old ... ok
+test same_row_newer_reported_age_only_raises_lower_bound ... ok
+test same_row_newer_unknown_or_overflow_age_cannot_inherit_freshness ... ok
+test actual_cache_wire_qualifies_future_clock_role_and_five_separate_dimensions ... ok
+test retained_ingest_decoder_refuses_identity_age_and_proof_laundering ... ok
+test republished_old_row_keeps_first_role_window_and_clock_context ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+
+     Running tests/witness_poll.rs (target/debug/deps/witness_poll-a64ed631cd879ce5)
+
+running 4 tests
+test fixed_schedule_skips_missed_tick_without_immediate_catch_up ... ok
+test one_actual_https_get_serves_two_planned_targets_per_round ... ok
+test cancelled_round_then_new_round_never_exceeds_four_local_requests ... ok
+test local_timeout_quarantines_late_remote_work_without_retry ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.62s
+
+   Doc-tests tos_health_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tos_health_services
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+Script done on 2026-09-29 12:19:43+00:00 [COMMAND_EXIT_CODE="0"]

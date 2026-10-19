@@ -1,3 +1,20 @@
+# Historical scope of this withdrawal record
+
+The withdrawal below describes the 2026-09-22 branch transcript, preserved
+byte for byte at [commit de94be875](https://github.com/tosnetwork/tos/tree/de94be8750d3d12a126b83cf40657e8fdf567899/artifacts/phase2).
+That immutable snapshot includes its original announcement, unsigned attestation,
+key and one-step chain. No old commit was rewritten.
+
+The merge also preserves the different, later legacy transcript previously
+published on [main at 881240331](https://github.com/tosnetwork/tos/tree/881240331/artifacts/phase2),
+with its coherent announcement, signed attestations and six-step chain. Those
+files remain together here; they are not the unsigned one-step snapshot the
+withdrawal text describes. The completed 2026-10-19 ceremony lives separately in
+[phase2-ceremony-2](../phase2-ceremony-2/). Neither historical chain is incorporated
+into it. The original withdrawal explanation follows.
+
+---
+
 # SUPERSEDED — this ceremony was withdrawn and must not be deployed
 
 **Status: withdrawn, 2026-09-22. Kept as a record of what was done, not as a

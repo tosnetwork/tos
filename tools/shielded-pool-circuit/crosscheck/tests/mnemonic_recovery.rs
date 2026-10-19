@@ -21,6 +21,8 @@
 
 mod support;
 
+use std::collections::BTreeSet;
+
 use shielded_pool_circuit::field::Fr;
 use shielded_pool_circuit::{notes, wire};
 use shielded_pool_circuit_crosscheck::pool::{dec, Pool, DENOMINATION};
@@ -91,7 +93,7 @@ fn deposit(pool: &mut Pool, wallet: &PoolInstance, index: u64) -> Deposited {
         output: ObservedOutput {
             slot: 0,
             output_data: sealed,
-            chain: ChainSlot { output_data_hash, note_body },
+            chain: ChainSlot { output_data_hash, note_body, recovered: None },
         },
         note_key_index: index,
         amount,
@@ -175,6 +177,134 @@ fn a_wallet_restored_from_the_mnemonic_finds_what_the_contract_minted() {
 
 /// A payload addressed to somebody else is not this wallet's business, and
 /// leaves no trace: it does not open, so it is not even a diagnostic.
+/// A bounced withdrawal comes back as money the restored wallet can spend.
+///
+/// The template a withdrawal signs carries no amount -- what a bounce returns
+/// depends on forward fees no prover knows in advance -- so the contract mints
+/// the note for `msg_value - recovery_charge` when the payout comes home. A
+/// wallet that can only ever import the template imports nothing, and a
+/// refused withdrawal then strands the sender's money from the sender's point
+/// of view. The person who causes that is the recipient, not the sender, which
+/// is why this is treated as an availability blocker and not a convenience.
+///
+/// Everything below crosses the line from the seed and the chain. No wallet
+/// database, no kept payload, no device.
+#[test]
+fn a_bounced_recovery_note_is_spendable_after_a_restore_from_the_mnemonic() {
+    let domain = wire::execution_domain(
+        shielded_pool_circuit_crosscheck::wire::WireProbe::deploy()
+            .expect("the wire probe")
+            .domain_inputs()
+            .expect("the domain inputs")
+            .0,
+        &Pool::deploy().expect("deploy the pool").account().expect("the pool's account"),
+    );
+    let wallet = PoolInstance::new(&SEED, domain);
+    let index = 3u64;
+
+    // The recovery payload a withdrawal seals for itself, before it is known
+    // whether it will be needed or what it will be worth.
+    let plaintext = Plaintext {
+        slot: 2,
+        kind: Kind::Recovery,
+        amount: 0,
+        note_secret: Fr::from(0x5eed_0003u64),
+        owner_nf_key_hash: wallet.owner_nf_key_hash(index).expect("an owner hash"),
+        note_key_index: index,
+        pq_auth_key_hash: wallet.pq_auth_key_hash(index).expect("a key hash"),
+    };
+    let sealed = delivery::seal(
+        &wallet.mlkem_encapsulation_key().expect("a key"),
+        wallet.execution_domain(),
+        &plaintext,
+    )
+    .expect("seal the recovery payload");
+    let output_data_hash = wire::output_data_hash(&sealed);
+    let owner = notes::owner_commitment(
+        plaintext.owner_nf_key_hash,
+        plaintext.pq_auth_key_hash,
+        plaintext.note_secret,
+    );
+
+    // Before the bounce: the chain carries the template, which is not money.
+    let template = wire::recovery_template_hash(owner, output_data_hash);
+    let restored = PoolInstance::new(&SEED, domain);
+    let before = scan::recover(
+        &restored,
+        &[ObservedOutput {
+            slot: 2,
+            output_data: sealed.clone(),
+            chain: ChainSlot { output_data_hash, note_body: template, recovered: None },
+        }],
+    )
+    .expect("recover the template");
+    assert_eq!(before.notes.len(), 1, "the template was not recognised at all");
+    assert_eq!(before.balance(), 0, "a template that has not bounced is not money");
+    assert_eq!(before.spendable_notes().count(), 0, "a template was offered as an input");
+
+    // After the bounce: the contract minted the note for what came back less
+    // its own charge, and published that body. The amount is read off the
+    // chain rather than assumed, which is the only way a wallet can know it.
+    let recovered_amount = u128::from(DENOMINATION) - 1_466_669;
+    let minted =
+        notes::note_body_commitment(owner, Fr::from(recovered_amount), output_data_hash);
+    let after = scan::recover(
+        &restored,
+        &[ObservedOutput {
+            slot: 2,
+            output_data: sealed.clone(),
+            chain: ChainSlot {
+                output_data_hash,
+                note_body: minted,
+                recovered: Some(recovered_amount),
+            },
+        }],
+    )
+    .expect("recover the minted note");
+
+    assert_eq!(after.notes.len(), 1, "the minted recovery note was not recognised");
+    assert_eq!(
+        after.balance(),
+        recovered_amount,
+        "a bounced recovery note is money and the restored wallet did not count it"
+    );
+    assert_eq!(
+        after.spendable_notes().count(),
+        1,
+        "the recovery note is not offered as an input, so the money cannot be moved"
+    );
+    let note = after.spendable_notes().next().expect("the recovery note");
+    assert!(note.spendable, "the recovery note imported as unspendable");
+    assert_eq!(note.amount, recovered_amount, "the note imported for the wrong amount");
+    assert_eq!(note.note_body, minted, "the imported body is not the one the chain published");
+
+    // And it is held to the chain's own body: a wallet told a different amount
+    // than the one that was minted must refuse rather than invent a note.
+    let lying = scan::recover(
+        &restored,
+        &[ObservedOutput {
+            slot: 2,
+            output_data: sealed,
+            chain: ChainSlot {
+                output_data_hash,
+                note_body: minted,
+                recovered: Some(recovered_amount + 1),
+            },
+        }],
+    )
+    .expect("recover with a wrong amount");
+    assert_eq!(lying.notes.len(), 0, "a recovery amount the chain did not mint was accepted");
+    assert_eq!(lying.diagnostics.len(), 1, "the mismatch was not reported");
+
+    // Once the chain publishes its nullifier it stops being spendable, by the
+    // same reconciliation every other note goes through.
+    let mut spent_later = after;
+    let key = restored.owner_nf_key(index).expect("the owner key");
+    let published: BTreeSet<Fr> = [notes::nullifier(minted, key)].into_iter().collect();
+    spent_later.reconcile_spent(&restored, &published).expect("reconcile");
+    assert_eq!(spent_later.balance(), 0, "a spent recovery note is still counted as money");
+}
+
 #[test]
 fn another_wallets_notes_are_invisible_and_silent() {
     let frontier = shielded_pool_circuit::tree::Frontier::new();
@@ -278,6 +408,7 @@ fn two_notes_sent_to_one_descriptor_are_both_recovered_and_the_index_is_burnt() 
                     Fr::from(u128::from(DENOMINATION)),
                     output_data_hash,
                 ),
+                recovered: None,
             },
         }
     };

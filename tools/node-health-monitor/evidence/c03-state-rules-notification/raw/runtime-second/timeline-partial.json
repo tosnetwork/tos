@@ -1,0 +1,145 @@
+{
+  "events": [
+    {
+      "kind": "start",
+      "monotonic": 282169.091898,
+      "utc": 1790673051.5181613,
+      "process": "health-state",
+      "pid": 774223
+    },
+    {
+      "kind": "start",
+      "monotonic": 282170.098967217,
+      "utc": 1790673052.525231,
+      "process": "health-watchdog",
+      "pid": 774228
+    },
+    {
+      "kind": "start",
+      "monotonic": 282170.100380301,
+      "utc": 1790673052.526644,
+      "process": "alertmanager",
+      "pid": 774229
+    },
+    {
+      "kind": "start",
+      "monotonic": 282170.101921563,
+      "utc": 1790673052.5281847,
+      "process": "prometheus",
+      "pid": 774230
+    },
+    {
+      "kind": "baseline_wait",
+      "monotonic": 282171.105399537,
+      "utc": 1790673053.5316634,
+      "seconds": 115
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282286.125369415,
+      "utc": 1790673168.5516334,
+      "process": "prometheus",
+      "returncode": 0
+    },
+    {
+      "kind": "prometheus_down",
+      "monotonic": 282286.12549077,
+      "utc": 1790673168.551754
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282296.130288705,
+      "utc": 1790673178.5565524,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282306.135482286,
+      "utc": 1790673188.5617461,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282316.14023631,
+      "utc": 1790673198.5665002,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282326.145299257,
+      "utc": 1790673208.571563,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282336.150034141,
+      "utc": 1790673218.5762978,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282346.155202158,
+      "utc": 1790673228.5814662,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282356.160359374,
+      "utc": 1790673238.5866234,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282366.164979688,
+      "utc": 1790673248.5912435,
+      "accepted": "0"
+    },
+    {
+      "kind": "old_sequence_replay",
+      "monotonic": 282376.169159779,
+      "utc": 1790673258.5954235,
+      "accepted": "0"
+    },
+    {
+      "kind": "prometheus_unavailable_delivered",
+      "monotonic": 282380.170184868,
+      "utc": 1790673262.5964484,
+      "key": "856f2c5624baa488ec0c2854e94220ca8f265fac854855faf9393f30ac826cd9"
+    },
+    {
+      "kind": "start",
+      "monotonic": 282380.171683517,
+      "utc": 1790673262.597947,
+      "process": "prometheus",
+      "pid": 775340
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282445.219799497,
+      "utc": 1790673327.6460633,
+      "process": "health-state",
+      "returncode": -15
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282445.223302516,
+      "utc": 1790673327.649566,
+      "process": "health-watchdog",
+      "returncode": -15
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282445.23909168,
+      "utc": 1790673327.6653554,
+      "process": "alertmanager",
+      "returncode": 0
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282445.254650806,
+      "utc": 1790673327.6809146,
+      "process": "prometheus",
+      "returncode": 0
+    }
+  ]
+}

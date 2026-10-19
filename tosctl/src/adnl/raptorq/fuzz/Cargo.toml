@@ -15,6 +15,12 @@ name = 'fuzz_raptorq'
 path = 'fuzz_targets/fuzz_raptorq.rs'
 test = false
 
+[[bin]]
+doc = false
+name = 'fuzz_raptorq_decoder'
+path = 'fuzz_targets/fuzz_raptorq_decoder.rs'
+test = false
+
 [dependencies]
 arbitrary = { features = [ 'derive' ], version = '1.1.0' }
 libfuzzer-sys = { features = [ 'arbitrary-derive' ], version = '0.4.0' }

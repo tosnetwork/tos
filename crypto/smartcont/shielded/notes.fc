@@ -4,7 +4,7 @@
 ;; order. The zero padding is part of the definition, not slack: dropping it
 ;; would shorten the absorbed state and change the result.
 ;;
-;; Requires domains.fc and a VM at global version 17 or above.
+;; Requires domains.fc and a VM at global version 16 or above.
 
 int h7(int domain, int a0, int a1, int a2, int a3, int a4, int a5, int a6)
   asm "POSEIDON2_HASH7";

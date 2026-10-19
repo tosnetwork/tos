@@ -13,7 +13,7 @@
 use super::http_server_task::{ApiErrorResponse, AppError, AppState};
 use crate::indexer::{
     DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord,
-    ListFilters,
+    IndexerStore, LedgerAvailability, ListFilters, attribution_complete,
 };
 use crate::runtime_config::RuntimeConfig;
 use axum::extract::{Path, Query, State};
@@ -435,8 +435,8 @@ fn block_hash_candidates(raw: &str) -> Vec<String> {
 pub async fn status(
     State(state): State<AppState>,
 ) -> Result<axum::Json<ExplorerStatusResponse>, AppError> {
-    let stats = state.indexer_store.explorer_stats().map_err(index_error)?;
-    let checkpoints = state.indexer_store.checkpoints().map_err(index_error)?;
+    let stats = state.indexer()?.explorer_stats().map_err(index_error)?;
+    let checkpoints = state.indexer()?.checkpoints().map_err(index_error)?;
     let chain_head = state.runtime_cfg.chain_provider().get_masterchain_info().await.ok();
     let masterchain_head = chain_head.as_ref().map(|head| head.last.seqno);
     let masterchain_indexed = chain_head.as_ref().and_then(|head| {
@@ -473,6 +473,9 @@ pub async fn status(
 pub async fn staking(
     State(state): State<AppState>,
 ) -> Result<axum::Json<ExplorerStakingResponse>, AppError> {
+    // The pool summary needs the index; refuse before any chain call, so a
+    // disabled indexer answers at once instead of waiting on the RPC.
+    let index = state.indexer()?;
     let provider = contract_provider_from(state.runtime_cfg.chain_provider());
     let elector = ElectorWrapperImpl::new(provider);
     let (current_result, past_result) =
@@ -546,8 +549,7 @@ pub async fn staking(
         })
         .collect::<Vec<_>>();
 
-    let (pools, _) = state
-        .indexer_store
+    let (pools, _) = index
         .list("contract.pool.nominator", &ListFilters::default(), 0, 10_000)
         .map_err(index_error)?;
     let mut active_pools = 0usize;
@@ -609,9 +611,16 @@ pub struct ExplorerNominatorPositionDto {
     /// because a total that silently absorbs what it could not account for is
     /// worse than one that says so.
     pub unattributed_total: String,
-    /// False when unattributed_total is non-zero: the earnings figure is then
-    /// a lower bound rather than the whole story.
+    /// Observation intervals in which the pool changed more than once, so one
+    /// end-of-interval snapshot could not attribute each change.
+    pub coverage_gap_count: u64,
+    /// True only when unattributed_total and coverage_gap_count are both
+    /// zero; otherwise the earnings figure is a lower bound.
     pub attribution_complete: bool,
+    /// Published masterchain block of this position's last observation.
+    pub last_mc_seqno: u32,
+    pub last_mc_root_hash: String,
+    pub last_mc_file_hash: String,
     pub first_seen_at: u64,
     pub updated_at: u64,
 }
@@ -620,6 +629,13 @@ pub struct ExplorerNominatorPositionDto {
 pub struct ExplorerNominatorPositionsResponse {
     pub ok: bool,
     pub address: String,
+    /// The published masterchain block the totals are exact as of.
+    pub as_of_mc_seqno: u32,
+    pub as_of_mc_root_hash: String,
+    pub as_of_mc_file_hash: String,
+    /// Whether the published index had reached the chain tip seen by the
+    /// indexer's last tick. The totals are exact as of `as_of_*` either way.
+    pub caught_up: bool,
     /// Sum of rewarded_total across pools.
     pub rewarded_total: String,
     /// True only if every position's attribution is complete.
@@ -635,6 +651,13 @@ pub struct ExplorerNominatorPositionsResponse {
 /// outright, so it cannot be reconstructed afterwards either. The indexer
 /// therefore attributes each change as it observes it, and this reports the
 /// result along with how much of it it could not explain.
+///
+/// Lifetime totals are served only from a valid ledger replayed from genesis
+/// over canonical history and anchored at the published masterchain block.
+/// Otherwise the answer is 503 with a stable `kind`:
+/// `nominator_ledger_rebuild_required`, `nominator_ledger_rebuilding`,
+/// `nominator_ledger_behind_index`, `nominator_ledger_behind_chain` or
+/// `nominator_ledger_not_canonical`.
 #[utoipa::path(get, path = "/explorer/staking/nominator/{address}", params(
     ("address" = String, Path, description = "basechain address of the depositor")
 ), responses(
@@ -644,37 +667,63 @@ pub async fn nominator_positions(
     State(state): State<AppState>,
     Path(address): Path<String>,
 ) -> Result<axum::Json<ExplorerNominatorPositionsResponse>, AppError> {
-    let entries = state.indexer_store.nominator_ledger_entries(&address).map_err(index_error)?;
+    nominator_positions_response(state.indexer()?, address).map(axum::Json)
+}
+
+/// The nominator endpoint's decision, separated from the HTTP plumbing.
+pub(crate) fn nominator_positions_response(
+    store: &IndexerStore,
+    address: String,
+) -> Result<ExplorerNominatorPositionsResponse, AppError> {
+    let report = store.nominator_ledger_report(&address).map_err(index_error)?;
+    let (as_of, caught_up) = match report.availability {
+        LedgerAvailability::Available { as_of, caught_up } => (as_of, caught_up),
+        LedgerAvailability::Unavailable { code, reason } => {
+            return Err(AppError::unavailable(code, reason));
+        }
+    };
 
     let mut rewarded_total = 0u64;
-    let mut attribution_complete = true;
-    let result = entries
-        .into_iter()
-        .map(|entry| {
-            rewarded_total = rewarded_total.saturating_add(entry.rewarded_total);
-            let complete = entry.unattributed_total == 0;
-            attribution_complete &= complete;
-            ExplorerNominatorPositionDto {
-                pool_address: entry.pool_address,
-                amount: entry.last_amount.to_string(),
-                pending_deposit: entry.last_pending.to_string(),
-                deposited_total: entry.deposited_total.to_string(),
-                rewarded_total: entry.rewarded_total.to_string(),
-                unattributed_total: entry.unattributed_total.to_string(),
-                attribution_complete: complete,
-                first_seen_at: entry.first_seen_at,
-                updated_at: entry.updated_at,
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut all_complete = true;
+    let mut result = Vec::with_capacity(report.entries.len());
+    for entry in report.entries {
+        let Some(last_mc_seqno) = entry.last_mc_seqno else {
+            return Err(AppError::unavailable(
+                "nominator_ledger_not_canonical",
+                "a ledger row carries no canonical provenance",
+            ));
+        };
+        rewarded_total = rewarded_total.saturating_add(entry.rewarded_total);
+        let complete = attribution_complete(true, &entry);
+        all_complete &= complete;
+        result.push(ExplorerNominatorPositionDto {
+            pool_address: entry.pool_address,
+            amount: entry.last_amount.to_string(),
+            pending_deposit: entry.last_pending.to_string(),
+            deposited_total: entry.deposited_total.to_string(),
+            rewarded_total: entry.rewarded_total.to_string(),
+            unattributed_total: entry.unattributed_total.to_string(),
+            coverage_gap_count: entry.coverage_gap_count,
+            attribution_complete: complete,
+            last_mc_seqno,
+            last_mc_root_hash: entry.last_mc_root_hash.unwrap_or_default(),
+            last_mc_file_hash: entry.last_mc_file_hash.unwrap_or_default(),
+            first_seen_at: entry.first_seen_at,
+            updated_at: entry.updated_at,
+        });
+    }
 
-    Ok(axum::Json(ExplorerNominatorPositionsResponse {
+    Ok(ExplorerNominatorPositionsResponse {
         ok: true,
         address,
+        as_of_mc_seqno: as_of.seqno,
+        as_of_mc_root_hash: as_of.root_hash,
+        as_of_mc_file_hash: as_of.file_hash,
+        caught_up,
         rewarded_total: rewarded_total.to_string(),
-        attribution_complete,
+        attribution_complete: all_complete,
         result,
-    }))
+    })
 }
 
 #[utoipa::path(get, path = "/explorer/transactions", params(ExplorerPageQuery), responses(
@@ -710,12 +759,12 @@ pub async fn list_transactions(
     };
     let (rows, total) = if let Some((workchain, shard, seqno)) = block_filter {
         state
-            .indexer_store
+            .indexer()?
             .list_explorer_block_transactions(workchain, shard, seqno, offset, limit)
             .map_err(index_error)?
     } else {
         state
-            .indexer_store
+            .indexer()?
             .list_explorer_transactions(account.as_deref(), offset, limit)
             .map_err(index_error)?
     };
@@ -737,7 +786,7 @@ pub async fn list_blocks(
 ) -> Result<axum::Json<ExplorerBlockListResponse>, AppError> {
     let (offset, limit) = page(query.offset, query.limit)?;
     let (rows, total) =
-        state.indexer_store.list_explorer_blocks(offset, limit).map_err(index_error)?;
+        state.indexer()?.list_explorer_blocks(offset, limit).map_err(index_error)?;
     Ok(axum::Json(ExplorerBlockListResponse {
         ok: true,
         total,
@@ -755,7 +804,7 @@ pub async fn get_transaction(
     Query(query): Query<HashQuery>,
 ) -> Result<axum::Json<ExplorerTransactionResponse>, AppError> {
     let record = state
-        .indexer_store
+        .indexer()?
         .explorer_transaction(query.hash.trim())
         .map_err(index_error)?
         .ok_or_else(|| AppError::not_found("transaction hash is not indexed"))?;
@@ -771,7 +820,7 @@ pub async fn get_block(
 ) -> Result<axum::Json<ExplorerBlockResponse>, AppError> {
     let mut record = None;
     for candidate in block_hash_candidates(&query.hash) {
-        record = state.indexer_store.explorer_block_by_hash(&candidate).map_err(index_error)?;
+        record = state.indexer()?.explorer_block_by_hash(&candidate).map_err(index_error)?;
         if record.is_some() {
             break;
         }
@@ -794,7 +843,7 @@ pub async fn dns_history(
             .map_err(|_| AppError::bad_request("invalid DNS history cursor address"))?;
     }
     let rows = state
-        .indexer_store
+        .indexer()?
         .dns_domain_history(query.after_mc_seqno.unwrap_or(0), &after_address, limit)
         .map_err(index_error)?;
     let result =
@@ -829,7 +878,7 @@ pub async fn list_contracts(
         deadline_before: query.deadline_before,
     };
     let (rows, total) =
-        state.indexer_store.list(&kind, &filters, offset, limit).map_err(index_error)?;
+        state.indexer()?.list(&kind, &filters, offset, limit).map_err(index_error)?;
     Ok(axum::Json(ExplorerContractListResponse {
         ok: true,
         total,
@@ -852,7 +901,7 @@ pub async fn get_contract(
         .map_err(|_| AppError::bad_request("invalid TOS address"))?
         .to_string();
     let record = state
-        .indexer_store
+        .indexer()?
         .get(&address)
         .map_err(index_error)?
         .filter(|record| record.kind == kind)
@@ -871,7 +920,7 @@ pub async fn search(
     if q.is_empty() {
         return Err(AppError::bad_request("search query is required"));
     }
-    if let Some(record) = state.indexer_store.explorer_transaction(q).map_err(index_error)? {
+    if let Some(record) = state.indexer()?.explorer_transaction(q).map_err(index_error)? {
         return Ok(axum::Json(ExplorerSearchResponse {
             ok: true,
             result: Some(ExplorerSearchHit::Transaction(record.into())),
@@ -879,7 +928,7 @@ pub async fn search(
     }
     for candidate in block_hash_candidates(q) {
         if let Some(record) =
-            state.indexer_store.explorer_block_by_hash(&candidate).map_err(index_error)?
+            state.indexer()?.explorer_block_by_hash(&candidate).map_err(index_error)?
         {
             return Ok(axum::Json(ExplorerSearchResponse {
                 ok: true,
@@ -887,15 +936,14 @@ pub async fn search(
             }));
         }
     }
-    if let Ok(address) = MsgAddressInt::from_str(q) {
-        if let Some(record) = state.indexer_store.get(&address.to_string()).map_err(index_error)? {
-            if record.kind != "unclassified" {
-                return Ok(axum::Json(ExplorerSearchResponse {
-                    ok: true,
-                    result: Some(ExplorerSearchHit::Contract(record.into())),
-                }));
-            }
-        }
+    if let Ok(address) = MsgAddressInt::from_str(q)
+        && let Some(record) = state.indexer()?.get(&address.to_string()).map_err(index_error)?
+        && record.kind != "unclassified"
+    {
+        return Ok(axum::Json(ExplorerSearchResponse {
+            ok: true,
+            result: Some(ExplorerSearchHit::Contract(record.into())),
+        }));
     }
     Ok(axum::Json(ExplorerSearchResponse { ok: true, result: None }))
 }

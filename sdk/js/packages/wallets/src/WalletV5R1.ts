@@ -38,7 +38,7 @@ import { sign } from "@tos/crypto";
 import type {
   ContractProvider,
   Signer,
-  SendConfirmation,
+  PendingTransfer,
 } from "@tos/client";
 import { WALLET_V5R1_CODE } from "./codes.js";
 import type {
@@ -48,22 +48,20 @@ import type {
   CreateTransferAsyncArgs,
   SendTransferArgs,
 } from "./types.js";
-import { createInternalMessage, defaultValidUntil } from "./utils.js";
+import {
+  createInternalMessage,
+  effectiveSendMode,
+  requireAffordable,
+  requireWalletPublicKey,
+  resolveValidUntil,
+} from "./utils.js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-/**
- * V5 wallet ID is composed of:
- *   networkGlobalId (int32) | workchain (int8) | walletVersion (uint8) | subwalletNumber (uint32)
- *
- * For TOS mainnet (globalId = -239), workchain 0, version 0, subwallet 0:
- *   walletId = 2147483409 (computed from the encoded fields)
- *
- * We use a simplified numeric walletId for consistency.
- */
-const DEFAULT_NETWORK_GLOBAL_ID = -239;
+// The network global ID is supplied explicitly and signed separately from the
+// plain subwallet ID. Read it from ConfigParam 19 of the target network.
 // DEFAULT_WALLET_VERSION removed — TOS V5 uses plain subwallet_id, not packed context
 const DEFAULT_SUBWALLET_NUMBER = 0;
 
@@ -98,12 +96,12 @@ const MAX_MESSAGES = 255;
  *   action_cell = action_send_msg opcode:uint32, mode:uint8, out_msg:^Cell, prev:^Cell
  * The chain terminates with an empty cell.
  */
-function buildActionList(messages: OutMessage[]): Cell {
+function buildActionList(messages: OutMessage[], sendMode?: number): Cell {
   return messages.reduce(
     (actions, msg) => beginCell()
       .storeRef(actions)
       .storeUint(ACTION_SEND_MSG, 32)
-      .storeUint(msg.mode ?? 3, 8)
+      .storeUint(effectiveSendMode(msg, sendMode), 8)
       .storeRef(createInternalMessage(msg))
       .endCell(),
     beginCell().endCell(),
@@ -125,7 +123,7 @@ function buildActionList(messages: OutMessage[]): Cell {
  * ```typescript
  * import { WalletV5R1 } from "@tos/wallets";
  *
- * const wallet = WalletV5R1.create({ publicKey: keys.publicKey });
+ * const wallet = WalletV5R1.create({ publicKey: keys.publicKey, networkGlobalId: 3 });
  * console.log(wallet.address.toString());
  * ```
  */
@@ -153,29 +151,36 @@ export class WalletV5R1 implements Wallet {
   /**
    * Create a new WalletV5R1 instance from a public key.
    *
-   * Unlike V3/V4, V5 encodes network global ID, workchain, version,
-   * and subwallet number into the wallet ID.
+   * The network global ID is a separate signed field, not part of walletId.
+   * Obtain it from ConfigParam 19 of the target network.
    *
    * @param args.publicKey - 32-byte Ed25519 public key
    * @param args.workchain - Workchain ID (default 0)
-   * @param args.networkGlobalId - Network global ID (default -239 for TOS mainnet)
-   * @param args.walletVersion - Wallet version (default 0)
+   * @param args.networkGlobalId - Required network global ID (signed int32)
    * @param args.subwalletNumber - Subwallet number (default 0)
    * @returns A new WalletV5R1 instance with computed address and init
    *
    * @example
    * ```typescript
-   * const wallet = WalletV5R1.create({ publicKey: keys.publicKey });
+   * const wallet = WalletV5R1.create({ publicKey: keys.publicKey, networkGlobalId: 3 });
    * ```
    */
   static create(args: {
     publicKey: Uint8Array;
     workchain?: number;
-    networkGlobalId?: number;
+    networkGlobalId: number;
     subwalletNumber?: number;
   }): WalletV5R1 {
+    requireWalletPublicKey(args.publicKey, "WalletV5R1");
     const workchain = args.workchain ?? 0;
-    const networkGlobalId = args.networkGlobalId ?? DEFAULT_NETWORK_GLOBAL_ID;
+    const networkGlobalId = args.networkGlobalId;
+    if (
+      !Number.isInteger(networkGlobalId) ||
+      networkGlobalId < -2147483648 ||
+      networkGlobalId > 2147483647
+    ) {
+      throw new Error("networkGlobalId must be an explicitly supplied signed int32 integer");
+    }
     const walletId = args.subwalletNumber ?? DEFAULT_SUBWALLET_NUMBER;
 
     const code = Cell.fromBoc(hexToBytes(WALLET_V5R1_CODE))[0]!;
@@ -201,7 +206,11 @@ export class WalletV5R1 implements Wallet {
   // Query methods (require ContractProvider)
   // -------------------------------------------------------------------------
 
-  /** Query the current on-chain sequence number. */
+  /**
+   * Query the current on-chain sequence number.
+   *
+   * @throws TosNotDeployedError when the wallet is not deployed
+   */
   async getSeqno(provider: ContractProvider): Promise<number> {
     const result = await provider.get("seqno", []);
     return result.stack.readNumber();
@@ -237,6 +246,7 @@ export class WalletV5R1 implements Wallet {
     seqno: number,
     messages: OutMessage[],
     validUntil?: number,
+    sendMode?: number,
   ): Cell {
     if (messages.length < 1 || messages.length > MAX_MESSAGES) {
       throw new Error(
@@ -244,8 +254,8 @@ export class WalletV5R1 implements Wallet {
       );
     }
 
-    const until = validUntil ?? defaultValidUntil();
-    const actionList = buildActionList(messages);
+    const until = resolveValidUntil(validUntil, "WalletV5R1");
+    const actionList = buildActionList(messages, sendMode);
 
     return beginCell()
       .storeUint(AUTH_SIGNED_EXTERNAL, 32)
@@ -264,6 +274,7 @@ export class WalletV5R1 implements Wallet {
       args.seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = sign(signingMessage.hash(), args.secretKey);
@@ -280,6 +291,7 @@ export class WalletV5R1 implements Wallet {
       args.seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = await args.signer(signingMessage.hash());
@@ -290,17 +302,30 @@ export class WalletV5R1 implements Wallet {
       .endCell();
   }
 
-  /** Query seqno, build, sign, and submit a transfer in one call. */
+  /**
+   * Query seqno and balance, build, sign, and submit a transfer in one call.
+   *
+   * Refuses before signing when the wallet is not deployed
+   * (`TosNotDeployedError`), when the values sent are not below the balance
+   * (`INSUFFICIENT_BALANCE`; fees come out of the balance too), or when
+   * `validUntil` is not in the future. The result only says the node accepted
+   * the message: pass it to `waitForTransfer` to learn whether the transfer was
+   * delivered. Messages go out with the ignore-errors flag by default, so one
+   * the wallet cannot pay is skipped on chain while the seqno still advances.
+   */
   async sendTransfer(
     provider: ContractProvider,
     via: Signer,
     args: SendTransferArgs,
-  ): Promise<SendConfirmation> {
+  ): Promise<PendingTransfer> {
     const seqno = await this.getSeqno(provider);
+    const state = await provider.getState();
+    requireAffordable(args.messages, state.balance, args.sendMode, "WalletV5R1");
     const signingMessage = this.buildSigningMessage(
       seqno,
       args.messages,
       args.validUntil,
+      args.sendMode,
     );
 
     const signature = await via.sign(signingMessage.hash());
@@ -310,15 +335,24 @@ export class WalletV5R1 implements Wallet {
       .storeBuffer(signature)
       .endCell();
 
-    return provider.external(body);
+    const { hash } = await provider.external(body);
+    // Where the wallet's history stood before this message: waitForTransfer
+    // pages back no further than that.
+    const outMessages = args.messages.length;
+    return state.last === null ? { hash, outMessages } : { hash, outMessages, afterLt: state.last.lt };
   }
 
-  /** Deploy this wallet contract on-chain via an external message. */
+  /**
+   * Deploy this wallet contract on-chain via an external message.
+   *
+   * @returns The external message hash, with no outgoing messages expected;
+   *   confirm with `waitForTransfer`
+   */
   async sendDeploy(
     provider: ContractProvider,
     via: Signer,
     _value: bigint,
-  ): Promise<void> {
+  ): Promise<PendingTransfer> {
     const deployMessage = beginCell()
       .storeUint(AUTH_SIGNED_EXTERNAL, 32)
       .storeInt(this.networkGlobalId, 32) // global_id
@@ -336,7 +370,8 @@ export class WalletV5R1 implements Wallet {
       .storeBuffer(signature)
       .endCell();
 
-    await provider.external(body);
+    const { hash } = await provider.external(body);
+    return { hash, outMessages: 0 };
   }
 }
 

@@ -1,0 +1,9 @@
+a4225559870a53215135aee37760beb9699b591d0f6ff720f4bba936050014dc  metrics/prometheus-exporter.cpp
+c3757c5392b7aece6104adf1c6d03fa7da78eec3b99646cebe5a421a1c063e94  tools/node-health-monitor/IMPLEMENTATION-STATUS.md
+3c014bafb437cd4b5d23f7b8a1341c79747d314aa360b016a94f6a347813e395  tools/node-health-monitor/contracts/metric-manifest.json
+ce75be27e26a91971df2d70f25994a180f1013c25ac3bd9dbaeb48a274133edd  tools/node-health-monitor/contracts/source-manifest.json
+dbf0e3f47131f0d02cc5889b513fe1c1aff781d0b57c45d0079a200c4d86d4b9  tools/node-health-monitor/crates/health-core/tests/fixtures/native-core.json
+16ce5a3439b110756584db7698b2e1cefa65e3830c762cddb88a3170b05d8727  tools/node-health-monitor/crates/health-core/tests/fixtures/native-core.prom
+4da8e22b54ffba58b092ab8bae44e6e17b1b6ff2a093c2f083cc9e18981e3a75  tools/node-health-monitor/crates/health-core/tests/native_contract.rs
+913f72101a3b6e8edc1294ab8089a7065dfb23b96acce987f65537b3bc7f4113  tools/node-health-monitor/scripts/freeze-manifests.py
+672537b71b91e6ff2d2d6ee1fb39a58d2cac59c16baee5358469274c0046d760  tools/node-health-monitor/tests/native-snapshot-http.py

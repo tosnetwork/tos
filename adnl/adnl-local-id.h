@@ -18,7 +18,6 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #pragma once
-
 #include <map>
 
 #include "auto/tl/tos_api.h"
@@ -27,6 +26,7 @@
 #include "td/utils/BufferedUdp.h"
 
 #include "adnl-peer-table.h"
+#include "decrypt-admission.h"
 #include "utils.hpp"
 
 namespace tos {
@@ -50,7 +50,12 @@ class AdnlLocalId : public td::actor::Actor {
 
   void decrypt_message(td::BufferSlice data, td::Promise<td::BufferSlice> promise);
   void deliver(AdnlNodeIdShort src, td::BufferSlice data);
+  // Delivers, then releases `held`: the subscriber has the message.
+  void deliver_holding(AdnlNodeIdShort src, td::BufferSlice data, std::shared_ptr<void> held) {
+    deliver(src, std::move(data));
+  }
   void deliver_query(AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
+  void deliver_query_ex(AdnlNodeIdShort src, td::BufferSlice data, td::Promise<AdnlQueryAnswer> promise);
   void receive(td::IPAddress addr, td::BufferSlice data);
   td::actor::Task<> receive_coro(td::IPAddress addr, td::BufferSlice data);
 
@@ -101,12 +106,12 @@ class AdnlLocalId : public td::actor::Actor {
 
   td::uint32 mode_;
 
-  struct InboundRateLimiter {
-    RateLimiter rate_limiter = RateLimiter(75, 0.33);
-    td::uint64 currently_decrypting_packets = 0;
+  static constexpr size_t MAX_PREAUTH_SOURCES = 4096;
+  DecryptBudget decrypt_budget_{256, 1.0 / 512.0, 64};
+  struct InboundSourceState {
     std::set<AdnlNodeIdShort> recent_inbound_peers;
   };
-  std::map<td::IPAddress, InboundRateLimiter> inbound_rate_limiter_;
+  PreauthGate<InboundSourceState> inbound_sources_{MAX_PREAUTH_SOURCES, 75, 0.33};
   struct PacketStats {
     double ts_start = 0.0, ts_end = 0.0;
 

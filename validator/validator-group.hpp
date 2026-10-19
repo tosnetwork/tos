@@ -19,6 +19,9 @@
 */
 #pragma once
 
+#include <set>
+
+#include "crypto/pq/consensus-pq-signer.h"
 #include "interfaces/validator-manager.h"
 
 #include "collation-manager.hpp"
@@ -29,26 +32,34 @@ namespace validator {
 
 class ValidatorManager;
 
+namespace consensus {
+std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
+    const std::vector<adnl::AdnlNodeIdShort>& members, std::optional<std::set<adnl::AdnlNodeIdShort>> current);
+}
+
 class IValidatorGroup : public td::actor::Actor {
  public:
   static td::actor::ActorOwn<IValidatorGroup> create_bridge(
-      td::Slice name, ShardIdFull shard, PublicKeyHash local_id, ValidatorSessionId session_id,
+      td::Slice name, ShardIdFull shard, tos::ValidatorId local_id,
+      std::shared_ptr<const tos::pq::ValidatorPQKeyStore> pq_signer, ValidatorSessionId session_id,
       td::Ref<block::ValidatorSet> validator_set, BlockSeqno last_key_block_seqno, NewConsensusConfig config,
       td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
       td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
-      std::vector<adnl::AdnlNodeIdShort> all_validators, std::string db_root,
-      td::actor::ActorId<ValidatorManager> validator_manager,
-      td::actor::ActorId<CollationManager> collation_manager, bool create_session, bool allow_unsafe_self_blocks_resync,
-      td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard);
+      std::vector<adnl::AdnlNodeIdShort> all_validators,
+      std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
+      td::actor::ActorId<ValidatorManager> validator_manager, td::actor::ActorId<CollationManager> collation_manager,
+      bool create_session, bool allow_unsafe_self_blocks_resync, td::Ref<ValidatorManagerOptions> opts,
+      bool monitoring_shard);
 
   static td::actor::ActorOwn<IValidatorGroup> create_bridge_observer(
       td::Slice name, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id, ValidatorSessionId session_id,
       td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config,
       td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
       td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
-      std::vector<adnl::AdnlNodeIdShort> all_validators, std::string db_root,
-      td::actor::ActorId<ValidatorManager> validator_manager,
-      td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard);
+      std::vector<adnl::AdnlNodeIdShort> all_validators,
+      std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
+      td::actor::ActorId<ValidatorManager> validator_manager, td::Ref<ValidatorManagerOptions> opts,
+      bool monitoring_shard);
 
   virtual void start(std::vector<BlockIdExt> prev, BlockIdExt min_masterchain_block_id) = 0;
   virtual void create_session() = 0;
@@ -64,8 +75,8 @@ class IValidatorGroup : public td::actor::Actor {
 
   // Retire the group WITHOUT deleting its consensus DB: stop the consensus bus,
   // close the database, and report closure to the manager, leaving the directory
-  // on disk for a later checkpoint-bound deletion (validator-group cleanup,
-  // Finding 1 / PR B). Unlike destroy(), this never removes the directory, so a
+  // on disk for a later checkpoint-bound deletion by the manager's validator-group
+  // cleanup. Unlike destroy(), this never removes the directory, so a
   // session that is still recreatable can never lose its consensus state here.
   // `generation` is the retiring incarnation tag the manager assigned; it is
   // reported back in consensus_db_closed so a stale close from an older

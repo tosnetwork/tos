@@ -17,15 +17,49 @@ use crate::v2::data_models::{
 };
 use anyhow::Context;
 use base64::Engine;
-use chain_block::{ConfigParamEnum, MsgAddressInt, read_boc, write_boc};
+use chain_block::{Cell, ConfigParamEnum, MsgAddressInt, read_boc, write_boc};
 use chain_rpc_rs::client::{ApiClientV2, ApiKey, Network};
-use chain_rpc_rs::error::ToscenterError;
+use chain_rpc_rs::error::{RpcErrorReason, ToscenterError};
 use std::{
     collections::HashSet,
     net::IpAddr,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use url::Url;
+
+/// A JSON-RPC response body as received: the HTTP status, the bounded text, and
+/// the id the request carried.
+pub struct RawRpcResponse {
+    pub status: u16,
+    pub text: String,
+    pub request_id: String,
+}
+
+/// One raw read: the endpoints to try, in order, and the id every attempt carries.
+pub struct RawReadPlan {
+    pub endpoints: Vec<usize>,
+    pub request_id: String,
+}
+
+/// What one endpoint answered.
+pub enum RawAttempt {
+    /// A successful status with a body within the transport limit.
+    Body(RawRpcResponse),
+    /// A successful status with a body above the transport limit.
+    TooLarge { limit: usize },
+    /// A transport error or a non-success status, as a fixed category.
+    Failed(&'static str),
+}
+
+impl RawAttempt {
+    pub fn category(&self) -> &'static str {
+        match self {
+            RawAttempt::Body(_) => "body",
+            RawAttempt::TooLarge { .. } => "response_too_large",
+            RawAttempt::Failed(category) => category,
+        }
+    }
+}
 
 struct EndpointClient {
     url: String,
@@ -37,7 +71,23 @@ struct EndpointClient {
 /// category. HTTP client errors commonly retain the complete request URL,
 /// including deployment-specific capability paths. Those errors must never
 /// cross the chain-RPC client boundary or enter tracing fields verbatim.
-fn bounded_rpc_error_category(error: &impl std::fmt::Display) -> &'static str {
+///
+/// A typed JSON-RPC error is categorized by its reason alone; the server's
+/// message never reaches the category.
+fn bounded_rpc_error_category(error: &ToscenterError) -> &'static str {
+    match error {
+        ToscenterError::RateLimitExceeded => return "rate_limit",
+        ToscenterError::Rpc(rpc) => return rpc_reason_category(&rpc.reason),
+        ToscenterError::ResponseTooLarge { .. } => return "response_too_large",
+        ToscenterError::HttpStatus { code } => return http_status_category(*code),
+        ToscenterError::HttpClientError { code, .. }
+        | ToscenterError::HttpServerError { code, .. } => {
+            return u16::try_from(*code).map_or("http_non_success", http_status_category);
+        }
+        ToscenterError::InvalidInput(_)
+        | ToscenterError::ProcessingError(_)
+        | ToscenterError::ProtocolError { .. } => {}
+    }
     let rendered = error.to_string().to_ascii_lowercase();
     if rendered.contains("response id") || rendered.contains("request id") {
         "response_id_mismatch"
@@ -54,25 +104,76 @@ fn bounded_rpc_error_category(error: &impl std::fmt::Display) -> &'static str {
     }
 }
 
-fn is_explicit_missing_config_param(
-    error: &ToscenterError,
-    expected_id: &serde_json::Value,
-    param_id: u32,
-) -> bool {
-    let ToscenterError::HttpServerError { code: 500, message } = error else {
-        return false;
-    };
-    let Ok(envelope) = serde_json::from_str::<serde_json::Value>(message) else {
-        return false;
-    };
-    let expected_message = format!("config param {param_id} not found");
-    envelope.get("jsonrpc").and_then(serde_json::Value::as_str) == Some("2.0")
-        && envelope.get("id") == Some(expected_id)
-        && envelope.get("ok").and_then(serde_json::Value::as_bool) == Some(false)
-        && !envelope.as_object().is_some_and(|object| object.contains_key("result"))
-        && envelope.get("code").and_then(serde_json::Value::as_i64) == Some(-32603)
-        && envelope.get("error").and_then(serde_json::Value::as_str)
-            == Some(expected_message.as_str())
+/// A fixed category for a non-success HTTP status.
+fn http_status_category(status: u16) -> &'static str {
+    match status {
+        429 => "rate_limit",
+        400..=499 => "http_client_error",
+        500..=599 => "http_server_error",
+        _ => "http_non_success",
+    }
+}
+
+/// A fixed category for each typed JSON-RPC error reason.
+fn rpc_reason_category(reason: &RpcErrorReason) -> &'static str {
+    match reason {
+        RpcErrorReason::ParseError => "parse_error",
+        RpcErrorReason::InvalidRequest => "invalid_request",
+        RpcErrorReason::MethodNotFound => "method_not_found",
+        RpcErrorReason::WriteDisabled => "write_disabled",
+        RpcErrorReason::InvalidArgument => "invalid_argument",
+        RpcErrorReason::InternalError => "internal_error",
+        RpcErrorReason::Unauthorized => "unauthorized",
+        RpcErrorReason::RateLimited => "rate_limit",
+        RpcErrorReason::NotFound => "not_found",
+        RpcErrorReason::ConfigParamAbsent => "config_param_absent",
+        RpcErrorReason::BlockUnavailable => "block_unavailable",
+        RpcErrorReason::PermissionSourceUnsupported => "permission_source_unsupported",
+        RpcErrorReason::PermissionSourceDeferred => "permission_source_deferred",
+        RpcErrorReason::IndexedStateStale => "indexed_state_stale",
+        RpcErrorReason::LifecycleImmutable => "lifecycle_immutable",
+        RpcErrorReason::ContractKindUnsupported => "contract_kind_unsupported",
+        RpcErrorReason::UpstreamUnavailable => "upstream_unavailable",
+        RpcErrorReason::UnsignedBlock => "unsigned_block",
+        RpcErrorReason::BlockIdMismatch => "block_id_mismatch",
+        RpcErrorReason::EvidenceInvalid => "evidence_invalid",
+        RpcErrorReason::UnsupportedCarrier => "unsupported_carrier",
+        RpcErrorReason::StateInvalid => "state_invalid",
+        RpcErrorReason::ResourceLimit => "resource_limit",
+        RpcErrorReason::VerificationBackendFailure => "verification_backend_failure",
+        RpcErrorReason::Unrecognized(_) => "unrecognized_rpc_reason",
+    }
+}
+
+/// Whether `error` is the server's statement that the configuration parameter
+/// does not exist: a request-bound JSON-RPC error (the envelope's id was
+/// already checked against the request) at HTTP 200 with the typed reason
+/// `CONFIG_PARAM_ABSENT`. Any other failure is not an absence.
+fn is_explicit_missing_config_param(error: &ToscenterError) -> bool {
+    matches!(
+        error,
+        ToscenterError::Rpc(rpc)
+            if rpc.http_status == 200
+                && rpc.code == -32004
+                && rpc.reason == RpcErrorReason::ConfigParamAbsent
+    )
+}
+
+/// The shard id as the server accepts it: the canonical signed decimal of a
+/// non-zero 64-bit shard prefix, e.g. "-9223372036854775808".
+fn shard_param(shard: &str) -> anyhow::Result<&str> {
+    match shard.parse::<i64>() {
+        Ok(value) if value != 0 && value.to_string() == shard => Ok(shard),
+        _ => anyhow::bail!(
+            "shard must be the signed decimal shard id, e.g. \"-9223372036854775808\""
+        ),
+    }
+}
+
+/// A block height as the server accepts it: an integer in [0, 2147483647].
+fn seqno_param(seqno: u32) -> anyhow::Result<u32> {
+    anyhow::ensure!(i32::try_from(seqno).is_ok(), "seqno must be in [0, 2147483647]");
+    Ok(seqno)
 }
 
 pub struct ClientJsonRpc {
@@ -213,6 +314,62 @@ impl ClientJsonRpc {
         }
     }
 
+    /// The plan for one raw read: every endpoint once, in round-robin order from
+    /// the next start, under one request id. A caller that validates each answer
+    /// itself walks the plan with [`Self::raw_attempt`] and moves to the next
+    /// endpoint on an endpoint-specific failure.
+    pub fn raw_read_plan(&self) -> RawReadPlan {
+        let total = self.endpoints.len();
+        let start = self.rr_cursor.fetch_add(1, Ordering::Relaxed) % total;
+        RawReadPlan {
+            endpoints: (0..total).map(|attempt| (start + attempt) % total).collect(),
+            request_id: uuid::Uuid::new_v4().to_string(),
+        }
+    }
+
+    /// One side-effect-free request to one endpoint of a plan, with the plan's id.
+    /// The answer comes back unparsed: a bounded successful body, a successful body
+    /// above the transport limit (refused whole), or a fixed failure category for a
+    /// transport error or a non-success HTTP status, whose body is not interpreted
+    /// or logged.
+    pub async fn raw_attempt(
+        &self,
+        endpoint: usize,
+        method: &'static str,
+        params: &serde_json::Value,
+        request_id: &str,
+    ) -> RawAttempt {
+        let Some(target) = self.endpoints.get(endpoint) else {
+            return RawAttempt::Failed("internal");
+        };
+        let outcome = target
+            .client
+            .json_rpc_text(method, params.clone(), serde_json::json!(request_id))
+            .await;
+        let attempt = match outcome {
+            Ok((status, text)) if (200..300).contains(&status) => {
+                return RawAttempt::Body(RawRpcResponse {
+                    status,
+                    text,
+                    request_id: request_id.to_string(),
+                });
+            }
+            Ok((status, _)) => RawAttempt::Failed(http_status_category(status)),
+            Err(ToscenterError::HttpStatus { code }) => {
+                RawAttempt::Failed(http_status_category(code))
+            }
+            Err(ToscenterError::ResponseTooLarge { limit }) => RawAttempt::TooLarge { limit },
+            Err(err) => RawAttempt::Failed(bounded_rpc_error_category(&err)),
+        };
+        tracing::debug!(
+            method,
+            endpoint = %target.display_origin,
+            category = attempt.category(),
+            "chain-rpc raw read attempt failed"
+        );
+        attempt
+    }
+
     /// Executes a state-changing JSON-RPC request against the configured
     /// primary endpoint exactly once.
     ///
@@ -268,13 +425,44 @@ impl ClientJsonRpc {
         decode_config_param(config_info, param_id)
     }
 
+    /// The parameter as of masterchain block `seqno`. The response does not echo
+    /// the block, so this is only as faithful as the endpoint.
+    pub async fn get_config_param_at(
+        &self,
+        param_id: u32,
+        seqno: u32,
+    ) -> anyhow::Result<(ConfigParamEnum, BlockIdExt)> {
+        anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
+        let seqno = seqno_param(seqno)?;
+        // with_proof makes the endpoint report the block it actually read; a height
+        // alone does not name a block, and another endpoint may hold another one.
+        let config_info = self
+            .json_rpc_read(
+                "getConfigParam",
+                serde_json::json!({"config_id": param_id, "seqno": seqno, "with_proof": true}),
+            )
+            .await
+            .with_context(|| format!("getConfigParam({param_id}) at seqno {seqno}"))?;
+        decode_config_param_with_block(config_info, param_id)
+    }
+
+    /// Return the exact on-chain value cell. Pool maintenance compares its
+    /// representation hash, so decoding and reserializing is not sufficient.
+    pub async fn get_config_param_cell(&self, param_id: u32) -> anyhow::Result<Cell> {
+        let config_info = self
+            .json_rpc_read("getConfigParam", serde_json::json!({"config_id": param_id}))
+            .await
+            .with_context(|| format!("getConfigParam({param_id})"))?;
+        decode_config_param_cell(config_info)
+    }
+
     /// Reads an optional configuration parameter without conflating an
     /// on-chain absence with a transport or protocol failure.
     ///
-    /// TOS nodes currently report an absent parameter as an HTTP 500 carrying
-    /// a JSON-RPC error envelope.  Accept that result only when every
-    /// configured endpoint returns the exact, request-bound absence response;
-    /// any other endpoint failure remains fail-closed.
+    /// The node reports an absent parameter as a request-bound JSON-RPC error
+    /// with the typed reason `CONFIG_PARAM_ABSENT` (code -32004) at HTTP 200.
+    /// Accept that result only when every configured endpoint returns it; any
+    /// other endpoint failure remains fail-closed.
     pub async fn get_optional_config_param(
         &self,
         param_id: u32,
@@ -295,7 +483,7 @@ impl ClientJsonRpc {
                 .await
             {
                 Ok(response) => return decode_config_param(response, param_id).map(Some),
-                Err(error) if is_explicit_missing_config_param(&error, &request_id, param_id) => {
+                Err(error) if is_explicit_missing_config_param(&error) => {
                     absent += 1;
                 }
                 Err(error) => {
@@ -401,6 +589,9 @@ impl ClientJsonRpc {
         &self,
         args: &RunGetMethodParams,
     ) -> anyhow::Result<RunGetMethodRes> {
+        if let Some(seqno) = args.seqno {
+            seqno_param(seqno)?;
+        }
         let json_params = serde_json::json!(args);
         let json_params_str = json_params.to_string();
         let res = self.json_rpc_read("runGetMethodStd", json_params).await.map_err(|e| {
@@ -595,6 +786,25 @@ impl ClientJsonRpc {
         Ok(address_info)
     }
 
+    /// The account as of masterchain block `seqno`; the response carries the block
+    /// it was read at, which the caller checks.
+    pub async fn get_address_information_at(
+        &self,
+        address: &MsgAddressInt,
+        seqno: u32,
+    ) -> anyhow::Result<GetAddressInformationRes> {
+        anyhow::ensure!(seqno > 0, "a pinned read needs a masterchain seqno above zero");
+        let seqno = seqno_param(seqno)?;
+        let res = self
+            .json_rpc_read(
+                "getAddressInformation",
+                serde_json::json!({"address": address.to_string(), "seqno": seqno}),
+            )
+            .await
+            .with_context(|| format!("getAddressInformation({address}) at seqno {seqno}"))?;
+        Ok(serde_json::from_value::<GetAddressInformationRes>(res)?)
+    }
+
     pub async fn get_account_capability(
         &self,
         address: &MsgAddressInt,
@@ -604,8 +814,9 @@ impl ClientJsonRpc {
         let mut json_params = serde_json::json!({
             "address": address.to_string(),
         });
+        // An absent seqno reads the latest state; Some(0) names block 0.
         if let Some(seqno) = seqno {
-            json_params["seqno"] = serde_json::json!(seqno);
+            json_params["seqno"] = serde_json::json!(seqno_param(seqno)?);
         }
         if include_experimental {
             json_params["include_experimental"] = serde_json::json!(true);
@@ -752,7 +963,7 @@ impl ClientJsonRpc {
 
     pub async fn get_shards(&self, seqno: u32) -> anyhow::Result<GetShardsRes> {
         let res = self
-            .json_rpc_read("shards", serde_json::json!({"seqno": seqno}))
+            .json_rpc_read("shards", serde_json::json!({"seqno": seqno_param(seqno)?}))
             .await
             .context("shards")?;
         Ok(serde_json::from_value(res)?)
@@ -772,8 +983,8 @@ impl ClientJsonRpc {
                 "lookupBlock",
                 serde_json::json!({
                     "workchain": workchain,
-                    "shard": shard,
-                    "seqno": seqno,
+                    "shard": shard_param(shard)?,
+                    "seqno": seqno_param(seqno)?,
                 }),
             )
             .await
@@ -805,8 +1016,8 @@ impl ClientJsonRpc {
     ) -> anyhow::Result<GetBlockTransactionsRes> {
         let mut params = serde_json::json!({
             "workchain": workchain,
-            "shard": shard,
-            "seqno": seqno,
+            "shard": shard_param(shard)?,
+            "seqno": seqno_param(seqno)?,
             "count": count,
         });
         if let Some(lt) = after_lt {
@@ -833,8 +1044,8 @@ impl ClientJsonRpc {
     ) -> anyhow::Result<GetBlockTransactionsExtRes> {
         let mut params = serde_json::json!({
             "workchain": workchain,
-            "shard": shard,
-            "seqno": seqno,
+            "shard": shard_param(shard)?,
+            "seqno": seqno_param(seqno)?,
             "count": count,
         });
         if let Some(lt) = after_lt {
@@ -861,8 +1072,8 @@ impl ClientJsonRpc {
                 "getBlockHeader",
                 serde_json::json!({
                     "workchain": workchain,
-                    "shard": shard,
-                    "seqno": seqno,
+                    "shard": shard_param(shard)?,
+                    "seqno": seqno_param(seqno)?,
                 }),
             )
             .await
@@ -1092,6 +1303,25 @@ fn decode_config_param(
     config_info: serde_json::Value,
     param_id: u32,
 ) -> anyhow::Result<ConfigParamEnum> {
+    let cell = decode_config_param_cell(config_info)?;
+    ConfigParamEnum::construct_from_cell_and_number(cell, param_id).map_err(anyhow::Error::from)
+}
+
+/// A `getConfigParam` answer requested `with_proof`, with the block it was read at.
+pub fn decode_config_param_with_block(
+    config_info: serde_json::Value,
+    param_id: u32,
+) -> anyhow::Result<(ConfigParamEnum, BlockIdExt)> {
+    let block = config_info
+        .get("block_id")
+        .or_else(|| config_info.get("result").and_then(|result| result.get("block_id")))
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("the endpoint did not report the block it read"))?;
+    let block = serde_json::from_value::<BlockIdExt>(block).context("block_id")?;
+    Ok((decode_config_param(config_info, param_id)?, block))
+}
+
+fn decode_config_param_cell(config_info: serde_json::Value) -> anyhow::Result<Cell> {
     let b64 = config_info
         .get("config")
         .and_then(|config| config.get("bytes"))
@@ -1104,8 +1334,7 @@ fn decode_config_param(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| anyhow::anyhow!(r#"missing "config.bytes" string"#))?;
     let boc = base64::engine::general_purpose::STANDARD.decode(b64)?;
-    let cell = read_boc(boc)?.withdraw_single_root()?;
-    ConfigParamEnum::construct_from_cell_and_number(cell, param_id).map_err(anyhow::Error::from)
+    Ok(read_boc(boc)?.withdraw_single_root()?)
 }
 
 /// Maximum exact external-message BOC accepted by custody and either relay
@@ -1175,7 +1404,7 @@ fn bounded_detail(value: &str) -> String {
 }
 
 fn normalize_get_transactions(res: serde_json::Value) -> anyhow::Result<GetTransactionsRes> {
-    // The validator JSON-RPC surface returns the current toncenter-style array
+    // The validator JSON-RPC surface returns the current upstream-HTTP-API-style array
     // with nested `transaction_id`, while older deployments used
     // `{transactions:[...]}` and top-level `lt`/`hash`.
     let values = if let Some(array) = res.as_array() {
@@ -1263,8 +1492,8 @@ mod get_transactions_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientJsonRpc, canonicalize_chain_rpc_endpoint, validate_exact_boc_before_broadcast,
-        validate_relay_network_domain_pin,
+        ClientJsonRpc, canonicalize_chain_rpc_endpoint, decode_config_param_cell,
+        validate_exact_boc_before_broadcast, validate_relay_network_domain_pin,
     };
     use crate::v2::data_models::{ExactBocSubmissionStatus, RelayNetworkDomainPin};
     use base64::Engine;
@@ -1345,7 +1574,6 @@ mod tests {
             request_count.fetch_add(1, Ordering::SeqCst);
             let request = read_json_request(&mut socket).await;
             let response_body = serde_json::json!({
-                "ok": true,
                 "jsonrpc": "2.0",
                 "result": result,
                 "id": request.get("id").cloned().unwrap_or(serde_json::Value::Null),
@@ -1457,7 +1685,6 @@ mod tests {
             request_count.fetch_add(1, Ordering::SeqCst);
             let _ = read_json_request(&mut socket).await;
             let response_body = serde_json::json!({
-                "ok": true,
                 "jsonrpc": "2.0",
                 "result": result,
                 "id": "attacker-selected-id",
@@ -1478,6 +1705,19 @@ mod tests {
         let cell = Cell::default();
         let hash = base64::engine::general_purpose::STANDARD.encode(cell.repr_hash().as_slice());
         (write_boc(&cell).expect("write test BOC"), hash)
+    }
+
+    #[test]
+    fn config_param_cell_keeps_the_raw_value_hash() {
+        let mut builder = BuilderData::new();
+        builder.append_u32(0x1234_5678).unwrap();
+        let cell = builder.into_cell().unwrap();
+        let boc = write_boc(&cell).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(boc);
+        let decoded =
+            decode_config_param_cell(serde_json::json!({"config": {"bytes": encoded}})).unwrap();
+        assert_eq!(decoded.repr_hash(), cell.repr_hash());
+        assert_eq!(decoded, cell);
     }
 
     fn relay_network_pin(global_id: i32, root: [u8; 32], file: [u8; 32]) -> RelayNetworkDomainPin {
@@ -1540,7 +1780,6 @@ mod tests {
                     other => panic!("unexpected method {other}"),
                 };
                 let response_body = serde_json::json!({
-                    "ok":true,
                     "jsonrpc":"2.0",
                     "id":request.get("id").cloned().unwrap_or(serde_json::Value::Null),
                     "result":result,
@@ -1591,53 +1830,70 @@ mod tests {
         (format!("http://{}", addr), handle)
     }
 
-    async fn spawn_missing_config_param_server(
-        param_id: u32,
-        matching_id: bool,
-    ) -> (String, tokio::task::JoinHandle<()>) {
+    /// Answers one request with `status_line` and `body`, where "@@ID@@" in the
+    /// body is replaced by the request's id, and hands the request back.
+    async fn spawn_reply_server(
+        status_line: &'static str,
+        body: String,
+    ) -> (String, tokio::task::JoinHandle<serde_json::Value>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind async listener");
         let addr = listener.local_addr().expect("listener local addr");
         let handle = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept connection");
             let request = read_json_request(&mut socket).await;
-            let id = if matching_id {
-                request.get("id").cloned().unwrap_or(serde_json::Value::Null)
-            } else {
-                serde_json::json!("wrong-response-id")
-            };
-            let response_body = serde_json::json!({
-                "ok": false,
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": format!("config param {param_id} not found"),
-                "code": -32603,
-            })
-            .to_string();
+            let id = request.get("id").cloned().unwrap_or(serde_json::Value::Null).to_string();
+            let response_body = body.replace("\"@@ID@@\"", &id);
             let response = format!(
-                "HTTP/1.1 500 Internal Server Error\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                "HTTP/1.1 {status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                 response_body.len(),
                 response_body
             );
             socket.write_all(response.as_bytes()).await.expect("write response");
             socket.shutdown().await.expect("shutdown socket");
+            request
         });
         (format!("http://{addr}"), handle)
     }
 
+    fn typed_error_body(id: &str, code: i64, reason: &str, retryable: bool) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": code,
+                "message": "config param 43 not found",
+                "data": {"schema_version": 1, "reason": reason, "retryable": retryable},
+            },
+        })
+        .to_string()
+    }
+
     #[tokio::test]
-    async fn optional_config_param_accepts_exact_request_bound_absence() {
-        let (url, handle) = spawn_missing_config_param_server(43, true).await;
+    async fn optional_config_param_accepts_typed_request_bound_absence() {
+        let (url, handle) = spawn_reply_server(
+            "200 OK",
+            typed_error_body("@@ID@@", -32004, "CONFIG_PARAM_ABSENT", false),
+        )
+        .await;
         let client = ClientJsonRpc::connect(url, None).expect("client");
 
         let value = client.get_optional_config_param(43).await.expect("optional config read");
 
         assert!(value.is_none());
-        handle.await.expect("server task");
+        let request = handle.await.expect("server task");
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["method"], "getConfigParam");
+        assert!(request["id"].is_string());
+        assert_eq!(request["params"], serde_json::json!({"config_id": 43}));
     }
 
     #[tokio::test]
     async fn optional_config_param_rejects_unbound_absence_response() {
-        let (url, handle) = spawn_missing_config_param_server(43, false).await;
+        let (url, handle) = spawn_reply_server(
+            "200 OK",
+            typed_error_body("wrong-response-id", -32004, "CONFIG_PARAM_ABSENT", false),
+        )
+        .await;
         let client = ClientJsonRpc::connect(url, None).expect("client");
 
         let error = client
@@ -1647,6 +1903,116 @@ mod tests {
 
         assert!(error.to_string().contains("failed without unanimous absence"));
         handle.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn optional_config_param_needs_the_typed_absence_reason() {
+        let other_failures = [
+            // Another -32004 reason is not an absent parameter.
+            ("200 OK", typed_error_body("@@ID@@", -32004, "NOT_FOUND", false)),
+            ("200 OK", typed_error_body("@@ID@@", -32004, "BLOCK_UNAVAILABLE", false)),
+            ("200 OK", typed_error_body("@@ID@@", -32603, "INTERNAL_ERROR", false)),
+            ("200 OK", typed_error_body("@@ID@@", -32603, "UPSTREAM_UNAVAILABLE", true)),
+            // The former HTTP 500 shape no longer reads as an absence.
+            (
+                "500 Internal Server Error",
+                r#"{"ok":false,"jsonrpc":"2.0","id":"@@ID@@","error":"config param 43 not found","code":-32603}"#
+                    .to_string(),
+            ),
+            // The absence reason is only an absence on a method answer.
+            (
+                "429 Too Many Requests",
+                typed_error_body("@@ID@@", -32004, "CONFIG_PARAM_ABSENT", false),
+            ),
+        ];
+        for (status_line, body) in other_failures {
+            let (url, handle) = spawn_reply_server(status_line, body.clone()).await;
+            let client = ClientJsonRpc::connect(url, None).expect("client");
+            let error = client
+                .get_optional_config_param(43)
+                .await
+                .expect_err("only CONFIG_PARAM_ABSENT is an absence");
+            assert!(error.to_string().contains("failed without unanimous absence"), "{body}");
+            handle.await.expect("server task");
+        }
+    }
+
+    #[tokio::test]
+    async fn typed_errors_surface_as_reason_categories_without_server_text() {
+        let (url, handle) = spawn_reply_server(
+            "200 OK",
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "@@ID@@",
+                "error": {
+                    "code": -32603,
+                    "message": "node not ready: secret-detail",
+                    "data": {"schema_version": 1, "reason": "UPSTREAM_UNAVAILABLE", "retryable": true},
+                },
+            })
+            .to_string(),
+        )
+        .await;
+        let client = ClientJsonRpc::connect(url, None).expect("client");
+
+        let Err(error) = client.get_masterchain_info().await else {
+            panic!("a typed error must not decode as a result");
+        };
+        let rendered = format!("{error:#}");
+
+        assert!(rendered.contains("rpc_error_category=upstream_unavailable"), "{rendered}");
+        assert!(!rendered.contains("secret-detail"), "{rendered}");
+        handle.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn block_coordinates_are_sent_as_typed_named_params() {
+        let block = serde_json::json!({
+            "@type": "tos.blockIdExt", "workchain": -1, "shard": "-9223372036854775808",
+            "seqno": 0, "root_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            "file_hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        });
+        let (url, handle) = spawn_reply_server(
+            "200 OK",
+            serde_json::json!({"jsonrpc": "2.0", "id": "@@ID@@", "result": block}).to_string(),
+        )
+        .await;
+        let client = ClientJsonRpc::connect(url, None).expect("client");
+
+        let found = client.lookup_block(-1, "-9223372036854775808", 0).await.expect("block 0");
+
+        assert_eq!(found.seqno, 0);
+        assert_eq!(found.shard, i64::MIN);
+        let request = handle.await.expect("server task");
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["method"], "lookupBlock");
+        assert!(request["id"].is_string());
+        // Seqno 0 is sent as block 0, never dropped or reinterpreted.
+        assert_eq!(
+            request["params"],
+            serde_json::json!({"workchain": -1, "shard": "-9223372036854775808", "seqno": 0})
+        );
+    }
+
+    #[tokio::test]
+    async fn noncanonical_block_coordinates_are_refused_before_network_io() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind endpoint");
+        listener.set_nonblocking(true).expect("make endpoint nonblocking");
+        let url = format!("http://{}", listener.local_addr().expect("endpoint addr"));
+        let client = ClientJsonRpc::connect(url, None).expect("client");
+
+        for shard in ["9223372036854775808", "0x8000000000000000", "+1", "0", ""] {
+            assert!(client.lookup_block(-1, shard, 1).await.is_err(), "{shard}");
+            assert!(client.get_block_header(0, shard, 1).await.is_err(), "{shard}");
+            assert!(client.get_block_transactions(0, shard, 1, 1).await.is_err(), "{shard}");
+        }
+        let full = "-9223372036854775808";
+        assert!(client.lookup_block(-1, full, 1 << 31).await.is_err());
+        assert!(client.get_shards(u32::MAX).await.is_err());
+        assert!(
+            matches!(listener.accept(), Err(err) if err.kind() == std::io::ErrorKind::WouldBlock),
+            "a refused coordinate must not reach the endpoint"
+        );
     }
 
     #[tokio::test]

@@ -6,7 +6,7 @@ SDK for integrating Toscenter into Rust applications. Connect and interact with 
 
 ## Features
 
-* **Authorization Support**: You can obtain token from [@tonapibot](https://t.me/tonapibot).
+* **Authorization Support**: Requests can carry an API token issued by the operator of the endpoint in use.
 * **REST API v2 Integration**: Interact with Toscenter RESTful endpoints for API v2.
 * **REST API v3 Integration**: Interact with Toscenter RESTful endpoints for API v3 (in progress).
 * **JSON-RPC API Integration**: Utilize JSON-RPC protocol for all available methods.

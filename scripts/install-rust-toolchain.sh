@@ -57,7 +57,19 @@ if ! command -v rustup >/dev/null 2>&1; then
   fi
 fi
 
-rustup toolchain install "$channel" --profile minimal --component clippy --component rustfmt
+install_pinned() {
+  rustup toolchain install "$channel" --profile minimal --component clippy --component rustfmt
+}
+
+# A runner image can carry a partially installed copy of the pinned toolchain.
+# rustup then repairs it in place and stops on a file the broken copy left behind
+# (for example `bin/cargo-clippy`). Remove that copy and install once more from
+# scratch; a second failure is reported as a real failure.
+if ! install_pinned; then
+  echo "installing $channel failed; removing the existing copy and installing it again" >&2
+  rustup toolchain uninstall "$channel"
+  install_pinned
+fi
 cd "$repo_root"
 rustc --version
 cargo --version

@@ -1,0 +1,34 @@
+{
+  "scope": "Raw JNI boundary exercised with standalone Java ART harness; Kotlin interface compilation only",
+  "runtime": "Dedicated emulator-5554 arm64 API36.1, 16KB pages; no physical-device acceptance",
+  "cases_passed": 11,
+  "control": "Remove status != 0 refusal: compiled JNI returned invalid success on missing material and named harness failed; restored 11 pass",
+  "artifacts": [
+    {
+      "file": "20261007-proof-jni-runtime.log",
+      "sha256": "a7eb16c60b5231aec5c36dd5abb138a73ab02b7ea8b7b36a540955ecf3d67766",
+      "bytes": 425
+    },
+    {
+      "file": "20261007-proof-jni-control-runtime.log",
+      "sha256": "cfaee9729746d0bb0d84fe3a5b8779c83a66eecd89480146b5ec35fd3d45ab99",
+      "bytes": 176
+    },
+    {
+      "file": "20261007-proof-jni-restored-runtime.log",
+      "sha256": "a7eb16c60b5231aec5c36dd5abb138a73ab02b7ea8b7b36a540955ecf3d67766",
+      "bytes": 425
+    },
+    {
+      "file": "20261007-proof-kotlin-compile.log",
+      "sha256": "27974fd5d61d42858e826ee56434701d3f13fdd5dab29369594cd0cb73f32258",
+      "bytes": 9423
+    }
+  ],
+  "limits": [
+    "Library not yet packaged in wallet app",
+    "Kotlin interface has not yet executed through instrumentation",
+    "No durable live state, independently provisioned anchor, acquisition or wallet authorization yet",
+    "No app signing/broadcast readiness inferred"
+  ]
+}

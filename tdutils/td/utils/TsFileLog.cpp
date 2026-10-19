@@ -19,25 +19,148 @@
 */
 
 #include <array>
+#include <atomic>
+#include <cerrno>
+#include <functional>
 
 #include "td/utils/FileLog.h"
+#include "td/utils/PathView.h"
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/Slice.h"
 #include "td/utils/TsFileLog.h"
 #include "td/utils/common.h"
 #include "td/utils/logging.h"
+#include "td/utils/misc.h"
+#include "td/utils/port/config.h"
+#include "td/utils/port/path.h"
 #include "td/utils/port/thread_local.h"
+
+// The log runs on Linux only; listing a directory uses POSIX directly.
+#if !TD_PORT_POSIX
+#error "TsFileLog needs a POSIX directory listing"
+#endif
+#include <dirent.h>
 
 namespace td {
 namespace detail {
+namespace {
+
+// Parses a decimal number of at most 9 digits that makes up all of `s`.
+bool parse_small_number(Slice s, int64 &value) {
+  if (s.empty() || s.size() > 9) {
+    return false;
+  }
+  value = 0;
+  for (char c : s) {
+    if (c < '0' || c > '9') {
+      return false;
+    }
+    value = value * 10 + (c - '0');
+  }
+  return true;
+}
+
+// Calls `func` with the name of every entry of `dir` itself, without "." and
+// "..", and without descending into or opening any subdirectory.
+std::atomic<TsFileLog::DirectoryOpenHook> directory_open_hook{nullptr};
+
+Status list_directory(const string &dir, const std::function<void(Slice)> &func) {
+  auto hook = directory_open_hook.load(std::memory_order_acquire);
+  if (hook != nullptr) {
+    TRY_STATUS(hook(dir));
+  }
+  DIR *handle = opendir(dir.c_str());
+  if (handle == nullptr) {
+    return OS_ERROR(PSLICE() << "Can't list directory \"" << dir << '"');
+  }
+  SCOPE_EXIT {
+    closedir(handle);
+  };
+  while (true) {
+    errno = 0;
+    const dirent *entry = readdir(handle);
+    if (entry == nullptr) {
+      if (errno != 0) {
+        return OS_ERROR(PSLICE() << "Can't read directory \"" << dir << '"');
+      }
+      return Status::OK();
+    }
+    Slice name(static_cast<const char *>(entry->d_name));
+    if (name != "." && name != "..") {
+      func(name);
+    }
+  }
+}
+
+// Removes the archives of every per-thread log of `path` beyond the kept
+// number: <path>.thread<N>.log.old.<k> for k >= keep_rotated. Only thread 0
+// opens its file at start (and prunes it then); the others open on their
+// first append, which a thread that stays idle in this process never reaches,
+// so without this a reduced kept number would leave a previous run's idle
+// threads' generations on disk forever. One listing of the log directory's own
+// entries, so the cost does not depend on how many generations or threads
+// could exist. Subdirectories are never opened: one that cannot be read
+// (the log may sit beside any other directory) must not stop the scan.
+//
+// A failed listing or removal is counted and reported, and start goes on: a
+// log that keeps a few files too many must not stop the engine. Only a file
+// that disappears between the listing and its removal is not a failure. An
+// entry with an archive's name that is not a regular file (a directory, say)
+// is taken as an archive too, so that it is reported rather than silently
+// kept.
+void prune_idle_thread_archives(const string &path, int32 keep_rotated, int32 max_threads) {
+  string dir = TsFileLog::log_directory(path);
+  string prefix = PSTRING() << PathView(path).file_name() << ".thread";
+  // Whether `base` is <path>.thread<N>.log.old.<k> with k beyond the kept number.
+  auto is_stale_archive = [&](Slice base) {
+    if (!begins_with(base, prefix)) {
+      return false;
+    }
+    Slice rest = base.substr(prefix.size());
+    auto dot = rest.find('.');
+    int64 thread = 0;
+    int64 generation = 0;
+    Slice marker(".log.old.");
+    if (dot == Slice::npos || !parse_small_number(rest.substr(0, dot), thread)) {
+      return false;
+    }
+    rest = rest.substr(dot);
+    if (!begins_with(rest, marker) || !parse_small_number(rest.substr(marker.size()), generation)) {
+      return false;
+    }
+    return thread >= 1 && thread < max_threads && generation >= keep_rotated;
+  };
+  string dir_prefix = dir.back() == '/' ? dir : dir + '/';
+  vector<string> doomed;
+  auto listing = list_directory(dir, [&](Slice name) {
+    if (is_stale_archive(name)) {
+      doomed.push_back(dir_prefix + name.str());
+    }
+  });
+  if (listing.is_error()) {
+    // Whatever was listed before the failure is still pruned.
+    FileLog::report_prune_failure(listing);
+  }
+  for (auto &file : doomed) {
+    auto status = unlink(file);
+    if (status.is_error() && !FileLog::is_missing_file_error(status)) {
+      FileLog::report_prune_failure(status);
+    }
+  }
+}
+
+}  // namespace
 class TsFileLog : public LogInterface {
  public:
-  Status init(string path, td::int64 rotate_threshold, bool redirect_stderr) {
+  Status init(string path, td::int64 rotate_threshold, bool redirect_stderr, td::int32 keep_rotated) {
     path_ = std::move(path);
     rotate_threshold_ = rotate_threshold;
+    keep_rotated_ = keep_rotated;
     redirect_stderr_ = redirect_stderr;
     for (int i = 0; i < (int)logs_.size(); i++) {
       logs_[i].id = i;
     }
+    prune_idle_thread_archives(path_, keep_rotated_ < 1 ? 1 : keep_rotated_, static_cast<int32>(logs_.size()));
     return init_info(&logs_[0]);
   }
 
@@ -63,6 +186,7 @@ class TsFileLog : public LogInterface {
     int id;
   };
   int64 rotate_threshold_;
+  int32 keep_rotated_ = 1;
   bool redirect_stderr_;
   std::string path_;
   std::array<Info, MAX_THREADS> logs_;
@@ -86,7 +210,7 @@ class TsFileLog : public LogInterface {
     // dead: the on-disk log grew without bound. Each thread keeps its own
     // file pair, so this bounds every file to rotate_threshold_ (+ at most one
     // trailing append) plus its retained `.old`.
-    TRY_STATUS(info->log.init(get_path(info), rotate_threshold_, info->id == 0 && redirect_stderr_));
+    TRY_STATUS(info->log.init(get_path(info), rotate_threshold_, info->id == 0 && redirect_stderr_, keep_rotated_));
     info->is_inited = true;
     return Status::OK();
   }
@@ -108,9 +232,27 @@ class TsFileLog : public LogInterface {
 };
 }  // namespace detail
 
-Result<td::unique_ptr<LogInterface>> TsFileLog::create(string path, td::int64 rotate_threshold, bool redirect_stderr) {
+Result<td::unique_ptr<LogInterface>> TsFileLog::create(string path, td::int64 rotate_threshold, bool redirect_stderr,
+                                                       td::int32 keep_rotated) {
   auto res = td::make_unique<detail::TsFileLog>();
-  TRY_STATUS(res->init(path, rotate_threshold, redirect_stderr));
+  TRY_STATUS(res->init(path, rotate_threshold, redirect_stderr, keep_rotated));
   return std::move(res);
+}
+
+void TsFileLog::set_directory_open_hook_for_tests(DirectoryOpenHook hook) {
+  detail::directory_open_hook.store(hook, std::memory_order_release);
+}
+
+string TsFileLog::log_directory(Slice path) {
+  PathView view(path);
+  Slice parent = view.parent_dir();
+  if (parent.empty()) {
+    return ".";
+  }
+  // Strip the trailing slashes, but never the root's own.
+  while (parent.size() > 1 && parent.back() == '/') {
+    parent.remove_suffix(1);
+  }
+  return parent.str();
 }
 }  // namespace td

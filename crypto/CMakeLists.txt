@@ -197,13 +197,20 @@ set(TLB_BLOCK_AUTO
 )
 
 set(BLOCK_SOURCE
+  block/validator-session-id.cpp
+  block/validator-session-members.cpp
+  block/pq-vote.cpp
+  pq/pq-bytes.cpp
   block/Binlog.h
   block/Binlog.cpp
   block/block.cpp
+  block/auth-policy.cpp
   block/block-db.cpp
   block/block-parse.cpp
   block/check-proof.cpp
   block/mc-config.cpp
+  block/get-method-context.cpp
+  block/get-method-context.h
   block/output-queue-merger.cpp
   block/transaction.cpp
   block/account-storage-stat.h
@@ -370,6 +377,15 @@ add_library(tos_db STATIC ${TOS_DB_SOURCE})
 target_include_directories(tos_db PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 target_link_libraries(tos_db PUBLIC tdutils tddb tos_crypto ${JEMALLOC_LIBRARIES})
+if (JEMALLOC_FOUND)
+  # Every tos_db consumer links jemalloc when it is found, so the allocator trim can
+  # reference mallctl directly on platforms whose linker has no usable weak symbols.
+  # The header is named by full path rather than adding JEMALLOC_INCLUDE_DIR to the
+  # search path: that directory is often a shared prefix (e.g. /opt/homebrew/include)
+  # whose other libraries would shadow the vendored headers tos_db is built against.
+  target_compile_definitions(tos_db PRIVATE TOS_DB_LINKS_JEMALLOC=1
+                             TOS_DB_JEMALLOC_HEADER="${JEMALLOC_INCLUDE_DIR}/jemalloc/jemalloc.h")
+endif()
 
 add_library(fift-lib STATIC ${FIFT_SOURCE})
 target_include_directories(fift-lib PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
@@ -394,7 +410,10 @@ target_link_libraries(src_parser PUBLIC tos_crypto_core)
 add_library(tos_block STATIC ${BLOCK_SOURCE})
 target_include_directories(tos_block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/block> $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
-target_link_libraries(tos_block PUBLIC tos_crypto_core tdactor tl_api)
+# Decoding a validator set settles a classical validator's identity from its key, so
+# the block library genuinely depends on the key library rather than hoping every
+# consumer happens to link it in the right order.
+target_link_libraries(tos_block PUBLIC tos_crypto_core tdactor tl_api tos_pq_consensus keys)
 if (MINGW)
   # Resolve circular static linking between tos_block and tos_crypto on MinGW.
   target_link_libraries(tos_block PUBLIC tos_crypto)
@@ -452,7 +471,8 @@ add_executable(mintless-proof-generator util/mintless-proof-generator.cpp)
 target_link_libraries(mintless-proof-generator PRIVATE tos_crypto git ${JEMALLOC_LIBRARIES})
 
 if (JEMALLOC_FOUND)
-  target_include_directories(mintless-proof-generator PRIVATE ${JEMALLOC_INCLUDE_DIR})
+  # The source includes no jemalloc header, so the shared jemalloc prefix is kept off
+  # the search path where it could shadow vendored headers.
   target_compile_definitions(mintless-proof-generator PRIVATE -DTOS_USE_JEMALLOC=1)
 endif()
 
@@ -530,29 +550,46 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
     add_dependencies(gen_fif gen_fif_${ID})
   endfunction()
 
-  GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config)
-  GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet)
-  GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3)
-  GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4)
-  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5 EXTRA_DEPS smartcont/auth-extension.fc)
-  GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet)
-  GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet)
-  GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2)
-  GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code)
-  GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig)
-  GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet)
-  GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2)
-  GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3)
+  GenFif(DEST smartcont/auto/config-code SOURCE smartcont/config-code.fc NAME config
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/auth-policy.fc smartcont/pq-launch-limits.fc)
+  GenFif(DEST smartcont/auto/wallet-code SOURCE smartcont/wallet-code.fc NAME wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/wallet3-code SOURCE smartcont/wallet3-code.fc NAME wallet3 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/wallet-v4-code SOURCE smartcont/wallet-v4-code.fc NAME wallet_v4 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/wallet-v5-code SOURCE smartcont/wallet-v5-code.fc NAME wallet_v5 EXTRA_DEPS smartcont/auth-extension.fc smartcont/wallet-v5-action-list.fc smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/simple-wallet-code SOURCE smartcont/simple-wallet-code.fc NAME simple-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/highload-wallet-code SOURCE smartcont/highload-wallet-code.fc NAME highload-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/highload-wallet-v2-code SOURCE smartcont/highload-wallet-v2-code.fc NAME highload-wallet-v2 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  # The libraries it includes are part of what it compiles to. Without them here, editing
+  # one leaves this artifact stale and every test reads the previous version of the rule.
+  GenFif(DEST smartcont/auto/elector-code SOURCE smartcont/elector-code.fc NAME elector-code
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
+  GenFif(DEST smartcont/auto/validator-controller-v1-code SOURCE smartcont/validator-controller-v1.fc NAME validator-controller-v1
+    EXTRA_DEPS smartcont/pq.fc smartcont/pq-validator.fc smartcont/pq-bytes.fc smartcont/stake-relay.fc)
+  GenFif(DEST smartcont/auto/multisig-code SOURCE smartcont/multisig-code.fc NAME multisig
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/restricted-wallet-code SOURCE smartcont/restricted-wallet-code.fc NAME restricted-wallet EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/restricted-wallet2-code SOURCE smartcont/restricted-wallet2-code.fc NAME restricted-wallet2 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
+  GenFif(DEST smartcont/auto/restricted-wallet3-code SOURCE smartcont/restricted-wallet3-code.fc NAME restricted-wallet3 EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/session-wallet-code SOURCE smartcont/session-wallet-code.fc NAME session-wallet)
-  GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow)
+  GenFif(DEST smartcont/auto/task-escrow-code SOURCE smartcont/task-escrow-code.fc NAME task-escrow
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc)
+  GenFif(DEST smartcont/auto/pq-highload-wallet-code SOURCE smartcont/pq-highload-wallet-code.fc
+    NAME pq-highload-wallet EXTRA_DEPS smartcont/replay-guard.fc smartcont/pq-bytes.fc smartcont/pq.fc)
+  GenFif(DEST smartcont/auto/multisig-wallet-code SOURCE smartcont/multisig-wallet-code.fc NAME multisig-wallet
+    EXTRA_DEPS smartcont/multisig-order.fc)
+  GenFif(DEST smartcont/auto/multisig-order-code SOURCE smartcont/multisig-order-code.fc NAME multisig-order
+    EXTRA_DEPS smartcont/multisig-order.fc)
   set(NATIVE_REGISTRY_CPP "${SMARTCONT_AUTO_DIR}/native-registry-code.cpp")
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Native Service Registry BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      FUNC_BIN=$<TARGET_FILE:func>
+      FIFT_BIN=$<TARGET_FILE:fift>
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-native-registry-v1.sh
       ${NATIVE_REGISTRY_CPP} native-registry
     MAIN_DEPENDENCY smartcont/native-registry-code.fc
-    DEPENDS func fift smartcont/stdlib.fc
+    DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc
       smartcont/tos-service-native-registry-v1.boc.base64
       smartcont/tos-service-native-registry-v1.release.json
       ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-native-registry-v1.sh
@@ -562,32 +599,17 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   )
   add_custom_target(gen_fif_smartcont_auto_native_registry_code DEPENDS ${NATIVE_REGISTRY_CPP})
   add_dependencies(gen_fif gen_fif_smartcont_auto_native_registry_code)
-  set(TOS_SERVICE_STABLECOIN_ESCROW_CPP "${SMARTCONT_AUTO_DIR}/tos-service-stablecoin-escrow-v1.cpp")
-  add_custom_command(
-    COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
-      ${TOS_SERVICE_STABLECOIN_ESCROW_CPP} tos-service-stablecoin-escrow-v1
-    MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v1.fc
-    DEPENDS func fift smartcont/stdlib.fc
-      smartcont/tos-service-stablecoin-escrow-v1.boc.base64
-      smartcont/tos-service-stablecoin-escrow-v1.release.json
-      ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/test-tos-service-stablecoin-escrow-v1.sh
-      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v1.sh
-    OUTPUT ${TOS_SERVICE_STABLECOIN_ESCROW_CPP}
-  )
-  add_custom_target(gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1
-    DEPENDS ${TOS_SERVICE_STABLECOIN_ESCROW_CPP})
-  add_dependencies(gen_fif gen_fif_smartcont_auto_tos_service_stablecoin_escrow_v1)
   set(TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP "${SMARTCONT_AUTO_DIR}/tos-service-stablecoin-escrow-v2.cpp")
   add_custom_command(
     COMMENT "Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
+    COMMAND ${CMAKE_COMMAND} -E env
+      FUNC_BIN=$<TARGET_FILE:func>
+      FIFT_BIN=$<TARGET_FILE:fift>
+      ${CMAKE_SOURCE_DIR}/scripts/embed-tos-service-stablecoin-escrow-v2.sh
       ${TOS_SERVICE_STABLECOIN_ESCROW_V2_CPP} tos-service-stablecoin-escrow-v2
     MAIN_DEPENDENCY smartcont/tos-service-stablecoin-escrow-v2.fc
-    DEPENDS func fift smartcont/stdlib.fc
+    DEPENDS func fift smartcont/stdlib.fc smartcont/strong-ed25519-key.fc smartcont/signing-domain.fc
       smartcont/tos-service-stablecoin-escrow-v2.boc.base64
       smartcont/tos-service-stablecoin-escrow-v2.release.json
       ${CMAKE_SOURCE_DIR}/scripts/build-tos-service-stablecoin-escrow-v2.sh
@@ -602,12 +624,14 @@ if (NOT CMAKE_CROSSCOMPILING OR USE_EMSCRIPTEN)
   GenFif(DEST smartcont/auto/prediction-market-code SOURCE smartcont/prediction-market-code.fc NAME prediction-market)
   GenFif(DEST smartcont/auto/pow-testgiver-code SOURCE smartcont/pow-testgiver-code.fc NAME pow-testgiver)
 
-  GenFif(DEST smartcont/auto/dns-manual-code SOURCE smartcont/dns-manual-code.fc NAME dns-manual)
+  GenFif(DEST smartcont/auto/dns-manual-code SOURCE smartcont/dns-manual-code.fc NAME dns-manual
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
   GenFif(DEST smartcont/auto/dns-auto-code SOURCE smartcont/dns-auto-code.fc NAME dns-auto)
 
-  GenFif(DEST smartcont/auto/payment-channel-code SOURCE smartcont/payment-channel-code.fc NAME payment-channel)
+  GenFif(DEST smartcont/auto/payment-channel-code SOURCE smartcont/payment-channel-code.fc NAME payment-channel
+    EXTRA_DEPS smartcont/strong-ed25519-key.fc)
 
-  GenFif(DEST smartcont/auto/simple-wallet-ext-code SOURCE smartcont/simple-wallet-ext-code.fc NAME simple-wallet-ext)
+  GenFif(DEST smartcont/auto/simple-wallet-ext-code SOURCE smartcont/simple-wallet-ext-code.fc NAME simple-wallet-ext EXTRA_DEPS smartcont/strong-ed25519-key.fc)
 endif()
 
 add_library(smc-envelope STATIC ${SMC_ENVELOPE_SOURCE})
@@ -644,6 +668,22 @@ if (WINGETOPT_FOUND)
   target_link_libraries_system(create-state wingetopt)
 endif()
 
+# The node's own vote producer, reachable from a command line so the bytes it makes can
+# be handed to the real contract and required to be counted. It signs a vote and nothing
+# else, and it holds no controller root.
+add_executable(tos-pq-vote pq/vote-tool.cpp)
+target_include_directories(tos-pq-vote PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+target_link_libraries(tos-pq-vote PUBLIC tos_crypto tos_pq_consensus_signer)
+
+# The operator's root-authorisation tool. It links the offline root library and no node
+# code, which is the boundary itself rather than a note about one: the only program in
+# this build that can sign a controller authorisation is the one an operator runs.
+add_executable(tos-pq-controller pq/controller-tool.cpp)
+target_include_directories(tos-pq-controller PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
+target_link_libraries(tos-pq-controller PUBLIC tos_crypto tos_pq_controller_root)
+
 add_executable(dump-block block/dump-block.cpp)
 target_include_directories(dump-block PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
@@ -669,11 +709,36 @@ if (WINGETOPT_FOUND)
   target_link_libraries_system(test-weight-distr wingetopt)
 endif()
 
-install(TARGETS fift func create-state tlbc RUNTIME DESTINATION bin)
+# The node's storage fee function against the shared vector file the tosctl executor
+# also reads, so the Rust side's expected values are the node's answers.
+add_executable(test-storage-fee-vectors block/test-storage-fee-vectors.cpp)
+target_link_libraries(test-storage-fee-vectors PRIVATE tos_crypto)
+target_compile_definitions(test-storage-fee-vectors PRIVATE
+  STORAGE_FEE_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/block/storage-fee-vectors.tsv")
+tos_test(test-storage-fee-vectors)
+
+install(TARGETS fift func create-state tlbc RUNTIME DESTINATION bin BUNDLE DESTINATION bin)
 install(DIRECTORY fift/lib/ DESTINATION lib/fift)
 install(DIRECTORY smartcont DESTINATION share/tos)
 
 add_subdirectory(pq)
+
+# The controller's deployment commands. Seeds for the test are placed with the
+# consensus-key tool, which writes the same 32-byte seed file the root is loaded from.
+if(TARGET tos-pq-consensus-key)
+  add_test(NAME pq-signing-tool-integers
+           COMMAND "${CMAKE_COMMAND}" -E env python3
+                   "${CMAKE_CURRENT_SOURCE_DIR}/../test/pq-mldsa44/signing_tool_integer_test.py"
+                   --controller "$<TARGET_FILE:tos-pq-controller>"
+                   --vote "$<TARGET_FILE:tos-pq-vote>"
+                   --consensus-key "$<TARGET_FILE:tos-pq-consensus-key>")
+  set_tests_properties(pq-signing-tool-integers PROPERTIES TIMEOUT 120)
+  add_test(NAME controller-tool
+           COMMAND "${CMAKE_COMMAND}" -E env python3
+                   "${CMAKE_CURRENT_SOURCE_DIR}/../test/pq-mldsa44/controller_tool_test.py"
+                   --controller "$<TARGET_FILE:tos-pq-controller>"
+                   --consensus-key "$<TARGET_FILE:tos-pq-consensus-key>")
+endif()
 
 if(TARGET tos_crypto)
   add_executable(test-poseidon2 "${CMAKE_CURRENT_SOURCE_DIR}/../test/poseidon2/test.cpp")

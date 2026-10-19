@@ -437,7 +437,7 @@ void StorageProvider::init_new_storage_contract(ContractAddress address, Storage
                 return tree;
               }();
               if (r_microchunk_tree.is_error()) {
-                LOG(WARNING) << "Failed to download torrent " << hash.to_hex() << ": " << R.move_as_error();
+                LOG(WARNING) << "Failed to download torrent " << hash.to_hex() << ": " << r_microchunk_tree.error();
                 td::actor::send_closure(SelfId, &StorageProvider::do_close_storage_contract, address);
               } else {
                 td::actor::send_closure(SelfId, &StorageProvider::downloaded_torrent, address,

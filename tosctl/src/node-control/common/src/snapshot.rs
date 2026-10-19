@@ -322,6 +322,54 @@ pub struct ValidatorNodeSnapshot {
     /// Binding lifecycle status.
     #[serde(default)]
     pub binding_status: BindingStatus,
+
+    /// The pool controller's operating authorization (kind 4), which pays for every
+    /// relayed stake. Absent for a node without a pool or before the first check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operating_authorization: Option<OperatingAuthorizationSnapshot>,
+}
+
+/// A controller's operating authorization as last read by the elections task.
+/// Amounts are nanoTOS as decimal strings.
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, Default, PartialEq, Eq)]
+pub struct OperatingAuthorizationSnapshot {
+    /// Controller address.
+    pub controller: String,
+    /// When the values below were read (unix seconds); zero if never.
+    pub checked_at: u64,
+    /// The masterchain block the values below were read at.
+    #[serde(default)]
+    pub block_seqno: u32,
+    /// When the last read was attempted (unix seconds).
+    #[serde(default)]
+    pub attempted_at: u64,
+    /// The last attempt failed with this error.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The values below are historical: they come from the read at `checked_at`,
+    /// and every attempt since has failed.
+    #[serde(default)]
+    pub stale: bool,
+    /// The controller the failed attempt was for, when it differs from `controller`
+    /// (the one the values above belong to) or no values exist yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempted_controller: Option<String>,
+    pub funds: String,
+    pub allowance: String,
+    pub per_request_limit: String,
+    pub storage_floor: String,
+    pub expires: u32,
+    pub payer: String,
+    /// What each relayed stake charges at the live fee configuration.
+    pub grant: String,
+    pub stakes_remaining: String,
+    pub runway_secs: u64,
+    pub expires_in_secs: u64,
+    pub relay_pending: bool,
+    /// Whether the next relayed stake is refused as things stand.
+    pub blocks_next_stake: bool,
+    pub warnings: Vec<String>,
 }
 
 /// View for `/v1/elections` endpoint.

@@ -104,8 +104,21 @@ class AdnlPeerTable : public Adnl {
                                      td::Promise<AdnlDbItem> promise) = 0;
 
   virtual void deliver(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data) = 0;
+  // Like deliver, but `held` is released only once the message has reached its
+  // subscriber, so a sender can keep the message's resources charged while it
+  // waits in mailboxes on the way. Every table must carry `held` along its own
+  // delivery path, including any asynchronous hop; there is no default, since
+  // one that drops `held` on entry would release the charge before delivery.
+  virtual void deliver_holding(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
+                               std::shared_ptr<void> held) = 0;
   virtual void deliver_query(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
                              td::Promise<td::BufferSlice> promise) = 0;
+  // Like deliver_query, for a transport that can use the answer's delivery
+  // metadata. A table that does not carry it answers with none.
+  virtual void deliver_query_ex(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
+                                td::Promise<AdnlQueryAnswer> promise) {
+    deliver_query(src, dst, std::move(data), drop_answer_metadata(std::move(promise)));
+  }
   virtual void decrypt_message(AdnlNodeIdShort dst, td::BufferSlice data, td::Promise<td::BufferSlice> promise) = 0;
 
   virtual void set_peer_pair_idle(AdnlNodeIdShort l_id, AdnlNodeIdShort p_id, bool value) = 0;

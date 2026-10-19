@@ -24,4 +24,39 @@ fn main() {
         .std("c90")
         .warnings(false)
         .compile("tos_rust_mldsa44");
+    let falcon = root.join("../../../third-party/falcon-reference");
+    let adapter = root.join("../../../crypto/pq");
+    println!("cargo:rerun-if-changed={}", falcon.display());
+    println!("cargo:rerun-if-changed={}", adapter.join("falcon512-native.c").display());
+    println!("cargo:rerun-if-changed={}", adapter.join("falcon512-native.h").display());
+    let mut build = cc::Build::new();
+    for source in ["codec.c", "common.c", "shake.c", "vrfy.c"] {
+        build.file(falcon.join(source));
+    }
+    build
+        .file(adapter.join("falcon512-native.c"))
+        .include(&falcon)
+        .include(&adapter)
+        .define("FALCON_FPEMU", "1")
+        .define("FALCON_FPNATIVE", "0")
+        .define("FALCON_AVX2", "0")
+        .define("FALCON_FMA", "0")
+        .define("FALCON_PREFIX", "tos_falcon_inner")
+        .std("c99")
+        .warnings(false)
+        .compile("tos_rust_falcon512");
+    // PROTOTYPE suite 3: the same pinned SLH-DSA import as the C++ VM, verify-only shim.
+    let slh = root.join("../../../third-party/slhdsa-c");
+    println!("cargo:rerun-if-changed={}", slh.display());
+    println!("cargo:rerun-if-changed=slh-shim.c");
+    let mut build = cc::Build::new();
+    for source in ["slh_dsa.c", "slh_sha2.c", "sha2_256.c", "sha2_512.c"] {
+        build.file(slh.join(source));
+    }
+    build
+        .file(root.join("slh-shim.c"))
+        .include(&slh)
+        .std("c99")
+        .warnings(false)
+        .compile("tos_rust_slhdsa128s");
 }

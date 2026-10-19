@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "node_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "edge_epoch": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "available",
+        "degraded",
+        "unknown"
+      ]
+    },
+    "guard": {
+      "type": "string",
+      "enum": [
+        "normal",
+        "guarded",
+        "emergency",
+        "recovering"
+      ]
+    },
+    "validator_epoch": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 128
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+          },
+          "age_ms": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^(0|[1-9][0-9]{0,19})$",
+                "format": "uint64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "usable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source_id",
+          "age_ms",
+          "usable"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 32
+    }
+  },
+  "required": [
+    "schema_version",
+    "node_id",
+    "edge_epoch",
+    "state",
+    "guard",
+    "validator_epoch",
+    "sources"
+  ],
+  "additionalProperties": false,
+  "$defs": {}
+}

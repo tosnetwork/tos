@@ -1,0 +1,10 @@
+--- crates/health-services/src/diagnostic_ingest.rs
++++ crates/health-services/src/diagnostic_ingest.rs
+@@ -161,6 +161,7 @@
+         if insert {
+             tx.execute("INSERT INTO observations(node,scope,process_epoch,source_epoch,source,source_record,content_hash,body) VALUES(?1,'node',?2,?2,?3,?4,?5,?6)",
+                 params![batch.node_id,batch.process_epoch,batch.source_id,value.record.source_record_id,digest,body]).map_err(|e|e.to_string())?;
++            tx.execute_batch("COMMIT; BEGIN").map_err(|e|e.to_string())?;
+         }
+     }
+     let last = batch.records.last().ok_or("empty diagnostic batch")?.sequence;

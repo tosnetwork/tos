@@ -1,0 +1,27 @@
+$ cargo test --locked -p tos-health-core --test native_v2_contract unapproved_scope_and_post_terminal_progress_cannot_stay_green -- --exact
+source_sha256=95d21585cba1eb977466eb7f0848d56406845c495b79ed05a31e5694c4f810a9
+timeout_seconds=120
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.39s
+     Running tests/native_v2_contract.rs (target/debug/deps/native_v2_contract-4dbc563f937d6516)
+
+running 1 test
+test unapproved_scope_and_post_terminal_progress_cannot_stay_green ... FAILED
+
+failures:
+
+---- unapproved_scope_and_post_terminal_progress_cannot_stay_green stdout ----
+
+thread 'unapproved_scope_and_post_terminal_progress_cannot_stay_green' (943036) panicked at crates/health-core/tests/native_v2_contract.rs:206:5:
+assertion failed: validate(&value).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    unapproved_scope_and_post_terminal_progress_cannot_stay_green
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p tos-health-core --test native_v2_contract`
+
+EXIT=101

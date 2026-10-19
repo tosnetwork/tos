@@ -2,10 +2,10 @@ name: Lint
 
 on:
   pull_request:
-    branches: [master, testnet]
+    branches: [main]
     types: [opened, reopened, synchronize, ready_for_review]
   push:
-    branches: [master, testnet]
+    branches: [main]
   workflow_dispatch:
   workflow_call:
 
@@ -13,39 +13,78 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
-  lint:
+  explorer-two-build-analysis:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/explorer-pq-validation.yml
+
+  # The whole tree, warnings as errors. This one gates: it passes today, so a failure
+  # means the change under test introduced it.
+  strict-build:
     runs-on: ubuntu-24.04
+    env:
+      # A compile cache carried between runs. ccache stores only successful compilations and
+      # keys them on the full command line, so -Werror and every warning flag stay in force: a
+      # cached object is one that compiled without warnings under the same flags and inputs.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      # Clang is installed afresh on every run; the default mtime check would treat it as a new
+      # compiler each time and never hit. Hash the compiler binary instead.
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 3G
+      # A fixed CPU level instead of the default -march=native. ccache keys on the flag's text,
+      # not on the CPU it resolves to, and hosted runners differ: objects cached on one runner
+      # died with an illegal instruction on another. Every hosted x86 runner supports v2.
+      BUILD_ARCH: x86-64-v2
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+    - name: Reuse only a proven identical Ready snapshot
+      id: snapshot
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 scripts/ci-snapshot.py --job 'strict-build'
     - name: Date Stamp
+      if: steps.snapshot.outputs.run-tests == 'true'
       shell: bash
       id: date-stamp
       run: |
         echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
 
     - name: Install system libraries
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev
+        sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache
 
     - name: Install Clang 21
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
-        # SECURITY: Pin to specific LLVM release instead of fetching script
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 all
+        sudo scripts/install-llvm-toolchain.sh 21 all
 
-    # TODO: Preserve ccache cache between runs once we get rid of warning suppression mappings.
+    # Pull requests read the newest cache saved on main (or their own earlier runs); main
+    # saves after every push, so the next pull request starts from it.
+    - name: Restore compile cache
+      if: steps.snapshot.outputs.run-tests == 'true'
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .ccache
+        key: strict-build-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
+        restore-keys: strict-build-ccache-${{ env.BUILD_ARCH }}-
 
     # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install repository-pinned Rust toolchain
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: scripts/install-rust-toolchain.sh
 
     - name: Build TOS
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
         cmake -S . -B build -G Ninja \
           -DCMAKE_C_COMPILER=clang-21 \
@@ -53,36 +92,191 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DTOS_USE_JEMALLOC=ON \
           -DTOS_USE_LLD=On \
-          -DTOS_WERROR_BUILD=On
+          -DTOS_WERROR_BUILD=On \
+          -DTOS_ARCH="$BUILD_ARCH" \
+          -DPORTABLE="$BUILD_ARCH" \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        ccache --zero-stats
         ninja -C build
 
-    - name: Check spaces at EOL
+    # Use-after-move defects that clang evaluates correctly, so no clang-built test can
+    # see them. The guard is registered only where clang-tidy-21 exists, and this job
+    # installs it, so a missing registration here is a failure, not a skip.
+    - name: Static use-after-move guard
+      if: steps.snapshot.outputs.run-tests == 'true'
       run: |
-        ! git grep --cached -Il '\s$' -- :/ \
-          ':(exclude)crypto/smartcont/tol-stdlib/' \
-          ':(exclude)tol/' \
-          ':(exclude)tol-tester/' \
-          ':(exclude)third-party/'
+        python3 scripts/check-ctest-inventory.py --build-dir build \
+          --label static-analysis --exact static-use-after-move
+        ctest --test-dir build -L static-analysis --no-tests=error --output-on-failure
 
-    - name: Check C++ formatting
+    # The regression tests of the fixes the guard covers, plus their neighbours. The
+    # inventory check refuses a selection that silently lost one of them.
+    - name: Targeted regression tests
+      if: steps.snapshot.outputs.run-tests == 'true'
+      env:
+        TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
       run: |
-        # TODO: Run clang-format only on changed files.
-        clang-format-21 -i $(git ls-files '*.h' '*.hpp' '*.cpp' \
+        regex="$(python3 scripts/check-ctest-inventory.py --build-dir build \
+          --expected-file scripts/strict-build-targeted-tests.txt --print-regex)"
+        ctest --test-dir build --output-on-failure --no-tests=error -R "$regex"
+
+    # The hit rate is the evidence that the cache works; a run that hits nothing is a cold
+    # build, not a broken one.
+    - name: Compile cache statistics
+      if: (always()) && steps.snapshot.outputs.run-tests == 'true'
+      run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
+
+    - name: Save compile cache
+      if: (always()) && steps.snapshot.outputs.run-tests == 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: .ccache
+        key: strict-build-ccache-${{ env.BUILD_ARCH }}-${{ steps.date-stamp.outputs.timestamp }}
+
+  # Formatting and whitespace, judged on the lines this change actually touches.
+  #
+  # The tree carries older deviations that a whole-tree check would report on every
+  # change, which teaches everyone to ignore the result. Judging only the changed lines
+  # means this passes today and still refuses new deviations, and the backlog shrinks as
+  # files are edited rather than in one reformatting commit.
+
+    - name: Record successful executed snapshot
+      if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+      run: python3 scripts/ci-snapshot.py --job 'strict-build' --record
+    - name: Retain successful snapshot evidence
+      if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: ci-snapshot-strict-build-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-snapshot-strict-build.json
+        if-no-files-found: error
+        retention-days: 14
+  hygiene:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      with:
+        fetch-depth: 0
+
+    - name: Reuse only a proven identical Ready snapshot
+      id: snapshot
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 scripts/ci-snapshot.py --job 'hygiene'
+    - name: Determine what this change touches
+      if: steps.snapshot.outputs.run-tests == 'true'
+      id: changed
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          base="${{ github.event.pull_request.base.sha }}"
+        else
+          base="${{ github.event.before }}"
+        fi
+        # A new branch, a force push, or a manual run leaves no usable base; fall back to
+        # the previous commit rather than silently checking nothing.
+        if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+          base="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+        fi
+        echo "base=$base" >> "$GITHUB_OUTPUT"
+        git diff --name-only --diff-filter=ACMR "$base" HEAD -- :/ \
           ':(exclude)crypto/smartcont/tol-stdlib/' \
           ':(exclude)tol/' \
           ':(exclude)tol-tester/' \
-          ':(exclude)third-party/')
-        git diff --exit-code
+          ':(exclude)third-party/' > changed-files.txt
+        grep -cE '\.py$' changed-files.txt > python-count.txt || echo 0 > python-count.txt
+        echo "python_count=$(cat python-count.txt)" >> "$GITHUB_OUTPUT"
+        echo "Files touched: $(wc -l < changed-files.txt)"
+
+    - name: Install Clang 21 formatting tools
+      if: steps.snapshot.outputs.run-tests == 'true'
+      run: |
+        sudo scripts/install-llvm-toolchain.sh 21
+        sudo apt-get install -y clang-format-21
+
+    # Captured output under an evidence `raw/` directory is a byte-exact record whose
+    # SHA-256 an evidence index pins; trimming it would break the pin and the record.
+    - name: Check spaces at EOL on added lines
+      if: steps.snapshot.outputs.run-tests == 'true'
+      shell: bash
+      run: |
+        if git diff -U0 "${{ steps.changed.outputs.base }}" HEAD -- :/ \
+          ':(exclude)crypto/smartcont/tol-stdlib/' \
+          ':(exclude)tol/' \
+          ':(exclude)tol-tester/' \
+          ':(exclude)third-party/' \
+          ':(exclude,glob)tools/node-health-monitor/evidence/**/raw/**' | grep -nE '^\+[^+].*[[:space:]]$'; then
+          echo "The lines above end in whitespace" >&2
+          exit 1
+        fi
+
+    - name: Check C++ formatting of changed lines
+      if: steps.snapshot.outputs.run-tests == 'true'
+      shell: bash
+      run: |
+        # The formatter exits non-zero when it has something to say, and this step runs
+        # under `set -e`, so capturing its output directly ended the step before the
+        # diff below could be printed. Every formatting failure looked identical, and
+        # said only that one had happened.
+        set +e
+        out="$(git clang-format-21 --binary clang-format-21 --diff \
+          --extensions h,hpp,cpp "${{ steps.changed.outputs.base }}" -- :/ \
+          ':(exclude)crypto/smartcont/tol-stdlib/' \
+          ':(exclude)tol/' \
+          ':(exclude)tol-tester/' \
+          ':(exclude)third-party/' 2>&1)"
+        status=$?
+        set -e
+        case "$out" in
+          ''|*'did not modify any files'*|*'no modified files to format'*)
+            # Silence is an answer only if the formatter meant to say nothing.
+            if [ "$status" -ne 0 ]; then
+              echo "the formatter exited $status without reporting anything" >&2
+              exit 1
+            fi
+            echo "changed lines are formatted" ;;
+          *)
+            echo "$out"
+            echo "Run: git clang-format-21 --binary clang-format-21 <base>" >&2
+            exit 1 ;;
+        esac
 
     - name: Prepare Python environment
+      if: (steps.changed.outputs.python_count != '0') && steps.snapshot.outputs.run-tests == 'true'
       run: |
-        # SECURITY: Pin uv version to avoid supply chain risk
-        curl -LsSf https://astral.sh/uv/0.11.7/install.sh | sh
+        tool_dir="$(mktemp -d)"
+        trap 'rm -rf "$tool_dir"' EXIT
+        curl -fsSL https://github.com/astral-sh/uv/releases/download/0.11.7/uv-x86_64-unknown-linux-gnu.tar.gz -o "$tool_dir/uv.tar.gz"
+        python3 scripts/verify-build-tool.py uv-x86_64 "$tool_dir/uv.tar.gz"
+        tar -xzf "$tool_dir/uv.tar.gz" -C "$tool_dir"
+        sudo install -m 0755 "$tool_dir/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
         uv sync
-        uv run test/tostester/generate_tl.py
 
-    - name: Lint Python
+    - name: Lint changed Python
+      if: (steps.changed.outputs.python_count != '0') && steps.snapshot.outputs.run-tests == 'true'
+      shell: bash
       run: |
-        uv run ruff check
-        uv run ruff format --check
-        uv run basedpyright
+        mapfile -t files < <(grep -E '\.py$' changed-files.txt)
+        uv run ruff check "${files[@]}"
+        uv run ruff format --check "${files[@]}"
+
+  # The reusable Python check also runs on Python/schema changes independently
+  # of native builds. Manual native validation retains the same check here.
+
+    - name: Record successful executed snapshot
+      if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+      run: python3 scripts/ci-snapshot.py --job 'hygiene' --record
+    - name: Retain successful snapshot evidence
+      if: github.event_name == 'pull_request' && steps.snapshot.outputs.run-tests == 'true'
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: ci-snapshot-hygiene-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/ci-snapshot-hygiene.json
+        if-no-files-found: error
+        retention-days: 14
+  python-types:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/python-types.yml

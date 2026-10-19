@@ -1,0 +1,6 @@
+$ $HOME/tos-node-health-impl/tools/node-health-monitor/.contract-venv/bin/python $HOME/tos-node-health-impl/tools/node-health-monitor/tests/native-snapshot-http.py $HOME/tos-node-health-c01-build/test-health-native-snapshot --mode lease
+native_snapshot_unit_passed
+isolated_actual_publisher_prepare_us=935
+lease: passed
+
+EXIT=0

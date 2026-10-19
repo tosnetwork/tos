@@ -1,0 +1,2 @@
+# Recorded lite-server answers are raw TL bytes, not TL schema text.
+*.tl binary

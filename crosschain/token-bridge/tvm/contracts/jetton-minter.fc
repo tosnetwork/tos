@@ -8,143 +8,1321 @@
 #include "utils.fc";
 #include "config.fc";
 #include "discovery-params.fc";
+#include "settlement.fc";
 
+{-
+  The minter is the receiver of C1 (mints from its bridge) and C3 (burn
+  admissions from its wallets) and the sender of C2 (credits to its wallets)
+  and C4 (burn notices to its bridge). Its layout is built by
+  pack_minter_initial_data in utils.fc.
 
-slice zero_address() inline {
-    return begin_cell().store_uint(0, 2).end_cell().begin_parse();
-}
+  storage#_ total_supply:int128 in_flight:Coins mint_reserve:Coins burn_reserve:Coins
+            stranded:Coins content:^Cell jetton_wallet_code:^Cell
+            ^[ bridge:MsgAddressInt bridge_life:uint64 born_lt:uint64 terminal:uint1
+               mint_watermark:uint64 mint_compaction:uint64
+               next_notice:uint64 bridge_burn_ack:uint64 holders_count:uint32
+               mints:(HashmapE 64 MintRecord) notices:(HashmapE 64 NoticeRef)
+               holders:(HashmapE 256 ^Holder) ] = Storage;
+  mint_record#_ status:uint3 wallet_life:uint64 k:uint64 escrow:Coins
+      descriptor_hash:uint256 owner:uint256 amount:Coins descriptor:^MintDescriptor = MintRecord;
+  notice_ref#_ owner:uint256 wallet_life:uint64 b:uint64 = NoticeRef;
+  holder#_ wallet_life:uint64 open:uint2 open_attempt:uint32 opening_life:uint64
+      next_credit:uint64 credit_ack:uint64 burn_watermark:uint64 burn_compaction:uint64
+      credits:(HashmapE 64 uint64) burns:(HashmapE 64 BurnRecord)
+      awaiting:(HashmapE 64 Unit) old_life:(Maybe ^OldLife) = Holder;
+  burn_record#_ status:uint3 cancel:uint1 m:uint64 amount:Coins descriptor_hash:uint256
+      descriptor:^BurnDescriptor = BurnRecord;
+  old_life#_ wallet_life:uint64 credits:(HashmapE 64 uint64) burns:(HashmapE 64 BurnRecord) = OldLife;
 
-;; storage scheme
-;; storage#_ total_supply:Coins content:^Cell jetton_wallet_code:^Cell = Storage;
+  total_supply counts credits wallets confirmed, less burns admitted. It is
+  signed: a burn of tokens whose credit landed is admitted before that
+  credit's confirmation. Supply plus every reservation stays within MAX_SUPPLY.
+-}
 
-(int, cell, cell) load_data() inline {
+const int HOLDER_DEAD = 3;   ;; the wallet refused this minter's life
+
+global int m_supply;
+global int m_in_flight;
+global int m_mint_reserve;
+global int m_burn_reserve;
+global int m_stranded;
+global cell m_wallet_code;
+global slice m_bridge;
+global int m_bridge_life;
+global int m_born;
+global int m_terminal;
+global int m_mint_wm;
+global int m_mint_cf;
+global int m_next_notice;
+global int m_bridge_burn_ack;
+global int m_holders_count;
+global cell m_mints;
+global cell m_notices;
+global cell m_holders;
+
+;; the holder being worked on
+global int h_owner;
+global int h_wallet_life;
+global int h_open;
+global int h_attempt;
+global int h_opening_life;
+global int h_next_credit;
+global int h_credit_ack;
+global int h_burn_wm;
+global int h_burn_cf;
+global cell h_credits;
+global cell h_burns;
+global cell h_awaiting;
+global cell h_old;
+
+() load_data() impure inline {
     slice ds = get_data().begin_parse();
-
-    (int total_supply, cell content, cell jetton_wallet_code) = (
-            ds~load_coins(), ;; total_supply
-            ds~load_ref(), ;; content
-            ds~load_ref() ;; jetton_wallet_code
-    );
+    m_supply = ds~load_int(128);
+    m_in_flight = ds~load_coins();
+    m_mint_reserve = ds~load_coins();
+    m_burn_reserve = ds~load_coins();
+    m_stranded = ds~load_coins();
+    ds~load_ref();   ;; content: read only by get-methods
+    m_wallet_code = ds~load_ref();
+    slice ss = ds~load_ref().begin_parse();
     ds.end_parse();
-
-    return (total_supply, content, jetton_wallet_code);
+    m_bridge = ss~load_msg_addr();
+    m_bridge_life = ss~load_uint(64);
+    m_born = ss~load_uint(64);
+    m_terminal = ss~load_uint(1);
+    m_mint_wm = ss~load_uint(64);
+    m_mint_cf = ss~load_uint(64);
+    m_next_notice = ss~load_uint(64);
+    m_bridge_burn_ack = ss~load_uint(64);
+    m_holders_count = ss~load_uint(32);
+    m_mints = ss~load_dict();
+    m_notices = ss~load_dict();
+    m_holders = ss~load_dict();
+    ss.end_parse();
 }
 
-() save_data(int total_supply, cell content, cell jetton_wallet_code) impure inline {
+() save_data() impure inline {
     set_data(begin_cell()
-            .store_coins(total_supply)
-            .store_ref(content)
-            .store_ref(jetton_wallet_code)
-            .end_cell()
-    );
+        .store_int(m_supply, 128)
+        .store_coins(m_in_flight)
+        .store_coins(m_mint_reserve)
+        .store_coins(m_burn_reserve)
+        .store_coins(m_stranded)
+        .store_ref(get_data().begin_parse().preload_ref())
+        .store_ref(m_wallet_code)
+        .store_ref(begin_cell()
+            .store_slice(m_bridge)
+            .store_uint(m_bridge_life, 64)
+            .store_uint(m_born, 64)
+            .store_uint(m_terminal, 1)
+            .store_uint(m_mint_wm, 64)
+            .store_uint(m_mint_cf, 64)
+            .store_uint(m_next_notice, 64)
+            .store_uint(m_bridge_burn_ack, 64)
+            .store_uint(m_holders_count, 32)
+            .store_dict(m_mints)
+            .store_dict(m_notices)
+            .store_dict(m_holders)
+            .end_cell())
+        .end_cell());
 }
 
-() mint_tokens(slice to_address, cell jetton_wallet_code, int amount, cell master_msg) impure {
-    cell state_init = calculate_jetton_wallet_state_init(to_address, my_address(), jetton_wallet_code);
-    slice to_wallet_address = calculate_address_by_state_init(state_init);
-    var msg = begin_cell()
-            .store_msg_flags(BOUNCEABLE)
-            .store_slice(to_wallet_address)
-            .store_coins(amount)
-            .store_msgbody_prefix_stateinit()
-            .store_ref(state_init)
-            .store_ref(master_msg);
-    send_raw_message(msg.end_cell(), SEND_MODE_REGULAR); ;; revert on errors
+;; ---- holders --------------------------------------------------------------
+
+() holder_reset() impure inline {
+    h_wallet_life = 0;
+    h_open = HOLDER_NEW;
+    h_opening_life = 0;
+    h_next_credit = 0;
+    h_credit_ack = 0;
+    h_burn_wm = 0;
+    h_burn_cf = 0;
+    h_credits = new_dict();
+    h_burns = new_dict();
 }
+
+int holder_load(int owner) impure inline {
+    h_owner = owner;
+    (cell c, int found) = m_holders.udict_get_ref?(256, owner);
+    if (~ found) {
+        holder_reset();
+        h_attempt = 0;
+        h_awaiting = new_dict();
+        h_old = null();
+        return false;
+    }
+    slice hs = c.begin_parse();
+    h_wallet_life = hs~load_uint(64);
+    h_open = hs~load_uint(2);
+    h_attempt = hs~load_uint(32);
+    h_opening_life = hs~load_uint(64);
+    h_next_credit = hs~load_uint(64);
+    h_credit_ack = hs~load_uint(64);
+    h_burn_wm = hs~load_uint(64);
+    h_burn_cf = hs~load_uint(64);
+    h_credits = hs~load_dict();
+    h_burns = hs~load_dict();
+    h_awaiting = hs~load_dict();
+    h_old = hs~load_maybe_ref();
+    hs.end_parse();
+    return true;
+}
+
+() holder_store() impure inline {
+    m_holders~udict_set_ref(256, h_owner, begin_cell()
+        .store_uint(h_wallet_life, 64)
+        .store_uint(h_open, 2)
+        .store_uint(h_attempt, 32)
+        .store_uint(h_opening_life, 64)
+        .store_uint(h_next_credit, 64)
+        .store_uint(h_credit_ack, 64)
+        .store_uint(h_burn_wm, 64)
+        .store_uint(h_burn_cf, 64)
+        .store_dict(h_credits)
+        .store_dict(h_burns)
+        .store_dict(h_awaiting)
+        .store_maybe_ref(h_old)
+        .end_cell());
+}
+
+slice owner_address(int owner) inline {
+    return create_address(WORKCHAIN, owner);
+}
+
+slice wallet_of(int owner) inline {
+    return calculate_user_jetton_wallet_address(owner_address(owner), my_address(), m_wallet_code);
+}
+
+cell wallet_init_of(int owner) inline {
+    return calculate_jetton_wallet_state_init(owner_address(owner), my_address(), m_wallet_code);
+}
+
+;; What the open message to `owner`'s wallet costs to forward, with its initial
+;; state; the wallet's advance(OPEN) prices it the same way.
+int open_fee(int owner) inline {
+    return fee_of(wallet_init_of(owner), 0) + described_fee(0);
+}
+
+;; old life: wallet_life, credits, burns
+(int, cell, cell) old_parts() inline {
+    if (h_old.null?()) {
+        return (0, new_dict(), new_dict());
+    }
+    slice os = h_old.begin_parse();
+    int life = os~load_uint(64);
+    cell credits = os~load_dict();
+    cell burns = os~load_dict();
+    os.end_parse();
+    return (life, credits, burns);
+}
+
+() old_store(int life, cell credits, cell burns) impure inline {
+    if (credits.null?() & burns.null?()) {
+        h_old = null();
+    } else {
+        h_old = begin_cell().store_uint(life, 64).store_dict(credits).store_dict(burns).end_cell();
+    }
+}
+
+;; ---- mint records ---------------------------------------------------------
+
+;; status, wallet_life, k, escrow, hash, owner, amount, descriptor
+(int, int, int, int, int, int, int, cell, int) mint_get(int s) inline {
+    (slice e, int found) = m_mints.udict_get?(64, s);
+    if (~ found) {
+        return (-1, 0, 0, 0, 0, 0, 0, null(), false);
+    }
+    int status = e~load_uint(3);
+    int life = e~load_uint(64);
+    int k = e~load_uint(64);
+    int escrow = e~load_coins();
+    int hash = e~load_uint(256);
+    int owner = e~load_uint(256);
+    int amount = e~load_coins();
+    cell d = e~load_ref();
+    return (status, life, k, escrow, hash, owner, amount, d, true);
+}
+
+() mint_put(int s, int status, int life, int k, int escrow, int hash, int owner, int amount, cell d) impure inline {
+    m_mints~udict_set_builder(64, s, begin_cell()
+        .store_uint(status, 3)
+        .store_uint(life, 64)
+        .store_uint(k, 64)
+        .store_coins(escrow)
+        .store_uint(hash, 256)
+        .store_uint(owner, 256)
+        .store_coins(amount)
+        .store_ref(d));
+}
+
+int mint_final?(int status) inline {
+    return (status == MINT_COUNTED) | (status == MINT_REFUSED) | (status == MINT_STRANDED);
+}
+
+;; ---- C1 receiver: the bridge's mints --------------------------------------
+
+() accept_mint_floor(int floor) impure inline {
+    if (floor <= m_mint_cf) {
+        return ();
+    }
+    throw_unless(error::bad_floor, floor <= entered_high(m_mints, m_mint_wm));
+    int s = max(m_mint_wm, m_mint_cf);
+    int steps = 0;
+    while ((s < floor) & (steps < FOLD_LIMIT)) {
+        (int status, _, _, _, _, _, _, _, int found) = mint_get(s);
+        if (found & mint_final?(status)) {
+            s += 1;
+            steps += 1;
+        } else {
+            floor = s;
+        }
+    }
+    m_mint_cf = max(m_mint_cf, min(floor, s));
+}
+
+;; Advances the watermark over final mints. A counted mint is the default and
+;; leaves no entry; a refused or stranded one stays as an exception until the
+;; bridge's finished floor passes it.
+() fold_mints() impure inline {
+    int steps = 0;
+    int more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (int status, _, _, _, _, _, _, _, int found) = mint_get(m_mint_wm);
+        if (found & mint_final?(status)) {
+            if ((status == MINT_COUNTED) | (m_mint_wm < m_mint_cf)) {
+                (m_mints, _) = m_mints.udict_delete?(64, m_mint_wm);
+            }
+            m_mint_wm += 1;
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+    int bound = min(m_mint_wm, m_mint_cf);
+    steps = 0;
+    more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (int s, _, int found) = m_mints.udict_get_min?(64);
+        if (found ? (s < bound) : false) {
+            (m_mints, _) = m_mints.udict_delete?(64, s);
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+}
+
+int mint_storage_floor() inline {
+    return storage_floor(m_mints, m_mint_wm, m_mint_cf);
+}
+
+;; ---- the bridge -----------------------------------------------------------
+
+;; Authenticates a message from the bridge. Returns false for an older bridge
+;; life, which is ignored. A newer bridge life means the bridge was recreated:
+;; this minter refuses it from then on. Only `prepare` may introduce the bridge.
+int bridge_ok?(slice sender, int life, int expected, int bootstrap) impure inline {
+    throw_unless(error::bridge_not_sender, equal_slices(sender, m_bridge));
+    throw_if(error::terminal, m_terminal);
+    if (m_bridge_life == 0) {
+        throw_unless(error::not_admissible, bootstrap);
+        m_bridge_life = life;
+    }
+    if (life < m_bridge_life) {
+        return false;
+    }
+    if (life > m_bridge_life) {
+        m_terminal = 1;
+        save_data();
+        return false;
+    }
+    throw_unless(error::life_mismatch, (expected == m_born) | (bootstrap & (expected == 0)));
+    return true;
+}
+
+builder to_bridge(int op) inline {
+    return header(op).store_uint(m_born, 64).store_uint(m_bridge_life, 64);
+}
+
+() send_mint_answer(int op, int s, int value) impure inline {
+    send_settlement(m_bridge, value, to_bridge(op)
+        .store_uint(s, 64)
+        .store_uint(mint_storage_floor(), 64));
+}
+
+;; ---- C2 sender: credits to wallets ----------------------------------------
+
+builder to_wallet(int op) inline {
+    return header(op).store_uint(m_born, 64).store_uint(h_wallet_life, 64);
+}
+
+() send_credit(int s, int k, cell d) impure inline {
+    send_settlement(wallet_of(h_owner), need_m2(), to_wallet(op::credit)
+        .store_uint(k, 64)
+        .store_uint(finished_floor(h_credits, h_next_credit), 64)
+        .store_ref(d));
+}
+
+() send_open() impure inline {
+    send_settlement_with_init(wallet_of(h_owner), need_o1(), wallet_init_of(h_owner), header(op::open)
+        .store_uint(m_born, 64)
+        .store_uint(h_opening_life, 64)
+        .store_uint(h_attempt, 32));
+}
+
+;; Starts a new opening attempt towards the holder's wallet, expecting `life`
+;; (0 when unknown). Returns false when no attempt can be started.
+int start_opening(int life) impure inline {
+    if ((~ h_old.null?()) | (h_attempt >= MAX_ATTEMPT)) {
+        return false;
+    }
+    h_attempt += 1;
+    h_open = HOLDER_OPENING;
+    h_opening_life = life;
+    send_open();
+    return true;
+}
+
+;; ---- stranding ------------------------------------------------------------
+
+;; A mint bound to a wallet life that no longer exists ends here, once: its
+;; amount moves into `stranded`, the liability is logged and the bridge is told.
+() strand_mint(int s) impure inline {
+    (int status, int life, int k, int escrow, int hash, int owner, int amount, cell d, int found) = mint_get(s);
+    if (~ found) {
+        return ();
+    }
+    if ((status != MINT_RESERVED) & (status != MINT_CREDITING)) {
+        return ();
+    }
+    if (status == MINT_RESERVED) {
+        m_mint_reserve -= amount;
+    } else {
+        m_in_flight -= amount;
+    }
+    m_stranded += amount;
+    mint_put(s, MINT_STRANDED, life, k, 0, hash, owner, amount, d);
+    emit_mandatory(LOG_LIABILITY_STRANDED, begin_cell()
+        .store_uint(1, 8)                 ;; a mint
+        .store_uint(s, 64)
+        .store_uint(k, 64)
+        .store_uint(owner, 256)
+        .store_uint(life, 64)
+        .store_coins(amount)
+        .store_ref(d)
+        .end_cell());
+    send_mint_answer(op::mint_stranded, s, need_m4());
+}
+
+() strand_refund(int b, int life, int amount, cell d) impure inline {
+    m_stranded += amount;
+    emit_mandatory(LOG_LIABILITY_STRANDED, begin_cell()
+        .store_uint(2, 8)                 ;; a refund
+        .store_uint(b, 64)
+        .store_uint(0, 64)
+        .store_uint(h_owner, 256)
+        .store_uint(life, 64)
+        .store_coins(amount)
+        .store_ref(d)
+        .end_cell());
+}
+
+;; Processes at most FOLD_LIMIT records of the holder's old life.
+() strand_old_batch() impure {
+    (int life, cell credits, cell burns) = old_parts();
+    int steps = 0;
+    int more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (int k, slice v, int found) = credits.udict_get_min?(64);
+        if (found) {
+            strand_mint(v.preload_uint(64));
+            (credits, _) = credits.udict_delete?(64, k);
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+    int pivot = 0;
+    int first = true;
+    more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (int b, slice e, int found) = first ? burns.udict_get_min?(64) : burns.udict_get_next?(64, pivot);
+        first = false;
+        if (found) {
+            pivot = b;
+            int status = e~load_uint(3);
+            e~skip_bits(1 + 64);
+            int amount = e~load_coins();
+            e~skip_bits(256);
+            cell d = e~load_ref();
+            if (status == BURN_REFUNDING) {
+                m_in_flight -= amount;
+                strand_refund(b, life, amount, d);
+                (burns, _) = burns.udict_delete?(64, b);
+            } elseif (status != BURN_AWAITING_BRIDGE) {
+                (burns, _) = burns.udict_delete?(64, b);
+            }
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+    old_store(life, credits, burns);
+}
+
+;; ---- promotion of waiting mints -------------------------------------------
+
+;; A mint waiting for its holder's wallet to open takes a credit number before it
+;; answers `prepared`, or is refused. Its own escrow pays for the answer.
+() promote(int s) impure inline {
+    (int status, _, _, int escrow, int hash, int owner, int amount, cell d, int found) = mint_get(s);
+    if ((~ found) | (status != MINT_AWAITING_OPEN)) {
+        (h_awaiting, _) = h_awaiting.udict_delete?(64, s);
+        return ();
+    }
+    int k = h_next_credit;
+    int value = escrow - small_fee(-1);
+    if ((h_open == HOLDER_OPEN) & (k <= MAX_SEQ) & (k < h_credit_ack + CREDIT_WINDOW)) {
+        mint_put(s, MINT_RESERVED, h_wallet_life, k, 0, hash, owner, amount, d);
+        h_credits~udict_set_builder(64, k, begin_cell().store_uint(s, 64));
+        h_next_credit = k + 1;
+        send_mint_answer(op::prepared, s, value);
+    } else {
+        m_mint_reserve -= amount;
+        mint_put(s, MINT_REFUSED, 0, 0, 0, hash, owner, amount, d);
+        send_mint_answer(op::refused, s, value);
+    }
+    (h_awaiting, _) = h_awaiting.udict_delete?(64, s);
+}
+
+() promote_batch() impure inline {
+    int steps = 0;
+    int more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (int s, _, int found) = h_awaiting.udict_get_min?(64);
+        if (found) {
+            promote(s);
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+}
+
+;; ---- C1: prepare and commit -----------------------------------------------
+
+;; Whether a new mint of `amount` fits the supply bound and the cell limit.
+int mint_capacity?(int amount) inline {
+    int used = m_supply + m_in_flight + m_mint_reserve + m_burn_reserve + m_stranded;
+    return (used + amount <= MAX_SUPPLY) & (MINTER_WORST_CELLS <= cell_limit(false));
+}
+
+() refuse_mint(int s, int hash, int owner, int amount, cell d) impure inline {
+    mint_put(s, MINT_REFUSED, 0, 0, 0, hash, owner, amount, d);
+    send_mint_answer(op::refused, s, small_fee(-1) + bridge_gas());
+}
+
+;; The recorded answer for a mint the bridge asks about again.
+() answer_mint(int s, int status, int life) impure inline {
+    if (status == MINT_COUNTED) {
+        send_mint_answer(op::mint_completed, s, need_m4());
+    } elseif (status == MINT_REFUSED) {
+        send_mint_answer(op::refused, s, small_fee(-1) + bridge_gas());
+    } elseif (status == MINT_STRANDED) {
+        send_mint_answer(op::mint_stranded, s, need_m4());
+    }
+}
+
+;; Continues the work of an unfinished mint; used by a repeated prepare or
+;; commit and by advance. A mint bound to a wallet life the holder no longer has
+;; is stranded rather than sent anywhere.
+() continue_mint(int s) impure {
+    (int status, int life, int k, int escrow, int hash, int owner, int amount, cell d, int found) = mint_get(s);
+    throw_unless(error::nothing_to_advance, found);
+    if (mint_final?(status)) {
+        answer_mint(s, status, life);
+        return ();
+    }
+    holder_load(owner);
+    if (status == MINT_AWAITING_OPEN) {
+        ;; The message continuing this mint paid for its `prepared` at the
+        ;; current prices; the escrow follows them.
+        mint_put(s, status, life, k, escrow_p2(), hash, owner, amount, d);
+        if (h_open == HOLDER_OPEN) {
+            promote(s);
+        } elseif (h_open == HOLDER_OPENING) {
+            send_open();
+        } elseif (h_open == HOLDER_DEAD) {
+            m_mint_reserve -= amount;
+            mint_put(s, MINT_REFUSED, 0, 0, 0, hash, owner, amount, d);
+            (h_awaiting, _) = h_awaiting.udict_delete?(64, s);
+            send_mint_answer(op::refused, s, small_fee(-1) + bridge_gas());
+        } else {
+            start_opening(h_opening_life);
+        }
+        holder_store();
+        return ();
+    }
+    if ((h_open != HOLDER_OPEN) | (life != h_wallet_life)) {
+        strand_mint(s);
+        return ();
+    }
+    if (status == MINT_RESERVED) {
+        send_mint_answer(op::prepared, s, need_p2());
+    } else {
+        send_credit(s, k, d);
+    }
+}
+
+() on_prepare(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int s = body~load_uint(64);
+    int floor = body~load_uint(64);
+    cell d = body~load_ref();
+    body.end_parse();
+    if (~ bridge_ok?(sender, life, expected, true)) {
+        return ();
+    }
+    (int dn, int ds, int amount, slice bridge, _, _, slice minter, slice recipient) = parse_mint_descriptor(d);
+    throw_unless(error::operation_mismatch, (ds == s) & equal_slices(bridge, m_bridge) & equal_slices(minter, my_address()));
+    (int wc, int owner) = parse_std_addr(recipient);
+    throw_unless(error::operation_mismatch, (wc == WORKCHAIN) & (amount > 0));
+    int hash = cell_hash(d);
+    accept_mint_floor(floor);
+
+    (int status, _, _, _, int stored_hash, _, _, _, int found) = mint_get(s);
+    if (found) {
+        throw_unless(error::operation_mismatch, stored_hash == hash);
+        throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_p1_opening(open_fee(owner)));
+        continue_mint(s);
+        fold_mints();
+        save_data();
+        return ();
+    }
+    if (s < max(m_mint_wm, m_mint_cf)) {
+        ;; counted, the channel's default
+        throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_p1_open());
+        send_mint_answer(op::mint_completed, s, need_m4());
+        save_data();
+        return ();
+    }
+
+    int exists = holder_load(owner);
+    int opening_fee = open_fee(owner);
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_p1_opening(opening_fee));
+    int refuse = ~ mint_capacity?(amount);
+    if ((~ refuse) & (~ exists)) {
+        refuse = m_holders_count >= HOLDER_LIMIT;
+    }
+    if ((~ refuse) & ((h_open == HOLDER_DEAD) | (~ h_old.null?()))) {
+        refuse = true;
+    }
+    if (refuse) {
+        refuse_mint(s, hash, owner, amount, d);
+        fold_mints();
+        save_data();
+        return ();
+    }
+    if (h_open == HOLDER_OPEN) {
+        int k = h_next_credit;
+        if ((k > MAX_SEQ) | (k >= h_credit_ack + CREDIT_WINDOW)) {
+            refuse_mint(s, hash, owner, amount, d);
+            fold_mints();
+            save_data();
+            return ();
+        }
+        m_mint_reserve += amount;
+        mint_put(s, MINT_RESERVED, h_wallet_life, k, 0, hash, owner, amount, d);
+        h_credits~udict_set_builder(64, k, begin_cell().store_uint(s, 64));
+        h_next_credit = k + 1;
+        holder_store();
+        save_data();
+        send_mint_answer(op::prepared, s, need_p2());
+        return ();
+    }
+    if ((h_open == HOLDER_NEW) & (h_attempt >= MAX_ATTEMPT)) {
+        refuse_mint(s, hash, owner, amount, d);
+        fold_mints();
+        save_data();
+        return ();
+    }
+    ;; The holder's wallet must confirm its life first; the mint waits with its
+    ;; supply reserved and keeps aside what its `prepared` will cost.
+    if (~ exists) {
+        m_holders_count += 1;
+    }
+    m_mint_reserve += amount;
+    mint_put(s, MINT_AWAITING_OPEN, 0, 0, escrow_p2(), hash, owner, amount, d);
+    h_awaiting~udict_set_builder(64, s, begin_cell());
+    if (h_open == HOLDER_NEW) {
+        start_opening(h_opening_life);
+    }
+    holder_store();
+    save_data();
+}
+
+() on_commit(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int s = body~load_uint(64);
+    int floor = body~load_uint(64);
+    cell d = body~load_ref();
+    body.end_parse();
+    if (~ bridge_ok?(sender, life, expected, false)) {
+        return ();
+    }
+    int hash = cell_hash(d);
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_m1());
+    accept_mint_floor(floor);
+    (int status, int bound_life, int k, _, int stored_hash, int owner, int amount, cell sd, int found) = mint_get(s);
+    if (~ found) {
+        throw_unless(error::not_admissible, s < max(m_mint_wm, m_mint_cf));
+        send_mint_answer(op::mint_completed, s, need_m4());
+        save_data();
+        return ();
+    }
+    throw_unless(error::operation_mismatch, stored_hash == hash);
+    throw_if(error::not_admissible, status == MINT_AWAITING_OPEN);
+    if (status == MINT_RESERVED) {
+        holder_load(owner);
+        if ((h_open == HOLDER_OPEN) & (bound_life == h_wallet_life)) {
+            m_mint_reserve -= amount;
+            m_in_flight += amount;
+            mint_put(s, MINT_CREDITING, bound_life, k, 0, hash, owner, amount, sd);
+            send_credit(s, k, sd);
+            save_data();
+            return ();
+        }
+    }
+    continue_mint(s);
+    fold_mints();
+    save_data();
+}
+
+;; ---- wallets: authentication ----------------------------------------------
+
+;; Authenticates a message from `owner`'s wallet at `life`. Returns false for a
+;; life older than the one the holder has, which is ignored.
+int wallet_ok?(slice sender, int owner, int life, int expected) impure inline {
+    throw_unless(error::owner_not_sender, equal_slices(wallet_of(owner), sender));
+    throw_unless(error::life_mismatch, expected == m_born);
+    throw_unless(error::not_open, holder_load(owner));
+    throw_unless(error::not_open, h_open == HOLDER_OPEN);
+    if (life < h_wallet_life) {
+        return false;
+    }
+    throw_unless(error::life_mismatch, life == h_wallet_life);
+    return true;
+}
+
+() on_credit_recorded(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int k = body~load_uint(64);
+    int floor = body~load_uint(64);
+    slice owner_addr = body~load_msg_addr();
+    body.end_parse();
+    (_, int owner) = parse_std_addr(owner_addr);
+    if (~ wallet_ok?(sender, owner, life, expected)) {
+        return ();
+    }
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_m3());
+    throw_unless(error::bad_floor, floor <= h_next_credit);
+    h_credit_ack = max(h_credit_ack, floor);
+    (slice v, int found) = h_credits.udict_get?(64, k);
+    if (found) {
+        int s = v.preload_uint(64);
+        (int status, int bound_life, _, _, int hash, _, int amount, cell d, _) = mint_get(s);
+        if (status == MINT_CREDITING) {
+            m_in_flight -= amount;
+            m_supply += amount;
+            mint_put(s, MINT_COUNTED, bound_life, k, 0, hash, owner, amount, d);
+            (h_credits, _) = h_credits.udict_delete?(64, k);
+            send_mint_answer(op::mint_completed, s, need_m4());
+        }
+    }
+    holder_store();
+    fold_mints();
+    save_data();
+}
+
+;; ---- opening ---------------------------------------------------------------
+
+() send_denied(slice wallet, int reason) impure inline {
+    send_settlement(wallet, wallet_gas(), header(op::open_denied).store_uint(m_born, 64).store_uint(reason, 8));
+}
+
+() on_open_request(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    slice owner_addr = body~load_msg_addr();
+    body.end_parse();
+    (int wc, int owner) = parse_std_addr(owner_addr);
+    throw_unless(error::wrong_sender_workchain, wc == WORKCHAIN);
+    throw_unless(error::owner_not_sender, equal_slices(wallet_of(owner), sender));
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= minter_gas() + open_fee(owner) + need_o1());
+    int exists = holder_load(owner);
+    if (~ exists) {
+        if ((m_holders_count >= HOLDER_LIMIT) | (MINTER_WORST_CELLS > cell_limit(false))) {
+            send_denied(sender, DENIED_CAPACITY);
+            return ();
+        }
+        m_holders_count += 1;
+    }
+    (int old_life, _, _) = old_parts();
+    if ((life <= old_life) | ((h_open == HOLDER_OPEN) & (life < h_wallet_life))) {
+        return ();                       ;; an older wallet life: ignored
+    }
+    if (h_open == HOLDER_OPEN) {
+        if (life == h_wallet_life) {
+            send_open();                 ;; already open: the answer is ignored
+            return ();
+        }
+        ;; A newer life of this wallet: it was deleted and recreated. Its
+        ;; previous life's records move aside, to be stranded in bounded steps.
+        if (~ h_old.null?()) {
+            send_denied(sender, DENIED_RETRY);
+            return ();
+        }
+        h_old = begin_cell().store_uint(h_wallet_life, 64).store_dict(h_credits).store_dict(h_burns).end_cell();
+        if (h_credits.null?() & h_burns.null?()) {
+            h_old = null();
+        }
+        holder_reset();
+        holder_store();
+        save_data();
+        send_denied(sender, DENIED_RETRY);
+        return ();
+    }
+    if (~ h_old.null?()) {
+        holder_store();
+        save_data();
+        send_denied(sender, DENIED_RETRY);
+        return ();
+    }
+    if (h_open == HOLDER_OPENING) {
+        if (h_opening_life == life) {
+            send_open();
+            holder_store();
+            save_data();
+            return ();
+        }
+        throw_unless(error::sequence_exhausted, h_attempt < MAX_ATTEMPT);
+        h_attempt += 1;
+        h_opening_life = life;
+        send_open();
+        holder_store();
+        save_data();
+        return ();
+    }
+    ;; NEW or DEAD: a fresh attempt towards this life
+    throw_unless(error::sequence_exhausted, start_opening(life));
+    holder_store();
+    save_data();
+}
+
+;; O2: the wallet confirms its life (opened) or refuses this minter's life.
+() on_opened(slice sender, slice body, int op, int msg_value) impure {
+    int life = body~load_uint(64);
+    int echoed = body~load_uint(64);
+    int attempt = body~load_uint(32);
+    slice owner_addr = body~load_msg_addr();
+    body.end_parse();
+    (int wc, int owner) = parse_std_addr(owner_addr);
+    throw_unless(error::wrong_sender_workchain, wc == WORKCHAIN);
+    throw_unless(error::owner_not_sender, equal_slices(wallet_of(owner), sender));
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_o2());
+    if (echoed != m_born) {
+        return ();
+    }
+    if (~ holder_load(owner)) {
+        return ();
+    }
+    if ((h_open != HOLDER_OPENING) | (attempt != h_attempt)) {
+        return ();                       ;; a stale attempt: ignored
+    }
+    if ((h_opening_life != 0) & (h_opening_life != life)) {
+        return ();
+    }
+    if (op == op::opened) {
+        h_open = HOLDER_OPEN;
+        h_wallet_life = life;
+    } else {
+        h_open = HOLDER_DEAD;
+    }
+    promote_batch();
+    holder_store();
+    fold_mints();
+    save_data();
+}
+
+;; ---- C3 receiver: burn admissions ----------------------------------------
+
+;; status, cancel, m, amount, hash, descriptor
+(int, int, int, int, int, cell, int) burn_get(cell burns, int b) inline {
+    (slice e, int found) = burns.udict_get?(64, b);
+    if (~ found) {
+        return (-1, 0, 0, 0, 0, null(), false);
+    }
+    int status = e~load_uint(3);
+    int cancel = e~load_uint(1);
+    int m = e~load_uint(64);
+    int amount = e~load_coins();
+    int hash = e~load_uint(256);
+    cell d = e~load_ref();
+    return (status, cancel, m, amount, hash, d, true);
+}
+
+builder burn_record(int status, int cancel, int m, int amount, int hash, cell d) inline {
+    return begin_cell()
+        .store_uint(status, 3)
+        .store_uint(cancel, 1)
+        .store_uint(m, 64)
+        .store_coins(amount)
+        .store_uint(hash, 256)
+        .store_ref(d);
+}
+
+int burn_final?(int status) inline {
+    return (status == BURN_RECORDED) | (status == BURN_REFUNDED) | (status == BURN_ADMIT_REFUSED) | (status == BURN_STRANDED);
+}
+
+() accept_burn_floor(int floor) impure inline {
+    if (floor <= h_burn_cf) {
+        return ();
+    }
+    throw_unless(error::bad_floor, floor <= entered_high(h_burns, h_burn_wm));
+    int b = max(h_burn_wm, h_burn_cf);
+    int steps = 0;
+    while ((b < floor) & (steps < FOLD_LIMIT)) {
+        (int status, _, _, _, _, _, int found) = burn_get(h_burns, b);
+        if (found & burn_final?(status)) {
+            b += 1;
+            steps += 1;
+        } else {
+            floor = b;
+        }
+    }
+    h_burn_cf = max(h_burn_cf, min(floor, b));
+}
+
+() fold_burns() impure inline {
+    int steps = 0;
+    int more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (int status, _, _, _, _, _, int found) = burn_get(h_burns, h_burn_wm);
+        if (found & burn_final?(status)) {
+            if ((status == BURN_RECORDED) | (h_burn_wm < h_burn_cf)) {
+                (h_burns, _) = h_burns.udict_delete?(64, h_burn_wm);
+            }
+            h_burn_wm += 1;
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+    int bound = min(h_burn_wm, h_burn_cf);
+    steps = 0;
+    more = true;
+    while (more & (steps < FOLD_LIMIT)) {
+        (int b, _, int found) = h_burns.udict_get_min?(64);
+        if (found ? (b < bound) : false) {
+            (h_burns, _) = h_burns.udict_delete?(64, b);
+            steps += 1;
+        } else {
+            more = false;
+        }
+    }
+}
+
+int burn_storage_floor() inline {
+    return storage_floor(h_burns, h_burn_wm, h_burn_cf);
+}
+
+() send_burn_answer(int op, int b, int value) impure inline {
+    send_settlement(wallet_of(h_owner), value, to_wallet(op)
+        .store_uint(b, 64)
+        .store_uint(burn_storage_floor(), 64));
+}
+
+() send_notice(int m, int cancel, cell d) impure inline {
+    send_settlement(m_bridge, need_b2(), to_bridge(op::burn_notice)
+        .store_uint(m, 64)
+        .store_uint(cancel, 1)
+        .store_uint(finished_floor(m_notices, m_next_notice), 64)
+        .store_ref(d));
+}
+
+;; The recorded answer for a burn of the holder's current life.
+() answer_burn(int b, int status, int cancel, int m, cell d) impure inline {
+    if (status == BURN_AWAITING_BRIDGE) {
+        send_notice(m, cancel, d);
+    } elseif (status == BURN_RECORDED) {
+        send_burn_answer(op::burn_outcome, b, need_b4());
+    } elseif (status == BURN_REFUNDING) {
+        send_burn_answer(op::refund, b, need_r1());
+    } elseif (status == BURN_ADMIT_REFUSED) {
+        send_burn_answer(op::admit_refused, b, need_b1r());
+    }
+}
+
+() on_burn_admit(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int cancel = body~load_uint(1);
+    int floor = body~load_uint(64);
+    slice owner_addr = body~load_msg_addr();
+    cell d = body~load_ref();
+    body.end_parse();
+    (int wc, int owner) = parse_std_addr(owner_addr);
+    throw_unless(error::wrong_sender_workchain, wc == WORKCHAIN);
+    if (~ wallet_ok?(sender, owner, life, expected)) {
+        return ();
+    }
+    (int b, int amount, _, slice minter, slice d_owner, int d_life) = parse_burn_descriptor(d);
+    throw_unless(error::operation_mismatch, equal_slices(minter, my_address()) & equal_slices(d_owner, owner_addr) & (d_life == life) & (amount > 0));
+    int hash = cell_hash(d);
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_b1());
+    accept_burn_floor(floor);
+
+    (int status, int stored_cancel, int m, _, int stored_hash, cell sd, int found) = burn_get(h_burns, b);
+    if (found) {
+        throw_unless(error::operation_mismatch, stored_hash == hash);
+        if ((status == BURN_AWAITING_BRIDGE) & cancel & (~ stored_cancel)) {
+            stored_cancel = 1;
+            h_burns~udict_set_builder(64, b, burn_record(status, 1, m, amount, hash, sd));
+        }
+        answer_burn(b, status, stored_cancel, m, sd);
+        holder_store();
+        save_data();
+        return ();
+    }
+    if (b < max(h_burn_wm, h_burn_cf)) {
+        ;; recorded, the channel's default
+        send_burn_answer(op::burn_outcome, b, need_b4());
+        holder_store();
+        save_data();
+        return ();
+    }
+    m = m_next_notice;
+    int admit = (m_bridge_life != 0) & (~ m_terminal) & (m <= MAX_SEQ) & (m < m_bridge_burn_ack + BURN_WINDOW);
+    if (admit) {
+        m_supply -= amount;
+        m_burn_reserve += amount;
+        m_notices~udict_set_builder(64, m, begin_cell().store_uint(owner, 256).store_uint(life, 64).store_uint(b, 64));
+        m_next_notice = m + 1;
+        h_burns~udict_set_builder(64, b, burn_record(BURN_AWAITING_BRIDGE, cancel, m, amount, hash, d));
+        send_notice(m, cancel, d);
+    } else {
+        ;; A durable refusal: a later copy of this admission finds it, even
+        ;; once capacity returns, and the burn can never be admitted.
+        h_burns~udict_set_builder(64, b, burn_record(BURN_ADMIT_REFUSED, cancel, 0, amount, hash, d));
+        send_burn_answer(op::admit_refused, b, need_b1r());
+    }
+    fold_burns();
+    holder_store();
+    save_data();
+}
+
+() on_refund_recorded(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int b = body~load_uint(64);
+    int floor = body~load_uint(64);
+    slice owner_addr = body~load_msg_addr();
+    body.end_parse();
+    (_, int owner) = parse_std_addr(owner_addr);
+    if (~ wallet_ok?(sender, owner, life, expected)) {
+        return ();
+    }
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_r2());
+    accept_burn_floor(floor);
+    (int status, int cancel, int m, int amount, int hash, cell d, int found) = burn_get(h_burns, b);
+    if (found & (status == BURN_REFUNDING)) {
+        m_in_flight -= amount;
+        m_supply += amount;
+        h_burns~udict_set_builder(64, b, burn_record(BURN_REFUNDED, cancel, m, amount, hash, d));
+    }
+    fold_burns();
+    holder_store();
+    save_data();
+}
+
+;; ---- C4 sender: the bridge's answers --------------------------------------
+
+() on_burn_result(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int m = body~load_uint(64);
+    int outcome = body~load_uint(1);
+    int floor = body~load_uint(64);
+    body.end_parse();
+    if (~ bridge_ok?(sender, life, expected, false)) {
+        return ();
+    }
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= need_b3());
+    throw_unless(error::bad_floor, floor <= m_next_notice);
+    m_bridge_burn_ack = max(m_bridge_burn_ack, floor);
+    (slice n, int found) = m_notices.udict_get?(64, m);
+    if (~ found) {
+        save_data();
+        return ();
+    }
+    int owner = n~load_uint(256);
+    int burn_life = n~load_uint(64);
+    int b = n~load_uint(64);
+    (m_notices, _) = m_notices.udict_delete?(64, m);
+    holder_load(owner);
+    (int old_life, cell old_credits, cell old_burns) = old_parts();
+    int current = (h_open == HOLDER_OPEN) & (burn_life == h_wallet_life);
+    cell burns = current ? h_burns : old_burns;
+    if ((~ current) & (burn_life != old_life)) {
+        save_data();
+        return ();
+    }
+    (int status, int cancel, int bm, int amount, int hash, cell d, int present) = burn_get(burns, b);
+    if ((~ present) | (status != BURN_AWAITING_BRIDGE) | (bm != m)) {
+        save_data();
+        return ();
+    }
+    m_burn_reserve -= amount;
+    if (current) {
+        if (outcome == OUTCOME_RECORDED) {
+            h_burns~udict_set_builder(64, b, burn_record(BURN_RECORDED, cancel, m, amount, hash, d));
+            send_burn_answer(op::burn_outcome, b, need_b4());
+        } else {
+            m_in_flight += amount;
+            h_burns~udict_set_builder(64, b, burn_record(BURN_REFUNDING, cancel, m, amount, hash, d));
+            send_burn_answer(op::refund, b, need_r1());
+        }
+        fold_burns();
+    } else {
+        ;; The wallet this burn belonged to no longer exists. A recorded burn is
+        ;; complete; a cancelled one cannot be refunded and is stranded.
+        if (outcome == OUTCOME_CANCELLED) {
+            strand_refund(b, old_life, amount, d);
+        }
+        (old_burns, _) = old_burns.udict_delete?(64, b);
+        old_store(old_life, old_credits, old_burns);
+    }
+    holder_store();
+    save_data();
+}
+
+;; ---- synchronization ------------------------------------------------------
+
+() on_sync_floor(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int kind = body~load_uint(8);
+    int floor = body~load_uint(64);
+    if (kind == channel::c1) {
+        body.end_parse();
+        if (~ bridge_ok?(sender, life, expected, false)) {
+            return ();
+        }
+        throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= minter_gas() + small_fee(-1) + need_sync_ack(true));
+        accept_mint_floor(floor);
+        fold_mints();
+        save_data();
+        send_settlement(m_bridge, need_sync_ack(true), to_bridge(op::sync_ack)
+            .store_uint(channel::c1, 8)
+            .store_uint(mint_storage_floor(), 64));
+        return ();
+    }
+    throw_unless(error::not_admissible, kind == channel::c3);
+    slice owner_addr = body~load_msg_addr();
+    body.end_parse();
+    (_, int owner) = parse_std_addr(owner_addr);
+    if (~ wallet_ok?(sender, owner, life, expected)) {
+        return ();
+    }
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= minter_gas() + small_fee(0) + need_sync_ack(false));
+    accept_burn_floor(floor);
+    fold_burns();
+    holder_store();
+    save_data();
+    send_settlement(sender, need_sync_ack(false), to_wallet(op::sync_ack)
+        .store_uint(channel::c3, 8)
+        .store_uint(burn_storage_floor(), 64));
+}
+
+() on_sync_ack(slice sender, slice body, int msg_value) impure {
+    int life = body~load_uint(64);
+    int expected = body~load_uint(64);
+    int kind = body~load_uint(8);
+    int floor = body~load_uint(64);
+    if (kind == channel::c4) {
+        body.end_parse();
+        if (~ bridge_ok?(sender, life, expected, false)) {
+            return ();
+        }
+        throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= minter_gas());
+        throw_unless(error::bad_floor, floor <= m_next_notice);
+        m_bridge_burn_ack = max(m_bridge_burn_ack, floor);
+        save_data();
+        return ();
+    }
+    throw_unless(error::not_admissible, kind == channel::c2);
+    slice owner_addr = body~load_msg_addr();
+    body.end_parse();
+    (_, int owner) = parse_std_addr(owner_addr);
+    if (~ wallet_ok?(sender, owner, life, expected)) {
+        return ();
+    }
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= minter_gas());
+    throw_unless(error::bad_floor, floor <= h_next_credit);
+    h_credit_ack = max(h_credit_ack, floor);
+    holder_store();
+    save_data();
+}
+
+;; ---- advance --------------------------------------------------------------
+
+;; Finds burn b of `owner`: in the current life (1), the old life (2), or not (0).
+(int, int, int, int, int, int, cell) find_burn(int b) inline {
+    (int status, int cancel, int m, int amount, int hash, cell d, int found) = burn_get(h_burns, b);
+    if (found & (h_open == HOLDER_OPEN)) {
+        return (1, status, cancel, m, amount, hash, d);
+    }
+    (_, _, cell old_burns) = old_parts();
+    (status, cancel, m, amount, hash, d, found) = burn_get(old_burns, b);
+    if (found) {
+        return (2, status, cancel, m, amount, hash, d);
+    }
+    return (0, 0, 0, 0, 0, 0, null());
+}
+
+int advance_need(int kind, int owner) inline {
+    if (kind == advance::mint) {
+        return max(need_p1_opening(open_fee(owner)), need_m1());
+    }
+    if (kind == advance::strand) {
+        return need_strand_batch();
+    }
+    if (kind == advance::open) {
+        return minter_gas() + open_fee(owner) + need_o1();
+    }
+    if (kind == advance::burn) {
+        return need_b1();
+    }
+    if (kind == advance::sync) {
+        return minter_gas() + small_fee(-1) + need_sync_floor(true, false);
+    }
+    return 0;
+}
+
+() on_advance(slice body, int msg_value) impure {
+    int kind = body~load_uint(8);
+    if (kind == advance::mint) {
+        int s = body~load_uint(64);
+        body.end_parse();
+        (_, _, _, _, _, int owner, _, _, int found) = mint_get(s);
+        throw_unless(error::nothing_to_advance, found);
+        throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= advance_need(kind, owner));
+        continue_mint(s);
+        fold_mints();
+        save_data();
+        return ();
+    }
+    if (kind == advance::sync) {
+        int channel = body~load_uint(8);
+        if (channel == channel::c4) {
+            body.end_parse();
+            throw_unless(error::not_admissible, m_bridge_life & (~ m_terminal));
+            throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= advance_need(kind, 0));
+            save_data();
+            send_settlement(m_bridge, need_sync_floor(true, false), to_bridge(op::sync_floor)
+                .store_uint(channel::c4, 8)
+                .store_uint(finished_floor(m_notices, m_next_notice), 64));
+            return ();
+        }
+        throw_unless(error::not_admissible, channel == channel::c2);
+        int owner = body~load_uint(256);
+        body.end_parse();
+        throw_unless(error::nothing_to_advance, holder_load(owner) & (h_open == HOLDER_OPEN));
+        throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= advance_need(kind, owner));
+        save_data();
+        send_settlement(wallet_of(owner), need_sync_floor(false, false), to_wallet(op::sync_floor)
+            .store_uint(channel::c2, 8)
+            .store_uint(finished_floor(h_credits, h_next_credit), 64));
+        return ();
+    }
+    int owner = body~load_uint(256);
+    throw_unless(error::nothing_to_advance, holder_load(owner));
+    throw_unless(error::underfunded, available(msg_value, MINTER_RESERVE) >= advance_need(kind, owner));
+    if (kind == advance::strand) {
+        body.end_parse();
+        throw_if(error::nothing_to_advance, h_old.null?());
+        strand_old_batch();
+        holder_store();
+        fold_mints();
+        save_data();
+        return ();
+    }
+    if (kind == advance::open) {
+        body.end_parse();
+        throw_unless(error::nothing_to_advance, (h_open == HOLDER_OPENING) | (h_open == HOLDER_OPEN));
+        send_open();
+        save_data();
+        return ();
+    }
+    throw_unless(error::nothing_to_advance, kind == advance::burn);
+    int b = body~load_uint(64);
+    body.end_parse();
+    (int where, int status, int cancel, int m, _, _, cell d) = find_burn(b);
+    throw_unless(error::nothing_to_advance, where);
+    if (where == 2) {
+        throw_unless(error::nothing_to_advance, status == BURN_AWAITING_BRIDGE);
+        send_notice(m, cancel, d);
+    } else {
+        throw_if(error::nothing_to_advance, status == BURN_REFUNDED);
+        answer_burn(b, status, cancel, m, d);
+    }
+    save_data();
+}
+
+;; ---- entry ----------------------------------------------------------------
 
 () recv_internal(int msg_value, cell in_msg_full, slice in_msg_body) impure {
-    if (in_msg_body.slice_empty?()) { ;; ignore empty messages
+    load_data();
+    if (m_born == 0) {
+        ;; The first committed transaction fixes this minter's life.
+        m_born = cur_lt();
+        save_data();
+    }
+    if (in_msg_body.slice_empty?()) { ;; plain top-up
         return ();
     }
     slice cs = in_msg_full.begin_parse();
     int flags = cs~load_uint(4);
-
-    if (flags & 1) { ;; ignore all bounced messages
-        return ();
+    if (flags & 1) {
+        return ();  ;; no settlement message is bounceable; nothing to restore
     }
     slice sender_address = cs~load_msg_addr();
     cs~load_msg_addr(); ;; skip dst
     cs~load_coins(); ;; skip value
     cs~skip_bits(1); ;; skip extracurrency collection
     cs~load_coins(); ;; skip ihr_fee
-    int fwd_fee = muldiv(cs~load_coins(), 3, 2); ;; we use message fwd_fee for estimation of forward_payload costs
+    int fwd_fee = muldiv(cs~load_coins(), 3, 2);
 
-    slice in_msg_body_copy = in_msg_body;
     (int op, int query_id) = in_msg_body~load_body_header();
 
-    (int total_supply, cell content, cell jetton_wallet_code) = load_data();
-
-    (int bridge_address_hash, int oracles_address_hash, _, int state_flags, int bridge_burn_fee, int bridge_mint_fee, int wallet_min_tos_for_storage, int wallet_gas_consumption, int minter_min_tos_for_storage, int discover_gas_consumption) = get_jetton_bridge_config();
-    (int sender_wc, int sender_address_hash) = parse_std_addr(sender_address);
-
-    if (op == op::mint) {
-        throw_unless(error::bridge_not_sender, (sender_wc == -1) & (sender_address_hash == bridge_address_hash));
-        slice to_address = in_msg_body~load_msg_addr();
-
-        int rest_amount = pair_first(get_balance()) - minter_min_tos_for_storage;
-
-        int jetton_amount = in_msg_body~load_coins();
-        int forward_coins_amount = in_msg_body~load_coins();
-        in_msg_body.end_parse();
-
-        cell master_msg = begin_cell()
-                .store_body_header(op::internal_transfer, query_id)
-                .store_coins(jetton_amount) ;; max 124 bit
-                .store_slice(zero_address()) ;; from_address, 2 bit
-                .store_slice(create_address(-1, bridge_address_hash)) ;; response_address, 3 + 8 + 256 = 267 bit
-                .store_coins(forward_coins_amount) ;; forward_amount, 4 bit if zero
-                .store_uint(0, 1) ;; no forward_payload, 1 bit
-                .end_cell();
-
-        mint_tokens(to_address, jetton_wallet_code, rest_amount, master_msg);
-        int new_total_supply = total_supply + jetton_amount;
-        save_data(new_total_supply, content, jetton_wallet_code);
-
-        emit_log_simple(
-                LOG_MINT_ON_MINTER,
-                begin_cell().store_coins(new_total_supply).end_cell(),
-                0
-        );
-
-        return ();
-    }
-
-    if (op == op::burn_notification) {
-        int jetton_amount = in_msg_body~load_coins();
-        slice from_address = in_msg_body~load_msg_addr();
-
-        throw_unless(error::owner_not_sender,
-                equal_slices(calculate_user_jetton_wallet_address(from_address, my_address(), jetton_wallet_code), sender_address)
-        );
-        int new_total_supply = total_supply - jetton_amount;
-        save_data(new_total_supply, content, jetton_wallet_code);
-
-        cell new_body = begin_cell()
-                .store_slice(in_msg_body_copy)
-                .store_ref(content)
-                .end_cell();
-
-        int rest_amount = pair_first(get_balance()) - minter_min_tos_for_storage;
-
-        builder msg = begin_cell()
-                    .store_msg_flags(NON_BOUNCEABLE)
-                    .store_masterchain_address(bridge_address_hash)
-                    .store_coins(rest_amount)
-                    .store_msgbody_prefix_ref()
-                    .store_ref(new_body);
-
-        send_raw_message(msg.end_cell(), SEND_MODE_REGULAR);
-
-        emit_log_simple(
-                LOG_BURN_ON_MINTER,
-                begin_cell().store_coins(new_total_supply).end_cell(),
-                0
-        );
-
-        return ();
-    }
+    ;; Settlement: none of these reads the network configuration.
+    if (op == op::prepare) { on_prepare(sender_address, in_msg_body, msg_value); return (); }
+    if (op == op::commit) { on_commit(sender_address, in_msg_body, msg_value); return (); }
+    if (op == op::credit_recorded) { on_credit_recorded(sender_address, in_msg_body, msg_value); return (); }
+    if (op == op::open_request) { on_open_request(sender_address, in_msg_body, msg_value); return (); }
+    if ((op == op::opened) | (op == op::open_refused)) { on_opened(sender_address, in_msg_body, op, msg_value); return (); }
+    if (op == op::burn_admit) { on_burn_admit(sender_address, in_msg_body, msg_value); return (); }
+    if (op == op::refund_recorded) { on_refund_recorded(sender_address, in_msg_body, msg_value); return (); }
+    if (op == op::burn_result) { on_burn_result(sender_address, in_msg_body, msg_value); return (); }
+    if (op == op::sync_floor) { on_sync_floor(sender_address, in_msg_body, msg_value); return (); }
+    if (op == op::sync_ack) { on_sync_ack(sender_address, in_msg_body, msg_value); return (); }
+    if (op == op::advance) { on_advance(in_msg_body, msg_value); return (); }
 
     if (op == op::provide_wallet_address) {
+        (_, _, _, _, _, _, _, _, _, int discover_gas_consumption) = get_jetton_bridge_config();
         throw_unless(error::discovery_fee_not_matched, msg_value > fwd_fee + discover_gas_consumption);
 
         slice owner_address = in_msg_body~load_msg_addr();
@@ -163,7 +1341,7 @@ slice zero_address() inline {
                 .store_body_header(op::take_wallet_address, query_id);
 
         if (is_resolvable?(owner_address)) {
-            msg = msg.store_slice(calculate_user_jetton_wallet_address(owner_address, my_address(), jetton_wallet_code));
+            msg = msg.store_slice(calculate_user_jetton_wallet_address(owner_address, my_address(), m_wallet_code));
         } else {
             msg = msg.store_uint(0, 2); ;; addr_none
         }
@@ -174,15 +1352,17 @@ slice zero_address() inline {
     throw(error::unknown_op);
 }
 
+;; ---- get-methods ----------------------------------------------------------
+
 (int, int, slice, cell, cell) get_jetton_data() method_id {
-    (int total_supply, cell content, cell jetton_wallet_code) = load_data();
+    load_data();
     cell content_dict = new_dict();
 
     (
         int chain_id,
         int token_address,
         int token_decimals
-    ) = unpack_wrapped_token_data(content);
+    ) = unpack_wrapped_token_data(get_data().begin_parse().preload_ref());
 
     slice decimals_slice = encode_number_to_text(token_decimals, 10);
     slice chain_id_value = encode_number_to_text(chain_id, 10);
@@ -203,16 +1383,109 @@ slice zero_address() inline {
     ;; TEP-64 token data standard (content representation)
     cell onchain_content = begin_cell().store_uint(0, 8).store_dict(content_dict).end_cell();
 
-    return (total_supply, -1, zero_address(), onchain_content, jetton_wallet_code);
+    return (max(m_supply, 0), -1, begin_cell().store_uint(0, 2).end_cell().begin_parse(), onchain_content, m_wallet_code);
 }
 
 slice get_wallet_address(slice owner_address) method_id {
-    (int total_supply, cell content, cell jetton_wallet_code) = load_data();
-    return calculate_user_jetton_wallet_address(owner_address, my_address(), jetton_wallet_code);
+    load_data();
+    return calculate_user_jetton_wallet_address(owner_address, my_address(), m_wallet_code);
 }
 
 ;; chain_id, token_address, token_decimals
 (int, int, int) get_wrapped_token_data() method_id {
-    (int total_supply, cell content, cell jetton_wallet_code) = load_data();
-    return unpack_wrapped_token_data(content);
+    load_data();
+    return unpack_wrapped_token_data(get_data().begin_parse().preload_ref());
+}
+
+;; signed supply, in flight, mint reserve, burn reserve, stranded
+(int, int, int, int, int) get_supply_state() method_id {
+    load_data();
+    return (m_supply, m_in_flight, m_mint_reserve, m_burn_reserve, m_stranded);
+}
+
+;; life, bridge life, terminal, mint watermark, mint compaction floor, mint high,
+;; mint storage floor, next notice, bridge burn ack, notice finished floor, holders
+(int, int, int, int, int, int, int, int, int, int, int) get_channels() method_id {
+    load_data();
+    return (m_born, m_bridge_life, m_terminal, m_mint_wm, m_mint_cf, entered_high(m_mints, m_mint_wm),
+            mint_storage_floor(), m_next_notice, m_bridge_burn_ack,
+            finished_floor(m_notices, m_next_notice), m_holders_count);
+}
+
+;; status (-1 when absent), bound wallet life, k, escrow, owner, amount
+(int, int, int, int, int, int) get_mint(int s) method_id {
+    load_data();
+    (int status, int life, int k, int escrow, _, int owner, int amount, _, int found) = mint_get(s);
+    if (~ found) {
+        return (-1, 0, 0, 0, 0, 0);
+    }
+    return (status, life, k, escrow, owner, amount);
+}
+
+;; the descriptor of mint s
+cell get_mint_descriptor(int s) method_id {
+    load_data();
+    (_, _, _, _, _, _, _, cell d, _) = mint_get(s);
+    return d;
+}
+
+int get_mint_count() method_id {
+    load_data();
+    int n = 0;
+    (int s, _, int found) = m_mints.udict_get_min?(64);
+    while (found) {
+        n += 1;
+        (s, _, found) = m_mints.udict_get_next?(64, s);
+    }
+    return n;
+}
+
+;; exists, wallet life, open state, attempt, opening life, next credit, credit ack,
+;; credit finished floor, burn watermark, burn compaction, burn high, burn storage
+;; floor, old life (0 when none), awaiting count, burns stored
+(int, int, int, int, int, int, int, int, int, int, int, int, int, int, int) get_holder(int owner) method_id {
+    load_data();
+    int exists = holder_load(owner);
+    (int old_life, _, _) = old_parts();
+    int awaiting = 0;
+    (int s, _, int f) = h_awaiting.udict_get_min?(64);
+    while (f) {
+        awaiting += 1;
+        (s, _, f) = h_awaiting.udict_get_next?(64, s);
+    }
+    int stored = 0;
+    (int b, _, int g) = h_burns.udict_get_min?(64);
+    while (g) {
+        stored += 1;
+        (b, _, g) = h_burns.udict_get_next?(64, b);
+    }
+    return (exists, h_wallet_life, h_open, h_attempt, h_opening_life, h_next_credit, h_credit_ack,
+            finished_floor(h_credits, h_next_credit), h_burn_wm, h_burn_cf, entered_high(h_burns, h_burn_wm),
+            burn_storage_floor(), old_life, awaiting, stored);
+}
+
+;; where (0 none, 1 current life, 2 old life), status, cancel, m, amount
+(int, int, int, int, int) get_burn(int owner, int b) method_id {
+    load_data();
+    holder_load(owner);
+    (int where, int status, int cancel, int m, int amount, _, _) = find_burn(b);
+    return (where, status, cancel, m, amount);
+}
+
+;; The least an advance must carry at the current prices, and a quote that adds
+;; any shortfall below the reserve and a day of storage.
+(int, int) get_advance_cost(int kind, int owner) method_id {
+    load_data();
+    int need = advance_need(kind, owner);
+    int balance = pair_first(get_balance());
+    int deficit = max(0, MINTER_RESERVE - balance);
+    (int cells, int bits, _) = compute_data_size(get_data(), 1 << 20);
+    return (need, need + deficit + storage_fee(cells, bits, STORAGE_QUOTE_HORIZON, false));
+}
+
+;; What a message must carry to the minter for each first leg, for the bridge's
+;; and the tests' pricing.
+(int, int, int) get_path_needs(int owner) method_id {
+    load_data();
+    return (need_p1_opening(open_fee(owner)), need_b0(), need_o1());
 }

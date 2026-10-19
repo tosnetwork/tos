@@ -1,0 +1,773 @@
+{
+    "schema_version": 1,
+    "evidence_class": "DIAGNOSTIC_FEASIBILITY_ONLY",
+    "release_evidence_eligible": false,
+    "git_commit": "d1e971eadc4bcc3462be04139b5aca7163123788",
+    "acceptance_criteria_sha256": "e975d7bf7cd69f43880411f04db62dfcd1e52a5c110e63f3248639c3fdfb3cc3",
+    "build": {
+        "type": "Release",
+        "compiler": "Clang-21.1.8",
+        "allocator": "system",
+        "pq_backend": "native-ml-dsa-44"
+    },
+    "host": {
+        "cpu_model": "Intel(R) Xeon(R) Platinum 8455C",
+        "affinity_cpus": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+        ],
+        "frequency_khz_observed": "1485074",
+        "governor_observed": "powersave",
+        "frequency_or_governor_changed_by_runner": false
+    },
+    "sample_policy": {
+        "single_warmup": 1000,
+        "single_measured": 10000,
+        "small_batch_measured": 100,
+        "large_batch_measured": 30,
+        "shortened_batches_are_diagnostic": true
+    },
+    "single_operations": {
+        "mldsa44_sign": {
+            "samples": 10000,
+            "p50_us": 237.602,
+            "p95_us": 725.443,
+            "p99_us": 1076.487,
+            "max_us": 2203.193
+        },
+        "mldsa44_verify_valid": {
+            "samples": 10000,
+            "p50_us": 67.605,
+            "p95_us": 74.029,
+            "p99_us": 79.421,
+            "max_us": 137.543
+        },
+        "mldsa44_verify_invalid": {
+            "samples": 10000,
+            "p50_us": 68.96,
+            "p95_us": 74.455,
+            "p99_us": 79.27,
+            "max_us": 127.875
+        },
+        "key_id_derivation": {
+            "samples": 10000,
+            "p50_us": 1.212,
+            "p95_us": 1.221,
+            "p99_us": 1.245,
+            "max_us": 26.442
+        },
+        "pqbytes_1312_pack_unpack": {
+            "samples": 10000,
+            "p50_us": 4.259,
+            "p95_us": 4.617,
+            "p99_us": 4.916,
+            "max_us": 30.032
+        },
+        "pqbytes_2420_pack_unpack": {
+            "samples": 10000,
+            "p50_us": 7.265,
+            "p95_us": 7.834,
+            "p99_us": 8.291,
+            "max_us": 27.079
+        },
+        "pending_finality_primitives": {
+            "samples": 10000,
+            "p50_us": 0.016,
+            "p95_us": 0.016,
+            "p99_us": 0.017,
+            "max_us": 0.029
+        }
+    },
+    "authority_classification": [
+        {
+            "validators": 21,
+            "memo_miss_current_and_next": {
+                "samples": 100,
+                "p50_us": 9.417,
+                "p95_us": 9.58,
+                "p99_us": 9.603,
+                "max_us": 15.642
+            },
+            "memo_hit": {
+                "samples": 100,
+                "p50_us": 0.043,
+                "p95_us": 0.045,
+                "p99_us": 0.054,
+                "max_us": 0.062
+            }
+        },
+        {
+            "validators": 100,
+            "memo_miss_current_and_next": {
+                "samples": 100,
+                "p50_us": 48.879,
+                "p95_us": 51.033,
+                "p99_us": 55.501,
+                "max_us": 56.009
+            },
+            "memo_hit": {
+                "samples": 100,
+                "p50_us": 0.079,
+                "p95_us": 0.089,
+                "p99_us": 0.091,
+                "max_us": 0.106
+            }
+        },
+        {
+            "validators": 400,
+            "memo_miss_current_and_next": {
+                "samples": 100,
+                "p50_us": 357.829,
+                "p95_us": 370.169,
+                "p99_us": 387.511,
+                "max_us": 389.334
+            },
+            "memo_hit": {
+                "samples": 100,
+                "p50_us": 0.239,
+                "p95_us": 0.245,
+                "p99_us": 0.249,
+                "max_us": 0.255
+            }
+        }
+    ],
+    "certificate_proof_matrix": [
+        {
+            "signers": 1,
+            "samples": 100,
+            "sizes": {
+                "n4_certificate_tl_bytes": 2488,
+                "n5_13_boc_bytes": 2720,
+                "block_proof_boc_bytes": 2810,
+                "lite_signature_set_tl_bytes": 2636
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 100,
+                    "p50_us": 0.193,
+                    "p95_us": 0.206,
+                    "p99_us": 0.229,
+                    "max_us": 0.258
+                },
+                "n4_certificate_verify": {
+                    "samples": 100,
+                    "p50_us": 65.113,
+                    "p95_us": 71.132,
+                    "p99_us": 73.559,
+                    "max_us": 74.421
+                },
+                "n5_13_serialize": {
+                    "samples": 100,
+                    "p50_us": 12.644,
+                    "p95_us": 13.328,
+                    "p99_us": 13.657,
+                    "max_us": 17.034
+                },
+                "n5_13_parse": {
+                    "samples": 100,
+                    "p50_us": 8.688,
+                    "p95_us": 9.024,
+                    "p99_us": 9.141,
+                    "max_us": 9.266
+                },
+                "n5_13_verify": {
+                    "samples": 100,
+                    "p50_us": 71.284,
+                    "p95_us": 73.718,
+                    "p99_us": 78.295,
+                    "max_us": 81.118
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 86.66,
+                    "p95_us": 92.958,
+                    "p99_us": 95.047,
+                    "max_us": 96.881
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 66.942,
+                    "p95_us": 71.652,
+                    "p99_us": 73.037,
+                    "max_us": 76.381
+                }
+            }
+        },
+        {
+            "signers": 4,
+            "samples": 100,
+            "sizes": {
+                "n4_certificate_tl_bytes": 9784,
+                "n5_13_boc_bytes": 10307,
+                "block_proof_boc_bytes": 10397,
+                "lite_signature_set_tl_bytes": 10016
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 100,
+                    "p50_us": 0.559,
+                    "p95_us": 0.588,
+                    "p99_us": 0.611,
+                    "max_us": 0.625
+                },
+                "n4_certificate_verify": {
+                    "samples": 100,
+                    "p50_us": 257.119,
+                    "p95_us": 275.118,
+                    "p99_us": 277.533,
+                    "max_us": 290.631
+                },
+                "n5_13_serialize": {
+                    "samples": 100,
+                    "p50_us": 44.568,
+                    "p95_us": 47.176,
+                    "p99_us": 50.734,
+                    "max_us": 53.093
+                },
+                "n5_13_parse": {
+                    "samples": 100,
+                    "p50_us": 30.476,
+                    "p95_us": 32.102,
+                    "p99_us": 36.54,
+                    "max_us": 37.452
+                },
+                "n5_13_verify": {
+                    "samples": 100,
+                    "p50_us": 282.402,
+                    "p95_us": 302.226,
+                    "p99_us": 305.193,
+                    "max_us": 305.314
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 354.918,
+                    "p95_us": 373.165,
+                    "p99_us": 375.755,
+                    "max_us": 379.995
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 286.95,
+                    "p95_us": 297.003,
+                    "p99_us": 304.341,
+                    "max_us": 307.747
+                }
+            }
+        },
+        {
+            "signers": 21,
+            "samples": 100,
+            "sizes": {
+                "n4_certificate_tl_bytes": 51128,
+                "n5_13_boc_bytes": 53787,
+                "block_proof_boc_bytes": 53879,
+                "lite_signature_set_tl_bytes": 51836
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 100,
+                    "p50_us": 3.762,
+                    "p95_us": 3.827,
+                    "p99_us": 3.938,
+                    "max_us": 11.483
+                },
+                "n4_certificate_verify": {
+                    "samples": 100,
+                    "p50_us": 1448.44,
+                    "p95_us": 1505.495,
+                    "p99_us": 1536.266,
+                    "max_us": 1562.4
+                },
+                "n5_13_serialize": {
+                    "samples": 100,
+                    "p50_us": 253.753,
+                    "p95_us": 263.36,
+                    "p99_us": 269.817,
+                    "max_us": 271.547
+                },
+                "n5_13_parse": {
+                    "samples": 100,
+                    "p50_us": 159.497,
+                    "p95_us": 165.918,
+                    "p99_us": 169.343,
+                    "max_us": 179.079
+                },
+                "n5_13_verify": {
+                    "samples": 100,
+                    "p50_us": 1500.948,
+                    "p95_us": 1538.842,
+                    "p99_us": 1567.611,
+                    "max_us": 1576.379
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 1864.552,
+                    "p95_us": 1933.03,
+                    "p99_us": 1947.38,
+                    "max_us": 1988.653
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 1486.547,
+                    "p95_us": 1543.976,
+                    "p99_us": 1572.348,
+                    "max_us": 1605.537
+                }
+            }
+        },
+        {
+            "signers": 32,
+            "samples": 100,
+            "sizes": {
+                "n4_certificate_tl_bytes": 77880,
+                "n5_13_boc_bytes": 81860,
+                "block_proof_boc_bytes": 81952,
+                "lite_signature_set_tl_bytes": 78896
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 100,
+                    "p50_us": 5.837,
+                    "p95_us": 5.949,
+                    "p99_us": 6.007,
+                    "max_us": 11.256
+                },
+                "n4_certificate_verify": {
+                    "samples": 100,
+                    "p50_us": 2211.879,
+                    "p95_us": 2331.599,
+                    "p99_us": 2374.106,
+                    "max_us": 2390.051
+                },
+                "n5_13_serialize": {
+                    "samples": 100,
+                    "p50_us": 417.817,
+                    "p95_us": 437.99,
+                    "p99_us": 441.35,
+                    "max_us": 457.847
+                },
+                "n5_13_parse": {
+                    "samples": 100,
+                    "p50_us": 241.93,
+                    "p95_us": 260.626,
+                    "p99_us": 263.245,
+                    "max_us": 263.262
+                },
+                "n5_13_verify": {
+                    "samples": 100,
+                    "p50_us": 2094.931,
+                    "p95_us": 2245.118,
+                    "p99_us": 2255.479,
+                    "max_us": 2259.965
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 2698.498,
+                    "p95_us": 2872.343,
+                    "p99_us": 2911.973,
+                    "max_us": 2917.474
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 2220.804,
+                    "p95_us": 2390.995,
+                    "p99_us": 2414.586,
+                    "max_us": 2430.92
+                }
+            }
+        },
+        {
+            "signers": 64,
+            "samples": 100,
+            "sizes": {
+                "n4_certificate_tl_bytes": 155704,
+                "n5_13_boc_bytes": 163524,
+                "block_proof_boc_bytes": 163616,
+                "lite_signature_set_tl_bytes": 157616
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 100,
+                    "p50_us": 12.149,
+                    "p95_us": 12.258,
+                    "p99_us": 12.325,
+                    "max_us": 16.689
+                },
+                "n4_certificate_verify": {
+                    "samples": 100,
+                    "p50_us": 4252.294,
+                    "p95_us": 4463.865,
+                    "p99_us": 4512.109,
+                    "max_us": 4529.899
+                },
+                "n5_13_serialize": {
+                    "samples": 100,
+                    "p50_us": 849.893,
+                    "p95_us": 893.648,
+                    "p99_us": 910.574,
+                    "max_us": 930.543
+                },
+                "n5_13_parse": {
+                    "samples": 100,
+                    "p50_us": 442.526,
+                    "p95_us": 488.02,
+                    "p99_us": 493.565,
+                    "max_us": 496.318
+                },
+                "n5_13_verify": {
+                    "samples": 100,
+                    "p50_us": 4468.038,
+                    "p95_us": 4636.935,
+                    "p99_us": 4693.22,
+                    "max_us": 4696.832
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 4770.91,
+                    "p95_us": 5886.01,
+                    "p99_us": 6086.221,
+                    "max_us": 6139.305
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 3704.966,
+                    "p95_us": 4062.25,
+                    "p99_us": 4153.125,
+                    "max_us": 4224.676
+                }
+            }
+        },
+        {
+            "signers": 100,
+            "samples": 100,
+            "sizes": {
+                "n4_certificate_tl_bytes": 243256,
+                "n5_13_boc_bytes": 255396,
+                "block_proof_boc_bytes": 255488,
+                "lite_signature_set_tl_bytes": 246176
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 100,
+                    "p50_us": 16.382,
+                    "p95_us": 17.582,
+                    "p99_us": 18.237,
+                    "max_us": 21.607
+                },
+                "n4_certificate_verify": {
+                    "samples": 100,
+                    "p50_us": 5653.874,
+                    "p95_us": 5685.995,
+                    "p99_us": 5694.026,
+                    "max_us": 5704.175
+                },
+                "n5_13_serialize": {
+                    "samples": 100,
+                    "p50_us": 1170.634,
+                    "p95_us": 1185.901,
+                    "p99_us": 1201.868,
+                    "max_us": 1212.774
+                },
+                "n5_13_parse": {
+                    "samples": 100,
+                    "p50_us": 621.148,
+                    "p95_us": 636.248,
+                    "p99_us": 645.66,
+                    "max_us": 690.204
+                },
+                "n5_13_verify": {
+                    "samples": 100,
+                    "p50_us": 5763.086,
+                    "p95_us": 7534.892,
+                    "p99_us": 7564.326,
+                    "max_us": 7736.055
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 7378.948,
+                    "p95_us": 7554.02,
+                    "p99_us": 7568.221,
+                    "max_us": 7574.14
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 100,
+                    "p50_us": 5801.503,
+                    "p95_us": 5840.957,
+                    "p99_us": 5866.257,
+                    "max_us": 5964.271
+                }
+            }
+        },
+        {
+            "signers": 200,
+            "samples": 30,
+            "sizes": {
+                "n4_certificate_tl_bytes": 486456,
+                "n5_13_boc_bytes": 510596,
+                "block_proof_boc_bytes": 510688,
+                "lite_signature_set_tl_bytes": 492176
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 30,
+                    "p50_us": 35.265,
+                    "p95_us": 35.817,
+                    "p99_us": null,
+                    "max_us": 41.424
+                },
+                "n4_certificate_verify": {
+                    "samples": 30,
+                    "p50_us": 11342.872,
+                    "p95_us": 11390.172,
+                    "p99_us": null,
+                    "max_us": 11424.604
+                },
+                "n5_13_serialize": {
+                    "samples": 30,
+                    "p50_us": 2458.629,
+                    "p95_us": 2476.236,
+                    "p99_us": null,
+                    "max_us": 2477.461
+                },
+                "n5_13_parse": {
+                    "samples": 30,
+                    "p50_us": 1311.812,
+                    "p95_us": 1327.965,
+                    "p99_us": null,
+                    "max_us": 1331.72
+                },
+                "n5_13_verify": {
+                    "samples": 30,
+                    "p50_us": 11534.762,
+                    "p95_us": 11587.629,
+                    "p99_us": null,
+                    "max_us": 11624.403
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 30,
+                    "p50_us": 14939.995,
+                    "p95_us": 15105.363,
+                    "p99_us": null,
+                    "max_us": 15153.839
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 30,
+                    "p50_us": 11713.796,
+                    "p95_us": 12251.672,
+                    "p99_us": null,
+                    "max_us": 12422.492
+                }
+            }
+        },
+        {
+            "signers": 300,
+            "samples": 30,
+            "sizes": {
+                "n4_certificate_tl_bytes": 729656,
+                "n5_13_boc_bytes": 765796,
+                "block_proof_boc_bytes": 765888,
+                "lite_signature_set_tl_bytes": 738176
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 30,
+                    "p50_us": 57.103,
+                    "p95_us": 60.928,
+                    "p99_us": null,
+                    "max_us": 62.639
+                },
+                "n4_certificate_verify": {
+                    "samples": 30,
+                    "p50_us": 17071.285,
+                    "p95_us": 17150.943,
+                    "p99_us": null,
+                    "max_us": 17154.123
+                },
+                "n5_13_serialize": {
+                    "samples": 30,
+                    "p50_us": 3698.685,
+                    "p95_us": 3808.859,
+                    "p99_us": null,
+                    "max_us": 3828.118
+                },
+                "n5_13_parse": {
+                    "samples": 30,
+                    "p50_us": 1996.128,
+                    "p95_us": 2026.137,
+                    "p99_us": null,
+                    "max_us": 2029.523
+                },
+                "n5_13_verify": {
+                    "samples": 30,
+                    "p50_us": 17344.685,
+                    "p95_us": 17420.948,
+                    "p99_us": null,
+                    "max_us": 20940.927
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 30,
+                    "p50_us": 22402.477,
+                    "p95_us": 22464.278,
+                    "p99_us": null,
+                    "max_us": 22487.897
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 30,
+                    "p50_us": 17626.928,
+                    "p95_us": 17678.9,
+                    "p99_us": null,
+                    "max_us": 17683.301
+                }
+            }
+        },
+        {
+            "signers": 400,
+            "samples": 30,
+            "sizes": {
+                "n4_certificate_tl_bytes": 972856,
+                "n5_13_boc_bytes": 1020996,
+                "block_proof_boc_bytes": 1021088,
+                "lite_signature_set_tl_bytes": 984176
+            },
+            "timings": {
+                "n4_certificate_parse": {
+                    "samples": 30,
+                    "p50_us": 99.892,
+                    "p95_us": 105.281,
+                    "p99_us": null,
+                    "max_us": 106.921
+                },
+                "n4_certificate_verify": {
+                    "samples": 30,
+                    "p50_us": 22789.938,
+                    "p95_us": 23070.439,
+                    "p99_us": null,
+                    "max_us": 23421.552
+                },
+                "n5_13_serialize": {
+                    "samples": 30,
+                    "p50_us": 5052.276,
+                    "p95_us": 5094.702,
+                    "p99_us": null,
+                    "max_us": 5101.09
+                },
+                "n5_13_parse": {
+                    "samples": 30,
+                    "p50_us": 2711.646,
+                    "p95_us": 2722.801,
+                    "p99_us": null,
+                    "max_us": 2726.21
+                },
+                "n5_13_verify": {
+                    "samples": 30,
+                    "p50_us": 23141.646,
+                    "p95_us": 23223.219,
+                    "p99_us": null,
+                    "max_us": 23245.575
+                },
+                "block_proof_signature_reference_roundtrip_verify": {
+                    "samples": 30,
+                    "p50_us": 30364.407,
+                    "p95_us": 30465.847,
+                    "p99_us": null,
+                    "max_us": 30472.819
+                },
+                "lite_signature_set_roundtrip_verify": {
+                    "samples": 30,
+                    "p50_us": 23533.101,
+                    "p95_us": 23636.467,
+                    "p99_us": null,
+                    "max_us": 23647.888
+                }
+            }
+        }
+    ],
+    "structural_401": {
+        "accepted": false,
+        "reason": "pq signatures: signer count exceeds maximum"
+    },
+    "concurrency_sweep_100_signers": [
+        {
+            "workers": 1,
+            "batch": {
+                "samples": 20,
+                "p50_us": 12321.777,
+                "p95_us": 13586.542,
+                "p99_us": null,
+                "max_us": 13877.767
+            }
+        },
+        {
+            "workers": 2,
+            "batch": {
+                "samples": 20,
+                "p50_us": 6429.544,
+                "p95_us": 7919.386,
+                "p99_us": null,
+                "max_us": 8090.913
+            }
+        },
+        {
+            "workers": 4,
+            "batch": {
+                "samples": 20,
+                "p50_us": 3454.817,
+                "p95_us": 4644.199,
+                "p99_us": null,
+                "max_us": 4859.51
+            }
+        },
+        {
+            "workers": 8,
+            "batch": {
+                "samples": 20,
+                "p50_us": 1517.271,
+                "p95_us": 1931.3,
+                "p99_us": null,
+                "max_us": 2967.602
+            }
+        },
+        {
+            "workers": 16,
+            "batch": {
+                "samples": 20,
+                "p50_us": 1603.388,
+                "p95_us": 2109.065,
+                "p99_us": null,
+                "max_us": 2109.57
+            }
+        }
+    ],
+    "actor_thread_decision": {
+        "launch_proof_signers": 100,
+        "launch_block_proof_bytes": 255488,
+        "single_thread_actor_callback_stall_us": 11250.365,
+        "decision": "OPEN_UNTIL_OWNER_ACCEPTS_NONZERO_CRITERIA",
+        "worker_pool_changed": false
+    },
+    "scope": {
+        "n4_certificate": "production TL parser, quorum and ML-DSA verifier",
+        "authority_classification": "production shard-set computation and memo lookup",
+        "n5_carrier_and_crypto": "production",
+        "block_proof": "real serialized BlockProof signature reference; no CheckProof actor claim",
+        "lite": "real checked SignatureSet parser; no transport or chain-advancement claim"
+    },
+    "acceptance_evaluation": {
+        "status": "NOT_EVALUATED_OWNER_CRITERIA_UNSET",
+        "thresholds_moved_to_fit_results": false
+    }
+}

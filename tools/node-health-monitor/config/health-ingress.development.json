@@ -1,0 +1,15 @@
+{
+  "listen": "0.0.0.0:9443",
+  "server_name": "validator.example.invalid",
+  "upstream": "127.0.0.1:9480",
+  "cert_file": "/etc/tos-health/edge.pem",
+  "key_file": "/etc/tos-health/edge.key",
+  "ca_file": "/etc/tos-health/ca.pem",
+  "peers": [
+    {
+      "alias": "monitor1",
+      "certificate_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "role": "edge_reader"
+    }
+  ]
+}

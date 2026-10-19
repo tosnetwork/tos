@@ -1,0 +1,20 @@
+{
+  "published_revision": "00095cc7900906a39ac7c43bdf9076f719c96dca",
+  "archive_sha256": "3fe7f063eec267044d24371bfa21e2af91e7a62dcd0a70a3db9abac7f367263c",
+  "matching_files": {
+    "ceremony/ceremony.json": "c047b45c61f7bf427e1836d1dd3275e25d12adf1b7465cbbf5bc2db032cebc4c",
+    "ceremony/contributions.bin": "f2f143987e36553516e949b52a276879ed53ac09c9e1329711dcc26edb77bae6",
+    "ceremony/key.bin": "43bad49013e26a203b411210a4837ba7adb32fb1be187490a99e52e51c696138",
+    "roster.json": "fcb0b90c0eb39bcb10c0d71d8299665aa0110ec4ae25f5dbd1d0cd24c3408d17",
+    "ANNOUNCEMENT.md": "43c8130141e1eca296fc5e1dafe9cf2b3ac577c3c42f45052fd7cf8f7433cbb1",
+    "attestation-1.txt": "5c009c39d5e6ac6986e8896ba00acad13f68507c6e0945578381b331f4b85888",
+    "attestation-1.txt.sig": "ae386ec59bb3a62eb45b0d672e2e45b857181fcfb3b2ab526e472f1938e58fd6",
+    "attestation-2.txt": "dbf1ead03fcea05d7df9bcd8d41fe36e28a0d1d95ed742e524747f8446fe0c23",
+    "attestation-2.txt.sig": "30732a0b5bfc964c80724baaf1a2728c9d8b2236ca5ad9ac475d632348299379",
+    "attestation-3.txt": "93af5e960239bc6c52d4a5d16703a3eef11207ada5bf942d429b9c44e1df6e4a",
+    "attestation-3.txt.sig": "4219e6235c469dc8a59ad55b9f55cdc00b442a73d9a53b430b4f7a537b691836",
+    "keys/tosman.pub": "92e64e939c43967c0d6861d9363a396322a37c4ef209ce7282168e6fa757327b",
+    "keys/tosdev2.pub": "32e1aaf83d70b661cd4389239af1b97da31f7577c46f8f66ffb54b58a0429a33",
+    "keys/tosdev3.pub": "1127dfd596ea9e253d77253d03b98b121cc683cc584eef69f211f0e67d1ac73e"
+  }
+}

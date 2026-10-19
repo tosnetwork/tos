@@ -1,0 +1,4 @@
+$ cmake --build $HOME/tos-node-health-c01-build --target test-health-source-policy -j16
+ninja: no work to do.
+
+EXIT=0

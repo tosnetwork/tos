@@ -29,40 +29,45 @@ enum ServiceProfile {
     Explorer,
 }
 
-pub async fn run(cancellation_ctx: CancellationCtx, config_path: String) {
-    run_profile(cancellation_ctx, config_path, ServiceProfile::Full).await;
+/// Runs the full service until it is cancelled. An error that ends the service
+/// is returned, not only logged, so the process exits non-zero and a
+/// supervisor that restarts on failure restarts it: logging it and exiting 0
+/// left an election task dead after a reboot, when the node's RPC was not up
+/// yet.
+pub async fn run(cancellation_ctx: CancellationCtx, config_path: String) -> anyhow::Result<()> {
+    run_profile(cancellation_ctx, config_path, ServiceProfile::Full).await
 }
 
-pub async fn run_explorer(cancellation_ctx: CancellationCtx, config_path: String) {
-    run_profile(cancellation_ctx, config_path, ServiceProfile::Explorer).await;
+/// Runs the read-only explorer profile; errors are returned as for [`run`].
+pub async fn run_explorer(
+    cancellation_ctx: CancellationCtx,
+    config_path: String,
+) -> anyhow::Result<()> {
+    run_profile(cancellation_ctx, config_path, ServiceProfile::Explorer).await
 }
 
 async fn run_profile(
     cancellation_ctx: CancellationCtx,
     config_path: String,
     profile: ServiceProfile,
-) {
-    let app_cfg = Arc::new(match AppConfig::load(Path::new(&config_path)) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("Failed to open config file: {:#}", e);
-            return;
-        }
-    });
+) -> anyhow::Result<()> {
+    let app_cfg = Arc::new(AppConfig::load(Path::new(&config_path)).map_err(|e| {
+        eprintln!("Failed to open config file: {:#}", e);
+        e.context("open config file")
+    })?);
 
-    let _log_guard = match setup_log(Some(&app_cfg)) {
-        Ok(guard) => guard,
-        Err(e) => {
-            eprintln!("Failed to setup log file: {:#}", e);
-            return;
-        }
-    };
+    let _log_guard = setup_log(Some(&app_cfg)).map_err(|e| {
+        eprintln!("Failed to setup log file: {:#}", e);
+        e.context("set up the log file")
+    })?;
 
     tracing::info!(profile = ?profile, "Service started");
-    if let Err(e) = run_with_profile(cancellation_ctx, app_cfg, config_path, profile).await {
+    let result = run_with_profile(cancellation_ctx, app_cfg, config_path, profile).await;
+    if let Err(e) = &result {
         tracing::error!("service error: {:#}", e);
     }
     tracing::info!(profile = ?profile, "Service stopped");
+    result
 }
 
 pub async fn run_with_config(
@@ -73,12 +78,46 @@ pub async fn run_with_config(
     run_with_profile(cancellation_ctx, app_cfg, config_path, ServiceProfile::Full).await
 }
 
+/// The tasks a profile enables at start, in start order.
+fn startup_tasks(
+    app_cfg: &AppConfig,
+    profile: ServiceProfile,
+) -> anyhow::Result<Vec<&'static str>> {
+    match profile {
+        ServiceProfile::Explorer => {
+            anyhow::ensure!(
+                app_cfg.indexer_enabled,
+                "the explorer profile serves the explorer index and cannot run with \
+                 indexer_enabled = false"
+            );
+            Ok(vec!["indexer"])
+        }
+        ServiceProfile::Full => {
+            let mut tasks = vec!["contracts"];
+            if app_cfg.elections.is_some() {
+                tasks.push("elections");
+            }
+            if app_cfg.voting.is_some() {
+                tasks.push("voting");
+            }
+            // Chain-wide contract discovery is a baseline read-only
+            // capability, on unless the configuration turns it off: a host
+            // that only takes part in elections does not need it.
+            if app_cfg.indexer_enabled {
+                tasks.push("indexer");
+            }
+            Ok(tasks)
+        }
+    }
+}
+
 async fn run_with_profile(
     cancellation_ctx: CancellationCtx,
     app_cfg: Arc<AppConfig>,
     config_path: String,
     profile: ServiceProfile,
 ) -> anyhow::Result<()> {
+    let startup = startup_tasks(&app_cfg, profile)?;
     let indexer_db_path = Path::new(&config_path).with_file_name("tosctl-indexer.db");
     let runtime_cfg = match profile {
         ServiceProfile::Full => RuntimeConfigStore::initialize(app_cfg.clone(), config_path).await,
@@ -89,8 +128,14 @@ async fn run_with_profile(
     .context("initialize runtime config store")?;
     let runtime_cfg = Arc::new(runtime_cfg);
     let store = Arc::new(SnapshotStore::new());
-    let indexer_store =
-        Arc::new(IndexerStore::open(&indexer_db_path).context("open indexer store")?);
+    // A disabled indexer leaves its database untouched: it is neither created
+    // nor opened, so it costs no disk reads and no file on a fresh host.
+    let indexer_store = if startup.contains(&"indexer") {
+        Some(Arc::new(IndexerStore::open(&indexer_db_path).context("open indexer store")?))
+    } else {
+        tracing::info!("explorer indexer disabled by configuration (indexer_enabled = false)");
+        None
+    };
 
     // Status callback: when the elections runner detects binding status changes,
     // update the runtime config and save to file.
@@ -134,27 +179,22 @@ async fn run_with_profile(
         )),
     );
 
-    tasks.insert(
-        "indexer",
-        Arc::new(TaskController::new(
+    if let Some(indexer_store) = &indexer_store {
+        tasks.insert(
             "indexer",
-            IndexerTask::new(runtime_cfg.clone(), indexer_store.clone()),
-            runtime_cfg.clone(),
-        )),
-    );
-
-    if profile == ServiceProfile::Full {
-        let _ = tasks.get("contracts").expect("contracts task").enable().await;
-        if app_cfg.elections.is_some() {
-            let _ = tasks.get("elections").expect("elections task").enable().await;
-        }
-        if app_cfg.voting.is_some() {
-            let _ = tasks.get("voting").expect("voting task").enable().await;
-        }
+            Arc::new(TaskController::new(
+                "indexer",
+                IndexerTask::new(runtime_cfg.clone(), indexer_store.clone()),
+                runtime_cfg.clone(),
+            )),
+        );
     }
-    // Always on: chain-wide contract discovery is a baseline read-only
-    // capability, not an opt-in participation feature like elections/voting.
-    let _ = tasks.get("indexer").expect("indexer task").enable().await;
+
+    for name in &startup {
+        let task =
+            tasks.get(name).with_context(|| format!("startup task '{name}' is not registered"))?;
+        let _ = task.enable().await;
+    }
 
     let http_task_handle = tokio::spawn(http_server_task::run(
         cancellation_ctx.clone(),
@@ -177,7 +217,9 @@ async fn run_with_profile(
                 // Reload config from file if changed
                 if runtime_cfg.reload_from_file().await {
                     if profile == ServiceProfile::Explorer {
-                        let _ = tasks.get("indexer").expect("indexer task").restart().await;
+                        if let Some(task) = tasks.get("indexer") {
+                            let _ = task.restart().await;
+                        }
                     } else {
                         for task in tasks.values() {
                             let _ = task.restart().await;
@@ -220,4 +262,89 @@ async fn run_with_profile(
     //    while finalizers are still running their cleanup.
     shutdown_tasks(&tasks, shutdown_deadline).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn closed_loopback_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.local_addr().expect("addr").port()
+    }
+
+    fn config(extra: serde_json::Value) -> AppConfig {
+        let mut config = serde_json::json!({
+            "nodes": {},
+            "chain_rpc": {"urls": ["http://127.0.0.1:3301/"]},
+            "http": {},
+            "master_wallet": null,
+            "log": null,
+            "elections": {}
+        });
+        for (key, value) in extra.as_object().expect("object").clone() {
+            config[key] = value;
+        }
+        serde_json::from_value(config).expect("config")
+    }
+
+    #[test]
+    fn the_indexer_starts_by_default_beside_elections() {
+        let config = config(serde_json::json!({}));
+        assert_eq!(
+            startup_tasks(&config, ServiceProfile::Full).unwrap(),
+            vec!["contracts", "elections", "indexer"]
+        );
+        assert_eq!(startup_tasks(&config, ServiceProfile::Explorer).unwrap(), vec!["indexer"]);
+    }
+
+    #[test]
+    fn a_disabled_indexer_stays_off_while_elections_still_start() {
+        let config = config(serde_json::json!({"indexer_enabled": false}));
+        assert_eq!(
+            startup_tasks(&config, ServiceProfile::Full).unwrap(),
+            vec!["contracts", "elections"]
+        );
+        let error = startup_tasks(&config, ServiceProfile::Explorer)
+            .expect_err("the explorer profile has nothing to serve without the indexer");
+        assert!(error.to_string().contains("indexer_enabled = false"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_missing_config_is_returned_as_an_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("missing.json").to_string_lossy().into_owned();
+        let result = run(CancellationCtx::new(), path).await;
+        let message = format!("{:#}", result.expect_err("a missing config must fail the service"));
+        assert!(message.contains("open config file"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn a_runtime_initialization_failure_is_returned_as_an_error() {
+        // The service must end with an error when it cannot initialize, so
+        // the process exits non-zero, instead of logging it and returning as
+        // if it had stopped cleanly. Here initialization stops at the vault
+        // (no VAULT_URL in the test process); after a reboot it stopped at the
+        // chain RPC, which was not up yet. Both return through the same path.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("tosctl-config.json");
+        let config = serde_json::json!({
+            "nodes": {},
+            "chain_rpc": {"urls": [format!("http://127.0.0.1:{}/jsonRPC", closed_loopback_port())]},
+            "http": {},
+            "master_wallet": null,
+            "log": null
+        });
+        std::fs::write(&path, config.to_string()).expect("write config");
+        let result = tokio::time::timeout(
+            Duration::from_secs(120),
+            run(CancellationCtx::new(), path.to_string_lossy().into_owned()),
+        )
+        .await
+        .expect("the service must give up when it cannot initialize, not run on");
+        let message =
+            format!("{:#}", result.expect_err("a failed initialization must fail the service"));
+        assert!(message.contains("initialize runtime config store"), "{message}");
+    }
 }

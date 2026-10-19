@@ -1,0 +1,18 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)
+
+running 1 test
+
+thread 'diagnostic_ipc::tests::real_credentials_and_epoch_are_separate_rejection_gates' (2820653) panicked at crates/health-services/src/diagnostic_ipc.rs:358:9:
+assertion failed: read_token(&link).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostic_ipc::tests::real_credentials_and_epoch_are_separate_rejection_gates ... FAILED
+
+failures:
+
+failures:
+    diagnostic_ipc::tests::real_credentials_and_epoch_are_separate_rejection_gates
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p tos-health-services --lib`

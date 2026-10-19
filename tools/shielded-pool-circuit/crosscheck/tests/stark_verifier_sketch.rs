@@ -21,8 +21,16 @@ use shielded_pool_circuit_crosscheck::stark_sketch_probe::StarkSketch;
 
 /// What a withdrawal costs today, and the ceiling frozen above it.
 const GROTH16_VERIFY_GAS: i64 = 204_493;
-const WITHDRAWAL_GAS: i64 = 1_175_034;
-const TRANSACT_CEILING: i64 = 1_470_000;
+const WITHDRAWAL_GAS: i64 = 1_171_516;
+
+/// Read out of the contract, not copied. This file's copy said 1,470,000 for
+/// as long as the ceiling did, and would have gone on saying it afterwards --
+/// which is the only way a comparison against a ceiling can be wrong without
+/// anything failing.
+fn transact_ceiling() -> i64 {
+    shielded_pool_circuit_crosscheck::pool::contract_gas_ceiling("transact_gas_ceiling")
+        .expect("the contract's transact ceiling")
+}
 /// What this workchain grants one transaction.
 const WORKCHAIN_GAS_LIMIT: i64 = 30_000_000;
 
@@ -106,7 +114,7 @@ fn what_a_fri_verifier_would_cost() {
     );
     eprintln!();
     eprintln!("for comparison: Groth16 verifies in {GROTH16_VERIFY_GAS} gas");
-    eprintln!("a whole withdrawal is {WITHDRAWAL_GAS} gas, ceiling {TRANSACT_CEILING}");
+    eprintln!("a whole withdrawal is {WITHDRAWAL_GAS} gas, ceiling {}", transact_ceiling());
     eprintln!("this workchain grants {WORKCHAIN_GAS_LIMIT} gas a transaction");
 
     // The claim this test exists to pin. It is deliberately loose: the

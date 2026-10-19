@@ -17,26 +17,93 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <algorithm>
+
+#include "td/utils/port/config.h"
+
+#if TD_PORT_POSIX
+#include <sys/socket.h>
+#endif
+
 #include "adnl-ext-connection.hpp"
 
 namespace tos {
 
 namespace adnl {
 
+namespace {
+// Half-close: the peer sees EOF after the last queued byte, while this side
+// can still read (and discard) what the peer sends.
+void shutdown_write(const td::SocketFd &fd) {
+#if TD_PORT_POSIX
+  ::shutdown(fd.get_native_fd().socket(), SHUT_WR);
+#elif TD_PORT_WINDOWS
+  ::shutdown(fd.get_native_fd().socket(), SD_SEND);
+#endif
+}
+}  // namespace
+
+AdnlExtClosingDiscardTotals &adnl_ext_closing_discard_totals() {
+  static AdnlExtClosingDiscardTotals totals;
+  return totals;
+}
+
 void AdnlExtConnection::send_uninit(td::BufferSlice data) {
   buffered_fd_.output_buffer().append(std::move(data));
   yield();
 }
 
-void AdnlExtConnection::send(td::BufferSlice data) {
+bool AdnlExtConnection::send(td::BufferSlice data) {
   LOG(DEBUG) << "sending packet of size " << data.size();
-  auto data_size = td::narrow_cast<td::uint32>(data.size()) + 32 + 32;
-  if (data_size < 32 || data_size > (1 << 24)) {
-    LOG(WARNING) << "bad packet size " << data_size;
-    return;
+  if (output_overflowed_ || closing_) {
+    // While closing, answers completing late are dropped: only what was
+    // already queued when the refusal closed the connection goes out.
+    return false;
+  }
+  auto size_status = check_adnl_ext_payload_size(data.size());
+  if (size_status.is_error()) {
+    LOG(WARNING) << size_status;
+    return false;
+  }
+  auto data_size = td::narrow_cast<td::uint32>(data.size() + adnl_ext_packet_framing_bytes);
+  auto frame_bytes = data.size() + 4 + 32 + 32;
+  account_output();
+  auto pending = buffered_fd_.ready_for_flush_write();
+  bool fits = adnl_ext_output_fits(pending, frame_bytes, pending_output_limit_);
+  std::size_t source_reserved = 0;
+  if (fits && output_source_shares_) {
+    auto held = pending + frame_bytes;
+    source_reserved = held > source_output_accounted_ ? held - source_output_accounted_ : 0;
+    fits = output_source_shares_->try_reserve(output_source_, source_reserved);
+    if (!fits) {
+      source_reserved = 0;
+    }
+  }
+  // Reserve the frame in the server's budget before it is queued, so
+  // connections on other threads cannot pass the bound together.
+  std::size_t reserved = 0;
+  if (fits && server_output_budget_) {
+    auto held = pending + frame_bytes;
+    reserved = held > output_accounted_ ? held - output_accounted_ : 0;
+    fits = server_output_budget_->try_reserve(reserved);
+    if (!fits) {
+      reserved = 0;
+    }
+  }
+  if (!fits) {
+    if (source_reserved != 0) {
+      CHECK(output_source_shares_->release(output_source_, source_reserved));
+    }
+    // The peer is not reading what it asked for, or the server's connections
+    // together hold too much unread. Queuing more would grow memory without
+    // bound, and dropping a frame would corrupt the stream.
+    LOG(INFO) << "ADNL external peer left " << pending << " bytes unread; closing connection";
+    output_overflowed_ = true;
+    stop();
+    return false;
   }
 
-  td::BufferSlice d{data.size() + 4 + 32 + 32};
+  td::BufferSlice d{frame_bytes};
   auto S = d.as_slice();
 
   S.copy_from(td::Slice(reinterpret_cast<const td::uint8 *>(&data_size), 4));
@@ -54,11 +121,17 @@ void AdnlExtConnection::send(td::BufferSlice data) {
   out_ctr_.encrypt(d.as_slice(), e.as_slice());
 
   buffered_fd_.output_buffer().append(std::move(e));
+  output_accounted_ += reserved;
+  source_output_accounted_ += source_reserved;
+  account_output();
   yield();
+  return true;
 }
 
 td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_loop) {
-  if (stop_read_) {
+  // Once closing for unread output or after a refusal, take no further
+  // queries from the buffer.
+  if (stop_read_ || output_overflowed_ || closing_) {
     exit_loop = true;
     return td::Status::OK();
   }
@@ -82,7 +155,15 @@ td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_l
       // Packet layout after decrypt:
       //   [32 bytes random prefix] [payload bytes (may be empty)] [32 bytes sha256]
       // So minimal valid length is 64 bytes (keepalive has empty payload).
-      if (len_ > (1 << 24) || len_ < 64) {
+      // A server connection holds at most its pending-input bound, so a frame
+      // that could not fit is refused as soon as its length is parsed. The
+      // bounded read that brought the length may already hold some of the
+      // body; nothing beyond that read is taken.
+      auto max_packet_bytes = adnl_ext_max_packet_bytes;
+      if (input_budget_) {
+        max_packet_bytes = max_pending_input_ > 4 ? std::min(max_packet_bytes, max_pending_input_ - 4) : 0;
+      }
+      if (check_adnl_ext_framed_size(len_, max_packet_bytes).is_error()) {
         return td::Status::Error(ErrorCode::protoviolation, PSTRING() << "bad packet size: size=" << len_);
       }
       read_len_ = true;
@@ -93,6 +174,7 @@ td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_l
     }
     auto data = input.cut_head(len_).move_as_buffer_slice();
     update_timer();
+    partial_frame_deadline_ = {};
 
     td::BufferSlice dec_data{data.size()};
     in_ctr_.encrypt(data.as_slice(), dec_data.as_slice());
@@ -109,31 +191,259 @@ td::Status AdnlExtConnection::receive(td::ChainBufferReader &input, bool &exit_l
 
     auto data = input.cut_head(256).move_as_buffer_slice();
     update_timer();
+    partial_frame_deadline_ = {};
 
     exit_loop = false;
     return process_init_packet(std::move(data));
   }
 }
 
-void AdnlExtConnection::loop() {
-  auto status = [&] {
+td::Result<std::size_t> AdnlExtConnection::read_input_within_budget() {
+  if (!input_budget_) {
     TRY_STATUS(buffered_fd_.flush_read());
-    auto &input = buffered_fd_.input_buffer();
-    bool exit_loop = false;
-    while (!exit_loop) {
-      TRY_STATUS(receive(input, exit_loop));
+    return 0;
+  }
+  if (!td::can_read(buffered_fd_)) {
+    return 0;
+  }
+  auto held = buffered_fd_.input_buffer().size();
+  if (held >= max_pending_input_) {
+    // Only reachable while reading is paused: a full buffer otherwise holds a
+    // complete frame, which receive() has already taken. The socket stays
+    // readable, so the next loop() resumes here.
+    return 0;
+  }
+  auto wanted = held + std::min(adnl_ext_input_read_chunk_bytes, max_pending_input_ - held);
+  if (wanted > input_accounted_) {
+    input_accounted_ += reserve_input(wanted - input_accounted_);
+  }
+  if (input_accounted_ <= held) {
+    // This source's connections, or the server's connections together, hold as
+    // much unfinished input as they may. Reading on would grow memory past the
+    // bound; leaving bytes in the socket would stall this peer with no end.
+    // Closing this connection, the one asking for more, releases everything it
+    // holds; no other connection is touched.
+    if (input_source_shares_ && input_source_shares_->used(input_source_) >= input_source_shares_->per_source_limit()) {
+      return td::Status::Error(ErrorCode::notready, PSTRING() << "external connections from " << input_source_
+                                                              << " hold their source's whole input share ("
+                                                              << input_source_shares_->per_source_limit() << " bytes)");
     }
+    return td::Status::Error(ErrorCode::notready, PSTRING() << "external connections hold their whole input budget ("
+                                                            << input_budget_->limit() << " bytes)");
+  }
+  // Never read more than is reserved: the budget is charged before the buffer grows.
+  TRY_RESULT(read, buffered_fd_.flush_read(input_accounted_ - held));
+  return read;
+}
+
+std::size_t AdnlExtConnection::reserve_input(std::size_t bytes) {
+  // The source's share first, then the server budget; whatever the server
+  // budget does not grant goes back to the share at once.
+  auto allowed = bytes;
+  if (input_source_shares_) {
+    allowed = input_source_shares_->try_reserve_up_to(input_source_, bytes);
+  }
+  auto taken = input_budget_->try_reserve_up_to(allowed);
+  if (input_source_shares_ && taken < allowed && !input_source_shares_->release(input_source_, allowed - taken)) {
+    LOG(ERROR) << "ADNL external input source share: released more than was reserved";
+  }
+  return taken;
+}
+
+void AdnlExtConnection::release_input(std::size_t bytes) {
+  if (!input_budget_ || bytes == 0) {
+    return;
+  }
+  if (bytes > input_accounted_) {
+    LOG(ERROR) << "ADNL external input budget: released more than this connection holds";
+    bytes = input_accounted_;
+  }
+  if (!input_budget_->release(bytes)) {
+    LOG(ERROR) << "ADNL external input budget: released more than was reserved";
+  }
+  if (input_source_shares_ && !input_source_shares_->release(input_source_, bytes)) {
+    LOG(ERROR) << "ADNL external input source share: released more than was reserved";
+  }
+  input_accounted_ -= bytes;
+}
+
+void AdnlExtConnection::account_input() {
+  if (!input_budget_) {
+    return;
+  }
+  auto held = buffered_fd_.input_buffer().size();
+  if (held < input_accounted_) {
+    release_input(input_accounted_ - held);
+  }
+}
+
+void AdnlExtConnection::update_partial_frame_deadline() {
+  if (!input_budget_) {
+    return;
+  }
+  bool holds_partial_frame = read_len_ || buffered_fd_.input_buffer().size() > 0;
+  if (!holds_partial_frame) {
+    partial_frame_deadline_ = {};
+    return;
+  }
+  if (!partial_frame_deadline_) {
+    partial_frame_deadline_ = td::Timestamp::in(partial_frame_lifetime_);
+  }
+  // Re-armed every time: update_timer() resets the alarm to the idle timeout.
+  alarm_timestamp().relax(partial_frame_deadline_);
+}
+
+void AdnlExtConnection::loop() {
+  if (closing_) {
+    closing_loop();
+    return;
+  }
+  // Set only when processing the peer's queries refused them. A refusal on the
+  // read path (input budget or source share exhausted) is load shedding and
+  // must close at once, not wait out the ordered close.
+  bool refused_by_query = false;
+  auto status = [&] {
+    auto &input = buffered_fd_.input_buffer();
+    // Read a reserved chunk, take every complete frame off the buffer, and
+    // repeat while the socket has more, so what is held between reads is at
+    // most one unfinished frame.
+    while (true) {
+      auto r_read = read_input_within_budget();
+      bool exit_loop = false;
+      while (!exit_loop) {
+        // Frames that arrived together with a read error (bytes, then a
+        // reset) are still delivered; the error then closes the connection.
+        auto received = receive(input, exit_loop);
+        if (received.is_error()) {
+          refused_by_query = received.code() == ErrorCode::notready;
+          return received;
+        }
+      }
+      account_input();
+      TRY_RESULT(read, std::move(r_read));
+      if (read == 0) {
+        break;
+      }
+    }
+    update_partial_frame_deadline();
     TRY_STATUS(buffered_fd_.flush_write());
+    account_output();
     if (td::can_close(buffered_fd_)) {
       stop();
     }
     return td::Status::OK();
   }();
   if (status.is_error()) {
-    LOG(ERROR) << "Client got error " << status;
+    if (refused_by_query) {
+      // A refusal of the peer's queries is an intended terminal state, not a
+      // fault of this side. The answers already queued must reach the peer, so
+      // close in order rather than at once.
+      begin_closing(status);
+      return;
+    }
+    // Every other error closes at once; answers already queued get one flush.
+    buffered_fd_.flush_write().ignore();
+    if (status.code() == ErrorCode::notready) {
+      LOG(INFO) << "Closing external connection: " << status;
+    } else {
+      LOG(ERROR) << "Client got error " << status;
+    }
     stop();
   } else {
     send_ready();
+  }
+}
+
+void AdnlExtConnection::begin_closing(const td::Status &reason) {
+  LOG(INFO) << "Closing external connection: " << reason;
+  closing_ = true;
+  stop_read_ = true;
+  closing_deadline_ = td::Timestamp::in(kClosingSeconds);
+  alarm_timestamp() = closing_deadline_;
+  closing_loop();
+}
+
+void AdnlExtConnection::closing_loop() {
+  // Input: never parsed again. Read only into what the input budget grants,
+  // and drop it at once, until the peer has closed its side.
+  bool discard_pending = false;
+  if (!read_eof_) {
+    auto &input = buffered_fd_.input_buffer();
+    input.advance(input.size());
+    account_input();
+    std::size_t allowance = kDiscardChunkBytes;
+    if (input_budget_) {
+      if (input_accounted_ < kDiscardChunkBytes) {
+        input_accounted_ += reserve_input(kDiscardChunkBytes - input_accounted_);
+      }
+      allowance = input_accounted_;
+    }
+    bool peer_closed_before = td::can_close(buffered_fd_);
+    std::size_t read = 0;
+    if (allowance > 0) {
+      auto r_read = buffered_fd_.flush_read(allowance);
+      input.advance(input.size());
+      account_input();
+      if (r_read.is_error()) {
+        // A reset: nothing more can be delivered to this peer.
+        stop();
+        return;
+      }
+      read = r_read.ok();
+    }
+    if (read > 0) {
+      auto &totals = adnl_ext_closing_discard_totals();
+      totals.passes.fetch_add(1, std::memory_order_relaxed);
+      totals.bytes.fetch_add(read, std::memory_order_relaxed);
+      if (peer_closed_before) {
+        totals.bytes_after_peer_close.fetch_add(read, std::memory_order_relaxed);
+      }
+    }
+    // The poll layer reports Close as soon as the peer's FIN is known, while
+    // bytes may still be queued ahead of it. Once the FIN is known a drained
+    // socket reads 0, never "would block", so only a pass that read less than
+    // its allowance has reached the end of the peer's stream. Closing with
+    // input still unread would make the kernel reset the connection and drop
+    // the answers queued for the peer.
+    if (read < allowance && td::can_close(buffered_fd_)) {
+      read_eof_ = true;
+    } else if (read == allowance) {
+      // A full chunk, or no budget to read into: under edge-triggered polling
+      // the bytes left behind bring no new read edge, so come back for them.
+      discard_pending = true;
+    }
+  }
+  // Output: what was queued before the refusal goes out in full.
+  if (read_eof_ && buffered_fd_.ready_for_flush_write() > 0) {
+    // The poll layer treats the peer's half-close as a close and drops the
+    // write flag, also on every later writable edge. The socket can still be
+    // written after the peer's SHUT_WR, so try the write directly; a full
+    // kernel buffer clears the flag again (EAGAIN) and the retry below comes
+    // back, bounded by the closing deadline.
+    buffered_fd_.get_poll_info().add_flags(td::PollFlags::Write());
+  }
+  auto r_written = buffered_fd_.flush_write();
+  account_output();
+  if (r_written.is_error()) {
+    stop();
+    return;
+  }
+  if (!write_shut_ && buffered_fd_.ready_for_flush_write() == 0) {
+    shutdown_write(buffered_fd_);
+    write_shut_ = true;
+  }
+  if (write_shut_ && read_eof_) {
+    stop();
+    return;
+  }
+  // The closing deadline is enforced in alarm(), whose timestamp never moves
+  // past it.
+  if ((read_eof_ && !write_shut_) || discard_pending) {
+    // No writable edge will arrive after the peer's half-close (see above),
+    // and no read edge for input left after a discard pass: retry shortly,
+    // never past the deadline.
+    alarm_timestamp() = td::Timestamp::in(kClosingRetrySeconds);
+    alarm_timestamp().relax(closing_deadline_);
   }
 }
 
@@ -165,7 +475,7 @@ td::Status AdnlExtConnection::init_crypto(td::Slice S) {
 
 td::Status AdnlExtConnection::receive_packet(td::BufferSlice data) {
   LOG(DEBUG) << "received packet of size " << data.size();
-  if (data.size() < 64) {
+  if (data.size() < adnl_ext_packet_framing_bytes) {
     return td::Status::Error(ErrorCode::protoviolation, "too small packet");
   }
   auto S = data.as_slice();

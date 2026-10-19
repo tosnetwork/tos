@@ -6,10 +6,13 @@
 
 #pragma once
 
+#include <functional>
 #include <variant>
 
 #include "consensus/misbehavior.h"
+#include "crypto/pq/consensus-pq-signer.h"
 #include "keyring/keyring.hpp"
+#include "metrics/consensus-health.h"
 #include "overlay/overlays.h"
 #include "quic/quic-sender.h"
 #include "rldp2/rldp.h"
@@ -32,6 +35,24 @@ struct Start {
 using StartEvent = std::shared_ptr<const Start>;
 
 struct StopRequested {};
+
+// Finality has fallen far enough behind that this group must stop getting further ahead of
+// it, or has caught up again.
+//
+// Consensus does not wait for a certificate to be converted: the pool advances the round the
+// moment a quorum finalizes a slot. That is right while conversion keeps up, and it is how
+// an agreed certificate that cannot be converted turns into an unbounded problem -- every
+// later slot adds another certificate the resolver must hold, with its own retry, while the
+// one at the front never completes. Certificates are never dropped to make room, so the
+// group stops producing instead, and starts again when the backlog clears.
+//
+// The condition is reversible, and the event says which way it went.
+struct FinalizationBacklog {
+  bool over_limit;
+  size_t pending;
+
+  std::string contents_to_string() const;
+};
 
 struct FinalizeBlock {
   using ReturnType = td::Unit;
@@ -141,6 +162,10 @@ struct MisbehaviorReport {
 };
 
 struct TraceEvent {
+  // Routine and frequent: traced at DEBUG, so the default log keeps hours of the
+  // events an incident analysis needs (candidates, certificates, finalization).
+  using LogToDebug = std::true_type;
+
   std::unique_ptr<const stats::Event> event;
 
   std::string contents_to_string() const;
@@ -178,16 +203,22 @@ class Db {
   virtual td::actor::Task<> close() = 0;
 };
 
+// Bridge and restart-cut fixtures open the same durable consensus journal
+// implementation. The caller owns the session-specific path.
+std::unique_ptr<Db> open_rocksdb_consensus_db(std::string path);
+
 class Bus : public td::actor::Bus {
  public:
-  using Events = td::TypeList<Start, StopRequested, FinalizeBlock, OurLeaderWindowStarted, CandidateGenerated,
-                              CandidateReceived, ValidationRequest, IncomingProtocolMessage, OutgoingProtocolMessage,
-                              IncomingOverlayRequest, OutgoingOverlayRequest, BlockFinalizedInMasterchain,
-                              MisbehaviorReport, TraceEvent, NoncriticalParamsUpdated, PrecheckCandidateBroadcast>;
+  using Events =
+      td::TypeList<Start, StopRequested, FinalizeBlock, OurLeaderWindowStarted, CandidateGenerated, CandidateReceived,
+                   ValidationRequest, IncomingProtocolMessage, OutgoingProtocolMessage, IncomingOverlayRequest,
+                   OutgoingOverlayRequest, BlockFinalizedInMasterchain, MisbehaviorReport, TraceEvent,
+                   NoncriticalParamsUpdated, PrecheckCandidateBroadcast, FinalizationBacklog>;
 
   Bus() = default;
   ~Bus() override {
     db = {};
+    health_session.close();
     stop_promise.set_value(td::Unit());
   }
 
@@ -197,9 +228,16 @@ class Bus : public td::actor::Bus {
 
   ValidatorSessionId session_id;
 
+  mutable tos::health::SessionObservation health_session;
+
   ShardIdFull shard;
   td::actor::ActorId<ManagerFacade> manager;
   td::actor::ActorId<keyring::Keyring> keyring;
+  // The post-quantum consensus signer for the local validator, if this node is one. It is
+  // the exact key the set records for us (resolved by PqConsensusCustody::get_matching_store
+  // at group creation), and is the only key consensus signs with — never the keyring.
+  // Null for an observer, which produces nothing.
+  std::shared_ptr<const tos::pq::ValidatorPQKeyStore> pq_signer;
   td::Ref<ValidatorManagerOptions> validator_opts;
 
   std::vector<PeerValidator> validator_set;
@@ -209,6 +247,7 @@ class Bus : public td::actor::Bus {
   std::optional<PeerValidator> local_id;
   adnl::AdnlNodeIdShort local_adnl_id;
   std::vector<adnl::AdnlNodeIdShort> all_validators;
+  std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators;
 
   NewConsensusConfig config;
 
@@ -222,6 +261,14 @@ class Bus : public td::actor::Bus {
 };
 
 using BusHandle = td::actor::BusHandle<Bus>;
+
+// Observation-only seam: called after the real bridge has populated and started
+// its bus. Tests install it before scheduling actors and clear it after teardown.
+void observe_bridge_bus_for_test(std::function<void(BusHandle)> observer);
+
+// Observation-only seam: called with the group name when a bridge object is
+// destroyed, so a test can see that nothing still holds a retired group.
+void observe_bridge_destroyed_for_test(std::function<void(std::string)> observer);
 
 struct BlockAccepter {
   static void register_in(td::actor::Runtime&);

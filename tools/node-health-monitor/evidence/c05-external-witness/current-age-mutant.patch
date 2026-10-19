@@ -1,0 +1,13 @@
+diff --git a/tools/node-health-monitor/crates/health-services/src/manager.rs b/tools/node-health-monitor/crates/health-services/src/manager.rs
+index 7d7b8d5da..7aa66758d 100644
+--- a/tools/node-health-monitor/crates/health-services/src/manager.rs
++++ b/tools/node-health-monitor/crates/health-services/src/manager.rs
+@@ -725,8 +725,6 @@ impl Manager {
+                                             && view.source_epoch == receipt.source_epoch
+                                     }) {
+                                         current_views.remove(&receipt.endpoint_id);
+-                                        evidence_db
+-                                            .forget_witness_current_track(&receipt.endpoint_id);
+                                     }
+                                 } else {
+                                     let retained_bytes = current_views

@@ -4,16 +4,13 @@
 
 This adds a C/C++ verifier and a general-purpose TVM instruction, not a wallet,
 key store, authentication module or validator-signature migration. Existing
-Wallet V5 and Agent Account contracts and their bytecode are unchanged. The
-separate Rust VM under `tosctl/src/vm` does not gain this instruction from this
-C++ integration; callers must use the native VM/emulator until that execution
-route has a separately reviewed compatible implementation.
+Wallet V5 and Agent Account contracts and their bytecode are unchanged. The Rust VM under `tosctl/src/vm` also implements this instruction; the
+readiness suite compares both executors and compiled language bindings.
 
 `PQCHECKSIG_MLDSA44` is codepage-0 instruction **F93100 (24 bits)**, registered
 with `require_version(16)`. Versions 0 through 15 reject it as invalid opcode
-(6). `SUPPORTED_VERSION` is **16**, with no build option to select anything
-else; `test/pq-readiness/test_release_profile.py` fails if a second profile
-reappears or if the ceiling and `pq_mldsa44_min_version` ever disagree.
+(6). `SUPPORTED_VERSION` is **16** in this source tree. ML-DSA retains its version-16
+activation gate and wire format; see [Global Versions](GlobalVersions.md).
 
 That constant is not an execution gate, and must not be read as one. A node
 whose configuration names a higher version logs an error and keeps collating and
@@ -21,7 +18,7 @@ validating: see the `get_global_version() > supported_version()` checks in
 `validator/impl/collator.cpp` and `validator/impl/validate-query.cpp`, which
 warn and fall through. A local chain built from this source when the constant
 was still 15 was set to ConfigParam 8 version 16 and produced blocks that
-executed this instruction; `doc/macos-local-node.md` records that run. What
+executed this instruction. What
 actually gates the instruction is the global version the VM is constructed at,
 which comes from ConfigParam 8.
 
@@ -96,8 +93,8 @@ add their own dispatch overhead. Bounds constrain memory, hashing and traversal.
 The price is fixed protocol data, never derived from a validator's CPU clock.
 The validation workflow measures full-VM CPU cost across valid and invalid
 vectors against the existing paid Ed25519 tariff, and exercises repeated-call
-workloads. See [validation and calibration](tvm-mldsa44-validation.md) for the
-formula, gate, model budget and limitations. Runner measurements do not replace
+workloads. The executable checks live under
+[`test/pq-readiness/`](../test/pq-readiness/). Runner measurements do not replace
 production-hardware load testing or protocol approval before activation.
 
 The base fee exceeds the ordinary 10,000-gas external admission credit. A PQ
@@ -157,7 +154,8 @@ bindings, six guard mutations, wrapper and full-VM ASan/UBSan, and byte-identica
 transcript/BOC comparisons. Artifacts contain corpus manifests, verdicts, gas,
 commit-state hashes and diagnostic timing. Definitions are not execution proof;
 use the final commit's successful jobs and artifacts. The detailed acceptance
-matrix is in [tvm-mldsa44-validation.md](tvm-mldsa44-validation.md).
+matrix is implemented by the tests and CI workflows; historical calibration
+notes remain available in Git history.
 
 Public-vector success is not NIST/FIPS certification, an independent audit or a
 claim that the whole chain or production wallets are quantum-safe. Activation

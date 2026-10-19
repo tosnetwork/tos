@@ -1,0 +1,23 @@
+# Native configure/make projects do not inherit CMake's implicit Apple SDK flags.
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT DEFINED TOS_IOS_THIRD_PARTY_FLAGS)
+  if(NOT CMAKE_OSX_ARCHITECTURES MATCHES "^(arm64|x86_64)$")
+    message(FATAL_ERROR "Build one supported Apple mobile architecture at a time")
+  endif()
+  if(IS_ABSOLUTE "${CMAKE_OSX_SYSROOT}")
+    set(TOS_IOS_SDK_PATH "${CMAKE_OSX_SYSROOT}")
+  else()
+    execute_process(COMMAND xcrun --sdk ${CMAKE_OSX_SYSROOT} --show-sdk-path
+      OUTPUT_VARIABLE TOS_IOS_SDK_PATH OUTPUT_STRIP_TRAILING_WHITESPACE
+      RESULT_VARIABLE TOS_IOS_SDK_RESULT)
+    if(NOT TOS_IOS_SDK_RESULT EQUAL 0)
+      message(FATAL_ERROR "Cannot resolve the selected Apple mobile SDK")
+    endif()
+  endif()
+  if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+    set(TOS_IOS_MIN_FLAG "-mios-simulator-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+  else()
+    set(TOS_IOS_MIN_FLAG "-miphoneos-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}")
+  endif()
+  set(TOS_IOS_THIRD_PARTY_FLAGS "-arch ${CMAKE_OSX_ARCHITECTURES} -isysroot${TOS_IOS_SDK_PATH} ${TOS_IOS_MIN_FLAG}")
+  set(TOS_IOS_CONFIGURE_HOST "${CMAKE_OSX_ARCHITECTURES}-apple-darwin")
+endif()

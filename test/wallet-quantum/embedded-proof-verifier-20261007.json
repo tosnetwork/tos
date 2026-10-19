@@ -1,0 +1,43 @@
+{
+  "scope": "Host arm64 C ABI over existing authenticated proof verifier; no mobile integration acceptance",
+  "tests": {
+    "original_core": 49,
+    "embedded": 12,
+    "ctest": "proof-verify-embedded passed"
+  },
+  "control": "Removing both output memsets compiled and failed live-rollback-clears-result; restored all 12 passed",
+  "artifacts": [
+    {
+      "file": "20261007-proof-core-tests.log",
+      "sha256": "5e64e6f94b0bf4103736e7b6bf9742610b53cf77c59f66eee55e3c1cd648cb58",
+      "bytes": 13462
+    },
+    {
+      "file": "20261007-embedded-proof-live-tests.log",
+      "sha256": "0ea0848e04057c18121eedda0415e1f23ae93777a7d6109de5afdb50c429526c",
+      "bytes": 16308
+    },
+    {
+      "file": "20261007-embedded-proof-wipe-control.log",
+      "sha256": "362d660d3a6472ca3c37ced7996107ea6ba82a2d3001812fce929c6a83ef6e3f",
+      "bytes": 16308
+    },
+    {
+      "file": "20261007-embedded-proof-restored.log",
+      "sha256": "8a24b428541fbe173d10018bf1c3190cc4ce081121c8ea075865eefefc901fa1",
+      "bytes": 16308
+    },
+    {
+      "file": "20261007-embedded-proof-final-build.log",
+      "sha256": "a5e968578373e2ba03a281528387752abbc6ee6b519abe67accc91d30d90b778",
+      "bytes": 5701
+    }
+  ],
+  "limits": [
+    "Mobile build/JNI/Swift bindings remain unfinished",
+    "No in-process transport acquisition or persistent live-state wrapper yet",
+    "Pointer ranges must be valid and disjoint",
+    "Live status may only be consumed after durable state commit",
+    "This does not authorize wallet signing, POP, deployment, or broadcasting"
+  ]
+}

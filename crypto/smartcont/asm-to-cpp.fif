@@ -1,6 +1,9 @@
 #!/usr/bin/fift -s
 "TosUtil.fif" include
-"Asm.fif" include
+// PQ.fif includes Asm.fif and then defines the post-quantum instruction, so contracts
+// that use it assemble here the same way they do everywhere else. Defining an opcode is
+// all it does; contracts that never mention it are unaffected.
+"PQ.fif" include
 
 { ."usage: " @' $0 type ." <source> <destination> <name>" cr
   ."Compiles asm from <source> file and stores serialization in a way prepared for usage from c++ to <destination> " cr 1 halt

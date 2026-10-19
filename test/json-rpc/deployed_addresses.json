@@ -6,7 +6,7 @@
     },
     "wallet_v5r1": {
       "address": null,
-      "code_hash": "086a86aa9913c0ec52277adbb7e4b5695964dbb8c817ad0c305cdd345bbfac69",
+      "code_hash": "47527d7483a0d15309661a8328539150bf35b496776c62eb60485af5211c9a9d",
       "error": "Wallet V5 code changed; no account deployed from it yet. Re-run deployer.py to redeploy and refill this entry."
     },
     "session_wallet": {
@@ -19,19 +19,11 @@
       "code_hash": "bcd75d29a1d932013cf31300c5d924a5f02eaa92cd830ec0330104ffbad07928"
     },
     "multisig": {
-      "address": "0:ed5de5e4b88810a88059e23456dfe19605e6babf44fe4eb99607e59616adc4e7",
-      "code_hash": "1a2b1207016361d584b4eef762457578798e0860d20c0ce0662c1ca17e65a56f",
+      "address": null,
+      "code_hash": "f3778b6de56cac18c461c79332d902f2b0b2966009d92c6377ce3cf75f2cc2c9",
+      "error": "Multisig code changed; no account deployed from it yet. Re-run deployer.py to redeploy and refill this entry.",
       "n": 3,
       "k": 2
-    },
-    "nominator_pool": {
-      "address": "0:819483e9f7be67da6b8bfe643cc5d1293bcfe295030c47b2c8d57341b6cbd831",
-      "code_hash": "9a3ec14bc098f6b44064c305222caea2800f17dda85ee6a8198a7095ede10dcf",
-      "nominators_count": 1,
-      "validator_reward_share": 4000,
-      "max_nominators": 40,
-      "min_validator_stake": 1000000000,
-      "min_nominator_stake": 100000000
     },
     "restricted_expired": {
       "address": "0:2c7979d7650d5f5f920437d4ef432b004dd894e786973fe937b6943a8550c5e7",
@@ -46,12 +38,6 @@
     "highload_v1": {
       "address": "0:7a789fdf7631b0bb5813da39cfedff75cb6ce1b4002515e8b46c7851125532e2",
       "code_hash": "9cec5155dcb2b37716c032c5ef85947c01e32c4405a2611ee8d1122afff0e0c1"
-    },
-    "nominator_pool_withdraw": {
-      "address": "0:feae51b29c7c00837e17ddb02caddd48d451590a9be2d52097c605e376886b7b",
-      "code_hash": "9a3ec14bc098f6b44064c305222caea2800f17dda85ee6a8198a7095ede10dcf",
-      "nominators_count": 1,
-      "has_withdraw_request": true
     },
     "restricted": {
       "address": "0:6c702f1bbe04fea77def8c0448055f7d5d3ce6f6f77a61d258ca47303bc5fb59",

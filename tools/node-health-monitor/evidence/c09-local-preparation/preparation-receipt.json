@@ -1,0 +1,43 @@
+{
+  "scope": "C09 actual local preparation and red integration evidence",
+  "accepted": false,
+  "source_commit": "096ae1146ec75229e6a96dba1ea9dcdbb944d909",
+  "files": {
+    "real-source-epoch-red.json": "1ebece23a1747d053dc143f9ee9e5d21ce81e04e5c042a9ab4c0493b31fbbe7d",
+    "real-native-edge-snapshots.json": "b681458cc934a9906f235b4e9c948474df1ec16b188a33cfc57ccb6f34e2dde4",
+    "real-monitor-startup.json": "4e8cb45edce960a5872345a87695bf9ad6e12527b05aa284064c7ce22f51642e",
+    "runtime/deployment-public.json": "c13eb791872307709c3100344bd2cbb2914e0286e09a62f2fbdea7e1f287b4ca",
+    "runtime/native-core-deployment.json": "df79fecde7c79b44caea93e216d7f1ccbce79237e27763cd817102ac482a278d",
+    "runtime/native-edge-deployment.json": "98353f66c6bff2799f9a66c42177b700eda75f011e706d6dbc26b9e8c382ea3d",
+    "raw/native-base-build.log": "73ffb445421ec184e1ea9db1290dfe6680ea6dd9268e681f8a440a9f5fcdc071",
+    "raw/instrument-sensitivity.log": "95974dc29c8625d899ff556b926b17fbbd72bfa9bc56f2e75cbab424c207e10b"
+  },
+  "baseline-startup": {
+    "terminal_sha256": "4618af2a35c2233c99ff1c63584ceda9cc9818ca98f1943b22c26980d723e4d8",
+    "terminal": {
+      "elapsed_monotonic_ns": 60000713757,
+      "requested_seconds": 60,
+      "samples": 4,
+      "instrument_or_rpc_errors": 4,
+      "agreeing_height_advances": 3,
+      "bytes": 14138,
+      "completed_duration": true,
+      "c09_accepted": false,
+      "production_accepted": false
+    }
+  },
+  "baseline-startup-v2": {
+    "terminal_sha256": "b5529b2cf0ddde77873b4f79bb8da6e657128fe5d63c78152592bbc2d96f26c3",
+    "terminal": {
+      "elapsed_monotonic_ns": 60002177909,
+      "requested_seconds": 60,
+      "samples": 4,
+      "instrument_or_rpc_errors": 0,
+      "agreeing_height_advances": 3,
+      "bytes": 39831,
+      "completed_duration": true,
+      "c09_accepted": false,
+      "production_accepted": false
+    }
+  }
+}

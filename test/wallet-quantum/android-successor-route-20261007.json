@@ -1,0 +1,62 @@
+{
+  "scope": "Android local successor-route reconstruction and typed installed-state integration; not proof of funded migration",
+  "android_revision": "d95cd77",
+  "validation": [
+    "New vault is paired to original wallet address",
+    "Incompatible module/vault code or network/global ID refuse",
+    "Three control variants compile and trigger named runtime failures; restored 31 related tests pass",
+    "Final account app module compiles"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-android-route-baseline.log",
+      "bytes": 10812,
+      "sha256": "ce712b0ba0dd59d4372077e2c96487f32c06f6af838c9e9edb57560f5cd353b2"
+    },
+    {
+      "file": "20261007-route-restored-regressions.log",
+      "bytes": 9799,
+      "sha256": "4689adb71c9932fa25a65166efd9a78446f266deb857ad58f7f89f6823ecfb86"
+    },
+    {
+      "file": "20261007-android-successor-bind-final.log",
+      "bytes": 22062,
+      "sha256": "7fd6d2bf5182599bc9c87ca4455fb894abffb966082749e0b27dc4ec193755f7"
+    },
+    {
+      "file": "20261007-route-wallet-control.log",
+      "bytes": 10289,
+      "sha256": "4f35a96c286ca907ca5899071bdd49de9fe87c9ae67896d54dcc24029d70abf0"
+    },
+    {
+      "file": "20261007-route-wallet-control.xml",
+      "bytes": 5410,
+      "sha256": "3172da1c704820cb1e81f54bd95e455bdc376e04317963cb5ff2e1419bc8cd56"
+    },
+    {
+      "file": "20261007-route-namespace-control.log",
+      "bytes": 10275,
+      "sha256": "6e4cfd6498b1f85c7273b553c1e6bb56e6730a7054169baa6a4940405ec8b7f4"
+    },
+    {
+      "file": "20261007-route-namespace-control.xml",
+      "bytes": 4987,
+      "sha256": "2ea1b1f0f385898742bd8179a7aa0fa8f6e0c52efa45661a31379eeede3a3c53"
+    },
+    {
+      "file": "20261007-route-code-control.log",
+      "bytes": 10275,
+      "sha256": "c825b5f74ca52bad720126e159e7e4524bd6d5d8863cb23273a0a96cdbc9007b"
+    },
+    {
+      "file": "20261007-route-code-control.xml",
+      "bytes": 4986,
+      "sha256": "522f9069f8b4df282591e9072ec0bee2f8611b0374670beee19399032b5db05d"
+    }
+  ],
+  "pending": [
+    "Authenticated deployed successor proof positive/negative integration",
+    "Funded dual POP, staging, same-address rotation and current enrollment persistence",
+    "Fee signer/custody and final recipient lifecycle"
+  ]
+}

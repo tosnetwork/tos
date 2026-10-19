@@ -1,8 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import { Cell } from './Cell';
 import { beginCell } from './Builder';
+import { BitString } from './BitString';
 
 describe('Cell', () => {
+    it('isolates cached hashes and cell bits from mutable caller buffers', () => {
+        const input = new Uint8Array([42]);
+        const bits = new BitString(input, 0, 8);
+        const cell = new Cell({ bits });
+        const originalHash = cell.hash().slice();
+        const originalBoc = cell.toBoc().slice();
+        const parent = beginCell().storeRef(cell).endCell();
+        const parentHash = parent.hash().slice();
+        input.fill(0);
+        expect(cell.beginParse().loadUint(8)).toBe(42);
+        const exposed = bits.subbuffer(0, 8);
+        expect(exposed).not.toBeNull();
+        exposed!.fill(0);
+        expect(cell.beginParse().loadUint(8)).toBe(42);
+        cell.hash().fill(0);
+        expect(cell.hash()).toEqual(originalHash);
+        expect(cell.toBoc()).toEqual(originalBoc);
+        expect(parent.hash()).toEqual(parentHash);
+        expect(beginCell().storeRef(cell).endCell().hash()).toEqual(parentHash);
+    });
     // ---- Basic build/serialize/deserialize ----
     it('should build a cell, serialize to BOC, and deserialize back', () => {
         const cell = beginCell().storeUint(42, 32).endCell();

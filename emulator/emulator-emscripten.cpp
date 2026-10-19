@@ -275,7 +275,8 @@ const char* emulate(const char* config, const char* libs, int verbosity, const c
   // setters that immediately deref the handle. Fail-fast with a structured
   // JSON error.
   if (em == nullptr) {
-    return strdup(R"({"fail":true,"message":"transaction_emulator_create returned null (bad config?)"})");
+    // A custom delimiter: the message itself contains the default terminator.
+    return strdup(R"json({"fail":true,"message":"transaction_emulator_create returned null (bad config?)"})json");
   }
   auto result = emulate_with_emulator(em, libs, account, message, params);
   transaction_emulator_destroy(em);

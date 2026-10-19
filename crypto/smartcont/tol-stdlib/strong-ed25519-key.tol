@@ -1,0 +1,48 @@
+// Ed25519 public keys a contract must not accept as an independent authority:
+// small-order points and non-canonical encodings, prohibited as a set.
+//
+// Tol counterpart of crypto/smartcont/strong-ed25519-key.fc, with the same
+// keys read the same way: the 256-bit integer `loadUint(256)` produces from
+// the 32 encoded bytes. For a key in the 8-torsion subgroup a signature can be
+// forged with no secret; this repository's tests demonstrate it for the
+// identity and order-2 point with the sign bit set and for the canonical
+// order-2 point. Not every encoding below takes a forgery (the VM's signature
+// check itself refuses the all-zero key and the canonical identity), but all
+// are refused regardless. A contract that counts a stored key's signature
+// toward an authorization must refuse them, or whoever configured the key can
+// name one nobody needs a secret for.
+//
+// Refused:
+//   - the eight canonical encodings of the torsion subgroup;
+//   - the identity (y = 1) and the order-2 point (y = -1) with the sign bit
+//     set. Both have x = 0, so the sign bit names no other point: these are
+//     non-canonical aliases of the same two points, and their y is in range;
+//   - every encoding whose y is at least 2^255 - 19, with either sign bit.
+// The other torsion points have x != 0, so flipping their sign bit gives
+// another canonical torsion encoding already listed. Callers throw their own
+// error code.
+tol 1.3
+
+// Grouped by first byte, as in strong-ed25519-key.fc: below 0xec the listed
+// encodings come in pairs that differ only in the sign bit, so one comparison
+// with that bit forced on covers both; 0xec..0xff share one test, bytes 1..30
+// all 0xff and y's top byte 0x7f with either sign bit (the order-2 point and
+// its alias at 0xec, every y >= 2^255 - 19 above it).
+
+/// True for every key [ed25519IsWeakKey] refuses. A few instructions, so a
+/// caller short of gas can skip the full check for almost every real key.
+fun ed25519KeyMayBeWeak(publicKey: int): bool {
+    val first = publicKey >> 248;
+    return first <= 0x01 || first == 0x26 || first == 0xc7 || first >= 0xec;
+}
+
+fun ed25519IsWeakKey(publicKey: int): bool {
+    if ((publicKey >> 248) >= 0xec) {
+        return ((publicKey >> 8) & ((1 << 240) - 1)) == ((1 << 240) - 1) && (publicKey & 127) == 127;
+    }
+    val eitherSign = publicKey | 0x80;
+    return eitherSign == 0x80
+        || eitherSign == 0x0100000000000000000000000000000000000000000000000000000000000080
+        || eitherSign == 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85
+        || eitherSign == 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa;
+}

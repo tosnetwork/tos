@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "source_profile": "development_native_process_v2",
+  "status": "partial",
+  "run_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "network_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "query_watermark": "17",
+  "manager_watermark": "3",
+  "process": [],
+  "missing_process": [
+    {
+      "node_id": "v1",
+      "scope_id": "node"
+    }
+  ],
+  "native": [],
+  "missing_native": [
+    {
+      "node_id": "v1",
+      "scope_id": "node"
+    }
+  ],
+  "health": [],
+  "missing_health": [
+    {
+      "node_id": "v1",
+      "scope_id": "node"
+    }
+  ],
+  "truncated": []
+}

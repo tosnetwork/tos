@@ -1,0 +1,28 @@
+[1;36m[ 3][t 1][2026-09-29 16:16:56.814116473][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;31m[ 1][t 1][2026-09-29 16:16:56.814325229][pool.cpp:385][!c04-isolated.SimplexPool]	Vote journal unusable, this group will not vote: fixture journal unusable[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.835108172][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::simplex::[1;33mBroadcastVote[1;36m@0x7e4b84060260[1;90m{vote=NotarizeVote{id={0, IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=, ?}}}[1;36m on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.835203228][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::simplex::[1;33mBroadcastVote[0m@0x7e4b84060260 on c04-isolated bus[0m
+[1;31m[ 1][t 2][2026-09-29 16:16:56.835226404][pool.cpp:902][!c04-isolated.SimplexPool]	consensus: refusing to vote, the vote journal is unusable: fixture journal unusable[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.835243679][BusRuntime.h:89][!c04-driver]	Response for tos::validator::consensus::simplex::[1;33mBroadcastVote[1;36m@0x7e4b84060260 is ready[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.855509128][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7e4b7c001570 on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.855568148][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7e4b7c001570 on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.855583718][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7e4b7c001570 on c04-isolated bus[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.856791565][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;31m[ 1][t 2][2026-09-29 16:16:56.856805666][pool.cpp:385][!c04-isolated.SimplexPool]	Vote journal unusable, this group will not vote: fixture journal unusable[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.877103286][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::simplex::[1;33mBroadcastVote[1;36m@0x7e4b84060770[1;90m{vote=NotarizeVote{id={0, IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=, ?}}}[1;36m on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.877167961][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::simplex::[1;33mBroadcastVote[0m@0x7e4b84060770 on c04-isolated bus[0m
+[1;31m[ 1][t 1][2026-09-29 16:16:56.877187462][pool.cpp:902][!c04-isolated.SimplexPool]	consensus: refusing to vote, the vote journal is unusable: fixture journal unusable[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.877201661][BusRuntime.h:89][!c04-driver]	Response for tos::validator::consensus::simplex::[1;33mBroadcastVote[1;36m@0x7e4b84060770 is ready[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.897510987][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7e4b8405e810 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.897570308][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7e4b8405e810 on c04-isolated bus[0m
+[0m[ 4][t 1][2026-09-29 16:16:56.897585647][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7e4b8405e810 on c04-isolated bus[0m
+[1;36m[ 3][t 1][2026-09-29 16:16:56.898784189][pool.cpp:360][!c04-isolated.SimplexPool]	Validator group started. We are validator 0 at kJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA= with weight 1 out of 4[0m
+[1;31m[ 1][t 1][2026-09-29 16:16:56.898800343][pool.cpp:385][!c04-isolated.SimplexPool]	Vote journal unusable, this group will not vote: fixture journal unusable[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.919056708][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::simplex::[1;33mBroadcastVote[1;36m@0x7e4b84061550[1;90m{vote=NotarizeVote{id={0, IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=, ?}}}[1;36m on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.919119159][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::simplex::[1;33mBroadcastVote[0m@0x7e4b84061550 on c04-isolated bus[0m
+[1;31m[ 1][t 2][2026-09-29 16:16:56.919138369][pool.cpp:902][!c04-isolated.SimplexPool]	consensus: refusing to vote, the vote journal is unusable: fixture journal unusable[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.919152729][BusRuntime.h:89][!c04-driver]	Response for tos::validator::consensus::simplex::[1;33mBroadcastVote[1;36m@0x7e4b84061550 is ready[0m
+[1;36m[ 3][t 2][2026-09-29 16:16:56.939466584][BusRuntime.h:238][!c04-driver]	Published event tos::validator::consensus::[1;33mStopRequested[1;36m@0x7e4b7c000c70 on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.939524881][BusRuntime.h:240][!c04-isolated.Fixture]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7e4b7c000c70 on c04-isolated bus[0m
+[0m[ 4][t 2][2026-09-29 16:16:56.939540486][BusRuntime.h:240][!c04-isolated.SimplexPool]	Received event tos::validator::consensus::[1;33mStopRequested[0m@0x7e4b7c000c70 on c04-isolated bus[0m
+C04_ACTION_PASS journal-suppressed: production branches, trace without consumer, three rotations

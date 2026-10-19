@@ -1,0 +1,185 @@
+{
+  "controls": [
+    {
+      "control": "clock",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 21,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v3",
+      "restored_exit": 0
+    },
+    {
+      "control": "logical-time",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 22,
+      "anchors": 2,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v3",
+      "restored_exit": 0
+    },
+    {
+      "control": "seed",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 24,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "vm-context",
+      "restored_exit": 0
+    },
+    {
+      "control": "balance",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 25,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v3",
+      "restored_exit": 0
+    },
+    {
+      "control": "config",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 27,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v3",
+      "restored_exit": 0
+    },
+    {
+      "control": "code",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 30,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v4",
+      "restored_exit": 0
+    },
+    {
+      "control": "previous",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 38,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v4",
+      "restored_exit": 0
+    },
+    {
+      "control": "unpacked",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 41,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v6",
+      "restored_exit": 0
+    },
+    {
+      "control": "debt",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 42,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v6",
+      "restored_exit": 0
+    },
+    {
+      "control": "precompiled",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 48,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v6",
+      "restored_exit": 0
+    },
+    {
+      "control": "version",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 50,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "context-v11",
+      "restored_exit": 0
+    },
+    {
+      "control": "account-library",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 63,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "libraries-v15",
+      "restored_exit": 0
+    },
+    {
+      "control": "global-library",
+      "file": "crypto/block/get-method-context.cpp",
+      "line": 60,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "libraries-v14-global",
+      "restored_exit": 0
+    },
+    {
+      "control": "basic-export",
+      "file": "validator/impl/liteserver.cpp",
+      "line": 1510,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "wire-c7-participants-12",
+      "restored_exit": 0
+    },
+    {
+      "control": "call-site",
+      "file": "validator/impl/liteserver.cpp",
+      "line": 1490,
+      "anchors": 2,
+      "green_exit": 0,
+      "red_exit": 1,
+      "assertion": "liteserver-context-fields",
+      "restored_exit": 0
+    },
+    {
+      "control": "selector",
+      "file": ".github/workflows/branch-chain-python.yml",
+      "line": 83,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0,
+      "reason": "getter-context independent parity gate is absent"
+    },
+    {
+      "control": "registration",
+      "file": "CMakeLists.txt",
+      "line": 1619,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0,
+      "reason": "getter-context CTest registrations or fixture dependency are absent"
+    },
+    {
+      "control": "oracle",
+      "file": "test/validator/getter-context-reference.h",
+      "line": 28,
+      "anchors": 1,
+      "green_exit": 0,
+      "red_exit": 1,
+      "restored_exit": 0,
+      "reason": "independent context oracle differs from the frozen source"
+    }
+  ],
+  "not_red": 0
+}

@@ -1,0 +1,9 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-anchor-integration/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.93s
+     Running tests/witness_archive.rs (target/debug/deps/witness_archive-b38b2ff1cb1b2671)
+
+running 1 test
+test synthetic_valid_clock_current_route_qualifies_context_without_proof ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.04s
+

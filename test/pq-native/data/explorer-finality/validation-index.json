@@ -1,0 +1,364 @@
+{
+  "merge_base": "018fc46b2",
+  "platform": "macOS arm64; AppleClang 21 Release",
+  "live_requests": {
+    "vm18": 62,
+    "vm16": 42
+  },
+  "schema_fragments": {
+    "DecodedConfig": 19,
+    "ErrorInfo": 3,
+    "PqSignaturesResult": 10,
+    "ProofResult": 4,
+    "PublicAuthorization": 18
+  },
+  "sensitivity_source_note": "Each receipt pins its measured source. The first five precede formatting-only normalization; the deadline, depth and output-admission controls exercise the final code. The output control uses an exact missing-backend assertion as its deliberate backend-access trap.",
+  "sensitivity_controls": [
+    {
+      "case": "full-block-identity",
+      "source": "validator-engine/json-rpc-explorer.cpp",
+      "source_sha256": "21a05fa4afde3ab7f6a81e5b2a57ad34b237c3ab9a3cf728ba147b7ba5906c40",
+      "expected_failure": "failure.is_error()",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-14 23:17:24.934414][test-json-rpc-explorer.cpp:145]\tExpectation failed: failure.is_error()!\u001b[0m"
+      ]
+    },
+    {
+      "case": "worker-permit-lifetime",
+      "source": "validator-engine/json-rpc-explorer.cpp",
+      "source_sha256": "21a05fa4afde3ab7f6a81e5b2a57ad34b237c3ab9a3cf728ba147b7ba5906c40",
+      "expected_failure": "premature == nullptr",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-14 23:17:31.048181][test-json-rpc-explorer.cpp:321]\tExpectation failed: premature == nullptr!\u001b[0m"
+      ]
+    },
+    {
+      "case": "code-identity",
+      "source": "validator-engine/json-rpc-explorer-account.cpp",
+      "source_sha256": "cc7cfe64254b639df96a4d9ce8dcdefc4ac2f0bf9dc7a927066e8716b4118fd9",
+      "expected_failure": "unknown.ok().family.empty()",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-14 23:17:36.677678][test-json-rpc-explorer.cpp:169]\tExpectation failed: unknown.ok().family.empty()!\u001b[0m"
+      ]
+    },
+    {
+      "case": "trusted-historical-session",
+      "source": "crypto/block/signature-set.cpp",
+      "source_sha256": "6dd95e5bb183d689444d7dc6ef3fe1099bf63b8ea60f53a11a645110d803e80c",
+      "expected_failure": "explorer accepted self-declared session",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "PQ_LITE_FORWARD_PROOF_FAILURE: explorer accepted self-declared session"
+      ]
+    },
+    {
+      "case": "backward-state-proof",
+      "source": "crypto/block/check-proof.cpp",
+      "source_sha256": "1e46252f05c48edd21e6588c22fcf8619e1cbb4ab063984df755f5cfe967a091",
+      "expected_failure": "refused.is_error()",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-14 23:20:49.592599][test-json-rpc-explorer.cpp:366]\tExpectation failed: refused.is_error()!\u001b[0m"
+      ]
+    },
+    {
+      "case": "policy-deadline",
+      "source": "validator-engine/json-rpc-explorer.cpp",
+      "source_sha256": "d41b733d09e88a807131c9464fad0ffea6d631cf0cb4cad004a989703515dd7a",
+      "expected_failure": "at_deadline_retired",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-14 23:45:40.975663][test-json-rpc-explorer.cpp:309]\tExpectation failed: at_deadline_retired!\u001b[0m"
+      ]
+    },
+    {
+      "case": "cell-depth",
+      "source": "validator-engine/json-rpc-explorer.cpp",
+      "source_sha256": "d41b733d09e88a807131c9464fad0ffea6d631cf0cb4cad004a989703515dd7a",
+      "expected_failure": "result.is_error()",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-14 23:46:08.972468][test-json-rpc-explorer.cpp:219]\tExpectation failed: result.is_error()!\u001b[0m"
+      ]
+    },
+    {
+      "case": "response-budget",
+      "source": "validator-engine/json-rpc-server-explorer.cpp",
+      "source_sha256": "cadbdc9c5057c48be7c79a2cf3b2a25d26e6e10f9c968aa985fa9b37d9e7229d",
+      "expected_failure": "[!explorer-query]\tCheck `!empty()` failed",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 2][2026-10-14 23:48:17.033027][ActorId.h:81][!explorer-query]\tCheck `!empty()` failed\u001b[0m"
+      ]
+    },
+    {
+      "case": "get-url-scalars",
+      "source": "validator-engine/json-rpc-server.cpp",
+      "source_sha256": "c559c953adbcfc7d8db733fb405f574bd7b13dfb3de1ae77919125356e074855",
+      "expected_failure": "HTTP/1.1 422 Unprocessable Entity != HTTP/1.1 429 Too Many Requests",
+      "red_exit": 1,
+      "green_exit": 0,
+      "failure_lines": [
+        "\u001b[1;31m[ 0][t 0][2026-10-15 00:12:31.885484][test-json-rpc-transport.cpp:1170]\tExpectation failed: status is not equal to std::string(path.second ? \"HTTP/1.1 429 Too Many Requests\" : \"HTTP/1.1 422 Unprocessable Entity\") (HTTP/1.1 422 Unprocessable Entity != HTTP/1.1 429 Too Many Requests)\u001b[0m"
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/00-rpc-evidence.json",
+      "sha256": "4913a19bead5bbe01907805e1fb3a4984cc3736918f06db85dd3152aed6a5089",
+      "bytes": 273857,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/01-rpc-evidence.json",
+      "sha256": "4e3829a4d79c0bbb9d86ec36c6e208486c84abd69a4d66bd0f7ba69cbb676e88",
+      "bytes": 104388,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/02-controls.json",
+      "sha256": "aa03c5aa7ef8390d426cd923e8ef0154b189b894ca906eba8c1f05d48a474b0d",
+      "bytes": 2624,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/03-controls.json",
+      "sha256": "f13d527a75e4346d3d37e97e454243f0d24edb588cde49a4ff614d1e397dbc7e",
+      "bytes": 676,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/04-explorer-final-all-tests.log",
+      "sha256": "3dda85520ad623fb6eacb3347fbb2fc61c6d6dd2de0126cc1cb1a0d8423b58da",
+      "bytes": 2003,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/05-explorer-final-transport-explorer.log",
+      "sha256": "58943de4f0020ac578dcbfa77a6e42223093039c678596e935c43228497751d8",
+      "bytes": 59768,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/06-explorer-final-transport-relay.log",
+      "sha256": "00ffba099c20f6a89ae14e527b3bdf92a10da0f33f6e3c668be8c478e7e42812",
+      "bytes": 22762,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/07-explorer-final-jobs1.log",
+      "sha256": "025dc78176bbe937fdd19294cd062a2c2f2eef609caa238b6e677d93529dc186",
+      "bytes": 2720,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/08-explorer-final-jobs8.log",
+      "sha256": "ccbd7e678a015c8e4f8e43a8f49153afe8a73d5c2aaf0becf6d21e18820e7bfd",
+      "bytes": 2719,
+      "retention": "Retained local public artifact through 2026-11-14; CI receipts are independently retained for 14 days."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/explorer-final-transport-portable.log",
+      "sha256": "aa76e3f37d4e7f72bcf9bf6be4237883573d5eda2eaf0e401fd2c5bd15dc64c7",
+      "bytes": 310913,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/deadline-controls.json",
+      "sha256": "12198e8b9dccd62a5451a7b67ec6455f08ad14002eb14f222f645bbd00a51523",
+      "bytes": 683,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/depth-controls.json",
+      "sha256": "451d4fa989ff654da14ed6d50fea0c5930184dde4f40984c7d44b6b74cc2ae8a",
+      "bytes": 674,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/output-controls.json",
+      "sha256": "0bbc1464b1c3694300d9b1ed0675a63ec754479fcad149013039acb478ddcba6",
+      "bytes": 702,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/explorer-final-transport-portable-v3.log",
+      "sha256": "6063190c726bab094274ab5d9761055e732d7d1a1c2c937045d926a05e9eee07",
+      "bytes": 353413,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/explorer-finality-final-tests.log",
+      "sha256": "fa92da13e49f901c7778f4b16e9005fdc7c4fd999864e05e316180b50aa58108",
+      "bytes": 560,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-v18-rpc-evidence.json",
+      "sha256": "df7c134d4d61f032f280ce5ec8556c126bed35c8b2f5846cb0251e4da29a4fc4",
+      "bytes": 307046,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-v16-rpc-evidence.json",
+      "sha256": "5d543426bce5e45341b3edb169842704a987b456294a6313f5f82171e4637794",
+      "bytes": 136877,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-url-controls.json",
+      "sha256": "02e4b94ebb09b5b553c4b0ae87ca9b650118cb253cbecd854f7545c9791bf46f",
+      "bytes": 909,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-regression-before-fix.log",
+      "sha256": "7a7aa21811d0811049d9ffd489c1cc76363ee8f1b754ee293f2367fb1ff7acb2",
+      "bytes": 4783,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-regression-after-fix.log",
+      "sha256": "e132f5867e89b02834bbb90ccb240ca0d956fc7140b189093f46f087b280667c",
+      "bytes": 36553,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-final-portable-http.log",
+      "sha256": "f670395911c1d6a3303eddfbe3b5133066a7a76ce7b3fe41213577220370ef30",
+      "bytes": 390041,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/get-final-14-ctest.log",
+      "sha256": "78208d128c98282d12424d736cfe99dddd5991ac7588f74e84828e4f031f47f0",
+      "bytes": 2003,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/linux-analysis-549212a22-refused.log",
+      "sha256": "290fe26dd46ba4a878f026f0d9f63d462d10917b450340bba0d320f422fe9ff4",
+      "bytes": 3271977,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/mhd-head-prepare.log",
+      "sha256": "6047f15772cb924c04857b9f95c027c46a24ce8c8b6cb9fd90efdff040f17ce4",
+      "bytes": 83927,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/mhd-base-prepare.log",
+      "sha256": "ab9cecd1f2003e0ec97dd25edab9c89627f75c56ae97e533d0645f3a56adbee8",
+      "bytes": 83927,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/mhd-dependency-scan.out",
+      "sha256": "bf9a0b99a4e7b6f6d34b8f1546b98c4b63e229ec476cf8994329bb1687926b07",
+      "bytes": 209708,
+      "retention": "Retained local public artifact through 2026-11-14."
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-explorer-pq-20261015/linux-analysis-3b55d9c31-refused.log",
+      "sha256": "1a168ca3b2e9f1dae656b045b8f07488fa782047f97ecc16ec90225130799249",
+      "bytes": 3543158,
+      "retention": "Retained local public artifact through 2026-11-14."
+    }
+  ],
+  "linux_analysis": "Fresh Linux gate required after preparing the complete default build graph on each side; two partial-target attempts refused with exit 2 before code analysis.",
+  "pull_request_ci": "not yet updated",
+  "native_ctest_entries_passed": 14,
+  "operator_worker_limits_tested": [
+    1,
+    8
+  ],
+  "transport_tests_passed": {
+    "explorer": 5,
+    "proof_relay": 1,
+    "portable_suite": 18
+  },
+  "wire_schema_checks": 130,
+  "wire_schema_sensitivity_controls": 8,
+  "unrelated_python_typecheck": {
+    "baseline_commit": "018fc46b2",
+    "baseline_summary": {
+      "filesAnalyzed": 126,
+      "errorCount": 856,
+      "warningCount": 7282,
+      "informationCount": 0,
+      "timeInSec": 7.587
+    },
+    "candidate_ci_errors": 856,
+    "candidate_ci_warnings": 7282,
+    "ci_run": "https://github.com/tosnetwork/tos/actions/runs/38655132001",
+    "scope_note": "Only test/integration and test/tostester are typechecked. Neither tree, pyproject.toml, uv.lock nor the TL schema is changed by this implementation."
+  },
+  "native_explorer_cases": 8,
+  "transport_fixture_correction": "A previous full selection observed an early-close client short write in the existing wrong-key fixture. Client short writes are now allowed; 401, connection closure and zero body reservation remain required. The final 17-entry portable selection passes.",
+  "latest_changed_native_entries_passed": 14,
+  "get_compatibility_correction": {
+    "reviewed_commit": "64ca29b4ce34ee8a93d58c09f2ae8fa7f81bcf2f",
+    "review": "https://github.com/tosnetwork/tos/pull/207#issuecomment-6181275473",
+    "before": "Actual GET seqno=1 returned 422 before output admission.",
+    "after": "Known canonical numeric/boolean URL scalars normalized only at the four explorer GET adapters. JSON height selectors and opt-in flags stay strict.",
+    "http_fixture": "Ten GET cases with API-key authentication on/off; five valid cases reach the 429 output-admission gate and five malformed cases remain 422.",
+    "live_get_methods": [
+      "getMasterchainBlockSignatures",
+      "getAccountCapability",
+      "getConfigParam"
+    ],
+    "source_sha256": {
+      "validator-engine/json-rpc-server.cpp": "c559c953adbcfc7d8db733fb405f574bd7b13dfb3de1ae77919125356e074855",
+      "test/test-json-rpc-transport.cpp": "151b47174d2293f4f014bf3fa36698d1edacb89bfd1ea76e5e42c621ef472edb",
+      "scripts/test-explorer-pq-rpc.py": "8fc1040c6dc39d2fcc3eab1cf7456cbff7eedbe3898ecc7a1875012c85c4c59c",
+      "scripts/test-explorer-pq-controls.py": "33863945c9b018dedd964d7ef18d9d827b28663c2a8df57c944e682fc93d3329"
+    }
+  },
+  "observation_scope": "Local validation and point-in-time CI observations before final PR update; not a live status feed.",
+  "linux_analysis_attempts": [
+    {
+      "source_commit": "549212a227323eb3d21f0e9b06aec4dc2663582f",
+      "run": "https://github.com/tosnetwork/tos/actions/runs/38659055692/job/116175694130",
+      "exit": 2,
+      "positive_controls": 10,
+      "codechecker": "6.29.1",
+      "llvm": "21.1.8",
+      "rule_set": "73600cde7a576a01",
+      "stage": "dependency scan before code analysis",
+      "reason": "Vendored microhttpd.h was not installed: the preparation target list omitted mhd.",
+      "correction": "Build mhd independently in both candidate and clean merge-base builds.",
+      "local_preflight": {
+        "candidate_mhd_build_exit": 0,
+        "base_mhd_build_exit": 0,
+        "previously_failing_compilation_scan_exit": 0,
+        "both_generated_header_sha256": "265b0ad618c22d0a648326d751d1c08826399d67da13e471f4053bcdf7a9f579"
+      },
+      "scope_note": "The successful local single-compilation scan verifies header preparation only, not a passing Linux two-build gate."
+    },
+    {
+      "source_commit": "3b55d9c31220d686e5fff94963e20e1719071a6b",
+      "run": "https://github.com/tosnetwork/tos/actions/runs/38664610859/job/116193543078",
+      "exit": 2,
+      "positive_controls": 10,
+      "codechecker": "6.29.1",
+      "llvm": "21.1.8",
+      "rule_set": "73600cde7a576a01",
+      "stage": "dependency scan before code analysis",
+      "reason": "smartcont/provider-code.h was absent because the storage daemon was outside the prepared target subset.",
+      "correction": "Prepare the complete default build graph in both independent checkouts; preserve all gate coverage and controls."
+    }
+  ]
+}

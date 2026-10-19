@@ -65,7 +65,7 @@ async fn create_and_fill_v1_vault(
     let crypto2 = crypto_factory.new_crypto()?;
 
     let master_key = create_test_master_key().await?;
-    let temp_dir = tempfile::TempDir::new()?;
+    let temp_dir = private_tempdir()?;
     let file_path = temp_dir.path().join("vault.json");
     let storage = FileJsonStorage::new(master_key, &file_path, crypto_factory, false).await?;
 
@@ -85,7 +85,11 @@ async fn create_and_fill_v1_vault(
 
 #[tokio::test]
 #[serial_test::serial]
+#[allow(clippy::await_holding_lock, reason = "the guard must cover the drop and reopen")]
 async fn test_migrate_from_v1() -> anyhow::Result<()> {
+    // The helper drops its Vault and this test reopens the same file; a child forked
+    // in between by another test would still hold the inherited writer lock.
+    let _guard = crate::process_test_guard();
     for config in fixture() {
         if config.storage_type != StorageType::FileJson {
             continue;
@@ -145,7 +149,9 @@ async fn test_migrate_from_v1() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[serial_test::serial]
+#[allow(clippy::await_holding_lock, reason = "the guard must cover the drop and reopen")]
 async fn test_auto_migrate_false_rejects_v1() -> anyhow::Result<()> {
+    let _guard = crate::process_test_guard();
     for config in fixture() {
         if config.storage_type != StorageType::FileJson {
             continue;
@@ -177,7 +183,9 @@ async fn test_auto_migrate_false_rejects_v1() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[serial_test::serial]
+#[allow(clippy::await_holding_lock, reason = "the guard must cover the drop and reopen")]
 async fn test_migrate_creates_backup() -> anyhow::Result<()> {
+    let _guard = crate::process_test_guard();
     for config in fixture() {
         if config.storage_type != StorageType::FileJson {
             continue;

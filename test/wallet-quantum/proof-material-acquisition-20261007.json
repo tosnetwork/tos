@@ -1,0 +1,38 @@
+{
+  "scope": "Transport-neutral acquisition planner; mobile network adapter remains unfinished",
+  "validation": [
+    "CLI and verifier compiled after extraction",
+    "Original proof core: 49 cases passed",
+    "Acquisition: correct four-query sequence and verification with captured real material",
+    "Single and cumulative 64MiB response limits",
+    "Byte limit removal compiled and failed cumulative-limit case; restored all four passed"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-acquisition-core-regression.log",
+      "bytes": 13462,
+      "sha256": "035906471ad77025e704d2664976444b51c2e75c1513817ade839b34f7debac3"
+    },
+    {
+      "file": "20261007-acquisition-tests.log",
+      "bytes": 4290,
+      "sha256": "1cf6d0065530092142101576e0ccf7f608f6c36029976f90248f5a55a39df986"
+    },
+    {
+      "file": "20261007-acquisition-limit-control.log",
+      "bytes": 4290,
+      "sha256": "dfa2d143a44db3b8934f3f023be7eb0d507414b3413f493721455e110de85392"
+    },
+    {
+      "file": "20261007-acquisition-restored.log",
+      "bytes": 4290,
+      "sha256": "4e508968cd8a0a7af4896cf6dccc60284d69f924bf7da0c50eef260ff2394dc7"
+    }
+  ],
+  "limits": [
+    "Captured reply replay is not live-network acquisition",
+    "No phone callback or HTTP/ADNL transport binding yet",
+    "Material is untrusted until the local verifier validates it",
+    "No signing, wallet readiness or recipient delivery acceptance claimed"
+  ]
+}

@@ -55,9 +55,25 @@ fn a_withdrawal_that_is_refused_comes_back_as_a_note() {
         outcome.transactions, 3,
         "a round trip is the message in, the payout out, and the bounce back"
     );
+    // The positive control for the transfer's "it sent nothing".
+    //
+    // `valid_proof_e2e` requires a private transfer's pool transaction to send
+    // zero messages. A counter that has only ever been seen to read zero is
+    // not evidence that anything is being counted, so the withdrawal -- which
+    // must send exactly the payout -- pins the other end of the same counter.
+    assert_eq!(
+        outcome.sent_by_the_pool, 1,
+        "a withdrawal sends its payout and nothing else; this counter is what a transfer's          zero is measured against"
+    );
     assert_eq!(outcome.nullifier_next_index, "3", "two nullifiers should have been spent");
     // Two deposits, three outputs from the transact, one recovery note.
     assert_eq!(outcome.commitment_next_index, "6", "the recovery did not mint a note");
+    // The withdrawal held one leaf back for this note, and the bounce it was
+    // held for has spent it.
+    assert_eq!(
+        outcome.reserved_recovery_leaves, "0",
+        "the recovery left its withdrawal's reservation behind"
+    );
 
     let paid_out = u128::from(DENOMINATION) + u128::from(WITHDRAWAL_FEE);
     let recovered = outcome.pool_liability_after + paid_out - outcome.pool_liability_before;
@@ -69,8 +85,9 @@ fn a_withdrawal_that_is_refused_comes_back_as_a_note() {
 
     // Section 14.1. The recovery runs under this, bought by an ACCEPT that the
     // withdrawal fee already paid for. Read out of the contract, because this
-    // file used to carry its own copy saying 280,000 where the contract grants
-    // 220,000. A recovery that outgrew the real ceiling would still have been
+    // file used to carry its own copy saying 280,000 where the contract at the
+    // time granted 220,000. A recovery that outgrew the real ceiling would
+    // still have been
     // caught -- by the exit code above, since it would run out of gas -- but
     // the line this test prints reported this recovery at 59% of its budget
     // where it is really at 75%, and the worst recovery the contract records,
@@ -150,6 +167,13 @@ fn a_withdrawal_that_is_taken_leaves_nothing_to_recover() {
     assert_eq!(
         outcome.commitment_next_index, "5",
         "a withdrawal that was taken minted a recovery note anyway"
+    );
+    // A payout that was taken sends nothing back, so nothing tells the pool
+    // it will never bounce. The leaf it reserved stays reserved: releasing it
+    // on an assumption is how a late bounce would find the tree full.
+    assert_eq!(
+        outcome.reserved_recovery_leaves, "1",
+        "a withdrawal whose payout was taken did not keep its recovery leaf reserved"
     );
 
     let paid_out = u128::from(DENOMINATION) + u128::from(WITHDRAWAL_FEE);

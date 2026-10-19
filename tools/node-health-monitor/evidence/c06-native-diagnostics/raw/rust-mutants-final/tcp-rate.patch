@@ -1,0 +1,20 @@
+--- crates/health-services/src/diagnostic_transport.rs
++++ crates/health-services/src/diagnostic_transport.rs
+@@ -28,7 +28,7 @@
+     }
+     fn charge(&mut self,count:usize)->io::Result<()> {
+         let n=u64::try_from(count).map_err(|_|io::Error::other("egress count overflow"))?;
+-        self.tokens=self.tokens.checked_sub(n).ok_or_else(||io::Error::other("egress budget underflow"))?;
++        self.tokens=self.tokens.saturating_sub(n);
+         self.written=self.written.checked_add(n).ok_or_else(||io::Error::other("egress count exhausted"))?;
+         Ok(())
+     }
+@@ -41,7 +41,7 @@
+ }
+ impl AsyncWrite for CountedSocket {
+     fn poll_write(mut self:Pin<&mut Self>,cx:&mut Context<'_>,bytes:&[u8])->Poll<io::Result<usize>> {
+-        let available=match self.rate.lock() {Ok(mut rate)=>rate.available(),Err(_)=>return Poll::Ready(Err(io::Error::other("egress accounting unavailable")))};
++        let available=match self.rate.lock() {Ok(_rate)=>u64::MAX,Err(_)=>return Poll::Ready(Err(io::Error::other("egress accounting unavailable")))};
+         if available==0 && !bytes.is_empty() {
+             if self.wait.is_none() {self.wait=Some(Box::pin(tokio::time::sleep(Duration::from_millis(1))));}
+             if let Some(wait)=&mut self.wait {let _=std::future::Future::poll(wait.as_mut(),cx);}

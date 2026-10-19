@@ -29,6 +29,8 @@ class TcpListener : public td::actor::Actor, private td::ObserverBase {
   class Callback {
    public:
     virtual ~Callback() = default;
+    virtual void on_listening(Status) {
+    }
     virtual void accept(SocketFd fd) = 0;
   };
 
@@ -69,6 +71,7 @@ class TcpInfiniteListener : public actor::Actor {
   void hangup() override;
   void loop() override;
   void accept(SocketFd fd);
+  void on_listening(Status status);
   void hangup_shared() override;
 };
 }  // namespace td

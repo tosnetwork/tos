@@ -114,6 +114,8 @@ class OverlayManager : public Overlays {
 
   void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                      td::Promise<td::BufferSlice> promise);
+  void receive_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
+                        td::Promise<adnl::AdnlQueryAnswer> promise);
   void receive_message(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data);
 
   void register_overlay(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id, OverlayMemberCertificate cert,
@@ -121,6 +123,15 @@ class OverlayManager : public Overlays {
   void get_stats(td::Promise<tl_object_ptr<tos_api::engine_validator_overlaysStats>> promise) override;
 
   void forget_peer(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay, adnl::AdnlNodeIdShort peer_id) override;
+
+  void collect(metrics::MetricsPromise promise) override;
+  void collect_with_budget(metrics::MetricsPromise promise, metrics::CollectionBudget budget) override;
+  // Declared before collection: two traffic buckets, each two families with
+  // one metric per cell; a bucket's cells are bounded by the TL schema table
+  // plus the shared unknown cell (TlTrafficBucket), so the live cell counts
+  // are the bound.
+  std::optional<metrics::CollectionReservation> reservation() const override;
+  void absorb_broadcasts(metrics::TlTrafficBucket delta, td::Promise<td::Unit> done) override;
 
   struct PrintId {};
 
@@ -135,12 +146,16 @@ class OverlayManager : public Overlays {
   };
   std::map<adnl::AdnlNodeIdShort, std::map<OverlayIdShort, OverlayDescription>> overlays_;
 
+  metrics::TlTrafficBucket broadcasts_in_;
+  metrics::TlTrafficBucket broadcasts_out_;
+  td::actor::Task<metrics::MetricSet> collect_coro(metrics::CollectionBudget budget = {});
+
   struct BufferedRequest {
     adnl::AdnlNodeIdShort src;
     adnl::AdnlNodeIdShort dst;
     OverlayIdShort overlay_id;
     td::BufferSlice data;
-    std::optional<td::Promise<td::BufferSlice>> promise;
+    std::optional<td::Promise<adnl::AdnlQueryAnswer>> promise;
     std::list<BufferedRequest>::iterator next_for_overlay;
   };
 
@@ -159,7 +174,7 @@ class OverlayManager : public Overlays {
 
     void evict_oldest();
     void add_request(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, OverlayIdShort overlay_id,
-                     td::BufferSlice data, std::optional<td::Promise<td::BufferSlice>> promise);
+                     td::BufferSlice data, std::optional<td::Promise<adnl::AdnlQueryAnswer>> promise);
     std::vector<BufferedRequest> extract_for_overlay(adnl::AdnlNodeIdShort local_id, OverlayIdShort overlay_id);
   };
 
@@ -184,6 +199,10 @@ class OverlayManager : public Overlays {
     void receive_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
                        td::Promise<td::BufferSlice> promise) override {
       td::actor::send_closure(id_, &OverlayManager::receive_query, src, dst, std::move(data), std::move(promise));
+    }
+    void receive_query_ex(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data,
+                          td::Promise<adnl::AdnlQueryAnswer> promise) override {
+      td::actor::send_closure(id_, &OverlayManager::receive_query_ex, src, dst, std::move(data), std::move(promise));
     }
     AdnlCallback(td::actor::ActorId<OverlayManager> id) : id_(id) {
     }

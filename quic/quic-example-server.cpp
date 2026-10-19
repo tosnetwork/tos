@@ -20,7 +20,7 @@ class QuicHttpServer : public td::actor::Actor {
     }
 
     td::Status on_connected(tos::quic::QuicConnectionId cid, td::SecureString, td::SecureString public_key,
-                            bool is_outbound) override {
+                            bool is_outbound, const std::string &) override {
       td::actor::send_closure(server_, &QuicHttpServer::on_connected, cid, std::move(public_key));
       return td::Status::OK();
     }

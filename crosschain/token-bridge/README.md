@@ -8,16 +8,17 @@ The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as 
 
 ### TOS/TVM side (`tvm/contracts/`, per-network parameters in `tvm/params/`)
 
-- `jetton-bridge.fc`: accepts exact mint-fee payments, validates oracle multisig execution, deploys deterministic wrapped-token minters, emits paid-swap and burn logs.
-- `jetton-minter.fc`: bridge-only minting, deterministic wallet deployment, supply accounting, burn forwarding.
-- `jetton-wallet.fc`: TEP-74-style transfers plus EVM destination payload on burn.
+- `jetton-bridge.fc`: serves one pinned EVM bridge and source generation; accepts exact mint-fee payments for locks within its swap window, validates oracle multisig execution, deploys deterministic wrapped-token minters, decides each burn once and emits `LOG_BURN` with the decision.
+- `jetton-minter.fc`: reserves supply and a credit number before a swap is consumed, opens holders' wallets, counts supply once per confirmed credit, admits burns, and strands a deleted wallet's obligations under the owner-approved scope.
+- `jetton-wallet.fc`: TEP-74-style transfers; credits once per credit number; holds burned tokens until the burn is admitted and decided.
+- `settlement.fc`: the settlement protocol's shared parts: channels, windows, descriptors, funding and logs (`SETTLEMENT-PROTOCOL.md`).
 - `multisig.fc`: threshold oracle voting for TOS-side mint/governance messages; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks.
 - `votes-collector.fc`: collects EVM-compatible oracle signatures for burn/unlock.
 - Shared configuration, message, opcode, error, utility, and Fift deployment sources.
 
 ### EVM side (`evm/`)
 
-- `Bridge.sol`: ERC-20 lock/unlock custody contract, oracle-set governance, pause/denylist, replay protection, and actual-balance accounting.
+- `Bridge.sol`: ERC-20 lock/unlock custody contract, oracle-set governance, pause/denylist, replay protection, actual-balance accounting, densely numbered locks under source generations, and the refund of a lock cancelled on TOS.
 - `SignatureChecker.sol`: low-`s` ECDSA verification and digest domain separation by EVM chain ID and bridge address.
 - `TosUtils.sol`: the shared cross-chain transaction/signature structs.
 - Hardhat tests and test token contracts.
@@ -29,36 +30,30 @@ No production oracle daemon ships with this directory: it completes the smart-co
 ### ERC-20 → TOS Jetton
 
 1. The user calls EVM `Bridge.lock(token, amount, tosAddressHash)`.
-2. The bridge measures the actual token balance increase and emits `Lock`.
-3. The user pays the exact TOS mint fee to `jetton-bridge` with the event-derived query ID.
+2. The bridge measures the actual token balance increase, numbers the lock `n` within the current source generation, and emits `Lock`.
+3. The user pays the exact TOS mint fee to `jetton-bridge` for `(generation, n)`.
 4. Oracles verify both events and vote through the TOS multisig.
-5. Once quorum is reached, `jetton-bridge` deterministically deploys/calls the wrapped-token minter and credits the user's Jetton wallet.
+5. Once quorum is reached, `jetton-bridge` asks the wrapped-token minter to reserve the mint; once reserved, it consumes the swap and the minter credits the user's Jetton wallet, which reports back. A lost message is recovered by a funded `advance` from the stored record.
+6. A lock that is never paid or voted can be cancelled by an oracle vote (`cancel_lock`); after `LOG_SWAP_CANCELLED`, oracles may sign `Bridge.refundLock(n)` on the EVM side.
 
 ### TOS Jetton → ERC-20
 
-1. The user burns wrapped Jettons and supplies a 160-bit EVM destination address.
-2. Wallet → minter → bridge messages validate ownership and deterministic sender addresses.
-3. `jetton-bridge` emits the burn log.
+1. The user burns wrapped Jettons and supplies a 160-bit EVM destination address; the wallet holds them.
+2. The minter admits the burn (or durably refuses it, releasing the hold) and notifies the bridge; every message validates ownership, deterministic sender addresses and the participants' lives.
+3. `jetton-bridge` decides the burn once and emits `LOG_BURN` with a RECORDED decision; a cancelled burn is refunded to the wallet instead.
 4. Oracles sign the burn; `votes-collector` assembles signatures.
 5. Anyone submits the signed burn to EVM `Bridge.unlock`; replay protection marks the digest finished before transfer.
 
 ## Refusals the contracts make
 
-A mint whose fee nobody paid is refused (`error::swap_not_paid`, 396).
-`pay_swap` takes the fee in one transaction and the vote arrives in another,
-with nothing on chain connecting them — so the bridge used to mint on the vote
-alone, and an oracle set that did not check would have the multisig pay for
-every mint out of its own balance.
-
-The bridge now records the payment and the vote spends it. The swap's identity
-is derived by the contract from the vote it already holds
-(`cell_hash(ext_chain_hash || internal_index)`), so a payer cannot aim a
-payment at a swap of their choosing, and removing the key on use means one fee
-pays for exactly one mint.
+A mint whose fee nobody paid is refused (`error::swap_not_paid`, 396). The
+bridge records the payment for `(generation, n)` and the vote consumes it, so
+the oracle multisig never mints out of the bridge's own balance and one fee
+pays for exactly one mint. A payment outside the swap window, or for a lock
+already paid, consumed or cancelled, is refused and bounced.
 
 This check cannot live in an oracle. Two operators disagreeing about whether a
 payment counts produce no rejection, only a quorum that never forms.
-
 
 A burn names where to release on the counterparty chain, and the zero address
 is not a destination: the ERC-20 transfer that would release the tokens there
@@ -90,8 +85,18 @@ With `func`/`fift` built (`cmake --build build --target func fift`):
 
 ```bash
 scripts/build-token-bridge.sh          # double-compile 5 contracts × 4 networks, assemble, hash
-scripts/test-token-bridge-tvm.sh       # execute the compiled contracts in the TOS TVM
+scripts/test-token-bridge-tvm.sh       # execute the multisig in the TOS TVM
 python3 scripts/verify-token-bridge.py # invariants + protocol model tests + naming gate
+```
+
+The settlement protocol runs in the token-bridge sandbox, and every
+transaction it executes is replayed in the native engine:
+
+```bash
+TOKEN_BRIDGE_TRACE_DIR=/tmp/trace cargo test --manifest-path tosctl/src/Cargo.toml \
+    -p contracts --locked --test token_bridge_sandbox
+python3 scripts/replay-token-bridge-trace.py /tmp/trace
+python3 scripts/token-bridge-mutations.py   # every guard removed: its test must fail
 ```
 
 Outputs are written to `crosschain/token-bridge/artifacts/tvm/` and are not committed.

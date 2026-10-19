@@ -1,0 +1,59 @@
+[
+  {
+    "name": "hook",
+    "command": [
+      "$HOME/nhm-c06-build/test-health-diagnostic-action"
+    ],
+    "natural_exit": 0,
+    "binary_sha256": "50919920230332a86c96c4b2e2c2c4ce362f3d62290512d2e7bafba39c7c83a2"
+  },
+  {
+    "name": "producer",
+    "command": [
+      "$HOME/nhm-c06-build/test-health-diagnostic-producer"
+    ],
+    "natural_exit": 0,
+    "binary_sha256": "61bef7e95bbeea2e8649e82b83376a82037f5492c3c45ffdf51fefab4d6dd1bd"
+  },
+  {
+    "name": "ipc",
+    "command": [
+      "$HOME/nhm-c06-build/test-health-diagnostic-ipc"
+    ],
+    "natural_exit": 0,
+    "binary_sha256": "3015ea09dd2eb6e118177f3f0f9b8739be93fc4ccb77c37a7679abf82adb412e"
+  },
+  {
+    "name": "ipc-peer",
+    "command": [
+      "$HOME/nhm-c06-build/test-health-diagnostic-ipc",
+      "bad-peer"
+    ],
+    "natural_exit": 0,
+    "binary_sha256": "3015ea09dd2eb6e118177f3f0f9b8739be93fc4ccb77c37a7679abf82adb412e"
+  },
+  {
+    "name": "registry",
+    "command": [
+      "$HOME/nhm-c06-build/test-health-core-registry"
+    ],
+    "natural_exit": 0,
+    "binary_sha256": "ef671c715b159ec786e8f198546f6e64505ccfca998a33435b49424ce7f6fc4e"
+  },
+  {
+    "name": "native-publisher-unit",
+    "command": [
+      "$HOME/nhm-c06-build/test-health-native-snapshot"
+    ],
+    "natural_exit": 0,
+    "binary_sha256": "1aa5686b27b6a2f4c1b717f06ec8a32341bb755db834641e4db97dc6ee285fdb"
+  },
+  {
+    "name": "c04-publisher-unit",
+    "command": [
+      "$HOME/nhm-c06-build/test/validator/consensus/test-health-c04-publisher"
+    ],
+    "natural_exit": -11,
+    "binary_sha256": "bffaf5bd92151fa304f85676894d7fd97aec6a70fe53d0fd7df12141b6b4174e"
+  }
+]

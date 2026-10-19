@@ -22,26 +22,24 @@ use crate::error::{SandboxError, SandboxResult};
 const MAINNET_GENESIS_UNIX: &str = "1789434000";
 
 /// Locate the TOS repository root by checking common paths.
+///
+/// The root is returned absolute. The tools found under it are run from a temporary
+/// working directory, so a root relative to the caller's would resolve to nothing there.
 fn find_tos_root() -> Option<PathBuf> {
-    if let Ok(root) = env::var("TOS_ROOT") {
-        let p = PathBuf::from(root);
-        if p.join("build/crypto/create-state").exists() {
-            return Some(p);
+    fn rooted(p: PathBuf) -> Option<PathBuf> {
+        p.join("build/crypto/create-state").exists().then(|| p.canonicalize().ok()).flatten()
+    }
+    if let Some(root) = env::var("TOS_ROOT").ok().map(PathBuf::from).and_then(rooted) {
+        return Some(root);
+    }
+    // The enclosing tree wins over any well-known checkout: a test run from a second
+    // worktree must exercise the contracts of that worktree, not the ones next door.
+    for candidate in [".", "..", "../..", "../../..", "../../../.."] {
+        if let Some(root) = rooted(PathBuf::from(candidate)) {
+            return Some(root);
         }
     }
-    if let Ok(home) = env::var("HOME") {
-        let p = PathBuf::from(&home).join("tos");
-        if p.join("build/crypto/create-state").exists() {
-            return Some(p);
-        }
-    }
-    for candidate in &[".", "..", "../..", "../../..", "../../../.."] {
-        let p = PathBuf::from(candidate);
-        if p.join("build/crypto/create-state").exists() {
-            return Some(p);
-        }
-    }
-    None
+    env::var("HOME").ok().map(|home| PathBuf::from(home).join("tos")).and_then(rooted)
 }
 
 /// Run `create-state` against a zero-state Fift template and return the
@@ -99,13 +97,23 @@ pub fn generate_zerostate_state(fif_path: impl AsRef<Path>) -> SandboxResult<Sha
     let tmp =
         tempfile::tempdir().map_err(|e| SandboxError::Serialization(format!("tmpdir: {e}")))?;
 
-    // gen-zerostate templates read a genesis validator key manifest
-    // (`validator-keys.pub`, four concatenated 32-byte public keys) from the
-    // working directory. Supply a deterministic manifest of four distinct
-    // keys: the key bytes only shape the validator set, not the total
-    // balance being measured here, and determinism keeps the run reproducible.
-    let manifest: Vec<u8> = (1u8..=4).flat_map(|i| [i; 32]).collect();
-    std::fs::write(tmp.path().join("validator-keys.pub"), manifest)
+    // gen-zerostate reads its four genesis validators from `validator-pq.pub`
+    // in the working directory: per validator a 1376-byte record of controller
+    // id (32), ADNL id (32) and ML-DSA-44 public key (1312). The template
+    // requires the ids nonzero and every id and key unique, and only hashes the
+    // key. Supply a deterministic manifest of four distinct records: the bytes
+    // only shape the validator set, not the balances or parameters measured
+    // here, and determinism keeps the run reproducible.
+    let manifest: Vec<u8> = (1u8..=4)
+        .flat_map(|i| {
+            let mut record = Vec::with_capacity(1376);
+            record.extend_from_slice(&[i; 32]);
+            record.extend_from_slice(&[i | 0x10; 32]);
+            record.extend_from_slice(&[i | 0x20; 1312]);
+            record
+        })
+        .collect();
+    std::fs::write(tmp.path().join("validator-pq.pub"), manifest)
         .map_err(|e| SandboxError::Serialization(format!("write validator manifest: {e}")))?;
 
     let fif_path = fif_path
@@ -173,7 +181,7 @@ mod tests {
     #[test]
     fn mainnet_genesis_total_supply_matches_validator_bootstrap_allocation() {
         let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
-        let fif_path = tos_root.join("crypto/smartcont/gen-zerostate.fif");
+        let fif_path = tos_root.join("test/tostester/tests/tostester/genesis-with-test-auth.fif");
         let balance = generate_zerostate_total_balance(&fif_path).expect("zerostate generation");
 
         const NANOTOS_PER_TOS: u128 = 1_000_000_000;
@@ -206,7 +214,7 @@ mod tests {
         const EXPECTED_BASECHAIN_FEE_NANOTOS: u128 = 23_233_312;
 
         let tos_root = find_tos_root().expect("TOS_ROOT (or a parent build dir) must be locatable");
-        let fif_path = tos_root.join("crypto/smartcont/gen-zerostate.fif");
+        let fif_path = tos_root.join("test/tostester/tests/tostester/genesis-with-test-auth.fif");
         let state = generate_zerostate_state(&fif_path).expect("zerostate generation");
         let mc_extra = state
             .read_custom()

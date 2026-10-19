@@ -1,0 +1,32 @@
+ceremony   artifacts/phase2/ceremony
+steps      1
+
+rebuilding the starting key from the committed slice (a couple of minutes)
+starting key matches: 018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+phase 1    zcash (1bfd7acdb3ecbfaa)
+circuit    18107 constraints, 19 instance variables
+the chain audits: 1 contribution(s)
+
+verifying key
+  length     1248 bytes
+  IC points  19
+  sha256     19881a8c29acb997ff32e9f9df1104c04ad3bbe7d813b942e99958b209a6bbe3
+
+NOT FINISHED. No beacon has closed this ceremony, so its delta is a product
+of participant scalars only -- sound if one of them was honest, but with
+nothing anchoring it to a value they could not all have known in advance.
+
+Still unchecked, by anything, ever:
+  * that any participant drew their scalar unpredictably and destroyed it;
+  * that the beacon was named before this ceremony opened.
+Both rest on what people published about themselves, not on these artifacts.
+
+Before deploying, put this key through the acceptance gate -- which deploys a
+pool carrying exactly these bytes and requires it to accept a real transfer:
+  TOS_ROOT=<a checkout with a built func/fift> cargo run --release \
+    --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml \
+    --example ceremony-gate -- artifacts/phase2/ceremony
+
+Then, for the state hash and the address these bytes imply:
+  cargo run --manifest-path tools/shielded-pool-genesis/Cargo.toml \
+    --bin genesis -- . out/manifest.json --verifying-key <the file above>

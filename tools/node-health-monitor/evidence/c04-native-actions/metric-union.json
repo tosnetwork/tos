@@ -1,0 +1,3528 @@
+{
+  "base_manifest_sha256": "3c014bafb437cd4b5d23f7b8a1341c79747d314aa360b016a94f6a347813e395",
+  "c04_manifest_sha256": "662dee776d77381f1754d6dcc5d77cfb702f8dcf08cbed5a7d99f92f8c8af363",
+  "base_series": 107,
+  "new_series": 142,
+  "union_series": 249,
+  "profile_ceiling": 256,
+  "global_ceiling": 2048,
+  "expanded_union": [
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "broadcast_enqueued"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "intent_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "requested"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "requested"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "restored_signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "enqueued"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "failed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "suppressed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "outcome",
+          "unknown"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "duplicate_or_stale"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "finality_behind"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "intent_storage"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "journal_unusable"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "missing_signer"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "sign_backend"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ],
+        [
+          "reason",
+          "signed_storage"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_accounting_complete",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_oldest_age_seconds",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_pending",
+      "labels": [
+        [
+          "action",
+          "finalize_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "broadcast_enqueued"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "intent_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "requested"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "requested"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "restored_signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "enqueued"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "failed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "suppressed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "outcome",
+          "unknown"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "duplicate_or_stale"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "finality_behind"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "intent_storage"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "journal_unusable"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "missing_signer"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "sign_backend"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ],
+        [
+          "reason",
+          "signed_storage"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_accounting_complete",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_oldest_age_seconds",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_pending",
+      "labels": [
+        [
+          "action",
+          "notarize_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "candidate_published"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "requested"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "enqueued"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "failed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "suppressed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "outcome",
+          "unknown"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "finality_behind"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "missing_signer"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "sign_backend"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ],
+        [
+          "reason",
+          "superseded"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_accounting_complete",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_oldest_age_seconds",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_pending",
+      "labels": [
+        [
+          "action",
+          "proposal"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "broadcast_enqueued"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "intent_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "requested"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "live"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "local_applied"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "requested"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "restored_signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "signed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_actions_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "origin",
+          "replay"
+        ],
+        [
+          "phase",
+          "signed_committed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "enqueued"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "failed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "suppressed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_outcomes_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "outcome",
+          "unknown"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "duplicate_or_stale"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "finality_behind"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "intent_storage"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "journal_unusable"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "missing_signer"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "sign_backend"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_failures_total",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ],
+        [
+          "reason",
+          "signed_storage"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_accounting_complete",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_oldest_age_seconds",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_action_pending",
+      "labels": [
+        [
+          "action",
+          "skip_vote"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_oldest_waiter_age_seconds",
+      "labels": [
+        [
+          "kind",
+          "finalization"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_waiters",
+      "labels": [
+        [
+          "kind",
+          "finalization"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_oldest_waiter_age_seconds",
+      "labels": [
+        [
+          "kind",
+          "state"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_waiters",
+      "labels": [
+        [
+          "kind",
+          "state"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "+Inf"
+        ],
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "+Inf"
+        ],
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "+Inf"
+        ],
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "+Inf"
+        ],
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "+Inf"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "+Inf"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "+Inf"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "+Inf"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.001"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.001"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.001"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.001"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.002"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.002"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.002"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.002"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.005"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.005"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.005"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.005"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.01"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.01"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.01"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.01"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.02"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.02"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.02"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.02"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.05"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.05"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.05"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.05"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.1"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.1"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.1"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.1"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.2"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.2"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.2"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.2"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.5"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.5"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.5"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "0.5"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "1"
+        ],
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "1"
+        ],
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "1"
+        ],
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "1"
+        ],
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "1"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "1"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "1"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "1"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "2"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "2"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "2"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "2"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "5"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "5"
+        ],
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "5"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_bucket",
+      "labels": [
+        [
+          "le",
+          "5"
+        ],
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "labels": [
+        [
+          "operation",
+          "finalization"
+        ],
+        [
+          "result",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "labels": [
+        [
+          "operation",
+          "finalization"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "labels": [
+        [
+          "operation",
+          "finalization"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "duplicate"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_count",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_sum",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_count",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_sum",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "labels": [
+        [
+          "operation",
+          "own_signed_vote"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "duplicate"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_count",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_sum",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_count",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operation_duration_seconds_sum",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_storage_operations_total",
+      "labels": [
+        [
+          "operation",
+          "own_vote_intent"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_count",
+      "labels": [
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_sum",
+      "labels": [
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operations_total",
+      "labels": [
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_count",
+      "labels": [
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_sum",
+      "labels": [
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operations_total",
+      "labels": [
+        [
+          "operation",
+          "sign"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_pq_accounting_complete",
+      "labels": [
+        [
+          "operation",
+          "sign"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "labels": [
+        [
+          "operation",
+          "state"
+        ],
+        [
+          "result",
+          "cancelled"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "labels": [
+        [
+          "operation",
+          "state"
+        ],
+        [
+          "result",
+          "failure"
+        ]
+      ]
+    },
+    {
+      "name": "tos_state_resolver_results_total",
+      "labels": [
+        [
+          "operation",
+          "state"
+        ],
+        [
+          "result",
+          "success"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_count",
+      "labels": [
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_sum",
+      "labels": [
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operations_total",
+      "labels": [
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "failure"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_count",
+      "labels": [
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operation_duration_seconds_sum",
+      "labels": [
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_pq_operations_total",
+      "labels": [
+        [
+          "operation",
+          "verify"
+        ],
+        [
+          "result",
+          "success"
+        ],
+        [
+          "suite",
+          "mldsa44"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_pq_accounting_complete",
+      "labels": [
+        [
+          "operation",
+          "verify"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_leader_windows_total",
+      "labels": [
+        [
+          "result",
+          "observed"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_leader_windows_total",
+      "labels": [
+        [
+          "result",
+          "started"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_current_slot",
+      "labels": [
+        [
+          "scope",
+          "masterchain"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_last_finalized_slot",
+      "labels": [
+        [
+          "scope",
+          "masterchain"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_collection_completed_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "exporter"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_failures_total",
+      "labels": [
+        [
+          "source",
+          "exporter"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_last_success_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "exporter"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_observed_timestamp_available",
+      "labels": [
+        [
+          "source",
+          "exporter"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_usable",
+      "labels": [
+        [
+          "source",
+          "exporter"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_collection_completed_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "exporter_internal"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_failures_total",
+      "labels": [
+        [
+          "source",
+          "exporter_internal"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_last_success_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "exporter_internal"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_observed_timestamp_available",
+      "labels": [
+        [
+          "source",
+          "exporter_internal"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_usable",
+      "labels": [
+        [
+          "source",
+          "exporter_internal"
+        ]
+      ]
+    },
+    {
+      "name": "tos_exporter_health_source_collection_completed_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "http_server"
+        ]
+      ]
+    },
+    {
+      "name": "tos_exporter_health_source_failures_total",
+      "labels": [
+        [
+          "source",
+          "http_server"
+        ]
+      ]
+    },
+    {
+      "name": "tos_exporter_health_source_last_success_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "http_server"
+        ]
+      ]
+    },
+    {
+      "name": "tos_exporter_health_source_observed_timestamp_available",
+      "labels": [
+        [
+          "source",
+          "http_server"
+        ]
+      ]
+    },
+    {
+      "name": "tos_exporter_health_source_usable",
+      "labels": [
+        [
+          "source",
+          "http_server"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_collection_completed_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "json_rpc"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_failures_total",
+      "labels": [
+        [
+          "source",
+          "json_rpc"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_last_success_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "json_rpc"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_observed_timestamp_available",
+      "labels": [
+        [
+          "source",
+          "json_rpc"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_usable",
+      "labels": [
+        [
+          "source",
+          "json_rpc"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_collection_completed_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "overlay"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_failures_total",
+      "labels": [
+        [
+          "source",
+          "overlay"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_last_success_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "overlay"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_observed_timestamp_available",
+      "labels": [
+        [
+          "source",
+          "overlay"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_usable",
+      "labels": [
+        [
+          "source",
+          "overlay"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_collection_completed_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "quic"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_failures_total",
+      "labels": [
+        [
+          "source",
+          "quic"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_last_success_timestamp_seconds",
+      "labels": [
+        [
+          "source",
+          "quic"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_observed_timestamp_available",
+      "labels": [
+        [
+          "source",
+          "quic"
+        ]
+      ]
+    },
+    {
+      "name": "tos_health_source_usable",
+      "labels": [
+        [
+          "source",
+          "quic"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_sessions",
+      "labels": [
+        [
+          "state",
+          "active"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_sessions",
+      "labels": [
+        [
+          "state",
+          "stopping"
+        ]
+      ]
+    },
+    {
+      "name": "tos_consensus_proposal_empty_candidates_total",
+      "labels": []
+    },
+    {
+      "name": "tos_consensus_proposal_retries_total",
+      "labels": []
+    },
+    {
+      "name": "tos_consensus_session_stop_started_total",
+      "labels": []
+    },
+    {
+      "name": "tos_consensus_sessions_started_total",
+      "labels": []
+    },
+    {
+      "name": "tos_consensus_sessions_stopped_total",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_collections_total",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_collectors",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_last_collection_duration_seconds",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_last_collection_timestamp_seconds",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_snapshot_collection_failures_total",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_snapshot_collection_inflight",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_snapshot_collection_skipped_total",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_snapshot_completed_timestamp_seconds",
+      "labels": []
+    },
+    {
+      "name": "tos_exporter_snapshot_generation",
+      "labels": []
+    },
+    {
+      "name": "tos_health_core_registry_dropped_updates_total",
+      "labels": []
+    },
+    {
+      "name": "tos_health_core_registry_instrumentation_complete",
+      "labels": []
+    }
+  ]
+}

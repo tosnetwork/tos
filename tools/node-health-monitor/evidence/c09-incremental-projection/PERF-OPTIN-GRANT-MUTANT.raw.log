@@ -1,0 +1,27 @@
+MUTATION: observability.rs grant gate !data.manager_caught_up -> false && !data.manager_caught_up
+COMMAND: NHM_C09_READONLY_M_DB=$HOME/nhm-supervision/c09-local/runtime/evidence/evidence.db NHM_C09_NETWORK=b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004 cargo test --locked -p tos-health-services --test manager_query_source live_read_only_projection_cost_witness -- --ignored --exact --nocapture
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-perf-docs-31fc/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.88s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+initial_page_ms=344
+
+thread 'live_read_only_projection_cost_witness' (1126460) panicked at crates/health-services/tests/manager_query_source.rs:76:5:
+assertion `left == right` failed
+  left: 200
+ right: 503
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test live_read_only_projection_cost_witness ... FAILED
+
+failures:
+
+failures:
+    live_read_only_projection_cost_witness
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 19 filtered out; finished in 0.74s
+
+error: test failed, to rerun pass `-p tos-health-services --test manager_query_source`
+
+COMMAND_EXIT_CODE=101
+

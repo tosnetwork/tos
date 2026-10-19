@@ -1,0 +1,11 @@
+{
+  "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
+  "node_id": "validator1",
+  "scope_id": "node",
+  "edge_url": "https://validator.example.invalid:9443/v1/edge/heartbeat",
+  "manager_url": "https://monitor.example.invalid:9444/v1/manager/facts",
+  "ca_file": "/etc/tos-health/ca.pem",
+  "identity_file": "/etc/tos-health/probe.pem",
+  "edge_token_file": "/etc/tos-health/edge.token",
+  "manager_token_file": "/etc/tos-health/manager-ingest.token"
+}

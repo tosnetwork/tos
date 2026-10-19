@@ -97,7 +97,7 @@ class BlockValidatorImpl : public td::actor::SpawnsWith<Bus>, public td::actor::
           .shard = bus.shard,
           .min_masterchain_block_id = event->state->min_mc_block_id(),
           .prev = event->state->block_ids(),
-          .local_validator_id = bus.local_id->short_id,
+          .local_validator_id = PublicKeyHash{bus.local_id->validator_id.value},
           .skip_store_candidate = true,
           .prev_block_state_roots = event->state->state(),
       };

@@ -68,6 +68,7 @@ export type {
   ConnectButtonRenderProps,
   UseWalletResult,
   UseConnectResult,
+  ConnectOptions,
   UseConnectModalResult,
   UseSignDataResult,
   UseWalletInfoResult,

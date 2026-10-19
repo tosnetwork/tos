@@ -38,6 +38,7 @@ fmt:
 	@cargo fmt --all --manifest-path lockfree/fuzz/Cargo.toml
 	@cargo fmt --all --manifest-path lockfree/benchmark/Cargo.toml
 	@cargo fmt --all --manifest-path ../../test/quic-interop-rust/Cargo.toml
+	@cargo fmt --all --manifest-path ../../tools/node-health-monitor/Cargo.toml
 	@rustfmt --edition 2021 --config-path ../.. ./common/src/*.rs ./common/build/*.rs
 
 fmt-check:
@@ -46,6 +47,7 @@ fmt-check:
 	@cargo fmt --all --manifest-path lockfree/fuzz/Cargo.toml -- --check
 	@cargo fmt --all --manifest-path lockfree/benchmark/Cargo.toml -- --check
 	@cargo fmt --all --manifest-path ../../test/quic-interop-rust/Cargo.toml -- --check
+	@cargo fmt --all --manifest-path ../../tools/node-health-monitor/Cargo.toml -- --check
 	@rustfmt --check --edition 2021 --config-path ../.. ./common/src/*.rs ./common/build/*.rs
 
 #### Tests

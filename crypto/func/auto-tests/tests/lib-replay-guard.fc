@@ -1,0 +1,221 @@
+#include "../../../smartcont/stdlib.fc";
+#include "../../../smartcont/replay-guard.fc";
+
+;; Same vector matrix as tol-tester/tests/stdlib-replay-guard-positive.tol: identical
+;; method ids, inputs, expected values and failure codes.
+
+() set_c7(tuple c7) impure asm "c7 POP";
+
+;; The library reads time with NOW (c7[0][3]); tests move the clock here.
+() set_now(int t) impure {
+  tuple params = empty_tuple();
+  int i = 0;
+  while (i < 17) {
+    params~tpush(i == 3 ? t : null());
+    i += 1;
+  }
+  tuple c7 = empty_tuple();
+  c7~tpush(params);
+  set_c7(c7);
+}
+
+() expect_throw(int code, int expected, int fail_code) impure inline {
+  throw_unless(fail_code, code == expected);
+}
+
+int main() {
+  return 0;
+}
+
+int test_split_query_id() method_id(101) {
+  (int s0, int b0) = replay_guard::split_query_id(0);
+  throw_unless(101, (s0 == 0) & (b0 == 0));
+  (int s1, int b1) = replay_guard::split_query_id(5 * 1024 + 7);
+  throw_unless(102, (s1 == 5) & (b1 == 7));
+  (int s2, int b2) = replay_guard::split_query_id(8191 * 1024 + 1022);
+  throw_unless(103, (s2 == 8191) & (b2 == 1022));
+
+  int rejected = 0;
+  try { replay_guard::split_query_id(1023); } catch (_, code) { expect_throw(code, replay_guard::error::invalid_query_id, 104); rejected += 1; }
+  try { replay_guard::split_query_id(-1); } catch (_, code) { expect_throw(code, replay_guard::error::invalid_query_id, 105); rejected += 1; }
+  try { replay_guard::split_query_id(1 << 23); } catch (_, code) { expect_throw(code, replay_guard::error::invalid_query_id, 106); rejected += 1; }
+  throw_unless(107, rejected == 3);
+  return 1;
+}
+
+int test_accept_and_replay_in_current_generation() method_id(102) {
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1000); g~replay_guard::accept(7, 990);
+  set_now(1000); g~replay_guard::accept(8, 990);
+  set_now(1000); g~replay_guard::accept(1024 + 7, 990);
+  throw_unless(111, replay_guard::processed?(g, 7));
+  throw_unless(112, replay_guard::processed?(g, 8));
+  throw_unless(113, replay_guard::processed?(g, 1024 + 7));
+  throw_if(114, replay_guard::processed?(g, 9));
+
+  int thrown = false;
+  try {
+    set_now(1000); g~replay_guard::accept(7, 995);
+  } catch (_, code) {
+    expect_throw(code, replay_guard::error::already_processed, 115);
+    thrown = true;
+  }
+  throw_unless(116, thrown);
+  return 2;
+}
+
+int test_replay_rejected_from_old_generation() method_id(103) {
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1099); g~replay_guard::accept(42, 1099);
+  ;; 1000 < 1101 - 100: the current generation becomes the old one, while the request
+  ;; created at 1099 is still fresh — only the old bitmap stops it.
+  int thrown = false;
+  try {
+    set_now(1101); g~replay_guard::accept(42, 1099);
+  } catch (_, code) {
+    expect_throw(code, replay_guard::error::already_processed, 121);
+    thrown = true;
+  }
+  throw_unless(122, thrown);
+  set_now(1101);
+  g~replay_guard::rotate();
+  [_, _, int last_clean_time, _] = g;
+  throw_unless(123, last_clean_time == 1101);
+  throw_unless(124, replay_guard::processed?(g, 42));
+  return 3;
+}
+
+int test_freshness_window_edges() method_id(104) {
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1000); g~replay_guard::accept(1, 1000);
+  set_now(1000); g~replay_guard::accept(2, 901);
+  int rejected = 0;
+  try { set_now(1000); g~replay_guard::accept(3, 900); } catch (_, code) { expect_throw(code, replay_guard::error::invalid_created_at, 131); rejected += 1; }
+  try { set_now(1000); g~replay_guard::accept(4, 1001); } catch (_, code) { expect_throw(code, replay_guard::error::invalid_created_at, 132); rejected += 1; }
+  throw_unless(133, rejected == 2);
+  throw_if(134, replay_guard::processed?(g, 3));
+  throw_if(135, replay_guard::processed?(g, 4));
+  return 4;
+}
+
+int test_dropped_history_is_covered_by_freshness() method_id(105) {
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1099); g~replay_guard::accept(42, 1099);
+  ;; 1000 < 1300 - 200: both generations are dropped at once.
+  int thrown = false;
+  try {
+    set_now(1300); g~replay_guard::accept(42, 1099);
+  } catch (_, code) {
+    expect_throw(code, replay_guard::error::invalid_created_at, 141);
+    thrown = true;
+  }
+  throw_unless(142, thrown);
+  ;; accept itself must age the history: storage stays bounded without any separate
+  ;; maintenance call
+  set_now(1300); g~replay_guard::accept(43, 1300);
+  throw_if(143, replay_guard::processed?(g, 42));
+  [cell old_queries, _, int last_clean_time, _] = g;
+  throw_unless(144, cell_null?(old_queries));
+  throw_unless(145, replay_guard::processed?(g, 43) & (last_clean_time == 1300));
+  return 5;
+}
+
+int test_invalid_timeout() method_id(106) {
+  int rejected = 0;
+  try { replay_guard::new(0); } catch (_, code) { expect_throw(code, replay_guard::error::invalid_timeout, 151); rejected += 1; }
+  try { replay_guard::new(replay_guard::max_timeout + 1); } catch (_, code) { expect_throw(code, replay_guard::error::invalid_timeout, 152); rejected += 1; }
+  throw_unless(153, rejected == 2);
+  set_now(1000);
+  var g = replay_guard::new(replay_guard::max_timeout);
+  [_, _, _, int timeout] = g;
+  throw_unless(154, timeout == replay_guard::max_timeout);
+  return 6;
+}
+
+int test_rejected_accept_leaves_guard_unchanged() method_id(107) {
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1000); g~replay_guard::accept(5, 1000);
+  int thrown = false;
+  try {
+    ;; would rotate at 1500, but the request is stale
+    set_now(1500); g~replay_guard::accept(6, 1000);
+  } catch (_, code) {
+    expect_throw(code, replay_guard::error::invalid_created_at, 161);
+    thrown = true;
+  }
+  throw_unless(162, thrown);
+  [_, _, int last_clean_time, _] = g;
+  throw_unless(163, last_clean_time == 1000);
+  throw_unless(164, replay_guard::processed?(g, 5));
+  return 7;
+}
+
+int test_row_edges_and_serialization() method_id(108) {
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1000); g~replay_guard::accept(0, 1000);
+  set_now(1000); g~replay_guard::accept(1022, 1000);
+  set_now(1000); g~replay_guard::accept(511, 1000);
+  [_, cell queries, _, _] = g;
+  (cell row, int found) = queries.udict_get_ref?(replay_guard::shift_bits, 0);
+  throw_unless(171, found);
+  throw_unless(172, row.begin_parse().slice_bits() == replay_guard::row_bits);
+  throw_if(173, replay_guard::processed?(g, 1));
+  throw_if(174, replay_guard::processed?(g, 1021));
+  ;; the whole guard survives a storage round trip
+  var restored = replay_guard::unpack(replay_guard::pack(g));
+  throw_unless(175, replay_guard::processed?(restored, 0) & replay_guard::processed?(restored, 511) & replay_guard::processed?(restored, 1022));
+  [_, _, int last_clean_time, int timeout] = restored;
+  throw_unless(176, (timeout == 100) & (last_clean_time == 1000));
+  return 8;
+}
+
+int test_layout_matches_tol() method_id(109) {
+  ;; The packed guard must be the very cell the Tol ReplayGuard.toCell() produces; the
+  ;; Tol suite pins the same hash for the same state.
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1000); g~replay_guard::accept(0, 1000);
+  set_now(1000); g~replay_guard::accept(1022, 1000);
+  set_now(1000); g~replay_guard::accept(5 * 1024 + 7, 1000);
+  return replay_guard::pack(g).cell_hash();
+}
+
+int test_check_reads_and_record_writes() method_id(110) {
+  set_now(1000);
+  var g = replay_guard::new(100);
+  set_now(1000);
+  g~replay_guard::check(7, 1000);
+  ;; check never writes: nothing recorded, storage unchanged
+  throw_if(181, replay_guard::processed?(g, 7));
+  [cell old_queries, cell queries, _, _] = g;
+  throw_unless(182, cell_null?(queries) & cell_null?(old_queries));
+  g~replay_guard::record(7);
+  throw_unless(183, replay_guard::processed?(g, 7));
+  int rejected = 0;
+  try { set_now(1000); g~replay_guard::check(7, 1000); } catch (_, code) { expect_throw(code, replay_guard::error::already_processed, 184); rejected += 1; }
+  try { g~replay_guard::record(7); } catch (_, code) { expect_throw(code, replay_guard::error::already_processed, 185); rejected += 1; }
+  ;; check rejects ids still remembered in the old generation too
+  set_now(1101);
+  try { g~replay_guard::check(7, 1100); } catch (_, code) { expect_throw(code, replay_guard::error::already_processed, 186); rejected += 1; }
+  throw_unless(187, rejected == 3);
+  return 10;
+}
+
+{-
+TESTCASE | 101 | | 1
+TESTCASE | 102 | | 2
+TESTCASE | 103 | | 3
+TESTCASE | 104 | | 4
+TESTCASE | 105 | | 5
+TESTCASE | 106 | | 6
+TESTCASE | 107 | | 7
+TESTCASE | 108 | | 8
+TESTCASE | 109 | | 49751840920418588745216052838403757172391007160505045324086559891392396194906
+TESTCASE | 110 | | 10
+-}

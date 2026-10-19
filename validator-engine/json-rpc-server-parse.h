@@ -26,6 +26,8 @@
 #include <string>
 #include <vector>
 
+#include "auto/tl/lite_api.h"
+#include "td/utils/JsonBuilder.h"
 #include "td/utils/Slice.h"
 #include "td/utils/Status.h"
 #include "vm/cells.h"
@@ -40,11 +42,36 @@ namespace tos {
 // on the other side will apply, or the reply is unparseable.
 bool is_valid_json_number(const std::string &s);
 
+// Upper bound on a request id echoed back in a reply, measured on its
+// serialized JSON form (quotes and escapes included). Without it a client can
+// send an id as large as the request body limit and have the server hold, and
+// write out, a reply of that size for every request it sends.
+inline constexpr std::size_t kMaxReflectedIdBytes = 256;
+
+// The JSON literal to echo as the reply's id: "null" for a null or absent id,
+// the escaped string for a string id, the number for a number id. Fails when
+// the id is not a string, number or null, when a number id is not a valid
+// JSON number, and when the serialized literal exceeds kMaxReflectedIdBytes;
+// the caller then answers with an invalid-request error carrying id null.
+td::Result<std::string> reflected_request_id(const td::JsonValue &id);
+
 // Deserializes the serialized VM stack returned by liteServer.runSmcMethod.
 // Fails, instead of throwing, when the BOC is malformed, the root or any
 // nested cell is exotic (pruned branch, library, Merkle proof/update), or the
 // stack encoding is invalid.
 td::Result<td::Ref<vm::Stack>> parse_get_method_result_stack(td::Slice result_boc);
+
+// The liteserver's answer for a get-method whose result was requested (mode 4)
+// leaves the result empty only when the account is unavailable -- absent,
+// uninitialized, frozen, or not unpackable -- and reports that with this exit
+// code.
+inline constexpr td::int32 kInactiveAccountExitCode = -0x100;
+
+// Resolves the result stack of a liteServer.runMethodResult requested with
+// mode 4. An empty result is an empty stack only for an unavailable account;
+// for any other exit code it is an error, and a result that does not parse is
+// an error too, never an empty stack.
+td::Result<td::Ref<vm::Stack>> resolve_run_method_result_stack(td::int32 exit_code, td::Slice result_boc);
 
 // Walks the `(Hashmap 8 PublicKey)` returned by a multisig's get_public_keys
 // and renders each key as "ed25519:<hex>". Fails on malformed dictionary
@@ -55,5 +82,11 @@ td::Result<std::vector<std::string>> parse_multisig_public_keys(td::Ref<vm::Cell
 // seqno(32) subwallet_id(32) public_key(256) start_at(32). Returns 0 when the
 // cell is too short and fails when the root is exotic or null.
 td::Result<td::uint32> parse_restricted_wallet_start_at(td::Ref<vm::Cell> data_cell);
+
+// Legacy classical signature renderer. PQ carriers must enter the checked
+// anchored-finality adapter and are refused here rather than being rendered
+// without verification. id_json must already be a serialized JSON object.
+td::Result<std::string> render_masterchain_block_signatures_json(const lite_api::liteServer_SignatureSet* signatures,
+                                                                 td::Slice id_json);
 
 }  // namespace tos

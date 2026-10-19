@@ -1,0 +1,31 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c06/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.75s
+     Running tests/c06_diagnostics.rs (tools/node-health-monitor/target/debug/deps/c06_diagnostics-1805dea44836ceb6)
+
+running 3 tests
+C06 native_bridge_sha256=98eda827eb782fd935bc44f3796ffb8a4871199632a424a1af73217b744e2ffe
+test actual_native_ipc_relay_mtls_manager_transaction_chain ... ok
+C06 caller_deadline elapsed_ms=2001 status=503 Service Unavailable budget={"budget":{"max_batches":32,"max_owned_bytes":"8388608","owned_batches":"1","owned_bytes":"160108","predecode_bytes":"4194304"},"enabled":true,"schema_version":1,"source_id":"consensus_diagnostic"}
+C06 child_binary=health-state sha256=01a565063deb3ffa9bd8dadff96540eeb7c6a41e47664d85ee63ffef5c235daa
+C06 child_binary=health-edge sha256=87c184072b1a11bd32796272ac54ab8934814f4482a5bbf8b335a78c2e9c5aad
+C06 native_bridge_sha256=98eda827eb782fd935bc44f3796ffb8a4871199632a424a1af73217b744e2ffe
+C06 native_first signed/inflight/sent/dropped=100 0 300 0
+C06 manager_pid=3144030 terminated=signal: 9 (SIGKILL)
+C06 native_after_manager_death signed/inflight/sent/dropped=200 0 600 0
+
+thread 'actual_manager_http_refusals_and_conflict_survive_reopen' (3138220) panicked at crates/health-services/tests/c06_diagnostics.rs:408:6:
+called `Result::unwrap()` on an `Err` value: Elapsed(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test actual_manager_http_refusals_and_conflict_survive_reopen ... FAILED
+C06 native_after_edge_exit signed/inflight/sent/dropped=300 0 600 300; edge_stop_ms=111
+C06 native_pid=3145193 EOF/terminal=exit status: 0
+test actual_manager_death_then_edge_shutdown_preserves_native_core_progress ... ok
+
+failures:
+
+failures:
+    actual_manager_http_refusals_and_conflict_survive_reopen
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 39.56s
+
+error: test failed, to rerun pass `-p tos-health-services --test c06_diagnostics`

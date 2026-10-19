@@ -227,6 +227,7 @@ class ValidateQuery : public td::actor::Actor {
 
   std::vector<block::McShardDescr> neighbors_;
   std::map<BlockSeqno, Ref<MasterchainStateQ>> aux_mc_states_;
+  bool top_descr_governing_states_requested_{false};
 
   block::ShardState ps_, ns_;
   bool processed_upto_updated_{false};
@@ -257,6 +258,7 @@ class ValidateQuery : public td::actor::Actor {
   std::set<StdSmcAddress> accounts_with_dispatch_queue_diff_;
   std::set<StdSmcAddress> account_expected_defer_all_messages_;
   td::uint64 old_out_msg_queue_size_ = 0, new_out_msg_queue_size_ = 0;
+  td::uint64 cleanup_out_msg_count_ = 0;
   bool out_msg_queue_size_known_ = false;
   bool have_out_msg_queue_size_in_state_ = false;
 
@@ -355,6 +357,7 @@ class ValidateQuery : public td::actor::Actor {
 
   bool register_mc_state(Ref<MasterchainStateQ> other_mc_state);
   bool request_aux_mc_state(BlockSeqno seqno, Ref<MasterchainStateQ>& state);
+  bool request_top_descr_governing_states();
   Ref<MasterchainStateQ> get_aux_mc_state(BlockSeqno seqno) const;
   void after_get_aux_shard_state(tos::BlockIdExt blkid, td::Result<Ref<ShardState>> res, td::PerfLogAction token);
 

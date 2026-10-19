@@ -14,7 +14,7 @@ use common::{app_config::AppConfig, snapshot::SnapshotStore, task_cancellation::
 use contracts::{ChainProvider, NominatorWrapper, Wallet};
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -27,6 +27,29 @@ const MIN_WALLET_BALANCE: u64 = 5_000_000_000; // 5 TOS
 const WALLET_GAS: u64 = 100_000_000; // 0.1 TOS
 /// Amount to top up a wallet if its balance is below the minimum threshold.
 const TOP_UP_AMOUNT: u64 = 10_000_000_000; // 10 TOS
+// The constants above must leave room for the gas on top of each payment; a
+// change that breaks this fails the build instead of reaching the checks below.
+const _: () = assert!(DEPLOY_AMOUNT.checked_add(WALLET_GAS).is_some());
+const _: () = assert!(TOP_UP_AMOUNT.checked_add(WALLET_GAS).is_some());
+
+/// The balance the master wallet needs to send `amount` to one wallet: the
+/// amount plus the gas of the sending message. An overflow is an error, never
+/// a clamped or wrapped requirement.
+fn required_balance(amount: u64, gas: u64) -> anyhow::Result<u64> {
+    amount.checked_add(gas).ok_or_else(|| {
+        anyhow::anyhow!("balance requirement overflows u64: amount={} gas={}", amount, gas)
+    })
+}
+
+/// The balance the master wallet needs to deploy one wallet or pool.
+fn deploy_required() -> anyhow::Result<u64> {
+    required_balance(DEPLOY_AMOUNT, WALLET_GAS)
+}
+
+/// The balance the master wallet needs to top up one wallet.
+fn top_up_required() -> anyhow::Result<u64> {
+    required_balance(TOP_UP_AMOUNT, WALLET_GAS)
+}
 
 pub(crate) async fn run(
     cancellation_ctx: CancellationCtx,
@@ -38,8 +61,27 @@ pub(crate) async fn run(
     let pools = runtime_cfg.pools();
     let wallets = runtime_cfg.wallets();
     let chain_provider = runtime_cfg.chain_provider();
-    let monitor = ContractsMonitor { master_wallet, pools, wallets, chain_provider, _store: store };
+    let monitor = ContractsMonitor {
+        master_wallet,
+        pools,
+        wallets,
+        chain_provider,
+        _store: store,
+        standby: Mutex::new(None),
+    };
     monitor.run_loop(cancellation_ctx, app_config.tick_interval).await
+}
+
+/// A condition the task waits out rather than fails on: nothing is wrong with
+/// the node, but the master wallet cannot do the optional work it is for until
+/// an operator funds it. It is reported when entered and when it changes, not
+/// on every tick.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Standby {
+    /// The master wallet is not deployed and holds too little to deploy itself.
+    MasterUnfunded { balance: u64 },
+    /// A wallet is below its minimum balance and the master wallet cannot top it up.
+    TopUpUnaffordable { wallet: String, master_balance: u64, required: u64 },
 }
 
 struct ContractsMonitor {
@@ -48,9 +90,49 @@ struct ContractsMonitor {
     wallets: Arc<HashMap<String, Arc<dyn Wallet>>>,
     chain_provider: Arc<dyn ChainProvider>,
     _store: Arc<SnapshotStore>,
+    /// The standby condition last reported, if the task is in one.
+    standby: Mutex<Option<Standby>>,
 }
 
 impl ContractsMonitor {
+    /// Records `condition` and warns about it unless it is the one already
+    /// reported. Returns whether it was reported.
+    fn enter_standby(&self, condition: Standby) -> bool {
+        let mut standby = self.standby.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if standby.as_ref() == Some(&condition) {
+            return false;
+        }
+        match &condition {
+            Standby::MasterUnfunded { balance } => tracing::warn!(
+                target: "contracts",
+                "master wallet {} is not deployed and holds {:.4} TOS, below the {:.4} TOS it \
+                 needs to deploy itself; fund it to let the service deploy and top up wallets",
+                self.master_wallet.address(),
+                *balance as f64 / 1e9,
+                DEPLOY_AMOUNT as f64 / 1e9,
+            ),
+            Standby::TopUpUnaffordable { wallet, master_balance, required } => tracing::warn!(
+                target: "contracts",
+                "wallet {} is below {:.4} TOS, but the master wallet holds {:.4} TOS, below the \
+                 {:.4} TOS a top-up needs; fund the master wallet or the wallet directly",
+                wallet,
+                MIN_WALLET_BALANCE as f64 / 1e9,
+                *master_balance as f64 / 1e9,
+                *required as f64 / 1e9,
+            ),
+        }
+        *standby = Some(condition);
+        true
+    }
+
+    /// Clears the standby condition, noting that it ended if there was one.
+    fn leave_standby(&self) {
+        let mut standby = self.standby.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(condition) = standby.take() {
+            tracing::info!(target: "contracts", "no longer waiting: {:?}", condition);
+        }
+    }
+
     async fn run_loop(
         &self,
         cancellation_ctx: CancellationCtx,
@@ -94,6 +176,7 @@ impl ContractsMonitor {
         if !self.ensure_wallet_balances(&mut seqno).await? {
             return Ok(());
         }
+        self.leave_standby();
         tracing::info!(target: "contracts", "all contracts are ready");
         Ok(())
     }
@@ -119,7 +202,8 @@ impl ContractsMonitor {
 
     /// Step 1: Deploy master wallet if uninitialized.
     /// Returns `true` when master is active and ready for subsequent steps.
-    /// Returns an error if master is frozen or has insufficient balance.
+    /// Returns an error if master is frozen. A master wallet too poor to deploy
+    /// itself is a standby condition, not an error: nothing else needs it.
     async fn ensure_master_deployed(&self) -> anyhow::Result<bool> {
         let addr = self.master_wallet.address();
         let (state, balance) = self.account_info(&addr).await.context("get master wallet state")?;
@@ -133,8 +217,10 @@ impl ContractsMonitor {
         }
 
         if balance < DEPLOY_AMOUNT {
-            return Err(Self::insufficient_master_balance_error(balance, DEPLOY_AMOUNT));
+            self.enter_standby(Standby::MasterUnfunded { balance });
+            return Ok(false);
         }
+        self.leave_standby();
 
         tracing::info!(
             target: "contracts",
@@ -174,7 +260,7 @@ impl ContractsMonitor {
                 continue;
             }
 
-            match self.deploy_wallet(&node_id, wallet.clone(), *seqno).await {
+            match self.deploy_wallet(node_id, wallet.clone(), *seqno).await {
                 Ok(true) => (),
                 Ok(false) => {
                     all_deployed = false;
@@ -213,11 +299,9 @@ impl ContractsMonitor {
         );
 
         let master_balance = self.master_wallet.balance().await.context("master wallet balance")?;
-        if master_balance < DEPLOY_AMOUNT + WALLET_GAS {
-            return Err(Self::insufficient_master_balance_error(
-                master_balance,
-                DEPLOY_AMOUNT + WALLET_GAS,
-            ));
+        let required = deploy_required()?;
+        if master_balance < required {
+            return Err(Self::insufficient_master_balance_error(master_balance, required));
         }
 
         let si = wallet.state_init().await?;
@@ -252,7 +336,7 @@ impl ContractsMonitor {
     async fn ensure_pools_deployed(&self, seqno: &mut i64) -> anyhow::Result<bool> {
         let mut all_deployed = true;
         for (node_id, pool) in self.pools.iter() {
-            match self.deploy_pool(&node_id, pool.clone(), *seqno).await {
+            match self.deploy_pool(node_id, pool.clone(), *seqno).await {
                 Ok(true) => (),
                 Ok(false) => {
                     all_deployed = false;
@@ -292,11 +376,9 @@ impl ContractsMonitor {
 
         let master_balance =
             self.master_wallet.balance().await.context("get master wallet balance")?;
-        if master_balance < DEPLOY_AMOUNT + WALLET_GAS {
-            return Err(Self::insufficient_master_balance_error(
-                master_balance,
-                DEPLOY_AMOUNT + WALLET_GAS,
-            ));
+        let required = deploy_required()?;
+        if master_balance < required {
+            return Err(Self::insufficient_master_balance_error(master_balance, required));
         }
 
         if pool.state_init().is_none() {
@@ -356,20 +438,24 @@ impl ContractsMonitor {
             }
 
             all_topped_up = false;
+
+            // A top-up is a convenience: the wallet may be funded some other
+            // way, so a master wallet that cannot afford one is waited out.
+            let master_balance =
+                self.master_wallet.balance().await.context("get master wallet balance")?;
+            let required = top_up_required()?;
+            if master_balance < required {
+                let wallet = addr.to_string();
+                self.enter_standby(Standby::TopUpUnaffordable { wallet, master_balance, required });
+                return Ok(false);
+            }
+            self.leave_standby();
+
             tracing::info!(
                 target: "contracts",
                 "[{}] top-up wallet: address={} current_balance={:.4} TOS topup_amount={:.4} TOS",
                 node_id, addr, balance as f64 / 1e9, TOP_UP_AMOUNT as f64 / 1e9,
             );
-
-            let master_balance =
-                self.master_wallet.balance().await.context("get master wallet balance")?;
-            if master_balance < TOP_UP_AMOUNT + WALLET_GAS {
-                return Err(Self::insufficient_master_balance_error(
-                    master_balance,
-                    TOP_UP_AMOUNT + WALLET_GAS,
-                ));
-            }
 
             match self
                 .master_wallet
@@ -401,7 +487,10 @@ impl ContractsMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::ContractsMonitor;
+    use super::{
+        ContractsMonitor, DEPLOY_AMOUNT, Standby, TOP_UP_AMOUNT, WALLET_GAS, deploy_required,
+        required_balance, top_up_required,
+    };
     use axum::{Json, Router, extract::State, routing::post};
     use chain_block::{Cell, MsgAddressInt, StateInit};
     use chain_rpc_client::v2::client_json_rpc::ClientJsonRpc;
@@ -470,7 +559,6 @@ mod tests {
 
         let response = match method {
             "getAddressInformation" => serde_json::json!({
-                "ok": true,
                 "result": {
                     "@type": "raw.fullAccountState",
                     "balance": state.account_balance,
@@ -500,16 +588,17 @@ mod tests {
             "sendBoc" => {
                 state.send_boc_calls.fetch_add(1, Ordering::Relaxed);
                 serde_json::json!({
-                    "ok": true,
                     "result": { "@type": "ok" },
                     "jsonrpc": "2.0",
                     "id": id
                 })
             }
             _ => serde_json::json!({
-                "ok": false,
-                "error": format!("unsupported method {method}"),
-                "code": 400,
+                "error": {
+                    "code": -32601,
+                    "message": format!("Method not found: {method}"),
+                    "data": {"schema_version": 1, "reason": "METHOD_NOT_FOUND", "retryable": false}
+                },
                 "jsonrpc": "2.0",
                 "id": id
             }),
@@ -522,12 +611,19 @@ mod tests {
     struct DummyWallet {
         addr: MsgAddressInt,
         state_init: Option<StateInit>,
+        balance: u64,
+    }
+
+    impl DummyWallet {
+        fn rich(byte: u8) -> Self {
+            Self { addr: addr(byte), state_init: Some(StateInit::default()), balance: u64::MAX }
+        }
     }
 
     #[async_trait::async_trait]
     impl SmartContract for DummyWallet {
         async fn balance(&self) -> anyhow::Result<u64> {
-            Ok(u64::MAX)
+            Ok(self.balance)
         }
 
         fn address(&self) -> MsgAddressInt {
@@ -586,6 +682,7 @@ mod tests {
             wallets,
             chain_provider,
             _store: Arc::new(SnapshotStore::new()),
+            standby: Default::default(),
         }
     }
 
@@ -593,14 +690,12 @@ mod tests {
     async fn ensure_wallets_deployed_sends_once_for_shared_wallet() {
         let server = MockRpcServer::start("uninitialized", 0).await;
 
-        let shared_wallet: Arc<dyn Wallet> =
-            Arc::new(DummyWallet { addr: addr(1), state_init: Some(StateInit::default()) });
+        let shared_wallet: Arc<dyn Wallet> = Arc::new(DummyWallet::rich(1));
         let wallets: Arc<HashMap<String, Arc<dyn Wallet>>> = Arc::new(HashMap::from([
             ("node-a".to_string(), shared_wallet.clone()),
             ("node-b".to_string(), shared_wallet),
         ]));
-        let master_wallet: Arc<dyn Wallet> =
-            Arc::new(DummyWallet { addr: addr(9), state_init: Some(StateInit::default()) });
+        let master_wallet: Arc<dyn Wallet> = Arc::new(DummyWallet::rich(9));
 
         let monitor = build_monitor(server.url.clone(), master_wallet, wallets);
         let mut seqno = 1;
@@ -617,14 +712,12 @@ mod tests {
     async fn ensure_wallet_balances_sends_once_for_shared_wallet() {
         let server = MockRpcServer::start("active", 0).await;
 
-        let shared_wallet: Arc<dyn Wallet> =
-            Arc::new(DummyWallet { addr: addr(2), state_init: Some(StateInit::default()) });
+        let shared_wallet: Arc<dyn Wallet> = Arc::new(DummyWallet::rich(2));
         let wallets: Arc<HashMap<String, Arc<dyn Wallet>>> = Arc::new(HashMap::from([
             ("node-a".to_string(), shared_wallet.clone()),
             ("node-b".to_string(), shared_wallet),
         ]));
-        let master_wallet: Arc<dyn Wallet> =
-            Arc::new(DummyWallet { addr: addr(9), state_init: Some(StateInit::default()) });
+        let master_wallet: Arc<dyn Wallet> = Arc::new(DummyWallet::rich(9));
 
         let monitor = build_monitor(server.url.clone(), master_wallet, wallets);
         let mut seqno = 10;
@@ -635,5 +728,90 @@ mod tests {
         assert_eq!(server.send_boc_calls.load(Ordering::Relaxed), 1);
 
         server.shutdown().await;
+    }
+
+    fn no_wallets() -> Arc<HashMap<String, Arc<dyn Wallet>>> {
+        Arc::new(HashMap::new())
+    }
+
+    /// An unfunded master wallet on an otherwise healthy node is waited out:
+    /// the tick succeeds, sends nothing, and records the condition once.
+    #[tokio::test]
+    async fn unfunded_master_wallet_is_a_standby_not_an_error() {
+        let server = MockRpcServer::start("uninitialized", 0).await;
+        let master_wallet: Arc<dyn Wallet> = Arc::new(DummyWallet::rich(9));
+        let monitor = build_monitor(server.url.clone(), master_wallet, no_wallets());
+
+        monitor.run().await.expect("an unfunded master wallet is not a tick failure");
+        monitor.run().await.expect("nor on the next tick");
+
+        assert_eq!(server.send_boc_calls.load(Ordering::Relaxed), 0);
+        let unfunded = Standby::MasterUnfunded { balance: 0 };
+        assert_eq!(*monitor.standby.lock().unwrap(), Some(unfunded.clone()));
+        // Reported on entry only; a changed balance is reported again.
+        assert!(!monitor.enter_standby(unfunded));
+        assert!(monitor.enter_standby(Standby::MasterUnfunded { balance: 1 }));
+
+        server.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn frozen_master_wallet_still_fails_the_tick() {
+        let server = MockRpcServer::start("frozen", u64::MAX).await;
+        let master_wallet: Arc<dyn Wallet> = Arc::new(DummyWallet::rich(9));
+        let monitor = build_monitor(server.url.clone(), master_wallet, no_wallets());
+
+        let error = monitor.run().await.expect_err("a frozen master wallet is an error");
+        assert!(format!("{error:#}").contains("frozen"), "unexpected error: {error:#}");
+        assert_eq!(*monitor.standby.lock().unwrap(), None);
+
+        server.shutdown().await;
+    }
+
+    /// A wallet below its minimum that the master wallet cannot afford to top
+    /// up is waited out, not reported as a failure on every tick.
+    #[tokio::test]
+    async fn unaffordable_top_up_is_a_standby_not_an_error() {
+        let server = MockRpcServer::start("active", 0).await;
+        let wallets: Arc<HashMap<String, Arc<dyn Wallet>>> =
+            Arc::new(HashMap::from([("node-a".to_string(), Arc::new(DummyWallet::rich(2)) as _)]));
+        let poor_master: Arc<dyn Wallet> =
+            Arc::new(DummyWallet { balance: 1_000_000_000, ..DummyWallet::rich(9) });
+        let monitor = build_monitor(server.url.clone(), poor_master, wallets);
+
+        let mut seqno = 10;
+        let all_topped_up = monitor
+            .ensure_wallet_balances(&mut seqno)
+            .await
+            .expect("an unaffordable top-up is not a tick failure");
+
+        assert!(!all_topped_up);
+        assert_eq!(seqno, 10);
+        assert_eq!(server.send_boc_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            *monitor.standby.lock().unwrap(),
+            Some(Standby::TopUpUnaffordable {
+                wallet: addr(2).to_string(),
+                master_balance: 1_000_000_000,
+                required: TOP_UP_AMOUNT + WALLET_GAS,
+            })
+        );
+
+        server.shutdown().await;
+    }
+
+    #[test]
+    fn requirement_is_the_amount_plus_the_gas() {
+        assert_eq!(deploy_required().unwrap(), DEPLOY_AMOUNT + WALLET_GAS);
+        assert_eq!(top_up_required().unwrap(), TOP_UP_AMOUNT + WALLET_GAS);
+        assert_eq!(required_balance(7, 3).unwrap(), 10);
+        assert_eq!(required_balance(u64::MAX - 1, 1).unwrap(), u64::MAX);
+    }
+
+    #[test]
+    fn overflowing_requirement_is_an_error_not_a_clamp() {
+        let err = required_balance(u64::MAX, 1).expect_err("must not clamp to u64::MAX");
+        assert!(err.to_string().contains("overflows"), "{err}");
+        assert!(required_balance(u64::MAX - 5, 10).is_err());
     }
 }

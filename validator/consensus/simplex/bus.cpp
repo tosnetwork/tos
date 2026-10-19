@@ -28,6 +28,14 @@ std::string BroadcastVote::contents_to_string() const {
   return PSTRING() << "{vote=" << vote << "}";
 }
 
+std::string PersistOwnVoteIntent::contents_to_string() const {
+  return PSTRING() << "{vote=" << vote << "}";
+}
+
+std::string PersistOwnSignedVote::contents_to_string() const {
+  return PSTRING() << "{vote=" << vote << ", seqno=" << seqno << ", signature_size=" << signature.size() << "}";
+}
+
 std::string NotarizationObserved::contents_to_string() const {
   return PSTRING() << "{id=" << id << "}";
 }
@@ -48,29 +56,16 @@ std::string ResolveCandidate::contents_to_string() const {
   return PSTRING() << "{id=" << id << "}";
 }
 
-std::string QuerySlotSkipped::contents_to_string() const {
-  return PSTRING() << "{id=" << id << "}";
+std::string QueryFinalizationState::contents_to_string() const {
+  return PSTRING() << "{slot=" << slot << "}";
 }
 
 std::string QueryResolverTrackedStateCount::contents_to_string() const {
   return PSTRING() << "{min_slot=" << min_slot << "}";
 }
 
-td::Result<SkippedSlotResolution> select_skipped_slot_resolution(
-    const CandidateId& requested, bool is_skipped, std::optional<CandidateId> notarized) {
-  if (!is_skipped) {
-    return SkippedSlotResolution::ResolveCandidate;
-  }
-  if (!notarized.has_value()) {
-    return SkippedSlotResolution::UseAvailableBase;
-  }
-  if (*notarized != requested) {
-    return td::Status::Error(
-        ErrorCode::protoviolation,
-        PSTRING() << "Simplex state-resolver: requested candidate " << requested
-                  << " conflicts with notarized candidate " << *notarized << " in the same skipped slot");
-  }
-  return SkippedSlotResolution::ResolveCandidate;
+std::string QueryVoteIngress::contents_to_string() const {
+  return "{}";
 }
 
 std::string StoreCandidate::contents_to_string() const {
@@ -78,7 +73,7 @@ std::string StoreCandidate::contents_to_string() const {
 }
 
 std::string ResolveState::contents_to_string() const {
-  return PSTRING() << "{id=" << id << "}";
+  return PSTRING() << "{id=" << id << ", requesting_candidate=" << requesting_candidate << "}";
 }
 
 std::string ResolveState::response_to_string(const ReturnType &result) {

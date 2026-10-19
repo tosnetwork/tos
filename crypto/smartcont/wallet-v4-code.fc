@@ -1,3 +1,4 @@
+#include "strong-ed25519-key.fc";
 ;; Wallet V4 smart contract with plugin support and global_id anti-replay protection
 
 int get_global_id() asm "GLOBALID";
@@ -74,6 +75,7 @@ slice pack_plugin_key(int wc, int addr_hash) inline {
   var (stored_seqno, stored_subwallet, public_key, plugins) = load_data();
   throw_unless(33, msg_seqno == stored_seqno);
   throw_unless(34, subwallet_id == stored_subwallet);
+  throw_if(35, weak_ed25519_key?(public_key));
   throw_unless(35, check_signature(slice_hash(in_msg), signature, public_key));
   accept_message();
 

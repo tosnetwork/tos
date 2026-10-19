@@ -1,0 +1,10 @@
+[Unit]
+Description=MCP-lane validator health judgement with model %i every thirty minutes
+
+[Timer]
+OnBootSec=8min
+OnUnitActiveSec=30min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

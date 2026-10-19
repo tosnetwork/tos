@@ -7,6 +7,8 @@ on:
     paths:
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
+      - "tosctl/src/adnl/**"
+      - "tosctl/src/Cargo.toml"
       - "tosctl/scripts/**"
       - "validator-engine/json-rpc-server*.cpp"
       - "scripts/localnet-jsonrpc.py"
@@ -17,6 +19,8 @@ on:
     paths:
       - "tosctl/src/node-control/**"
       - "tosctl/src/secrets-vault/**"
+      - "tosctl/src/adnl/**"
+      - "tosctl/src/Cargo.toml"
       - "tosctl/scripts/**"
       - "validator-engine/json-rpc-server*.cpp"
       - "scripts/localnet-jsonrpc.py"
@@ -34,11 +38,12 @@ jobs:
       run:
         working-directory: tosctl/src/node-control
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
+          toolchain: stable
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: tosctl/src/node-control -> target
       - name: Formatting
@@ -58,11 +63,12 @@ jobs:
       run:
         working-directory: tosctl/src
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
         with:
+          toolchain: stable
           components: rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: tosctl/src -> target
       - name: Formatting
@@ -70,13 +76,43 @@ jobs:
       - name: Vault tests
         run: cargo test -p secrets-vault --lib --locked
 
+  # The RaptorQ codec decodes symbols chosen by remote peers for the Rust RLDP
+  # and broadcast paths. Its suite pins byte-for-byte agreement with golden
+  # vectors from the C++ implementation and every refusal of malformed peer
+  # input; nothing ran it before. The ADNL wrapper tests cover what reaches the
+  # codec: FEC parameter admission, the single-block layout, RLDP part numbers
+  # and two-step part sizes. The fuzz targets run with
+  # `make -C tosctl/src/adnl/raptorq fuzz`.
+  raptorq:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tosctl/src
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: tosctl/src -> target
+      - name: Formatting
+        run: cargo fmt -p raptorq --check
+      - name: Codec tests (unit, peer input, interop with the C++ vectors)
+        run: cargo test -p raptorq --locked
+      - name: ADNL FEC wrapper tests
+        run: |
+          cargo test -p adnl --locked --lib rldp::
+          cargo test -p adnl --locked --test test_overlay -- test_raptorq test_twostep
+
   # This harness creates a new encrypted file Vault for one local child
   # process. It has no third-party Python dependency and must stay unable to
   # leak its generated capability into source, logs, or a caller's environment.
   local-test-vault-harness:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify local ephemeral Vault runner
         run: python3 -m unittest tosctl/scripts/tests/test_local_test_vault.py -v
 
@@ -98,28 +134,30 @@ jobs:
     # before the gate starts at all.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install native build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build libjemalloc-dev ccache
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
       # ccache rather than caching the build directory. This job compiles the
       # commit under test, so a key built from the tree changes on every push
       # and a directory cache would miss exactly when it is needed. ccache is
       # keyed per translation unit, so a change to a handful of files reuses
       # the rest.
       - name: Restore compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ccache
           key: tos-ccache-${{ runner.os }}-${{ github.sha }}
           restore-keys: |
             tos-ccache-${{ runner.os }}-
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: tosctl/src -> target
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           enable-cache: true
       - name: Prepare Python environment
@@ -136,12 +174,15 @@ jobs:
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           cmake --build build --target \
-            validator-engine dht-server create-state generate-random-id toslibjson -j2
+            validator-engine dht-server create-state generate-random-id toslibjson \
+            tos-pq-consensus-key -j2
           ccache --show-stats
       - name: Build tosctl explorer
         run: cargo build --manifest-path tosctl/src/Cargo.toml -p tosctl --locked
       - name: Real-chain TOSCAN release gate
         env:
+          # Explicit public namespace for this disposable acceptance network.
+          TOS_AUTH_NETWORK_TAG: "4545454545454545454545454545454545454545454545454545454545454545"
           # This step starts immediately after compiling the node, on a runner
           # whose disk has just been saturated for the better part of an hour.
           # The waits inside are for a chain to produce blocks and an indexer to
@@ -149,7 +190,7 @@ jobs:
           # work that is not theirs.
           TOSCAN_E2E_TIMEOUT_SCALE: "3"
         run: uv run python scripts/toscan-explorer-e2e.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: toscan-real-chain-logs

@@ -1,0 +1,167 @@
+[1/159] Checking the git repository for changes...
+[2/159] Building CXX object CMakeFiles/git.dir/git.cc.o
+[3/159] Linking CXX static library libgit.a
+[4/159] Building CXX object adnl/CMakeFiles/adnllite.dir/adnl-query.cpp.o
+[5/159] Building CXX object adnl/CMakeFiles/adnllite.dir/adnl-ext-connection.cpp.o
+[6/159] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/Dictionary.cpp.o
+[7/159] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/IntCtx.cpp.o
+[8/159] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/Fift.cpp.o
+[9/159] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/HashMap.cpp.o
+[10/159] Building CXX object tl/CMakeFiles/tl_toslib_api.dir/generate/auto/tl/toslib_api.cpp.o
+[11/159] Linking CXX static library tl/libtl_toslib_api.a
+[12/159] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/SourceLookup.cpp.o
+[13/159] Building CXX object adnl/CMakeFiles/adnllite.dir/adnl-ext-client.cpp.o
+[14/159] Linking CXX static library adnl/libadnllite.a
+[15/159] Building CXX object crypto/CMakeFiles/func.dir/func/func-main.cpp.o
+[16/159] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/Continuation.cpp.o
+[17/159] Building CXX object crypto/CMakeFiles/func.dir/func/keywords.cpp.o
+[18/159] Building CXX object crypto/CMakeFiles/func.dir/func/unify-types.cpp.o
+[19/159] Building CXX object crypto/CMakeFiles/fift.dir/fift/fift-main.cpp.o
+[20/159] Building CXX object crypto/CMakeFiles/func.dir/func/abscode.cpp.o
+[21/159] Building CXX object crypto/CMakeFiles/func.dir/func/asmops.cpp.o
+[22/159] Building CXX object crypto/CMakeFiles/func.dir/func/gen-abscode.cpp.o
+[23/159] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/utils.cpp.o
+[24/159] Building CXX object crypto/CMakeFiles/func.dir/func/builtins.cpp.o
+[25/159] Building CXX object crypto/CMakeFiles/func.dir/func/stack-transform.cpp.o
+[26/159] Building CXX object crypto/CMakeFiles/func.dir/func/optimize.cpp.o
+[27/159] Building CXX object crypto/CMakeFiles/func.dir/func/func.cpp.o
+[28/159] Building CXX object crypto/CMakeFiles/func.dir/func/codegen.cpp.o
+[29/159] Building CXX object crypto/CMakeFiles/func.dir/func/analyzer.cpp.o
+[30/159] Building CXX object crypto/CMakeFiles/fift-lib.dir/fift/words.cpp.o
+[31/159] Linking CXX static library crypto/libfift.a
+[32/159] Building CXX object crypto/CMakeFiles/func.dir/func/parse-func.cpp.o
+[33/159] Linking CXX executable crypto/fift
+[34/159] Linking CXX executable crypto/func
+[35/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/wallet-v5-code.fif
+[36/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/restricted-wallet-code.fif
+[37/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/restricted-wallet-code.cpp
+[38/159] Building CXX object lite-client/CMakeFiles/lite-client-common.dir/ext-client.cpp.o
+[39/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/session-wallet-code.fif
+[40/159] Verify and embed the frozen TOS Service Protocol stablecoin escrow v2 BOC
+[41/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/agent-account-code.fif
+[42/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/wallet-v5-code.cpp
+[43/159] Compile FunC stdlib TVM v6 fee primitive coverage
+[44/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/config-code.fif
+[45/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/config-code.cpp
+[46/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/wallet-code.fif
+[47/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/prediction-market-code.fif
+[48/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/wallet-code.cpp
+[49/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/wallet3-code.fif
+[50/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/wallet-v4-code.fif
+[51/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/wallet3-code.cpp
+[52/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/wallet-v4-code.cpp
+[53/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/simple-wallet-code.fif
+[54/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/simple-wallet-code.cpp
+[55/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/highload-wallet-code.fif
+[56/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/highload-wallet-code.cpp
+[57/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/highload-wallet-v2-code.fif
+[58/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/highload-wallet-v2-code.cpp
+[59/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/elector-code.fif
+[60/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/elector-code.cpp
+[61/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/multisig-code.fif
+[62/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/multisig-code.cpp
+[63/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/restricted-wallet2-code.fif
+[64/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/restricted-wallet2-code.cpp
+[65/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/restricted-wallet3-code.fif
+[66/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/restricted-wallet3-code.cpp
+[67/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/session-wallet-code.cpp
+[68/159] Verify and embed the frozen TOS Native Service Registry BOC
+[69/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/task-escrow-code.fif
+[70/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/task-escrow-code.cpp
+[71/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/agent-account-code.cpp
+[72/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/prediction-market-code.cpp
+[73/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/pow-testgiver-code.fif
+[74/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/pow-testgiver-code.cpp
+[75/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/dns-manual-code.fif
+[76/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/dns-manual-code.cpp
+[77/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/dns-auto-code.fif
+[78/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/dns-auto-code.cpp
+[79/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/payment-channel-code.fif
+[80/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/payment-channel-code.cpp
+[81/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/simple-wallet-ext-code.fif
+[82/159] Verify and embed the frozen TOS Service Protocol stablecoin escrow v1 BOC
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+NOTE: escrow v1 is deprecated (superseded by v2); this build exists only to verify the frozen historical artifact.
+[83/159] Generate $HOME/nhm-c04-build/crypto/smartcont/auto/simple-wallet-ext-code.cpp
+[84/159] Building CXX object lite-client/CMakeFiles/lite-client-common.dir/lite-client-common.cpp.o
+[85/159] Building CXX object CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o
+FAILED: CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o 
+ccache /usr/bin/clang++-21 -DSODIUM_STATIC -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I$HOME/tos-node-health-c04 -I$HOME/tos-node-health-c04/metrics/.. -I$HOME/tos-node-health-c04/tdutils -I$HOME/nhm-c04-build/tdutils -I$HOME/tos-node-health-c04/tl -I$HOME/tos-node-health-c04/tl/.. -I$HOME/tos-node-health-c04/tl/../crypto -I$HOME/tos-node-health-c04/tl/generate -I$HOME/tos-node-health-c04/tdnet -I$HOME/tos-node-health-c04/tdactor -I$HOME/tos-node-health-c04/toslib -I$HOME/tos-node-health-c04/toslib/.. -I$HOME/tos-node-health-c04/http/.. -I$HOME/tos-node-health-c04/crypto -I$HOME/tos-node-health-c04/crypto/.. -I$HOME/nhm-c04-build/third-party/secp256k1/include -I$HOME/nhm-c04-build/third-party/sodium/include -I$HOME/tos-node-health-c04/tddb -I$HOME/tos-node-health-c04/crypto/block -I$HOME/tos-node-health-c04/crypto/pq -I$HOME/tos-node-health-c04/keys/.. -I$HOME/tos-node-health-c04/tl-utils/.. -isystem $HOME/tos-node-health-c04/third-party/abseil-cpp -isystem $HOME/nhm-c04-build/third-party/openssl/include -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIE -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o -MF CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o.d -o CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o -c $HOME/tos-node-health-c04/test/test-health-native-snapshot.cpp
+In file included from $HOME/tos-node-health-c04/test/test-health-native-snapshot.cpp:6:
+In file included from $HOME/tos-node-health-c04/metrics/native-core-snapshot.h:8:
+In file included from $HOME/tos-node-health-c04/metrics/consensus-snapshot.h:8:
+In file included from $HOME/tos-node-health-c04/metrics/consensus-work.h:3:
+$HOME/tos-node-health-c04/metrics/consensus-health.h:325:53: error: default member initializer for 'leased' needed within definition of enclosing class 'SessionObservation' outside of member functions
+  325 |   static inline std::array<Context, 8> context_rows{};
+      |                                                     ^
+$HOME/tos-node-health-c04/metrics/consensus-health.h:319:23: note: default member initializer declared here
+  319 |     std::atomic<bool> leased{false};
+      |                       ^
+1 error generated.
+[86/159] Building CXX object lite-client/CMakeFiles/lite-client-common.dir/query-utils.cpp.o
+[87/159] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+FAILED: validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o 
+ccache /usr/bin/clang++-21 -DSODIUM_STATIC -DTDDB_USE_ROCKSDB -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I$HOME/tos-node-health-c04/validator -I$HOME/tos-node-health-c04/validator/.. -I$HOME/tos-node-health-c04/validator/../crypto -I$HOME/tos-node-health-c04/tdactor -I$HOME/tos-node-health-c04/tdutils -I$HOME/nhm-c04-build/tdutils -I$HOME/tos-node-health-c04/adnl/.. -I$HOME/tos-node-health-c04/crypto -I$HOME/tos-node-health-c04/crypto/.. -I$HOME/nhm-c04-build/third-party/secp256k1/include -I$HOME/nhm-c04-build/third-party/sodium/include -I$HOME/tos-node-health-c04/tddb -I$HOME/tos-node-health-c04/crypto/block -I$HOME/tos-node-health-c04/tl -I$HOME/tos-node-health-c04/tl/.. -I$HOME/tos-node-health-c04/tl/../crypto -I$HOME/tos-node-health-c04/tl/generate -I$HOME/tos-node-health-c04/crypto/pq -I$HOME/tos-node-health-c04/keys/.. -I$HOME/tos-node-health-c04/tl-utils/.. -I$HOME/tos-node-health-c04/tdnet -I$HOME/tos-node-health-c04/third-party/rocksdb/include -I$HOME/tos-node-health-c04/keyring/.. -I$HOME/tos-node-health-c04/common -I$HOME/tos-node-health-c04/common/.. -I$HOME/tos-node-health-c04/dht -I$HOME/tos-node-health-c04/dht/.. -I$HOME/tos-node-health-c04/tdfec -I$HOME/tos-node-health-c04/tdfec/.. -I$HOME/tos-node-health-c04/overlay -I$HOME/tos-node-health-c04/overlay/.. -I$HOME/tos-node-health-c04/validator/impl -I$HOME/tos-node-health-c04/validator/impl/.. -I$HOME/tos-node-health-c04/validator/impl/../crypto -isystem $HOME/nhm-c04-build/third-party/openssl/include -isystem $HOME/tos-node-health-c04/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIC -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o -MF validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o.d -o validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o -c $HOME/tos-node-health-c04/validator/consensus/simplex/bus.cpp
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/bus.cpp:7:
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/bus.h:9:
+In file included from $HOME/tos-node-health-c04/validator/consensus/bus.h:9:
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:325:53: error: default member initializer for 'leased' needed within definition of enclosing class 'SessionObservation' outside of member functions
+  325 |   static inline std::array<Context, 8> context_rows{};
+      |                                                     ^
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:319:23: note: default member initializer declared here
+  319 |     std::atomic<bool> leased{false};
+      |                       ^
+1 error generated.
+[88/159] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+FAILED: validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o 
+ccache /usr/bin/clang++-21 -DSODIUM_STATIC -DTDDB_USE_ROCKSDB -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I$HOME/tos-node-health-c04/validator -I$HOME/tos-node-health-c04/validator/.. -I$HOME/tos-node-health-c04/validator/../crypto -I$HOME/tos-node-health-c04/tdactor -I$HOME/tos-node-health-c04/tdutils -I$HOME/nhm-c04-build/tdutils -I$HOME/tos-node-health-c04/adnl/.. -I$HOME/tos-node-health-c04/crypto -I$HOME/tos-node-health-c04/crypto/.. -I$HOME/nhm-c04-build/third-party/secp256k1/include -I$HOME/nhm-c04-build/third-party/sodium/include -I$HOME/tos-node-health-c04/tddb -I$HOME/tos-node-health-c04/crypto/block -I$HOME/tos-node-health-c04/tl -I$HOME/tos-node-health-c04/tl/.. -I$HOME/tos-node-health-c04/tl/../crypto -I$HOME/tos-node-health-c04/tl/generate -I$HOME/tos-node-health-c04/crypto/pq -I$HOME/tos-node-health-c04/keys/.. -I$HOME/tos-node-health-c04/tl-utils/.. -I$HOME/tos-node-health-c04/tdnet -I$HOME/tos-node-health-c04/third-party/rocksdb/include -I$HOME/tos-node-health-c04/keyring/.. -I$HOME/tos-node-health-c04/common -I$HOME/tos-node-health-c04/common/.. -I$HOME/tos-node-health-c04/dht -I$HOME/tos-node-health-c04/dht/.. -I$HOME/tos-node-health-c04/tdfec -I$HOME/tos-node-health-c04/tdfec/.. -I$HOME/tos-node-health-c04/overlay -I$HOME/tos-node-health-c04/overlay/.. -I$HOME/tos-node-health-c04/validator/impl -I$HOME/tos-node-health-c04/validator/impl/.. -I$HOME/tos-node-health-c04/validator/impl/../crypto -isystem $HOME/nhm-c04-build/third-party/openssl/include -isystem $HOME/tos-node-health-c04/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIC -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o -MF validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o.d -o validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o -c $HOME/tos-node-health-c04/validator/consensus/simplex/certificate.cpp
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/certificate.cpp:11:
+In file included from $HOME/tos-node-health-c04/validator/../validator/consensus/bus.h:9:
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:325:53: error: default member initializer for 'leased' needed within definition of enclosing class 'SessionObservation' outside of member functions
+  325 |   static inline std::array<Context, 8> context_rows{};
+      |                                                     ^
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:319:23: note: default member initializer declared here
+  319 |     std::atomic<bool> leased{false};
+      |                       ^
+1 error generated.
+[89/159] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+FAILED: validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o 
+ccache /usr/bin/clang++-21 -DSODIUM_STATIC -DTDDB_USE_ROCKSDB -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I$HOME/tos-node-health-c04/validator -I$HOME/tos-node-health-c04/validator/.. -I$HOME/tos-node-health-c04/validator/../crypto -I$HOME/tos-node-health-c04/tdactor -I$HOME/tos-node-health-c04/tdutils -I$HOME/nhm-c04-build/tdutils -I$HOME/tos-node-health-c04/adnl/.. -I$HOME/tos-node-health-c04/crypto -I$HOME/tos-node-health-c04/crypto/.. -I$HOME/nhm-c04-build/third-party/secp256k1/include -I$HOME/nhm-c04-build/third-party/sodium/include -I$HOME/tos-node-health-c04/tddb -I$HOME/tos-node-health-c04/crypto/block -I$HOME/tos-node-health-c04/tl -I$HOME/tos-node-health-c04/tl/.. -I$HOME/tos-node-health-c04/tl/../crypto -I$HOME/tos-node-health-c04/tl/generate -I$HOME/tos-node-health-c04/crypto/pq -I$HOME/tos-node-health-c04/keys/.. -I$HOME/tos-node-health-c04/tl-utils/.. -I$HOME/tos-node-health-c04/tdnet -I$HOME/tos-node-health-c04/third-party/rocksdb/include -I$HOME/tos-node-health-c04/keyring/.. -I$HOME/tos-node-health-c04/common -I$HOME/tos-node-health-c04/common/.. -I$HOME/tos-node-health-c04/dht -I$HOME/tos-node-health-c04/dht/.. -I$HOME/tos-node-health-c04/tdfec -I$HOME/tos-node-health-c04/tdfec/.. -I$HOME/tos-node-health-c04/overlay -I$HOME/tos-node-health-c04/overlay/.. -I$HOME/tos-node-health-c04/validator/impl -I$HOME/tos-node-health-c04/validator/impl/.. -I$HOME/tos-node-health-c04/validator/impl/../crypto -isystem $HOME/nhm-c04-build/third-party/openssl/include -isystem $HOME/tos-node-health-c04/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIC -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o -MF validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o.d -o validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o -c $HOME/tos-node-health-c04/validator/consensus/simplex/candidate-resolver.cpp
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/candidate-resolver.cpp:15:
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/bus.h:9:
+In file included from $HOME/tos-node-health-c04/validator/consensus/bus.h:9:
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:325:53: error: default member initializer for 'leased' needed within definition of enclosing class 'SessionObservation' outside of member functions
+  325 |   static inline std::array<Context, 8> context_rows{};
+      |                                                     ^
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:319:23: note: default member initializer declared here
+  319 |     std::atomic<bool> leased{false};
+      |                       ^
+1 error generated.
+[90/159] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ExtClient.cpp.o
+[91/159] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+FAILED: validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o 
+ccache /usr/bin/clang++-21 -DSODIUM_STATIC -DTDDB_USE_ROCKSDB -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I$HOME/tos-node-health-c04/validator -I$HOME/tos-node-health-c04/validator/.. -I$HOME/tos-node-health-c04/validator/../crypto -I$HOME/tos-node-health-c04/tdactor -I$HOME/tos-node-health-c04/tdutils -I$HOME/nhm-c04-build/tdutils -I$HOME/tos-node-health-c04/adnl/.. -I$HOME/tos-node-health-c04/crypto -I$HOME/tos-node-health-c04/crypto/.. -I$HOME/nhm-c04-build/third-party/secp256k1/include -I$HOME/nhm-c04-build/third-party/sodium/include -I$HOME/tos-node-health-c04/tddb -I$HOME/tos-node-health-c04/crypto/block -I$HOME/tos-node-health-c04/tl -I$HOME/tos-node-health-c04/tl/.. -I$HOME/tos-node-health-c04/tl/../crypto -I$HOME/tos-node-health-c04/tl/generate -I$HOME/tos-node-health-c04/crypto/pq -I$HOME/tos-node-health-c04/keys/.. -I$HOME/tos-node-health-c04/tl-utils/.. -I$HOME/tos-node-health-c04/tdnet -I$HOME/tos-node-health-c04/third-party/rocksdb/include -I$HOME/tos-node-health-c04/keyring/.. -I$HOME/tos-node-health-c04/common -I$HOME/tos-node-health-c04/common/.. -I$HOME/tos-node-health-c04/dht -I$HOME/tos-node-health-c04/dht/.. -I$HOME/tos-node-health-c04/tdfec -I$HOME/tos-node-health-c04/tdfec/.. -I$HOME/tos-node-health-c04/overlay -I$HOME/tos-node-health-c04/overlay/.. -I$HOME/tos-node-health-c04/validator/impl -I$HOME/tos-node-health-c04/validator/impl/.. -I$HOME/tos-node-health-c04/validator/impl/../crypto -isystem $HOME/nhm-c04-build/third-party/openssl/include -isystem $HOME/tos-node-health-c04/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIC -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o -MF validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o.d -o validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o -c $HOME/tos-node-health-c04/validator/consensus/simplex/collator-schedule.cpp
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/collator-schedule.cpp:7:
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/bus.h:9:
+In file included from $HOME/tos-node-health-c04/validator/consensus/bus.h:9:
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:325:53: error: default member initializer for 'leased' needed within definition of enclosing class 'SessionObservation' outside of member functions
+  325 |   static inline std::array<Context, 8> context_rows{};
+      |                                                     ^
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:319:23: note: default member initializer declared here
+  319 |     std::atomic<bool> leased{false};
+      |                       ^
+1 error generated.
+[92/159] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+FAILED: validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o 
+ccache /usr/bin/clang++-21 -DSODIUM_STATIC -DTDDB_USE_ROCKSDB -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I$HOME/tos-node-health-c04/validator -I$HOME/tos-node-health-c04/validator/.. -I$HOME/tos-node-health-c04/validator/../crypto -I$HOME/tos-node-health-c04/tdactor -I$HOME/tos-node-health-c04/tdutils -I$HOME/nhm-c04-build/tdutils -I$HOME/tos-node-health-c04/adnl/.. -I$HOME/tos-node-health-c04/crypto -I$HOME/tos-node-health-c04/crypto/.. -I$HOME/nhm-c04-build/third-party/secp256k1/include -I$HOME/nhm-c04-build/third-party/sodium/include -I$HOME/tos-node-health-c04/tddb -I$HOME/tos-node-health-c04/crypto/block -I$HOME/tos-node-health-c04/tl -I$HOME/tos-node-health-c04/tl/.. -I$HOME/tos-node-health-c04/tl/../crypto -I$HOME/tos-node-health-c04/tl/generate -I$HOME/tos-node-health-c04/crypto/pq -I$HOME/tos-node-health-c04/keys/.. -I$HOME/tos-node-health-c04/tl-utils/.. -I$HOME/tos-node-health-c04/tdnet -I$HOME/tos-node-health-c04/third-party/rocksdb/include -I$HOME/tos-node-health-c04/keyring/.. -I$HOME/tos-node-health-c04/common -I$HOME/tos-node-health-c04/common/.. -I$HOME/tos-node-health-c04/dht -I$HOME/tos-node-health-c04/dht/.. -I$HOME/tos-node-health-c04/tdfec -I$HOME/tos-node-health-c04/tdfec/.. -I$HOME/tos-node-health-c04/overlay -I$HOME/tos-node-health-c04/overlay/.. -I$HOME/tos-node-health-c04/validator/impl -I$HOME/tos-node-health-c04/validator/impl/.. -I$HOME/tos-node-health-c04/validator/impl/../crypto -isystem $HOME/nhm-c04-build/third-party/openssl/include -isystem $HOME/tos-node-health-c04/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIC -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o -MF validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o.d -o validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o -c $HOME/tos-node-health-c04/validator/consensus/simplex/consensus.cpp
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/consensus.cpp:12:
+In file included from $HOME/tos-node-health-c04/validator/consensus/simplex/bus.h:9:
+In file included from $HOME/tos-node-health-c04/validator/consensus/bus.h:9:
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:325:53: error: default member initializer for 'leased' needed within definition of enclosing class 'SessionObservation' outside of member functions
+  325 |   static inline std::array<Context, 8> context_rows{};
+      |                                                     ^
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:319:23: note: default member initializer declared here
+  319 |     std::atomic<bool> leased{false};
+      |                       ^
+1 error generated.
+ninja: build stopped: subcommand failed.

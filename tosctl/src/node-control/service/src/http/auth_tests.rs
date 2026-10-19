@@ -65,6 +65,7 @@ fn app_cfg_with_auth_and_proxies(
         master_wallet: None,
         tick_interval: 30,
         indexer_retention_blocks: 0,
+        indexer_enabled: true,
         log: Some(Default::default()),
         bookmarks: HashMap::new(),
         agent_wallets: HashMap::new(),
@@ -74,6 +75,7 @@ fn app_cfg_with_auth_and_proxies(
         disputes: HashMap::new(),
         proof_attestations: HashMap::new(),
         alerts: Default::default(),
+        proof_verifier: None,
     })
 }
 
@@ -90,6 +92,7 @@ fn app_cfg_no_auth() -> Arc<common::app_config::AppConfig> {
         master_wallet: None,
         tick_interval: 30,
         indexer_retention_blocks: 0,
+        indexer_enabled: true,
         log: Some(Default::default()),
         bookmarks: HashMap::new(),
         agent_wallets: HashMap::new(),
@@ -99,6 +102,7 @@ fn app_cfg_no_auth() -> Arc<common::app_config::AppConfig> {
         disputes: HashMap::new(),
         proof_attestations: HashMap::new(),
         alerts: Default::default(),
+        proof_verifier: None,
     })
 }
 
@@ -155,7 +159,7 @@ async fn state_with_auth_and_proxies(trusted_proxies: Vec<std::net::IpAddr>) -> 
         jwt_auth: test_jwt_auth().await,
         user_store: Arc::new(UserStore::new(rt as Arc<dyn RuntimeConfig>)),
         login_rate_limiter: Arc::new(tokio::sync::Mutex::new(Default::default())),
-        indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+        indexer_store: Some(Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap())),
         unauthenticated_serving_allowed: true,
     }
 }
@@ -169,7 +173,7 @@ async fn state_no_auth() -> AppState {
         jwt_auth: test_jwt_auth().await,
         user_store: Arc::new(UserStore::new(rt.clone() as Arc<dyn RuntimeConfig>)),
         login_rate_limiter: Arc::new(tokio::sync::Mutex::new(Default::default())),
-        indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+        indexer_store: Some(Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap())),
         unauthenticated_serving_allowed: true,
     }
 }
@@ -551,7 +555,8 @@ async fn explorer_only_router_exposes_no_operator_or_auth_surface() {
 #[tokio::test]
 async fn explorer_search_resolves_a_durably_indexed_transaction() {
     let st = state_with_auth().await;
-    st.indexer_store
+    st.indexer()
+        .unwrap()
         .index_explorer_block(
             &crate::indexer::ExplorerBlockRecord {
                 workchain: -1,
@@ -578,6 +583,7 @@ async fn explorer_search_resolves_a_durably_indexed_transaction() {
             }],
         )
         .unwrap();
+    st.indexer().unwrap().publish_through_for_tests(7).unwrap();
 
     let resp = app(st.clone()).oneshot(get("/explorer/search?q=tx-seven")).await.unwrap();
     assert_eq!(resp.status(), 200);
@@ -612,7 +618,8 @@ async fn explorer_block_lookup_accepts_the_nodes_base64_hash_format() {
     use base64::Engine;
 
     let st = state_with_auth().await;
-    st.indexer_store
+    st.indexer()
+        .unwrap()
         .index_explorer_block(
             &crate::indexer::ExplorerBlockRecord {
                 workchain: -1,
@@ -628,10 +635,94 @@ async fn explorer_block_lookup_accepts_the_nodes_base64_hash_format() {
             &[],
         )
         .unwrap();
+    st.indexer().unwrap().publish_through_for_tests(8).unwrap();
     let base64_hash = base64::engine::general_purpose::STANDARD.encode([0x11; 32]);
     let uri = format!("/explorer/block?hash={base64_hash}");
     let response = app(st).oneshot(get(&uri)).await.unwrap();
     assert_eq!(response.status(), 200);
+}
+
+#[tokio::test]
+async fn every_index_read_refuses_when_the_indexer_is_disabled() {
+    let mut st = state_no_auth().await;
+    st.indexer_store = None;
+    let address = format!("0:{}", "a1".repeat(32));
+    let uris = [
+        "/explorer/status".to_owned(),
+        format!("/explorer/staking/nominator/{address}"),
+        "/explorer/blocks".to_owned(),
+        "/explorer/transactions".to_owned(),
+        "/explorer/transaction?hash=tx".to_owned(),
+        "/explorer/block?hash=block".to_owned(),
+        "/explorer/search?q=tx".to_owned(),
+        "/explorer/dns/history".to_owned(),
+        "/explorer/contracts/dispute".to_owned(),
+        format!("/explorer/contracts/dispute/{address}"),
+        "/disputes".to_owned(),
+        format!("/disputes/{address}"),
+        "/services".to_owned(),
+        format!("/services/{address}"),
+        format!("/services/{address}/requests/1"),
+        "/registry".to_owned(),
+        format!("/registry/{address}"),
+    ];
+    for uri in &uris {
+        let response = app(st.clone()).oneshot(get(uri)).await.unwrap();
+        assert_eq!(response.status(), 503, "{uri}");
+        let body = json(response).await;
+        assert_eq!(body["ok"], false, "{uri}");
+        assert_eq!(body["error"]["kind"], "indexer_disabled", "{uri}");
+    }
+    // Routes that do not read the index keep working.
+    let health = app(st).oneshot(get("/health")).await.unwrap();
+    assert_eq!(health.status(), 200);
+}
+
+#[tokio::test]
+async fn nominator_totals_fail_closed_until_the_ledger_is_canonical() {
+    use crate::indexer::store::LedgerStatus;
+    let st = state_no_auth().await;
+    let alice = format!("0:{}", "a1".repeat(32));
+    let uri = format!("/explorer/staking/nominator/{alice}");
+
+    let response = app(st.clone()).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 503);
+    let body = json(response).await;
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"]["kind"], "nominator_ledger_rebuild_required");
+
+    // Replaying: rows exist but must not be served.
+    let store = &st.indexer().unwrap();
+    assert!(store.begin_nominator_ledger_rebuild().unwrap());
+    store.publish_through_for_tests(5).unwrap();
+    let published = store.canonical_state().unwrap().unwrap();
+    store
+        .observe_nominator_snapshot("-1:pool", 0, 1, &[(alice.clone(), 900, 0)], &published, 1)
+        .unwrap();
+    let response = app(st.clone()).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 503);
+    assert_eq!(json(response).await["error"]["kind"], "nominator_ledger_rebuilding");
+
+    // Valid and anchored at the published block: served with provenance.
+    store.set_remote_mc_tip(5).unwrap();
+    assert_eq!(store.settle_nominator_ledger().unwrap().status, LedgerStatus::Valid);
+    let response = app(st.clone()).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body = json(response).await;
+    assert_eq!(body["as_of_mc_seqno"], 5);
+    assert_eq!(body["as_of_mc_root_hash"], "00".repeat(32));
+    assert_eq!(body["as_of_mc_file_hash"], "00".repeat(32));
+    assert_eq!(body["caught_up"], true);
+    assert_eq!(body["attribution_complete"], true);
+    assert_eq!(body["result"][0]["amount"], "900");
+    assert_eq!(body["result"][0]["coverage_gap_count"], 0);
+    assert_eq!(body["result"][0]["last_mc_seqno"], 5);
+
+    // The index moves on while the pool's next observation is not folded in.
+    store.publish_through_for_tests(6).unwrap();
+    let response = app(st.clone()).oneshot(get(&uri)).await.unwrap();
+    assert_eq!(response.status(), 503);
+    assert_eq!(json(response).await["error"]["kind"], "nominator_ledger_behind_index");
 }
 
 #[tokio::test]

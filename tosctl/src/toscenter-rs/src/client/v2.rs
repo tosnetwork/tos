@@ -1,6 +1,6 @@
 use super::base::Network;
 use crate::client::base::{ApiKey, BaseApiClient};
-use crate::error::ToscenterError;
+use crate::error::{InvalidInput, ToscenterError};
 use crate::models::{
     BlocksHeader, BlocksMasterchainInfo, BlocksShardBlockProof, BlocksShards, BlocksTransactions,
     ConfigInfo, ConsensusBlock, DetectAddressResult, FullAccountState, JsonRpcRequest,
@@ -208,7 +208,7 @@ impl ApiClientV2 {
         &self,
         seqno: u32,
     ) -> Result<MasterchainBlockSignatures, ToscenterError> {
-        let seqno_string = seqno.to_string();
+        let seqno_string = seqno_param(seqno)?.to_string();
         let seqno_ref = seqno_string.as_str();
 
         let params = [("seqno", seqno_ref)];
@@ -233,12 +233,12 @@ impl ApiClientV2 {
     ) -> Result<BlocksShardBlockProof, ToscenterError> {
         let mut params: Vec<(&str, String)> = vec![
             ("workchain", workchain.to_string()),
-            ("shard", shard.to_string()),
-            ("seqno", seqno.to_string()),
+            ("shard", signed_shard(shard)?.to_string()),
+            ("seqno", seqno_param(seqno)?.to_string()),
         ];
 
         if let Some(from_seqno) = from_seqno {
-            params.push(("from_seqno", from_seqno.to_string()));
+            params.push(("from_seqno", seqno_param(from_seqno)?.to_string()));
         }
 
         let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -251,12 +251,16 @@ impl ApiClientV2 {
         self.base_client.get(&self.base_url, "getConsensusBlock", &[]).await
     }
 
-    /// Look up block by either seqno, lt or unixtime.
+    /// Look up block by exactly one of seqno, lt or unixtime.
+    ///
+    /// Sent as a POST of named params, so `unixtime` and `seqno` travel as JSON
+    /// integers.
     ///
     /// # Parameters
     ///
     /// * `workchain` - Workchain id to look up block in.
-    /// * `shard` - Shard id to look up block in.
+    /// * `shard` - Shard id to look up block in, as a signed decimal
+    ///   (`"-9223372036854775808"` for the full shard).
     /// * `seqno` - Block's height (optional).
     /// * `lt` - Block's logical time (optional).
     /// * `unixtime` - Block's unixtime (optional).
@@ -268,22 +272,32 @@ impl ApiClientV2 {
         lt: Option<u64>,
         unixtime: Option<u64>,
     ) -> Result<TosBlockIdExt, ToscenterError> {
-        let mut params: Vec<(&str, String)> =
-            vec![("workchain", workchain.to_string()), ("shard", shard.to_string())];
-
+        let selectors = usize::from(seqno.is_some())
+            + usize::from(lt.is_some())
+            + usize::from(unixtime.is_some());
+        if selectors != 1 {
+            return Err(invalid_parameter("exactly one of seqno, lt or unixtime is required"));
+        }
+        let mut body = serde_json::json!({
+            "workchain": workchain,
+            "shard": signed_shard(shard)?,
+        });
         if let Some(seqno) = seqno {
-            params.push(("seqno", seqno.to_string()));
+            body["seqno"] = serde_json::json!(seqno_param(seqno)?);
         }
         if let Some(lt) = lt {
-            params.push(("lt", lt.to_string()));
+            if i64::try_from(lt).is_err() {
+                return Err(invalid_parameter("lt must fit a signed 64-bit integer"));
+            }
+            body["lt"] = serde_json::json!(lt.to_string());
         }
         if let Some(unixtime) = unixtime {
-            params.push(("unixtime", unixtime.to_string()));
+            let unixtime = i32::try_from(unixtime)
+                .map_err(|_| invalid_parameter("unixtime must be in [0, 2147483647]"))?;
+            body["unixtime"] = serde_json::json!(unixtime);
         }
 
-        let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
-
-        self.base_client.get(&self.base_url, "lookupBlock", &params).await
+        self.base_client.post_api(&self.base_url, "lookupBlock", &body).await
     }
 
     /// Get shards information.
@@ -292,7 +306,7 @@ impl ApiClientV2 {
     ///
     /// * `seqno` - Masterchain seqno to fetch shards of.
     pub async fn get_shards(&self, seqno: u32) -> Result<BlocksShards, ToscenterError> {
-        let seqno_string = seqno.to_string();
+        let seqno_string = seqno_param(seqno)?.to_string();
         let seqno_ref = seqno_string.as_str();
 
         let params = [("seqno", seqno_ref)];
@@ -325,8 +339,8 @@ impl ApiClientV2 {
     ) -> Result<BlocksTransactions, ToscenterError> {
         let mut params: Vec<(&str, String)> = vec![
             ("workchain", workchain.to_string()),
-            ("shard", shard.to_string()),
-            ("seqno", seqno.to_string()),
+            ("shard", signed_shard(shard)?.to_string()),
+            ("seqno", seqno_param(seqno)?.to_string()),
         ];
 
         if let Some(root_hash) = root_hash {
@@ -369,8 +383,8 @@ impl ApiClientV2 {
     ) -> Result<BlocksHeader, ToscenterError> {
         let mut params: Vec<(&str, String)> = vec![
             ("workchain", workchain.to_string()),
-            ("shard", shard.to_string()),
-            ("seqno", seqno.to_string()),
+            ("shard", signed_shard(shard)?.to_string()),
+            ("seqno", seqno_param(seqno)?.to_string()),
         ];
 
         if let Some(root_hash) = root_hash {
@@ -456,7 +470,8 @@ impl ApiClientV2 {
     /// # Parameters
     ///
     /// * `config_id` - Configuration id.
-    /// * `seqno` - Masterchain seqno (optional). If not specified, latest blockchain state will be used.
+    /// * `seqno` - Masterchain seqno (optional). If not specified, latest blockchain state will be used;
+    ///   `Some(0)` names masterchain block 0.
     pub async fn get_config_param(
         &self,
         config_id: u32,
@@ -465,7 +480,7 @@ impl ApiClientV2 {
         let mut params: Vec<(&str, String)> = vec![("config_id", config_id.to_string())];
 
         if let Some(seqno) = seqno {
-            params.push(("seqno", seqno.to_string()));
+            params.push(("seqno", seqno_param(seqno)?.to_string()));
         }
 
         let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -607,13 +622,17 @@ impl ApiClientV2 {
     ///
     /// * `method` - The JSON-RPC method name.
     /// * `params` - Parameters for the JSON-RPC method.
-    /// * `id` - The JSON-RPC request ID.
+    /// * `id` - The JSON-RPC request ID: a string or a number.
+    ///
+    /// `params` must be an object of named parameters; positional (array)
+    /// parameters are refused before sending.
     pub async fn json_rpc(
         &self,
         method: &str,
         params: serde_json::Value,
         id: serde_json::Value,
     ) -> Result<serde_json::Value, ToscenterError> {
+        check_envelope_inputs(&params, &id)?;
         let request_body = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -622,5 +641,109 @@ impl ApiClientV2 {
         };
 
         self.base_client.post_rpc(&self.base_url, "jsonRPC", &request_body, &id).await
+    }
+
+    /// The same request as [`Self::json_rpc`], returning the HTTP status and the
+    /// bounded response body without parsing or validating it.
+    pub async fn json_rpc_text(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        id: serde_json::Value,
+    ) -> Result<(u16, String), ToscenterError> {
+        check_envelope_inputs(&params, &id)?;
+        let request_body =
+            JsonRpcRequest { jsonrpc: "2.0".to_string(), method: method.to_string(), params, id };
+        self.base_client.post_rpc_text(&self.base_url, "jsonRPC", &request_body).await
+    }
+}
+
+fn invalid_parameter(message: &str) -> ToscenterError {
+    ToscenterError::InvalidInput(InvalidInput::Parameter(message.to_string()))
+}
+
+/// The shard id exactly as the server accepts it: the canonical signed decimal
+/// of a non-zero 64-bit shard prefix.
+fn signed_shard(shard: &str) -> Result<&str, ToscenterError> {
+    match shard.parse::<i64>() {
+        Ok(value) if value != 0 && value.to_string() == shard => Ok(shard),
+        _ => Err(invalid_parameter(
+            "shard must be the signed decimal shard id, e.g. \"-9223372036854775808\"",
+        )),
+    }
+}
+
+/// A block height the server accepts: a JSON integer in [0, 2147483647].
+fn seqno_param(seqno: u32) -> Result<u32, ToscenterError> {
+    if i32::try_from(seqno).is_err() {
+        return Err(invalid_parameter("seqno must be in [0, 2147483647]"));
+    }
+    Ok(seqno)
+}
+
+/// A request envelope the server accepts: named params, and an id that makes
+/// the request a call rather than a notification.
+fn check_envelope_inputs(
+    params: &serde_json::Value,
+    id: &serde_json::Value,
+) -> Result<(), ToscenterError> {
+    if !params.is_object() {
+        return Err(invalid_parameter("params must be a JSON object of named parameters"));
+    }
+    if !(id.is_string() || id.is_number()) {
+        return Err(invalid_parameter("id must be a string or a number"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shard_must_be_canonical_signed_decimal() {
+        assert_eq!(signed_shard("-9223372036854775808").unwrap(), "-9223372036854775808");
+        assert_eq!(signed_shard("6917529027641081856").unwrap(), "6917529027641081856");
+        for refused in
+            ["9223372036854775808", "0x8000000000000000", "+1", "0", "-0", "01", " 1", ""]
+        {
+            assert!(signed_shard(refused).is_err(), "{refused}");
+        }
+    }
+
+    #[test]
+    fn seqno_must_fit_the_server_range() {
+        assert_eq!(seqno_param(0).unwrap(), 0);
+        assert_eq!(seqno_param(2_147_483_647).unwrap(), 2_147_483_647);
+        assert!(seqno_param(2_147_483_648).is_err());
+    }
+
+    #[test]
+    fn envelope_needs_named_params_and_an_id() {
+        let named = serde_json::json!({});
+        assert!(check_envelope_inputs(&named, &serde_json::json!(1)).is_ok());
+        assert!(check_envelope_inputs(&named, &serde_json::json!("a")).is_ok());
+        assert!(check_envelope_inputs(&serde_json::json!([1]), &serde_json::json!(1)).is_err());
+        assert!(check_envelope_inputs(&serde_json::Value::Null, &serde_json::json!(1)).is_err());
+        assert!(check_envelope_inputs(&named, &serde_json::Value::Null).is_err());
+    }
+
+    #[tokio::test]
+    async fn lookup_block_requires_exactly_one_selector_before_sending() {
+        // Port 9 (discard) is never contacted: every case fails locally.
+        let client =
+            ApiClientV2::try_new_direct(Network::Custom("http://127.0.0.1:9".to_string()), None)
+                .unwrap();
+        let shard = "-9223372036854775808";
+        for (seqno, lt, unixtime) in
+            [(None, None, None), (Some(1), Some(2), None), (Some(1), None, Some(3))]
+        {
+            let error = client.lookup_block(-1, shard, seqno, lt, unixtime).await.unwrap_err();
+            assert!(matches!(error, ToscenterError::InvalidInput(InvalidInput::Parameter(_))));
+        }
+        let error = client.lookup_block(-1, shard, None, None, Some(1 << 31)).await.unwrap_err();
+        assert!(matches!(error, ToscenterError::InvalidInput(InvalidInput::Parameter(_))));
+        let error = client.lookup_block(-1, "9223372036854775808", Some(1), None, None).await;
+        assert!(matches!(error, Err(ToscenterError::InvalidInput(InvalidInput::Parameter(_)))));
     }
 }

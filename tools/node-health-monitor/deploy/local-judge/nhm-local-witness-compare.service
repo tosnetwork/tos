@@ -1,0 +1,13 @@
+[Unit]
+Description=External witness comparison of every node against the observers
+After=nhm-local-manager.service
+
+[Service]
+CPUQuota=50%
+MemoryMax=268435456
+TasksMax=32
+NoNewPrivileges=yes
+UMask=0077
+Restart=on-failure
+RestartSec=10
+ExecStart=%h/nhm-supervision/c09-local/runtime/bin/health-witness-compare %h/nhm-supervision/c09-local/runtime/config/witness-compare.json

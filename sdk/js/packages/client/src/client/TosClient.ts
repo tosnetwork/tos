@@ -42,7 +42,9 @@ import type {
   SendBocHashResult,
   SendQueryResult,
 } from "../types.js";
-import { TosError, TosRpcError, ErrorCodes } from "../errors.js";
+import { TosError, TosRpcError, ErrorCodes, ErrorReasons } from "../errors.js";
+import type { RpcErrorData } from "../errors.js";
+import { Cell, base64ToBytes } from "@tos/core";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -139,11 +141,16 @@ export class TosClient implements TosProvider {
   /**
    * Execute a raw JSON-RPC call with automatic retry on transient failures.
    *
+   * Only transport failures (network errors, timeouts, HTTP 5xx without a
+   * JSON-RPC error object) are retried. A server error object is never
+   * retried here; its `retryable` flag tells the caller whether repeating the
+   * request later may succeed.
+   *
    * @param method - The JSON-RPC method name
-   * @param params - Method parameters
+   * @param params - Named method parameters (an object, never an array)
    * @returns The JSON-RPC result
-   * @throws {TosRpcError} On deterministic RPC errors
-   * @throws {TosError} On timeout or exhausted retries
+   * @throws {TosRpcError} On a JSON-RPC error object from the server
+   * @throws {TosError} On invalid parameters, an invalid response, timeout or exhausted retries
    *
    * @example
    * ```typescript
@@ -151,11 +158,18 @@ export class TosClient implements TosProvider {
    * ```
    */
   async rawCall<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    if (typeof params !== "object" || params === null || Array.isArray(params)) {
+      throw new TosError(
+        "JSON-RPC params must be an object of named parameters",
+        ErrorCodes.INVALID_PARAMETER,
+      );
+    }
     this.onRequest?.(method, params);
 
+    const id = ++this.requestId;
     const body = JSON.stringify({
       jsonrpc: "2.0",
-      id: ++this.requestId,
+      id,
       method,
       params,
     });
@@ -193,19 +207,20 @@ export class TosClient implements TosProvider {
         }
 
         const responseText = await response.text();
-        const json = parseJsonRpcResponse(response, responseText);
+        const outcome = parseJsonRpcResponse(response, responseText, id);
 
-        if (json.error) {
+        if (outcome.kind === "error") {
           const rpcErr = new TosRpcError(
-            json.error.message ?? "RPC error",
-            json.error.code ?? ErrorCodes.INTERNAL_ERROR,
-            json.error.data,
+            outcome.message,
+            outcome.code,
+            outcome.data,
+            response.status,
           );
           this.onError?.(method, rpcErr);
           throw rpcErr;
         }
 
-        const result = json.result as T;
+        const result = outcome.result as T;
         this.onResponse?.(method, result);
         return result;
       } catch (err) {
@@ -372,35 +387,48 @@ export class TosClient implements TosProvider {
     return this.rawCall<ConsensusBlock>("getConsensusBlock");
   }
 
+  /**
+   * Look up a block by exactly one of `seqno`, `opts.lt` or `opts.utime`.
+   *
+   * @param shard - Signed decimal shard id, e.g. `"-9223372036854775808"`
+   * @param seqno - Block height, or `null`/`undefined` when selecting by lt or utime
+   */
   async lookupBlock(
     workchain: number,
     shard: string,
-    seqno: number,
+    seqno?: number | null,
     opts?: { lt?: string; utime?: number },
   ): Promise<BlockIdExt> {
+    const selectors = [seqno, opts?.lt, opts?.utime].filter((value) => value != null).length;
+    if (selectors !== 1) {
+      throw new TosError(
+        "lookupBlock needs exactly one of seqno, lt or utime",
+        ErrorCodes.INVALID_PARAMETER,
+      );
+    }
     return this.rawCall<BlockIdExt>("lookupBlock", {
-      workchain,
-      shard,
-      seqno,
-      ...(opts?.lt != null ? { lt: opts.lt } : {}),
-      ...(opts?.utime != null ? { unixtime: opts.utime } : {}),
+      workchain: workchainValue(workchain),
+      shard: shardValue(shard),
+      ...(seqno != null ? { seqno: seqnoValue(seqno) } : {}),
+      ...(opts?.lt != null ? { lt: ltValue(opts.lt) } : {}),
+      ...(opts?.utime != null ? { unixtime: seqnoValue(opts.utime, "utime") } : {}),
     });
   }
 
   async getBlockHeader(workchain: number, shard: string, seqno: number): Promise<BlockHeader> {
-    return this.rawCall<BlockHeader>("getBlockHeader", { workchain, shard, seqno });
+    return this.rawCall<BlockHeader>("getBlockHeader", blockSelector(workchain, shard, seqno));
   }
 
   async getShards(seqno: number): Promise<ShardInfo> {
-    return this.rawCall<ShardInfo>("shards", { seqno });
+    return this.rawCall<ShardInfo>("shards", { seqno: seqnoValue(seqno) });
   }
 
   async getMasterchainBlockSignatures(seqno: number): Promise<BlockSignatures> {
-    return this.rawCall<BlockSignatures>("getMasterchainBlockSignatures", { seqno });
+    return this.rawCall<BlockSignatures>("getMasterchainBlockSignatures", { seqno: seqnoValue(seqno) });
   }
 
   async getShardBlockProof(workchain: number, shard: string, seqno: number): Promise<ShardBlockProof> {
-    return this.rawCall<ShardBlockProof>("getShardBlockProof", { workchain, shard, seqno });
+    return this.rawCall<ShardBlockProof>("getShardBlockProof", blockSelector(workchain, shard, seqno));
   }
 
   // -----------------------------------------------------------------------
@@ -429,9 +457,7 @@ export class TosClient implements TosProvider {
     opts?: { count?: number; after_lt?: string; after_hash?: string },
   ): Promise<BlockTransactions> {
     return this.rawCall<BlockTransactions>("getBlockTransactions", {
-      workchain,
-      shard,
-      seqno,
+      ...blockSelector(workchain, shard, seqno),
       ...(opts?.count != null ? { count: opts.count } : {}),
       ...(opts?.after_lt != null ? { after_lt: opts.after_lt } : {}),
       ...(opts?.after_hash != null ? { after_hash: opts.after_hash } : {}),
@@ -445,9 +471,7 @@ export class TosClient implements TosProvider {
     opts?: { count?: number; after_lt?: string; after_hash?: string },
   ): Promise<BlockTransactionsExt> {
     return this.rawCall<BlockTransactionsExt>("getBlockTransactionsExt", {
-      workchain,
-      shard,
-      seqno,
+      ...blockSelector(workchain, shard, seqno),
       ...(opts?.count != null ? { count: opts.count } : {}),
       ...(opts?.after_lt != null ? { after_lt: opts.after_lt } : {}),
       ...(opts?.after_hash != null ? { after_hash: opts.after_hash } : {}),
@@ -533,7 +557,8 @@ export class TosClient implements TosProvider {
   }
 
   /**
-   * Send a serialized BOC and return the transaction hash.
+   * Send a serialized BOC and return the hash of the external message it holds,
+   * which the consuming transaction's `in_msg.hash` will equal (see `waitForTransaction`).
    *
    * @param boc - Serialized message as a Cell, Uint8Array, or base64 string
    * @returns Send result with the message hash
@@ -561,10 +586,15 @@ export class TosClient implements TosProvider {
   /**
    * Estimate the fee for a message without actually sending it.
    *
+   * The node prices the message `sendQuery` submits for the same arguments,
+   * which carries a StateInit exactly when `init_code` or `init_data` is
+   * given. Pass them only for an account that is not active yet, as
+   * {@link externalStateInit} decides for `open()` sends.
+   *
    * @param address - Target contract address
    * @param body - Message body as a Cell or base64 string
-   * @param init_code - Optional init code for deploy
-   * @param init_data - Optional init data for deploy
+   * @param init_code - Init code, for an account that is not active yet
+   * @param init_data - Init data, for an account that is not active yet
    * @param ignore_chksig - Whether to ignore signature verification
    * @returns Fee estimate
    */
@@ -611,6 +641,26 @@ export class TosClient implements TosProvider {
     });
   }
 
+  /**
+   * The network's global ID (ConfigParam 19, signed int32).
+   *
+   * Wallets sign it into every external message and their code refuses a
+   * message naming another network, so pass this to a wallet's `create`.
+   */
+  async getNetworkGlobalId(opts?: BlockQueryOpts): Promise<number> {
+    const { config } = await this.getConfigParam(19, opts);
+    const cells = Cell.fromBoc(base64ToBytes(config.bytes));
+    const [cell] = cells;
+    if (cells.length !== 1 || cell === undefined) {
+      throw new TosError("ConfigParam 19 must be exactly one cell", ErrorCodes.INVALID_RESPONSE);
+    }
+    const slice = cell.beginParse();
+    if (slice.remainingBits < 32) {
+      throw new TosError("ConfigParam 19 is shorter than its 32-bit global ID", ErrorCodes.INVALID_RESPONSE);
+    }
+    return slice.loadInt(32);
+  }
+
   async getConfigAll(opts?: BlockQueryOpts): Promise<ConfigAll> {
     return this.rawCall<ConfigAll>("getConfigAll", {
       ...seqnoParam(opts),
@@ -643,60 +693,127 @@ export class TosClient implements TosProvider {
 // JSON-RPC response shape
 // ---------------------------------------------------------------------------
 
-interface JsonRpcResponse {
-  jsonrpc: "2.0";
-  id: number | string | null;
-  result?: unknown;
-  error?: {
-    code: number;
-    message: string;
-    data?: unknown;
-  };
-}
+type JsonRpcOutcome =
+  | { kind: "result"; result: unknown }
+  | { kind: "error"; code: number; message: string; data: RpcErrorData };
 
-function parseJsonRpcResponse(response: Response, responseText: string): JsonRpcResponse {
-  let parsed: unknown;
+const ENVELOPE_MEMBERS = new Set(["jsonrpc", "id", "result", "error"]);
+
+/**
+ * Validate one answer to the request with `id`.
+ *
+ * Success is HTTP 200 with exactly `jsonrpc: "2.0"`, the request's `id` and
+ * `result`. An error is `jsonrpc`, `id` and an `error` object with an integer
+ * `code`, a string `message` and `data: {schema_version: 1, reason, retryable}`;
+ * a refusal made before any method ran (HTTP 401/404/405/415/429) carries the
+ * same object, possibly with `id: null`. Anything else is an invalid response,
+ * except that an HTTP error status without a valid error object stays an HTTP
+ * error (5xx retryable, 4xx not).
+ */
+function parseJsonRpcResponse(response: Response, responseText: string, id: number): JsonRpcOutcome {
+  const status = response.status;
+  let outcome: JsonRpcOutcome;
   try {
-    parsed = JSON.parse(responseText) as unknown;
+    outcome = parseEnvelope(responseText, id, status);
   } catch (cause) {
+    if (status === 200) {
+      throw cause;
+    }
+    // 4xx = client error (not retryable), 5xx = server error (retryable)
+    const code = status >= 400 && status < 500 ? ErrorCodes.CLIENT_ERROR : ErrorCodes.NETWORK_ERROR;
     throw new TosError(
-      `Invalid JSON response (${response.status}) from ${response.url || "RPC endpoint"}`,
-      ErrorCodes.INVALID_RESPONSE,
+      `HTTP ${status} ${response.statusText || "request failed"}`,
+      code,
       cause instanceof Error ? cause : undefined,
     );
   }
-
-  if (!isJsonRpcResponse(parsed)) {
-    throw new TosError(
-      `Invalid JSON-RPC response (${response.status}) from ${response.url || "RPC endpoint"}`,
-      ErrorCodes.INVALID_RESPONSE,
-    );
+  if (outcome.kind === "result" && status !== 200) {
+    throw new TosError(`HTTP ${status} carried a result`, ErrorCodes.INVALID_RESPONSE);
   }
-
-  if (!response.ok) {
-    if (parsed.error) {
-      return parsed;
-    }
-    // 4xx = client error (not retryable), 5xx = server error (retryable)
-    const code = response.status >= 400 && response.status < 500
-      ? ErrorCodes.CLIENT_ERROR
-      : ErrorCodes.NETWORK_ERROR;
-    throw new TosError(
-      `HTTP ${response.status} ${response.statusText || "request failed"}`,
-      code,
-    );
-  }
-
-  return parsed;
+  return outcome;
 }
 
-function isJsonRpcResponse(value: unknown): value is JsonRpcResponse {
-  if (typeof value !== "object" || value === null) {
-    return false;
+function parseEnvelope(text: string, id: number, status: number): JsonRpcOutcome {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch (cause) {
+    throw invalidResponse(`Invalid JSON response (${status})`, cause);
   }
-  const candidate = value as Record<string, unknown>;
-  return candidate["jsonrpc"] === "2.0"
-    && ("result" in candidate || "error" in candidate);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw invalidResponse("JSON-RPC response is not an object");
+  }
+  const envelope = parsed as Record<string, unknown>;
+  if (envelope.jsonrpc !== "2.0") {
+    throw invalidResponse("JSON-RPC response must carry jsonrpc \"2.0\"");
+  }
+  if (!("id" in envelope)) {
+    throw invalidResponse("JSON-RPC response has no id");
+  }
+  if (envelope.id !== id && !(status !== 200 && envelope.id === null)) {
+    throw invalidResponse("JSON-RPC response id does not match the request");
+  }
+  for (const member of Object.keys(envelope)) {
+    if (!ENVELOPE_MEMBERS.has(member)) {
+      throw invalidResponse(`JSON-RPC response has an unexpected member "${member}"`);
+    }
+  }
+  const hasResult = "result" in envelope;
+  const hasError = "error" in envelope;
+  if (hasResult === hasError) {
+    throw invalidResponse("JSON-RPC response must carry exactly one of result and error");
+  }
+  if (hasResult) {
+    return { kind: "result", result: envelope.result };
+  }
+  return parseErrorObject(envelope.error);
+}
+
+function parseErrorObject(value: unknown): JsonRpcOutcome {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw invalidResponse("JSON-RPC error must be an object");
+  }
+  const error = value as Record<string, unknown>;
+  const code = error.code;
+  if (typeof code !== "number" || !Number.isSafeInteger(code)) {
+    throw invalidResponse("JSON-RPC error code must be an integer");
+  }
+  const message = error.message;
+  if (typeof message !== "string") {
+    throw invalidResponse("JSON-RPC error message must be a string");
+  }
+  const data = error.data;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw invalidResponse("JSON-RPC error data must be an object");
+  }
+  const fields = data as Record<string, unknown>;
+  if (fields.schema_version !== 1) {
+    throw invalidResponse("JSON-RPC error schema_version must be 1");
+  }
+  const reason = fields.reason;
+  if (typeof reason !== "string" || !/^[A-Z0-9_]{1,64}$/.test(reason)) {
+    throw invalidResponse("JSON-RPC error reason must be an upper-case identifier");
+  }
+  const retryable = fields.retryable;
+  if (typeof retryable !== "boolean") {
+    throw invalidResponse("JSON-RPC error retryable must be a boolean");
+  }
+  const known = Object.prototype.hasOwnProperty.call(ErrorReasons, reason)
+    ? ErrorReasons[reason as keyof typeof ErrorReasons]
+    : undefined;
+  if (known && (known.code !== code || known.retryable !== retryable)) {
+    throw invalidResponse(`JSON-RPC error ${reason} arrived with an unexpected code or retryable flag`);
+  }
+  return {
+    kind: "error",
+    code,
+    message: message.slice(0, 512),
+    data: { schema_version: 1, reason, retryable },
+  };
+}
+
+function invalidResponse(message: string, cause?: unknown): TosError {
+  return new TosError(message, ErrorCodes.INVALID_RESPONSE, cause instanceof Error ? cause : undefined);
 }
 
 function isRetryableError(error: TosError): boolean {
@@ -723,11 +840,61 @@ function toBocString(value: CellLike | Uint8Array | string): string {
   return boc.toString("base64");
 }
 
+/** An absent seqno reads the latest state; `seqno: 0` names block 0. */
 function seqnoParam(opts?: BlockQueryOpts): Record<string, number> {
-  if (opts?.seqno != null && opts.seqno > 0) {
-    return { seqno: opts.seqno };
+  if (opts?.seqno != null) {
+    return { seqno: seqnoValue(opts.seqno) };
   }
   return {};
+}
+
+function invalidParameter(message: string): TosError {
+  return new TosError(message, ErrorCodes.INVALID_PARAMETER);
+}
+
+/** A JSON integer in [0, 2147483647], as the server accepts for seqno and unixtime. */
+function seqnoValue(value: number, name = "seqno"): number {
+  if (!Number.isInteger(value) || value < 0 || value > 2147483647) {
+    throw invalidParameter(`${name} must be an integer in [0, 2147483647]`);
+  }
+  return value;
+}
+
+function workchainValue(value: number): number {
+  if (!Number.isInteger(value) || value < -2147483648 || value > 2147483647) {
+    throw invalidParameter("workchain must be a signed 32-bit integer");
+  }
+  return value;
+}
+
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+/** The canonical signed decimal of a non-zero 64-bit shard id, e.g. "-9223372036854775808". */
+function shardValue(value: string): string {
+  if (typeof value === "string" && /^-?[1-9][0-9]{0,18}$/.test(value)) {
+    const parsed = BigInt(value);
+    if (parsed >= INT64_MIN && parsed <= INT64_MAX) {
+      return value;
+    }
+  }
+  throw invalidParameter('shard must be the signed decimal shard id, e.g. "-9223372036854775808"');
+}
+
+/** A logical time as a canonical non-negative decimal string. */
+function ltValue(value: string): string {
+  if (typeof value === "string" && /^(0|[1-9][0-9]{0,18})$/.test(value) && BigInt(value) <= INT64_MAX) {
+    return value;
+  }
+  throw invalidParameter("lt must be a non-negative decimal integer string");
+}
+
+function blockSelector(workchain: number, shard: string, seqno: number): Record<string, unknown> {
+  return {
+    workchain: workchainValue(workchain),
+    shard: shardValue(shard),
+    seqno: seqnoValue(seqno),
+  };
 }
 
 function serializeStack(stack: TupleItemLike[]): unknown[] {

@@ -1,0 +1,5 @@
+;; Generated-policy view of config/pq-launch-limits.json.  The source guard checks
+;; both values and every production consumer, so changing only this copy is refused.
+const int pq_launch::max_total_validators = 21;
+const int pq_launch::max_masterchain_committee = 21;
+const int pq_launch::max_shard_committee = 21;

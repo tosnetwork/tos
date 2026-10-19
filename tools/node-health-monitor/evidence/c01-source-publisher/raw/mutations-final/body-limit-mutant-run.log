@@ -1,0 +1,4 @@
+$ $HOME/tos-node-health-c01-build/test-health-source-policy
+[1;31m[ 0][t 0][2026-09-29 07:35:19.143284279][test-health-source-policy.cpp:15]	Check `!admission.finish(16.5, true, 2 * 1024 * 1024 + 1)` failed[0m
+
+EXIT=-6

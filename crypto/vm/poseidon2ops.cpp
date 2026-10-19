@@ -1,6 +1,7 @@
 /* Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later */
 #include <cstring>
 #include <tuple>
+#include <vector>
 
 #include "vm/cells/CellSlice.h"
 #include "vm/excno.hpp"
@@ -319,13 +320,40 @@ int exec_poseidon2_path7(VmState* st) {
   unsigned char carry[32];
   pop_field_element(stack, carry);
 
+  // The index, decided before any level is charged.
+  //
+  // Whether an index fits the depth is a question about two integers. It needs
+  // no cell, no hash and no level, so it is answered before any of those are
+  // paid for: refusing after twelve levels of work bills a caller for a
+  // permutation whose result was going to be thrown away, and lets one
+  // malformed operand cost as much as a real path.
+  //
+  // This ordering is also what the Rust VM does. It did not used to be what
+  // this one did, and the two charged differently for the same input --
+  // 500 gas against 500 plus twelve levels -- which is a divergence between
+  // two implementations of one public instruction. The shared vectors did not
+  // catch it because they are all *well-formed* paths, and a malformed one
+  // was only ever checked for its exception, never for its price.
   td::RefInt256 remaining = std::move(index);
   const td::RefInt256 arity = td::make_refint(7);
+  std::vector<int> digits;
+  digits.reserve(static_cast<std::size_t>(depth));
+  for (int level = 0; level < depth; ++level) {
+    td::RefInt256 quotient, digit;
+    std::tie(quotient, digit) = td::divmod(std::move(remaining), arity);
+    digits.push_back(static_cast<int>(digit->to_long()));
+    remaining = std::move(quotient);
+  }
+  if (remaining->sgn() != 0) {
+    throw VmError{Excno::range_chk, "Poseidon2 path index is past the depth given"};
+  }
+
   Ref<Cell> node = std::move(path);
   unsigned char siblings[6][32];
   for (int level = 0; level < depth; ++level) {
-    // Charged as the level is read, so an oversized path is paid for on the
-    // way in rather than after it fails.
+    // Charged as the level is read, so an oversized *path* is paid for on the
+    // way in rather than after it fails. An oversized *index* is a different
+    // case and was already refused above, without charging anything for it.
     st->consume_gas_chk(poseidon2_path7_level_gas_price);
 
     Ref<Cell> next = read_siblings(node, false, siblings);
@@ -335,10 +363,7 @@ int exec_poseidon2_path7(VmState* st) {
       std::memcpy(siblings[3 + i], rest[i], 32);
     }
 
-    td::RefInt256 quotient, digit;
-    std::tie(quotient, digit) = td::divmod(std::move(remaining), arity);
-    int d = static_cast<int>(digit->to_long());
-    remaining = std::move(quotient);
+    const int d = digits[static_cast<std::size_t>(level)];
 
     // The carry goes back into position d and the six siblings fill the rest
     // in ascending child position, which is what makes a reordered witness
@@ -356,11 +381,9 @@ int exec_poseidon2_path7(VmState* st) {
     std::memcpy(carry, state[0], 32);
     node = std::move(after);
   }
-  // Every digit of the index has been consumed, so an index past the tree the
-  // path describes is refused rather than silently folded.
-  if (remaining->sgn() != 0) {
-    throw VmError{Excno::range_chk, "Poseidon2 path index is past the depth given"};
-  }
+  // The index was decided before the loop, so nothing about it is left to
+  // check here. A path *longer* than its depth still is: that is a property of
+  // the cells, and the cells are only known as they are read.
   if (node.not_null()) {
     throw VmError{Excno::cell_und, "Poseidon2 path is longer than its depth"};
   }

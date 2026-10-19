@@ -27,10 +27,11 @@ class FullNodeFastSyncOverlay : public td::actor::Actor {
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast& query);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressed& query);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2& query);
-  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast& query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast& query, std::size_t received_bytes);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_outMsgQueueProofBroadcast& query);
   void process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast& query);
-  void process_block_finality_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast& query);
+  void process_block_finality_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast& query,
+                                        std::size_t received_bytes);
   void obtain_state_for_decompression(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query);
   void process_block_broadcast_with_state(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query,
                                           td::Ref<ShardState> state);

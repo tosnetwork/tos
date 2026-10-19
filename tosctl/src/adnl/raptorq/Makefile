@@ -31,7 +31,8 @@ profile:
 
 .PHONY: fuzz
 fuzz:
-	 cargo fuzz run --sanitizer=none fuzz_raptorq
+	cargo +nightly fuzz run fuzz_raptorq -- -max_total_time=600
+	cargo +nightly fuzz run fuzz_raptorq_decoder -- -max_total_time=600
 
 .PHONY: build_py
 build_py: pre

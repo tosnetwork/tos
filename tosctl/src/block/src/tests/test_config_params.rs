@@ -200,7 +200,8 @@ fn get_validator_set() -> ValidatorSet {
     for n in 0..2 {
         let keypair = Ed25519KeyOption::generate().unwrap();
         let key = SigPubKey::from_bytes(keypair.pub_key().unwrap()).unwrap();
-        let vd = ValidatorDescr::with_params(key, n, None);
+        // weights start at one: a validator with no stake is not a valid member
+        let vd = ValidatorDescr::with_params(key, n + 1, None);
         list.push(vd);
     }
 
@@ -1180,4 +1181,72 @@ fn test_new_consensus_config_all_mixed_v1_mc_v2_shard() {
         shard.noncritical_params.max_leader_window_desync,
         NoncriticalParams::default().max_leader_window_desync
     );
+}
+
+// The Rust half of the configuration-parameter-43 lock. The C++ half reads the same file
+// and must reach the same values: how much state an account may hold is not a thing two
+// implementations may disagree about, and this file is where they are made to agree.
+mod config43_vectors {
+    use super::*;
+
+    fn summary(limits: &SizeLimitsConfig) -> String {
+        let loads = match limits.max_transaction_library_loads {
+            Some(loads) => loads.to_string(),
+            None => "-".to_string(),
+        };
+        format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            limits.max_msg_bits,
+            limits.max_msg_cells,
+            limits.max_library_cells,
+            limits.max_vm_data_depth,
+            limits.max_ext_msg_size,
+            limits.max_ext_msg_depth,
+            limits.max_acc_state_cells,
+            limits.max_mc_acc_state_cells,
+            limits.max_acc_public_libraries,
+            limits.defer_out_queue_size_limit,
+            limits.max_msg_extra_currencies,
+            limits.max_acc_fixed_prefix_length,
+            limits.acc_state_cells_for_storage_dict,
+            loads,
+            limits.max_total_msg_bits,
+            limits.max_total_msg_cells,
+        )
+    }
+
+    #[test]
+    fn parses_exactly_what_cpp_parses() {
+        let path =
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../../../test/pq-native/config43-vectors.tsv");
+        let text = std::fs::read_to_string(path).expect("shared configuration vectors");
+        let (mut accepted, mut rejected) = (0, 0);
+        for line in text.lines() {
+            if line.starts_with('#') || line.trim().is_empty() {
+                continue;
+            }
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 4, "malformed vector line");
+            let (name, verdict, boc, expected) = (fields[0], fields[1], fields[2], fields[3]);
+            let bytes = hex::decode(boc).expect("vector is hex");
+            let cell = crate::read_single_root_boc(bytes).expect("vector is a boc");
+            let parsed = SizeLimitsConfig::construct_from_cell(cell);
+            match verdict {
+                "accept" => {
+                    let parsed = parsed.unwrap_or_else(|e| panic!("{name}: refused: {e}"));
+                    assert_eq!(summary(&parsed), expected, "{name}: values differ");
+                    accepted += 1;
+                }
+                "reject" => {
+                    assert!(parsed.is_err(), "{name}: accepted a refused encoding");
+                    rejected += 1;
+                }
+                other => panic!("{name}: unknown verdict {other}"),
+            }
+        }
+        // A file that lost its cases would otherwise pass by checking nothing, and a lock
+        // carrying only accepted encodings proves nothing about what must be refused.
+        assert!(accepted >= 6, "expected the accepted encodings, saw {accepted}");
+        assert!(rejected >= 2, "expected the refused encodings, saw {rejected}");
+    }
 }

@@ -26,7 +26,7 @@ use tos_sandbox::{compile_func, Blockchain, MessageBuilder};
 use tos_vm::stack::StackItem;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 
 fn root() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -51,7 +51,7 @@ fn normalise(bytes: &[u8]) -> Vec<u8> {
 fn parameters() -> Parameters {
     let root = root();
     let profile =
-        std::fs::read(root.join("doc/shielded-pool-v1-profile.md")).expect("the profile copy");
+        std::fs::read(root.join("artifacts/shielded-pool/PROFILE.md")).expect("the profile copy");
     let fixture = std::fs::read_to_string(
         root.join("tools/shielded-pool-circuit/fixtures/groth16-development.json"),
     )
@@ -67,15 +67,16 @@ fn parameters() -> Parameters {
         poseidon_manifest_bytes: std::fs::read(root.join("crypto/poseidon2/manifest.bin"))
             .expect("the Poseidon2 manifest"),
         verifying_key,
-        reserve_floor: 5_000_000_000,
+        reserve_floor: shielded_pool_genesis::RESERVE_FLOOR,
         withdrawal_fee: shielded_pool_genesis::WITHDRAWAL_FEE,
         denominations: vec![1_000_000_000, 10_000_000_000, 100_000_000_000, 1_000_000_000_000],
     }
 }
 
 fn frozen() -> serde_json::Value {
-    let text = std::fs::read_to_string(root().join("doc/shielded-pool/genesis-manifest.json"))
-        .expect("the frozen manifest");
+    let text =
+        std::fs::read_to_string(root().join("artifacts/shielded-pool/genesis-manifest.json"))
+            .expect("the frozen manifest");
     serde_json::from_str(&text).expect("the manifest is JSON")
 }
 
@@ -98,11 +99,14 @@ struct Probe {
 impl Probe {
     fn deploy() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         bc.set_workchain(0);
         let payer = bc.treasury("genesis_probe", 1_000 * TOS).expect("treasury");
         let library = library_dir();
-        let path = std::env::temp_dir().join("tos_shielded_genesis_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+        let path = probe_dir.path().join("tos_shielded_genesis_probe.fc");
         std::fs::write(&path, PROBE).expect("write the probe");
         let code = compile_func(&[
             stdlib_path(),
@@ -244,7 +248,7 @@ fn the_generated_state_is_the_state_the_frozen_manifest_names() {
 fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
     let genesis = build(parameters()).expect("build the genesis state");
     let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-        .expect("blockchain at version 17");
+        .expect("blockchain at version 16");
     bc.set_workchain(0);
     let payer = bc.treasury("deployer", 1_000 * TOS).expect("treasury");
     let code = compile_func(&shielded_pool_circuit_crosscheck::pool::pool_sources())
@@ -253,11 +257,18 @@ fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
     let hash = si.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
     let addr = MsgAddressInt::with_params(0, hash).unwrap();
     bc.send_message(
-        MessageBuilder::internal(payer.address(), &addr, 20 * TOS)
-            .bounce(false)
-            .state_init(si)
-            .body(Cell::default())
-            .build(),
+        MessageBuilder::internal(
+            payer.address(),
+            &addr,
+            // A deployment has to carry at least the reserve floor, or the
+            // pool is unbacked from its first block and refuses everything.
+            // Twenty TOS did until the floor was re-derived to fifty.
+            u64::try_from(shielded_pool_genesis::RESERVE_FLOOR).expect("the floor fits") + 20 * TOS,
+        )
+        .bounce(false)
+        .state_init(si)
+        .body(Cell::default())
+        .build(),
     )
     .expect("deploy")
     .expect_success();
@@ -273,6 +284,7 @@ fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
         shielded_pool_circuit_crosscheck::pool::dec(genesis.commitment_root)
     );
     assert_eq!(get("commitment_next_index"), "0");
+    assert_eq!(get("reserved_recovery_leaves"), "0");
     assert_eq!(
         get("nullifier_root"),
         shielded_pool_circuit_crosscheck::pool::dec(genesis.nullifier_root)
@@ -285,7 +297,11 @@ fn a_pool_deployed_from_it_reads_back_what_the_manifest_says() {
         "the deployed reserve floor is not the one the manifest names"
     );
     // A pool with no deposits owes nothing, so it is backed by anything at all.
-    assert_eq!(get("backed"), "-1", "a pool holding twenty TOS and owing nothing is unbacked");
+    assert_eq!(
+        get("backed"),
+        "-1",
+        "a pool funded above its reserve floor and owing nothing is unbacked"
+    );
 }
 
 /// Every parameter section 13.2 constrains, refused before a state is built.

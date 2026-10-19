@@ -1,0 +1,224 @@
+import "@stdlib/replay-guard"
+import "@stdlib/tvm-dicts"
+
+fun setC7(c7: array<unknown>): void
+    asm "c7 POP"
+
+// The libraries read time with NOW (c7[0][3]); tests move the clock here.
+fun setNow(t: int): void {
+    var params: array<unknown> = [];
+    var i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(t, 3);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
+fun main(): int {
+    return 0;
+}
+
+fun expectThrow(code: int, expected: int, failCode: int): void {
+    assert(code == expected) throw failCode;
+}
+
+@method_id(101)
+fun test_split_query_id(): int {
+    val (s0, b0) = replayGuardSplitQueryId(0);
+    assert(s0 == 0 && b0 == 0) throw 101;
+    val (s1, b1) = replayGuardSplitQueryId(5 * 1024 + 7);
+    assert(s1 == 5 && b1 == 7) throw 102;
+    val (s2, b2) = replayGuardSplitQueryId(8191 * 1024 + 1022);
+    assert(s2 == 8191 && b2 == 1022) throw 103;
+
+    var rejected = 0;
+    try { replayGuardSplitQueryId(1023); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_INVALID_QUERY_ID, 104); rejected += 1; }
+    try { replayGuardSplitQueryId(-1); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_INVALID_QUERY_ID, 105); rejected += 1; }
+    try { replayGuardSplitQueryId(1 << 23); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_INVALID_QUERY_ID, 106); rejected += 1; }
+    assert(rejected == 3) throw 107;
+    return 1;
+}
+
+@method_id(102)
+fun test_accept_and_replay_in_current_generation(): int {
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1000); g.accept(7, 990);
+    setNow(1000); g.accept(8, 990);
+    setNow(1000); g.accept(1024 + 7, 990);
+    assert(g.isProcessed(7)) throw 111;
+    assert(g.isProcessed(8)) throw 112;
+    assert(g.isProcessed(1024 + 7)) throw 113;
+    assert(!g.isProcessed(9)) throw 114;
+
+    var thrown = false;
+    try {
+        setNow(1000); g.accept(7, 995);
+    } catch (code) {
+        expectThrow(code, REPLAY_GUARD_THROW_ALREADY_PROCESSED, 115);
+        thrown = true;
+    }
+    assert(thrown) throw 116;
+    return 2;
+}
+
+@method_id(103)
+fun test_replay_rejected_from_old_generation(): int {
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1099); g.accept(42, 1099);
+    // 1000 < 1101 - 100: the current generation becomes the old one, while the
+    // request created at 1099 is still fresh — only the old bitmap stops it.
+    var thrown = false;
+    try {
+        setNow(1101); g.accept(42, 1099);
+    } catch (code) {
+        expectThrow(code, REPLAY_GUARD_THROW_ALREADY_PROCESSED, 121);
+        thrown = true;
+    }
+    assert(thrown) throw 122;
+    setNow(1101);
+    g.rotate();
+    assert(g.lastCleanTime == 1101) throw 123;
+    assert(g.isProcessed(42)) throw 124;
+    return 3;
+}
+
+@method_id(104)
+fun test_freshness_window_edges(): int {
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1000); g.accept(1, 1000);
+    setNow(1000); g.accept(2, 901);
+    var rejected = 0;
+    try { setNow(1000); g.accept(3, 900); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_INVALID_CREATED_AT, 131); rejected += 1; }
+    try { setNow(1000); g.accept(4, 1001); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_INVALID_CREATED_AT, 132); rejected += 1; }
+    assert(rejected == 2) throw 133;
+    assert(!g.isProcessed(3)) throw 134;
+    assert(!g.isProcessed(4)) throw 135;
+    return 4;
+}
+
+@method_id(105)
+fun test_dropped_history_is_covered_by_freshness(): int {
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1099); g.accept(42, 1099);
+    // 1000 < 1300 - 200: both generations are dropped at once.
+    var thrown = false;
+    try {
+        setNow(1300); g.accept(42, 1099);
+    } catch (code) {
+        expectThrow(code, REPLAY_GUARD_THROW_INVALID_CREATED_AT, 141);
+        thrown = true;
+    }
+    assert(thrown) throw 142;
+    // accept itself must age the history: storage stays bounded without any
+    // separate maintenance call
+    setNow(1300); g.accept(43, 1300);
+    assert(!g.isProcessed(42)) throw 143;
+    assert(g.oldQueries == null) throw 144;
+    assert(g.isProcessed(43) && g.lastCleanTime == 1300) throw 145;
+    return 5;
+}
+
+@method_id(106)
+fun test_invalid_timeout(): int {
+    var rejected = 0;
+    try { replayGuardNew(0); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_INVALID_TIMEOUT, 151); rejected += 1; }
+    try { replayGuardNew(REPLAY_GUARD_MAX_TIMEOUT + 1); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_INVALID_TIMEOUT, 152); rejected += 1; }
+    assert(rejected == 2) throw 153;
+    setNow(1000);
+    val g = replayGuardNew(REPLAY_GUARD_MAX_TIMEOUT);
+    assert(g.timeout == REPLAY_GUARD_MAX_TIMEOUT) throw 154;
+    return 6;
+}
+
+@method_id(107)
+fun test_rejected_accept_leaves_guard_unchanged(): int {
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1000); g.accept(5, 1000);
+    var thrown = false;
+    try {
+        // would rotate at 1500, but the request is stale
+        setNow(1500); g.accept(6, 1000);
+    } catch (code) {
+        expectThrow(code, REPLAY_GUARD_THROW_INVALID_CREATED_AT, 161);
+        thrown = true;
+    }
+    assert(thrown) throw 162;
+    assert(g.lastCleanTime == 1000) throw 163;
+    assert(g.isProcessed(5)) throw 164;
+    return 7;
+}
+
+@method_id(108)
+fun test_row_edges_and_serialization(): int {
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1000); g.accept(0, 1000);
+    setNow(1000); g.accept(1022, 1000);
+    setNow(1000); g.accept(511, 1000);
+    val (row, found) = g.queries.uDictGetRef(REPLAY_GUARD_SHIFT_BITS, 0);
+    assert(found) throw 171;
+    val s = row!.beginParse();
+    assert(s.remainingBitsCount() == REPLAY_GUARD_ROW_BITS) throw 172;
+    assert(!g.isProcessed(1)) throw 173;
+    assert(!g.isProcessed(1021)) throw 174;
+    // the whole guard survives a storage round trip
+    val restored = ReplayGuard.fromCell(g.toCell());
+    assert(restored.isProcessed(0) && restored.isProcessed(511) && restored.isProcessed(1022)) throw 175;
+    assert(restored.timeout == 100 && restored.lastCleanTime == 1000) throw 176;
+    return 8;
+}
+
+@method_id(109)
+fun test_layout_matches_func(): int {
+    // The stored guard must be the very cell crypto/smartcont/replay-guard.fc packs; the
+    // FunC suite pins the same hash for the same state.
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1000); g.accept(0, 1000);
+    setNow(1000); g.accept(1022, 1000);
+    setNow(1000); g.accept(5 * 1024 + 7, 1000);
+    return g.toCell().hash();
+}
+
+@method_id(110)
+fun test_check_reads_and_record_writes(): int {
+    setNow(1000);
+    var g = replayGuardNew(100);
+    setNow(1000);
+    g.check(7, 1000);
+    // check never writes: nothing recorded, storage unchanged
+    assert(!g.isProcessed(7)) throw 181;
+    assert(g.queries == null && g.oldQueries == null) throw 182;
+    g.record(7);
+    assert(g.isProcessed(7)) throw 183;
+    var rejected = 0;
+    try { setNow(1000); g.check(7, 1000); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_ALREADY_PROCESSED, 184); rejected += 1; }
+    try { g.record(7); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_ALREADY_PROCESSED, 185); rejected += 1; }
+    // check rejects ids still remembered in the old generation too
+    setNow(1101);
+    try { g.check(7, 1100); } catch (code) { expectThrow(code, REPLAY_GUARD_THROW_ALREADY_PROCESSED, 186); rejected += 1; }
+    assert(rejected == 3) throw 187;
+    return 10;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+@testcase | 108 | | 8
+@testcase | 109 | | 49751840920418588745216052838403757172391007160505045324086559891392396194906
+@testcase | 110 | | 10
+ */

@@ -1,0 +1,57 @@
+{
+  "scope": "Swift callback proof acquisition with same-lock checkpoint verification/commit; public captured proof fixtures on owned iOS simulator",
+  "ios_revision": "6c4493d",
+  "native_revision": "4132d5891",
+  "validation": [
+    "Two baseline session tests pass",
+    "Restored acquisition test passes at updated native source",
+    "Three transport queries required; checkpoint exists before result returns",
+    "Transport exception propagates and preserves prior checkpoint",
+    "Device and both simulator XCFramework slices rebuild",
+    "x86_64 libbacktrace rebuilt with selected SDK/architecture and link no longer ignores wrong-architecture objects"
+  ],
+  "control": "Compiled bypass returning fabricated verified JSON fails the named query-count assertion; original code restored and passes",
+  "artifacts": [
+    {
+      "file": "20261007-ios-proof-acquire-walletcore.log",
+      "bytes": 161786,
+      "sha256": "f54183581e7b8be1e14d9a4a901bd19aeded83e69c4301dc5098699f0c4d0464"
+    },
+    {
+      "file": "20261007-ios-proof-acquire-control.log",
+      "bytes": 54813,
+      "sha256": "f8433ab3e85dbda8d0724f557d27cea8904900d6df94e282006fcd691c590e9a"
+    },
+    {
+      "file": "20261007-ios-proof-acquire-control-raw.log",
+      "bytes": 100790,
+      "sha256": "e3a22dbf6bafc7e61b6e0396f515bdcaf6756ec4a5af89b93608b773a89670d2"
+    },
+    {
+      "file": "20261007-ios-proof-acquire-restored.log",
+      "bytes": 40684,
+      "sha256": "a52d5b7ae543be856cb530576265e007d082533d46dc37ac1712050a9dff1671"
+    },
+    {
+      "file": "20261007-ios-proof-acquire-restored-raw.log",
+      "bytes": 447669,
+      "sha256": "1d6759fa0a0e32a8c41145e9ce68409fa83205917440399c860079157609ef9a"
+    },
+    {
+      "file": "20261007-backtrace-ios-clean-build.log",
+      "bytes": 18033,
+      "sha256": "028b7dbc52bc880d5250dd97f5e5754888194b45bb52eea55b28082d8d046845"
+    },
+    {
+      "file": "20261007-backtrace-ios-link.log",
+      "bytes": 453,
+      "sha256": "3fb5535fc59c5dbb1fb9e7cbd8071f14dec250a7548b8b660cdac6f2b7ba4ea8"
+    }
+  ],
+  "limits": [
+    "First attempt used nonexistent CoreComponents scheme and is excluded",
+    "No live endpoint acquisition, wallet authority/config binding, broadcast or recipient finality acceptance",
+    "No physical-device runtime evidence",
+    "Full app compile after this revision remains pending"
+  ]
+}

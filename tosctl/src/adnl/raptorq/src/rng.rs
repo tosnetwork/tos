@@ -233,10 +233,13 @@ where
 {
     assert!(m > 0);
     let i = i.into();
-    let x0 = (y + i) % 256;
-    let x1 = ((y >> 8) + i) % 256;
-    let x2 = ((y >> 16) + i) % 256;
-    let x3 = ((y >> 24) + i) % 256;
+    // Section 5.3.5.1 adds in 32-bit arithmetic, as the C++ implementation
+    // does: y can be up to 2^32 - 1 for valid symbol ids, and only the low
+    // eight bits of each sum are used, so the sums wrap.
+    let x0 = y.wrapping_add(i) % 256;
+    let x1 = (y >> 8).wrapping_add(i) % 256;
+    let x2 = (y >> 16).wrapping_add(i) % 256;
+    let x3 = (y >> 24).wrapping_add(i) % 256;
 
     (V0[x0 as usize] ^ V1[x1 as usize] ^ V2[x2 as usize] ^ V3[x3 as usize]) % m
 }

@@ -412,6 +412,151 @@ fun test_dual_bound_grant_requires_signature_path(): int {
     return 0;
 }
 
+// A real Ed25519 vector: the grantee key from a private key of 32 bytes 0x11
+// signs CAP_H, the signature hash of capStrongGrant() in capCtxDefault().
+const CAP_STRONG_GRANTEE: uint256 = 0xd04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737
+const CAP_H = 0xd69aa731a7cd1c5c40ad760713d215ac748d9c8b65effabf44f124d66a562c2d
+
+fun capStrongSignature(): cell { return beginCell().storeSlice("77DBA658133B4167C5897477E0E28A34070EE795FB9D8B4C2B7D04ACDCD72DEAA7A82A0AAE9F2A52741AF2EC494B118E80639F726A190F6416267B4E084BE104".hexToSlice()).endCell(); }
+
+fun capStrongGrant(): Slice6CapabilityGrantV1 {
+    return slice6CapabilityGrant(capIssuer(), capTarget(), null, CAP_STRONG_GRANTEE, 0x43415001, capConstraints(), 10, 100, 7, 2);
+}
+
+// The order-2 point, and the identity and the order-2 point with the sign bit set.
+const CAP_ORDER2: uint256 = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+const CAP_ID_ALIAS: uint256 = 0x0100000000000000000000000000000000000000000000000000000000000080
+const CAP_O2_ALIAS: uint256 = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+// The fourteen keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
+// as loadUint(256) reads them: the eight torsion encodings, y >= 2^255 - 19 with
+// either sign bit, and the two sign-bit aliases.
+fun capWeakKeys(): array<int> {
+    var t: array<int> = [];
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000080);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000080);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    return t;
+}
+
+/// A signature of `hash` under the weak `key` that the verifier accepts and
+/// that needs no secret: R one of the eight torsion encodings, S = 0. Null
+/// when no R works for this hash.
+fun capTryForge(hash: int, key: int): cell? {
+    val torsion = capWeakKeys();
+    var i = 0;
+    while (i < 8) {
+        val forged = beginCell().storeUint(torsion.get(i), 256).storeUint(0, 256).endCell();
+        if (isSignatureValid(hash, forged.beginParse(), key)) {
+            return forged;
+        }
+        i += 1;
+    }
+    return null;
+}
+
+/// A grant bound to `granteePubkey` as a contract would load it from storage,
+/// never checked by slice6CapabilityGrant.
+fun capStoredGrant(granteePubkey: uint256, nonce: uint64): Slice6CapabilityGrantV1 {
+    val parties = Slice6CapabilityGrantParties { issuer: capIssuer(), target: capTarget(), grantee: null };
+    val proof = Slice6CapabilityGrantProof {
+        granteePubkey,
+        selector: 0x43415001,
+        constraintsHash: capConstraints().constraintsHash(),
+        validFrom: 10,
+        expiresAt: 100,
+        nonce,
+        revocationEpoch: 2,
+    };
+    return Slice6CapabilityGrantV1 { version: SLICE6_CAPABILITY_VERSION, parties: parties.toCell(), proof: proof.toCell() };
+}
+
+@method_id(730)
+fun test_strong_grantee_vector_is_real(): int {
+    // Guards the fixture: if it stops verifying, the cases below fail for the
+    // wrong reason.
+    assert(capStrongGrant().signatureHash(capConstraints(), capCtxDefault()) == CAP_H) throw 7301;
+    assert(isSignatureValid(CAP_H, capStrongSignature().beginParse(), CAP_STRONG_GRANTEE)) throw 7302;
+    assert(!isSignatureValid(CAP_H + 1, capStrongSignature().beginParse(), CAP_STRONG_GRANTEE)) throw 7303;
+    return 1;
+}
+
+@method_id(731)
+fun test_strong_grantee_signature_path_succeeds(): int {
+    val grant = capStrongGrant();
+    assert(grant.signatureBoundValid(capConstraints(), capCtxDefault(), capStrongSignature())) throw 7311;
+    var reg = slice6CapabilityRegistry(4, 2, 2);
+    reg.registerGrant(grant);
+    reg.requireCapabilityWithSignature(grant, capConstraints(), capCtxDefault(), capStrongSignature(), true, true);
+    assert(reg.consumedNonceCount == 1) throw 7312;
+    return 1;
+}
+
+@method_id(732)
+fun test_weak_grantee_keys_refused_by_the_builder(): int {
+    val weak = capWeakKeys();
+    var refused = 0;
+    var i = 0;
+    while (i < 14) {
+        try {
+            slice6CapabilityGrant(capIssuer(), capTarget(), null, weak.get(i) as uint256, 0x43415001, capConstraints(), 10, 100, 7, 2);
+        } catch (code) {
+            assert(code == SLICE6_CAPABILITY_THROW_WEAK_GRANTEE_KEY) throw 7321;
+            refused += 1;
+        }
+        i += 1;
+    }
+    return refused;
+}
+
+/// A stored grant whose grantee key is `key`, with a signature forged for it
+/// that the verifier accepts: the boolean check answers false without
+/// throwing, the signature path refuses with the signature-failure code, and
+/// the registry consumes nothing. Returns the number of refusals.
+fun capRefuseForged(key: uint256): int {
+    val constraints = capConstraints();
+    val ctx = capCtxDefault();
+    // The first stored grant, by nonce, a signature can be forged for.
+    var nonce: uint64 = 7;
+    var forged = capTryForge(capStoredGrant(key, nonce).signatureHash(constraints, ctx) as int, key as int);
+    while (forged == null) {
+        nonce += 1;
+        assert(nonce < 71) throw 7399;
+        forged = capTryForge(capStoredGrant(key, nonce).signatureHash(constraints, ctx) as int, key as int);
+    }
+    val grant = capStoredGrant(key, nonce);
+    assert(!grant.signatureBoundValid(constraints, ctx, forged!)) throw 7331;
+    var reg = slice6CapabilityRegistry(4, 2, 2);
+    reg.registerGrant(grant);
+    var refused = 0;
+    try {
+        reg.requireCapabilityWithSignature(grant, constraints, ctx, forged!, true, true);
+    } catch (code) {
+        assert(code == SLICE6_CAPABILITY_THROW_SIGNATURE_FAILURE) throw 7332;
+        refused += 1;
+    }
+    try { grant.requireSignatureBound(constraints, ctx, forged!); } catch (code) { assert(code == SLICE6_CAPABILITY_THROW_SIGNATURE_FAILURE) throw 7333; refused += 1; }
+    assert(reg.consumedNonceCount == 0 && reg.trackedUseCount == 0) throw 7334;
+    return refused;
+}
+
+@method_id(733)
+fun test_forged_weak_grantee_refused_at_use(): int {
+    // The verifier itself refuses the canonical identity, so nothing forges for it.
+    return capRefuseForged(CAP_ID_ALIAS) + capRefuseForged(CAP_O2_ALIAS) + capRefuseForged(CAP_ORDER2);
+}
+
 /**
 @testcase | 701 | | 50689
 @testcase | 702 | | 1
@@ -442,4 +587,8 @@ fun test_dual_bound_grant_requires_signature_path(): int {
 @testcase | 727 | | 1
 @testcase | 728 | | 5128
 @testcase | 729 | | 5137
+@testcase | 730 | | 1
+@testcase | 731 | | 1
+@testcase | 732 | | 14
+@testcase | 733 | | 6
  */

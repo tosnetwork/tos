@@ -143,10 +143,12 @@ set(HARDFORK_VALIDATOR_SOURCE
 )
 
 set(FULL_NODE_SOURCE
+  validator-transport-authority.h
   full-node.h
   full-node.hpp
   full-node.cpp
   full-node-shard.h
+  full-node-shard-admission.h
   full-node-shard.hpp
   full-node-shard.cpp
   full-node-master.h
@@ -171,7 +173,19 @@ set(FULL_NODE_SOURCE
   net/download-proof.cpp
   net/get-next-key-blocks.hpp
   net/get-next-key-blocks.cpp
+  net/startup-probe.hpp
+  net/startup-probe.cpp
 )
+
+add_library(validator-measurement STATIC
+  measurement/measurement-contract.cpp
+  measurement/measurement-contract.h
+)
+target_include_directories(validator-measurement PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..
+)
+target_link_libraries(validator-measurement PUBLIC tdutils)
 
 # Persistent-state download/processing budget primitives. Lives in its own
 # static library so the budget destructor / reservation API live in exactly
@@ -205,6 +219,7 @@ add_library(validator-common OBJECT
   shard-client.cpp
   validator-full-id.cpp
   validator-options.cpp
+  admission-work-profile.cpp
 )
 target_link_libraries(validator-common PUBLIC validator-db validator-state-download-budget)
 
@@ -257,10 +272,21 @@ target_include_directories(full-node PUBLIC
   )
 
 target_link_libraries(validator PRIVATE validator-common validator-db tos_validator)
+# The consensus bus exposes the post-quantum consensus signer/key types and signs and
+# verifies with them, so consumers linking `validator` need these transitively.
+target_link_libraries(validator PUBLIC tos_pq_consensus_signer tos_pq_consensus tos_mldsa44)
+target_link_libraries(validator PUBLIC validator-measurement)
 
 target_link_libraries(validator-disk PRIVATE validator-common validator-db)
+# Its manager holds post-quantum consensus custody, which consults the signer's registry of
+# retired keys; consumers inherit the dependency from here.
+target_link_libraries(validator-disk PUBLIC tos_pq_consensus_signer tos_pq_consensus)
 
 target_link_libraries(validator-hardfork PRIVATE validator-common validator-db)
+# Its manager holds post-quantum consensus custody, which consults the signer's registry of
+# retired keys; consumers inherit the dependency from here.
+target_link_libraries(validator-hardfork PUBLIC tos_pq_consensus_signer tos_pq_consensus)
 
 target_link_libraries(full-node PUBLIC validator-state-download-budget)
+target_link_libraries(full-node PUBLIC validator-measurement)
 target_link_libraries(full-node PRIVATE tdactor adnl rldp2 tl_api dht tdfec overlay tos_db)

@@ -1,0 +1,11 @@
+--- diagnostic-producer.h
++++ diagnostic-producer.h
+@@ -32,7 +32,7 @@
+   void disable() noexcept { stats_.enabled.store(0, std::memory_order_release); }
+   // Builders are internal fixed-size encoders, never caller-owned objects.
+   template <class Builder> bool emit(Builder &&builder) noexcept {
+-    if (stats_.enabled.load(std::memory_order_acquire) == 0) return false;
++    if (false) return false;
+     std::uint64_t ticket = 0;
+     if (!take(sampling_, ticket)) { stats_.drop(Drop::Sequence); return false; }
+     if (ticket % sample_every_ != 0) { stats_.add(stats_.sampled_out); return false; }

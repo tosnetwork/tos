@@ -185,6 +185,7 @@ td::Result<toslib_api::object_ptr<toslib_api::blocks_BlockSignatures>> to_toslib
     return td::Status::Error("not final signature set");
   }
   toslib_api::object_ptr<toslib_api::blocks_BlockSignatures> result;
+  bool pq_carrier = false;
   tos::tos_api::downcast_call(*sig_set->tl(),
                               td::overloaded(
                                   [&](const tos::tos_api::tosNode_signatureSet_ordinary& obj) {
@@ -205,7 +206,11 @@ td::Result<toslib_api::object_ptr<toslib_api::blocks_BlockSignatures>> to_toslib
                                     result = tos::create_tl_object<toslib_api::blocks_blockSignatures_simplex>(
                                         to_toslib_api(blk), std::move(signatures), obj.session_id_, obj.slot_,
                                         tos::serialize_tl_object(obj.candidate_, true).as_slice().str());
-                                  }));
+                                  },
+                                  [&](const tos::tos_api::tosNode_signatureSet_simplexPq&) { pq_carrier = true; }));
+  if (pq_carrier) {
+    return td::Status::Error("post-quantum block signatures are not supported by toslib yet");
+  }
   return result;
 }
 
@@ -361,6 +366,17 @@ td::Result<block::PublicKey> get_public_key(td::Slice public_key) {
   return address;
 }
 
+// The key a contract's owner signs with, for a wallet, resolver or channel
+// state this client builds, deploys or watches: refused when it is a
+// prohibited weak or non-canonical encoding (block::PublicKey).
+td::Result<block::PublicKey> get_owner_public_key(td::Slice public_key) {
+  TRY_RESULT(key, get_public_key(public_key));
+  if (key.is_forgeable_ed25519()) {
+    return ToslibError::ForgeablePublicKey();
+  }
+  return key;
+}
+
 td::Result<block::StdAddress> get_account_address(td::Slice account_address) {
   TRY_RESULT_PREFIX(address, block::StdAddress::parse(account_address), ToslibError::InvalidAccountAddress());
   return address;
@@ -372,7 +388,7 @@ td::Result<block::PublicKey> public_key_from_bytes(td::Slice bytes) {
 }
 
 td::Result<tos::WalletV3::InitData> to_init_data(const toslib_api::wallet_v3_initialAccountState& wallet_state) {
-  TRY_RESULT(key_bytes, get_public_key(wallet_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(wallet_state.public_key_));
   tos::WalletV3::InitData init_data;
   init_data.public_key = td::SecureString(key_bytes.key);
   init_data.wallet_id = static_cast<td::uint32>(wallet_state.wallet_id_);
@@ -380,7 +396,7 @@ td::Result<tos::WalletV3::InitData> to_init_data(const toslib_api::wallet_v3_ini
 }
 
 td::Result<tos::WalletV4::InitData> to_init_data(const toslib_api::wallet_v4_initialAccountState& wallet_state) {
-  TRY_RESULT(key_bytes, get_public_key(wallet_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(wallet_state.public_key_));
   tos::WalletV4::InitData init_data;
   init_data.public_key = td::SecureString(key_bytes.key);
   init_data.wallet_id = static_cast<td::uint32>(wallet_state.wallet_id_);
@@ -388,8 +404,8 @@ td::Result<tos::WalletV4::InitData> to_init_data(const toslib_api::wallet_v4_ini
 }
 
 td::Result<tos::RestrictedWallet::InitData> to_init_data(const toslib_api::rwallet_initialAccountState& rwallet_state) {
-  TRY_RESULT(init_key_bytes, get_public_key(rwallet_state.init_public_key_));
-  TRY_RESULT(key_bytes, get_public_key(rwallet_state.public_key_));
+  TRY_RESULT(init_key_bytes, get_owner_public_key(rwallet_state.init_public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(rwallet_state.public_key_));
   tos::RestrictedWallet::InitData init_data;
   init_data.init_key = td::SecureString(init_key_bytes.key);
   init_data.main_key = td::SecureString(key_bytes.key);
@@ -402,10 +418,10 @@ td::Result<tos::pchan::Config> to_pchan_config(const toslib_api::pchan_initialAc
   if (!pchan_state.config_) {
     return ToslibError::EmptyField("config");
   }
-  TRY_RESULT_PREFIX(a_key, get_public_key(pchan_state.config_->alice_public_key_),
+  TRY_RESULT_PREFIX(a_key, get_owner_public_key(pchan_state.config_->alice_public_key_),
                     ToslibError::InvalidField("alice_public_key", ""));
   config.a_key = td::SecureString(a_key.key);
-  TRY_RESULT_PREFIX(b_key, get_public_key(pchan_state.config_->bob_public_key_),
+  TRY_RESULT_PREFIX(b_key, get_owner_public_key(pchan_state.config_->bob_public_key_),
                     ToslibError::InvalidField("bob_public_key", ""));
   config.b_key = td::SecureString(b_key.key);
 
@@ -2465,7 +2481,16 @@ class RunEmulator : public ToslibQueryActor {
   }
 };
 
-ToslibClient::ToslibClient(td::unique_ptr<ToslibCallback> callback) : callback_(std::move(callback)) {
+ToslibClient::ToslibClient(td::unique_ptr<ToslibCallback> callback
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                           ,
+                           std::shared_ptr<PublicNetworkTestHook> hook
+#endif
+                           )
+    : callback_(std::move(callback)) {
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  test_hook_ = std::move(hook);
+#endif
 }
 ToslibClient::~ToslibClient() = default;
 
@@ -2482,6 +2507,9 @@ void ToslibClient::hangup() {
 ExtClientRef ToslibClient::get_client_ref() {
   ExtClientRef ref;
   ref.adnl_ext_client_ = raw_client_.get();
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  ref.test_hook = test_hook_;
+#endif
   ref.last_block_actor_ = raw_last_block_.get();
   ref.last_config_actor_ = raw_last_config_.get();
 
@@ -2517,6 +2545,10 @@ void ToslibClient::init_ext_client() {
   } else {
     ext_client_outbound_ = {};
     raw_client_ = liteclient::ExtClient::create(config_.lite_servers, nullptr);
+#ifdef TOSLIB_Q01_TEST_NETWORK
+    if (test_hook_)
+      raw_client_ = test_hook_->decorate(std::move(raw_client_), config_generation_);
+#endif
   }
 }
 
@@ -2610,7 +2642,19 @@ void ToslibClient::make_any_request(toslib_api::Function& function, QueryContext
   downcast_call(function, [&](auto& request) { this->make_request(request, promise.wrap([](auto x) { return x; })); });
 }
 
-void ToslibClient::request(td::uint64 id, toslib_api::object_ptr<toslib_api::Function> function) {
+#ifdef TOSLIB_Q01_TEST_NETWORK
+void ToslibClient::test_arm(td::uint64 id, std::string nonce, td::Promise<QueryTraceContext> ack) {
+  if (!test_hook_ || use_callbacks_for_network_ || state_ != State::Running)
+    return ack.set_error(td::Status::Error("Q01 default transport not initialized"));
+  test_hook_->arm(id, std::move(nonce), std::move(ack));
+}
+#endif
+void ToslibClient::request(td::uint64 id, toslib_api::object_ptr<toslib_api::Function> function
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                           ,
+                           QueryTraceContext trace_context
+#endif
+) {
   VLOG(toslib_query) << "Toslib got query " << td::tag("id", id) << " " << to_string(function);
   if (function == nullptr) {
     LOG(ERROR) << "Receive empty static request";
@@ -2643,6 +2687,21 @@ void ToslibClient::request(td::uint64 id, toslib_api::object_ptr<toslib_api::Fun
     send_closure(actor_id, &ToslibClient::on_result, id, std::move(result));
   };
 
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  if (trace_context.public_request_id != 0) {
+    if (trace_context.public_request_id != id || trace_context.transport_generation != config_generation_ ||
+        function->get_id() != toslib_api::blocks_getMasterchainInfo::ID) {
+      return promise.set_error(td::Status::Error("Q01 public request context differs"));
+    }
+    td::Promise<object_ptr<toslib_api::blocks_masterchainInfo>> typed =
+        promise.wrap([](object_ptr<toslib_api::blocks_masterchainInfo> value) -> Object { return std::move(value); });
+    auto status = do_request(static_cast<const toslib_api::blocks_getMasterchainInfo&>(*function), std::move(typed),
+                             trace_context);
+    if (status.is_error())
+      typed.set_error(std::move(status));
+    return;
+  }
+#endif
   make_any_request(*function, {}, std::move(promise));
 }
 void ToslibClient::close() {
@@ -2715,22 +2774,20 @@ td::Result<block::StdAddress> get_account_address(const toslib_api::raw_initialA
 
 td::Result<block::StdAddress> get_account_address(const toslib_api::wallet_v3_initialAccountState& test_wallet_state,
                                                   td::int32 revision, tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(test_wallet_state.public_key_));
-  return tos::WalletV3::create({key_bytes.key, static_cast<td::uint32>(test_wallet_state.wallet_id_)}, revision)
-      ->get_address(workchain_id);
+  TRY_RESULT(init_data, to_init_data(test_wallet_state));
+  return tos::WalletV3::create(std::move(init_data), revision)->get_address(workchain_id);
 }
 
 td::Result<block::StdAddress> get_account_address(const toslib_api::wallet_v4_initialAccountState& test_wallet_state,
                                                   td::int32 revision, tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(test_wallet_state.public_key_));
-  return tos::WalletV4::create({key_bytes.key, static_cast<td::uint32>(test_wallet_state.wallet_id_)}, revision)
-      ->get_address(workchain_id);
+  TRY_RESULT(init_data, to_init_data(test_wallet_state));
+  return tos::WalletV4::create(std::move(init_data), revision)->get_address(workchain_id);
 }
 
 td::Result<block::StdAddress> get_account_address(
     const toslib_api::wallet_highload_v1_initialAccountState& test_wallet_state, td::int32 revision,
     tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(test_wallet_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(test_wallet_state.public_key_));
   return tos::HighloadWallet::create({key_bytes.key, static_cast<td::uint32>(test_wallet_state.wallet_id_)}, revision)
       ->get_address(workchain_id);
 }
@@ -2738,14 +2795,14 @@ td::Result<block::StdAddress> get_account_address(
 td::Result<block::StdAddress> get_account_address(
     const toslib_api::wallet_highload_v2_initialAccountState& test_wallet_state, td::int32 revision,
     tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(test_wallet_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(test_wallet_state.public_key_));
   return tos::HighloadWalletV2::create({key_bytes.key, static_cast<td::uint32>(test_wallet_state.wallet_id_)}, revision)
       ->get_address(workchain_id);
 }
 
 td::Result<block::StdAddress> get_account_address(const toslib_api::dns_initialAccountState& dns_state,
                                                   td::int32 revision, tos::WorkchainId workchain_id) {
-  TRY_RESULT(key_bytes, get_public_key(dns_state.public_key_));
+  TRY_RESULT(key_bytes, get_owner_public_key(dns_state.public_key_));
   auto key = td::Ed25519::PublicKey(td::SecureString(key_bytes.key));
   return tos::ManualDns::create(key, static_cast<td::uint32>(dns_state.wallet_id_), revision)
       ->get_address(workchain_id);
@@ -2954,7 +3011,9 @@ td::Status ToslibClient::guess_revisions(std::vector<Target> targets,
     void start_up() override {
       left_ += targets_.size();
       for (auto& p : targets_) {
-        send_query(int_api::GetAccountState{p.address, block_id_.copy(), std::move(p.public_key)},
+        // Built first: the continuation below moves p, and arguments are unordered.
+        auto query = int_api::GetAccountState{p.address, block_id_.copy(), std::move(p.public_key)};
+        send_query(std::move(query),
                    promise_send_closure(td::actor::actor_id(this), &GuessRevisions::on_account_state, std::move(p)));
       }
       on_account_state_finish();
@@ -4349,8 +4408,12 @@ class GenericCreateSendGrams : public ToslibQueryActor {
                 std::move(builder).with_a_key(&private_key_.value());
               }
               if (is_bob) {
+                // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+                // NOLINTNEXTLINE(bugprone-use-after-move)
                 std::move(builder).with_b_key(&private_key_.value());
               }
+              // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+              // NOLINTNEXTLINE(bugprone-use-after-move)
               raw.message_body = std::move(builder).finalize();
               return td::Status::OK();
             },
@@ -4365,8 +4428,12 @@ class GenericCreateSendGrams : public ToslibQueryActor {
                 std::move(builder).with_a_key(&private_key_.value());
               }
               if (is_bob) {
+                // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+                // NOLINTNEXTLINE(bugprone-use-after-move)
                 std::move(builder).with_b_key(&private_key_.value());
               }
+              // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+              // NOLINTNEXTLINE(bugprone-use-after-move)
               raw.message_body = std::move(builder).finalize();
               return td::Status::OK();
             },
@@ -4397,8 +4464,12 @@ class GenericCreateSendGrams : public ToslibQueryActor {
                 std::move(builder).with_a_key(&private_key_.value());
               }
               if (is_bob) {
+                // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+                // NOLINTNEXTLINE(bugprone-use-after-move)
                 std::move(builder).with_b_key(&private_key_.value());
               }
+              // with_*_key only sets a key pointer and returns *this; nothing is moved from builder.
+              // NOLINTNEXTLINE(bugprone-use-after-move)
               raw.message_body = std::move(builder).finalize();
               return td::Status::OK();
             }));
@@ -6189,13 +6260,23 @@ td::Status ToslibClient::do_request(const toslib_api::getConfigAll& request,
 }
 
 td::Status ToslibClient::do_request(const toslib_api::blocks_getMasterchainInfo& masterchain_info,
-                                    td::Promise<object_ptr<toslib_api::blocks_masterchainInfo>>&& promise) {
+                                    td::Promise<object_ptr<toslib_api::blocks_masterchainInfo>>&& promise
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                                    ,
+                                    QueryTraceContext trace_context
+#endif
+) {
   client_.send_query(tos::lite_api::liteServer_getMasterchainInfo(),
                      promise.wrap([](lite_api_ptr<tos::lite_api::liteServer_masterchainInfo>&& masterchain_info) {
                        return toslib_api::make_object<toslib_api::blocks_masterchainInfo>(
                            to_toslib_api(*masterchain_info->last_), masterchain_info->state_root_hash_.as_slice().str(),
                            to_toslib_api(*masterchain_info->init_));
-                     }));
+                     })
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                         ,
+                     -1, trace_context
+#endif
+  );
   return td::Status::OK();
 }
 

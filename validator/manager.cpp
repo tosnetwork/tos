@@ -18,20 +18,26 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <limits>
 #include <optional>
+#include <sys/statvfs.h>
 
 #include "auto/tl/lite_api.h"
 #include "auto/tl/tos_api_json.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
+#include "block/validator-session-id.h"
+#include "block/validator-session-members.h"
 #include "block/workchain-execution-dispatch.h"
 #include "common/delay.h"
 #include "common/stats.h"
+#include "crypto/pq/pq-launch-limits.h"
 #include "db/celldb.hpp"
 #include "db/fileref.hpp"
 #include "downloaders/wait-block-data.hpp"
@@ -40,38 +46,44 @@
 #include "impl/applied-ext-message-cleanup.hpp"
 #include "impl/config.hpp"
 #include "interfaces/validator-full-id.h"
-#include "node-consensus-status.h"
+#include "lite-client/lite-ext-query-failure.h"
+#include "metrics/chain-anchor-snapshot.h"
+#include "metrics/core-health.h"
+#include "metrics/node-state-snapshot.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/coro_utils.h"
+#include "td/db/RocksDb.h"
 #include "td/utils/JsonBuilder.h"
+#include "td/utils/PathView.h"
 #include "td/utils/Random.h"
 #include "td/utils/ScopeGuard.h"
 #include "td/utils/buffer.h"
 #include "td/utils/filesystem.h"
 #include "td/utils/port/path.h"
+#include "td/utils/port/thread.h"
 #include "tl-utils/lite-utils.hpp"
 #include "tl/tl_json.h"
 #include "tos/lite-tl.hpp"
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
+#include "validator/consensus/db-path.h"
+#include "validator/consensus/validator-cleanup-dispatch.h"
+#include "validator/consensus/validator-cleanup-store.h"
+#include "validator/startup-catchup-driver.h"
 #include "validator/stats-merger.h"
 
+#include "auth-policy-admission.h"
 #include "checksum.h"
 #include "fabric.h"
 #include "finality-cache-policy.h"
+#include "full-node-serializer.hpp"
+#include "full-node.h"
 #include "get-next-key-blocks.h"
 #include "import-db-slice-local.hpp"
 #include "import-db-slice.hpp"
 #include "manager.h"
 #include "manager.hpp"
-
-#include "validator/consensus/db-path.h"
-#include "validator/consensus/validator-cleanup-dispatch.h"
-#include "validator/consensus/validator-cleanup-store.h"
-#include "td/db/RocksDb.h"
-#include "td/utils/PathView.h"
-#include "td/utils/filesystem.h"
-#include "td/utils/port/path.h"
+#include "node-consensus-status.h"
 #include "shard.hpp"
 #include "state-serializer.hpp"
 #include "validate-broadcast.hpp"
@@ -80,6 +92,79 @@
 namespace tos {
 
 namespace validator {
+
+namespace {
+std::optional<health::ChainAnchorSnapshot::Block> health_block_anchor(const BlockIdExt &id) noexcept {
+  health::ChainAnchorSnapshot::Block result;
+  const auto file = id.file_hash.as_slice();
+  const auto root = id.root_hash.as_slice();
+  if (file.size() != 32 || root.size() != 32)
+    return std::nullopt;
+  bool file_nonzero = false, root_nonzero = false;
+  for (std::size_t i = 0; i < 32; ++i) {
+    result.file_hash[i] = static_cast<std::uint8_t>(file[i]);
+    result.root_hash[i] = static_cast<std::uint8_t>(root[i]);
+    file_nonzero |= result.file_hash[i] != 0;
+    root_nonzero |= result.root_hash[i] != 0;
+  }
+  if (!file_nonzero || !root_nonzero)
+    return std::nullopt;
+  result.seqno = id.seqno();
+  return result;
+}
+std::uint64_t health_block_unix_seconds(const BlockHandle &handle) noexcept {
+  if (!handle || !handle->inited_unix_time())
+    return 0;
+  return static_cast<std::uint64_t>(handle->unix_time());
+}
+void publish_health_chain_anchors(const BlockIdExt &network_zero, const BlockIdExt &applied,
+                                  td::Ref<MasterchainState> served, bool applied_advanced,
+                                  std::uint64_t applied_block_unix_seconds, const BlockHandle &key_block) noexcept {
+  if (!network_zero.is_masterchain_ext() || !network_zero.is_valid_full() || !applied.is_masterchain_ext() ||
+      !applied.is_valid_full())
+    return;
+  health::ChainAnchorSnapshot snapshot;
+  const auto network = network_zero.root_hash.as_slice();
+  if (network.size() != 32)
+    return;
+  for (std::size_t i = 0; i < 32; ++i)
+    snapshot.network_hash[i] = static_cast<std::uint8_t>(network[i]);
+  auto applied_block = health_block_anchor(applied);
+  if (!applied_block)
+    return;
+  snapshot.applied = *applied_block;
+  if (served.not_null() && served->get_block_id().is_masterchain_ext() && served->get_block_id().is_valid_full() &&
+      served->get_block_id().seqno() <= applied.seqno()) {
+    if (auto served_block = health_block_anchor(served->get_block_id())) {
+      snapshot.served = *served_block;
+      snapshot.have_served = true;
+    }
+  }
+  snapshot.observed_unix_seconds = static_cast<std::uint64_t>(td::Clocks::system());
+  if (key_block && key_block->id().is_masterchain_ext()) {
+    snapshot.key_block_seqno = key_block->id().seqno();
+    snapshot.key_block_unix_seconds = health_block_unix_seconds(key_block);
+  }
+  if (applied_advanced) {
+    snapshot.applied_advanced_unix_seconds = snapshot.observed_unix_seconds;
+  } else if (auto previous = health::chain_anchor_state.read();
+             previous && previous->network_hash == snapshot.network_hash &&
+             previous->applied.seqno == snapshot.applied.seqno &&
+             previous->applied.root_hash == snapshot.applied.root_hash &&
+             previous->applied.file_hash == snapshot.applied.file_hash) {
+    snapshot.applied_advanced_unix_seconds = previous->applied_advanced_unix_seconds;
+  } else {
+    // First observation of an already-applied block (startup, or a resume
+    // onto a halted chain): the block's own time is the latest moment the
+    // chain is known to have advanced, so the stall clock starts there.
+    snapshot.applied_advanced_unix_seconds =
+        applied_block_unix_seconds != 0 && applied_block_unix_seconds <= snapshot.observed_unix_seconds
+            ? applied_block_unix_seconds
+            : snapshot.observed_unix_seconds;
+  }
+  health::chain_anchor_state.publish(snapshot);
+}
+}  // namespace
 
 void ValidatorManagerImpl::validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id,
                                                         td::BufferSlice proof, td::Promise<td::Unit> promise) {
@@ -299,7 +384,7 @@ td::actor::Task<> ValidatorManagerImpl::validated_accepted_block_broadcast(Block
 
 td::actor::Task<> ValidatorManagerImpl::generate_shard_block_description(BlockIdExt block_id,
                                                                          Ref<block::BlockSignatureSet> sig_set) {
-  if (!is_validator()) {
+  if (!has_local_validator_keys()) {
     co_return td::Unit{};
   }
   if (!shard_client_handle_ || shard_client_handle_->unix_time() <= (UnixTime)td::Clocks::system() - 60) {
@@ -346,6 +431,11 @@ td::actor::Task<> ValidatorManagerImpl::generate_shard_block_description(BlockId
 void ValidatorManagerImpl::sync_complete(td::Promise<td::Unit> promise) {
   started_ = true;
 
+  // Session activation is gated like group construction.
+  if (!validator_groups_permitted()) {
+    LOG(WARNING) << "completed sync; not activating validator sessions while validator groups are fenced";
+    return;
+  }
   VLOG(VALIDATOR_WARNING) << "completed sync. Validating " << validator_groups_.size() << " groups";
   for (auto &v : validator_groups_) {
     if (!v.second.actor.empty()) {
@@ -504,7 +594,8 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::Buffe
   }
   auto r_check_result =
       co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), priority,
-                              /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(), std::move(source_peer))
+                              /* add_to_mempool = */ has_local_validator_keys() || !collator_nodes_.empty(),
+                              std::move(source_peer))
           .wrap();
   if (r_check_result.is_error()) {
     VLOG(VALIDATOR_DEBUG) << "Dropping external message broadcast (prio=" << priority
@@ -527,7 +618,7 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_query(td::BufferSli
                                                                    td::optional<PublicKeyHash> source_peer) {
   auto [message, wait_allow_broadcast] = co_await td::actor::ask(
       ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), 0,
-      /* add_to_mempool = */ is_validator() || !collator_nodes_.empty(), std::move(source_peer));
+      /* add_to_mempool = */ has_local_validator_keys() || !collator_nodes_.empty(), std::move(source_peer));
   new_external_message_query_cont(std::move(message), std::move(wait_allow_broadcast)).start().detach();
   co_return td::Unit{};
 }
@@ -554,7 +645,7 @@ void ValidatorManagerImpl::new_shard_block_description_broadcast(BlockIdExt bloc
     VLOG(VALIDATOR_DEBUG) << "dropping shard block description broadcast: not inited";
     return;
   }
-  if (!is_validator() && !opts_->need_monitor(block_id.shard_full(), last_masterchain_state_)) {
+  if (!has_local_validator_keys() && !opts_->need_monitor(block_id.shard_full(), last_masterchain_state_)) {
     return;
   }
   if (cached_checked_shard_block_descriptions_.contains(block_id)) {
@@ -591,17 +682,30 @@ td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt
 
   if (opts_->nonfinal_ls_queries_enabled() && shard_client_handle_ &&
       shard_client_handle_->unix_time() > (UnixTime)td::Clocks::system() - 60) {
-    auto handle = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::get_block_handle, block_id, true);
-    Ref<BlockData> block = co_await create_block(block_id, std::move(data));
-    co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::set_block_data, handle, std::move(block));
-    co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state, handle, 0, td::Timestamp::in(60.0),
-                            true);
-    VLOG(VALIDATOR_DEBUG) << "Processed candidate broadcast " << block_id.to_str();
-    if (is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
-      NonfinalGroupInfo &info = nonfinal_info_[{block_id.shard_full(), cc_seqno}];
-      if (!info.last_accepted.is_valid() || info.last_accepted.seqno() < block_id.seqno()) {
-        if (!info.last_candidate.is_valid() || info.last_candidate.seqno() < block_id.seqno()) {
-          info.last_candidate = block_id;
+    // Applying a candidate ahead of finality keeps its data alive until the
+    // state is computed, so only a bounded number run at once.
+    using StartResult = BoundedActiveOperations<BlockIdExt>::StartResult;
+    auto admission = active_candidate_broadcasts_.try_start(block_id);
+    if (admission != StartResult::Started) {
+      VLOG(VALIDATOR_DEBUG) << "not applying candidate broadcast " << block_id.to_str() << ": "
+                            << (admission == StartResult::AlreadyActive ? "already being applied"
+                                                                        : "too many being applied");
+    } else {
+      SCOPE_EXIT {
+        active_candidate_broadcasts_.finish(block_id);
+      };
+      auto handle = co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::get_block_handle, block_id, true);
+      Ref<BlockData> block = co_await create_block(block_id, std::move(data));
+      co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::set_block_data, handle, std::move(block));
+      co_await td::actor::ask(actor_id(this), &ValidatorManagerImpl::wait_block_state, handle, 0,
+                              td::Timestamp::in(60.0), true);
+      VLOG(VALIDATOR_DEBUG) << "Processed candidate broadcast " << block_id.to_str();
+      if (is_valid_nonfinal_group(block_id.shard_full(), cc_seqno)) {
+        NonfinalGroupInfo &info = nonfinal_info_[{block_id.shard_full(), cc_seqno}];
+        if (!info.last_accepted.is_valid() || info.last_accepted.seqno() < block_id.seqno()) {
+          if (!info.last_candidate.is_valid() || info.last_candidate.seqno() < block_id.seqno()) {
+            info.last_candidate = block_id;
+          }
         }
       }
     }
@@ -616,14 +720,16 @@ td::actor::Task<> ValidatorManagerImpl::new_block_candidate_broadcast(BlockIdExt
 }
 
 static td::actor::Task<> check_finality_signatures(BlockIdExt block_id, Ref<block::BlockSignatureSet> sig_set,
-                                                   Ref<MasterchainState> mc_state) {
+                                                   std::vector<Ref<block::ValidatorSet>> validator_sets) {
   co_await td::actor::detach_from_actor();
   CHECK(td::actor::detail::get_current_actor_id().empty());
   auto try_val_set = [&](Ref<block::ValidatorSet> val_set) -> td::Status {
     if (val_set.is_null()) {
       return td::Status::Error("no validator set");
     }
-    if (sig_set->is_final()) {
+    if (sig_set->is_pq()) {
+      return td::Status::Error("post-quantum finality requires the verified block header context");
+    } else if (sig_set->is_final()) {
       TRY_STATUS(sig_set->check_signatures(val_set, block_id));
     } else {
       TRY_STATUS(sig_set->check_approve_signatures(val_set, block_id));
@@ -631,18 +737,20 @@ static td::actor::Task<> check_finality_signatures(BlockIdExt block_id, Ref<bloc
     return td::Status::OK();
   };
 
-  auto mc_state_q = Ref<MasterchainStateQ>(mc_state);
-  auto next_val_set = mc_state_q->get_next_validator_set(block_id.shard_full(), sig_set->get_catchain_seqno());
-  if (try_val_set(next_val_set).is_ok()) {
-    co_return td::Unit{};
+  td::Status last_error = td::Status::Error("no validator set for claimed catchain seqno");
+  for (auto &validator_set : validator_sets) {
+    auto status = try_val_set(std::move(validator_set));
+    if (status.is_ok()) {
+      co_return td::Unit{};
+    }
+    last_error = std::move(status);
   }
-  auto val_set = mc_state_q->get_validator_set(block_id.shard_full(), sig_set->get_catchain_seqno());
-  CO_TRY(try_val_set(val_set));
-  co_return td::Unit{};
+  co_return std::move(last_error);
 }
 
 td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinalityBroadcast finality,
-                                                                     BroadcastSource source) {
+                                                                     BroadcastSource source,
+                                                                     td::optional<PublicKeyHash> source_peer) {
   if (!last_masterchain_block_handle_ || last_masterchain_state_.is_null()) {
     VLOG(VALIDATOR_DEBUG) << "dropping block finality broadcast: not inited";
     co_return td::Unit{};
@@ -661,26 +769,138 @@ td::actor::Task<> ValidatorManagerImpl::new_block_finality_broadcast(BlockFinali
     co_return td::Unit{};
   }
 
-  auto cached = pending_block_finality_.get_if_exists(finality.block_id, false);
-  if (!should_replace_pending_finality(cached != nullptr, cached != nullptr && cached->sig_set->is_final(),
-                                       finality.sig_set->is_final())) {
-    co_return td::Unit{};
+  if (!pending_finality_authority_memo_state_ ||
+      *pending_finality_authority_memo_state_ != last_masterchain_block_id_) {
+    pending_finality_authority_memo_.clear();
+    pending_finality_authority_memo_state_ = last_masterchain_block_id_;
+  }
+  auto state = Ref<MasterchainStateQ>(last_masterchain_state_);
+  const auto shard = finality.block_id.shard_full();
+  const auto claimed_catchain_seqno = finality.sig_set->get_catchain_seqno();
+  const auto claimed_validator_set_hash = finality.sig_set->get_validator_set_hash();
+  const auto current_catchain_seqno = state->get_shard_cc_seqno(shard);
+  const std::vector<PendingFinalityAuthoritySet> *authority_sets = nullptr;
+  if ((source_peer || !finality.sig_set->is_pq()) &&
+      pending_finality_coordinate_is_admissible(state->get_shard_from_config(shard, true).not_null(),
+                                                current_catchain_seqno, claimed_catchain_seqno)) {
+    authority_sets = &pending_finality_authority_memo_.get({shard, claimed_catchain_seqno}, [&] {
+      std::vector<PendingFinalityAuthoritySet> sets;
+      auto append_matching_set = [&](const Ref<block::ValidatorSet> &set) {
+        if (set.is_null() || set->get_catchain_seqno() != claimed_catchain_seqno) {
+          return;
+        }
+        std::vector<PublicKeyHash> roots;
+        for (const auto &validator : set->export_vector()) {
+          roots.push_back(validator_transport_root(validator));
+        }
+        sets.push_back({set->get_validator_set_hash(), canonical_validator_transport_roots(std::move(roots)), set});
+      };
+      append_matching_set(state->get_next_validator_set(shard, claimed_catchain_seqno));
+      append_matching_set(state->get_validator_set(shard, claimed_catchain_seqno));
+      return sets;
+    });
   }
 
-  auto status = co_await check_finality_signatures(finality.block_id, finality.sig_set, last_masterchain_state_).wrap();
-  if (status.is_error()) {
-    VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast: " << status.move_as_error();
-    co_return td::Unit{};
+  // A finality-only broadcast does not carry the verified header coordinates needed to
+  // derive the trusted PQ session. Keep an arrival-ordered, sender-isolated and byte-bounded set
+  // of structurally checked, explicitly unverified PQ candidates until the block arrives.
+  // ValidateBroadcast then derives the context from its proof and tries each candidate until one
+  // is genuinely valid. Classical evidence can still be checked immediately and is marked
+  // verified before cache admission.
+  bool signatures_verified = false;
+  bool remote_validator_capacity = false;
+  std::vector<Ref<block::ValidatorSet>> validator_sets;
+  if (authority_sets != nullptr) {
+    if (!finality.sig_set->is_pq()) {
+      validator_sets.reserve(authority_sets->size());
+    }
+    for (const auto &set : *authority_sets) {
+      if (!finality.sig_set->is_pq()) {
+        validator_sets.push_back(set.validator_set);
+      }
+      if (source_peer && set.validator_set_hash == claimed_validator_set_hash &&
+          std::find(set.roots.begin(), set.roots.end(), *source_peer) != set.roots.end()) {
+        remote_validator_capacity = true;
+      }
+    }
+  }
+  if (!finality.sig_set->is_pq()) {
+    auto status =
+        co_await check_finality_signatures(finality.block_id, finality.sig_set, std::move(validator_sets)).wrap();
+    if (status.is_error()) {
+      VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast: " << status.move_as_error();
+      co_return td::Unit{};
+    }
+    signatures_verified = true;
   }
 
-  if (!finality.block_id.is_masterchain() && finality.sig_set->is_final() && is_validator()) {
-    generate_shard_block_description(finality.block_id, finality.sig_set).start().detach();
+  auto block_id = finality.block_id;
+  auto incoming_is_final = finality.sig_set->is_final();
+  // Remote evidence is charged by the exact boxed TL payload received from the
+  // overlay. This avoids doing an attacker-triggered canonical reserialization
+  // before admission and charges the bytes the sender actually made us parse,
+  // including the wrapper and block id. A remote path that loses this metadata
+  // fails closed instead of silently undercharging. Locally originated evidence
+  // has no wire payload, so charge its intrinsic signature bytes; the store's
+  // minimum charge still bounds small local entries.
+  std::optional<std::size_t> local_signature_bytes;
+  if (!source_peer) {
+    auto signature_bytes = finality.sig_set->get_signature_data_size();
+    if (signature_bytes.is_error()) {
+      VLOG(VALIDATOR_WARNING) << "dropping local block finality broadcast with an unmeasurable signature set: "
+                              << signature_bytes.move_as_error();
+      co_return td::Unit{};
+    }
+    local_signature_bytes = signature_bytes.move_as_ok();
   }
-  if (!finality.block_id.is_masterchain() && finality.sig_set->is_final()) {
-    process_accepted_nonfinal_block(finality.block_id, finality.sig_set->get_catchain_seqno()).start().detach();
+  auto ingress = prepare_pending_finality_ingress(source_peer ? &*source_peer : nullptr, finality.received_bytes,
+                                                  local_signature_bytes);
+  if (!ingress.admitted()) {
+    VLOG(VALIDATOR_WARNING) << "dropping block finality broadcast with incomplete admission accounting: block="
+                            << block_id.to_str()
+                            << " rejection=" << pending_finality_ingress_rejection_name(ingress.rejection);
+    co_return td::Unit{};
   }
-  pending_block_finality_.put(finality.block_id, PendingBlockFinality{std::move(finality.sig_set), source});
-  try_process_pending_block_finality(finality.block_id);
+  // Classification was completed before the detached classical check: no
+  // reference into the actor-owned LRU is retained across co_await.
+  bool validator_capacity = ingress.sender.local || remote_validator_capacity;
+  // test-pending-finality-cache measured one uncached 400-validator shard-set
+  // computation at 390 us and 524800 copied PQ-key bytes on the development
+  // host (20-run average). Checking current plus next can therefore copy
+  // 1049600 bytes per miss. A cheap local cc_seqno check admits only current
+  // and next, and an exact-shard lookup rejects invented descendants which
+  // inherit their containing shard's cc_seqno. The attacker-claimed set hash is
+  // compared with the computed hash stored inside an entry and cannot create
+  // cache keys. A global eight-entry LRU bounds memory even when arrivals cycle
+  // attacker-selected real shard ids; current/next being the only legitimate
+  // coordinates per shard keeps the honest-path working set small. The memo is
+  // reset above when the trusted masterchain state changes.
+  const auto capacity =
+      validator_capacity ? PendingFinalityCapacity::ValidatorReserved : PendingFinalityCapacity::Shared;
+  auto admission_time = td::Time::now();
+  pending_block_finality_.erase_expired(admission_time);
+  auto expires_at = admission_time + pending_finality_retention_seconds;
+  auto admission = pending_block_finality_.admit(
+      block_id, std::move(ingress.sender), PendingBlockFinalityCandidate{finality.sig_set, source},
+      ingress.accounted_bytes, capacity, signatures_verified, incoming_is_final, expires_at);
+  if (!admission.admitted()) {
+    VLOG(VALIDATOR_DEBUG) << "dropping block finality broadcast because its sender-isolated byte-bounded store did "
+                             "not admit it: block="
+                          << block_id.to_str() << " rejection=" << pending_finality_rejection_name(admission.rejection);
+    co_return td::Unit{};
+  }
+  delay_action(
+      [SelfId = actor_id(this), block_id]() {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::expire_pending_block_finality, block_id);
+      },
+      td::Timestamp::at(expires_at));
+  if (signatures_verified && !block_id.is_masterchain() && incoming_is_final && has_local_validator_keys()) {
+    generate_shard_block_description(block_id, finality.sig_set).start().detach();
+  }
+  if (signatures_verified && !block_id.is_masterchain() && incoming_is_final) {
+    process_accepted_nonfinal_block(block_id, finality.sig_set->get_catchain_seqno()).start().detach();
+  }
+  try_process_pending_block_finality(block_id);
   co_return td::Unit{};
 }
 
@@ -709,7 +929,7 @@ void ValidatorManagerImpl::add_shard_block_description(td::Ref<ShardTopBlockDesc
                               desc->catchain_seqno());
     }
   }
-  if (!is_validator() && !opts_->nonfinal_ls_queries_enabled()) {
+  if (!has_local_validator_keys() && !opts_->nonfinal_ls_queries_enabled()) {
     return;
   }
   auto it = shard_blocks_.find(ShardTopBlockDescriptionId{desc->shard(), desc->catchain_seqno()});
@@ -810,20 +1030,38 @@ void ValidatorManagerImpl::set_shard_block_description_ready(td::Ref<ShardTopBlo
 }
 
 void ValidatorManagerImpl::add_cached_block_data(BlockIdExt block_id, td::BufferSlice data) {
+  static_assert(kMaxCandidateDataSize == fullnode::FullNode::max_block_size(),
+                "the candidate data caches must admit every block the node accepts");
+  auto &cache = block_id.is_masterchain() ? cached_masterchain_block_candidates_ : cached_block_data_;
+  auto stored = cache.put(block_id, data);
+  data = {};
+  if (stored == CandidateDataCache<BlockIdExt>::PutResult::TooLarge) {
+    VLOG(VALIDATOR_WARNING) << "not caching block data for " << block_id.to_str() << ": larger than "
+                            << kMaxCandidateDataSize << " bytes";
+    return;
+  }
+  if (stored == CandidateDataCache<BlockIdExt>::PutResult::Full) {
+    // Allocations still held by asynchronous work fill the cache's budget.
+    // Not caching is never a verdict on the block: every reader of these
+    // caches falls back to the normal path on a miss (download_block,
+    // download_block_proof_link, the candidate DB), and pending finality
+    // evidence waits within its own deadline for the data to arrive.
+    VLOG(VALIDATOR_DEBUG) << "not caching block data for " << block_id.to_str()
+                          << ": cached data still held by pending work fills the budget";
+    return;
+  }
+  if (stored != CandidateDataCache<BlockIdExt>::PutResult::Stored) {
+    return;
+  }
   if (block_id.is_masterchain()) {
-    td::BufferSlice &block_data = cached_masterchain_block_candidates_.get(block_id);
-    if (!block_data.empty()) {
-      return;
-    }
-    block_data = std::move(data);
     try_process_pending_block_finality(block_id);
     return;
   }
-  td::BufferSlice &block_data = cached_block_data_.get(block_id);
-  if (!block_data.empty()) {
+  const td::BufferSlice *cached = cached_block_data_.get(block_id, false);
+  if (cached == nullptr) {
     return;
   }
-  block_data = std::move(data);
+  td::BufferSlice block_data = cached->clone();
   {
     auto it = wait_block_data_.find(block_id);
     if (it != wait_block_data_.end()) {
@@ -855,10 +1093,11 @@ void ValidatorManagerImpl::add_cached_block_data(BlockIdExt block_id, td::Buffer
 }
 
 void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_id) {
-  auto candidate = block_id.is_masterchain() ? cached_masterchain_block_candidates_.get_if_exists(block_id)
-                                             : cached_block_data_.get_if_exists(block_id);
-  auto finality = pending_block_finality_.get_if_exists(block_id);
-  if (candidate == nullptr || finality == nullptr || last_masterchain_state_.is_null()) {
+  auto candidate =
+      block_id.is_masterchain() ? cached_masterchain_block_candidates_.get(block_id) : cached_block_data_.get(block_id);
+  auto pending = pending_block_finality_.get_if_exists(block_id);
+  if (candidate == nullptr || pending == nullptr || pending->empty() || pending->processing() ||
+      last_masterchain_state_.is_null()) {
     return;
   }
 
@@ -875,42 +1114,181 @@ void ValidatorManagerImpl::try_process_pending_block_finality(BlockIdExt block_i
     return;
   }
 
+  auto finality = pending->begin_processing(td::Time::now());
+  if (!finality) {
+    return;
+  }
+  const auto attempt_token = finality.token;
+  PendingBlockProofFailureSource proof_failure_source = PendingBlockProofFailureSource::BlockBytes;
   td::Result<td::BufferSlice> proof =
       block_id.is_masterchain()
-          ? WaitBlockData::generate_proof(block_id, block.ok()->root_cell(), finality->sig_set, last_masterchain_state_)
+          ? WaitBlockData::generate_proof(block_id, block.ok()->root_cell(), finality->evidence.sig_set,
+                                          last_masterchain_state_, proof_failure_source)
           : WaitBlockData::generate_proof_link(block_id, block.ok()->root_cell());
   if (proof.is_error()) {
-    auto error = proof.move_as_error();
-    if (error.code() == ErrorCode::notready) {
-      VLOG(VALIDATOR_DEBUG) << "failed to create pending block proof for " << block_id.to_str() << ": " << error;
-    } else {
-      VLOG(VALIDATOR_WARNING) << "failed to create pending block proof for " << block_id.to_str() << ": " << error;
-      if (block_id.is_masterchain()) {
-        cached_masterchain_block_candidates_.erase(block_id);
-      } else {
-        cached_block_data_.erase(block_id);
-      }
-    }
+    failed_pending_block_proof(block_id, attempt_token, proof_failure_source, proof.move_as_error());
     return;
   }
 
-  auto sig_set = finality->sig_set;
-  auto finality_source = finality->source;
+  auto sig_set = finality->evidence.sig_set;
+  auto finality_source = finality->evidence.source;
+  auto was_final = finality->is_final;
+  BlockBroadcast broadcast{block_id, std::move(sig_set), std::move(data), proof.move_as_ok()};
+  const bool signatures_checked = finality->verified || !broadcast.sig_set->is_pq();
+  if (!signatures_checked) {
+    measurement::record_trace_lazy(
+        [&] {
+          return fullnode::block_finality_broadcast_trace_id(
+              BlockFinalityBroadcast{block_id, finality->evidence.sig_set});
+        },
+        measurement::TraceStage::peer_finality_verification_started);
+    auto broadcast_for_validation = broadcast.clone();
+    validate_block_broadcast_signatures(
+        std::move(broadcast_for_validation),
+        [SelfId = actor_id(this), block_id, broadcast = std::move(broadcast), finality_source, was_final,
+         attempt_token](td::Result<td::Unit> result) mutable {
+          td::actor::send_closure(SelfId, &ValidatorManagerImpl::checked_pending_block_finality, block_id,
+                                  std::move(broadcast), finality_source, was_final, attempt_token, std::move(result));
+        });
+    return;
+  }
+  new_block_broadcast(
+      std::move(broadcast), signatures_checked, finality_source,
+      [SelfId = actor_id(this), block_id, was_final, attempt_token](td::Result<td::Unit> result) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::processed_pending_block_finality, block_id, was_final,
+                                attempt_token, std::move(result));
+      });
+}
+
+void ValidatorManagerImpl::failed_pending_block_proof(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token,
+                                                      PendingBlockProofFailureSource source, td::Status error) {
+  auto pending = pending_block_finality_.get_if_exists(block_id);
+  if (pending == nullptr || !pending->is_processing(attempt_token)) {
+    return;
+  }
+  auto action = pending_block_proof_failure_action(source, error.code());
+  if (action != PendingBlockProofFailureAction::DiscardBlockBytes) {
+    if (source == PendingBlockProofFailureSource::TrustedContext && error.code() != ErrorCode::notready &&
+        error.code() != ErrorCode::timeout) {
+      // Context can be temporarily behind a valid block. Retain both inputs
+      // within the pending-evidence deadline rather than deleting either.
+      error = td::Status::Error(ErrorCode::notready, PSTRING() << "masterchain proof context: " << error);
+    }
+    failed_pending_block_finality(block_id, attempt_token, std::move(error),
+                                  action == PendingBlockProofFailureAction::DiscardEvidence
+                                      ? "check finality evidence for block proof"
+                                      : "create block proof with current context");
+    return;
+  }
+  // Only an error attributed to the cached candidate bytes retires those
+  // bytes while preserving independently received finality evidence.
+  pending->cancel_processing(attempt_token);
+  VLOG(VALIDATOR_WARNING) << "failed to create pending block proof for " << block_id.to_str() << ": " << error;
   if (block_id.is_masterchain()) {
     cached_masterchain_block_candidates_.erase(block_id);
+  } else {
+    cached_block_data_.erase(block_id);
   }
-  pending_block_finality_.erase(block_id);
-  BlockBroadcast broadcast{block_id, std::move(sig_set), std::move(data), proof.move_as_ok()};
-  new_block_broadcast(std::move(broadcast), true, finality_source, [block_id](td::Result<td::Unit> R) mutable {
-    if (R.is_error()) {
-      auto error = R.move_as_error();
-      if (error.code() == ErrorCode::notready || error.code() == ErrorCode::timeout) {
-        VLOG(VALIDATOR_DEBUG) << "dropped pending block finality broadcast for " << block_id.to_str() << ": " << error;
-      } else {
-        VLOG(VALIDATOR_INFO) << "dropped pending block finality broadcast for " << block_id.to_str() << ": " << error;
-      }
+}
+
+void ValidatorManagerImpl::schedule_pending_block_finality_retry(BlockIdExt block_id, double retry_at) {
+  delay_action(
+      [SelfId = actor_id(this), block_id]() {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::try_process_pending_block_finality, block_id);
+      },
+      td::Timestamp::at(retry_at));
+}
+
+void ValidatorManagerImpl::expire_pending_block_finality(BlockIdExt block_id) {
+  auto pending = pending_block_finality_.get_if_exists(block_id);
+  if (pending == nullptr) {
+    return;
+  }
+  pending->erase_expired(td::Time::now());
+  if (pending->empty()) {
+    pending_block_finality_.erase(block_id);
+  } else {
+    try_process_pending_block_finality(block_id);
+  }
+}
+
+void ValidatorManagerImpl::failed_pending_block_finality(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token,
+                                                         td::Status error, td::Slice operation) {
+  auto pending = pending_block_finality_.get_if_exists(block_id);
+  if (pending == nullptr || !pending->is_processing(attempt_token)) {
+    return;
+  }
+  auto failure = pending->resolve_front_failure(attempt_token, error.code(), td::Time::now());
+  if (failure.action == PendingFinalityFailureAction::Retry) {
+    VLOG(VALIDATOR_DEBUG) << "transient failure while attempting to " << operation << " for pending block finality "
+                          << block_id.to_str() << ": " << error;
+    schedule_pending_block_finality_retry(block_id, failure.retry_at);
+    return;
+  }
+  VLOG(VALIDATOR_INFO) << (failure.action == PendingFinalityFailureAction::DiscardExpired
+                               ? "retention deadline expired while attempting to "
+                               : "permanent failure while attempting to ")
+                       << operation << " for pending block finality " << block_id.to_str() << ": " << error;
+  if (pending->empty()) {
+    pending_block_finality_.erase(block_id);
+  } else {
+    try_process_pending_block_finality(block_id);
+  }
+}
+
+void ValidatorManagerImpl::checked_pending_block_finality(BlockIdExt block_id, BlockBroadcast broadcast,
+                                                          BroadcastSource source, bool was_final,
+                                                          PendingFinalityAttemptToken attempt_token,
+                                                          td::Result<td::Unit> result) {
+  auto pending = pending_block_finality_.get_if_exists(block_id);
+  if (pending == nullptr || !pending->is_processing(attempt_token)) {
+    return;
+  }
+  if (result.is_error()) {
+    failed_pending_block_finality(block_id, attempt_token, result.move_as_error(), "verify signatures");
+    return;
+  }
+  if (!pending->mark_front_verified(attempt_token)) {
+    return;
+  }
+  measurement::record_trace_lazy(
+      [&] { return fullnode::block_finality_broadcast_trace_id(BlockFinalityBroadcast{block_id, broadcast.sig_set}); },
+      measurement::TraceStage::peer_finality_broadcast_verified);
+  new_block_broadcast(
+      std::move(broadcast), true, source,
+      [SelfId = actor_id(this), block_id, was_final, attempt_token](td::Result<td::Unit> apply_result) mutable {
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::processed_pending_block_finality, block_id, was_final,
+                                attempt_token, std::move(apply_result));
+      });
+}
+
+void ValidatorManagerImpl::processed_pending_block_finality(BlockIdExt block_id, bool was_final,
+                                                            PendingFinalityAttemptToken attempt_token,
+                                                            td::Result<td::Unit> result) {
+  auto pending = pending_block_finality_.get_if_exists(block_id);
+  if (pending == nullptr || !pending->is_processing(attempt_token)) {
+    return;
+  }
+  bool accepted = result.is_ok();
+  if (!accepted) {
+    failed_pending_block_finality(block_id, attempt_token, result.move_as_error(), "apply verified evidence");
+    return;
+  }
+  if (!pending->complete_front(attempt_token, true)) {
+    return;
+  }
+  if (was_final) {
+    if (block_id.is_masterchain()) {
+      cached_masterchain_block_candidates_.erase(block_id);
     }
-  });
+    pending_block_finality_.erase(block_id);
+    return;
+  }
+  if (pending->empty()) {
+    pending_block_finality_.erase(block_id);
+    return;
+  }
+  try_process_pending_block_finality(block_id);
 }
 
 void ValidatorManagerImpl::add_ext_server_id(adnl::AdnlNodeIdShort id) {
@@ -951,6 +1329,10 @@ void ValidatorManagerImpl::add_ext_server_port(td::uint16 port) {
 
 void ValidatorManagerImpl::created_ext_server(td::actor::ActorOwn<adnl::AdnlExtServer> server) {
   lite_server_ = std::move(server);
+  // Installed before any port is added, so every Lite query this server refuses is
+  // answered with a same-ID liteServer.error from its first connection on.
+  td::actor::send_closure(lite_server_, &adnl::AdnlExtServer::set_query_failure_encoder,
+                          liteclient::LiteExtQueryFailureEncoder::create());
   for (auto &id : pending_ext_ids_) {
     td::actor::send_closure(lite_server_, &adnl::AdnlExtServer::add_local_id, id);
   }
@@ -963,6 +1345,17 @@ void ValidatorManagerImpl::created_ext_server(td::actor::ActorOwn<adnl::AdnlExtS
 
 void ValidatorManagerImpl::run_ext_query(adnl::AdnlNodeIdShort source, td::BufferSlice data,
                                          td::Promise<td::BufferSlice> promise) {
+  // This is already inside the liteServer_query contract. An early failure
+  // must be an answer, not a failed ADNL promise that leaves the client
+  // waiting for its ten-second transport deadline.
+  promise = td::PromiseCreator::lambda([reply = std::move(promise)](td::Result<td::BufferSlice> result) mutable {
+    if (result.is_error()) {
+      auto status = result.move_as_error();
+      reply.set_value(create_serialize_tl_object<lite_api::liteServer_error>(status.code(), status.message().c_str()));
+    } else {
+      reply.set_value(result.move_as_ok());
+    }
+  });
   if (!started_ && !opts_->get_unsynced_liteserver()) {
     promise.set_error(td::Status::Error(ErrorCode::notready, "node not synced"));
     return;
@@ -1418,14 +1811,14 @@ void ValidatorManagerImpl::get_shard_state_from_db_short(BlockIdExt block_id,
   get_block_handle(block_id, false, std::move(P));
 }
 
-void ValidatorManagerImpl::get_block_candidate_from_db(PublicKey source, BlockIdExt id,
+void ValidatorManagerImpl::get_block_candidate_from_db(ValidatorId source, BlockIdExt id,
                                                        FileHash collated_data_file_hash,
                                                        td::Promise<BlockCandidate> promise) {
   td::actor::send_closure(db_, &Db::get_block_candidate, source, id, collated_data_file_hash, std::move(promise));
 }
 
 void ValidatorManagerImpl::get_candidate_data_by_block_id_from_db(BlockIdExt id, td::Promise<td::BufferSlice> promise) {
-  if (auto cached = cached_block_data_.get_if_exists(id, false)) {
+  if (auto cached = cached_block_data_.get(id, false)) {
     promise.set_result(cached->clone());
     return;
   }
@@ -1813,11 +2206,39 @@ void ValidatorManagerImpl::written_handle(BlockHandle handle, td::Promise<td::Un
   promise.set_value(td::Unit());
 }
 
+namespace {
+td::Result<td::Ref<vm::Cell>> auth_policy_config(const MasterchainState &state) {
+  TRY_RESULT(holder, state.get_config_holder());
+  if (holder.is_null()) {
+    return td::Status::Error("AUTH configuration holder is missing");
+  }
+  return holder->get_auth_policy_config_root();
+}
+
+td::Status admit_auth_policy_state(const MasterchainState &candidate, const td::Ref<MasterchainState> &previous) {
+  try {
+    return validate_auth_policy_admission(
+        auth_policy_config(candidate),
+        previous.not_null() ? auth_policy_config(*previous) : td::Result<td::Ref<vm::Cell>>{td::Ref<vm::Cell>{}},
+        previous.not_null());
+  } catch (vm::VmError &error) {
+    return error.as_status("cannot admit AUTH policy state: ");
+  } catch (vm::VmVirtError &error) {
+    return error.as_status("cannot admit AUTH policy proof: ");
+  }
+}
+}  // namespace
+
 void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState> state,
                                           td::Promise<td::Unit> promise) {
   if (state->get_shard().is_masterchain() && handle->id().id.seqno > last_masterchain_seqno_) {
     if (handle->id().id.seqno == last_masterchain_seqno_ + 1) {
       VLOG(VALIDATOR_DEBUG) << "new block " << handle->id().id.to_str() << " is the next masterchain block";
+      auto auth_status = admit_auth_policy_state(*td::Ref<MasterchainState>{state}, last_masterchain_state_);
+      if (auth_status.is_error()) {
+        promise.set_error(std::move(auth_status));
+        return;
+      }
       last_masterchain_seqno_ = handle->id().id.seqno;
       last_masterchain_state_ = td::Ref<MasterchainState>{state};
       last_masterchain_block_id_ = handle->id();
@@ -1825,6 +2246,9 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
       last_masterchain_block_handle_->set_processed();
 
       new_masterchain_block();
+      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true,
+                                   health_block_unix_seconds(last_masterchain_block_handle_),
+                                   last_known_key_block_handle_);
 
       promise.set_value(td::Unit());
 
@@ -1832,6 +2256,14 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
         auto it = pending_masterchain_states_.find(last_masterchain_seqno_ + 1);
         if (it != pending_masterchain_states_.end()) {
           CHECK(it == pending_masterchain_states_.begin());
+          auto auth_status = admit_auth_policy_state(*std::get<1>(it->second), last_masterchain_state_);
+          if (auth_status.is_error()) {
+            for (auto &pending : std::get<2>(it->second)) {
+              pending.set_error(auth_status.clone());
+            }
+            pending_masterchain_states_.erase(it);
+            break;
+          }
           last_masterchain_block_handle_ = std::move(std::get<0>(it->second));
           last_masterchain_state_ = std::move(std::get<1>(it->second));
           last_masterchain_block_id_ = last_masterchain_block_handle_->id();
@@ -1845,6 +2277,9 @@ void ValidatorManagerImpl::new_block_cont(BlockHandle handle, td::Ref<ShardState
           pending_masterchain_states_.erase(it);
 
           new_masterchain_block();
+          publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, true,
+                                       health_block_unix_seconds(last_masterchain_block_handle_),
+                                       last_known_key_block_handle_);
 
           for (auto &p : l_promise) {
             p.set_value(td::Unit());
@@ -2049,18 +2484,32 @@ void ValidatorManagerImpl::get_node_consensus_status(td::Promise<NodeConsensusSt
     status.validator_set_hash = val_set->get_validator_set_hash();
     status.validator_set_total_weight = val_set->get_total_weight();
     status.validator_set_count = static_cast<td::uint32>(val_set->export_vector().size());
-    auto membership = node_validator_membership(*val_set, temp_keys_, permanent_keys_);
+    auto membership = node_validator_membership(*val_set, temp_keys_, permanent_keys_, pq_custody_, pq_custody_now());
     status.has_local_validator_keys = membership.first;
     status.is_validator = membership.second;
   } else {
-    status.has_local_validator_keys = !temp_keys_.empty() || !permanent_keys_.empty();
+    status.has_local_validator_keys = !temp_keys_.empty() || !permanent_keys_.empty() || !pq_custody_.empty();
   }
   promise.set_result(std::move(status));
 }
 
 void ValidatorManagerImpl::send_get_block_request(BlockIdExt id, td::uint32 priority,
                                                   td::Promise<ReceivedBlock> promise) {
-  if (auto cached = cached_block_data_.get_if_exists(id, false)) {
+  // The cache holds candidate bytes as they were received, before any check.
+  // They are served only if they pass the same full block check the waiter
+  // applies (file hash, BOC, root hash); anything else is evicted and the
+  // block is downloaded. So whatever this answers is either the network's or
+  // bytes the waiter accepts, and the waiter never retries the same bad entry.
+  auto valid = [&id](const td::BufferSlice &data) {
+    auto block = create_block(id, data.clone());
+    if (block.is_error()) {
+      LOG(WARNING) << "send_get_block_request: evicting cached block data for " << id.to_str() << ": "
+                   << block.move_as_error();
+      return false;
+    }
+    return true;
+  };
+  if (auto cached = cached_block_data_.get_if_valid(id, valid, false)) {
     LOG(DEBUG) << "send_get_block_request: got result from block data cache for " << id.to_str();
     return promise.set_value(ReceivedBlock{id, cached->clone()});
   }
@@ -2087,7 +2536,7 @@ void ValidatorManagerImpl::send_get_block_proof_request(BlockIdExt block_id, td:
 void ValidatorManagerImpl::send_get_block_proof_link_request(BlockIdExt block_id, td::uint32 priority,
                                                              td::Promise<td::BufferSlice> promise) {
   if (!block_id.is_masterchain()) {
-    if (auto cached = cached_block_data_.get_if_exists(block_id, false)) {
+    if (auto cached = cached_block_data_.get(block_id, false)) {
       // Proof link can be created from the cached block data
       LOG(DEBUG) << "send_get_block_proof_link_request: creating proof link from cached block data for "
                  << block_id.to_str();
@@ -2337,6 +2786,10 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
   if (last_masterchain_state_.not_null()) {
     return;
   }
+  auto auth_status = admit_auth_policy_state(*state, {});
+  if (auth_status.is_error()) {
+    LOG(FATAL) << "refusing initial masterchain AUTH policy: " << auth_status;
+  }
   last_masterchain_state_ = std::move(state);
   update_shard_overlays();
 }
@@ -2344,6 +2797,10 @@ void ValidatorManagerImpl::init_last_masterchain_state(td::Ref<MasterchainState>
 void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   CHECK(R.handle);
   CHECK(R.state.not_null());
+  auto auth_status = admit_auth_policy_state(*R.state, last_masterchain_state_);
+  if (auth_status.is_error()) {
+    LOG(FATAL) << "refusing restored masterchain AUTH policy: " << auth_status;
+  }
   last_masterchain_block_handle_ = std::move(R.handle);
   last_masterchain_block_id_ = last_masterchain_block_handle_->id();
   last_masterchain_seqno_ = last_masterchain_block_id_.id.seqno;
@@ -2353,6 +2810,8 @@ void ValidatorManagerImpl::started(ValidatorManagerInitResult R) {
   last_known_key_block_handle_ = last_key_block_handle_;
 
   CHECK(last_masterchain_block_handle_->is_applied());
+  publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                               health_block_unix_seconds(last_masterchain_block_handle_), last_known_key_block_handle_);
   if (last_known_key_block_handle_->inited_is_key_block()) {
     callback_->new_key_block(last_key_block_handle_);
   }
@@ -2386,12 +2845,11 @@ void ValidatorManagerImpl::got_destroyed_validator_sessions(std::vector<Validato
   // Load the cleanup queue before sweeping. The queue holds only observer
   // directory names; the sweep deletes exactly those. Validator directories are
   // never swept here (their cleanup is checkpoint-bound in the manager).
-  td::actor::send_closure(db_, &Db::get_pending_consensus_db_cleanup,
-                          [SelfId = actor_id(this)](td::Result<std::vector<std::string>> R) {
-                            R.ensure();
-                            td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_consensus_db_cleanup,
-                                                    R.move_as_ok());
-                          });
+  td::actor::send_closure(
+      db_, &Db::get_pending_consensus_db_cleanup, [SelfId = actor_id(this)](td::Result<std::vector<std::string>> R) {
+        R.ensure();
+        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_consensus_db_cleanup, R.move_as_ok());
+      });
 }
 
 void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::string> dirs) {
@@ -2405,30 +2863,12 @@ void ValidatorManagerImpl::got_pending_consensus_db_cleanup(std::vector<std::str
     }
   }
   sweep_destroyed_consensus_dbs();
-  // Load the validator-group cleanup records BEFORE finishing startup, so they are
-  // in the adapter before update_shards can create any group. This is the startup
-  // barrier: on_group_created must never precede on_loaded_at_startup, or a load
-  // could overwrite a live group's state.
-  td::actor::send_closure(
-      db_, &Db::get_pending_validator_consensus_db_cleanup,
-      [SelfId = actor_id(this)](td::Result<std::vector<consensus::PendingValidatorConsensusDbCleanup>> R) {
-        R.ensure();
-        td::actor::send_closure(SelfId, &ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup,
-                                R.move_as_ok());
-      });
-}
-
-void ValidatorManagerImpl::got_pending_validator_consensus_db_cleanup(
-    std::vector<consensus::PendingValidatorConsensusDbCleanup> records) {
-  // Fresh process, and this runs before any group is created (startup barrier), so
-  // nothing owns these directories -- closure is established by exclusive ownership,
-  // not an invented ack. Load each record into the cleanup adapter, attempt a
-  // cleanup pass (a no-op while deletion is gated off), and only THEN finish
-  // startup (which triggers group creation via update_shards).
-  for (auto &record : records) {
-    validator_cleanup_manager_.on_loaded_at_startup(std::move(record));
-  }
-  try_validator_consensus_db_cleanup();
+  // Validator-group cleanup records are not loaded: the durable store is the backlog
+  // and a fixed-period tick scans it a page at a time from the beginning. Nothing is
+  // open in a fresh process, so every stored retirement is closed; a group created
+  // meanwhile is live and the scan refuses it. The one tick chain starts here, and only
+  // if cleanup is enabled; that choice is fixed for the life of the process.
+  consensus::start_validator_cleanup_ticks(this, actor_id(this), consensus::ValidatorCleanupManager::kTickSeconds);
   finish_start_up().start().detach_ensure();
 }
 
@@ -2444,15 +2884,15 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
   // observer directories. Validator-group directories are NOT swept by fence
   // match: a validator session can be legitimately recreated, so deleting its
   // directory here would destroy live consensus state. Validator-group cleanup is
-  // checkpoint-bound and handled by the manager (Finding 1 / PR B), not this
+  // checkpoint-bound and handled by the cleanup tick, not this
   // startup sweep.
   // The walk + decision + reconciliation logic lives in a testable helper; the
   // deleter here does the real removal and confirms it with stat() (rmrf()
   // ignores unlink/rmdir errors, so its own status is not proof of removal --
   // only a "not found" proves the directory is gone).
   auto before = pending_consensus_db_cleanup_;
-  auto stats = consensus::sweep_orphaned_consensus_dbs(
-      db_root_, pending_consensus_db_cleanup_, [](td::CSlice full) -> bool {
+  auto stats =
+      consensus::sweep_orphaned_consensus_dbs(db_root_, pending_consensus_db_cleanup_, [](td::CSlice full) -> bool {
         td::RocksDb::destroy(full.str() + "/db/").ignore();
         td::rmrf(full).ignore();
         auto probe = td::stat(full);
@@ -2472,10 +2912,10 @@ void ValidatorManagerImpl::sweep_destroyed_consensus_dbs() {
                  << "; not reconciling the cleanup queue this pass";
   }
   if (pending_consensus_db_cleanup_ != before) {
-    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
-                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
-                                                     pending_consensus_db_cleanup_.end()),
-                            [](td::Result<td::Unit> R) { R.ensure(); });
+    td::actor::send_closure(
+        db_, &Db::update_pending_consensus_db_cleanup,
+        std::vector<std::string>(pending_consensus_db_cleanup_.begin(), pending_consensus_db_cleanup_.end()),
+        [](td::Result<td::Unit> R) { R.ensure(); });
   }
   if (stats.reclaimed > 0) {
     LOG(WARNING) << "reclaimed " << stats.reclaimed << " consensus database(s) left behind by a retired group";
@@ -2489,10 +2929,10 @@ void ValidatorManagerImpl::consensus_db_cleanup_done(std::string dir_name) {
   // A retired group confirmed its own directory is gone; drop it from the queue
   // during normal uptime so the queue does not grow until the next restart.
   if (pending_consensus_db_cleanup_.erase(dir_name) > 0) {
-    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
-                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
-                                                     pending_consensus_db_cleanup_.end()),
-                            [](td::Result<td::Unit> R) { R.ensure(); });
+    td::actor::send_closure(
+        db_, &Db::update_pending_consensus_db_cleanup,
+        std::vector<std::string>(pending_consensus_db_cleanup_.begin(), pending_consensus_db_cleanup_.end()),
+        [](td::Result<td::Unit> R) { R.ensure(); });
   }
 }
 
@@ -2501,112 +2941,153 @@ void ValidatorManagerImpl::consensus_db_closed(ValidatorSessionId session_id, td
   // A retiring validator group reported its bus stopped and DB closed (WITHOUT
   // deleting the directory), tagged with the incarnation it was retired at. The
   // adapter accepts it only if it matches the current pending incarnation -- a
-  // stale ack from an older incarnation (after a reopen) is ignored. Then attempt
-  // a cleanup pass (a no-op while deletion is gated off).
+  // stale ack from an older incarnation (after a reopen) is ignored. The session
+  // becomes eligible to a later cleanup tick.
   validator_cleanup_manager_.on_close_confirmed(session_id, generation);
   LOG(INFO) << "Validator consensus DB closed for retirement (pending checkpoint-bound cleanup): " << dir_name;
-  try_validator_consensus_db_cleanup();
 }
 
-void ValidatorManagerImpl::try_validator_consensus_db_cleanup() {
-  // Enablement: the runtime option is the sole opt-in and defaults false, so a normal
-  // build/deploy never deletes; only an explicit acceptance run
-  // (--enable-validator-consensus-cleanup) arms it. The compile-time constant stays
-  // false and is an OR override -- setting it true would force-enable regardless of the
-  // option, which is deliberately not done.
-  if (!kValidatorConsensusCleanupEnabled && !opts_->get_validator_consensus_cleanup_enabled()) {
-    return;
-  }
+bool ValidatorManagerImpl::validator_cleanup_enabled() {
+  // On by default: without it every retired session's directory stays on disk forever.
+  // An operator can keep them (e.g. for forensics) with
+  // --disable-validator-consensus-cleanup, a start-up choice: then no tick runs and
+  // nothing is read, durable records keep accumulating, and after a restart with
+  // cleanup enabled the scan reclaims them over many ticks, each record only once it
+  // passes the eligibility gate.
+  return opts_->get_validator_consensus_cleanup_enabled();
+}
+
+void ValidatorManagerImpl::validator_cleanup_timer() {
+  consensus::on_validator_cleanup_timer(this, actor_id(this), validator_cleanup_manager_, db_.get(),
+                                        consensus::ValidatorCleanupManager::kTickSeconds);
+}
+
+std::optional<consensus::ValidatorCleanupOracles> ValidatorManagerImpl::validator_cleanup_oracles() {
   if (!gc_masterchain_handle_ || gc_masterchain_state_.is_null()) {
-    return;  // no durable GC floor yet -> nothing is provably obsolete
+    return std::nullopt;
   }
   auto gc_id = gc_masterchain_handle_->id();
   auto gc_state = gc_masterchain_state_;
   if (!(gc_state->get_block_id() == gc_id)) {
-    return;  // the handle and state must describe the SAME durable GC block; else fail closed
+    return std::nullopt;  // the handle and state must describe the SAME durable GC block; else fail closed
   }
+  consensus::ValidatorCleanupOracles oracles;
+  oracles.gc = gc_id;
   // Both oracles are bound to this one durable GC snapshot.
-  auto ancestor_or_equal_of_gc = [gc_state](const BlockIdExt &retirement) {
+  oracles.ancestor_or_equal_of_gc = [gc_state](const BlockIdExt &retirement) {
     return gc_state->check_old_mc_block_id(retirement, /*strict=*/true);
   };
-  auto gc_shard_catchain_seqno = [gc_state](ShardIdFull shard) -> std::optional<CatchainSeqno> {
+  oracles.gc_shard_catchain_seqno = [gc_state](ShardIdFull shard) -> std::optional<CatchainSeqno> {
     auto cc = gc_state->get_shard_cc_seqno(shard);
     if (cc == std::numeric_limits<CatchainSeqno>::max()) {
       return std::nullopt;  // unknown sentinel / unsupported topology -> veto deletion
     }
     return cc;
   };
-  auto is_live = [this](const ValidatorSessionId &session) {
+  oracles.is_live = [this](const ValidatorSessionId &session) {
     return validator_groups_.contains(session) || next_validator_groups_.contains(session);
   };
-  // Per-record examination trace (armed-only): proves, per session, that a record was
-  // evaluated this pass and the eligibility decision -- so an acceptance harness need not
-  // infer examination from budget arithmetic.
-  auto on_examined = [](const ValidatorSessionId &session, bool eligible) {
-    LOG(WARNING) << "VALCLEANUP eval session=" << session.to_hex() << " eligible=" << (eligible ? 1 : 0);
+  return oracles;
+}
+
+void ValidatorManagerImpl::validator_cleanup_page_loaded(consensus::ValidatorCleanupPageRequest request,
+                                                         td::Result<consensus::ValidatorCleanupPage> R) {
+  // Per-record examination trace: proves, per session, that a record was evaluated and
+  // what was decided. The first full scan in this process logs every decision at INFO
+  // (a start-up audit of the backlog); later scans, which repeat on every GC advance,
+  // log them at DEBUG.
+  bool audit = validator_cleanup_manager_.in_first_scan();
+  auto on_examined = [audit](const ValidatorSessionId &session, bool eligible) {
+    if (audit) {
+      LOG(INFO) << "VALCLEANUP eval session=" << session.to_hex() << " eligible=" << (eligible ? 1 : 0);
+    } else {
+      LOG(DEBUG) << "VALCLEANUP eval session=" << session.to_hex() << " eligible=" << (eligible ? 1 : 0);
+    }
   };
-  auto reserved = validator_cleanup_manager_.begin_eligible_deletes(
-      gc_id, ancestor_or_equal_of_gc, gc_shard_catchain_seqno, is_live, kValidatorConsensusCleanupBudget,
-      kValidatorConsensusCleanupScanBudget, kValidatorConsensusCleanupMaxOutstanding, on_examined);
-  // Observable proof that a cleanup pass actually RAN and examined the durable records
-  // against this GC snapshot (so "record X was not reserved" is evidence of refusal, not
-  // of the pass never running). Emitted only when cleanup is armed.
-  LOG(WARNING) << "VALCLEANUP pass gc_seqno=" << gc_id.seqno()
-               << " pending=" << validator_cleanup_manager_.pending_count() << " reserved=" << reserved.size();
-  // Distinguishable per-op trace for the REAL validator-group cleanup path (bound to
-  // session/generation/attempt/dir + the GC/retirement inputs). This is emitted only
-  // when cleanup is armed, so it is not noise in a normal build; it lets a real-node
-  // acceptance verify the SAME reserved op reaches fs-confirmed-gone and erase-ack --
-  // distinct from the observer startup sweep's "reclaimed ..." log.
-  for (const auto &item : reserved) {
-    LOG(WARNING) << "VALCLEANUP reserve session=" << item.record.session_id.to_hex()
-                 << " generation=" << item.generation << " attempt=" << item.attempt_id
-                 << " dir=" << item.record.dir_name << " gc_seqno=" << gc_id.seqno()
-                 << " retirement_seqno=" << item.record.retirement_checkpoint.seqno();
+  // The oracles are re-bound to the GC snapshot current now; a GC move since the page
+  // request only makes them more permissive in the safe direction (a later floor).
+  consensus::handle_validator_cleanup_page(this, actor_id(this), validator_cleanup_manager_, db_.get(), request,
+                                           std::move(R), validator_cleanup_oracles(), on_examined);
+}
+
+void ValidatorManagerImpl::validator_cleanup_point_read(
+    td::uint64 pass_token, consensus::PendingValidatorConsensusDbCleanup candidate,
+    td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> R) {
+  consensus::handle_validator_cleanup_point_read(this, actor_id(this), validator_cleanup_manager_,
+                                                 validator_cleanup_worker_, db_root_, pass_token, candidate,
+                                                 std::move(R), validator_cleanup_oracles());
+}
+
+bool ValidatorManagerImpl::validator_cleanup_reserved(const consensus::ReservedValidatorDelete &item) {
+  // Distinguishable per-op trace for the validator-group cleanup path (bound to
+  // session/generation/attempt/dir + the GC/retirement inputs). One line per reserved
+  // delete lets an operator or harness follow the SAME op to fs-confirmed-gone and
+  // erase-ack -- distinct from the observer startup sweep's "reclaimed ..." log.
+  auto gc_seqno = gc_masterchain_handle_ ? gc_masterchain_handle_->id().seqno() : 0;
+  LOG(INFO) << "VALCLEANUP reserve session=" << item.record.session_id.to_hex() << " generation=" << item.generation
+            << " attempt=" << item.attempt_id << " dir=" << item.record.dir_name << " gc_seqno=" << gc_seqno
+            << " retirement_seqno=" << item.record.retirement_checkpoint.seqno();
+  return true;
+}
+
+void ValidatorManagerImpl::validator_cleanup_pass_finished(consensus::ValidatorCleanupPassSummary summary,
+                                                           td::Status status) {
+  if (status.is_error()) {
+    LOG(WARNING) << "validator consensus cleanup pass did not run: " << status;
+  } else if (summary.reserved > 0 || validator_cleanup_manager_.in_first_scan() ||
+             (summary.wrapped && validator_cleanup_manager_.completed_cycles() == 1)) {
+    // Observable proof that a pass RAN and examined durable records (so "record X was
+    // not reserved" is evidence of refusal, not of the pass never running). A pass runs
+    // every tick, so only the first cycle and passes that reserve something are logged.
+    auto gc_seqno = gc_masterchain_handle_ ? gc_masterchain_handle_->id().seqno() : 0;
+    LOG(INFO) << "VALCLEANUP pass gc_seqno=" << gc_seqno << " examined=" << summary.examined
+              << " reserved=" << summary.reserved << " wrapped=" << (summary.wrapped ? 1 : 0)
+              << " in_flight=" << validator_cleanup_manager_.in_flight_count();
   }
-  // Dispatch the reserved deletes to the worker actor so the blocking filesystem work
-  // does not run inline on this manager's message-processing stack. The worker,
-  // completion token threading, durable-erase ordering, and retry pacing are shared
-  // with the integration harness via validator-cleanup-dispatch.h, so the production
-  // path and its end-to-end test exercise one copy of this glue.
-  consensus::dispatch_reserved_validator_deletes(actor_id(this), validator_cleanup_worker_, db_root_, reserved);
 }
 
 void ValidatorManagerImpl::validator_cleanup_delete_done(ValidatorSessionId session_id, td::uint64 generation,
                                                          td::uint64 attempt_id, bool confirmed_gone) {
-  LOG(WARNING) << "VALCLEANUP delete_done session=" << session_id.to_hex() << " generation=" << generation
-               << " attempt=" << attempt_id << " confirmed_gone=" << (confirmed_gone ? 1 : 0);
-  // ACCEPTANCE FAULT INJECTION (default off): the worker has just confirmed the consensus
-  // directory removed, and the durable record erase below has NOT been dispatched yet. On
+  // A delete that could not be confirmed is retried by a later cycle; it is the one
+  // outcome an operator should notice, so it is a warning.
+  if (confirmed_gone) {
+    LOG(INFO) << "VALCLEANUP delete_done session=" << session_id.to_hex() << " generation=" << generation
+              << " attempt=" << attempt_id << " confirmed_gone=1";
+  } else {
+    LOG(WARNING) << "VALCLEANUP delete_done session=" << session_id.to_hex() << " generation=" << generation
+                 << " attempt=" << attempt_id << " confirmed_gone=0";
+  }
+  // TEST-ONLY FAULT INJECTION (default off, --test-consensus-cleanup-crash-before-erase):
+  // the worker has just confirmed the consensus directory removed, and the durable
+  // record erase below has NOT been dispatched yet. On
   // disk this is exactly {directory gone, durable record present}. Exiting abruptly here
   // reproduces the crash a validator could take at this instant, so a restart can be shown
   // to reconcile that mid-flight state. This is the real dispatch path, not a fixture.
   if (confirmed_gone && opts_->get_test_crash_cleanup_before_erase()) {
-    LOG(WARNING) << "VALCLEANUP test_crash_before_erase session=" << session_id.to_hex()
-                 << " generation=" << generation << " attempt=" << attempt_id
-                 << " (fault injection: exiting before durable erase)";
+    LOG(WARNING) << "VALCLEANUP test_crash_before_erase session=" << session_id.to_hex() << " generation=" << generation
+                 << " attempt=" << attempt_id << " (fault injection: exiting before durable erase)";
     // Abrupt exit: skip destructors and the pending durable erase, like a real crash.
     std::_Exit(137);
   }
   // Feed the completed delete attempt to the adapter; on a confirmed delete this
   // dispatches the durable record erase and releases the reservation only on the
-  // erase-ack. Deliberately does NOT re-trigger a pass (that would spin a backoff-free
-  // retry loop on a persistently failing delete). See validator-cleanup-dispatch.h.
+  // erase-ack. Nothing here schedules a pass; the next tick does.
   consensus::complete_validator_delete(actor_id(this), validator_cleanup_manager_, db_.get(), session_id, generation,
                                        attempt_id, confirmed_gone);
 }
 
 void ValidatorManagerImpl::validator_cleanup_erase_acked(ValidatorSessionId session_id, td::uint64 generation,
                                                          td::uint64 attempt_id) {
-  LOG(WARNING) << "VALCLEANUP erase_ack session=" << session_id.to_hex() << " generation=" << generation
-               << " attempt=" << attempt_id;
-  // A record was actually removed: release the reservation and re-trigger draining.
-  // This is the only completion-path re-trigger, and it is loop-safe because each
-  // re-trigger is paid for by a completed removal. See validator-cleanup-dispatch.h.
-  consensus::acknowledge_validator_erase(this, validator_cleanup_manager_, session_id, generation, attempt_id);
+  LOG(INFO) << "VALCLEANUP erase_ack session=" << session_id.to_hex() << " generation=" << generation
+            << " attempt=" << attempt_id;
+  // A record was actually removed: release the reservation.
+  consensus::acknowledge_validator_erase(validator_cleanup_manager_, session_id, generation, attempt_id);
 }
 
 td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
+  // Before anything can build a group: a stale validator enters the catch-up mode,
+  // which fences groups until it ends.
+  decide_startup_catchup();
   new_masterchain_block();
 
   serializer_ =
@@ -2634,7 +3115,7 @@ td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
         run_hardfork_accept_block_query(b, dataR.move_as_ok(), SelfId, std::move(P));
       });
       td::actor::send_closure(db_, &Db::try_get_static_file, b.file_hash, std::move(P));
-      co_return {};
+      co_return td::Unit{};
     }
   }
 
@@ -2642,12 +3123,243 @@ td::actor::Task<> ValidatorManagerImpl::finish_start_up() {
   if (S.is_error()) {
     LOG(ERROR) << "Initial advancing of masterchain: " << S.move_as_error();
   }
+  if (startup_catchup_.active()) {
+    co_await run_startup_catchup_mode();
+  }
   if (!out_of_sync()) {
     completed_prestart_sync();
   } else {
     prestart_sync();
   }
-  co_return {};
+  co_return td::Unit{};
+}
+
+startup_catchup::SyncReason ValidatorManagerImpl::classify_startup_sync() {
+  startup_catchup::SyncInputs in;
+  in.masterchain_seqno = last_masterchain_seqno_;
+  in.shard_client_seqno = shard_client_handle_->id().seqno();
+  in.sync_upto = opts_->sync_upto();
+  in.block_unix_time = last_masterchain_block_handle_->unix_time();
+  in.now = td::Clocks::system();
+  in.known_key_block_seqno = last_known_key_block_handle_->id().seqno();
+  return startup_catchup::classify_sync(in, [&] {
+    if (!validator_groups_.empty()) {
+      return true;
+    }
+    auto val_set = last_masterchain_state_->get_validator_set(ShardIdFull{masterchainId});
+    return !get_validator_id(ShardIdFull{masterchainId}, val_set).is_zero();
+  });
+}
+
+void ValidatorManagerImpl::decide_startup_catchup() {
+  startup_catchup::EntryInputs in;
+  in.reason = classify_startup_sync();
+  in.age_seconds =
+      startup_catchup::block_age_seconds(td::Clocks::system(), last_masterchain_block_handle_->unix_time());
+  in.holds_validator_keys = has_local_validator_keys();
+  in.groups_empty = validator_groups_.empty() && next_validator_groups_.empty() && observer_groups_.empty();
+  in.imports_empty = to_import_.empty();
+  in.next_is_hardfork = last_masterchain_block_handle_->inited_next_left() &&
+                        opts_->is_hardfork(last_masterchain_block_handle_->one_next(true));
+  auto refusal = startup_catchup::evaluate_entry(in);
+  if (refusal == startup_catchup::EntryRefusal::GroupsExist) {
+    LOG(ERROR) << "startup catch-up refused: groups exist before the startup group update";
+  }
+  if (startup_catchup_.decide(refusal)) {
+    // The startup replay of stored blocks has not run yet: this is where it starts,
+    // not the tip discovery and import will start from.
+    LOG(WARNING) << "startup catch-up: entering for a stale validator; the startup replay starts at "
+                 << last_masterchain_block_id_.to_str() << ", " << static_cast<td::int64>(in.age_seconds)
+                 << "s old. Validator and observer groups are fenced until it ends";
+  } else {
+    LOG(INFO) << "startup catch-up not entered: " << startup_catchup::entry_refusal_name(refusal)
+              << " (sync reason: " << startup_catchup::sync_reason_name(in.reason) << ")";
+  }
+}
+
+td::actor::Task<> ValidatorManagerImpl::run_startup_catchup_mode() {
+  if (!startup_catchup_.active()) {
+    co_return td::Unit{};
+  }
+  // Local replay may have made the tip young enough: the threshold is tested again.
+  auto age = startup_catchup::block_age_seconds(td::Clocks::system(), last_masterchain_block_handle_->unix_time());
+  if (age < startup_catchup::kStaleValidatorAgeSeconds) {
+    end_startup_catchup(startup_catchup::ExitReason::NotStale);
+    co_return td::Unit{};
+  }
+  LOG(WARNING) << "startup catch-up: local tip after the startup replay is " << last_masterchain_block_id_.to_str()
+               << ", " << static_cast<td::int64>(age) << "s old; shard client at " << shard_client_handle_->id().seqno()
+               << ". Discovery and import start from it";
+  auto reason = co_await startup_catchup::run_startup_catchup(this).wrap();
+  if (reason.is_error()) {
+    LOG(ERROR) << "startup catch-up stopped: " << reason.error();
+    end_startup_catchup(startup_catchup::ExitReason::NoVerifiedSuccessor);
+    co_return td::Unit{};
+  }
+  end_startup_catchup(reason.ok());
+  co_return td::Unit{};
+}
+
+void ValidatorManagerImpl::end_startup_catchup(startup_catchup::ExitReason reason) {
+  bool fenced = startup_catchup_.fence_closed();
+  if (!startup_catchup_.finish(reason)) {
+    return;
+  }
+  if (!fenced) {
+    return;
+  }
+  LOG(WARNING) << "startup catch-up ended: " << startup_catchup::exit_reason_name(reason) << "; masterchain "
+               << last_masterchain_block_id_.to_str() << ", shard client " << shard_client_handle_->id().seqno()
+               << ". Validator groups are no longer fenced";
+  // Build the groups the resulting state selects now: on a stopped network no new
+  // masterchain block would arrive to do it, and producing one needs the groups.
+  update_shards();
+}
+
+bool ValidatorManagerImpl::validator_groups_permitted() const {
+  // Integration point: the consensus cleanup checkpoint's readiness condition joins
+  // this predicate with AND.
+  return !startup_catchup_.fence_closed();
+}
+
+bool ValidatorManagerImpl::observer_groups_permitted() const {
+  // Observer groups open a consensus database too.
+  return !startup_catchup_.fence_closed();
+}
+
+double ValidatorManagerImpl::catchup_monotonic_now() {
+  return td::Time::now();
+}
+
+BlockIdExt ValidatorManagerImpl::catchup_tip() {
+  return last_masterchain_block_id_;
+}
+
+BlockSeqno ValidatorManagerImpl::catchup_masterchain_seqno() {
+  return last_masterchain_seqno_;
+}
+
+BlockSeqno ValidatorManagerImpl::catchup_shard_client_seqno() {
+  return shard_client_handle_->id().seqno();
+}
+
+bool ValidatorManagerImpl::catchup_out_of_sync() {
+  return out_of_sync();
+}
+
+void ValidatorManagerImpl::catchup_phase(startup_catchup::Phase phase) {
+  if (phase == startup_catchup::Phase::Discovering) {
+    startup_catchup_.set_discovering();
+  } else if (phase == startup_catchup::Phase::Importing) {
+    startup_catchup_.set_importing();
+  }
+}
+
+td::actor::Task<startup_catchup::RoundResult> ValidatorManagerImpl::catchup_probe_round(BlockIdExt prev,
+                                                                                        double deadline,
+                                                                                        std::uint32_t budget) {
+  auto [task, promise] = td::actor::StartedTask<startup_catchup::RoundResult>::make_bridge();
+  callback_->probe_next_masterchain_block(prev, td::Timestamp::at(deadline), budget, std::move(promise));
+  co_return co_await std::move(task);
+}
+
+td::actor::Task<startup_catchup::ImportOutcome> ValidatorManagerImpl::catchup_import_attempt(double attempt_deadline) {
+  auto seqno = std::min(last_masterchain_seqno_, shard_client_handle_->id().seqno());
+  auto [task, promise] = td::actor::StartedTask<startup_catchup::ImportOutcome>::make_bridge();
+  td::actor::create_actor<ArchiveImporter>(PSTRING() << "catchupimport." << seqno, db_root_, last_masterchain_state_,
+                                           seqno, opts_, actor_id(this), td::Timestamp::at(attempt_deadline),
+                                           std::move(promise))
+      .release();
+  co_return co_await std::move(task);
+}
+
+td::actor::Task<td::Unit> ValidatorManagerImpl::catchup_persist_shard_client(BlockSeqno seqno) {
+  if (seqno > last_masterchain_seqno_) {
+    co_return td::Status::Error(ErrorCode::error, PSTRING()
+                                                      << "shard-client seqno " << seqno
+                                                      << " is above the masterchain tip " << last_masterchain_seqno_);
+  }
+  // The identity comes from the applied, proof-checked masterchain state.
+  BlockIdExt block_id;
+  if (seqno == last_masterchain_seqno_) {
+    block_id = last_masterchain_block_id_;
+  } else if (!last_masterchain_state_->get_old_mc_block_id(seqno, block_id)) {
+    co_return td::Status::Error(ErrorCode::error, PSTRING() << "masterchain block " << seqno << " is unknown");
+  }
+  auto [handle_task, handle_promise] = td::actor::StartedTask<BlockHandle>::make_bridge();
+  get_block_handle(block_id, true, std::move(handle_promise));
+  auto handle = co_await std::move(handle_task);
+  auto [state_task, state_promise] = td::actor::StartedTask<td::Ref<ShardState>>::make_bridge();
+  td::actor::send_closure(db_, &Db::get_block_state, handle, std::move(state_promise));
+  auto state = co_await std::move(state_task);
+  auto [update_task, update_promise] = td::actor::StartedTask<td::Unit>::make_bridge();
+  td::actor::send_closure(shard_client_, &ShardClient::force_update_shard_client_ex, std::move(handle),
+                          td::Ref<MasterchainState>{std::move(state)}, std::move(update_promise));
+  co_await std::move(update_task);
+  co_return td::Unit{};
+}
+
+td::actor::Task<td::Unit> ValidatorManagerImpl::catchup_sleep(double seconds) {
+  co_await td::actor::coro_sleep(td::Timestamp::in(seconds));
+  co_return td::Unit{};
+}
+
+void ValidatorManagerImpl::verify_startup_probe_successor(BlockIdExt prev_block_id, BlockIdExt next_block_id,
+                                                          td::BufferSlice proof, td::Timestamp deadline,
+                                                          td::Promise<startup_catchup::SuccessorVerdict> promise) {
+  // An answer about a block that is no longer the tip proves nothing about the tip,
+  // and checking it here would take the path for older blocks.
+  if (last_masterchain_block_id_ != prev_block_id) {
+    promise.set_value(startup_catchup::SuccessorVerdict::FrontierMoved);
+    return;
+  }
+  if (deadline.at() - td::Time::now() < startup_catchup::kProofCheckSeconds) {
+    promise.set_error(td::Status::Error(ErrorCode::timeout, "no time left in the discovery window for a proof check"));
+    return;
+  }
+  validate_block_is_next_proof(prev_block_id, next_block_id, std::move(proof),
+                               promise.wrap([](td::Unit) { return startup_catchup::SuccessorVerdict::Verified; }));
+}
+
+std::optional<CatchainSeqno> ValidatorManagerImpl::startup_orphan_current_catchain_seqno(ShardIdFull shard) {
+  if (last_masterchain_state_.is_null()) {
+    return std::nullopt;
+  }
+  // The cleanup oracle's semantics, on the final startup state.
+  auto cc = last_masterchain_state_->get_shard_cc_seqno(shard);
+  if (cc == std::numeric_limits<CatchainSeqno>::max()) {
+    return std::nullopt;
+  }
+  return cc;
+}
+
+void ValidatorManagerImpl::startup_orphan_read_record(
+    ValidatorSessionId session, td::Promise<std::optional<consensus::PendingValidatorConsensusDbCleanup>> promise) {
+  td::actor::send_closure(db_, &Db::get_pending_validator_consensus_db_cleanup_record, session, std::move(promise));
+}
+
+void ValidatorManagerImpl::startup_orphan_persist(std::vector<ValidatorSessionId> destroyed,
+                                                  std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
+                                                  td::Promise<td::Unit> promise) {
+  td::actor::send_closure(db_, &Db::persist_validator_retirement, std::move(destroyed), std::move(records),
+                          std::move(promise));
+}
+
+void ValidatorManagerImpl::startup_orphan_point_read(
+    td::uint64 token, consensus::StartupOrphanCandidate candidate,
+    td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> record) {
+  consensus::handle_startup_orphan_point_read(this, actor_id(this), token, std::move(candidate), std::move(record));
+}
+
+void ValidatorManagerImpl::startup_orphan_persisted(td::uint64 token,
+                                                    std::vector<std::pair<ValidatorSessionId, td::uint64>> retired,
+                                                    td::Result<td::Unit> result) {
+  consensus::handle_startup_orphans_persisted(this, token, std::move(retired), std::move(result));
+}
+
+void ValidatorManagerImpl::startup_orphan_reconcile_finished(consensus::StartupOrphanSummary summary) {
+  startup_reconciled_ = true;
+  finish_prestart_completion();
 }
 
 td::actor::Task<> ValidatorManagerImpl::start_up_advance_mc() {
@@ -2665,7 +3377,7 @@ td::actor::Task<> ValidatorManagerImpl::start_up_advance_mc() {
     co_await std::move(task);
     VLOG(VALIDATOR_INFO) << "Initial advancing mc to seqno " << next_handle->id().seqno();
   }
-  co_return {};
+  co_return td::Unit{};
 }
 
 void ValidatorManagerImpl::applied_hardfork() {
@@ -2677,37 +3389,15 @@ void ValidatorManagerImpl::applied_hardfork() {
 }
 
 bool ValidatorManagerImpl::out_of_sync() {
-  auto seqno = std::min(last_masterchain_seqno_, shard_client_handle_->id().seqno());
-  if (seqno < opts_->sync_upto()) {
-    return true;
+  // The legacy checks in their legacy order (startup-catchup.h). Inside the startup
+  // catch-up mode the stale-validator short-circuit reports out of sync, so import
+  // continues until the 80-second rule holds; every other answer is unchanged.
+  auto reason = classify_startup_sync();
+  if (reason == startup_catchup::SyncReason::StaleNonValidator) {
+    LOG(INFO) << "groups=" << validator_groups_.size() << " seqno=" << last_known_key_block_handle_->id().seqno()
+              << " our_seqno=" << last_masterchain_seqno_;
   }
-  if (shard_client_handle_->id().seqno() + 16 < last_masterchain_seqno_) {
-    return true;
-  }
-  if (last_masterchain_block_handle_->unix_time() + 80 > td::Clocks::system()) {
-    return false;
-  }
-
-  if (last_masterchain_seqno_ < last_known_key_block_handle_->id().seqno()) {
-    return true;
-  }
-
-  bool masterchain_validator = false;
-  if (!validator_groups_.size()) {
-    auto val_set = last_masterchain_state_->get_validator_set(ShardIdFull{masterchainId});
-    if (!get_validator(ShardIdFull{masterchainId}, val_set).is_zero()) {
-      masterchain_validator = true;
-    }
-  }
-
-  if ((masterchain_validator || validator_groups_.size() > 0) &&
-      last_known_key_block_handle_->id().seqno() <= last_masterchain_seqno_) {
-    return false;
-  }
-  LOG(INFO) << "groups=" << validator_groups_.size() << " seqno=" << last_known_key_block_handle_->id().seqno()
-            << " our_seqno=" << last_masterchain_seqno_;
-
-  return true;
+  return startup_catchup::out_of_sync_value(reason, startup_catchup_.active());
 }
 
 void ValidatorManagerImpl::prestart_sync() {
@@ -2781,7 +3471,26 @@ void ValidatorManagerImpl::finish_prestart_sync() {
 }
 
 void ValidatorManagerImpl::completed_prestart_sync() {
+  if (prestart_completion_started_) {
+    LOG(ERROR) << "prestart sync completed a second time; ignoring it";
+    return;
+  }
+  prestart_completion_started_ = true;
+  // The mode has ended on every path here; this only guards the order.
+  end_startup_catchup(startup_catchup::ExitReason::NotEntered);
+  // After all startup advancement and with groups reconciled on the final state,
+  // before the shard client starts: record the session directories nothing will
+  // ever reopen.
+  consensus::begin_startup_orphan_reconcile(this, actor_id(this), db_root_);
+}
+
+void ValidatorManagerImpl::start_shard_client() {
   td::actor::send_closure(shard_client_, &ShardClient::start);
+}
+
+void ValidatorManagerImpl::finish_prestart_completion() {
+  prestart_finished_ = true;
+  start_shard_client();
 
   send_peek_key_block_request();
 
@@ -2886,10 +3595,20 @@ void ValidatorManagerImpl::update_shards() {
       opts_->get_last_fork_masterchain_seqno() <= last_masterchain_seqno_) {
     allow_validate_ = true;
   }
+  auto config_holder = last_masterchain_state_->get_config_holder();
+  auto launch_config = config_holder.is_error()
+                           ? config_holder.move_as_error_prefix("failed to extract launch resource configuration: ")
+                           : config_holder.ok()->validate_pq_launch_resource_config();
+  if (launch_config.is_error()) {
+    LOG(ERROR) << "refusing validator and observer groups for an unsafe launch resource configuration: "
+               << launch_config;
+    allow_validate_ = false;
+  }
   auto exp_vec = last_masterchain_state_->get_shards();
   auto config = last_masterchain_state_->get_consensus_config();
   consensus::ValidatorSessionOptions opts{config};
-  auto opts_hash = opts.get_hash();
+  auto opts_hash = block::validator_session_options_hash(config);
+  const auto global_id = last_masterchain_state_->get_global_id();
 
   std::map<ShardIdFull, std::vector<BlockIdExt>> new_shards;
   std::set<ShardIdFull> future_shards;
@@ -2962,9 +3681,14 @@ void ValidatorManagerImpl::update_shards() {
 
   BlockSeqno key_seqno = last_key_block_handle_->id().seqno();
 
-  auto get_or_make_next_group = [&](ShardIdFull shard, ValidatorSessionId id, td::Ref<block::ValidatorSet> val_set) {
+  auto get_or_make_next_group = [&](ShardIdFull shard, ValidatorSessionId id, td::Ref<block::ValidatorSet> val_set,
+                                    const NewConsensusConfig &simplex_config) {
     CHECK(!validator_groups_.contains(id) && !new_validator_groups.contains(id));
     CHECK(!destroyed_validator_sessions_.contains(id));
+    // Construction opens the consensus database: gated like selection.
+    if (!validator_groups_permitted()) {
+      return next_validator_groups_.end();
+    }
     if (auto it = next_validator_groups_.find(id); it != next_validator_groups_.end()) {
       return it;
     }
@@ -2973,14 +3697,13 @@ void ValidatorManagerImpl::update_shards() {
     // session: do not reopen its directory until the delete completes (it will be
     // retried on a later masterchain block). This is a secondary guard -- the
     // eligibility check already refuses to delete a live/recreatable session -- and
-    // it cannot fire while the cleanup gate is off (nothing is ever in flight then).
+    // it cannot fire when cleanup is disabled (nothing is ever in flight then).
     if (validator_cleanup_manager_.is_delete_in_flight(id)) {
-      LOG(WARNING) << "deferring validator group creation for " << id
-                   << ": a consensus-DB cleanup delete is in flight";
+      LOG(WARNING) << "deferring validator group creation for " << id << ": a consensus-DB cleanup delete is in flight";
       return next_validator_groups_.end();
     }
 
-    auto G = create_validator_group(id, shard, val_set, key_seqno, opts, started_);
+    auto G = create_validator_group(id, shard, val_set, key_seqno, simplex_config, opts, started_);
     if (G.empty()) {
       // create_validator_group fails closed (and logs) when the consensus
       // config is missing or unreadable. Do not materialize a group entry for
@@ -2997,10 +3720,8 @@ void ValidatorManagerImpl::update_shards() {
     LOG(INFO) << "Created " << entry.name() << ":" << id;
     // A (new or reopened) group for this session is born: advance its incarnation
     // and drop any pending cleanup record -- the directory is now owned by a live
-    // group again, so it is no longer a deletion target. (When deletion is enabled
-    // in B2-8c, the caller must additionally defer creation while a delete for this
-    // session is in flight -- is_delete_in_flight -- which cannot occur while the
-    // cleanup gate is off.)
+    // group again, so it is no longer a deletion target. Creation was deferred
+    // above while a delete for this session was in flight (is_delete_in_flight).
     validator_cleanup_manager_.on_group_created(id);
     auto [it, success] = next_validator_groups_.emplace(id, std::move(entry));
     CHECK(success);
@@ -3009,7 +3730,10 @@ void ValidatorManagerImpl::update_shards() {
 
   active_validator_groups_master_ = active_validator_groups_shard_ = 0;
   adnl::AdnlNodeIdShort mc_validator_adnl_id = adnl::AdnlNodeIdShort::zero();
-  if (allow_validate_) {
+  // Validator groups, current and tentative, are selected, built and started only
+  // while permitted (not during startup catch-up). Everything else below still runs.
+  const bool validate_now = allow_validate_ && validator_groups_permitted();
+  if (validate_now) {
     for (auto &desc : new_shards) {
       auto shard = desc.first;
       if (force_recover && !desc.first.is_masterchain()) {
@@ -3022,26 +3746,46 @@ void ValidatorManagerImpl::update_shards() {
       auto val_set = last_masterchain_state_->get_validator_set(shard);
       auto x = val_set->export_vector();
 
-      auto validator_id = get_validator(shard, val_set);
+      auto validator_id = get_validator_id(shard, val_set);
 
       if (!validator_id.is_zero()) {
-        ++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
-        auto val_group_id = get_validator_set_id(shard, val_set, opts_hash, key_seqno, opts);
-        if (destroyed_validator_sessions_.contains(val_group_id)) {
+        auto selected_config = last_masterchain_state_->get_selected_new_consensus_config(shard.workchain);
+        if (!selected_config || !selected_config.value().config.protocol_version_supported()) {
+          LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+                     << ": consensus config is missing or its protocol version is not supported by this build; "
+                        "validation for this shard is disabled until the node is upgraded or the config is fixed";
           continue;
         }
-
-        if (force_recover) {
-          auto r = opts_->check_unsafe_catchain_rotate(last_masterchain_seqno_, val_set->get_catchain_seqno());
-          if (r) {
-            td::uint8 b[36];
-            td::MutableSlice x{b, 36};
-            x.copy_from(val_group_id.as_slice());
-            x.remove_prefix(32);
-            CHECK(x.size() == 4);
-            x.copy_from(td::Slice(reinterpret_cast<const td::uint8 *>(&r), 4));
-            val_group_id = sha256_bits256(td::Slice(b, 36));
-          }
+        // A local recovery tag is not part of the chain-derived PQ signing
+        // session. The old path hashed it into val_group_id, then handed that
+        // ID to Bridge as bus->session_id; trusted validation then logged a
+        // carried-session mismatch against the chain-derived ID. Do not
+        // create an active group until storage incarnation and
+        // consensus identity have been safely split, including old DB votes.
+        if (auto rotation_tag =
+                opts_->check_unsafe_catchain_rotate(last_masterchain_seqno_, val_set->get_catchain_seqno());
+            rotation_tag != 0) {
+          LOG(ERROR) << "refusing to create PQ Simplex validator group for " << shard.to_str()
+                     << ": --unsafe-catchain-rotate=" << rotation_tag
+                     << " cannot alter the canonical PQ ValidatorSessionId";
+          continue;
+        }
+        ++(shard.is_masterchain() ? active_validator_groups_master_ : active_validator_groups_shard_);
+        auto val_group_id =
+            block::derive_validator_session_identity(block::ValidatorSessionIdentityInput{
+                                                         .global_id = global_id,
+                                                         .validator_options_hash = opts_hash,
+                                                         .simplex_config_cell_hash = selected_config.value().cell_hash,
+                                                         .shard = shard,
+                                                         .catchain_seqno = val_set->get_catchain_seqno(),
+                                                         .validators = val_set->export_vector(),
+                                                         .vertical_seqno = opts_->get_maximal_vertical_seqno(),
+                                                         .last_key_block_seqno = key_seqno,
+                                                         .new_catchain_ids = opts.new_catchain_ids,
+                                                     })
+                .session_id;
+        if (destroyed_validator_sessions_.contains(val_group_id)) {
+          continue;
         }
 
         auto find_or_create_validator_group = [&] {
@@ -3050,7 +3794,7 @@ void ValidatorManagerImpl::update_shards() {
             validator_groups_.erase(it);
             return &entry;
           } else {
-            auto it2 = get_or_make_next_group(shard, val_group_id, val_set);
+            auto it2 = get_or_make_next_group(shard, val_group_id, val_set, selected_config.value().config);
             if (it2 == next_validator_groups_.end()) {
               return static_cast<ValidatorGroupEntry *>(nullptr);
             }
@@ -3075,55 +3819,109 @@ void ValidatorManagerImpl::update_shards() {
         }
 
         if (shard.is_masterchain()) {
-          mc_validator_adnl_id = adnl::AdnlNodeIdShort{val_set->get_validator(validator_id.bits256_value())->addr};
-          if (mc_validator_adnl_id.is_zero()) {
-            mc_validator_adnl_id = adnl::AdnlNodeIdShort{validator_id.bits256_value()};
-          }
+          mc_validator_adnl_id =
+              adnl::AdnlNodeIdShort{block::validator_adnl_identity(*val_set->get_validator(validator_id))};
         }
       }
     }
   }
-  for (auto &shard : future_shards) {
-    auto val_set = last_masterchain_state_->get_next_validator_set(shard);
-    if (val_set.is_null()) {
-      continue;
-    }
-
-    auto validator_id = get_validator(shard, val_set);
-    if (!validator_id.is_zero()) {
-      auto val_group_id = get_validator_set_id(shard, val_set, opts_hash, key_seqno, opts);
-      if (destroyed_validator_sessions_.contains(val_group_id)) {
+  if (validate_now) {
+    for (auto &shard : future_shards) {
+      auto val_set = last_masterchain_state_->get_next_validator_set(shard);
+      if (val_set.is_null()) {
         continue;
       }
-      get_or_make_next_group(shard, val_group_id, val_set);
-      if (shard.is_masterchain() && mc_validator_adnl_id.is_zero()) {
-        mc_validator_adnl_id = adnl::AdnlNodeIdShort{val_set->get_validator(validator_id.bits256_value())->addr};
-        if (mc_validator_adnl_id.is_zero()) {
-          mc_validator_adnl_id = adnl::AdnlNodeIdShort{validator_id.bits256_value()};
+
+      auto validator_id = get_validator_id(shard, val_set);
+      if (!validator_id.is_zero()) {
+        auto selected_config = last_masterchain_state_->get_selected_new_consensus_config(shard.workchain);
+        if (!selected_config || !selected_config.value().config.protocol_version_supported()) {
+          LOG(ERROR) << "refusing to create future validator group for " << shard.to_str()
+                     << ": consensus config is missing or its protocol version is not supported by this build";
+          continue;
+        }
+        auto val_group_id =
+            block::derive_validator_session_identity(block::ValidatorSessionIdentityInput{
+                                                         .global_id = global_id,
+                                                         .validator_options_hash = opts_hash,
+                                                         .simplex_config_cell_hash = selected_config.value().cell_hash,
+                                                         .shard = shard,
+                                                         .catchain_seqno = val_set->get_catchain_seqno(),
+                                                         .validators = val_set->export_vector(),
+                                                         .vertical_seqno = opts_->get_maximal_vertical_seqno(),
+                                                         .last_key_block_seqno = key_seqno,
+                                                         .new_catchain_ids = opts.new_catchain_ids,
+                                                     })
+                .session_id;
+        if (destroyed_validator_sessions_.contains(val_group_id)) {
+          continue;
+        }
+        get_or_make_next_group(shard, val_group_id, val_set, selected_config.value().config);
+        if (shard.is_masterchain() && mc_validator_adnl_id.is_zero()) {
+          mc_validator_adnl_id =
+              adnl::AdnlNodeIdShort{block::validator_adnl_identity(*val_set->get_validator(validator_id))};
         }
       }
     }
   }
 
   std::map<ObserverGroupId, ValidatorGroupEntry> new_observer_groups;
-  if (allow_validate_) {
+  if (allow_validate_ && observer_groups_permitted()) {
     for (const auto &[shard, prev] : new_shards) {
-      auto maybe_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
-      if (!consensus_group_admissible(maybe_config)) {
+      auto selected_config = last_masterchain_state_->get_selected_new_consensus_config(shard.workchain);
+      if (!selected_config || !selected_config.value().config.protocol_version_supported()) {
         // Missing config, or a protocol version newer than this build supports:
         // skip the observer group rather than aborting in the version check.
         continue;
       }
-      auto config = maybe_config.value();
-      if (!config.enable_block_sync() && !config.observers_in_private_overlay()) {
+      auto config = selected_config.value().config;
+      const auto enable_block_sync = config.enable_block_sync();
+      const auto observers_in_private_overlay = config.observers_in_private_overlay();
+      auto record_observer_diagnostics = [&](std::optional<std::size_t> candidate_count) {
+        auto state = std::make_tuple(enable_block_sync, observers_in_private_overlay, candidate_count);
+        auto it = observer_group_diagnostic_states_.find(shard);
+        if (it != observer_group_diagnostic_states_.end() && it->second == state) {
+          return;
+        }
+        observer_group_diagnostic_states_.insert_or_assign(shard, state);
+        LOG(INFO) << "Observer group policy for " << shard.to_str() << ": enable_block_sync=" << enable_block_sync
+                  << ", observers_in_private_overlay=" << observers_in_private_overlay;
+        if (candidate_count) {
+          LOG(INFO) << "Observer group candidates for " << shard.to_str()
+                    << ": get_observer_adnl_ids size=" << *candidate_count;
+        }
+      };
+      if (!enable_block_sync && !observers_in_private_overlay) {
+        record_observer_diagnostics(std::nullopt);
         continue;
       }
       auto val_set = last_masterchain_state_->get_validator_set(shard);
       if (val_set.is_null()) {
         continue;
       }
-      auto session_id = get_validator_set_id(shard, val_set, opts_hash, key_seqno, opts);
-      for (auto local_adnl_id : get_observer_adnl_ids(val_set)) {
+      auto observer_adnl_ids = get_observer_adnl_ids(val_set);
+      record_observer_diagnostics(observer_adnl_ids.size());
+      // An observer verifies peers with the same post-quantum keys a validator does, so a
+      // set it could not verify must not get an observer group either. Decided here, before
+      // any actor is created, for the same reason as the validator path.
+      if (auto usable = block::validate_simplex_pq_validator_set(*val_set); usable.is_error()) {
+        LOG(ERROR) << "refusing to create observer groups for " << shard.to_str() << ": " << usable.move_as_error();
+        continue;
+      }
+      auto session_id =
+          block::derive_validator_session_identity(block::ValidatorSessionIdentityInput{
+                                                       .global_id = global_id,
+                                                       .validator_options_hash = opts_hash,
+                                                       .simplex_config_cell_hash = selected_config.value().cell_hash,
+                                                       .shard = shard,
+                                                       .catchain_seqno = val_set->get_catchain_seqno(),
+                                                       .validators = val_set->export_vector(),
+                                                       .vertical_seqno = opts_->get_maximal_vertical_seqno(),
+                                                       .last_key_block_seqno = key_seqno,
+                                                       .new_catchain_ids = opts.new_catchain_ids,
+                                                   })
+              .session_id;
+      for (auto local_adnl_id : observer_adnl_ids) {
         ObserverGroupId observer_id{session_id, local_adnl_id};
         ValidatorGroupEntry entry;
         if (auto it = observer_groups_.find(observer_id); it != observer_groups_.end()) {
@@ -3136,6 +3934,9 @@ void ValidatorManagerImpl::update_shards() {
               .started = false,
               .cc_seqno = val_set->get_catchain_seqno(),
           };
+          if (entry.actor.empty()) {
+            continue;
+          }
           LOG(INFO) << "Created observer group " << shard.to_str() << "." << entry.cc_seqno << " at " << local_adnl_id;
         }
         if (!entry.started) {
@@ -3167,8 +3968,9 @@ void ValidatorManagerImpl::update_shards() {
   // Validator/tentative groups: retired by CLOSING (stop bus + close DB) without
   // deleting the directory, and recorded as a durable cleanup record. The record
   // is the delete authority; physical deletion happens later only under a
-  // checkpoint-bound eligibility check (PR B/B2), never here -- so a session that
-  // could still be recreated can never lose its consensus state at retirement.
+  // checkpoint-bound eligibility check (the cleanup tick), never
+  // here -- so a session that could still be recreated can never lose its
+  // consensus state at retirement.
   // The destroyed-session fence still guards recreation, as before.
   std::vector<std::pair<td::actor::ActorId<IValidatorGroup>, td::uint64>> to_close;
   std::vector<consensus::PendingValidatorConsensusDbCleanup> retirement_records;
@@ -3248,13 +4050,13 @@ void ValidatorManagerImpl::update_shards() {
     }
   };
   if (observer_queue_changed) {
-    td::actor::send_closure(db_, &Db::update_pending_consensus_db_cleanup,
-                            std::vector<std::string>(pending_consensus_db_cleanup_.begin(),
-                                                     pending_consensus_db_cleanup_.end()),
-                            [destroy_observers = std::move(destroy_observers)](td::Result<td::Unit> R) mutable {
-                              R.ensure();
-                              destroy_observers();
-                            });
+    td::actor::send_closure(
+        db_, &Db::update_pending_consensus_db_cleanup,
+        std::vector<std::string>(pending_consensus_db_cleanup_.begin(), pending_consensus_db_cleanup_.end()),
+        [destroy_observers = std::move(destroy_observers)](td::Result<td::Unit> R) mutable {
+          R.ensure();
+          destroy_observers();
+        });
   } else {
     destroy_observers();
   }
@@ -3291,7 +4093,7 @@ void ValidatorManagerImpl::update_shards() {
   }
   if (!serializer_.empty()) {
     td::actor::send_closure(serializer_, &AsyncStateSerializer::auto_disable_serializer,
-                            (is_validator() || !collator_nodes_.empty()) &&
+                            (has_local_validator_keys() || !collator_nodes_.empty()) &&
                                 last_masterchain_state_->get_global_id() == 1);  // TOS mainnet only
   }
   init_shard_block_verifier(mc_validator_adnl_id);
@@ -3346,46 +4148,40 @@ void ValidatorManagerImpl::updated_init_block(BlockIdExt last_rotate_block_id,
   }
 }
 
-ValidatorSessionId ValidatorManagerImpl::get_validator_set_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set,
-                                                              td::Bits256 opts_hash, BlockSeqno last_key_block_seqno,
-                                                              const consensus::ValidatorSessionOptions &opts) {
-  std::vector<tl_object_ptr<tos_api::validator_groupMember>> vec;
-  auto v = val_set->export_vector();
-  auto vert_seqno = opts_->get_maximal_vertical_seqno();
-  for (auto &n : v) {
-    auto pub_key = PublicKey{pubkeys::Ed25519{n.key}};
-    vec.push_back(
-        create_tl_object<tos_api::validator_groupMember>(pub_key.compute_short_id().bits256_value(), n.addr, n.weight));
-  }
-  if (!opts.new_catchain_ids) {
-    if (vert_seqno == 0) {
-      return create_hash_tl_object<tos_api::validator_group>(shard.workchain, shard.shard,
-                                                             val_set->get_catchain_seqno(), opts_hash, std::move(vec));
-    } else {
-      return create_hash_tl_object<tos_api::validator_groupEx>(
-          shard.workchain, shard.shard, vert_seqno, val_set->get_catchain_seqno(), opts_hash, std::move(vec));
-    }
-  } else {
-    return create_hash_tl_object<tos_api::validator_groupNew>(shard.workchain, shard.shard, vert_seqno,
-                                                              last_key_block_seqno, val_set->get_catchain_seqno(),
-                                                              opts_hash, std::move(vec));
-  }
-}
-
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_group(
     ValidatorSessionId session_id, ShardIdFull shard, td::Ref<block::ValidatorSet> validator_set, BlockSeqno key_seqno,
-    consensus::ValidatorSessionOptions opts, bool init_session) {
+    NewConsensusConfig config, consensus::ValidatorSessionOptions opts, bool init_session) {
+  if (!validator_groups_permitted()) {
+    // Final defence; the callers are gated too. A group opens its consensus
+    // database before its session starts.
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str() << ": validator groups are fenced";
+    return {};
+  }
   td::actor::send_closure(ext_message_pool_, &ExtMessagePool::cleanup_external_messages, shard);
 
-  auto validator_id = get_validator(shard, validator_set);
-  CHECK(!validator_id.is_zero());
-  auto descr = validator_set->get_validator(validator_id.bits256_value());
+  auto validator_id = get_validator_id(shard, validator_set);
+  if (validator_id.is_zero()) {
+    // The caller found this node a member a moment ago; membership follows custody, and a
+    // consensus key that expired in between makes it a member no longer. Refuse the group
+    // as for any other key this node cannot sign with.
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+               << ": this node no longer holds an unexpired consensus key the set records for it";
+    return {};
+  }
+  auto descr = validator_set->get_validator(validator_id);
   CHECK(descr);
-  auto adnl_id = adnl::AdnlNodeIdShort{
-      descr->addr.is_zero() ? ValidatorFullId{descr->key}.compute_short_id().bits256_value() : descr->addr};
+  auto adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(*descr)};
 
-  auto new_consensus_config = last_masterchain_state_->get_new_consensus_config(shard.workchain);
-  if (!consensus_group_admissible(new_consensus_config)) {
+  const auto committee_ceiling = shard.is_masterchain() ? tos::pq::launch_limits::max_masterchain_committee
+                                                        : tos::pq::launch_limits::max_shard_committee;
+  const auto committee_size = validator_set->export_vector().size();
+  if (committee_size > committee_ceiling) {
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str() << ": committee has " << committee_size
+               << " members, above launch ceiling " << committee_ceiling;
+    return {};
+  }
+
+  if (!config.protocol_version_supported()) {
     // Fail closed. A missing or unrecognized consensus config (absent
     // parameter, unpack failure, reserved flag bits), or one whose protocol
     // version is newer than this build supports, must stop this node from
@@ -3398,42 +4194,109 @@ td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_validator_grou
                   "validation for this shard is disabled until the node is upgraded or the config is fixed";
     return {};
   }
-  auto config = new_consensus_config.value();
-  return IValidatorGroup::create_bridge(PSTRING() << "valgroup" << shard.to_str(), shard, validator_id, session_id,
-                                        validator_set, key_seqno, config, keyring_, adnl_, quic_, overlays_,
-                                        get_all_validator_adnl_ids(), db_root_, actor_id(this),
-                                        get_collation_manager(adnl_id), init_session,
-                                        opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
-                                        opts_->need_monitor(shard, last_masterchain_state_));
+  // The consensus path is post-quantum only and verifies every peer with the key the set
+  // records, so the whole set must be runnable. Decide that here, before a group exists:
+  // if the bus discovered it asynchronously in start_up and stopped itself, this manager
+  // would be left holding a group it had already marked started, which it would neither
+  // run nor ever recreate.
+  if (auto usable = block::validate_simplex_pq_validator_set(*validator_set); usable.is_error()) {
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str() << ": " << usable.move_as_error()
+               << "; validation for this shard is disabled until the set is post-quantum";
+    return {};
+  }
+
+  // The consensus signer for this node, resolved once from custody: the exact post-quantum
+  // key the set records for us, or nothing. If we do not custody that exact key, we must not
+  // start an active group with a key we cannot sign with -- refuse and stay a full node,
+  // never fall back to the network keyring.
+  const tos::ValidatorId local_vid = validator_id;
+  auto pq_signer = pq_custody_.get_matching_store(local_vid, *descr, pq_custody_now());
+  if (pq_signer == nullptr) {
+    LOG(ERROR) << "refusing to create validator group for " << shard.to_str()
+               << ": this node is post-quantum validator " << local_vid.value.to_hex()
+               << " but does not custody, unexpired, the exact consensus key the set records for it (key "
+               << descr->key_id.value.to_hex()
+               << "); validation for this shard is disabled until the key is provisioned";
+    return {};
+  }
+
+  auto current_relays = get_twostep_relay_snapshot();
+  return construct_group(false, session_id, shard, [&] {
+    return IValidatorGroup::create_bridge(
+        PSTRING() << "valgroup" << shard.to_str(), shard, local_vid, std::move(pq_signer), session_id, validator_set,
+        key_seqno, config, keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), std::move(current_relays),
+        db_root_, actor_id(this), get_collation_manager(adnl_id), init_session,
+        opts_->check_unsafe_resync_allowed(validator_set->get_catchain_seqno()), opts_,
+        opts_->need_monitor(shard, last_masterchain_state_));
+  });
+}
+
+td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::construct_group(
+    bool, ValidatorSessionId, ShardIdFull, const std::function<td::actor::ActorOwn<IValidatorGroup>()> &make) {
+  return make();
 }
 
 td::actor::ActorOwn<IValidatorGroup> ValidatorManagerImpl::create_observer_group(
     ValidatorSessionId session_id, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id,
     td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config) {
-  return IValidatorGroup::create_bridge_observer(
-      PSTRING() << "valgroup" << shard.to_str(), shard, local_adnl_id, session_id, std::move(validator_set),
-      std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), db_root_, actor_id(this),
-      opts_, opts_->need_monitor(shard, last_masterchain_state_));
+  const auto committee_ceiling = shard.is_masterchain() ? tos::pq::launch_limits::max_masterchain_committee
+                                                        : tos::pq::launch_limits::max_shard_committee;
+  const auto committee_size = validator_set->export_vector().size();
+  if (committee_size > committee_ceiling) {
+    LOG(ERROR) << "refusing to create observer group for " << shard.to_str() << ": committee has " << committee_size
+               << " members, above launch ceiling " << committee_ceiling;
+    return {};
+  }
+  auto current_relays = get_twostep_relay_snapshot();
+  return construct_group(true, session_id, shard, [&] {
+    return IValidatorGroup::create_bridge_observer(
+        PSTRING() << "valgroup" << shard.to_str(), shard, local_adnl_id, session_id, std::move(validator_set),
+        std::move(config), keyring_, adnl_, quic_, overlays_, get_all_validator_adnl_ids(), std::move(current_relays),
+        db_root_, actor_id(this), opts_, opts_->need_monitor(shard, last_masterchain_state_));
+  });
 }
 
 std::set<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_observer_adnl_ids(
     td::Ref<block::ValidatorSet> validator_set) const {
   std::set<adnl::AdnlNodeIdShort> result;
-  for (const auto &key : temp_keys_) {
-    if (validator_set->is_validator(key.bits256_value())) {
+  for (int offset = -1; offset <= 1; ++offset) {
+    auto total_set = last_masterchain_state_->get_total_validator_set(offset);
+    if (total_set.is_null()) {
       continue;
     }
-    for (int offset = -1; offset <= 1; ++offset) {
-      auto total_set = last_masterchain_state_->get_total_validator_set(offset);
-      if (total_set.is_null()) {
+    for (const auto &descr : total_set->export_vector()) {
+      if (validator_set->is_validator(descr.validator_id)) {
         continue;
       }
-      auto descr = total_set->get_validator(key.bits256_value());
-      if (!descr) {
+      if (!local_consensus_descriptor(descr, temp_keys_, permanent_keys_, pq_custody_, pq_custody_now())) {
         continue;
       }
-      result.emplace(descr->addr.is_zero() ? key.bits256_value() : descr->addr);
+      result.emplace(block::validator_adnl_identity(descr));
     }
+  }
+  return result;
+}
+
+std::optional<std::set<adnl::AdnlNodeIdShort>> ValidatorManagerImpl::get_twostep_relay_snapshot() const {
+  const auto state = last_masterchain_state_;
+  if (state.is_null()) {
+    LOG(WARNING) << "two-step relays: no masterchain state; using legacy relays";
+    return std::nullopt;
+  }
+  const consensus::ValidatorSessionOptions session_opts{state->get_consensus_config()};
+  if (!session_opts.new_catchain_ids) {
+    LOG(WARNING) << "two-step relays: new_catchain_ids=false; using legacy relays";
+    return std::nullopt;
+  }
+  const auto ids =
+      block::current_validator_adnl_ids([state](int offset) { return state->get_total_validator_set(offset); });
+  if (ids.empty()) {
+    LOG(WARNING) << "two-step relays: current total validator set is missing or empty; using legacy relays";
+    return std::nullopt;
+  }
+  std::set<adnl::AdnlNodeIdShort> result;
+  for (const auto &id : ids) {
+    result.emplace(id);
   }
   return result;
 }
@@ -3446,8 +4309,7 @@ std::vector<adnl::AdnlNodeIdShort> ValidatorManagerImpl::get_all_validator_adnl_
       continue;
     }
     for (const auto &descr : total_set->export_vector()) {
-      auto key_hash = ValidatorFullId{descr.key}.compute_short_id();
-      result.emplace_back(descr.addr.is_zero() ? key_hash.bits256_value() : descr.addr);
+      result.emplace_back(block::validator_adnl_identity(descr));
     }
   }
   std::sort(result.begin(), result.end());
@@ -3495,6 +4357,83 @@ BlockHandle ValidatorManagerImpl::get_handle_from_lru(BlockIdExt id) {
     return handle;
   } else {
     return nullptr;
+  }
+}
+
+// Node-state gauges for the health snapshot: membership (duty counters live in
+// the consensus group), the three real waiter queues of this actor as sampled
+// by the one-second timer sweep that already walks them, and the storage
+// position. Runs only while health instrumentation is on and only from that
+// sweep, never per alarm wake-up. The filesystem query never runs on this
+// actor: a stalled disk must not stall block processing, so statvfs runs on a
+// short-lived thread at most every ten seconds, one in flight at a time, and
+// only writes lock-free gauges this actor publishes.
+// Three missed ten-second disk samples make the storage position unknown.
+constexpr std::uint64_t kStorageSampleTtlMs = 30'000;
+void ValidatorManagerImpl::publish_health_node_state(const HealthWaiterSample &block_data,
+                                                     const HealthWaiterSample &state,
+                                                     const HealthWaiterSample &shard_client) {
+  auto &g = health::node_state;
+  g.block_data_waiters.depth.store(block_data.depth, std::memory_order_relaxed);
+  g.block_data_waiters.oldest_age_ms.store(block_data.oldest_age_ms, std::memory_order_relaxed);
+  g.state_waiters.depth.store(state.depth, std::memory_order_relaxed);
+  g.state_waiters.oldest_age_ms.store(state.oldest_age_ms, std::memory_order_relaxed);
+  g.shard_client_waiters.depth.store(shard_client.depth, std::memory_order_relaxed);
+  g.shard_client_waiters.oldest_age_ms.store(shard_client.oldest_age_ms, std::memory_order_relaxed);
+  g.validator_member.store(!validator_groups_.empty(), std::memory_order_relaxed);
+  g.gc_seqno.store(gc_masterchain_handle_ ? gc_masterchain_handle_->id().id.seqno : 0, std::memory_order_relaxed);
+  g.persistent_state_seqno.store(state_serializer_masterchain_seqno_, std::memory_order_relaxed);
+  // A disk sample that the worker has not refreshed within its TTL is not a
+  // current fact: report storage unknown rather than an old value under a
+  // fresh observation clock.
+  {
+    const auto sampled = g.storage_sampled_steady_ms.load(std::memory_order_acquire);
+    const auto now_steady_ms = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+    if (sampled == 0 || now_steady_ms - sampled > kStorageSampleTtlMs) {
+      g.storage_valid.store(false, std::memory_order_relaxed);
+    }
+  }
+  if (health_statvfs_at_.is_in_past()) {
+    health_statvfs_at_ = td::Timestamp::in(10.0);
+    static std::atomic<bool> statvfs_inflight{false};
+    bool idle = false;
+    if (statvfs_inflight.compare_exchange_strong(idle, true, std::memory_order_acq_rel)) {
+      td::thread([root = db_root_] {
+        auto &gauges = health::node_state;
+        struct statvfs st;
+        if (statvfs(root.c_str(), &st) == 0 && st.f_frsize > 0) {
+          gauges.db_total_bytes.store(static_cast<std::uint64_t>(st.f_blocks) * st.f_frsize, std::memory_order_relaxed);
+          gauges.db_free_bytes.store(static_cast<std::uint64_t>(st.f_bavail) * st.f_frsize, std::memory_order_relaxed);
+          gauges.storage_sampled_steady_ms.store(
+              static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             std::chrono::steady_clock::now().time_since_epoch())
+                                             .count()),
+              std::memory_order_release);
+          gauges.storage_valid.store(true, std::memory_order_relaxed);
+        } else {
+          gauges.storage_valid.store(false, std::memory_order_relaxed);
+        }
+        statvfs_inflight.store(false, std::memory_order_release);
+      }).detach();
+    }
+  }
+  g.observed_unix_seconds.store(static_cast<std::uint64_t>(td::Clocks::system()), std::memory_order_release);
+}
+
+void ValidatorManagerImpl::check_masterchain_lag() {
+  auto &g = health::node_state;
+  // The STATUS line above stays as it is for the tools that parse it; this
+  // is the line that says the node is behind, and only when it is.
+  const auto report =
+      observe_masterchain_lag(masterchain_lag_alert_, health_block_unix_seconds(last_masterchain_block_handle_),
+                              health_block_unix_seconds(shard_client_handle_), td::Clocks::system(),
+                              td::Timestamp::now().at(), g.masterchain_block_unix_seconds, g.shard_client_unix_seconds);
+  if (report.action == MasterchainLagAction::Warn) {
+    LOG(WARNING) << masterchain_lag_message(report);
+  } else if (report.action == MasterchainLagAction::Clear) {
+    LOG(INFO) << masterchain_lag_message(report);
   }
 }
 
@@ -3583,8 +4522,7 @@ void ValidatorManagerImpl::advance_gc(BlockHandle handle, td::Ref<MasterchainSta
   gc_masterchain_handle_ = std::move(handle);
   gc_masterchain_state_ = std::move(state);
   // The durable GC floor moved forward: more retired sessions may now be provably
-  // obsolete. Attempt a cleanup pass (a no-op while deletion is gated off).
-  try_validator_consensus_db_cleanup();
+  // obsolete; the next cleanup tick sees the new floor.
   try_advance_gc_masterchain_block();
 }
 
@@ -3598,6 +4536,10 @@ void ValidatorManagerImpl::update_shard_client_block_handle(BlockHandle handle, 
     if (last_liteserver_state_.is_null() || last_liteserver_state_->get_block_id().seqno() < seqno) {
       last_liteserver_state_ = std::move(state);
     }
+    if (last_masterchain_state_.not_null())
+      publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                                   health_block_unix_seconds(last_masterchain_block_handle_),
+                                   last_known_key_block_handle_);
   }
   if (!db_event_publisher_.empty()) {
     VLOG(VALIDATOR_DEBUG) << "DB Event: blockApplied " << shard_client_handle_->id().to_str();
@@ -3641,6 +4583,15 @@ void ValidatorManagerImpl::alarm() {
   try_advance_gc_masterchain_block();
   handles_.sweep_expired(handle_sweep_alarm_budget_);
   alarm_timestamp() = td::Timestamp::in(1.0);
+  // Re-observe the chain anchor every tick so a halted chain keeps a fresh,
+  // truthful anchor (same block, older applied-advance clock) instead of
+  // vanishing from the health snapshot.
+  if (last_masterchain_block_handle_ && last_masterchain_block_handle_->is_applied() &&
+      last_masterchain_state_.not_null()) {
+    publish_health_chain_anchors(opts_->zero_block_id(), last_masterchain_block_id_, last_liteserver_state_, false,
+                                 health_block_unix_seconds(last_masterchain_block_handle_),
+                                 last_known_key_block_handle_);
+  }
   if (shard_client_state_.not_null() && gc_masterchain_handle_) {
     td::actor::send_closure(db_, &Db::run_gc, shard_client_state_, gc_masterchain_handle_->unix_time(),
                             opts_->archive_ttl());
@@ -3660,6 +4611,7 @@ void ValidatorManagerImpl::alarm() {
     log_status_at_ = td::Timestamp::in(60.0);
   }
   alarm_timestamp().relax(log_status_at_);
+  check_masterchain_lag();
   if (resend_shard_blocks_at_ && resend_shard_blocks_at_.is_in_past()) {
     resend_shard_blocks_at_ = td::Timestamp::never();
     for (auto &B : out_shard_blocks_) {
@@ -3672,14 +4624,34 @@ void ValidatorManagerImpl::alarm() {
   alarm_timestamp().relax(resend_shard_blocks_at_);
   if (check_waiters_at_.is_in_past()) {
     check_waiters_at_ = td::Timestamp::in(1.0);
+    // The health sample is taken inside the timer sweep's own pass over each
+    // waiter vector: survivors are counted and their earliest creation time
+    // kept while timed-out waiters are expired, so no waiter is visited a
+    // second time, and nothing runs per alarm wake-up.
+    const bool health_on = health::enabled.load(std::memory_order_relaxed);
+    const auto sweep_now = td::Timestamp::now();
+    constexpr double kNoWaiter = std::numeric_limits<double>::infinity();
+    std::uint64_t block_data_depth = 0, state_depth = 0, shard_client_depth = 0;
+    double block_data_oldest = kNoWaiter, state_oldest = kNoWaiter, shard_client_oldest = kNoWaiter;
     for (auto &w : wait_block_data_) {
-      w.second.check_timers();
+      w.second.check_timers(health_on ? &block_data_depth : nullptr, &block_data_oldest);
     }
     for (auto &w : wait_state_) {
-      w.second.check_timers();
+      w.second.check_timers(health_on ? &state_depth : nullptr, &state_oldest);
     }
     for (auto &w : shard_client_waiters_) {
-      w.second.check_timers();
+      w.second.check_timers(health_on ? &shard_client_depth : nullptr, &shard_client_oldest);
+    }
+    if (health_on) {
+      auto sample = [&](std::uint64_t depth, double oldest_created) {
+        HealthWaiterSample into;
+        into.depth = depth;
+        const double age = depth == 0 ? 0 : sweep_now.at() - oldest_created;
+        into.oldest_age_ms = age > 0 ? static_cast<std::uint64_t>(age * 1000.0) : 0;
+        return into;
+      };
+      publish_health_node_state(sample(block_data_depth, block_data_oldest), sample(state_depth, state_oldest),
+                                sample(shard_client_depth, shard_client_oldest));
     }
     for (auto it = block_state_cache_.begin(); it != block_state_cache_.end();) {
       bool del = it->second.ttl_.is_in_past();
@@ -3782,23 +4754,56 @@ void ValidatorManagerImpl::get_archive_slice(td::uint64 archive_id, td::uint64 o
   td::actor::send_closure(db_, &Db::get_archive_slice, archive_id, offset, limit, std::move(promise));
 }
 
-bool ValidatorManagerImpl::is_validator() {
-  return temp_keys_.size() > 0 || permanent_keys_.size() > 0;
+void ValidatorManagerImpl::del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
+                                                td::Promise<td::Unit> promise) {
+  // One clock reading for every part of the decision, taken here, where the key is
+  // removed: the engine's own checks ran before the hop to this actor, and a deadline may
+  // have passed since.
+  const auto now = pq_custody_now();
+  std::vector<std::vector<tos::ValidatorDescr>> sets;
+  if (last_masterchain_state_.is_null()) {
+    // Judged as everywhere else: a key retired in this process is expired, whatever its
+    // timestamp says after a clock step back, and may be removed without any set.
+    if (pq_custody_.held_keys(validator_id).count(key_id) != 0 && !pq_custody_.key_expired(validator_id, key_id, now)) {
+      promise.set_error(td::Status::Error(tos::ErrorCode::notready,
+                                          "no masterchain state yet; which sets list this key cannot be told"));
+      return;
+    }
+  } else {
+    for (int offset = -1; offset <= 1; ++offset) {
+      auto set = last_masterchain_state_->get_total_validator_set(offset);
+      if (set.not_null()) {
+        sets.push_back(set->export_vector());
+      }
+    }
+  }
+  if (auto refused = pq_custody_.removal_refusal(validator_id, key_id, now, sets)) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::error, *refused));
+    return;
+  }
+  pq_custody_.remove_key(validator_id, key_id);
+  promise.set_value(td::Unit());
+}
+
+bool ValidatorManagerImpl::has_local_validator_keys() {
+  return temp_keys_.size() > 0 || permanent_keys_.size() > 0 || !pq_custody_.empty();
 }
 
 bool ValidatorManagerImpl::validating_masterchain() {
-  return !get_validator(ShardIdFull(masterchainId),
-                        last_masterchain_state_->get_validator_set(ShardIdFull(masterchainId)))
+  return !get_validator_id(ShardIdFull(masterchainId),
+                           last_masterchain_state_->get_validator_set(ShardIdFull(masterchainId)))
               .is_zero();
 }
 
-PublicKeyHash ValidatorManagerImpl::get_validator(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set) {
-  for (auto &key : temp_keys_) {
-    if (val_set->is_validator(key.bits256_value())) {
-      return key;
-    }
+tos::ValidatorId ValidatorManagerImpl::get_validator_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set) {
+  // Membership is decided by what this node custodies for a validator identity, not by
+  // which Ed25519 keys happen to be installed. A node holding network or operator keys
+  // and nothing else is not a consensus validator.
+  auto member = local_consensus_member(*val_set, temp_keys_, permanent_keys_, pq_custody_, pq_custody_now());
+  if (!member) {
+    return {};
   }
-  return PublicKeyHash::zero();
+  return *member;
 }
 
 bool ValidatorManagerImpl::is_shard_collator(ShardIdFull shard) {
@@ -3810,7 +4815,7 @@ bool ValidatorManagerImpl::is_shard_collator(ShardIdFull shard) {
       return true;
     }
   }
-  return is_validator() && opts_->get_collators_list()->self_collate;
+  return has_local_validator_keys() && opts_->get_collators_list()->self_collate;
 }
 
 bool ValidatorManagerImpl::Collator::can_collate_shard(ShardIdFull shard) const {
@@ -3925,14 +4930,15 @@ void ValidatorManagerImpl::prepare_stats(td::Promise<std::vector<std::pair<std::
                                                               << " error:" << total_validated_blocks_master_error_);
   vec.emplace_back("total.validated_blocks.shard", PSTRING() << "ok:" << total_validated_blocks_shard_ok_
                                                              << " error:" << total_validated_blocks_shard_error_);
-  if (is_validator()) {
+  if (has_local_validator_keys()) {
     vec.emplace_back("active_validator_groups", PSTRING() << "master:" << active_validator_groups_master_
                                                           << " shard:" << active_validator_groups_shard_);
   }
   vec.emplace_back("active_observer_groups", td::to_string(observer_groups_.size()));
 
   bool serializer_enabled = opts_->get_state_serializer_enabled();
-  if (is_validator() && last_masterchain_state_.not_null() && last_masterchain_state_->get_global_id() == 1) {
+  if (has_local_validator_keys() && last_masterchain_state_.not_null() &&
+      last_masterchain_state_->get_global_id() == 1) {
     serializer_enabled = false;
   }
   vec.emplace_back("stateserializerenabled", serializer_enabled ? "true" : "false");
@@ -4151,7 +5157,7 @@ void ValidatorManagerImpl::process_lookup_block_for_litequery_error(AccountIdPre
   promise.set_error(std::move(err));
 }
 
-void ValidatorManagerImpl::get_block_candidate_for_litequery(PublicKey source, BlockIdExt block_id,
+void ValidatorManagerImpl::get_block_candidate_for_litequery(ValidatorId source, BlockIdExt block_id,
                                                              FileHash collated_data_hash,
                                                              td::Promise<BlockCandidate> promise) {
   if (!opts_->nonfinal_ls_queries_enabled()) {

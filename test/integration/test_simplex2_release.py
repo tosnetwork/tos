@@ -24,6 +24,7 @@ from pathlib import Path
 
 from tostester.install import Install
 from tostester.network import FullNode, Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
 
 
 OBSERVER_CREATED = re.compile(
@@ -35,6 +36,17 @@ OBSERVER_STARTED = re.compile(
 OBSERVER_DESTROYED = re.compile(
     r"Destroying observer group (?P<shard>\S+)\.(?P<cc_seqno>\d+) at (?P<adnl>\S+)"
 )
+OBSERVER_POLICY = re.compile(
+    r"Observer group policy for (?P<shard>\S+): "
+    r"enable_block_sync=(?P<block_sync>0|1|false|true), "
+    r"observers_in_private_overlay=(?P<private_overlay>0|1|false|true)"
+)
+OBSERVER_CANDIDATES = re.compile(
+    r"Observer group candidates for (?P<shard>\S+): "
+    r"get_observer_adnl_ids size=(?P<count>\d+)"
+)
+OBSERVER_REFUSED = re.compile(r"refusing to create observer groups for (?P<reason>.+)")
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 FATAL_LOG = re.compile(
     r"\b(FATAL|PANIC|CHECK failed|LOG_CHECK failed|AddressSanitizer|"
     r"UndefinedBehaviorSanitizer)\b",
@@ -51,6 +63,11 @@ class NodeEvidence:
     observer_started: int
     observer_destroyed: int
     observer_sessions: list[str]
+    observer_policies: list[dict[str, object]]
+    observer_candidate_counts: list[dict[str, object]]
+    observer_refusals: list[str]
+    observer_cc_seqnos: list[int]
+    observer_lifecycle_errors: list[str]
     fatal_lines: list[str]
 
 
@@ -106,6 +123,72 @@ async def _wait_all_heights(
 
 def _matches(text: str, pattern: re.Pattern[str]) -> list[re.Match[str]]:
     return list(pattern.finditer(text))
+
+
+def _unique_records(records: list[dict[str, object]]) -> list[dict[str, object]]:
+    unique: list[dict[str, object]] = []
+    seen: set[tuple[tuple[str, object], ...]] = set()
+    for record in records:
+        key = tuple(sorted(record.items()))
+        if key not in seen:
+            seen.add(key)
+            unique.append(record)
+    return unique
+
+
+def _observer_lifecycle(text: str) -> tuple[list[str], set[int]]:
+    """Pair each local group transition by shard, cc_seqno and ADNL identity."""
+    state: dict[tuple[str, int, str], str] = {}
+    errors: list[str] = []
+    created_cc_seqnos: set[int] = set()
+    for line in ANSI_ESCAPE.sub("", text).splitlines():
+        for label, pattern, expected, next_state in (
+            ("created", OBSERVER_CREATED, (None, "destroyed"), "created"),
+            ("started", OBSERVER_STARTED, ("created",), "started"),
+            ("destroyed", OBSERVER_DESTROYED, ("started",), "destroyed"),
+        ):
+            match = pattern.search(line)
+            if match is None:
+                continue
+            key = (match.group("shard"), int(match.group("cc_seqno")), match.group("adnl"))
+            prior = state.get(key)
+            if label == "created":
+                created_cc_seqnos.add(key[1])
+            if prior not in expected:
+                action = {
+                    "created": "created before prior group was destroyed",
+                    "started": "started without matching create",
+                    "destroyed": "destroyed without matching start",
+                }[label]
+                errors.append(f"{action}: {key}; prior={prior}")
+            state[key] = next_state
+            break
+    errors.extend(
+        f"created without matching start: {key}"
+        for key, current in state.items()
+        if current == "created"
+    )
+    return errors, created_cc_seqnos
+
+
+def _observer_integrity_failures(
+    start_heights: list[int],
+    end_heights: list[int],
+    lifecycle_errors: list[list[str]],
+    cc_seqnos: list[set[int]],
+) -> list[str]:
+    if not (len(start_heights) == len(end_heights) == len(lifecycle_errors) == len(cc_seqnos)):
+        return ["observer evidence does not cover every queried node"]
+    failures = [
+        f"node {index} did not progress: {start} -> {end}"
+        for index, (start, end) in enumerate(zip(start_heights, end_heights), start=1)
+        if end <= start
+    ]
+    for index, errors in enumerate(lifecycle_errors, start=1):
+        failures.extend(f"node {index} observer lifecycle: {error}" for error in errors)
+    if len(set().union(*cc_seqnos)) < 2:
+        failures.append("observer groups did not cover two distinct cc_seqno values")
+    return failures
 
 
 def _fresh_artifact_dir(repo_root: Path, requested: Path | None) -> Path:
@@ -174,9 +257,9 @@ async def _observer_churn(args: argparse.Namespace) -> int:
 
         dht = network.create_dht_node()
         nodes: list[FullNode] = []
-        for _ in range(args.validators):
+        for validator_index in range(args.validators):
             node = network.create_full_node()
-            node.make_initial_validator()
+            make_deterministic_pq_initial_validator(node, validator_index)
             node.announce_to(dht)
             nodes.append(node)
         for key_file in network_dir.glob("node*/keyring/*"):
@@ -213,10 +296,30 @@ async def _observer_churn(args: argparse.Namespace) -> int:
 
         evidence: list[NodeEvidence] = []
         for index, node in enumerate(nodes):
-            text = node.log_path.read_text(errors="replace")
+            text = ANSI_ESCAPE.sub("", node.log_path.read_text(errors="replace"))
             created = _matches(text, OBSERVER_CREATED)
             started = _matches(text, OBSERVER_STARTED)
             destroyed = _matches(text, OBSERVER_DESTROYED)
+            lifecycle_errors, cc_seqnos = _observer_lifecycle(text)
+            policies = _unique_records([
+                {
+                    "shard": match.group("shard"),
+                    "enable_block_sync": match.group("block_sync") in {"1", "true"},
+                    "observers_in_private_overlay": match.group("private_overlay")
+                    in {"1", "true"},
+                }
+                for match in _matches(text, OBSERVER_POLICY)
+            ])
+            candidate_counts = _unique_records([
+                {
+                    "shard": match.group("shard"),
+                    "get_observer_adnl_ids_size": int(match.group("count")),
+                }
+                for match in _matches(text, OBSERVER_CANDIDATES)
+            ])
+            refusals = sorted(
+                {match.group(0)[:1000] for match in _matches(text, OBSERVER_REFUSED)}
+            )
             fatal_lines = [
                 line[:1000] for line in text.splitlines() if FATAL_LOG.search(line)
             ]
@@ -236,6 +339,11 @@ async def _observer_churn(args: argparse.Namespace) -> int:
                     observer_started=len(started),
                     observer_destroyed=len(destroyed),
                     observer_sessions=sessions,
+                    observer_policies=policies,
+                    observer_candidate_counts=candidate_counts,
+                    observer_refusals=refusals,
+                    observer_cc_seqnos=sorted(cc_seqnos),
+                    observer_lifecycle_errors=lifecycle_errors,
                     fatal_lines=fatal_lines,
                 )
             )
@@ -251,14 +359,62 @@ async def _observer_churn(args: argparse.Namespace) -> int:
             session for item in evidence for session in item.observer_sessions
         }
         fatal_total = sum(len(item.fatal_lines) for item in evidence)
+        refusal_total = sum(len(item.observer_refusals) for item in evidence)
+        lifecycle_error_total = sum(len(item.observer_lifecycle_errors) for item in evidence)
+        distinct_cc_seqnos = set().union(*(item.observer_cc_seqnos for item in evidence))
+        policy_samples = [
+            {"node": item.node, **policy}
+            for item in evidence
+            for policy in item.observer_policies
+        ]
+        candidate_samples = [
+            {"node": item.node, **sample}
+            for item in evidence
+            for sample in item.observer_candidate_counts
+        ]
+        refusal_samples = [
+            {"node": item.node, "reason": refusal}
+            for item in evidence
+            for refusal in item.observer_refusals
+        ]
 
         failures: list[str] = []
-        if min(end_heights) <= min(start_heights):
-            failures.append("masterchain did not progress on every node")
+        failures.extend(_observer_integrity_failures(
+            start_heights,
+            end_heights,
+            [item.observer_lifecycle_errors for item in evidence],
+            [set(item.observer_cc_seqnos) for item in evidence],
+        ))
         if max(end_heights) - min(end_heights) > 12:
             failures.append(f"final masterchain spread is too large: {end_heights}")
         if created_total == 0 or started_total == 0:
-            failures.append("no real observer group was created and started")
+            if refusal_total:
+                failures.append(
+                    "no real observer group was created and started; manager refused "
+                    f"observer admission {refusal_total} times"
+                )
+            elif policy_samples and all(
+                not sample["enable_block_sync"]
+                and not sample["observers_in_private_overlay"]
+                for sample in policy_samples
+            ):
+                failures.append(
+                    "no real observer group was created and started; both observer "
+                    "policy flags were disabled"
+                )
+            elif candidate_samples and all(
+                sample["get_observer_adnl_ids_size"] == 0
+                for sample in candidate_samples
+            ):
+                failures.append(
+                    "no real observer group was created and started; "
+                    "get_observer_adnl_ids was empty"
+                )
+            else:
+                failures.append(
+                    "no real observer group was created and started; policy allowed "
+                    "observers and no refusal or empty observer-id set explained the zero"
+                )
         if destroyed_total == 0:
             failures.append("no observer group was destroyed during membership rotation")
         if len(distinct_sessions) < 2:
@@ -274,6 +430,12 @@ async def _observer_churn(args: argparse.Namespace) -> int:
                 "observer_started": started_total,
                 "observer_destroyed": destroyed_total,
                 "distinct_observer_sessions": len(distinct_sessions),
+                "distinct_observer_cc_seqnos": sorted(distinct_cc_seqnos),
+                "observer_lifecycle_error_count": lifecycle_error_total,
+                "observer_policy_samples": policy_samples,
+                "observer_candidate_samples": candidate_samples,
+                "observer_refusal_count": refusal_total,
+                "observer_refusal_samples": refusal_samples,
                 "failures": failures,
             }
         )
@@ -291,6 +453,12 @@ async def _observer_churn(args: argparse.Namespace) -> int:
                     "observer_started": started_total,
                     "observer_destroyed": destroyed_total,
                     "distinct_observer_sessions": len(distinct_sessions),
+                    "distinct_observer_cc_seqnos": sorted(distinct_cc_seqnos),
+                    "observer_lifecycle_error_count": lifecycle_error_total,
+                    "observer_policy_samples": policy_samples,
+                    "observer_candidate_samples": candidate_samples,
+                    "observer_refusal_count": refusal_total,
+                    "observer_refusal_samples": refusal_samples,
                     "failures": failures,
                 },
                 indent=2,

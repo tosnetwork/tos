@@ -1,0 +1,5 @@
+COMMAND: .contract-venv/bin/python tests/native-snapshot-http.py $HOME/tos-node-health-c01-build/test-health-native-snapshot --mode fast
+native_snapshot_unit_passed
+isolated_actual_publisher_prepare_us=976
+fast: passed
+EXIT=0

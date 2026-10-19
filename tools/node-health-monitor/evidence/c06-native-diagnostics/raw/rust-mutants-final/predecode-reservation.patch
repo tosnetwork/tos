@@ -1,0 +1,11 @@
+--- crates/health-services/src/diagnostic_ingest.rs
++++ crates/health-services/src/diagnostic_ingest.rs
+@@ -252,7 +252,7 @@
+         let bytes = self
+             .bytes
+             .clone()
+-            .try_acquire_many_owned(PREDECODE_BYTES)
++            .try_acquire_many_owned(PREDECODE_BYTES / 2)
+             .map_err(|_| "DIAGNOSTIC_BUSY")?;
+         Ok(Lease { _slot: slot, _bytes: bytes })
+     }

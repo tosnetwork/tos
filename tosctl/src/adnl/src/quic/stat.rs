@@ -67,7 +67,6 @@ pub(super) fn tl_tag_name(tag: u32) -> &'static str {
         0xd55c14ec => "overlay.fec.received",
         0x09d76914 => "overlay.fec.completed",
         0x48ee64ab => "overlay.getRandomPeers",
-        0xa58e7ecc => "overlay.getRandomPeersV2",
         0x690cb481 => "overlay.ping",
         0x236758c4 => "catchain.blockUpdate",
         0x9283ce37 => "validatorSession.blockUpdate",

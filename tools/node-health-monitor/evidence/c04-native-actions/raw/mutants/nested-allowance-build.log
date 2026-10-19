@@ -1,0 +1,6 @@
+[1/60] Checking the git repository for changes...
+[2/6] Building CXX object metrics/CMakeFiles/metrics.dir/metrics-collectors.cpp.o
+[3/6] Building CXX object test/validator/consensus/CMakeFiles/test-health-c04-publisher.dir/__/__/test-health-c04-publisher.cpp.o
+[4/6] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o
+[5/6] Linking CXX static library metrics/libmetrics.a
+[6/6] Linking CXX executable test/validator/consensus/test-health-c04-publisher

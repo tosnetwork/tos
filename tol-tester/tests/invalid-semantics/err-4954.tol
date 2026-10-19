@@ -1,0 +1,13 @@
+struct WithDefault {
+    a: int = match (0) { 0 => { return 1; } else => 2 }
+}
+
+fun main() {
+    var w: WithDefault = {};
+    return w.a;
+}
+
+/**
+@compilation_should_fail
+@stderr `return` used outside a function
+ */

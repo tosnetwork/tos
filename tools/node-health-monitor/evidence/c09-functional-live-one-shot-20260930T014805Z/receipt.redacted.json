@@ -1,0 +1,107 @@
+{
+  "baseline_counts": {
+    "attempts": 72,
+    "grant_body_bytes": 18003,
+    "grants": 24
+  },
+  "baseline_sha256": "25c0458888a275bcf9568bc1fc53d914e9d5a3901932b0840444d99a3ea3382f",
+  "m_identity": {
+    "device": "64512",
+    "inode": "6055466",
+    "network": "b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004"
+  },
+  "one_shot_elapsed_ms": 794,
+  "one_shot_wall_utc": "2026-09-30T01:48:30.037312+00:00",
+  "post_counts": {
+    "attempts": 73,
+    "grant_body_bytes": 18637,
+    "grants": 25
+  },
+  "preflight_six_collectors_fresh": {
+    "observer5": {
+      "age_ms": 17658,
+      "m_store_seq": 24406,
+      "unit_state": "active"
+    },
+    "observer6": {
+      "age_ms": 17591,
+      "m_store_seq": 24412,
+      "unit_state": "active"
+    },
+    "validator1": {
+      "age_ms": 17723,
+      "m_store_seq": 24409,
+      "unit_state": "active"
+    },
+    "validator2": {
+      "age_ms": 17703,
+      "m_store_seq": 24417,
+      "unit_state": "active"
+    },
+    "validator3": {
+      "age_ms": 17691,
+      "m_store_seq": 24420,
+      "unit_state": "active"
+    },
+    "validator4": {
+      "age_ms": 2673,
+      "m_store_seq": 24423,
+      "unit_state": "active"
+    }
+  },
+  "preflight_wall_utc": "2026-09-30T01:48:05.609399+00:00",
+  "q_identity": {
+    "device": "64512",
+    "inode": "6056899"
+  },
+  "query_binary_sha256": "e37f9c4353bb80f5ae8acd3a941d7eeb21b5f116a448448adb79588fb94cf8ee",
+  "query_pid": 3847778,
+  "request_redacted": {
+    "as_of_ms": 1790732909491,
+    "components": [
+      "process"
+    ],
+    "control_grant": {
+      "node_ids": [
+        "validator4"
+      ],
+      "scope_ids": [
+        "node"
+      ],
+      "window_end_ms": 1790732909491,
+      "window_start_ms": 1790732669491
+    },
+    "max_age_seconds": 180,
+    "mcp_tool": "tos_get_node_snapshot",
+    "node_id": "validator4"
+  },
+  "response_redacted": {
+    "clock_quality_valid": true,
+    "delivered_evidence_count": 1,
+    "grant_frozen_m_w": 24455,
+    "grant_frozen_q_w": 11021,
+    "grant_revoked_durably": true,
+    "mcp_result_code": "ok",
+    "original_m_parent_seq": 24441,
+    "parent_age_ms": 11204,
+    "parent_hash_valid": true,
+    "parent_quarantine_absent": true,
+    "parent_retained_exactly": true,
+    "pid_positive": true,
+    "process_payload_kind": "process",
+    "process_payload_sha256": "4990c26b3805eb2af0fa27a407a980f75a5bb6facb308f9d6d070cfb4a1bc15c",
+    "q_evidence_seq": 11018,
+    "returned_bytes": 2290
+  },
+  "result": {
+    "cleanup_confirmed": true,
+    "error_kind": null,
+    "fixed_grant_query_status": "pass",
+    "negative_controls": false,
+    "projection_head_status": "lagging",
+    "status": "pass"
+  },
+  "schema_version": 1,
+  "script_sha256": "1da3030e9de70e64984c1131f21bb516cb6e72e3656dedf7e35ec1f3196aef2b",
+  "source_commit": "e03e2f5e5904e21ff6f99d44185c2ffdb942d710"
+}

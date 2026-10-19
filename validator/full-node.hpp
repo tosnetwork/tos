@@ -33,7 +33,9 @@
 
 #include "full-node-custom-overlays.hpp"
 #include "full-node-fast-sync-overlays.hpp"
+#include "full-node-relay-dedup.h"
 #include "rate-limiter.h"
+#include "validator-transport-authority.h"
 
 namespace tos {
 
@@ -47,8 +49,8 @@ class FullNodeImpl : public FullNode {
     dht_ = dht;
   }
 
-  void add_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) override;
-  void del_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) override;
+  void add_validator_adnl_id(adnl::AdnlNodeIdShort id) override;
+  void del_validator_adnl_id(adnl::AdnlNodeIdShort id) override;
   void add_collator_adnl_id(adnl::AdnlNodeIdShort id) override;
   void del_collator_adnl_id(adnl::AdnlNodeIdShort id) override;
 
@@ -90,6 +92,8 @@ class FullNodeImpl : public FullNode {
   void get_next_key_blocks(BlockIdExt block_id, td::Timestamp timeout, td::Promise<std::vector<BlockIdExt>> promise);
   void download_archive(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, std::string tmp_dir,
                         td::Timestamp timeout, td::Promise<std::string> promise);
+  void probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                    td::Promise<startup_catchup::RoundResult> promise);
   void download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                     block::ImportedMsgQueueLimits limits, td::Timestamp timeout,
                                     td::Promise<std::vector<td::Ref<OutMsgQueueProof>>> promise);
@@ -99,8 +103,8 @@ class FullNodeImpl : public FullNode {
 
   void process_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
                                bool send_to_custom) override;
-  void process_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source,
-                                        bool send_to_custom) override;
+  void process_block_finality_broadcast(BlockFinalityBroadcast finality, PublicKeyHash source_peer,
+                                        BroadcastSource source, bool send_to_custom) override;
   void process_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno, td::uint32 validator_set_hash,
                                          td::BufferSlice data, BroadcastSource source, bool send_to_custom) override;
   void process_shard_block_info_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno, td::BufferSlice data) override;
@@ -137,6 +141,7 @@ class FullNodeImpl : public FullNode {
   };
 
   void update_shard_actor(ShardIdFull shard, bool active, bool enable_plumtree_broadcast);
+  void update_validator_transport_authority();
 
   adnl::AdnlNodeIdShort adnl_id_;
   FileHash zero_state_file_hash_;
@@ -158,10 +163,8 @@ class FullNodeImpl : public FullNode {
   std::string db_root_;
 
   PublicKeyHash sign_cert_by_;
-  std::vector<PublicKeyHash> all_validators_;
-  std::map<PublicKeyHash, adnl::AdnlNodeIdShort> current_validators_;
-
-  std::set<PublicKeyHash> local_keys_;
+  std::vector<PublicKeyHash> validator_transport_roots_;
+  ValidatorAdnlRefCounts local_validator_adnl_ids_;
   std::map<adnl::AdnlNodeIdShort, int> local_collator_nodes_;
 
   td::Promise<td::Unit> started_promise_;
@@ -174,13 +177,13 @@ class FullNodeImpl : public FullNode {
     std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<FullNodeCustomOverlay>> actors_;  // our local id -> actor
   };
   std::map<std::string, CustomOverlayInfo> custom_overlays_;
-  td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_broadcasts_{10000};
-  td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_finality_{10000};
-  td::LRUCache<BlockIdExt, td::Unit> custom_overlays_sent_shard_block_desc_{10000};
+  CustomOverlayRelay custom_overlays_relay_{10000};
 
   void update_private_overlays();
   void update_custom_overlay(CustomOverlayInfo& overlay);
+  // What custom_overlays_relay_ decided to forward; nothing here decides.
   void send_block_broadcast_to_custom_overlays(const BlockBroadcast& broadcast);
+  void custom_relay_block_signatures_verified(BlockBroadcast broadcast);
   void send_block_finality_broadcast_to_custom_overlays(const BlockFinalityBroadcast& finality);
   void send_block_candidate_broadcast_to_custom_overlays(const BlockIdExt& block_id, CatchainSeqno cc_seqno,
                                                          td::uint32 validator_set_hash, const td::BufferSlice& data);
@@ -195,7 +198,11 @@ class FullNodeImpl : public FullNode {
   td::actor::ActorOwn<TokenManager> out_msg_queue_query_token_manager_ =
       td::actor::create_actor<TokenManager>("tokens", /* max_tokens = */ 1);
 
-  std::shared_ptr<RateLimiter<>> limiter_;
+  std::shared_ptr<FullNodeRateLimiter> limiter_;
+  // Shared by every shard actor, like the limiter, so the answers to its
+  // refusals are bounded once for the node. Its counts are exported.
+  std::shared_ptr<RefusalAnswerBudget> refusal_answers_ = std::make_shared<RefusalAnswerBudget>(
+      default_refusal_answer_limits(), td::Timestamp::now(), &health::node_state.refusal_answers);
 
   decltype(limiter_) make_limiter(const FullNodeOptions& opts);
 };

@@ -1,0 +1,9 @@
+Using Python 3.14.4 environment at: $HOME/nhm-c04-tools/python
+Resolved 5 packages in 141ms
+Prepared 1 package in 16ms
+Installed 5 packages in 46ms
+ + attrs==26.1.0
+ + jsonschema==4.26.0
+ + jsonschema-specifications==2025.9.1
+ + referencing==0.37.0
+ + rpds-py==2026.6.3

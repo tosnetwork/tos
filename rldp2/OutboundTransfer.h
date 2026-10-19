@@ -25,6 +25,7 @@
 #include "fec/fec.h"
 
 #include "RldpSender.h"
+#include "rldp-inbound-budget.h"
 
 namespace tos {
 namespace rldp2 {
@@ -46,10 +47,10 @@ struct OutboundTransfer {
   bool is_done() const;
 
   static size_t part_size() {
-    return 2000000;
+    return rldp_part_size;
   }
   static size_t symbol_size() {
-    return 768;
+    return rldp_symbol_size;
   }
 
  private:

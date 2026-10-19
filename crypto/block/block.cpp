@@ -17,6 +17,7 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include "block/auth-policy.h"
 #include "block/block-auto.h"
 #include "block/block-parse.h"
 #include "block/block.h"
@@ -44,12 +45,53 @@ td::Result<PublicKey> PublicKey::from_bytes(td::Slice key) {
   return res;
 }
 
+bool PublicKey::is_forgeable_ed25519(td::Slice key) {
+  if (key.size() != 32) {
+    return false;
+  }
+  auto byte = [&](std::size_t i) { return static_cast<unsigned char>(key[i]); };
+  // y's lowest byte at 0xec or above: the order-2 point and its alias (0xec),
+  // and every y >= 2^255 - 19, exactly when bytes 1..30 are all 0xff and y's
+  // top byte is 0x7f, with either sign bit.
+  if (byte(0) >= 0xec) {
+    for (std::size_t i = 1; i < 31; i++) {
+      if (byte(i) != 0xff) {
+        return false;
+      }
+    }
+    return (byte(31) & 0x7f) == 0x7f;
+  }
+  // Below 0xec each torsion encoding and its sign-bit twin differ only in the
+  // sign bit, so compare with that bit forced on.
+  static const unsigned char torsion_with_sign_bit[4][32] = {
+      {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80},
+      {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80},
+      {0x26, 0xe8, 0x95, 0x8f, 0xc2, 0xb2, 0x27, 0xb0, 0x45, 0xc3, 0xf4, 0x89, 0xf2, 0xef, 0x98, 0xf0,
+       0xd5, 0xdf, 0xac, 0x05, 0xd3, 0xc6, 0x33, 0x39, 0xb1, 0x38, 0x02, 0x88, 0x6d, 0x53, 0xfc, 0x85},
+      {0xc7, 0x17, 0x6a, 0x70, 0x3d, 0x4d, 0xd8, 0x4f, 0xba, 0x3c, 0x0b, 0x76, 0x0d, 0x10, 0x67, 0x0f,
+       0x2a, 0x20, 0x53, 0xfa, 0x2c, 0x39, 0xcc, 0xc6, 0x4e, 0xc7, 0xfd, 0x77, 0x92, 0xac, 0x03, 0xfa},
+  };
+  for (const auto& torsion : torsion_with_sign_bit) {
+    bool equal = true;
+    for (std::size_t i = 0; i < 32 && equal; i++) {
+      unsigned char b = i == 31 ? static_cast<unsigned char>(byte(i) | 0x80) : byte(i);
+      equal = b == torsion[i];
+    }
+    if (equal) {
+      return true;
+    }
+  }
+  return false;
+}
+
 td::Result<PublicKey> PublicKey::parse(td::Slice key) {
   if (key.size() != 48) {
     return td::Status::Error("Serialized Ed25519 public key must be exactly 48 characters long");
   }
   td::uint8 buf[36];
-  if (!buff_base64_decode(td::MutableSlice(buf, 36), key, true)) {
+  if (!buff_base64_decode_exact(td::MutableSlice(buf, 36), key, true)) {
     return td::Status::Error("Public key is not serialized in base64 encoding");
   }
 
@@ -115,7 +157,7 @@ bool unpack_std_smc_addr(const char packed[48], tos::WorkchainId& wc, tos::StdSm
                          bool& testnet) {
   unsigned char buffer[36];
   wc = tos::workchainInvalid;
-  if (!buff_base64_decode(td::MutableSlice{buffer, 36}, td::Slice{packed, 48}, true)) {
+  if (!buff_base64_decode_exact(td::MutableSlice{buffer, 36}, td::Slice{packed, 48}, true)) {
     return false;
   }
   unsigned crc = td::crc16(td::Slice{buffer, 34});
@@ -1901,6 +1943,9 @@ bool valid_config_data(Ref<vm::Cell> cell, const td::BitArray<256>& addr, bool c
       return false;
     }
   }
+  if (validate_auth_policy_config(cell).is_error()) {
+    return false;
+  }
   vm::Dictionary dict{std::move(cell), 32};
   if (!dict.check_for_each(std::bind(check_one_config_param, _1, _2, addr.cbits(), relax_par0))) {
     return false;
@@ -1920,6 +1965,7 @@ td::Status valid_config_transition(Ref<vm::Cell> old_cfg_root, Ref<vm::Cell> new
     return td::Status::Error("configuration root is missing");
   }
   try {
+    TRY_STATUS(validate_auth_policy_transition(old_cfg_root, new_cfg_root));
     vm::Dictionary old_dict{std::move(old_cfg_root), 32};
     vm::Dictionary new_dict{std::move(new_cfg_root), 32};
     TRY_RESULT_PREFIX(old_workchains, Config::unpack_workchain_list(old_dict.lookup_ref(td::BitArray<32>{12})),
@@ -2318,36 +2364,46 @@ bool get_transaction_owner(Ref<vm::Cell> trans_ref, tos::StdSmcAddress& addr) {
   return get_transaction_id(std::move(trans_ref), addr, lt);
 }
 
-td::uint32 compute_validator_set_hash(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from,
-                                      const std::vector<tos::ValidatorDescr>& nodes) {
-  /*
-  std::vector<tl_object_ptr<tos_api::test0_validatorSetItem>> s_vec;
-
-  for (auto& n : nodes) {
-    auto id = ValidatorFullId{n.key}.short_id();
-    s_vec.emplace_back(create_tl_object<tos_api::test0_validatorSetItem>(id, n.weight));
-  }
-
-  auto obj = create_tl_object<tos_api::test0_validatorSet>(cc_seqno, std::move(s_vec));
-  auto B = serialize_tl_object(obj, true);
-  return td::crc32c(B.as_slice());
-  */
+// Version 2 of the validator-set commitment. The inherited version hashed a
+// validator's raw 32-byte classical key, which cannot represent a post-quantum
+// validator at all and which tied the commitment to the key rather than to the
+// validator. This one commits to both identities instead: the stable membership
+// identity, and the identity of the key currently held. Rotating a key therefore
+// changes the commitment while the validator keeps its place in the set.
+//
+// The public key is deliberately not repeated here. key_id is already a hash over
+// the algorithm and the key, so including the key as well would add length without
+// adding any binding.
+//
+// The magic is a new value rather than the inherited one, so a preimage produced by
+// either version can never be mistaken for the other:
+//   SHA-256("TOS-VALIDATOR-SET-v2")[0..4) = 0x79ae62d2
+std::string validator_set_hash_preimage(tos::CatchainSeqno cc_seqno, const std::vector<tos::ValidatorDescr>& nodes) {
   CHECK(nodes.size() <= 0xffffffff);
-  auto tot_size = 1 + 1 + 1 + nodes.size() * (8 + 2 + 8);
+  // uint32 words: magic + cc_seqno + count, then per validator
+  // validator_id(8) + key_id(8) + weight(2) + adnl_addr(8)
+  auto tot_size = 1 + 1 + 1 + nodes.size() * (8 + 8 + 2 + 8);
   auto buff = std::make_unique<td::uint32[]>(tot_size);
   td::TlStorerUnsafe storer(reinterpret_cast<unsigned char*>(buff.get()));
   auto* begin = storer.get_buf();
-  storer.store_int(-1877581587);  // magic inherited from test0.validatorSet
+  storer.store_int(static_cast<td::int32>(validator_set_hash_magic_v2));
   storer.store_int(cc_seqno);
   storer.store_binary((td::uint32)nodes.size());
   for (auto& n : nodes) {
-    storer.store_binary(n.key.as_bits256());
+    storer.store_binary(n.validator_id.value);
+    storer.store_binary(n.key_id.value);
     storer.store_long(n.weight);
     storer.store_binary(n.addr);
   }
   auto* end = storer.get_buf();
   CHECK(static_cast<size_t>(end - begin) == 4 * tot_size);
-  return td::crc32c(td::Slice(begin, end));
+  return std::string(reinterpret_cast<const char*>(begin), static_cast<std::size_t>(end - begin));
+}
+
+td::uint32 compute_validator_set_hash(tos::CatchainSeqno cc_seqno, tos::ShardIdFull from,
+                                      const std::vector<tos::ValidatorDescr>& nodes) {
+  auto preimage = validator_set_hash_preimage(cc_seqno, nodes);
+  return td::crc32c(td::Slice(preimage));
 }
 
 td::Result<Ref<vm::Cell>> get_config_data_from_smc(Ref<vm::Cell> acc_root) {

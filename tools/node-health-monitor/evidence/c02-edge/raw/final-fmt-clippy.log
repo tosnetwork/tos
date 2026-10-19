@@ -1,0 +1,4 @@
++ cargo fmt --all -- --check
++ cargo clippy --workspace --all-targets --locked -- -D warnings
+    Checking tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.54s

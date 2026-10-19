@@ -1,0 +1,42 @@
+{
+  "ios_commit": "6e69788",
+  "scope": "Swift native persisted live proof session and full app compile; no wallet readiness acceptance",
+  "validation": [
+    "Private per-wallet directory and backup exclusion",
+    "Explicit enrollment required",
+    "Checkpoint exists before result return",
+    "Reopened persisted state read succeeds",
+    "Lost enrolled state cannot be reset",
+    "Backup exclusion removal compiles and fails named assertion; restored passes",
+    "make compile complete app build succeeds"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-ios-proof-session-test-updated-pin.log",
+      "bytes": 49710,
+      "sha256": "5aa5b0c7951ce809acf50dd5a8cc00784e6aafed606255e1880bfab78f4e71cb"
+    },
+    {
+      "file": "20261007-ios-session-backup-control.raw.log",
+      "bytes": 431619,
+      "sha256": "d3c8ae915c018b40094bdb1e1419d5303ec9dbd3b4ae752547ca4aacf4cb7ef1"
+    },
+    {
+      "file": "20261007-ios-session-restored.log",
+      "bytes": 11922,
+      "sha256": "75da8ad98815928659707c4005bbdc47bbd146dde462192e5f2d7b2104519bea"
+    },
+    {
+      "file": "20261007-ios-session-full-app-build.log",
+      "bytes": 137773,
+      "sha256": "3c55d2c44c847ac3d9e7cd20a5a646b77a4875aabfe702c650a6290f76f5c6c1"
+    }
+  ],
+  "remaining": [
+    "Authenticated live acquisition and independently provisioned anchors",
+    "Wallet account/configuration and fee-route authority binding",
+    "Creation, funded dual POP and staged same-address rotation",
+    "Transaction-bound recipient delivery and failure cases",
+    "Physical device and independent crypto/release review; final-head CI"
+  ]
+}

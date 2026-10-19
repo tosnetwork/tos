@@ -6,7 +6,7 @@ max_seconds=${2:-28800}
 start=$(date +%s)
 
 while (( $(date +%s) - start < max_seconds )); do
-  pid=$(pgrep -n -f '^/home/tomi/tos/build/validator-engine/validator-engine.*node3' || true)
+  pid=$(systemctl show tos-pq-validator@3.service --property=MainPID --value || true)
   if [[ -z "$pid" || ! -r "/proc/$pid/status" ]]; then
     printf '%s process=not-running\n' "$(date -u +%FT%TZ)" >> "$log_file"
     exit 0

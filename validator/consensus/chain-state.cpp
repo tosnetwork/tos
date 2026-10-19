@@ -15,22 +15,24 @@ namespace tos::validator::consensus {
 
 td::actor::Task<td::Ref<ChainState>> ChainState::from_manager(td::actor::ActorId<ManagerFacade> manager,
                                                               ShardIdFull shard, std::vector<BlockIdExt> blocks,
-                                                              BlockIdExt min_mc_block_id) {
+                                                              BlockIdExt min_mc_block_id,
+                                                              std::optional<CandidateId> requesting_candidate,
+                                                              double wait_timeout) {
   if (blocks.size() == 1 && blocks[0].seqno() == 0) {
     CHECK(blocks[0].shard_full() == shard);
-    auto state =
-        co_await td::actor::ask(manager, &ManagerFacade::wait_block_state_root, blocks[0], td::Timestamp::in(10.0));
+    auto state = co_await td::actor::ask(manager, &ManagerFacade::wait_block_state_root, blocks[0],
+                                         td::Timestamp::in(wait_timeout), requesting_candidate);
     co_return td::make_ref<ChainState>(ZerostateTip{blocks[0], state}, min_mc_block_id);
   }
 
   std::vector<td::actor::StartedTask<td::Ref<vm::Cell>>> wait_state_root;
   std::vector<td::actor::StartedTask<td::Ref<BlockData>>> wait_block_data;
   for (auto block : blocks) {
-    wait_state_root.push_back(
-        td::actor::ask(manager, &ManagerFacade::wait_block_state_root, block, td::Timestamp::in(10.0)));
+    wait_state_root.push_back(td::actor::ask(manager, &ManagerFacade::wait_block_state_root, block,
+                                             td::Timestamp::in(wait_timeout), requesting_candidate));
     if (block.seqno() != 0) {
       wait_block_data.push_back(
-          td::actor::ask(manager, &ManagerFacade::wait_block_data, block, td::Timestamp::in(10.0)));
+          td::actor::ask(manager, &ManagerFacade::wait_block_data, block, td::Timestamp::in(wait_timeout)));
     }
   }
   auto states = co_await td::actor::all(std::move(wait_state_root));
@@ -120,7 +122,13 @@ td::Ref<ChainState> ChainState::apply(const BlockCandidate& candidate) const {
     bool rc = block::gen::unpack_cell(block->root_cell(), rec);
     LOG_CHECK(rc) << "Failed to unpack block " << candidate.id.to_str();
 
-    auto state = vm::MerkleUpdate::apply(root_, rec.state_update).ensure().move_as_ok();
+    auto state_result = vm::MerkleUpdate::apply(root_, rec.state_update);
+    if (state_result.is_error()) {
+      state_result = state_result.move_as_error_prefix(PSTRING() << "candidate block id = " << candidate.id.to_str()
+                                                                 << "; base state root hash = "
+                                                                 << root_->get_hash().to_hex() << ": ");
+    }
+    auto state = state_result.ensure().move_as_ok();
 
     return td::Ref<ChainState>(new ChainState{NormalTip{block, state}, min_mc_block_id_},
                                td::Ref<ChainState>::acquire_t{});

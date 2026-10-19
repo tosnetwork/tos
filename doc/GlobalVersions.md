@@ -2,7 +2,23 @@
 
 Global versioning is controlled by `ConfigParam 8`, defined in [block.tlb](../crypto/block/block.tlb).
 
+This source tree advertises `SUPPORTED_VERSION = 16` in
+[`global-version.h`](../common/global-version.h). That is a binary capability;
+the active version of a network is its on-chain ConfigParam 8.
+
 It enables protocol capability bits and gates behavior across validators, contracts, and VM execution.
+
+Current-network test fixtures use version 16, including the native authentication
+emulator. Minimum-version compatibility tests and future-version rejection tests
+select their versions explicitly. Recorded configuration BOCs and historical
+measurements retain the version actually observed; changing a fixture default
+never changes an existing network.
+
+PredictionMarket V1 permits risk-increasing operations only at versions 14, 15
+and 16. Its contract and CLI keep the same explicit allowlist. Later versions
+continue to reject new exposure while allowing withdrawals and other exit
+operations on already activated markets. The production-BOC sandbox exercises
+the current version and the future-version rejection/withdrawal boundary.
 
 AI actor protocol primitives that affect consensus-visible behavior, such as scheduled task timeouts, delivery failure records, supervision, or new execution semantics, must be gated through the same global-version and capability process.
 
@@ -314,11 +330,11 @@ end of this file for the activation plan.
 - When the action phase fails with bounce-on-fail, bounce now returns the whole remaining
   message balance from before the action phase, instead of whatever was left after partially
   processed actions.
-- TOS-specific (not part of upstream TON's version 14): deploy activation after a StateInit
-  message now requires the compute phase to have committed successfully (`success`), rather than
-  merely accepted gas (`accepted`). Before version 14, an account could be deployed by a message
-  that accepted gas but then threw during compute, matching legacy TON behavior. See
-  `compute_phase_can_activate_account` in `crypto/block/transaction.cpp`.
+- TOS-specific (not part of the reference implementation's version 14): deploy activation after
+  a StateInit message now requires the compute phase to have committed successfully (`success`),
+  rather than merely accepted gas (`accepted`). Before version 14, an account could be deployed by
+  a message that accepted gas but then threw during compute, matching the legacy behavior of the
+  reference implementation. See `compute_phase_can_activate_account` in `crypto/block/transaction.cpp`.
 
 ## Version 15
 
@@ -343,9 +359,30 @@ Not yet activated on any TOS network, same as version 14 above.
   `max_total_msg_cells`, configured in `ConfigParam 43`). Older v1/v2 `ConfigParam 43` records
   fall back to these same defaults.
 
-## Version 16
+## Version 16: unified development baseline
 
-Not yet activated on any TOS network.
+The execution features listed below are enabled at version 16, the
+genesis version: ML-DSA-44, Falcon-512 padded, the generic `PQCHECKSIG_SUITE`
+instruction (suites 1-4), `LMSCHECKFEEHASH`, all three Poseidon2 instructions,
+the `c7[18]` import-statistics element and the frozen-account recovery fix.
+
+At version 16 and later, read-only getters expose `c7[18]` as `null` because
+they do not authenticate an external-message import. This applies to emulator,
+LiteServer, control and proof-verification getter contexts. Earlier versions
+retain their original tuple layout.
+
+Authorization-policy configuration uses the same version-16 baseline:
+ConfigParam 48 must be present and valid, and must belong to both the mandatory
+and critical parameter lists (ConfigParams 9 and 10). Fresh Genesis generation
+requires an explicit 32-byte AUTH namespace, including ordinary test networks.
+The Quantum admission candidate retains its explicit namespace and fee profile
+without raising the protocol version above 16.
+
+This changes execution under version 16: existing development-chain history
+requires the original binary, or a fresh genesis for the consolidated baseline.
+No running network is migrated by this source change.
+
+Activation on a particular network must be checked against its ConfigParam 8.
 
 ### New TVM instructions
 - `PQCHECKSIG_MLDSA44` (`message context signature public_key - valid`) - FIPS 204
@@ -360,15 +397,9 @@ Not yet activated on any TOS network.
   applies that test to every account status. Uninitialized accounts are unaffected.
   See `crypto/block/transaction.cpp`, the `global_version < 16` branch.
 
-These two are the whole of the difference between 15 and 16. That was established by
-searching for the version compared against 16 in any form, not only `>= 16`: the first
-attempt looked for `>= 16` and `> 15`, found nothing outside the opcode table, and
-missed the transaction change because it is spelled `< 16`. Every other threshold in
-the transaction engine is `>= 15` or lower and is satisfied at both versions.
+### Poseidon2 permutation and hash
 
-## Version 17
-
-Not yet activated on any TOS network.
+Activation on a particular network must be checked against its ConfigParam 8.
 
 ### New TVM instructions
 - `POSEIDON2_PERM8` (`a0 a1 a2 a3 a4 a5 a6 a7 - b0 b1 b2 b3 b4 b5 b6 b7`) - the
@@ -382,10 +413,9 @@ Not yet activated on any TOS network.
   with the domain constant in lane 0, returning lane 0 of the result. There is
   no capacity element and no padding convention beyond that sentence.
 
-Both cost 3,500 gas, frozen on 2026-09-20 by measuring the permutation against
-instructions whose price was already fixed, and are rejected as invalid (exit 6)
-at versions 0-16. `PQCHECKSIG_MLDSA44` keeps its own minimum of
-16 and is unaffected: the ceiling moves, the older gate does not.
+Both cost 2,800 gas in the current frozen tariff, and are rejected as invalid (exit 6)
+at versions 0-15. `PQCHECKSIG_MLDSA44` keeps its own minimum of
+16; all five new instructions share the same development baseline.
 
 The parameters are frozen against a pinned upstream commit and are not loaded at
 runtime. Both VMs rebuild the same manifest byte stream from their own vendored
@@ -396,12 +426,11 @@ Adding a permutation to the instruction set is a genesis-time decision in
 practice: doing it after a network starts is a hard fork, and the contracts that
 need it cannot be priced without it.
 
-### Transaction changes
-None. Version 17 adds instructions and changes nothing in the transaction engine.
+Poseidon2 adds no separate transaction-engine change.
 
-## Version 18
+### Poseidon2 Merkle path
 
-Not yet activated on any TOS network.
+Activation on a particular network must be checked against its ConfigParam 8.
 
 ### New TVM instructions
 - `POSEIDON2_PATH7` (`leaf domain path index depth - root`) - folds a Merkle
@@ -431,19 +460,41 @@ Not yet activated on any TOS network.
   - gas is charged per level as the level is read, so an oversized path is
     paid for on the way in.
 
-  It costs 500 gas plus 3,700 a level: one permutation at the frozen 3,500 plus
-  the two cell loads a level needs. **Neither figure is measured.** The 3,500
-  is; the rest is an assembly of prices. Before this reaches a network it wants
-  what `POSEIDON2_PERM8` got -- measured against instructions that already have
-  a price, on target hardware, quoted as a bracket.
+  It costs 500 base gas plus 3,000 per level, with ordinary cell-load charges.
+  The current tariff is pinned in both VM implementations; target-hardware
+  qualification remains part of release validation.
 
-Rejected as invalid (exit 6) at versions 0-17. `POSEIDON2_PERM8` and
-`POSEIDON2_HASH7` keep their minimum of 17 and `PQCHECKSIG_MLDSA44` its 16: the
-ceiling moves, the older gates do not.
+Rejected as invalid (exit 6) at versions 0-15. `POSEIDON2_PERM8` and
+`POSEIDON2_HASH7` keep their minimum of 16 and `PQCHECKSIG_MLDSA44` its 16.
 
-### Transaction changes
-None. Version 18 adds one instruction and changes nothing in the transaction
-engine.
+PATH7 adds no separate transaction-engine change.
+
+### Falcon-512 padded, generic suite and fee verification
+
+- `PQCHECKSIG_FALCON512_PADDED` (`F93101`) consumes message/signature/public-key
+  Cells, uses the fixed original Falcon-512 padded profile and returns a TVM
+  boolean. It charges 20,000 base gas plus one gas per decoded byte and ordinary
+  instruction/cell loads. See [the frozen profile](falcon512-profile-v1.json) and
+  [implementation and remaining gates](wallet-falcon-fndsa.md).
+- `PQCHECKSIG_SUITE` (`F93102`, `message context signature public_key suite - valid`)
+  dispatches suite 1 ML-DSA-44, suite 2 Falcon-512 padded, suite 3
+  SLH-DSA-SHA2-128s and suite 4 the one-level HSS/LMS fee verifier. Suite 2 shares
+  `F93101`'s version gate.
+- `LMSCHECKFEEHASH` (`F93103`, `hash leaf signature public_key - valid`) is the
+  fixed H20/W4 fee-admission profile. See [tvm-lms-fee-hash.md](tvm-lms-fee-hash.md).
+
+All three are rejected as invalid (exit 6) at versions 0-15. The Falcon,
+SLH-DSA and LMS tariffs are prototype values pending reference-hardware
+calibration and protocol approval; profile acceptance bytes cannot later be
+reinterpreted as formal FN-DSA.
+
+### c7 tuple
+
+**c7** tuple extended from 18 to 19 elements:
+* **18**: `null | [1, incoming_message_hash, cells, bits]` - complete import
+  statistics of the inbound external message of an ordinary, non-special
+  transaction; null for internal messages, tick/tock, getters and compute-only
+  contexts. See [tvm-lms-fee-hash.md](tvm-lms-fee-hash.md).
 
 ## Capability flags versus version bumps
 
@@ -484,12 +535,13 @@ and raising it activates nothing. The safe sequence:
    its current active version.
 2. Get every validator upgraded to such a binary before touching `ConfigParam 8`. This is the
    step that actually protects the network, because nothing downstream will refuse on its own.
-3. Raise `ConfigParam 8` one version at a time, observing stability at each, and never past a
-   version some validator does not implement.
+3. Activate the unified version 16 only after all validators implement the same
+   baseline. There are no intermediate development versions 17, 18 or 19 to activate.
 4. Mainnet activation happens last, after the target version has proven stable on a public
    testnet.
 
 For the 15 -> 16 transition specifically, `tools/pq/activation.py` validates a proposal against
 this sequence -- evidence bound to one release, explicit owner approvals, and a roster in which
 every validator acknowledges the binary it runs -- and emits an unsigned `ConfigParam 8` payload.
-A validated proposal is not an activation. See [pq-v16-readiness.md](pq-v16-readiness.md).
+A validated proposal is not an activation. The proposal checker and its tests
+are under [`tools/pq/`](../tools/pq/) and [`test/pq-readiness/`](../test/pq-readiness/).

@@ -10,4 +10,5 @@ pub mod client_json_rpc;
 pub mod data_models;
 pub mod stack;
 
+pub use chain_rpc_rs::client::MAX_RESPONSE_BYTES;
 pub use stack::RPCStackEntry;

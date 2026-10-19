@@ -89,7 +89,8 @@ describe.skipIf(!canRun)("Jetton live integration", () => {
     beforeAll(async () => {
       // Derive wallet from mnemonic
       const keyPair = await mnemonicToPrivateKey(mnemonic!);
-      const wallet = WalletV4R2.create({ publicKey: keyPair.publicKey });
+      const networkGlobalId = await client.getNetworkGlobalId();
+      const wallet = WalletV4R2.create({ publicKey: keyPair.publicKey, networkGlobalId });
       walletAddress = wallet.address;
 
       // Get the jetton wallet address for our owner
@@ -113,7 +114,8 @@ describe.skipIf(!canRun)("Jetton live integration", () => {
 
       // Build signer from mnemonic
       const keyPair = await mnemonicToPrivateKey(mnemonic!);
-      const wallet = WalletV4R2.create({ publicKey: keyPair.publicKey });
+      const networkGlobalId = await client.getNetworkGlobalId();
+      const wallet = WalletV4R2.create({ publicKey: keyPair.publicKey, networkGlobalId });
       const openedWallet = open(wallet as any, client);
       const signer = new KeyPairSigner(keyPair, openedWallet as any);
 

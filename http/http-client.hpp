@@ -105,12 +105,18 @@ class HttpMultiClientImpl : public HttpClient {
   void send_request(
       std::unique_ptr<HttpRequest> request, std::shared_ptr<HttpPayload> payload, td::Timestamp timeout,
       td::Promise<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> promise) override;
+  // An outbound connection opened by send_request has closed.
+  void connection_closed();
 
  private:
   std::string domain_;
   td::IPAddress addr_;
 
+  // Each request opens its own connection, which lives until the exchange
+  // ends; at most this many are open at once, and requests beyond them are
+  // refused rather than queued.
   size_t max_connections_;
+  size_t open_connections_ = 0;
   td::uint32 max_requests_per_connect_;
 
   td::Timestamp next_create_at_;

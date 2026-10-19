@@ -11,5 +11,6 @@ pub mod store;
 
 pub use store::{
     DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerIndexStats, ExplorerTransactionRecord,
-    IndexedRecord, IndexerCheckpoint, IndexerStore, ListFilters,
+    IndexedRecord, IndexerCheckpoint, IndexerStore, LedgerAvailability, ListFilters,
+    attribution_complete,
 };

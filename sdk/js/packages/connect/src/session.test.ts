@@ -179,7 +179,7 @@ describe("Session persistence", () => {
   });
 
   it("loadSession returns null for corrupt JSON", async () => {
-    await storage.setItem("session_v2", "not-valid-json{{{");
+    await storage.setItem("session_v3", "not-valid-json{{{");
     const loaded = await loadSession(storage);
     expect(loaded).toBeNull();
   });

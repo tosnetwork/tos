@@ -73,7 +73,7 @@ struct Run {
 // Runs one instruction over a prepared stack. Anything already on the stack is
 // free, so the gas reported is the instruction's own price plus the fixed
 // overhead of running a one-instruction continuation.
-Run run(unsigned opcode, const std::vector<td::RefInt256>& inputs, int version = 17, long long budget = 1000000,
+Run run(unsigned opcode, const std::vector<td::RefInt256>& inputs, int version = 16, long long budget = 1000000,
         td::Ref<vm::Cell> extra = {}) {
   td::Ref<vm::Stack> stack{true};
   for (const auto& value : inputs) {
@@ -254,7 +254,7 @@ void check_vectors() {
 void check_version_gate() {
   namespace kat = vm::poseidon2::kat;
   const auto inputs = state_inputs(kat::perm8[0].input);
-  for (int version = 0; version <= 16; ++version) {
+  for (int version = 0; version < 16; ++version) {
     for (unsigned opcode : {vm::poseidon2_perm8_opcode, vm::poseidon2_hash7_opcode}) {
       const auto result = run(opcode, inputs, version);
       require(result.exit == 6, "opcode " + hex(reinterpret_cast<const unsigned char*>(&opcode), 3) +
@@ -262,9 +262,13 @@ void check_version_gate() {
     }
   }
   for (unsigned opcode : {vm::poseidon2_perm8_opcode, vm::poseidon2_hash7_opcode}) {
-    require(run(opcode, inputs, 17).exit == 0, "an opcode was refused at version 17");
+    require(run(opcode, inputs, 16).exit == 0, "an opcode was refused at version 16");
   }
-  // The earlier instruction must not have been dragged forward with it. At 16 it
+  for (int version = 0; version < 16; ++version) {
+    require(run(vm::poseidon2_path7_opcode, {}, version).exit == 6, "PATH7 was accepted before version 16");
+  }
+  require(run(vm::poseidon2_path7_opcode, {}, 16).exit == 2, "PATH7 must reach operand validation at version 16");
+  // The ML-DSA instruction shares the same activation boundary. At 16 it
   // is reachable, so it fails on its own arguments rather than on the version.
   const auto mldsa = run(vm::pq_mldsa44_opcode, {}, 16);
   require(mldsa.exit == 2, "ML-DSA no longer runs at version 16 (exit " + std::to_string(mldsa.exit) + ")");
@@ -318,7 +322,7 @@ void check_fail_closed() {
   auto short_inputs = state_inputs(kat::perm8[0].input);
   short_inputs.pop_back();
   for (unsigned opcode : {vm::poseidon2_perm8_opcode, vm::poseidon2_hash7_opcode}) {
-    require(run(opcode, short_inputs, 17, 1000000, vm::CellBuilder().finalize()).exit == 7,
+    require(run(opcode, short_inputs, 16, 1000000, vm::CellBuilder().finalize()).exit == 7,
             "a cell operand was not a type error");
   }
 }
@@ -334,9 +338,9 @@ void check_gas() {
     require(baseline.exit == 0, "gas baseline did not run");
     require(baseline.gas == expected,
             "gas is " + std::to_string(baseline.gas) + ", expected " + std::to_string(expected));
-    const auto exact = run(opcode, inputs, 17, baseline.gas);
+    const auto exact = run(opcode, inputs, 16, baseline.gas);
     require(exact.exit == 0, "the exact budget was not enough");
-    const auto starved = run(opcode, inputs, 17, baseline.gas - 1);
+    const auto starved = run(opcode, inputs, 16, baseline.gas - 1);
     require(starved.exit == -14, "one gas short did not run out of gas");
     // A refused input is still charged: probing must not be free.
     auto bad = inputs;
@@ -472,7 +476,7 @@ void check_path7() {
   stack.write().push_cell(build_path(levels));
   stack.write().push_int(td::make_refint(static_cast<long long>(kIndex)));
   stack.write().push_int(td::make_refint(kDepth));
-  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 18, std::move(stack),
+  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 16, std::move(stack),
                     vm::GasLimits{1000000, 1000000}};
   const int exit = ~state.run();
   require(exit == 0, "POSEIDON2_PATH7 did not run: exit " + std::to_string(exit));
@@ -527,11 +531,92 @@ long long path7_gas(int depth) {
   stack.write().push_cell(build_path(levels));
   stack.write().push_int(td::make_refint(0));
   stack.write().push_int(td::make_refint(depth));
-  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 18, std::move(stack),
+  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 16, std::move(stack),
                     vm::GasLimits{10000000, 10000000}};
   const int exit = ~state.run();
   require(exit == 0, "POSEIDON2_PATH7 did not run at depth " + std::to_string(depth));
   return state.gas_consumed();
+}
+
+// The same run, with the index as a parameter and the refusal kept rather
+// than asserted away. A malformed operand has a price as well as an
+// exception, and the price is the half nobody was checking.
+struct Path7Run {
+  int exit;
+  long long gas;
+};
+
+Path7Run path7_run(int depth, td::RefInt256 index) {
+  std::vector<std::array<unsigned char, 6 * 32>> levels;
+  for (int level = 0; level < depth; ++level) {
+    std::array<unsigned char, 6 * 32> packed{};
+    for (int position = 0; position < 6; ++position) {
+      const auto value = sibling(level, position);
+      std::memcpy(packed.data() + position * 32, value.data(), 32);
+    }
+    levels.push_back(packed);
+  }
+  unsigned char leaf[32] = {};
+  leaf[31] = 0x11;
+  unsigned char domain[32] = {};
+  domain[31] = 0x2b;
+  td::Ref<vm::Stack> stack{true};
+  stack.write().push_int(int_of(leaf));
+  stack.write().push_int(int_of(domain));
+  stack.write().push_cell(build_path(levels));
+  stack.write().push_int(std::move(index));
+  stack.write().push_int(td::make_refint(depth));
+  vm::VmState state{vm::load_cell_slice_ref(opcode_cell(vm::poseidon2_path7_opcode)), 16, std::move(stack),
+                    vm::GasLimits{10000000, 10000000}};
+  const int exit = ~state.run();
+  return Path7Run{exit, state.gas_consumed()};
+}
+
+// An index that does not fit its depth costs the base and nothing else.
+//
+// This is the assertion that was missing, and its absence let the two VMs
+// charge differently for one public instruction. The Rust VM decides the
+// index from `(index, depth)` before touching a cell; this one used to run
+// every level first and refuse afterwards, so the same operand cost 500 gas
+// there and 500 plus twelve levels here.
+//
+// Both halves matter. Asserting only the exception -- which the Rust
+// malformed corpus did -- leaves the price free to diverge, and the price is
+// what a node charges.
+void check_path7_index_refusal_is_cheap() {
+  constexpr int kDepth = 12;
+  // 7^12, the smallest index that needs a thirteenth base-seven digit.
+  td::RefInt256 past = td::make_refint(1);
+  for (int i = 0; i < kDepth; ++i) {
+    past = past * td::make_refint(7);
+  }
+
+  const Path7Run refused = path7_run(kDepth, past);
+  require(refused.exit == static_cast<int>(vm::Excno::range_chk),
+          "an index past the depth exited " + std::to_string(refused.exit) +
+              ", not a range check");
+
+  // What a refusal at depth 1 costs, which is the base plus this harness's
+  // own fixed cost and no level at all. A refusal at depth 12 must cost the
+  // same: the index is decided before any level is charged, so depth cannot
+  // enter the price of refusing it.
+  const Path7Run shallow = path7_run(1, td::make_refint(7));
+  require(shallow.exit == static_cast<int>(vm::Excno::range_chk),
+          "an index past a depth of one was not refused");
+  require(refused.gas == shallow.gas,
+          "refusing an oversized index cost " + std::to_string(refused.gas) +
+              " gas at depth 12 and " + std::to_string(shallow.gas) +
+              " at depth 1. The index must be decided before any level is "
+              "charged, or the price of a malformed operand grows with a depth "
+              "whose levels are never walked.");
+
+  // And it is cheaper than doing the work, by about the levels it skips.
+  const long long honest = path7_gas(kDepth);
+  require(refused.gas * 4 < honest,
+          "refusing an oversized index cost " + std::to_string(refused.gas) +
+              " against " + std::to_string(honest) +
+              " for walking the path, which is not the early refusal this "
+              "claims to be.");
 }
 
 void check_path7_gas() {
@@ -540,6 +625,25 @@ void check_path7_gas() {
   constexpr long long kPerLevel = 3000 + 2 * 100;
   const long long four = path7_gas(4);
   const long long five = path7_gas(5);
+  // The base, isolated. Extrapolating back to depth zero leaves the base plus
+  // this harness's own fixed cost for running a one-instruction continuation,
+  // so the constant below is that sum and not the tariff alone. Without this
+  // the C++ base price is unguarded: the delta check cancels it exactly, and
+  // setting `poseidon2_path7_base_gas_price` to zero passed every C++ test
+  // while the Rust VM's absolute pinned it. Two VMs that disagree about what a
+  // withdrawal costs do not agree at all.
+  //
+  // Written as literals, like the Rust VM's absolute and for the same reason:
+  // a test that reads the constant it is checking cannot check it. 500 is the
+  // base; 39 is what this harness costs to run one instruction, and is the
+  // same 39 the Rust test spells `34 + 5`.
+  constexpr long long kBaseAndHarness = 500 + 39;
+  const long long intercept = four - 4 * kPerLevel;
+  require(intercept == kBaseAndHarness,
+          "POSEIDON2_PATH7 extrapolates back to " + std::to_string(intercept) +
+              " at depth zero, not " + std::to_string(kBaseAndHarness) +
+              ". The base price is the only thing in that figure that should ever move, and "
+              "it may not move in one VM alone.");
   require(five - four == kPerLevel,
           "one more level of POSEIDON2_PATH7 costs " + std::to_string(five - four) + ", not " +
               std::to_string(kPerLevel) +
@@ -561,6 +665,7 @@ int main() {
       {"opcode registration", check_opcode_registration},
       {"path7", check_path7},
       {"path7 gas", check_path7_gas},
+      {"path7 index refusal is cheap", check_path7_index_refusal_is_cheap},
   };
   // The VM narrates every instruction at info level; only failures matter here.
   SET_VERBOSITY_LEVEL(VERBOSITY_NAME(ERROR));

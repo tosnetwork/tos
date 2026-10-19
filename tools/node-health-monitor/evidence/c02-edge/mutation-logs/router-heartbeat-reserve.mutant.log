@@ -1,0 +1,37 @@
+$ cargo test --locked -p tos-health-services --test http edge_router_reserves_burst_token_for_approved_heartbeat -- --exact
+timeout_seconds=120
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+warning: unused variable: `heartbeat`
+  --> crates/health-services/src/edge.rs:37:24
+   |
+37 |     fn take(&mut self, heartbeat: bool) -> bool {
+   |                        ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_heartbeat`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `tos-health-services` (lib) generated 1 warning (run `cargo fix --lib -p tos-health-services` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.84s
+     Running tests/http.rs (target/debug/deps/http-559405db5d53b52c)
+
+running 1 test
+test edge_router_reserves_burst_token_for_approved_heartbeat ... FAILED
+
+failures:
+
+---- edge_router_reserves_burst_token_for_approved_heartbeat stdout ----
+
+thread 'edge_router_reserves_burst_token_for_approved_heartbeat' (641402) panicked at crates/health-services/tests/http.rs:244:5:
+assertion `left == right` failed
+  left: 200
+ right: 429
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    edge_router_reserves_burst_token_for_approved_heartbeat
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 14 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p tos-health-services --test http`
+
+EXIT=101

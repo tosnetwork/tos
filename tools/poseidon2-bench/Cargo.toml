@@ -9,6 +9,9 @@ description = "Prices POSEIDON2_PERM8 and POSEIDON2_HASH7 against instructions w
 chain_block = { path = "../../tosctl/src/block" }
 tos_sandbox = { path = "../../tosctl/src/sandbox" }
 tos_vm = { path = "../../tosctl/src/vm" }
+# A private directory per probe compile. The pinned version is the one
+# the sandbox crate already locks, so this adds an edge, not a resolution.
+tempfile = "=3.27.0"
 
 [lints.clippy]
 unwrap_used = "deny"

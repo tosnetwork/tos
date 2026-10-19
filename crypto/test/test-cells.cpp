@@ -197,6 +197,104 @@ void test_bitstring_fill(unsigned n, unsigned p, unsigned k) {
   ASSERT_EQ(td::to_binary(bs), s);
 }
 
+// The bytes a contract has to put in a pruned branch so that the platform agrees with
+// it. A controller proves the code it was born with by sending only the hash and depth
+// of its code and data; the elector rebuilds the two pruned branches from those four
+// numbers and requires the resulting state-init commitment to equal the sender address.
+//
+// That reconstruction is only a proof while the hand-built branch is byte-for-byte the
+// branch the platform would have made. This is what says so, and it is here rather than
+// in a comment because the layout is four fields in a fixed order and nothing about the
+// contract announces when one of them moves.
+TEST(Cells, pruned_branch_rebuilt_from_a_hash_and_a_depth) {
+  auto leaf = [](int tag) {
+    vm::CellBuilder cb;
+    cb.store_long(tag, 32);
+    return cb.finalize();
+  };
+  // Cells with references, because `create_pruned_branch` returns a childless cell
+  // unchanged -- there is nothing in it to prune -- and the comparison would then be
+  // against the original rather than against a branch.
+  auto with_children = [&](int tag) {
+    vm::CellBuilder cb;
+    cb.store_long(tag, 16);
+    cb.store_ref(leaf(tag + 1));
+    cb.store_ref(leaf(tag + 2));
+    return cb.finalize();
+  };
+
+  auto code = with_children(0xc0);
+  auto data = with_children(0xda);
+
+  // What the contract builds, from the four numbers a witness carries.
+  auto rebuilt = [](td::Ref<vm::Cell> of) {
+    vm::CellBuilder cb;
+    cb.store_long(1, 8);  // PrunedBranch
+    cb.store_long(1, 8);  // one level
+    cb.store_bytes(of->get_hash(0).as_slice());
+    cb.store_long(of->get_depth(0), 16);
+    return cb.finalize(true);
+  };
+
+  for (auto& original : {code, data}) {
+    auto native = vm::CellBuilder::create_pruned_branch(original, 1);
+    auto mine = rebuilt(original);
+    ASSERT_TRUE(native->get_hash() == mine->get_hash());
+    ASSERT_EQ(native->get_depth(), mine->get_depth());
+    ASSERT_EQ(native->get_level(), 1u);
+    ASSERT_EQ(mine->get_level(), 1u);
+    // 8 + 8 + 256 + 16
+    ASSERT_EQ(vm::CellSlice(vm::NoVm{}, mine).size(), 288u);
+  }
+
+  // The state init a validator controller is deployed with: no split depth, no tick-tock,
+  // code and data present, no library. Five bits and two references, in that order.
+  auto state_init = [](td::Ref<vm::Cell> c, td::Ref<vm::Cell> d) {
+    vm::CellBuilder cb;
+    cb.store_long(0b00110, 5);
+    cb.store_ref(std::move(c));
+    cb.store_ref(std::move(d));
+    return cb.finalize();
+  };
+
+  auto address = state_init(code, data)->get_hash(0);
+  auto reconstructed = state_init(rebuilt(code), rebuilt(data));
+
+  // The whole point: the commitment rebuilt from four numbers is the address the account
+  // was deployed at, so proving one proves the other.
+  ASSERT_TRUE(reconstructed->get_hash(0) == address);
+
+  // And it is a commitment, not a statement. Changing any of the four numbers changes it,
+  // which is what makes a false witness fail the address check rather than be believed.
+  auto altered_hash = [&](td::Ref<vm::Cell> of) {
+    vm::CellBuilder cb;
+    cb.store_long(1, 8);
+    cb.store_long(1, 8);
+    auto bytes = of->get_hash(0).as_slice().str();
+    bytes[31] ^= 1;
+    cb.store_bytes(bytes);
+    cb.store_long(of->get_depth(0), 16);
+    return cb.finalize(true);
+  };
+  auto altered_depth = [&](td::Ref<vm::Cell> of) {
+    vm::CellBuilder cb;
+    cb.store_long(1, 8);
+    cb.store_long(1, 8);
+    cb.store_bytes(of->get_hash(0).as_slice());
+    cb.store_long(of->get_depth(0) + 1, 16);
+    return cb.finalize(true);
+  };
+
+  ASSERT_TRUE(state_init(altered_hash(code), rebuilt(data))->get_hash(0) != address);
+  ASSERT_TRUE(state_init(rebuilt(code), altered_hash(data))->get_hash(0) != address);
+  ASSERT_TRUE(state_init(altered_depth(code), rebuilt(data))->get_hash(0) != address);
+  ASSERT_TRUE(state_init(rebuilt(code), altered_depth(data))->get_hash(0) != address);
+
+  // Swapping the two branches is the mistake a reader of the TL-B would make, so it is
+  // worth knowing it does not go unnoticed either.
+  ASSERT_TRUE(state_init(rebuilt(data), rebuilt(code))->get_hash(0) != address);
+}
+
 TEST(Bitstrings, main) {
   os = create_ss();
   auto test = td::BitSlice{(const unsigned char*)"test", 32};

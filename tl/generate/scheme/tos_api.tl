@@ -229,12 +229,9 @@ dht.query node:dht.node = True;
 
 ---types---
 
-overlay.node.toSign id:adnl.id.short overlay:int256 version:int = overlay.node.ToSign;
-overlay.node.toSignEx id:adnl.id.short overlay:int256 flags:int version:int = overlay.node.ToSign;
-overlay.node id:PublicKey overlay:int256 version:int signature:bytes = overlay.Node;
-overlay.nodeV2 id:PublicKey overlay:int256 flags:int version:int signature:bytes certificate:overlay.MemberCertificate = overlay.NodeV2;
+overlay.node.toSign id:adnl.id.short overlay:int256 flags:int version:int = overlay.node.ToSign;
+overlay.node id:PublicKey overlay:int256 flags:int version:int signature:bytes certificate:overlay.MemberCertificate = overlay.Node;
 overlay.nodes nodes:(vector overlay.node) = overlay.Nodes;
-overlay.nodesV2 nodes:(vector overlay.nodeV2) = overlay.NodesV2;
 
 overlay.pong = overlay.Pong;
 
@@ -279,7 +276,6 @@ overlay.broadcastTwostepFec.toSign id:int256 seqno:int part:bytes = overlay.broa
 ---functions---
 
 overlay.getRandomPeers peers:overlay.nodes = overlay.Nodes;
-overlay.getRandomPeersV2 peers:overlay.nodesV2 = overlay.NodesV2;
 overlay.ping = overlay.Pong;
 
 overlay.query overlay:int256 = True;
@@ -290,7 +286,6 @@ overlay.repairPlumtreePart broadcast_id:int256 timestamp:double part_index:int t
 
 ---types---
 
-overlay.db.nodesV2 nodes:overlay.nodesV2 = overlay.db.Nodes;
 overlay.db.nodes nodes:overlay.nodes = overlay.db.Nodes;
 overlay.db.key.nodes local_id:int256 overlay:int256 = overlay.db.Key;
 
@@ -408,6 +403,9 @@ tosNode.sessionId workchain:int shard:long cc_seqno:int opts_hash:int256 = tosNo
 tosNode.blockSignature who:int256 signature:bytes = tosNode.BlockSignature;
 tosNode.signatureSet.ordinary cc_seqno:int validator_set_hash:int signatures:(vector tosNode.blockSignature) = tosNode.SignatureSet;
 tosNode.signatureSet.simplex final:Bool cc_seqno:int validator_set_hash:int signatures:(vector tosNode.blockSignature)
+    session_id:int256 slot:int candidate:consensus.CandidateHashData = tosNode.SignatureSet;
+tosNode.pqBlockSignature validator_id:int256 algorithm_id:int signature:bytes = tosNode.PqBlockSignature;
+tosNode.signatureSet.simplexPq final:Bool cc_seqno:int validator_set_hash:int signatures:(vector tosNode.pqBlockSignature)
     session_id:int256 slot:int candidate:consensus.CandidateHashData = tosNode.SignatureSet;
 
 tosNode.blockId workchain:int shard:long seqno:int = tosNode.BlockId;
@@ -580,8 +578,8 @@ db.blockdb.lru id:tosNode.blockIdExt prev:int256 next:int256 = db.blockdb.Lru;
 db.blockdb.key.lru id:tosNode.blockIdExt = db.blockdb.Key;
 db.blockdb.key.value id:tosNode.blockIdExt = db.blockdb.Key;
 
-db.candidate source:PublicKey id:tosNode.blockIdExt data:bytes collated_data:bytes = db.Candidate;
-db.candidate.id source:PublicKey id:tosNode.blockIdExt collated_data_file_hash:int256 = db.candidate.Id;
+db.candidate source:int256 id:tosNode.blockIdExt data:bytes collated_data:bytes = db.Candidate;
+db.candidate.id source:int256 id:tosNode.blockIdExt collated_data_file_hash:int256 = db.candidate.Id;
 
 db.filedb.key.empty = db.filedb.Key;
 db.filedb.key.blockFile block_id:tosNode.blockIdExt = db.filedb.Key;
@@ -647,9 +645,15 @@ db.event.blockCandidateReceived block_id:tosNode.blockIdExt = db.Event;
 ---types---
 
 validator.groupMember public_key_hash:int256 adnl:int256 weight:long = engine.validator.GroupMember;
-validator.group workchain:int shard:long catchain_seqno:int config_hash:int256 members:(vector validator.groupMember) = validator.Group;
-validator.groupEx workchain:int shard:long vertical_seqno:int catchain_seqno:int config_hash:int256 members:(vector validator.groupMember) = validator.Group;
-validator.groupNew workchain:int shard:long vertical_seqno:int last_key_block_seqno:int catchain_seqno:int config_hash:int256 members:(vector validator.groupMember) = validator.Group;
+// A post-quantum member commits to both of its identities: the stable one that says
+// which validator this is, and the one naming the consensus key it currently holds.
+// Rotating a key therefore changes the session while the validator stays the same
+// member. The member vector is boxed so the two forms carry distinct constructor ids
+// and a classical member can never be read as a post-quantum one.
+validator.groupMemberPQ validator_id:int256 key_id:int256 adnl:int256 weight:long = engine.validator.GroupMember;
+validator.group workchain:int shard:long catchain_seqno:int config_hash:int256 members:(vector engine.validator.GroupMember) = validator.Group;
+validator.groupEx workchain:int shard:long vertical_seqno:int catchain_seqno:int config_hash:int256 members:(vector engine.validator.GroupMember) = validator.Group;
+validator.groupNew workchain:int shard:long vertical_seqno:int last_key_block_seqno:int catchain_seqno:int config_hash:int256 members:(vector engine.validator.GroupMember) = validator.Group;
 
 validator.telemetry flags:# timestamp:double adnl_id:int256
     node_version:string os_version:string node_started_at:int
@@ -709,9 +713,30 @@ engine.validator.fullNodeConfig ext_messages_broadcast_disabled:Bool = engine.va
 engine.validator.fastSyncMemberCertificate adnl_id:int256 certificate:overlay.MemberCertificate = engine.validator.FastSyncMemberCertificate;
 engine.validator.fastSyncOverlayClient adnl_id:int256 slot:int = engine.validator.FastSyncOverlayClient;
 engine.validator.collatorNodeWhitelist enabled:Bool adnl_ids:(vector int256) = engine.validator.CollatorNodeWhitelist;
+// One more post-quantum consensus key for the same validator, held alongside the others
+// so the consensus key can rotate without a moment at which the node holds only the
+// wrong one. valid_from is the first election date (unix time) the key may sign a stake
+// for; a stake for an election is signed with the key whose valid_from is the greatest
+// not after the election date. expire_at is the unix time from which the node stops
+// using the key for anything; 0 means never. Both are read as unsigned 32-bit values.
+engine.validator.pqConsensusKey consensus_key_file:string valid_from:int expire_at:int = engine.validator.PqConsensusKey;
+// Which validator this node holds post-quantum consensus keys for, and where those keys
+// are. The identity is the controller account the validator was registered as; it is
+// stated here because it cannot be derived from a key, which rotates while the identity
+// does not. No key identity is configured: that is derived from each seed, so a
+// configuration cannot claim to hold a key it does not.
+//
+// consensus_key_file, when not empty, is a key valid for every election and never
+// expiring: the whole configuration of a node that does not rotate. keys holds the keys
+// with explicit windows. Together they must name at least one key, no key twice, and no
+// two keys valid from the same election date.
+engine.validator.pqConsensus validator_id:int256 consensus_key_file:string
+    keys:(vector engine.validator.pqConsensusKey) = engine.validator.PqConsensus;
+
 engine.validator.extraConfig state_serializer_enabled:Bool fast_sync_member_certificates:(vector engine.validator.fastSyncMemberCertificate)
     collator_node_whitelist:engine.validator.collatorNodeWhitelist
-    fast_sync_overlay_clients:(vector engine.validator.fastSyncOverlayClient) = engine.validator.ExtraConfig;
+    fast_sync_overlay_clients:(vector engine.validator.fastSyncOverlayClient)
+    pq_consensus:engine.validator.pqConsensus = engine.validator.ExtraConfig;
 engine.validator.config out_port:int addrs:(vector engine.Addr) adnl:(vector engine.adnl)
         dht:(vector engine.dht)
         validators:(vector engine.validator) collators:(vector engine.collator)
@@ -778,7 +803,12 @@ engine.validator.success = engine.validator.Success;
 
 engine.validator.jsonConfig data:string = engine.validator.JsonConfig;
 
-engine.validator.electionBid election_date:int perm_key:int256 adnl_addr:int256 to_send_payload:bytes = engine.validator.ElectionBid;
+engine.validator.pqStakeAuthorization validator_id:int256 key_id:int256 algorithm_id:int public_key:bytes signature:bytes = engine.validator.PqStakeAuthorization;
+// The consensus keys a node holds, by identity and window; never a seed.
+engine.validator.pqConsensusKeyInfo key_id:int256 consensus_key_file:string valid_from:int expire_at:int
+    expired:Bool = engine.validator.PqConsensusKeyInfo;
+engine.validator.pqConsensusKeys validator_id:int256 keys:(vector engine.validator.pqConsensusKeyInfo)
+    = engine.validator.PqConsensusKeys;
 engine.validator.proposalVote perm_key:int256 to_send:bytes = engine.validator.ProposalVote;
 
 engine.validator.dhtServerStatus id:int256 status:int = engine.validator.DhtServerStatus;
@@ -861,7 +891,20 @@ engine.validator.getConfig = engine.validator.JsonConfig;
 
 engine.validator.setVerbosity verbosity:int = engine.validator.Success;
 
-engine.validator.createElectionBid election_date:int election_addr:string wallet:string = engine.validator.ElectionBid;
+engine.validator.createPqStakeAuthorization election_date:int max_factor:int adnl_addr:int256 stake_owner:int256 = engine.validator.PqStakeAuthorization;
+// The same authorization, with the caller's statement of which key it expects to sign:
+// refused unless that is the key the schedule assigns to the election (which is then the
+// one used). There is no override; this only makes a disagreement loud.
+engine.validator.createPqStakeAuthorizationWithKey election_date:int max_factor:int adnl_addr:int256
+    stake_owner:int256 key_id:int256 = engine.validator.PqStakeAuthorization;
+// Consensus key rotation while the node runs. add loads the seed under the same rules as
+// at startup and refuses a key that would make the schedule ambiguous; del refuses the
+// last key and an unexpired key a current, previous or next validator set lists for
+// this validator.
+engine.validator.getPqConsensusKeys = engine.validator.PqConsensusKeys;
+engine.validator.addPqConsensusKey consensus_key_file:string valid_from:int expire_at:int
+    = engine.validator.PqConsensusKeyInfo;
+engine.validator.delPqConsensusKey key_id:int256 = engine.validator.Success;
 engine.validator.createProposalVote vote:bytes = engine.validator.ProposalVote;
 engine.validator.createComplaintVote election_id:int vote:bytes = engine.validator.ProposalVote;
 
@@ -1035,9 +1078,9 @@ validatorStats.collatorNodeResponse self:int256 validator_id:int256 timestamp:do
     block_id:tosNode.blockIdExt original_block_id:tosNode.blockIdExt collated_data_hash:int256
     = validatorStats.CollatorNodeResponse;
 
-collatorNode.candidate source:PublicKey id:tosNode.blockIdExt data:bytes collated_data:bytes = collatorNode.Candidate;
-collatorNode.compressedCandidate flags:# source:PublicKey id:tosNode.blockIdExt decompressed_size:int data:bytes = collatorNode.Candidate;
-collatorNode.compressedCandidateV2 flags:# source:PublicKey id:tosNode.blockIdExt data:bytes = collatorNode.Candidate;
+collatorNode.candidate source:int256 id:tosNode.blockIdExt data:bytes collated_data:bytes = collatorNode.Candidate;
+collatorNode.compressedCandidate flags:# source:int256 id:tosNode.blockIdExt decompressed_size:int data:bytes = collatorNode.Candidate;
+collatorNode.compressedCandidateV2 flags:# source:int256 id:tosNode.blockIdExt data:bytes = collatorNode.Candidate;
 collatorNode.pong#5bbf0521 flags:# version:flags.0?int = collatorNode.Pong;
 collatorNode.error code:int message:string = collatorNode.Error;
 
@@ -1229,7 +1272,12 @@ consensus.simplex.certificate vote:consensus.simplex.UnsignedVote signatures:con
 consensus.simplex.candidateAndCert candidate:bytes notar:bytes = consensus.simplex.CandidateAndCert;
 
 consensus.simplex.db.key.vote vote_hash:int256 = consensus.simplex.db.key.Vote;
-consensus.simplex.db.ourVote vote:consensus.simplex.UnsignedVote seqno:long = consensus.simplex.db.Vote;
+// This node's own vote, in its two durable states under one key. The intent commits the
+// vote decision before anything is signed; the signed record commits the exact signature
+// bytes before they are allowed to affect local state or leave the process, so a restart
+// replays what was emitted instead of signing again.
+consensus.simplex.db.ourVoteIntent vote:consensus.simplex.UnsignedVote seqno:long = consensus.simplex.db.Vote;
+consensus.simplex.db.ourSignedVote vote:consensus.simplex.UnsignedVote seqno:long signature:bytes = consensus.simplex.db.Vote;
 consensus.simplex.db.cert cert:consensus.simplex.Certificate = consensus.simplex.db.Vote;
 
 consensus.simplex.db.key.poolState = consensus.simplex.db.key.PoolState;
@@ -1300,3 +1348,18 @@ consensus.simplex.requestCandidate id:consensus.CandidateId want_candidate:Bool 
 
 engine.validator.setConsensusNoncriticalParamsOverrides overrides:consensus.noncriticalParamsOverrideList = engine.validator.Success;
 engine.validator.getConsensusNoncriticalParamsOverrides = consensus.NoncriticalParamsOverrideList;
+
+---types---
+engine.validator.electionParticipant id:int256 stake:bytes max_factor:int adnl:int256 algorithm:int key_id:int256 = engine.validator.ElectionParticipant;
+engine.validator.frozenStake id:int256 owner:int256 weight:long stake:bytes banned:Bool = engine.validator.FrozenStake;
+engine.validator.pastElection election_id:int unfreeze_at:int stake_held:int vset_hash:int256 total_stake:bytes bonuses:bytes frozen:(vector engine.validator.frozenStake) = engine.validator.PastElection;
+engine.validator.returnedStake wallet:int256 amount:bytes = engine.validator.ReturnedStake;
+engine.validator.electorState block:tosNode.blockIdExt elect_at:int elect_close:int min_stake:bytes total_stake:bytes failed:Bool finished:Bool participants:(vector engine.validator.electionParticipant) past_elections:(vector engine.validator.pastElection) returned:(vector engine.validator.returnedStake) = engine.validator.ElectorState;
+engine.validator.configProposalMeta flags:# hash:int256 expires:int critical:Bool param_id:int param_hash:flags.0?int256 has_value:Bool vset_id:int256 voters:(vector int) weight_remaining:long rounds_remaining:int wins:int losses:int = engine.validator.ConfigProposalMeta;
+engine.validator.configProposals block:tosNode.blockIdExt proposals:(vector engine.validator.configProposalMeta) = engine.validator.ConfigProposals;
+engine.validator.configProposalDetail flags:# block:tosNode.blockIdExt meta:flags.0?engine.validator.configProposalMeta value:flags.1?bytes = engine.validator.ConfigProposalDetail;
+
+---functions---
+engine.validator.getElectorState flags:# block:flags.0?tosNode.blockIdExt wallets:(vector int256) = engine.validator.ElectorState;
+engine.validator.getConfigProposals flags:# block:flags.0?tosNode.blockIdExt = engine.validator.ConfigProposals;
+engine.validator.getConfigProposal flags:# block:flags.0?tosNode.blockIdExt hash:int256 = engine.validator.ConfigProposalDetail;

@@ -26,6 +26,61 @@
 
 namespace tos::validator {
 
+void ExtMessagePool::tear_down() {
+  // Suspended admission coroutines retain this actor. End their waits before
+  // destruction, otherwise their promises and actor references form a cycle.
+  while (!admission_waiters_.empty()) {
+    auto waiter = std::move(admission_waiters_.front());
+    admission_waiters_.pop_front();
+    waiter.set_error(td::Status::Error(ErrorCode::cancelled, "external admission pool stopped"));
+  }
+}
+
+td::Result<td::Unit> ExtMessagePool::configure_work_profile(ExtMessageWorkProfile profile) {
+  if (work_admission_) {
+    TRY_STATUS(work_admission_->update_profile(std::move(profile)));
+  } else {
+    TRY_RESULT(admission, ExtMessageWorkAdmission::create(std::move(profile)));
+    work_admission_ = std::move(admission);
+  }
+  update_last_masterchain_state(last_masterchain_state_);
+  return td::Unit{};
+}
+
+void ExtMessagePool::update_options(td::Ref<ValidatorManagerOptions> opts) {
+  if (opts.not_null()) {
+    auto profile = opts->get_ext_message_work_profile();
+    if (profile) {
+      auto status = configure_work_profile(profile.value());
+      if (status.is_error()) {
+        LOG(ERROR) << "External admission work profile update refused: " << status.move_as_error();
+        return;
+      }
+    }
+  }
+  // An unrelated options update cannot silently disable existing protection.
+  opts_ = std::move(opts);
+}
+
+void ExtMessagePool::update_last_masterchain_state(td::Ref<MasterchainState> state) {
+  last_masterchain_state_ = std::move(state);
+  work_profile_supported_ = false;
+  if (!work_admission_ || last_masterchain_state_.is_null()) {
+    return;
+  }
+  // Compute once at state installation, not once for each attacker request.
+  auto holder = last_masterchain_state_->get_config_holder();
+  if (holder.is_error()) {
+    return;
+  }
+  auto root = holder.ok()->get_auth_policy_config_root();
+  if (root.is_error() || root.ok().is_null()) {
+    return;
+  }
+  auto limits = last_masterchain_state_->get_ext_msg_limits();
+  work_profile_supported_ = work_admission_->supports(root.ok()->get_hash().bits(), limits.max_size, limits.max_depth);
+}
+
 void ExtMessagePool::init_checkers() {
   checker_inflight_.assign(NUM_CHECKERS, 0);
   for (size_t i = 0; i < NUM_CHECKERS; ++i) {
@@ -40,6 +95,13 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
     ++admission_window_.rejected;
     co_return td::Status::Error(ErrorCode::notready, "external message source rate limit exceeded");
   }
+  auto reserved = ExtMessageAdmissionReservation::acquire(admission_budget_, data.size());
+  if (reserved.is_error()) {
+    ++admission_window_.rejected;
+    co_return reserved.move_as_error();
+  }
+  // Retain through every suspension and release on every completion/error path.
+  auto input_reservation = reserved.move_as_ok();
   if (last_masterchain_state_.is_null()) {
     ++admission_window_.rejected;
     co_return td::Status::Error(ErrorCode::notready, "not ready");
@@ -62,15 +124,43 @@ td::actor::Task<ExtMessagePool::CheckResult> ExtMessagePool::check_add_external_
     co_await std::move(task);
   }
   ++inflight_checks_;
+  bool dispatched = false;
   SCOPE_EXIT {
-    release_check_slot();
+    release_check_slot(dispatched);
   };
+
+  // Waiting may have advanced the chain configuration. Pin one fresh snapshot
+  // for limits and execution, with no suspension before checker dispatch.
+  auto admission_state = last_masterchain_state_;
+  if (admission_state.is_null()) {
+    ++admission_window_.rejected;
+    co_return td::Status::Error(ErrorCode::notready, "not ready");
+  }
+  ext_msg_limits = admission_state->get_ext_msg_limits();
+  if (data.size() > ext_msg_limits.max_size) {
+    ++admission_window_.rejected;
+    co_return td::Status::Error("external message too large, rejecting");
+  }
+
+  if (work_admission_) {
+    if (!work_profile_supported_) {
+      ++admission_window_.rejected;
+      co_return td::Status::Error(ErrorCode::notready, "external admission configuration is outside the work profile");
+    }
+    // Every source reaches this point. No await separates charge from dispatch,
+    // and neither errors nor completion return consumed work units.
+    if (!work_admission_->try_consume()) {
+      ++admission_window_.rejected;
+      co_return td::Status::Error(ErrorCode::notready, "external message admission work budget exhausted");
+    }
+  }
 
   size_t worker = next_checker_++ % checkers_.size();
   ++checker_inflight_[worker];
   td::Timer check_timer;
+  dispatched = true;
   auto checked_result = co_await td::actor::ask(checkers_[worker].get(), &ExtMessageChecker::check, std::move(data),
-                                                ext_msg_limits, last_masterchain_state_)
+                                                ext_msg_limits, std::move(admission_state))
                             .wrap();
   --checker_inflight_[worker];
   admission_window_.check_time += check_timer.elapsed();
@@ -149,8 +239,10 @@ size_t ExtMessagePool::max_admission_waiters() {
   return static_cast<size_t>(td::clamp(cap, 512.0, static_cast<double>(MAX_ADMISSION_WAITERS)));
 }
 
-void ExtMessagePool::release_check_slot() {
-  ++completions_in_rate_window_;
+void ExtMessagePool::release_check_slot(bool dispatched) {
+  if (dispatched) {
+    ++completions_in_rate_window_;
+  }
   --inflight_checks_;
   if (!admission_waiters_.empty()) {
     auto waiter = std::move(admission_waiters_.front());
@@ -363,6 +455,12 @@ std::vector<std::pair<std::string, std::string>> ExtMessagePool::prepare_stats()
                    PSTRING() << "ok:" << total_check_ext_messages_ok_ << " error:" << total_check_ext_messages_error_);
   vec.emplace_back("total.ext_msg_applied_cleanup", PSTRING() << "requested:" << applied_ext_msgs_delete_requests_
                                                               << " deleted:" << applied_ext_msgs_deleted_);
+  vec.emplace_back("ext_msg_admission_bytes",
+                   PSTRING() << "used:" << admission_budget_->used() << " limit:" << admission_budget_->limit());
+  if (work_admission_) {
+    vec.emplace_back("ext_msg_admission_work", PSTRING() << "available:" << work_admission_->available()
+                                                         << " supported:" << work_profile_supported_);
+  }
   return vec;
 }
 

@@ -25,12 +25,26 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use contracts::MasterchainCheckpoint;
 use rusqlite::{Connection, OptionalExtension, params};
+
+#[path = "store_canonical.rs"]
+mod canonical;
+#[path = "store_ledger.rs"]
+mod ledger;
+pub use canonical::{
+    AddressRefresh, AddressTouch, BatchPhase, PendingBatch, ScannedTarget, ShardStep,
+    shards_intersect,
+};
+pub use ledger::{
+    LedgerAvailability, LedgerStatus, NominatorLedgerReport, NominatorLedgerState,
+    attribution_complete,
+};
 
 /// Bumped whenever `init_schema`'s table/column layout changes in a way that
 /// isn't purely additive (`CREATE ... IF NOT EXISTS` alone can't detect a
 /// changed column set on an existing file).
-const CURRENT_SCHEMA_VERSION: i64 = 9;
+const CURRENT_SCHEMA_VERSION: i64 = 14;
 /// pool.fc state 0: the stake is in the pool rather than with the Elector.
 const POOL_STATE_IDLE: i64 = 0;
 
@@ -48,6 +62,13 @@ pub struct NominatorLedgerRecord {
     pub last_pending: u64,
     pub first_seen_at: u64,
     pub updated_at: u64,
+    /// Observation intervals in which the pool changed more than once, so a
+    /// single end-of-interval snapshot could not attribute each change.
+    pub coverage_gap_count: u64,
+    /// The published masterchain block of the last observation.
+    pub last_mc_seqno: Option<u32>,
+    pub last_mc_root_hash: Option<String>,
+    pub last_mc_file_hash: Option<String>,
 }
 
 /// `MIGRATIONS[i]` transforms a database at schema version `i + 1` into
@@ -114,7 +135,135 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     // gen_utime 0, now ordered by their own seqno). Within any single shard
     // chain the order is unchanged.
     |conn| conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA),
+    // v10 replays block identities because older indexers scanned only shard
+    // heads and skipped their parents. Preserve independently accumulated
+    // contract/ledger state: historical account reads are current-state reads
+    // and cannot reconstruct prior economic deltas from scratch.
+    |conn| {
+        conn.execute_batch(
+            "DELETE FROM explorer_transactions;
+             DELETE FROM explorer_blocks;
+             DELETE FROM indexer_meta
+               WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%';",
+        )
+    },
+    migrate_to_canonical_publication,
+    migrate_address_refresh_key,
+    ledger::repair_nominator_ledger_provenance,
+    // v14 indexes blocks by the masterchain height that observed them, so the
+    // per-height deletes of hidden, rewound and pruned rows are index range
+    // scans instead of full-table scans.
+    |conn| conn.execute_batch(EXPLORER_OBSERVATION_INDEX_SCHEMA),
 ];
+
+/// Columns of `indexer_address_refresh`, in declaration order. Every v11
+/// layout carries exactly these; only the key differs.
+const ADDRESS_REFRESH_COLUMNS: &[&str] = &[
+    "address",
+    "touch_count",
+    "last_block_seqno",
+    "last_gen_utime",
+    "mc_seqno",
+    "mc_root_hash",
+    "mc_file_hash",
+    "attempts",
+];
+
+/// v12 keys the refresh queue by `(address, mc_seqno)`.
+///
+/// Version 11 shipped with two layouts of `indexer_address_refresh`: first
+/// one row per address (`PRIMARY KEY(address)`), later one row per address
+/// and published height. Both recorded schema version 11, and
+/// `CREATE TABLE IF NOT EXISTS` leaves an existing table as it is, so a
+/// database from the first layout kept its single-column key and every
+/// publication upserting on the composite key was refused by SQLite.
+///
+/// A single-column-key table is rebuilt under the composite key with every
+/// queued row copied verbatim: the single-column key admits one row per
+/// address, so no two rows can collide under the wider key, and each row
+/// keeps its checkpoint and attempt count. A table already keyed by the pair
+/// only gains the scheduling index if it lacks it. Any other layout is
+/// refused rather than guessed at. Runs inside the caller's per-step
+/// transaction, so a failure leaves the original table and its rows intact.
+fn migrate_address_refresh_key(conn: &Connection) -> rusqlite::Result<()> {
+    let (columns, key) = address_refresh_layout(conn)?;
+    if columns != ADDRESS_REFRESH_COLUMNS {
+        return Err(migration_error(format!(
+            "indexer_address_refresh has unexpected columns {columns:?}"
+        )));
+    }
+    match key.as_slice() {
+        [address, mc_seqno] if address == "address" && mc_seqno == "mc_seqno" => {
+            return conn.execute_batch(ADDRESS_REFRESH_SCHEMA);
+        }
+        [address] if address == "address" => {}
+        _ => {
+            return Err(migration_error(format!(
+                "indexer_address_refresh has unexpected primary key {key:?}"
+            )));
+        }
+    }
+    let column_list = ADDRESS_REFRESH_COLUMNS.join(", ");
+    // An index moves with its renamed table and keeps its name, so it is
+    // dropped first; the replacement schema recreates it on the new table.
+    conn.execute_batch(&format!(
+        "DROP INDEX IF EXISTS idx_address_refresh_schedule;
+         ALTER TABLE indexer_address_refresh RENAME TO indexer_address_refresh_single_key;
+         {ADDRESS_REFRESH_SCHEMA}
+         INSERT INTO indexer_address_refresh ({column_list})
+             SELECT {column_list} FROM indexer_address_refresh_single_key;
+         DROP TABLE indexer_address_refresh_single_key;"
+    ))
+}
+
+/// Column names in declaration order and primary-key columns in key order.
+fn address_refresh_layout(conn: &Connection) -> rusqlite::Result<(Vec<String>, Vec<String>)> {
+    let mut statement = conn.prepare("PRAGMA table_info(indexer_address_refresh)")?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let columns = rows.iter().map(|(name, _)| name.clone()).collect();
+    let mut key: Vec<(i64, String)> = rows
+        .into_iter()
+        .filter(|(_, position)| *position > 0)
+        .map(|(name, position)| (position, name))
+        .collect();
+    key.sort();
+    Ok((columns, key.into_iter().map(|(_, name)| name).collect()))
+}
+
+/// A layout the migration does not recognise is reported as a corrupt schema,
+/// with the specific mismatch as its message.
+fn migration_error(message: String) -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CORRUPT),
+        Some(message),
+    )
+}
+
+/// v11 introduces a published watermark. Rows indexed by a v10 binary carry
+/// no record of which masterchain height was completely assembled when they
+/// were written, so none of them can be declared published after the fact:
+/// the explorer history is replayed from genesis under the new watermark.
+/// The v10 nominator ledger was built from latest-state reads that no
+/// checkpoint binds, so it is marked for a genesis rebuild and cannot be
+/// served until that replay completes.
+fn migrate_to_canonical_publication(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
+    conn.execute_batch(TRAVERSAL_SCHEMA)?;
+    conn.execute_batch(ADDRESS_REFRESH_SCHEMA)?;
+    for table in CANONICAL_PROGRESS_TABLES {
+        conn.execute(&format!("DELETE FROM {table}"), [])?;
+    }
+    ledger::migrate_nominator_ledger(conn)?;
+    conn.execute_batch(
+        "DELETE FROM explorer_transactions;
+         DELETE FROM explorer_blocks;
+         DELETE FROM dns_domain_history;
+         DELETE FROM indexer_meta
+           WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'filehash:%';",
+    )
+}
 
 fn migrate_dns_checkpoint_hashes(conn: &Connection) -> rusqlite::Result<()> {
     let mut columns = conn.prepare("PRAGMA table_info(dns_domain_history)")?;
@@ -169,6 +318,10 @@ const NOMINATOR_LEDGER_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS nominator_ledg
         last_pool_state INTEGER NOT NULL DEFAULT 0,
         first_seen_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
+        last_mc_seqno INTEGER,
+        last_mc_root_hash TEXT,
+        last_mc_file_hash TEXT,
+        coverage_gap_count INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY(pool_address, nominator_address)
     );
     CREATE INDEX IF NOT EXISTS idx_nominator_ledger_address
@@ -220,6 +373,158 @@ const EXPLORER_ORDER_INDEX_SCHEMA: &str = "CREATE INDEX IF NOT EXISTS idx_explor
         ON explorer_blocks(gen_utime DESC, seqno DESC, workchain, shard);
     CREATE INDEX IF NOT EXISTS idx_explorer_transactions_order
         ON explorer_transactions(seqno DESC, length(lt) DESC, lt DESC, hash);";
+
+/// v14: blocks by the masterchain height that observed them. Every
+/// per-height delete selects blocks by `observed_mc_seqno` and reaches their
+/// transactions through `idx_explorer_transactions_block`.
+const EXPLORER_OBSERVATION_INDEX_SCHEMA: &str =
+    "CREATE INDEX IF NOT EXISTS idx_explorer_blocks_observed
+        ON explorer_blocks(observed_mc_seqno);";
+
+/// Explorer rows observed above a masterchain height (the hidden rows of an
+/// unpublished batch). Each pair deletes transactions first, reached through
+/// the blocks they belong to, then the blocks themselves; both statements are
+/// served by indexes, so their cost follows the rows removed, not the table.
+const DELETE_TRANSACTIONS_OBSERVED_ABOVE: &str = "DELETE FROM explorer_transactions
+    WHERE (workchain, shard, seqno) IN (
+        SELECT workchain, shard, seqno FROM explorer_blocks WHERE observed_mc_seqno > ?1)";
+const DELETE_BLOCKS_OBSERVED_ABOVE: &str =
+    "DELETE FROM explorer_blocks WHERE observed_mc_seqno > ?1";
+/// Explorer rows observed at or above a masterchain height (a rewound suffix).
+const DELETE_TRANSACTIONS_OBSERVED_FROM: &str = "DELETE FROM explorer_transactions
+    WHERE (workchain, shard, seqno) IN (
+        SELECT workchain, shard, seqno FROM explorer_blocks WHERE observed_mc_seqno >= ?1)";
+const DELETE_BLOCKS_OBSERVED_FROM: &str =
+    "DELETE FROM explorer_blocks WHERE observed_mc_seqno >= ?1";
+/// Explorer rows observed below a masterchain height (outside retention).
+const DELETE_TRANSACTIONS_OBSERVED_BELOW: &str = "DELETE FROM explorer_transactions
+    WHERE (workchain, shard, seqno) IN (
+        SELECT workchain, shard, seqno FROM explorer_blocks WHERE observed_mc_seqno < ?1)";
+const DELETE_BLOCKS_OBSERVED_BELOW: &str =
+    "DELETE FROM explorer_blocks WHERE observed_mc_seqno < ?1";
+
+/// v11: the canonical publication watermark and the views every public
+/// explorer read goes through.
+///
+/// Explorer rows are written in slices while a masterchain height is still
+/// being assembled, so their mere presence proves nothing. A block is public
+/// only once the masterchain height that referenced it has been published;
+/// a transaction is public only through such a block. Without a published
+/// state nothing is public at all (the scalar subquery yields NULL and every
+/// comparison against it fails).
+const CANONICAL_PUBLICATION_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS indexer_canonical_state (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        published_mc_seqno INTEGER NOT NULL,
+        published_mc_root_hash TEXT NOT NULL,
+        published_mc_file_hash TEXT NOT NULL
+    );
+    CREATE VIEW IF NOT EXISTS published_explorer_blocks AS
+        SELECT b.* FROM explorer_blocks b
+        WHERE b.observed_mc_seqno <= (
+            SELECT c.published_mc_seqno FROM indexer_canonical_state c WHERE c.id = 1
+        );
+    CREATE VIEW IF NOT EXISTS published_explorer_transactions AS
+        SELECT t.*, b.gen_utime AS block_gen_utime FROM explorer_transactions t
+        JOIN published_explorer_blocks b
+          ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno;";
+
+/// v11: durable traversal progress, decoupled from retained history.
+///
+/// `canonical_shard_frontier` holds the exact shard heads referenced by the
+/// last published masterchain block; ancestry traversal stops only on an
+/// exact match. It is progress metadata, so retention never touches it. The
+/// batch tables persist one masterchain height's ancestry DAG (work items and
+/// full-identity parent edges) and the per-address touch counts, so a crash
+/// or a bounded tick resumes the same height. `indexer_address_refresh` hands
+/// published touches to the contract refresher, bound to the exact published
+/// masterchain block.
+const TRAVERSAL_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS canonical_shard_frontier (
+        workchain INTEGER NOT NULL,
+        shard INTEGER NOT NULL,
+        seqno INTEGER NOT NULL,
+        root_hash TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
+        published_mc_seqno INTEGER NOT NULL,
+        PRIMARY KEY(workchain, shard)
+    );
+    CREATE TABLE IF NOT EXISTS indexer_master_batch (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        mc_seqno INTEGER NOT NULL,
+        mc_root_hash TEXT NOT NULL,
+        mc_file_hash TEXT NOT NULL,
+        phase TEXT NOT NULL CHECK(phase IN ('scan_master', 'seed_shards', 'traverse'))
+    );
+    CREATE TABLE IF NOT EXISTS indexer_shard_work (
+        batch_mc_seqno INTEGER NOT NULL,
+        workchain INTEGER NOT NULL,
+        shard INTEGER NOT NULL,
+        seqno INTEGER NOT NULL,
+        root_hash TEXT NOT NULL,
+        file_hash TEXT NOT NULL,
+        state TEXT NOT NULL
+            CHECK(state IN ('discovered', 'parents_expanded', 'indexed', 'frontier')),
+        is_head INTEGER NOT NULL DEFAULT 0,
+        pending_parents INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(batch_mc_seqno, workchain, shard, seqno)
+    );
+    CREATE INDEX IF NOT EXISTS idx_indexer_shard_work_state
+        ON indexer_shard_work(batch_mc_seqno, state, pending_parents, seqno);
+    CREATE TABLE IF NOT EXISTS indexer_shard_edge (
+        batch_mc_seqno INTEGER NOT NULL,
+        child_workchain INTEGER NOT NULL,
+        child_shard INTEGER NOT NULL,
+        child_seqno INTEGER NOT NULL,
+        child_root_hash TEXT NOT NULL,
+        child_file_hash TEXT NOT NULL,
+        parent_workchain INTEGER NOT NULL,
+        parent_shard INTEGER NOT NULL,
+        parent_seqno INTEGER NOT NULL,
+        parent_root_hash TEXT NOT NULL,
+        parent_file_hash TEXT NOT NULL,
+        PRIMARY KEY(batch_mc_seqno, child_workchain, child_shard, child_seqno,
+                    parent_workchain, parent_shard, parent_seqno)
+    );
+    CREATE INDEX IF NOT EXISTS idx_indexer_shard_edge_parent
+        ON indexer_shard_edge(batch_mc_seqno, parent_workchain, parent_shard, parent_seqno);
+    CREATE TABLE IF NOT EXISTS indexer_touched_address (
+        batch_mc_seqno INTEGER NOT NULL,
+        address TEXT NOT NULL,
+        touch_count INTEGER NOT NULL,
+        last_block_seqno INTEGER NOT NULL,
+        last_gen_utime INTEGER NOT NULL,
+        PRIMARY KEY(batch_mc_seqno, address)
+    );";
+
+/// v12: the refresh queue, one row per address and published height. Kept
+/// apart from [`TRAVERSAL_SCHEMA`] because [`migrate_address_refresh_key`]
+/// rebuilds an older table from this exact definition.
+const ADDRESS_REFRESH_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS indexer_address_refresh (
+        address TEXT NOT NULL,
+        touch_count INTEGER NOT NULL,
+        last_block_seqno INTEGER NOT NULL,
+        last_gen_utime INTEGER NOT NULL,
+        mc_seqno INTEGER NOT NULL,
+        mc_root_hash TEXT NOT NULL,
+        mc_file_hash TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(address, mc_seqno)
+    );
+    -- The refresh scheduler walks rows in this order and stops once its
+    -- window is full, instead of sorting the whole queue on every pass.
+    CREATE INDEX IF NOT EXISTS idx_address_refresh_schedule
+        ON indexer_address_refresh(attempts, mc_seqno, address);";
+
+/// Tables holding canonical progress; emptied together whenever the index
+/// is replayed from genesis.
+const CANONICAL_PROGRESS_TABLES: &[&str] = &[
+    "indexer_canonical_state",
+    "canonical_shard_frontier",
+    "indexer_master_batch",
+    "indexer_shard_work",
+    "indexer_shard_edge",
+    "indexer_touched_address",
+    "indexer_address_refresh",
+];
 
 /// One indexed account: either a recognized contract (`kind` is one of the
 /// public explorer contract kinds, including Agent Account) or
@@ -278,6 +583,24 @@ pub struct ExplorerTransactionRecord {
     pub indexed_at: u64,
 }
 
+/// A block's complete identity. A coordinate `(workchain, shard, seqno)`
+/// alone names different blocks on different forks, so both hashes always
+/// travel with it (lowercase hex, as stored everywhere in this database).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BlockFullId {
+    pub workchain: i32,
+    pub shard: i64,
+    pub seqno: u32,
+    pub root_hash: String,
+    pub file_hash: String,
+}
+
+impl BlockFullId {
+    pub fn same_coordinate(&self, other: &Self) -> bool {
+        self.workchain == other.workchain && self.shard == other.shard && self.seqno == other.seqno
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IndexerCheckpoint {
     pub shard_key: String,
@@ -326,8 +649,7 @@ impl IndexerStore {
         // no-op until a full VACUUM, in which case pruning still bounds row
         // growth, only the file does not shrink.
         conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
-        Self::init_schema(&conn)?;
-        Self::ensure_schema_version(&conn)?;
+        Self::prepare_schema(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
@@ -335,42 +657,50 @@ impl IndexerStore {
     pub fn open_in_memory() -> anyhow::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
-        Self::init_schema(&conn)?;
-        Self::ensure_schema_version(&conn)?;
+        Self::prepare_schema(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
+    }
+
+    /// Creates the current layout, brings an older database forward, then
+    /// adds the indexes over columns that only a migration may have added: an
+    /// old explorer table gains `observed_mc_seqno` in the v4 to v5 step, so
+    /// an index on it cannot be created before the migrations have run.
+    fn prepare_schema(conn: &Connection) -> anyhow::Result<()> {
+        Self::init_schema(conn)?;
+        Self::ensure_schema_version(conn)?;
+        conn.execute_batch(EXPLORER_OBSERVATION_INDEX_SCHEMA)?;
+        Ok(())
     }
 
     /// Prune explorer/indexer history older than `keep_from_mc_seqno`
     /// (exclusive) to bound the append-only history tables. The DNS-history and
     /// explorer block tables are keyed by the masterchain seqno at which the row
     /// was observed; explorer transactions carry no such column and are pruned
-    /// referentially, by dropping rows whose block is no longer retained. Called
-    /// with `keep_from = tip - retention_window`; a window of 0 disables pruning
-    /// (the caller does not invoke this). Returns the number of rows removed.
+    /// referentially, through the blocks being pruned. The
+    /// caller passes `published_mc_seqno - retention_window`: the watermark of
+    /// what is actually published, never the remote chain tip, so an indexer
+    /// far behind the tip cannot prune what it has only just scanned. A window
+    /// of 0 disables pruning (the caller does not invoke this). Scanner
+    /// progress lives in `canonical_shard_frontier`, which is never pruned.
+    /// Returns the number of rows removed.
     pub fn prune_history(&self, keep_from_mc_seqno: u32) -> anyhow::Result<usize> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut removed = 0usize;
         removed += conn.execute(
             "DELETE FROM dns_domain_history WHERE observed_mc_seqno < ?1",
             params![keep_from_mc_seqno],
         )?;
-        removed += conn.execute(
-            "DELETE FROM explorer_blocks WHERE observed_mc_seqno < ?1",
-            params![keep_from_mc_seqno],
-        )?;
-        // Explorer transactions have no observed_mc_seqno; drop the ones whose
-        // block has just been (or was previously) pruned so the two stay
-        // consistent and transactions cannot outlive their block.
-        removed += conn.execute(
-            "DELETE FROM explorer_transactions
-             WHERE NOT EXISTS (
-                 SELECT 1 FROM explorer_blocks b
-                 WHERE b.workchain = explorer_transactions.workchain
-                   AND b.shard = explorer_transactions.shard
-                   AND b.seqno = explorer_transactions.seqno
-             )",
-            [],
-        )?;
+        // Explorer transactions have no observed_mc_seqno; they are dropped
+        // through the blocks about to be pruned, before those blocks go, so
+        // transactions cannot outlive their block. Every writer inserts and
+        // deletes a block's transactions in the same transaction as the block
+        // row, so no transaction exists without its block to be swept here.
+        removed = removed.saturating_add(
+            conn.execute(DELETE_TRANSACTIONS_OBSERVED_BELOW, params![keep_from_mc_seqno])?,
+        );
+        removed = removed.saturating_add(
+            conn.execute(DELETE_BLOCKS_OBSERVED_BELOW, params![keep_from_mc_seqno])?,
+        );
         if removed > 0 {
             // Return the freed pages to the OS (no-op unless auto_vacuum is
             // incremental for this database).
@@ -413,17 +743,38 @@ impl IndexerStore {
         conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA)?;
         conn.execute_batch(NOMINATOR_LEDGER_SCHEMA)?;
         conn.execute_batch(DNS_HISTORY_SCHEMA)?;
+        conn.execute_batch(CANONICAL_PUBLICATION_SCHEMA)?;
+        conn.execute_batch(TRAVERSAL_SCHEMA)?;
+        conn.execute_batch(ADDRESS_REFRESH_SCHEMA)?;
+        conn.execute_batch(ledger::NOMINATOR_LEDGER_STATE_SCHEMA)?;
         Ok(())
+    }
+
+    fn lock(&self) -> anyhow::Result<std::sync::MutexGuard<'_, Connection>> {
+        self.conn.lock().map_err(|_| anyhow::anyhow!("indexer store lock poisoned"))
+    }
+
+    /// The last completely assembled masterchain height, with its full
+    /// identity. `None` until the first height is published.
+    pub fn canonical_state(&self) -> anyhow::Result<Option<MasterchainCheckpoint>> {
+        let conn = self.lock()?;
+        read_canonical_state(&conn)
+    }
+
+    /// Published masterchain seqno, `0` before anything is published.
+    pub fn published_mc_seqno(&self) -> anyhow::Result<u32> {
+        Ok(self.canonical_state()?.map_or(0, |state| state.seqno))
     }
 
     /// Records [`CURRENT_SCHEMA_VERSION`] on a fresh database, or runs any
     /// pending [`MIGRATIONS`] to bring an older one forward. A version newer
     /// than this binary supports fails outright -- an older binary opening a
     /// database written by a future one is never safe to silently proceed
-    /// with. Each migration step updates the stored version immediately
-    /// after it succeeds, so a failure partway through a multi-step chain
-    /// leaves the database at the last version that was actually reached,
-    /// not silently marked as fully migrated.
+    /// with. Each migration step runs in its own transaction together with
+    /// the stored version update, so a failure partway through a multi-step
+    /// chain leaves the database exactly at the last version that was
+    /// actually reached -- neither silently marked as fully migrated nor
+    /// holding half of the failed step's changes.
     fn ensure_schema_version(conn: &Connection) -> anyhow::Result<()> {
         Self::ensure_schema_version_against(conn, CURRENT_SCHEMA_VERSION, MIGRATIONS)
     }
@@ -472,12 +823,19 @@ impl IndexerStore {
                      or pin the binary version that wrote it"
                 )
             })?;
-            migration(conn)?;
-            version += 1;
-            conn.execute(
+            let next = version.checked_add(1).ok_or_else(|| {
+                anyhow::anyhow!("indexer database schema version {version} cannot advance")
+            })?;
+            // One step and its version bump commit together; a failing step
+            // rolls back whatever it had already changed.
+            let tx = conn.unchecked_transaction()?;
+            migration(&tx)?;
+            tx.execute(
                 "UPDATE indexer_meta SET value = ?1 WHERE key = 'schema_version'",
-                params![version.to_string()],
+                params![next.to_string()],
             )?;
+            tx.commit()?;
+            version = next;
         }
         Ok(())
     }
@@ -496,7 +854,7 @@ impl IndexerStore {
     /// rescan is redundant work, not silent data loss, so this is a
     /// deliberate fail-safe rather than a fail-closed).
     pub fn checkpoint(&self, shard_key: &str) -> anyhow::Result<u32> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let value: Option<String> = conn
             .query_row(
                 "SELECT value FROM indexer_meta WHERE key = ?1",
@@ -522,7 +880,7 @@ impl IndexerStore {
     }
 
     pub fn set_checkpoint(&self, shard_key: &str, seqno: u32) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO indexer_meta (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -536,7 +894,7 @@ impl IndexerStore {
     /// that same seqno, the block the indexer already scanned was
     /// reorganized out from under it.
     pub fn checkpoint_block_hash(&self, shard_key: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT value FROM indexer_meta WHERE key = ?1",
             params![format!("blockhash:{shard_key}")],
@@ -551,7 +909,7 @@ impl IndexerStore {
         shard_key: &str,
         block_hash: &str,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO indexer_meta (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -564,7 +922,7 @@ impl IndexerStore {
     /// order. Corrupt values are omitted (and separately warned about by
     /// [`Self::checkpoint`]) rather than being exposed as made-up progress.
     pub fn checkpoints(&self) -> anyhow::Result<Vec<IndexerCheckpoint>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut stmt = conn.prepare(
             "SELECT substr(key, 12), value FROM indexer_meta
              WHERE key LIKE 'checkpoint:%' ORDER BY key",
@@ -592,7 +950,7 @@ impl IndexerStore {
         block: &ExplorerBlockRecord,
         transactions: &[ExplorerTransactionRecord],
     ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO explorer_blocks
@@ -665,7 +1023,7 @@ impl IndexerStore {
         shard: i64,
         from_seqno: u32,
     ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM explorer_transactions
@@ -685,37 +1043,21 @@ impl IndexerStore {
     /// suffix. This is the topology-aware counterpart to a masterchain
     /// reorg rewind and removes retired split/merge branches as well.
     pub fn rewind_masterchain_observations(&self, from_mc_seqno: u32) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "DELETE FROM explorer_transactions WHERE EXISTS (
-                SELECT 1 FROM explorer_blocks b
-                WHERE b.workchain = explorer_transactions.workchain
-                  AND b.shard = explorer_transactions.shard
-                  AND b.seqno = explorer_transactions.seqno
-                  AND b.observed_mc_seqno >= ?1
-             )",
-            params![from_mc_seqno],
-        )?;
-        tx.execute(
-            "DELETE FROM explorer_blocks WHERE observed_mc_seqno >= ?1",
-            params![from_mc_seqno],
-        )?;
+        tx.execute(DELETE_TRANSACTIONS_OBSERVED_FROM, params![from_mc_seqno])?;
+        tx.execute(DELETE_BLOCKS_OBSERVED_FROM, params![from_mc_seqno])?;
         tx.commit()?;
         Ok(())
     }
 
-    /// Clears all chain-derived state after a confirmed masterchain reorg.
-    /// A full replay is intentionally conservative: contract snapshots and
-    /// lifecycle evidence may also have originated on a retired branch and
-    /// cannot be repaired safely from a short explorer-only rewind.
     /// The highest new-request id ever scanned for a service, kept as one
     /// meta row per service. Ids probed and found absent are deliberately
     /// NOT stored as lifecycle rows -- a contract reporting a fabricated
     /// counter would otherwise grow the table by one batch of dead rows per
     /// visit -- so the scan position must survive on its own.
     pub fn service_scan_high_water(&self, service_address: &str) -> anyhow::Result<Option<u64>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let value: Option<String> = conn
             .query_row(
                 "SELECT value FROM indexer_meta WHERE key = ?1",
@@ -731,7 +1073,7 @@ impl IndexerStore {
         service_address: &str,
         high_water: u64,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT OR REPLACE INTO indexer_meta (key, value) VALUES (?1, ?2)",
             params![format!("svc-scan:{service_address}"), high_water.to_string()],
@@ -739,20 +1081,82 @@ impl IndexerStore {
         Ok(())
     }
 
+    /// Clears all chain-derived state after a confirmed masterchain reorg.
+    /// A full replay is intentionally conservative: contract snapshots and
+    /// lifecycle evidence may also have originated on a retired branch and
+    /// cannot be repaired safely from a short explorer-only rewind. The
+    /// nominator ledger is marked for a genesis rebuild in the same
+    /// transaction, so its totals stop being served immediately.
     pub fn reset_canonical_index(&self) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
+        let mut conn = self.lock()?;
         let tx = conn.transaction()?;
         tx.execute("DELETE FROM explorer_transactions", [])?;
         tx.execute("DELETE FROM explorer_blocks", [])?;
         tx.execute("DELETE FROM indexed_contracts", [])?;
         tx.execute("DELETE FROM service_request_lifecycle", [])?;
         tx.execute("DELETE FROM dns_domain_history", [])?;
+        for table in CANONICAL_PROGRESS_TABLES {
+            tx.execute(&format!("DELETE FROM {table}"), [])?;
+        }
+        // Totals built on the replaced history stop being servable in the
+        // same transaction that forgets that history.
+        ledger::mark_rebuild_required(&tx)?;
         tx.execute(
             "DELETE FROM indexer_meta
-             WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'svc-scan:%'",
+             WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%' OR key LIKE 'filehash:%'
+                OR key LIKE 'svc-scan:%'",
             [],
         )?;
         tx.commit()?;
+        Ok(())
+    }
+
+    /// File-backed store for tests that simulate a process restart by
+    /// dropping and reopening it. Commits stay atomic across a process
+    /// crash; only the OS-crash fsync barrier is relaxed to keep tests fast.
+    #[cfg(test)]
+    pub(crate) fn open_for_tests(path: &Path) -> anyhow::Result<Self> {
+        let store = Self::open(path)?;
+        store.lock()?.execute_batch("PRAGMA synchronous = OFF;")?;
+        Ok(store)
+    }
+
+    /// Every explorer row, published or hidden: `(blocks, transactions)`.
+    #[cfg(test)]
+    pub(crate) fn raw_explorer_row_counts(&self) -> anyhow::Result<(i64, i64)> {
+        let conn = self.lock()?;
+        Ok((
+            conn.query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM explorer_transactions", [], |row| row.get(0))?,
+        ))
+    }
+
+    /// Raw transaction presence, published or hidden.
+    #[cfg(test)]
+    pub(crate) fn raw_transaction_exists(&self, hash: &str) -> anyhow::Result<bool> {
+        let conn = self.lock()?;
+        Ok(conn
+            .query_row("SELECT 1 FROM explorer_transactions WHERE hash = ?1", params![hash], |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_some())
+    }
+
+    /// Declares everything up to `seqno` published, for tests that seed
+    /// explorer rows directly instead of running the scanner.
+    #[cfg(test)]
+    pub(crate) fn publish_through_for_tests(&self, seqno: u32) -> anyhow::Result<()> {
+        let conn = self.lock()?;
+        conn.execute(
+            "INSERT INTO indexer_canonical_state
+                (id, published_mc_seqno, published_mc_root_hash, published_mc_file_hash)
+             VALUES (1, ?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET published_mc_seqno = excluded.published_mc_seqno,
+                published_mc_root_hash = excluded.published_mc_root_hash,
+                published_mc_file_hash = excluded.published_mc_file_hash",
+            params![seqno, "00".repeat(32), "00".repeat(32)],
+        )?;
         Ok(())
     }
 
@@ -762,7 +1166,7 @@ impl IndexerStore {
                 && record.file_hash.as_ref().is_some_and(|hash| !hash.is_empty()),
             "DNS history requires a full masterchain checkpoint"
         );
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO dns_domain_history(address,account_seqno,observed_mc_seqno,observed_at,dto_json,root_hash,file_hash)
              VALUES(?1,?2,?3,?4,?5,?6,?7)
@@ -780,7 +1184,7 @@ impl IndexerStore {
         after_address: &str,
         limit: usize,
     ) -> anyhow::Result<Vec<DnsDomainHistoryRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut statement = conn.prepare(
             "SELECT h.address,h.account_seqno,h.observed_mc_seqno,h.observed_at,h.dto_json,
                     h.root_hash,h.file_hash
@@ -803,14 +1207,15 @@ impl IndexerStore {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Published masterchain block at `seqno`; a pending height is invisible.
     pub fn masterchain_block(&self, seqno: u32) -> anyhow::Result<Option<ExplorerBlockRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT b.workchain, b.shard, b.seqno, b.root_hash, b.file_hash, b.gen_utime,
                     (SELECT COUNT(*) FROM explorer_transactions t
                      WHERE t.workchain=b.workchain AND t.shard=b.shard AND t.seqno=b.seqno),
                     b.indexed_at, b.observed_mc_seqno
-             FROM explorer_blocks b WHERE b.workchain=-1 AND b.seqno=?1",
+             FROM published_explorer_blocks b WHERE b.workchain=-1 AND b.seqno=?1",
             params![seqno],
             row_to_explorer_block,
         )
@@ -818,13 +1223,15 @@ impl IndexerStore {
         .map_err(Into::into)
     }
 
+    /// Raw row lookup, published or not. Internal diagnostics and tests only;
+    /// public reads go through the published views.
     pub fn explorer_block_root(
         &self,
         workchain: i32,
         shard: i64,
         seqno: u32,
     ) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT root_hash FROM explorer_blocks
              WHERE workchain = ?1 AND shard = ?2 AND seqno = ?3",
@@ -835,17 +1242,16 @@ impl IndexerStore {
         .map_err(Into::into)
     }
 
+    /// A transaction is public only through a published block.
     pub fn explorer_transaction(
         &self,
         hash: &str,
     ) -> anyhow::Result<Option<ExplorerTransactionRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT t.hash, t.account, t.lt, t.workchain, t.shard, t.seqno,
-                    COALESCE(b.gen_utime, 0), t.indexed_at, t.fee, t.in_msg_hash
-             FROM explorer_transactions t
-             LEFT JOIN explorer_blocks b
-               ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno
+                    t.block_gen_utime, t.indexed_at, t.fee, t.in_msg_hash
+             FROM published_explorer_transactions t
              WHERE t.hash = ?1",
             params![hash],
             row_to_explorer_transaction,
@@ -858,13 +1264,13 @@ impl IndexerStore {
         &self,
         hash: &str,
     ) -> anyhow::Result<Option<ExplorerBlockRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT b.workchain, b.shard, b.seqno, b.root_hash, b.file_hash, b.gen_utime,
                     (SELECT COUNT(*) FROM explorer_transactions t
                      WHERE t.workchain = b.workchain AND t.shard = b.shard AND t.seqno = b.seqno),
                     b.indexed_at, b.observed_mc_seqno
-             FROM explorer_blocks b WHERE b.root_hash = ?1 OR b.file_hash = ?1 LIMIT 1",
+             FROM published_explorer_blocks b WHERE b.root_hash = ?1 OR b.file_hash = ?1 LIMIT 1",
             params![hash],
             row_to_explorer_block,
         )
@@ -882,10 +1288,12 @@ impl IndexerStore {
     ) -> anyhow::Result<(Vec<ExplorerBlockRecord>, usize)> {
         let offset = i64::try_from(offset)?;
         let limit = i64::try_from(limit)?;
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        let total = conn
-            .query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get::<_, i64>(0))?
-            as usize;
+        let conn = self.lock()?;
+        let total = usize::try_from(conn.query_row(
+            "SELECT COUNT(*) FROM published_explorer_blocks",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?)?;
         // The ORDER BY matches `idx_explorer_blocks_gen_utime` exactly so the
         // sort is an index walk, not a full-table sort per request.
         let mut stmt = conn.prepare(
@@ -893,7 +1301,7 @@ impl IndexerStore {
                     (SELECT COUNT(*) FROM explorer_transactions t
                      WHERE t.workchain = b.workchain AND t.shard = b.shard AND t.seqno = b.seqno),
                     b.indexed_at, b.observed_mc_seqno
-             FROM explorer_blocks b
+             FROM published_explorer_blocks b
              ORDER BY b.gen_utime DESC, b.seqno DESC, b.workchain, b.shard
              LIMIT ?1 OFFSET ?2",
         )?;
@@ -914,34 +1322,32 @@ impl IndexerStore {
     ) -> anyhow::Result<(Vec<ExplorerTransactionRecord>, usize)> {
         let offset = i64::try_from(offset)?;
         let limit = i64::try_from(limit)?;
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let (where_sql, account_param) =
             if account.is_some() { (" WHERE account = ?1", account) } else { ("", None) };
-        let total: usize = if let Some(account) = account_param {
+        let total = usize::try_from(if let Some(account) = account_param {
             conn.query_row(
-                "SELECT COUNT(*) FROM explorer_transactions WHERE account = ?1",
+                "SELECT COUNT(*) FROM published_explorer_transactions WHERE account = ?1",
                 params![account],
                 |row| row.get::<_, i64>(0),
-            )? as usize
+            )?
         } else {
-            conn.query_row("SELECT COUNT(*) FROM explorer_transactions", [], |row| {
+            conn.query_row("SELECT COUNT(*) FROM published_explorer_transactions", [], |row| {
                 row.get::<_, i64>(0)
-            })? as usize
-        };
+            })?
+        })?;
         // Sorted on the transaction's own columns (matching
         // `idx_explorer_transactions_order` exactly for the network-wide
         // feed, and the `account` index's `seqno DESC` prefix for account
         // history) rather than the joined block's `gen_utime`, which no index
         // can serve. Observable ordering difference versus the older
         // gen_utime sort: same-seqno blocks in different shards group by
-        // seqno instead of block time, and a transaction whose block row is
-        // missing sorts by its own seqno instead of being forced last.
+        // seqno instead of block time. A transaction without a published
+        // block is not listed at all.
         let sql = format!(
             "SELECT t.hash, t.account, t.lt, t.workchain, t.shard, t.seqno,
-                    COALESCE(b.gen_utime, 0), t.indexed_at, t.fee, t.in_msg_hash
-             FROM explorer_transactions t
-             LEFT JOIN explorer_blocks b
-               ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno{where_sql}
+                    t.block_gen_utime, t.indexed_at, t.fee, t.in_msg_hash
+             FROM published_explorer_transactions t{where_sql}
              ORDER BY t.seqno DESC, length(t.lt) DESC, t.lt DESC, t.hash
              LIMIT ?{} OFFSET ?{}",
             if account.is_some() { 2 } else { 1 },
@@ -971,19 +1377,17 @@ impl IndexerStore {
     ) -> anyhow::Result<(Vec<ExplorerTransactionRecord>, usize)> {
         let offset = i64::try_from(offset)?;
         let limit = i64::try_from(limit)?;
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        let total = conn.query_row(
-            "SELECT COUNT(*) FROM explorer_transactions
+        let conn = self.lock()?;
+        let total = usize::try_from(conn.query_row(
+            "SELECT COUNT(*) FROM published_explorer_transactions
              WHERE workchain = ?1 AND shard = ?2 AND seqno = ?3",
             params![workchain, shard, seqno],
             |row| row.get::<_, i64>(0),
-        )? as usize;
+        )?)?;
         let mut stmt = conn.prepare(
             "SELECT t.hash, t.account, t.lt, t.workchain, t.shard, t.seqno,
-                    COALESCE(b.gen_utime, 0), t.indexed_at, t.fee, t.in_msg_hash
-             FROM explorer_transactions t
-             LEFT JOIN explorer_blocks b
-               ON b.workchain = t.workchain AND b.shard = t.shard AND b.seqno = t.seqno
+                    t.block_gen_utime, t.indexed_at, t.fee, t.in_msg_hash
+             FROM published_explorer_transactions t
              WHERE t.workchain = ?1 AND t.shard = ?2 AND t.seqno = ?3
              ORDER BY length(t.lt) DESC, t.lt DESC, t.hash
              LIMIT ?4 OFFSET ?5",
@@ -998,33 +1402,30 @@ impl IndexerStore {
     }
 
     pub fn explorer_stats(&self) -> anyhow::Result<ExplorerIndexStats> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        let blocks = conn
-            .query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get::<_, i64>(0))?
-            as usize;
-        let transactions =
-            conn.query_row("SELECT COUNT(*) FROM explorer_transactions", [], |row| {
-                row.get::<_, i64>(0)
-            })? as usize;
-        let contracts = conn.query_row(
-            "SELECT COUNT(*) FROM indexed_contracts WHERE kind != 'unclassified'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )? as usize;
+        let conn = self.lock()?;
+        let count = |sql: &str| -> anyhow::Result<usize> {
+            Ok(usize::try_from(conn.query_row(sql, [], |row| row.get::<_, i64>(0))?)?)
+        };
+        let blocks = count("SELECT COUNT(*) FROM published_explorer_blocks")?;
+        let transactions = count("SELECT COUNT(*) FROM published_explorer_transactions")?;
+        let contracts =
+            count("SELECT COUNT(*) FROM indexed_contracts WHERE kind != 'unclassified'")?;
         let latest_indexed_at: Option<i64> =
-            conn.query_row("SELECT MAX(indexed_at) FROM explorer_blocks", [], |row| row.get(0))?;
+            conn.query_row("SELECT MAX(indexed_at) FROM published_explorer_blocks", [], |row| {
+                row.get(0)
+            })?;
         Ok(ExplorerIndexStats {
             blocks,
             transactions,
             contracts,
-            latest_indexed_at: latest_indexed_at.map(|value| value as u64),
+            latest_indexed_at: latest_indexed_at.map(u64::try_from).transpose()?,
         })
     }
 
     /// `true` if this address has already been seen (classified or not),
     /// i.e. it does not need a fresh code-hash lookup.
     pub fn is_known(&self, address: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let found: Option<i64> = conn
             .query_row(
                 "SELECT 1 FROM indexed_contracts WHERE address = ?1",
@@ -1037,7 +1438,7 @@ impl IndexerStore {
 
     /// Returns the stored `kind` for an already-known address, if any.
     pub fn kind_of(&self, address: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let kind: Option<String> = conn
             .query_row(
                 "SELECT kind FROM indexed_contracts WHERE address = ?1",
@@ -1049,7 +1450,7 @@ impl IndexerStore {
     }
 
     pub fn upsert(&self, record: &IndexedRecord) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO indexed_contracts
                 (address, kind, creator, counterparty, status, deadline, last_seqno, updated_at, dto_json)
@@ -1079,7 +1480,7 @@ impl IndexerStore {
     }
 
     pub fn get(&self, address: &str) -> anyhow::Result<Option<IndexedRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT address, kind, creator, counterparty, status, deadline, last_seqno, updated_at, dto_json
              FROM indexed_contracts WHERE address = ?1",
@@ -1101,7 +1502,7 @@ impl IndexerStore {
     ) -> anyhow::Result<(Vec<IndexedRecord>, usize)> {
         let offset = i64::try_from(offset)?;
         let limit = i64::try_from(limit)?;
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
 
         let mut where_clauses = vec!["kind = ?1".to_owned()];
         let mut bind: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(kind.to_owned())];
@@ -1148,138 +1549,18 @@ impl IndexerStore {
     }
 
     /// One depositor's standing in one pool, as attributed so far.
+    /// Raw ledger rows for one depositor. Whether they may be served is
+    /// decided by [`Self::nominator_ledger_report`].
     pub fn nominator_ledger_entries(
         &self,
         nominator_address: &str,
     ) -> anyhow::Result<Vec<NominatorLedgerRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
-        let mut statement = conn.prepare(
-            "SELECT pool_address, nominator_address, deposited_total, rewarded_total,
-                    unattributed_total, last_amount, last_pending, first_seen_at, updated_at
-             FROM nominator_ledger
-             WHERE nominator_address = ?1
-             ORDER BY pool_address",
-        )?;
-        let rows = statement.query_map(params![nominator_address], |row| {
-            Ok(NominatorLedgerRecord {
-                pool_address: row.get(0)?,
-                nominator_address: row.get(1)?,
-                deposited_total: row.get::<_, i64>(2)? as u64,
-                rewarded_total: row.get::<_, i64>(3)? as u64,
-                unattributed_total: row.get::<_, i64>(4)? as u64,
-                last_amount: row.get::<_, i64>(5)? as u64,
-                last_pending: row.get::<_, i64>(6)? as u64,
-                first_seen_at: row.get::<_, i64>(7)? as u64,
-                updated_at: row.get::<_, i64>(8)? as u64,
-            })
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    }
-
-    /// Fold one observation of a pool's depositors into the ledger.
-    ///
-    /// Attribution follows pool.fc's own rules for where a change can come
-    /// from: while the pool is idle a deposit lands directly in `amount`;
-    /// while it is staked a deposit lands in `pending_deposit`; and a
-    /// distribution moves the pending amount plus the round's reward into
-    /// `amount` and clears pending. Anything the previous observation cannot
-    /// account for is recorded as unattributed instead of being called a
-    /// reward.
-    pub fn observe_nominator_positions(
-        &self,
-        pool_address: &str,
-        pool_state: i32,
-        observed_at: u64,
-        positions: &[(String, u64, u64)],
-    ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().expect("indexer store lock poisoned");
-        let tx = conn.transaction()?;
-        for (nominator, amount, pending) in positions {
-            let previous: Option<(i64, i64, i64)> = tx
-                .query_row(
-                    "SELECT last_amount, last_pending, last_pool_state
-                     FROM nominator_ledger
-                     WHERE pool_address = ?1 AND nominator_address = ?2",
-                    params![pool_address, nominator],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .optional()?;
-
-            let (mut deposited, mut rewarded, mut unattributed) = (0i64, 0i64, 0i64);
-            match previous {
-                None => {
-                    // First sight of this depositor. Everything they hold was
-                    // put there before anyone was watching, so it is a
-                    // deposit only in the sense that it is not a reward this
-                    // ledger observed.
-                    deposited = (*amount as i64).saturating_add(*pending as i64);
-                }
-                Some((last_amount, last_pending, last_state)) => {
-                    // Chain-controlled values: keep the delta math saturating
-                    // so a hostile or corrupt observation cannot overflow.
-                    let amount_delta = (*amount as i64).saturating_sub(last_amount);
-                    let pending_delta = (*pending as i64).saturating_sub(last_pending);
-                    let distribution_happened = last_state != POOL_STATE_IDLE
-                        && i64::from(pool_state) == POOL_STATE_IDLE
-                        && *pending == 0;
-
-                    if distribution_happened {
-                        // amount grew by the pending deposit plus this
-                        // round's share of the reward.
-                        let reward = amount_delta.saturating_sub(last_pending);
-                        if reward >= 0 {
-                            rewarded = reward;
-                        } else {
-                            // A loss round, or an observation gap that hid a
-                            // withdrawal. Either way it is not a reward.
-                            unattributed = reward;
-                        }
-                    } else if pending_delta > 0 {
-                        deposited = pending_delta;
-                        if amount_delta != 0 {
-                            unattributed = amount_delta;
-                        }
-                    } else if amount_delta > 0 && last_state == POOL_STATE_IDLE {
-                        deposited = amount_delta;
-                    } else if amount_delta != 0 || pending_delta != 0 {
-                        unattributed = amount_delta.saturating_add(pending_delta);
-                    }
-                }
-            }
-
-            tx.execute(
-                "INSERT INTO nominator_ledger
-                    (pool_address, nominator_address, deposited_total, rewarded_total,
-                     unattributed_total, last_amount, last_pending, last_pool_state,
-                     first_seen_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
-                 ON CONFLICT(pool_address, nominator_address) DO UPDATE SET
-                    deposited_total = deposited_total + ?3,
-                    rewarded_total = rewarded_total + ?4,
-                    unattributed_total = unattributed_total + ?5,
-                    last_amount = excluded.last_amount,
-                    last_pending = excluded.last_pending,
-                    last_pool_state = excluded.last_pool_state,
-                    updated_at = excluded.updated_at",
-                params![
-                    pool_address,
-                    nominator,
-                    deposited.max(0),
-                    rewarded.max(0),
-                    unattributed.unsigned_abs() as i64,
-                    *amount as i64,
-                    *pending as i64,
-                    pool_state,
-                    observed_at as i64,
-                ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+        let conn = self.lock()?;
+        read_ledger_entries(&conn, nominator_address)
     }
 
     pub fn upsert_service_request(&self, record: &ServiceRequestRecord) -> anyhow::Result<()> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.execute(
             "INSERT INTO service_request_lifecycle
                 (service_address, request_id, status, updated_at, dto_json)
@@ -1303,7 +1584,7 @@ impl IndexerStore {
         service_address: &str,
         request_id: u64,
     ) -> anyhow::Result<Option<ServiceRequestRecord>> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         conn.query_row(
             "SELECT service_address, request_id, status, updated_at, dto_json
              FROM service_request_lifecycle WHERE service_address = ?1 AND request_id = ?2",
@@ -1335,7 +1616,7 @@ impl IndexerStore {
         &self,
         service_address: &str,
     ) -> anyhow::Result<(Option<u64>, u64, Vec<ServiceRequestRecord>)> {
-        let conn = self.conn.lock().expect("indexer store lock poisoned");
+        let conn = self.lock()?;
         let mut stmt = conn.prepare(
             "SELECT service_address, request_id, status, updated_at, dto_json
              FROM service_request_lifecycle WHERE service_address = ?1",
@@ -1374,6 +1655,165 @@ impl IndexerStore {
             .collect();
         Ok((max_id, stored, active))
     }
+}
+
+/// Writes a database exactly as a v10 binary left it: a ledger that looks
+/// complete, explorer history and checkpoints, and no provenance anywhere.
+#[cfg(test)]
+pub(crate) fn write_v10_database_for_tests(path: &Path) -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open(path)?;
+    conn.execute_batch(
+        "CREATE TABLE indexer_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+         CREATE TABLE indexed_contracts (address TEXT PRIMARY KEY, kind TEXT NOT NULL,
+            creator TEXT, counterparty TEXT, status TEXT, deadline INTEGER,
+            last_seqno INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            dto_json TEXT NOT NULL);
+         CREATE TABLE service_request_lifecycle (service_address TEXT NOT NULL,
+            request_id TEXT NOT NULL, status TEXT NOT NULL, updated_at INTEGER NOT NULL,
+            dto_json TEXT NOT NULL, PRIMARY KEY(service_address, request_id));
+         CREATE TABLE nominator_ledger (pool_address TEXT NOT NULL,
+            nominator_address TEXT NOT NULL,
+            deposited_total INTEGER NOT NULL DEFAULT 0,
+            rewarded_total INTEGER NOT NULL DEFAULT 0,
+            unattributed_total INTEGER NOT NULL DEFAULT 0,
+            last_amount INTEGER NOT NULL DEFAULT 0,
+            last_pending INTEGER NOT NULL DEFAULT 0,
+            last_pool_state INTEGER NOT NULL DEFAULT 0,
+            first_seen_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+            PRIMARY KEY(pool_address, nominator_address));",
+    )?;
+    conn.execute_batch(EXPLORER_SCHEMA)?;
+    conn.execute_batch(EXPLORER_ORDER_INDEX_SCHEMA)?;
+    conn.execute_batch(DNS_HISTORY_SCHEMA)?;
+    conn.execute_batch(
+        "INSERT INTO indexer_meta VALUES ('schema_version', '10');
+         INSERT INTO indexer_meta VALUES ('checkpoint:-1:-9223372036854775808', '900');
+         INSERT INTO nominator_ledger (pool_address, nominator_address, deposited_total,
+            rewarded_total, unattributed_total, last_amount, first_seen_at, updated_at)
+            VALUES ('-1:aaaa', '0:1111', 1000, 250, 0, 1250, 1, 2);
+         INSERT INTO explorer_blocks VALUES (-1, -9223372036854775808, 900, 'r', 'f', 1, 1, 900);",
+    )?;
+    Ok(())
+}
+
+fn read_ledger_entries(
+    conn: &Connection,
+    nominator_address: &str,
+) -> anyhow::Result<Vec<NominatorLedgerRecord>> {
+    let mut statement = conn.prepare(
+        "SELECT pool_address, nominator_address, deposited_total, rewarded_total,
+                unattributed_total, last_amount, last_pending, first_seen_at, updated_at,
+                coverage_gap_count, last_mc_seqno, last_mc_root_hash, last_mc_file_hash
+         FROM nominator_ledger
+         WHERE nominator_address = ?1
+         ORDER BY pool_address",
+    )?;
+    let rows = statement.query_map(params![nominator_address], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            [
+                row.get::<_, i64>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, i64>(6)?,
+                row.get::<_, i64>(7)?,
+                row.get::<_, i64>(8)?,
+                row.get::<_, i64>(9)?,
+            ],
+            row.get::<_, Option<u32>>(10)?,
+            row.get::<_, Option<String>>(11)?,
+            row.get::<_, Option<String>>(12)?,
+        ))
+    })?;
+    rows.map(|row| {
+        let (pool_address, nominator_address, numbers, seqno, root_hash, file_hash) = row?;
+        let [deposited, rewarded, unattributed, amount, pending, first_seen, updated, gaps] =
+            numbers.map(u64::try_from);
+        Ok(NominatorLedgerRecord {
+            pool_address,
+            nominator_address,
+            deposited_total: deposited?,
+            rewarded_total: rewarded?,
+            unattributed_total: unattributed?,
+            last_amount: amount?,
+            last_pending: pending?,
+            first_seen_at: first_seen?,
+            updated_at: updated?,
+            coverage_gap_count: gaps?,
+            last_mc_seqno: seqno,
+            last_mc_root_hash: root_hash,
+            last_mc_file_hash: file_hash,
+        })
+    })
+    .collect()
+}
+
+fn read_canonical_state(conn: &Connection) -> anyhow::Result<Option<MasterchainCheckpoint>> {
+    conn.query_row(
+        "SELECT published_mc_seqno, published_mc_root_hash, published_mc_file_hash
+         FROM indexer_canonical_state WHERE id = 1",
+        [],
+        |row| {
+            Ok(MasterchainCheckpoint {
+                seqno: row.get(0)?,
+                root_hash: row.get(1)?,
+                file_hash: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+/// The watermark and compatibility-checkpoint half of a publication. Shard
+/// checkpoints only move forward, so a retired shard keeps its last value.
+fn write_publication(
+    conn: &Connection,
+    master_shard: i64,
+    anchor: &MasterchainCheckpoint,
+    shard_heads: &[BlockFullId],
+) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO indexer_canonical_state
+            (id, published_mc_seqno, published_mc_root_hash, published_mc_file_hash)
+         VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+            published_mc_seqno = excluded.published_mc_seqno,
+            published_mc_root_hash = excluded.published_mc_root_hash,
+            published_mc_file_hash = excluded.published_mc_file_hash",
+        params![anchor.seqno, anchor.root_hash, anchor.file_hash],
+    )?;
+    let master_key = format!("-1:{master_shard}");
+    upsert_meta(conn, &format!("checkpoint:{master_key}"), &anchor.seqno.to_string())?;
+    upsert_meta(conn, &format!("blockhash:{master_key}"), &anchor.root_hash)?;
+    upsert_meta(conn, &format!("filehash:{master_key}"), &anchor.file_hash)?;
+    for head in shard_heads.iter().filter(|head| head.seqno > 0) {
+        let key = format!("{}:{}", head.workchain, head.shard);
+        let current: Option<String> = conn
+            .query_row(
+                "SELECT value FROM indexer_meta WHERE key = ?1",
+                params![format!("checkpoint:{key}")],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let current = current.and_then(|value| value.parse::<u32>().ok()).unwrap_or(0);
+        if head.seqno >= current {
+            upsert_meta(conn, &format!("checkpoint:{key}"), &head.seqno.to_string())?;
+            upsert_meta(conn, &format!("blockhash:{key}"), &head.root_hash)?;
+            upsert_meta(conn, &format!("filehash:{key}"), &head.file_hash)?;
+        }
+    }
+    Ok(())
+}
+
+fn upsert_meta(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO indexer_meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
 }
 
 fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<IndexedRecord> {
@@ -1512,6 +1952,50 @@ mod tests {
             })
             .unwrap();
         assert_eq!(version, CURRENT_SCHEMA_VERSION.to_string());
+    }
+
+    #[test]
+    fn v9_head_only_index_is_replayed_instead_of_trusting_its_checkpoint() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let conn = store.conn.lock().unwrap();
+        conn.execute_batch(
+            "UPDATE indexer_meta SET value = '9' WHERE key = 'schema_version';
+             INSERT INTO indexer_meta(key,value) VALUES('checkpoint:-1:-9223372036854775808','136');
+             INSERT INTO indexer_meta(key,value) VALUES('checkpoint:0:-9223372036854775808','313');
+             INSERT INTO indexer_meta(key,value) VALUES('svc-scan:0:old','42');
+             INSERT INTO nominator_ledger(pool_address,nominator_address,first_seen_at,updated_at)
+               VALUES('0:pool','0:owner',1,2);
+             INSERT INTO explorer_blocks(workchain,shard,seqno,root_hash,file_hash,gen_utime,indexed_at,observed_mc_seqno)
+               VALUES(0,-9223372036854775808,124,'old-root','old-file',1,1,57);
+             INSERT INTO explorer_transactions(hash,account,lt,workchain,shard,seqno,indexed_at)
+               VALUES('old-tx','0:old','1',0,-9223372036854775808,124,1);",
+        ).unwrap();
+        IndexerStore::ensure_schema_version(&conn).unwrap();
+        for table in ["explorer_blocks", "explorer_transactions"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(count, 0, "stale {table} must be replayed from genesis");
+        }
+        let remaining: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM indexer_meta WHERE key LIKE 'checkpoint:%' OR key LIKE 'blockhash:%'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(remaining, 0);
+        let retained: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM nominator_ledger WHERE pool_address='0:pool'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, 1, "block replay cannot reconstruct historical ledger deltas");
+        let service_cursor: String = conn
+            .query_row("SELECT value FROM indexer_meta WHERE key='svc-scan:0:old'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(service_cursor, "42");
     }
 
     #[test]
@@ -1835,6 +2319,7 @@ mod tests {
         let block = explorer_block(7);
         let transaction = explorer_transaction("tx-seven", "-1:account", u64::MAX, 7);
         store.index_explorer_block(&block, std::slice::from_ref(&transaction)).unwrap();
+        store.publish_through_for_tests(7).unwrap();
 
         assert_eq!(store.explorer_block_by_hash("root-7").unwrap(), Some(block.clone()));
         assert_eq!(store.explorer_block_by_hash("file-7").unwrap(), Some(block));
@@ -1974,6 +2459,7 @@ mod tests {
         replacement.fee = Some("424242".into());
         replacement.in_msg_hash = Some("message-canonical".into());
         store.index_explorer_block(&replacement_block, std::slice::from_ref(&replacement)).unwrap();
+        store.publish_through_for_tests(9).unwrap();
 
         assert_eq!(store.explorer_transaction("tx-retired").unwrap(), None);
         assert_eq!(store.explorer_transaction("tx-canonical").unwrap(), Some(replacement));
@@ -2002,6 +2488,7 @@ mod tests {
                 ],
             )
             .unwrap();
+        store.publish_through_for_tests(2).unwrap();
 
         let (all, total) = store.list_explorer_transactions(None, 0, 2).unwrap();
         assert_eq!(total, 3);
@@ -2028,6 +2515,72 @@ mod tests {
         assert_eq!(block_transactions.iter().map(|row| row.lt).collect::<Vec<_>>(), vec![30, 20]);
     }
 
+    /// Every public read path, as one tuple, so a before/after comparison
+    /// covers all of them at once.
+    fn public_view(store: &IndexerStore) -> (usize, usize, usize, bool, bool, bool, usize, usize) {
+        let (blocks, block_total) = store.list_explorer_blocks(0, 50).unwrap();
+        let (txs, tx_total) = store.list_explorer_transactions(None, 0, 50).unwrap();
+        let (_, account_total) =
+            store.list_explorer_transactions(Some("-1:pending"), 0, 50).unwrap();
+        let by_block_hash = store.explorer_block_by_hash("root-8").unwrap().is_some();
+        let by_tx_hash = store.explorer_transaction("tx-pending").unwrap().is_some();
+        let master = store.masterchain_block(8).unwrap().is_some();
+        let (_, per_block_total) =
+            store.list_explorer_block_transactions(-1, i64::MIN, 8, 0, 50).unwrap();
+        let stats = store.explorer_stats().unwrap();
+        assert_eq!(blocks.len(), block_total);
+        assert_eq!(txs.len(), tx_total);
+        assert_eq!(stats.blocks, block_total);
+        assert_eq!(stats.transactions, tx_total);
+        (
+            block_total,
+            tx_total,
+            account_total,
+            by_block_hash,
+            by_tx_hash,
+            master,
+            per_block_total,
+            stats.latest_indexed_at.map_or(0, |value| value as usize),
+        )
+    }
+
+    #[test]
+    fn pending_rows_are_invisible_on_every_public_path_until_published() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store
+            .index_explorer_block(
+                &explorer_block(7),
+                &[explorer_transaction("tx-published", "-1:published", 1, 7)],
+            )
+            .unwrap();
+        store.publish_through_for_tests(7).unwrap();
+        // Height 8 is written but its masterchain batch is still assembling.
+        store
+            .index_explorer_block(
+                &explorer_block(8),
+                &[explorer_transaction("tx-pending", "-1:pending", 2, 8)],
+            )
+            .unwrap();
+
+        assert_eq!(public_view(&store), (1, 1, 0, false, false, false, 0, 1_007));
+        assert!(store.explorer_transaction("tx-published").unwrap().is_some());
+        assert!(store.explorer_block_root(-1, i64::MIN, 8).unwrap().is_some(), "row is durable");
+
+        store.publish_through_for_tests(8).unwrap();
+        assert_eq!(public_view(&store), (2, 2, 1, true, true, true, 1, 1_008));
+    }
+
+    #[test]
+    fn nothing_is_public_before_the_first_publication() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store
+            .index_explorer_block(&explorer_block(1), &[explorer_transaction("tx-1", "-1:a", 1, 1)])
+            .unwrap();
+        assert_eq!(store.explorer_stats().unwrap().blocks, 0);
+        assert_eq!(store.explorer_stats().unwrap().transactions, 0);
+        assert!(store.explorer_transaction("tx-1").unwrap().is_none());
+    }
+
     #[test]
     fn explorer_rewind_removes_only_the_reorganized_suffix() {
         let store = IndexerStore::open_in_memory().unwrap();
@@ -2045,6 +2598,7 @@ mod tests {
                 .unwrap();
         }
         store.rewind_explorer(-1, i64::MIN, 2).unwrap();
+        store.publish_through_for_tests(3).unwrap();
 
         assert!(store.explorer_block_by_hash("root-1").unwrap().is_some());
         assert!(store.explorer_transaction("tx-1").unwrap().is_some());
@@ -2052,11 +2606,288 @@ mod tests {
         assert!(store.explorer_transaction("tx-3").unwrap().is_none());
         assert_eq!(store.explorer_stats().unwrap().blocks, 1);
     }
+
+    /// Every statement that deletes explorer rows by observing height.
+    const PER_HEIGHT_DELETES: &[(&str, &str)] = &[
+        ("transactions above", DELETE_TRANSACTIONS_OBSERVED_ABOVE),
+        ("blocks above", DELETE_BLOCKS_OBSERVED_ABOVE),
+        ("transactions from", DELETE_TRANSACTIONS_OBSERVED_FROM),
+        ("blocks from", DELETE_BLOCKS_OBSERVED_FROM),
+        ("transactions below", DELETE_TRANSACTIONS_OBSERVED_BELOW),
+        ("blocks below", DELETE_BLOCKS_OBSERVED_BELOW),
+    ];
+
+    fn query_plan(conn: &Connection, sql: &str) -> Vec<String> {
+        let mut statement = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        statement
+            .query_map(params![1u32], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn full_scans(plan: &[String]) -> Vec<&String> {
+        plan.iter()
+            .filter(|detail| {
+                detail.contains("SCAN explorer_transactions")
+                    || detail.contains("SCAN explorer_blocks")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn per_height_deletes_are_served_by_indexes() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let conn = store.conn.lock().unwrap();
+        // The guard must be able to see a full scan: the correlated form
+        // these statements replaced walks every transaction row.
+        let correlated = query_plan(
+            &conn,
+            "DELETE FROM explorer_transactions WHERE EXISTS (
+                SELECT 1 FROM explorer_blocks b
+                WHERE b.workchain = explorer_transactions.workchain
+                  AND b.shard = explorer_transactions.shard
+                  AND b.seqno = explorer_transactions.seqno
+                  AND b.observed_mc_seqno > ?1)",
+        );
+        assert!(!full_scans(&correlated).is_empty(), "control plan: {correlated:?}");
+        for (name, sql) in PER_HEIGHT_DELETES {
+            let plan = query_plan(&conn, sql);
+            assert!(full_scans(&plan).is_empty(), "{name} scans a whole table: {plan:?}");
+            assert!(
+                plan.iter().any(|detail| detail.contains("idx_explorer_blocks_observed")),
+                "{name} does not select blocks by observing height: {plan:?}"
+            );
+            if sql.contains("DELETE FROM explorer_transactions") {
+                assert!(
+                    plan.iter().any(|detail| detail.contains("idx_explorer_transactions_block")),
+                    "{name} does not reach transactions through their block: {plan:?}"
+                );
+            }
+        }
+    }
+
+    fn has_index(conn: &Connection, name: &str) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            params![name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+            == 1
+    }
+
+    fn schema_version(conn: &Connection) -> String {
+        conn.query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_v13_database_gains_the_observation_index() {
+        let downgrade = "DROP INDEX idx_explorer_blocks_observed;
+             UPDATE indexer_meta SET value = '13' WHERE key = 'schema_version';";
+        // The migration step alone adds the index.
+        let store = IndexerStore::open_in_memory().unwrap();
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute_batch(downgrade).unwrap();
+            assert!(!has_index(&conn, "idx_explorer_blocks_observed"));
+            IndexerStore::ensure_schema_version(&conn).unwrap();
+            assert!(has_index(&conn, "idx_explorer_blocks_observed"));
+            assert_eq!(schema_version(&conn), "14");
+        }
+        // A v13 file on disk is upgraded in place when it is opened, and keeps
+        // its rows.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tosctl-indexer.db");
+        {
+            let store = IndexerStore::open(&path).unwrap();
+            store.index_explorer_block(&explorer_block(7), &[]).unwrap();
+            store.conn.lock().unwrap().execute_batch(downgrade).unwrap();
+        }
+        let store = IndexerStore::open(&path).unwrap();
+        let conn = store.conn.lock().unwrap();
+        assert!(has_index(&conn, "idx_explorer_blocks_observed"));
+        assert_eq!(schema_version(&conn), CURRENT_SCHEMA_VERSION.to_string());
+        let blocks: i64 =
+            conn.query_row("SELECT COUNT(*) FROM explorer_blocks", [], |row| row.get(0)).unwrap();
+        assert_eq!(blocks, 1);
+    }
+
+    /// A database from before the v4 to v5 step has explorer tables without
+    /// `observed_mc_seqno`, `fee` and `in_msg_hash`. Opening it must run the
+    /// migrations first and only then index the observation column; creating
+    /// that index up front fails on the missing column and the store never
+    /// opens.
+    #[test]
+    fn a_pre_v5_layout_reaches_the_current_schema_with_the_observation_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tosctl-indexer.db");
+        drop(IndexerStore::open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP VIEW IF EXISTS published_explorer_blocks;
+                 DROP VIEW IF EXISTS published_explorer_transactions;
+                 DROP INDEX idx_explorer_blocks_observed;
+                 ALTER TABLE explorer_blocks DROP COLUMN observed_mc_seqno;
+                 ALTER TABLE explorer_transactions DROP COLUMN fee;
+                 ALTER TABLE explorer_transactions DROP COLUMN in_msg_hash;
+                 UPDATE indexer_meta SET value = '4' WHERE key = 'schema_version';",
+            )
+            .unwrap();
+            let columns: Vec<String> = conn
+                .prepare("SELECT name FROM pragma_table_info('explorer_blocks')")
+                .unwrap()
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap();
+            assert!(!columns.iter().any(|c| c == "observed_mc_seqno"));
+        }
+        let store = IndexerStore::open(&path).unwrap();
+        let conn = store.conn.lock().unwrap();
+        assert_eq!(schema_version(&conn), CURRENT_SCHEMA_VERSION.to_string());
+        assert!(has_index(&conn, "idx_explorer_blocks_observed"));
+    }
+
+    /// Masterchain blocks 1..=5 observed at their own height, and a basechain
+    /// block at seqno 2 observed at height 5, so a coordinate that differs only
+    /// in workchain must not be confused with the masterchain block 2. Every
+    /// block carries two transactions.
+    fn store_with_observed_heights() -> IndexerStore {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let mut blocks: Vec<ExplorerBlockRecord> = (1..=5).map(explorer_block).collect();
+        let mut basechain = explorer_block(2);
+        basechain.workchain = 0;
+        basechain.root_hash = "root-basechain-2".into();
+        basechain.file_hash = "file-basechain-2".into();
+        basechain.observed_mc_seqno = 5;
+        blocks.push(basechain);
+        for block in &blocks {
+            let transactions: Vec<_> = (0..2u64)
+                .map(|index| {
+                    let mut tx = explorer_transaction(
+                        &format!("tx-{}-{}-{index}", block.workchain, block.seqno),
+                        "-1:account",
+                        index,
+                        block.seqno,
+                    );
+                    tx.workchain = block.workchain;
+                    tx
+                })
+                .collect();
+            store.index_explorer_block(block, &transactions).unwrap();
+        }
+        store
+    }
+
+    /// Remaining blocks as `(workchain, seqno)` and transaction hashes.
+    fn remaining_rows(store: &IndexerStore) -> (Vec<(i32, u32)>, Vec<String>) {
+        let conn = store.conn.lock().unwrap();
+        let blocks = conn
+            .prepare("SELECT workchain, seqno FROM explorer_blocks ORDER BY workchain, seqno")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let transactions = conn
+            .prepare("SELECT hash FROM explorer_transactions ORDER BY hash")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        (blocks, transactions)
+    }
+
+    fn expected_rows(blocks: &[(i32, u32)]) -> (Vec<(i32, u32)>, Vec<String>) {
+        let mut blocks = blocks.to_vec();
+        blocks.sort();
+        let mut transactions: Vec<String> = blocks
+            .iter()
+            .flat_map(|(workchain, seqno)| {
+                (0..2).map(move |index| format!("tx-{workchain}-{seqno}-{index}"))
+            })
+            .collect();
+        transactions.sort();
+        (blocks, transactions)
+    }
+
+    #[test]
+    fn per_height_deletes_remove_exactly_the_rows_on_their_side_of_the_height() {
+        let all = [(-1, 1), (-1, 2), (-1, 3), (-1, 4), (-1, 5), (0, 2)];
+        assert_eq!(remaining_rows(&store_with_observed_heights()), expected_rows(&all));
+        let at_or_below_three = [(-1, 1), (-1, 2), (-1, 3)];
+
+        // Hidden rows above the published height go when a batch is discarded.
+        let store = store_with_observed_heights();
+        store.publish_through_for_tests(3).unwrap();
+        store.discard_pending_batch().unwrap();
+        assert_eq!(remaining_rows(&store), expected_rows(&at_or_below_three));
+
+        // ... and when the next batch opens.
+        let store = store_with_observed_heights();
+        store.publish_through_for_tests(3).unwrap();
+        store
+            .begin_batch(&MasterchainCheckpoint {
+                seqno: 4,
+                root_hash: "00".repeat(32),
+                file_hash: "00".repeat(32),
+            })
+            .unwrap();
+        assert_eq!(remaining_rows(&store), expected_rows(&at_or_below_three));
+
+        // A rewind removes the observing height itself and everything above.
+        let store = store_with_observed_heights();
+        store.rewind_masterchain_observations(3).unwrap();
+        assert_eq!(remaining_rows(&store), expected_rows(&[(-1, 1), (-1, 2)]));
+
+        // Retention keeps the boundary height and everything above, and
+        // counts every removed block and transaction.
+        let store = store_with_observed_heights();
+        assert_eq!(store.prune_history(3).unwrap(), 6);
+        assert_eq!(remaining_rows(&store), expected_rows(&[(-1, 3), (-1, 4), (-1, 5), (0, 2)]));
+    }
 }
 
 #[cfg(test)]
 mod nominator_ledger_tests {
-    use super::IndexerStore;
+    use super::{IndexerStore, LedgerStatus, MasterchainCheckpoint};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    /// Checkpoints only need to increase; every test store publishes far
+    /// ahead of them.
+    static NEXT_CHECKPOINT: AtomicU32 = AtomicU32::new(1);
+
+    fn checkpoint() -> MasterchainCheckpoint {
+        MasterchainCheckpoint {
+            seqno: NEXT_CHECKPOINT.fetch_add(1, Ordering::Relaxed),
+            root_hash: "00".repeat(32),
+            file_hash: "00".repeat(32),
+        }
+    }
+
+    /// A ledger replaying from genesis over published history.
+    fn ledger_store() -> IndexerStore {
+        let store = IndexerStore::open_in_memory().unwrap();
+        assert!(store.begin_nominator_ledger_rebuild().unwrap());
+        store.publish_through_for_tests(u32::MAX >> 1).unwrap();
+        store
+    }
+
+    fn observe(
+        store: &IndexerStore,
+        pool: &str,
+        state: i32,
+        at: u64,
+        positions: &[(String, u64, u64)],
+    ) -> anyhow::Result<()> {
+        store.observe_nominator_snapshot(pool, state, at, positions, &checkpoint(), 1)
+    }
 
     const POOL: &str = "-1:aaaa";
     const ALICE: &str = "0:1111";
@@ -2074,8 +2905,8 @@ mod nominator_ledger_tests {
         // Whatever a depositor already holds when the indexer first sees them
         // was put there before anyone was watching. Calling it a reward would
         // invent profit out of a cold start.
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.deposited_total, 2_000);
@@ -2085,9 +2916,9 @@ mod nominator_ledger_tests {
 
     #[test]
     fn a_deposit_while_idle_lands_in_the_principal() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 3_500, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, POOL, IDLE, 200, &[(ALICE.into(), 3_500, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.deposited_total, 3_500, "2000 seen plus 1500 deposited");
@@ -2096,11 +2927,9 @@ mod nominator_ledger_tests {
 
     #[test]
     fn a_deposit_while_staked_lands_in_pending() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store
-            .observe_nominator_positions(POOL, STAKED, 200, &[(ALICE.into(), 2_000, 500)])
-            .unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, POOL, STAKED, 200, &[(ALICE.into(), 2_000, 500)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.deposited_total, 2_500);
@@ -2112,11 +2941,9 @@ mod nominator_ledger_tests {
         // pool.fc folds pending into the principal and adds the round's share
         // in the same step, so the reward is the growth beyond what was
         // already pending -- not the whole delta.
-        let store = IndexerStore::open_in_memory().unwrap();
-        store
-            .observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 500)])
-            .unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 2_600, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, STAKED, 100, &[(ALICE.into(), 2_000, 500)]).unwrap();
+        observe(&store, POOL, IDLE, 200, &[(ALICE.into(), 2_600, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.rewarded_total, 100, "2600 - 2000 - 500 pending");
@@ -2126,9 +2953,9 @@ mod nominator_ledger_tests {
 
     #[test]
     fn a_losing_round_is_not_recorded_as_a_reward() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 1_800, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, STAKED, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, POOL, IDLE, 200, &[(ALICE.into(), 1_800, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.rewarded_total, 0);
@@ -2140,9 +2967,9 @@ mod nominator_ledger_tests {
         // The principal shrank while the pool was idle, which no rule accounts
         // for -- an unobserved withdrawal and redeposit, most likely. It must
         // not quietly reduce or inflate the earnings figure.
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 200, &[(ALICE.into(), 1_500, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, POOL, IDLE, 200, &[(ALICE.into(), 1_500, 0)]).unwrap();
 
         let entry = only(&store, ALICE);
         assert_eq!(entry.rewarded_total, 0);
@@ -2152,27 +2979,13 @@ mod nominator_ledger_tests {
 
     #[test]
     fn rewards_accumulate_across_rounds() {
-        let store = IndexerStore::open_in_memory().unwrap();
+        let store = ledger_store();
         let mut principal = 1_000u64;
-        store.observe_nominator_positions(POOL, IDLE, 0, &[(ALICE.into(), principal, 0)]).unwrap();
+        observe(&store, POOL, IDLE, 0, &[(ALICE.into(), principal, 0)]).unwrap();
         for round in 1..=3u64 {
-            store
-                .observe_nominator_positions(
-                    POOL,
-                    STAKED,
-                    round * 10,
-                    &[(ALICE.into(), principal, 0)],
-                )
-                .unwrap();
+            observe(&store, POOL, STAKED, round * 10, &[(ALICE.into(), principal, 0)]).unwrap();
             principal += 50;
-            store
-                .observe_nominator_positions(
-                    POOL,
-                    IDLE,
-                    round * 10 + 5,
-                    &[(ALICE.into(), principal, 0)],
-                )
-                .unwrap();
+            observe(&store, POOL, IDLE, round * 10 + 5, &[(ALICE.into(), principal, 0)]).unwrap();
         }
 
         let entry = only(&store, ALICE);
@@ -2184,12 +2997,1055 @@ mod nominator_ledger_tests {
 
     #[test]
     fn positions_are_tracked_per_pool() {
-        let store = IndexerStore::open_in_memory().unwrap();
-        store.observe_nominator_positions(POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
-        store.observe_nominator_positions("-1:bbbb", IDLE, 100, &[(ALICE.into(), 700, 0)]).unwrap();
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        observe(&store, "-1:bbbb", IDLE, 100, &[(ALICE.into(), 700, 0)]).unwrap();
 
         let rows = store.nominator_ledger_entries(ALICE).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows.iter().map(|r| r.deposited_total).sum::<u64>(), 2_700);
+    }
+
+    const BOB: &str = "0:2222";
+
+    #[test]
+    fn a_depositor_who_left_the_pool_is_zeroed_and_a_redeposit_counts_from_zero() {
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0), (BOB.into(), 500, 0)])
+            .unwrap();
+        // Alice withdrew everything; pool.fc deletes her dictionary entry.
+        observe(&store, POOL, IDLE, 200, &[(BOB.into(), 500, 0)]).unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!((alice.last_amount, alice.last_pending), (0, 0), "current amount is zero");
+        assert_eq!(alice.deposited_total, 2_000, "lifetime totals survive the exit");
+        assert_eq!(alice.unattributed_total, 0, "a full exit is not unexplained");
+        // She comes back with 700: a deposit measured from zero, not from 2000.
+        observe(&store, POOL, IDLE, 300, &[(ALICE.into(), 700, 0), (BOB.into(), 500, 0)]).unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!(alice.deposited_total, 2_700);
+        assert_eq!(alice.unattributed_total, 0);
+        assert_eq!(alice.last_amount, 700);
+        // Returning while the pool is staked lands in pending, also from zero.
+        observe(&store, POOL, STAKED, 400, &[(BOB.into(), 500, 0)]).unwrap();
+        observe(&store, POOL, STAKED, 500, &[(ALICE.into(), 0, 300), (BOB.into(), 500, 0)])
+            .unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!(alice.deposited_total, 3_000);
+        assert_eq!(alice.unattributed_total, 0);
+    }
+
+    #[test]
+    fn more_than_one_touch_in_an_interval_is_a_coverage_gap_for_every_row() {
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0), (BOB.into(), 100, 0)])
+            .unwrap();
+        // Two transactions hit the pool before the next pinned snapshot: the
+        // final state is known, the order of what produced it is not.
+        store
+            .observe_nominator_snapshot(
+                POOL,
+                IDLE,
+                200,
+                &[(ALICE.into(), 2_500, 0)],
+                &checkpoint(),
+                2,
+            )
+            .unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!(alice.coverage_gap_count, 1);
+        assert_eq!(alice.last_amount, 2_500, "the final snapshot is still recorded");
+        let bob = only(&store, BOB);
+        assert_eq!(bob.coverage_gap_count, 1, "a zeroed row shares the interval's gap");
+        assert!(!super::attribution_complete(true, &alice));
+        // One touch per interval afterwards adds nothing.
+        observe(&store, POOL, IDLE, 300, &[(ALICE.into(), 2_600, 0)]).unwrap();
+        assert_eq!(only(&store, ALICE).coverage_gap_count, 1);
+    }
+
+    #[test]
+    fn attribution_is_complete_only_for_a_valid_ledger_without_gaps_or_unexplained_change() {
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 100, &[(ALICE.into(), 2_000, 0)]).unwrap();
+        let clean = only(&store, ALICE);
+        assert!(super::attribution_complete(true, &clean));
+        assert!(!super::attribution_complete(false, &clean), "never while not valid");
+        let unexplained = super::NominatorLedgerRecord { unattributed_total: 1, ..clean.clone() };
+        assert!(!super::attribution_complete(true, &unexplained));
+        let gap = super::NominatorLedgerRecord { coverage_gap_count: 1, ..clean };
+        assert!(!super::attribution_complete(true, &gap));
+    }
+
+    #[test]
+    fn replaying_the_same_checkpoint_does_not_double_count() {
+        let store = ledger_store();
+        let first = checkpoint();
+        let second = checkpoint();
+        store
+            .observe_nominator_snapshot(POOL, IDLE, 1, &[(ALICE.into(), 1_000, 0)], &first, 1)
+            .unwrap();
+        store
+            .observe_nominator_snapshot(POOL, IDLE, 2, &[(ALICE.into(), 1_500, 0)], &second, 1)
+            .unwrap();
+        store
+            .observe_nominator_snapshot(POOL, IDLE, 3, &[(ALICE.into(), 1_500, 0)], &second, 1)
+            .unwrap();
+        store
+            .observe_nominator_snapshot(POOL, IDLE, 4, &[(ALICE.into(), 9_999, 0)], &first, 1)
+            .unwrap();
+        let alice = only(&store, ALICE);
+        assert_eq!(alice.deposited_total, 1_500);
+        assert_eq!(alice.last_amount, 1_500);
+        assert_eq!(alice.last_mc_seqno, Some(second.seqno));
+    }
+
+    #[test]
+    fn observations_are_refused_until_a_rebuild_starts_and_must_be_published() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        store.publish_through_for_tests(10).unwrap();
+        let error = observe(&store, POOL, IDLE, 1, &[(ALICE.into(), 1, 0)]).unwrap_err();
+        assert!(error.to_string().contains("must be rebuilt"), "{error}");
+        assert!(store.begin_nominator_ledger_rebuild().is_err(), "a rebuild starts at genesis");
+        let store = IndexerStore::open_in_memory().unwrap();
+        assert!(store.begin_nominator_ledger_rebuild().unwrap());
+        store.publish_through_for_tests(10).unwrap();
+        let beyond = MasterchainCheckpoint { seqno: 11, ..checkpoint() };
+        assert!(store.observe_nominator_snapshot(POOL, IDLE, 1, &[], &beyond, 1).is_err());
+        let forked =
+            MasterchainCheckpoint { seqno: 10, root_hash: "11".repeat(32), ..checkpoint() };
+        assert!(
+            store.observe_nominator_snapshot(POOL, IDLE, 1, &[], &forked, 1).is_err(),
+            "the published height itself must match exactly"
+        );
+    }
+
+    #[test]
+    fn amounts_beyond_the_storable_range_are_refused_not_wrapped() {
+        let store = ledger_store();
+        let error = observe(&store, POOL, IDLE, 1, &[(ALICE.into(), u64::MAX, 0)]).unwrap_err();
+        assert!(error.to_string().contains("range"), "{error}");
+        assert!(store.nominator_ledger_entries(ALICE).unwrap().is_empty());
+        let error = observe(&store, POOL, IDLE, 1, &[(ALICE.into(), 1, 0), (ALICE.into(), 2, 0)])
+            .unwrap_err();
+        assert!(error.to_string().contains("twice"), "{error}");
+    }
+
+    #[test]
+    fn a_canonical_reset_makes_the_ledger_unavailable_in_the_same_step() {
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 1, &[(ALICE.into(), 1_000, 0)]).unwrap();
+        store.set_remote_mc_tip(1).unwrap();
+        store.settle_nominator_ledger().unwrap();
+        assert_eq!(store.nominator_ledger_state().unwrap().status, LedgerStatus::Valid);
+        store.reset_canonical_index().unwrap();
+        let state = store.nominator_ledger_state().unwrap();
+        assert_eq!(state.status, LedgerStatus::RebuildRequired);
+        assert_eq!(state.as_of, None);
+        let report = store.nominator_ledger_report(ALICE).unwrap();
+        assert!(matches!(
+            report.availability,
+            super::LedgerAvailability::Unavailable {
+                code: "nominator_ledger_rebuild_required",
+                ..
+            }
+        ));
+        assert!(store.begin_nominator_ledger_rebuild().unwrap());
+        assert!(store.nominator_ledger_entries(ALICE).unwrap().is_empty(), "old totals are gone");
+    }
+
+    #[test]
+    fn serving_requires_a_valid_ledger_anchored_at_the_published_checkpoint() {
+        use super::LedgerAvailability::{Available, Unavailable};
+        let store = ledger_store();
+        observe(&store, POOL, IDLE, 1, &[(ALICE.into(), 1_000, 0)]).unwrap();
+        let code =
+            |store: &IndexerStore| match store.nominator_ledger_report(ALICE).unwrap().availability
+            {
+                Available { caught_up, .. } => {
+                    if caught_up {
+                        "available"
+                    } else {
+                        "available_lagging"
+                    }
+                }
+                Unavailable { code, .. } => code,
+            };
+        assert_eq!(code(&store), "nominator_ledger_rebuilding");
+        let published = store.canonical_state().unwrap().unwrap();
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, Some(&published)).unwrap();
+        store.set_remote_mc_tip(published.seqno).unwrap();
+        assert_eq!(code(&store), "available");
+        store.set_remote_mc_tip(published.seqno + 5).unwrap();
+        assert_eq!(
+            code(&store),
+            "nominator_ledger_behind_chain",
+            "an index behind the chain tip is never served as a success"
+        );
+        store.set_remote_mc_tip(published.seqno).unwrap();
+        let behind = MasterchainCheckpoint { seqno: published.seqno - 1, ..published.clone() };
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, Some(&behind)).unwrap();
+        assert_eq!(code(&store), "nominator_ledger_behind_index");
+        let forked = MasterchainCheckpoint { root_hash: "77".repeat(32), ..published.clone() };
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, Some(&forked)).unwrap();
+        assert_eq!(code(&store), "nominator_ledger_not_canonical");
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, None).unwrap();
+        assert_eq!(code(&store), "nominator_ledger_not_canonical");
+    }
+
+    /// A database written by a v10 binary: its ledger looks complete, but
+    /// nothing binds it to canonical history.
+    #[test]
+    fn a_v10_ledger_is_never_served_before_a_genesis_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v10.sqlite");
+        super::write_v10_database_for_tests(&path).unwrap();
+        let store = IndexerStore::open(&path).unwrap();
+        let state = store.nominator_ledger_state().unwrap();
+        assert_eq!(state.status, LedgerStatus::RebuildRequired);
+        assert_eq!(state.as_of, None);
+        let report = store.nominator_ledger_report(ALICE).unwrap();
+        assert_eq!(report.entries.len(), 1, "the old row is still on disk");
+        assert_eq!(report.entries[0].last_mc_seqno, None, "with no provenance");
+        assert!(matches!(
+            report.availability,
+            super::LedgerAvailability::Unavailable {
+                code: "nominator_ledger_rebuild_required",
+                ..
+            }
+        ));
+        assert_eq!(store.canonical_state().unwrap(), None, "the explorer replays from genesis");
+        assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 0);
+        assert!(store.explorer_block_root(-1, i64::MIN, 900).unwrap().is_none());
+        drop(store);
+        // Reopening does not re-run the migration or revive the ledger.
+        let store = IndexerStore::open(&path).unwrap();
+        assert_eq!(store.nominator_ledger_state().unwrap().status, LedgerStatus::RebuildRequired);
+    }
+}
+
+/// Databases left behind by the two layouts that both recorded schema
+/// version 11, and their upgrade to the composite refresh key.
+#[cfg(test)]
+mod refresh_key_migration_tests {
+    use super::*;
+
+    /// The single-column-key definition a version-11 binary created before the
+    /// refresh queue held one row per published height.
+    const SINGLE_KEY_REFRESH_TABLE: &str = "CREATE TABLE indexer_address_refresh (
+        address TEXT PRIMARY KEY,
+        touch_count INTEGER NOT NULL,
+        last_block_seqno INTEGER NOT NULL,
+        last_gen_utime INTEGER NOT NULL,
+        mc_seqno INTEGER NOT NULL,
+        mc_root_hash TEXT NOT NULL,
+        mc_file_hash TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0
+    );";
+
+    /// The upsert publication runs against the refresh queue.
+    const COMPOSITE_UPSERT: &str = "INSERT INTO indexer_address_refresh
+            (address, touch_count, last_block_seqno, last_gen_utime,
+             mc_seqno, mc_root_hash, mc_file_hash, attempts)
+         VALUES ('0:probe', 1, 1, 1, 1, 'r', 'f', 0)
+         ON CONFLICT(address, mc_seqno) DO UPDATE SET attempts = 0";
+
+    #[derive(Clone, Copy, Debug)]
+    enum V11Layout {
+        /// `PRIMARY KEY(address)`, no scheduling index.
+        SingleKey,
+        /// `PRIMARY KEY(address, mc_seqno)`, written before the scheduling
+        /// index existed.
+        CompositeWithoutIndex,
+        /// `PRIMARY KEY(address, mc_seqno)` with the scheduling index.
+        CompositeWithIndex,
+    }
+
+    /// One queued refresh row: address, height, attempts, touch count.
+    type Queued = (String, u32, u32, u32);
+
+    fn anchor(seqno: u32) -> MasterchainCheckpoint {
+        MasterchainCheckpoint {
+            seqno,
+            root_hash: format!("{seqno:064x}"),
+            file_hash: format!("{:064x}", u64::from(seqno) + 1_000),
+        }
+    }
+
+    /// Writes a version-11 database with one published height (5) and queued
+    /// refresh work. Every other table's definition is the same in both v11
+    /// layouts, so the current schema stands in for it.
+    fn write_v11_database(path: &Path, layout: V11Layout) -> Vec<Queued> {
+        let conn = Connection::open(path).unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+        let queued: Vec<Queued> = match layout {
+            V11Layout::SingleKey => {
+                conn.execute_batch("DROP TABLE indexer_address_refresh;").unwrap();
+                conn.execute_batch(SINGLE_KEY_REFRESH_TABLE).unwrap();
+                vec![("0:aa".into(), 5, 2, 3), ("0:bb".into(), 4, 0, 1)]
+            }
+            V11Layout::CompositeWithoutIndex => {
+                conn.execute_batch("DROP INDEX idx_address_refresh_schedule;").unwrap();
+                vec![("0:aa".into(), 4, 1, 1), ("0:aa".into(), 5, 0, 2), ("0:bb".into(), 4, 0, 1)]
+            }
+            V11Layout::CompositeWithIndex => {
+                vec![("0:aa".into(), 4, 1, 1), ("0:aa".into(), 5, 0, 2), ("0:bb".into(), 4, 0, 1)]
+            }
+        };
+        let published = anchor(5);
+        conn.execute(
+            "INSERT INTO indexer_canonical_state
+                (id, published_mc_seqno, published_mc_root_hash, published_mc_file_hash)
+             VALUES (1, ?1, ?2, ?3)",
+            params![published.seqno, published.root_hash, published.file_hash],
+        )
+        .unwrap();
+        for (address, mc_seqno, attempts, touches) in &queued {
+            let checkpoint = anchor(*mc_seqno);
+            conn.execute(
+                "INSERT INTO indexer_address_refresh
+                    (address, touch_count, last_block_seqno, last_gen_utime,
+                     mc_seqno, mc_root_hash, mc_file_hash, attempts)
+                 VALUES (?1, ?2, ?3, 7, ?3, ?4, ?5, ?6)",
+                params![
+                    address,
+                    touches,
+                    mc_seqno,
+                    checkpoint.root_hash,
+                    checkpoint.file_hash,
+                    attempts
+                ],
+            )
+            .unwrap();
+        }
+        conn.execute("INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '11')", [])
+            .unwrap();
+        queued
+    }
+
+    fn raw_queue(conn: &Connection) -> Vec<Queued> {
+        let mut statement = conn
+            .prepare(
+                "SELECT address, mc_seqno, attempts, touch_count FROM indexer_address_refresh
+                 ORDER BY address, mc_seqno",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn stored_version(conn: &Connection) -> String {
+        conn.query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    }
+
+    fn schedule_index_count(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND name = 'idx_address_refresh_schedule'
+               AND tbl_name = 'indexer_address_refresh'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    fn sorted(mut rows: Vec<Queued>) -> Vec<Queued> {
+        rows.sort();
+        rows
+    }
+
+    /// Publishes height `seqno` with one touch per address.
+    fn publish(store: &IndexerStore, seqno: u32, touched: &[&str]) -> anyhow::Result<()> {
+        let checkpoint = anchor(seqno);
+        store.begin_batch(&checkpoint)?;
+        let touches: Vec<AddressTouch> = touched
+            .iter()
+            .map(|address| AddressTouch {
+                address: (*address).to_string(),
+                count: 1,
+                block_seqno: seqno,
+                gen_utime: seqno,
+            })
+            .collect();
+        let block = ExplorerBlockRecord {
+            workchain: -1,
+            shard: i64::MIN,
+            seqno,
+            root_hash: checkpoint.root_hash.clone(),
+            file_hash: checkpoint.file_hash.clone(),
+            gen_utime: seqno,
+            tx_count: 0,
+            indexed_at: 1,
+            observed_mc_seqno: seqno,
+        };
+        store.commit_scanned_block(seqno, &ScannedTarget::Master, &block, &[], &touches)?;
+        store.seed_batch_heads(seqno, &[])?;
+        store.publish_batch(i64::MIN, &checkpoint)
+    }
+
+    /// The fixture really carries the defect: on the single-column key the
+    /// publication's upsert is refused, so the upgrade tests below exercise a
+    /// table that would freeze the indexer if left unmigrated.
+    #[test]
+    fn the_single_key_layout_refuses_the_publication_upsert() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v11-single-key.sqlite");
+        write_v11_database(&path, V11Layout::SingleKey);
+        let conn = Connection::open(&path).unwrap();
+        let error = conn.execute(COMPOSITE_UPSERT, []).unwrap_err();
+        assert!(error.to_string().contains("ON CONFLICT clause does not match"), "{error}");
+    }
+
+    fn upgrade_publish_and_restart(layout: V11Layout) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v11.sqlite");
+        let queued = write_v11_database(&path, layout);
+
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        {
+            let conn = store.lock().unwrap();
+            assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string(), "{layout:?}");
+            let (columns, key) = address_refresh_layout(&conn).unwrap();
+            assert_eq!(columns, ADDRESS_REFRESH_COLUMNS, "{layout:?}");
+            assert_eq!(key, ["address", "mc_seqno"], "{layout:?}");
+            assert_eq!(schedule_index_count(&conn), 1, "{layout:?}");
+            assert_eq!(raw_queue(&conn), sorted(queued.clone()), "queued work kept: {layout:?}");
+            let leftovers: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE name = 'indexer_address_refresh_single_key'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(leftovers, 0, "{layout:?}");
+        }
+        // The scheduler reads through the index, so the queue must be readable.
+        let heads = store.address_refresh_queue(16).unwrap();
+        assert!(heads.iter().any(|head| head.address == "0:aa"), "{layout:?}");
+        assert!(heads.iter().any(|head| head.address == "0:bb"), "{layout:?}");
+
+        publish(&store, 6, &["0:aa", "0:cc"]).unwrap();
+        assert_eq!(store.published_mc_seqno().unwrap(), 6, "{layout:?}");
+        let latest = store.latest_address_refresh("0:aa").unwrap().unwrap();
+        assert_eq!(latest.checkpoint, anchor(6), "{layout:?}");
+        let mut expected = queued.clone();
+        expected.push(("0:aa".into(), 6, 0, 1));
+        expected.push(("0:cc".into(), 6, 0, 1));
+        {
+            let conn = store.lock().unwrap();
+            assert_eq!(raw_queue(&conn), sorted(expected.clone()), "{layout:?}");
+        }
+        drop(store);
+
+        // A restart neither re-runs the rebuild nor loses the queue, and
+        // publication keeps working.
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        {
+            let conn = store.lock().unwrap();
+            assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string(), "{layout:?}");
+            assert_eq!(raw_queue(&conn), sorted(expected.clone()), "{layout:?}");
+            assert_eq!(schedule_index_count(&conn), 1, "{layout:?}");
+        }
+        publish(&store, 7, &["0:bb"]).unwrap();
+        assert_eq!(store.published_mc_seqno().unwrap(), 7, "{layout:?}");
+        expected.push(("0:bb".into(), 7, 0, 1));
+        let conn = store.lock().unwrap();
+        assert_eq!(raw_queue(&conn), sorted(expected), "{layout:?}");
+    }
+
+    #[test]
+    fn a_single_key_v11_database_is_migrated_and_keeps_publishing() {
+        upgrade_publish_and_restart(V11Layout::SingleKey);
+    }
+
+    #[test]
+    fn a_composite_key_v11_database_without_the_index_is_migrated() {
+        upgrade_publish_and_restart(V11Layout::CompositeWithoutIndex);
+    }
+
+    #[test]
+    fn a_composite_key_v11_database_with_the_index_is_migrated() {
+        upgrade_publish_and_restart(V11Layout::CompositeWithIndex);
+    }
+
+    /// Opening re-creates the scheduling index before migrating, so that path
+    /// alone cannot show the migration builds it. Run the migration step on
+    /// the raw file and check it leaves the key and the index in place itself.
+    #[test]
+    fn the_migration_step_itself_builds_the_key_and_the_scheduling_index() {
+        for layout in [V11Layout::SingleKey, V11Layout::CompositeWithoutIndex] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("v11.sqlite");
+            let queued = write_v11_database(&path, layout);
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(schedule_index_count(&conn), 0, "{layout:?}");
+            IndexerStore::ensure_schema_version(&conn).unwrap();
+            assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string(), "{layout:?}");
+            let (_, key) = address_refresh_layout(&conn).unwrap();
+            assert_eq!(key, ["address", "mc_seqno"], "{layout:?}");
+            assert_eq!(schedule_index_count(&conn), 1, "{layout:?}");
+            assert_eq!(raw_queue(&conn), sorted(queued), "{layout:?}");
+        }
+    }
+
+    /// A step that fails after the table was already rebuilt must leave the
+    /// original table, its rows and the stored version as they were.
+    #[test]
+    fn a_failed_refresh_key_migration_rolls_back_completely() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v11-single-key.sqlite");
+        let queued = write_v11_database(&path, V11Layout::SingleKey);
+        let conn = Connection::open(&path).unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+
+        // MIGRATIONS[10] is the v11 -> v12 step.
+        let mut migrations = MIGRATIONS.to_vec();
+        migrations[10] = |conn| {
+            migrate_address_refresh_key(conn)?;
+            let (_, key) = address_refresh_layout(conn)?;
+            assert_eq!(key, ["address", "mc_seqno"], "the rebuild ran before the failure");
+            Err(rusqlite::Error::SqliteSingleThreadedMode)
+        };
+        let result =
+            IndexerStore::ensure_schema_version_against(&conn, CURRENT_SCHEMA_VERSION, &migrations);
+        assert!(result.is_err());
+
+        assert_eq!(stored_version(&conn), "11");
+        let (_, key) = address_refresh_layout(&conn).unwrap();
+        assert_eq!(key, ["address"], "the single-column key is restored");
+        assert_eq!(raw_queue(&conn), sorted(queued.clone()));
+        let leftovers: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE name = 'indexer_address_refresh_single_key'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftovers, 0);
+        drop(conn);
+
+        // The untouched database still upgrades normally afterwards.
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        let conn = store.lock().unwrap();
+        assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string());
+        assert_eq!(raw_queue(&conn), sorted(queued));
+    }
+
+    /// A refresh table in neither v11 layout is refused, not rebuilt.
+    #[test]
+    fn an_unrecognised_refresh_layout_is_refused_without_change() {
+        for (definition, reason) in [
+            (
+                "CREATE TABLE indexer_address_refresh (
+                    address TEXT NOT NULL, touch_count INTEGER NOT NULL,
+                    last_block_seqno INTEGER NOT NULL, last_gen_utime INTEGER NOT NULL,
+                    mc_seqno INTEGER PRIMARY KEY, mc_root_hash TEXT NOT NULL,
+                    mc_file_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0);",
+                "unexpected primary key",
+            ),
+            (
+                "CREATE TABLE indexer_address_refresh (
+                    address TEXT PRIMARY KEY, touch_count INTEGER NOT NULL,
+                    last_block_seqno INTEGER NOT NULL, last_gen_utime INTEGER NOT NULL,
+                    mc_seqno INTEGER NOT NULL, mc_root_hash TEXT NOT NULL,
+                    mc_file_hash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                    note TEXT);",
+                "unexpected columns",
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("v11-unknown.sqlite");
+            write_v11_database(&path, V11Layout::SingleKey);
+            {
+                let conn = Connection::open(&path).unwrap();
+                conn.execute_batch("DROP TABLE indexer_address_refresh;").unwrap();
+                conn.execute_batch(definition).unwrap();
+            }
+            let error = IndexerStore::open_for_tests(&path).err().unwrap();
+            assert!(error.to_string().contains(reason), "{error}");
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(stored_version(&conn), "11", "{reason}");
+            let sql: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name = 'indexer_address_refresh'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(sql, definition.trim_end_matches(';'), "{reason}");
+        }
+    }
+}
+
+/// Ledgers written at schema version 11 before `nominator_ledger` carried
+/// provenance, and their repair by the v12 -> v13 step.
+#[cfg(test)]
+mod ledger_provenance_migration_tests {
+    use super::*;
+
+    /// `nominator_ledger` exactly as the first version-11 binaries created it,
+    /// copied verbatim from their source. Those binaries had no ledger state
+    /// table either; the provenance columns and the state arrived later
+    /// without a schema version bump.
+    const EARLY_V11_LEDGER_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS nominator_ledger (
+        pool_address TEXT NOT NULL,
+        nominator_address TEXT NOT NULL,
+        deposited_total INTEGER NOT NULL DEFAULT 0,
+        rewarded_total INTEGER NOT NULL DEFAULT 0,
+        unattributed_total INTEGER NOT NULL DEFAULT 0,
+        last_amount INTEGER NOT NULL DEFAULT 0,
+        last_pending INTEGER NOT NULL DEFAULT 0,
+        last_pool_state INTEGER NOT NULL DEFAULT 0,
+        first_seen_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(pool_address, nominator_address)
+    );
+    CREATE INDEX IF NOT EXISTS idx_nominator_ledger_address
+        ON nominator_ledger(nominator_address);";
+
+    /// Tables the traversal schema adds; the first version-11 binary had none.
+    const TRAVERSAL_TABLES: &[&str] = &[
+        "canonical_shard_frontier",
+        "indexer_master_batch",
+        "indexer_shard_work",
+        "indexer_shard_edge",
+        "indexer_touched_address",
+    ];
+
+    const BASE_COLUMNS: [&str; 10] = [
+        "pool_address",
+        "nominator_address",
+        "deposited_total",
+        "rewarded_total",
+        "unattributed_total",
+        "last_amount",
+        "last_pending",
+        "last_pool_state",
+        "first_seen_at",
+        "updated_at",
+    ];
+
+    const POOL: &str = "-1:aaaa";
+    const ALICE: &str = "0:1111";
+
+    #[derive(Clone, Copy, Debug)]
+    enum EarlyLedger {
+        /// Left by the first version-11 binary: no traversal tables, no
+        /// refresh queue, no ledger state, and an unprovenanced ledger row.
+        FirstV11,
+        /// Left by the version-11 binary that added canonical traversal,
+        /// still before ledger provenance.
+        TraversalV11,
+        /// A first-v11 database later opened by a version-12 binary. Its
+        /// startup created the ledger state and emptied the ledger for a
+        /// replay, which then reached this status with the columns missing.
+        SettledAtV12(LedgerStatus),
+    }
+
+    fn anchor(seqno: u32) -> MasterchainCheckpoint {
+        MasterchainCheckpoint {
+            seqno,
+            root_hash: format!("{seqno:064x}"),
+            file_hash: format!("{:064x}", u64::from(seqno) + 1_000),
+        }
+    }
+
+    fn ledger_columns(conn: &Connection) -> Vec<String> {
+        let mut statement = conn.prepare("PRAGMA table_info(nominator_ledger)").unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn full_columns() -> Vec<String> {
+        BASE_COLUMNS
+            .iter()
+            .chain(&[
+                "last_mc_seqno",
+                "last_mc_root_hash",
+                "last_mc_file_hash",
+                "coverage_gap_count",
+            ])
+            .map(|name| (*name).to_string())
+            .collect()
+    }
+
+    fn stored_version(conn: &Connection) -> String {
+        conn.query_row("SELECT value FROM indexer_meta WHERE key = 'schema_version'", [], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    }
+
+    fn has_table(conn: &Connection, name: &str) -> bool {
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .unwrap();
+        count == 1
+    }
+
+    /// Raw ledger state row, read without the store.
+    fn raw_state(conn: &Connection) -> (String, Option<u32>) {
+        conn.query_row("SELECT status, as_of_mc_seqno FROM nominator_ledger_state", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .unwrap()
+    }
+
+    fn write_early_database(path: &Path, fixture: EarlyLedger) {
+        let conn = Connection::open(path).unwrap();
+        // Every table other than the ledger, the ledger state, the traversal
+        // tables and the refresh queue already had its current definition.
+        IndexerStore::init_schema(&conn).unwrap();
+        conn.execute_batch(
+            "DROP TABLE nominator_ledger_state;
+             DROP TABLE indexer_address_refresh;
+             DROP INDEX idx_nominator_ledger_address;
+             DROP TABLE nominator_ledger;",
+        )
+        .unwrap();
+        if !matches!(fixture, EarlyLedger::TraversalV11) {
+            for table in TRAVERSAL_TABLES {
+                conn.execute_batch(&format!("DROP TABLE {table};")).unwrap();
+            }
+        }
+        conn.execute_batch(EARLY_V11_LEDGER_SCHEMA).unwrap();
+        let published = anchor(5);
+        conn.execute(
+            "INSERT INTO indexer_canonical_state
+                (id, published_mc_seqno, published_mc_root_hash, published_mc_file_hash)
+             VALUES (1, ?1, ?2, ?3)",
+            params![published.seqno, published.root_hash, published.file_hash],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO nominator_ledger (pool_address, nominator_address, deposited_total,
+                rewarded_total, unattributed_total, last_amount, first_seen_at, updated_at)
+             VALUES (?1, ?2, 1000, 250, 0, 1250, 1, 2)",
+            params![POOL, ALICE],
+        )
+        .unwrap();
+        let version = match fixture {
+            EarlyLedger::FirstV11 | EarlyLedger::TraversalV11 => "11",
+            EarlyLedger::SettledAtV12(status) => {
+                // What a version-12 startup creates around the old ledger,
+                // followed by a replay that never wrote a row.
+                IndexerStore::init_schema(&conn).unwrap();
+                conn.execute("DELETE FROM nominator_ledger", []).unwrap();
+                let as_of = (status == LedgerStatus::Valid).then_some(&published);
+                conn.execute(
+                    "UPDATE nominator_ledger_state SET status = ?1, as_of_mc_seqno = ?2,
+                        as_of_mc_root_hash = ?3, as_of_mc_file_hash = ?4 WHERE id = 1",
+                    params![
+                        status.as_str(),
+                        as_of.map(|c| c.seqno),
+                        as_of.map(|c| c.root_hash.clone()),
+                        as_of.map(|c| c.file_hash.clone())
+                    ],
+                )
+                .unwrap();
+                "12"
+            }
+        };
+        conn.execute(
+            "INSERT INTO indexer_meta (key, value) VALUES ('schema_version', ?1)",
+            [version],
+        )
+        .unwrap();
+        assert_eq!(ledger_columns(&conn), BASE_COLUMNS, "{fixture:?}");
+    }
+
+    fn assert_unavailable(store: &IndexerStore, fixture: EarlyLedger) {
+        let state = store.nominator_ledger_state().unwrap();
+        assert_eq!(state.status, LedgerStatus::RebuildRequired, "{fixture:?}");
+        assert_eq!(state.as_of, None, "{fixture:?}");
+        let report = store.nominator_ledger_report(ALICE).unwrap();
+        assert!(
+            matches!(
+                report.availability,
+                LedgerAvailability::Unavailable { code: "nominator_ledger_rebuild_required", .. }
+            ),
+            "{fixture:?}: {:?}",
+            report.availability
+        );
+    }
+
+    fn upgrade_and_restart(fixture: EarlyLedger) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("early-ledger.sqlite");
+        write_early_database(&path, fixture);
+
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        {
+            let conn = store.lock().unwrap();
+            assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string(), "{fixture:?}");
+            assert_eq!(ledger_columns(&conn), full_columns(), "{fixture:?}");
+        }
+        assert_unavailable(&store, fixture);
+        let entries = store.nominator_ledger_entries(ALICE).unwrap();
+        if let EarlyLedger::SettledAtV12(_) = fixture {
+            assert!(entries.is_empty(), "{fixture:?}");
+        } else {
+            // The old row stays on disk until the replay drops it; its
+            // defaulted columns are readable but never served.
+            assert_eq!(entries.len(), 1, "{fixture:?}");
+            assert_eq!(entries[0].last_mc_seqno, None, "{fixture:?}");
+            assert_eq!(entries[0].coverage_gap_count, 0, "{fixture:?}");
+        }
+        drop(store);
+
+        // A restart neither revives the ledger nor fails on the new columns.
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        assert_eq!(stored_version(&store.lock().unwrap()), CURRENT_SCHEMA_VERSION.to_string());
+        assert_unavailable(&store, fixture);
+
+        // The replay the indexer runs next now records provenance, and once
+        // it settles a further restart leaves the rebuilt ledger valid.
+        store.reset_canonical_index().unwrap();
+        assert!(store.begin_nominator_ledger_rebuild().unwrap(), "{fixture:?}");
+        assert!(store.nominator_ledger_entries(ALICE).unwrap().is_empty(), "{fixture:?}");
+        store.publish_through_for_tests(10).unwrap();
+        let observed = anchor(3);
+        store
+            .observe_nominator_snapshot(POOL, 0, 100, &[(ALICE.into(), 2_000, 0)], &observed, 2)
+            .unwrap();
+        let published = store.canonical_state().unwrap().unwrap();
+        store.set_nominator_ledger_state_for_tests(LedgerStatus::Valid, Some(&published)).unwrap();
+        let rebuilt = store.nominator_ledger_entries(ALICE).unwrap();
+        assert_eq!(rebuilt.len(), 1, "{fixture:?}");
+        assert_eq!(rebuilt[0].last_mc_seqno, Some(observed.seqno), "{fixture:?}");
+        assert_eq!(rebuilt[0].coverage_gap_count, 1, "{fixture:?}");
+        drop(store);
+
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        let state = store.nominator_ledger_state().unwrap();
+        assert_eq!(state.status, LedgerStatus::Valid, "{fixture:?}");
+        assert_eq!(state.as_of, Some(published), "{fixture:?}");
+        assert_eq!(store.nominator_ledger_entries(ALICE).unwrap(), rebuilt, "{fixture:?}");
+    }
+
+    #[test]
+    fn a_first_v11_ledger_gains_its_columns_and_must_be_rebuilt() {
+        upgrade_and_restart(EarlyLedger::FirstV11);
+    }
+
+    #[test]
+    fn a_traversal_era_v11_ledger_gains_its_columns_and_must_be_rebuilt() {
+        upgrade_and_restart(EarlyLedger::TraversalV11);
+    }
+
+    /// The case only a repair at v13 reaches: the database already records
+    /// version 12, and its ledger settled as valid without the columns.
+    #[test]
+    fn a_v12_ledger_settled_without_its_columns_is_no_longer_served() {
+        upgrade_and_restart(EarlyLedger::SettledAtV12(LedgerStatus::Valid));
+    }
+
+    #[test]
+    fn a_v12_ledger_replaying_without_its_columns_restarts_the_replay() {
+        upgrade_and_restart(EarlyLedger::SettledAtV12(LedgerStatus::Rebuilding));
+    }
+
+    /// The fixture really carries the defect: the current ledger read fails
+    /// on it, so the tests above exercise a table the binary could not use.
+    #[test]
+    fn the_early_ledger_layout_refuses_the_current_ledger_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("early-ledger.sqlite");
+        write_early_database(&path, EarlyLedger::FirstV11);
+        let conn = Connection::open(&path).unwrap();
+        let error = read_ledger_entries(&conn, ALICE).unwrap_err();
+        assert!(error.to_string().contains("no such column"), "{error}");
+        assert!(!has_table(&conn, "nominator_ledger_state"));
+        assert!(!has_table(&conn, "canonical_shard_frontier"));
+    }
+
+    /// Opening creates the ledger state before migrating, so that path alone
+    /// cannot show the step creates it. Run the step on the raw first-v11
+    /// file, which has no state table at all.
+    #[test]
+    fn the_repair_step_itself_creates_and_marks_the_ledger_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("early-ledger.sqlite");
+        write_early_database(&path, EarlyLedger::FirstV11);
+        let conn = Connection::open(&path).unwrap();
+        ledger::repair_nominator_ledger_provenance(&conn).unwrap();
+        assert_eq!(ledger_columns(&conn), full_columns());
+        assert_eq!(raw_state(&conn), ("rebuild_required".to_string(), None));
+    }
+
+    /// Each column is repaired on its own: a ledger missing only one of them
+    /// gains that one and is still marked for a replay.
+    #[test]
+    fn a_ledger_missing_any_single_column_is_repaired_and_marked() {
+        let full = full_columns();
+        for missing in &full[BASE_COLUMNS.len()..] {
+            let conn = Connection::open_in_memory().unwrap();
+            IndexerStore::init_schema(&conn).unwrap();
+            conn.execute_batch(&format!("ALTER TABLE nominator_ledger DROP COLUMN {missing};"))
+                .unwrap();
+            conn.execute(
+                "UPDATE nominator_ledger_state SET status = 'valid', as_of_mc_seqno = 5,
+                    as_of_mc_root_hash = 'r', as_of_mc_file_hash = 'f' WHERE id = 1",
+                [],
+            )
+            .unwrap();
+            ledger::repair_nominator_ledger_provenance(&conn).unwrap();
+            let mut columns = ledger_columns(&conn);
+            assert_eq!(columns.last(), Some(missing), "{missing} is appended");
+            columns.sort();
+            let mut expected = full.clone();
+            expected.sort();
+            assert_eq!(columns, expected, "{missing}");
+            assert_eq!(raw_state(&conn), ("rebuild_required".to_string(), None), "{missing}");
+        }
+    }
+
+    /// A fully migrated version-12 database with a valid, provenanced ledger
+    /// keeps its ledger, its state and its rows exactly as they were.
+    #[test]
+    fn a_valid_fully_migrated_ledger_is_left_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v12.sqlite");
+        let published = anchor(9);
+        {
+            let conn = Connection::open(&path).unwrap();
+            IndexerStore::init_schema(&conn).unwrap();
+            conn.execute(
+                "INSERT INTO indexer_canonical_state
+                    (id, published_mc_seqno, published_mc_root_hash, published_mc_file_hash)
+                 VALUES (1, ?1, ?2, ?3)",
+                params![published.seqno, published.root_hash, published.file_hash],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO nominator_ledger (pool_address, nominator_address,
+                    deposited_total, rewarded_total, unattributed_total, last_amount,
+                    last_pending, first_seen_at, updated_at, last_mc_seqno,
+                    last_mc_root_hash, last_mc_file_hash, coverage_gap_count)
+                 VALUES (?1, ?2, 1000, 250, 7, 1250, 40, 1, 2, 8, 'rr', 'ff', 3)",
+                params![POOL, ALICE],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE nominator_ledger_state SET status = 'valid', as_of_mc_seqno = ?1,
+                    as_of_mc_root_hash = ?2, as_of_mc_file_hash = ?3 WHERE id = 1",
+                params![published.seqno, published.root_hash, published.file_hash],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO indexer_meta (key, value) VALUES ('schema_version', '12')",
+                [],
+            )
+            .unwrap();
+        }
+        let expected = NominatorLedgerRecord {
+            pool_address: POOL.into(),
+            nominator_address: ALICE.into(),
+            deposited_total: 1000,
+            rewarded_total: 250,
+            unattributed_total: 7,
+            last_amount: 1250,
+            last_pending: 40,
+            first_seen_at: 1,
+            updated_at: 2,
+            coverage_gap_count: 3,
+            last_mc_seqno: Some(8),
+            last_mc_root_hash: Some("rr".into()),
+            last_mc_file_hash: Some("ff".into()),
+        };
+        // The upgrade, then a restart at the current version.
+        for _ in 0..2 {
+            let store = IndexerStore::open_for_tests(&path).unwrap();
+            {
+                let conn = store.lock().unwrap();
+                assert_eq!(stored_version(&conn), CURRENT_SCHEMA_VERSION.to_string());
+                assert_eq!(ledger_columns(&conn), full_columns());
+            }
+            let state = store.nominator_ledger_state().unwrap();
+            assert_eq!(state.status, LedgerStatus::Valid);
+            assert_eq!(state.as_of, Some(published.clone()));
+            assert_eq!(store.nominator_ledger_entries(ALICE).unwrap(), vec![expected.clone()]);
+        }
+    }
+
+    /// A ledger in neither the early nor the current layout is refused, not
+    /// repaired.
+    #[test]
+    fn an_unrecognised_ledger_layout_is_refused_without_change() {
+        let base: Vec<String> = BASE_COLUMNS.iter().map(|name| format!("{name} INTEGER")).collect();
+        let extra: Vec<String> = base.iter().cloned().chain(["note TEXT".to_string()]).collect();
+        let short: Vec<String> =
+            base.iter().filter(|column| !column.starts_with("last_pool_state")).cloned().collect();
+        for columns in [extra, short] {
+            let definition = format!("CREATE TABLE nominator_ledger ({})", columns.join(", "));
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("v12-unknown.sqlite");
+            write_early_database(&path, EarlyLedger::SettledAtV12(LedgerStatus::Valid));
+            {
+                let conn = Connection::open(&path).unwrap();
+                conn.execute_batch("DROP TABLE nominator_ledger;").unwrap();
+                conn.execute_batch(&definition).unwrap();
+            }
+            let error = IndexerStore::open_for_tests(&path).err().unwrap();
+            assert!(error.to_string().contains("unexpected columns"), "{error}");
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(stored_version(&conn), "12", "{definition}");
+            let sql: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE name = 'nominator_ledger'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(sql, definition);
+            assert_eq!(raw_state(&conn), ("valid".to_string(), Some(5)), "{definition}");
+        }
+    }
+
+    /// A step that fails after adding the columns and marking the ledger
+    /// leaves the columns absent, the state valid and the version at 12.
+    #[test]
+    fn a_failed_ledger_repair_rolls_back_completely() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v12-early-ledger.sqlite");
+        write_early_database(&path, EarlyLedger::SettledAtV12(LedgerStatus::Valid));
+        let conn = Connection::open(&path).unwrap();
+        IndexerStore::init_schema(&conn).unwrap();
+
+        // MIGRATIONS[11] is the v12 -> v13 step.
+        let mut migrations = MIGRATIONS.to_vec();
+        migrations[11] = |conn| {
+            ledger::repair_nominator_ledger_provenance(conn)?;
+            let status: String =
+                conn.query_row("SELECT status FROM nominator_ledger_state", [], |row| row.get(0))?;
+            assert_eq!(status, "rebuild_required", "the repair ran before the failure");
+            Err(rusqlite::Error::SqliteSingleThreadedMode)
+        };
+        let result =
+            IndexerStore::ensure_schema_version_against(&conn, CURRENT_SCHEMA_VERSION, &migrations);
+        assert!(result.is_err());
+
+        assert_eq!(stored_version(&conn), "12");
+        assert_eq!(ledger_columns(&conn), BASE_COLUMNS);
+        assert_eq!(raw_state(&conn), ("valid".to_string(), Some(5)));
+        drop(conn);
+
+        // The untouched database still upgrades normally afterwards.
+        let store = IndexerStore::open_for_tests(&path).unwrap();
+        assert_eq!(stored_version(&store.lock().unwrap()), CURRENT_SCHEMA_VERSION.to_string());
+        assert_unavailable(&store, EarlyLedger::SettledAtV12(LedgerStatus::Valid));
     }
 }

@@ -1,0 +1,22 @@
+# Constants that exist once per language and must never drift apart. Each side asserts
+# its own definition against this file, so changing one without the other fails rather
+# than producing two implementations that quietly disagree about the wire.
+#
+# Values are decimal so both readers stay trivial.
+#
+# name	value
+pq_bytes_chunk	127
+pq_bytes_hard_max	8192
+mldsa44_public_key_bytes	1312
+mldsa44_signature_bytes	2420
+mldsa44_algorithm_id	1
+validator_descr_pq_tag	179
+validator_set_hash_magic_v2	2041471698
+# The operation and signed-domain tags. Frozen here before anything is written
+# against them, because this is the last point at which changing one is cheap.
+elector_pq_stake_op	1347515252
+elector_pq_stake_sign_tag	1347507028
+config_pq_vote_op	1347516015
+config_pq_vote_sign_tag	1347507791
+elector_pq_complaint_op	1347511151
+elector_pq_complaint_sign_tag	1347502927

@@ -145,16 +145,34 @@ export interface UseWalletResult {
   disconnect: () => Promise<void>;
 }
 
+/**
+ * Options for a connection attempt.
+ *
+ * An HTTP-bridge wallet is trusted only through its session public key, which
+ * the dApp must obtain from the wallet out of band (pairing) before it
+ * connects; TosConnect refuses a bridge connection whose key is missing, is not
+ * 64 hex characters, or is an unsafe low-order key. Injected wallets do not
+ * need it.
+ */
+export interface ConnectOptions {
+  /** Connect items to request. */
+  items?: ConnectRequest["items"];
+  /** The paired wallet's session public key, as 64 hex characters. */
+  walletSessionPublicKey?: string;
+}
+
 /** Return type of useConnect(). */
 export interface UseConnectResult {
   /** Initiate a connection (optionally to a specific wallet). */
-  connect: (wallet?: WalletInfo, request?: ConnectRequest) => void;
+  connect: (wallet?: WalletInfo, request?: ConnectOptions) => void;
   /** Disconnect the wallet. */
   disconnect: () => Promise<void>;
   /** Whether a wallet is connected. */
   connected: boolean;
   /** Whether a connection attempt is in progress. */
   connecting: boolean;
+  /** Why the last connection attempt was refused, or null. */
+  connectError: Error | null;
 }
 
 /** Return type of useConnectModal(). */
@@ -207,8 +225,10 @@ export interface ConnectContextValue {
   connecting: boolean;
   /** Disconnect the wallet. */
   disconnect: () => Promise<void>;
+  /** Why the last connection attempt was refused, or null. */
+  connectError: Error | null;
   /** Connect to a wallet. */
-  connect: (wallet?: WalletInfo, request?: ConnectRequest) => void;
+  connect: (wallet?: WalletInfo, request?: ConnectOptions) => void;
 }
 
 /** Shape of the modal context provided by TosConnectProvider. */
@@ -248,7 +268,7 @@ export interface ResolvedTheme {
  */
 export interface TosConnectInstance {
   /** Initiate a connection. Returns a universal link (or null for injected). */
-  connect(wallet: WalletInfo, request?: { items?: ConnectRequest["items"] }): string | null;
+  connect(wallet: WalletInfo, request?: ConnectOptions): string | null;
   disconnect(): Promise<void>;
   restoreConnection(): Promise<void>;
   sendTransaction(

@@ -21,9 +21,11 @@
 
 #include <deque>
 #include <functional>
+#include <memory>
 #include <vector>
 
 #include "adnl/adnl.h"
+#include "crypto/pq/consensus-pq-signer.h"
 #include "dht/dht.h"
 #include "interfaces/block-handle.h"
 #include "interfaces/block.h"
@@ -38,6 +40,8 @@
 #include "td/actor/coro_utils.h"
 #include "tos/tos-types.h"
 
+#include "admission-work-profile.h"
+#include "startup-catchup.h"
 #include "state-download-buffer.h"
 #include "types.h"
 
@@ -152,6 +156,7 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual double block_ttl() const = 0;
   virtual double state_ttl() const = 0;
   virtual size_t max_mempool_num() const = 0;
+  virtual td::optional<ExtMessageWorkProfile> get_ext_message_work_profile() const = 0;
   virtual double archive_ttl() const = 0;
   virtual double key_proof_ttl() const = 0;
   virtual bool initial_sync_disabled() const = 0;
@@ -175,12 +180,16 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual size_t get_max_open_archive_files() const = 0;
   virtual double get_archive_preload_period() const = 0;
   virtual bool get_disable_rocksdb_stats() const = 0;
-  // Runtime opt-in for live validator consensus-DB deletion (Finding 1). Default false:
-  // a normal build/deploy never deletes. Turned on ONLY for an explicit acceptance run
-  // (validator-engine --enable-validator-consensus-cleanup). Replaces the former
-  // compile-time gate so enablement is not baked into every build.
+  // Deletion of retired validator consensus-DB directories. Default TRUE: every
+  // validator-set session leaves a RocksDB directory under <db>/consensus/, and without
+  // this a validator's disk grows without bound. A directory is deleted only when its
+  // durable cleanup record passes the four-condition gate against the durable GC
+  // snapshot (retirement checkpoint is an ancestor of the GC block, the session is
+  // obsolete on-chain, not live or recreatable, and its actor has closed the DB).
+  // validator-engine --disable-validator-consensus-cleanup turns it off; records keep
+  // accumulating and are reclaimed once it is enabled again.
   virtual bool get_validator_consensus_cleanup_enabled() const = 0;
-  // ACCEPTANCE FAULT INJECTION (Finding 1 crash boundary), default false. When armed, the
+  // TEST-ONLY FAULT INJECTION (crash boundary), default false. When armed, the
   // manager exits abruptly after the worker has confirmed the consensus directory removed
   // but before the durable cleanup record is erased -- reproducing, through the real
   // dispatch path, the {directory gone, record present} state a crash leaves at that
@@ -215,6 +224,7 @@ struct ValidatorManagerOptions : public td::CntObject {
   virtual void set_block_ttl(double value) = 0;
   virtual void set_state_ttl(double value) = 0;
   virtual void set_max_mempool_num(size_t value) = 0;
+  virtual td::Status set_ext_message_work_profile(ExtMessageWorkProfile profile) = 0;
   virtual void set_archive_ttl(double value) = 0;
   virtual void set_key_proof_ttl(double value) = 0;
   virtual void set_initial_sync_disabled(bool value) = 0;
@@ -335,6 +345,13 @@ class ValidatorManagerInterface : public td::actor::Actor {
     virtual void download_archive(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, std::string tmp_dir,
                                   td::Timestamp timeout, td::Promise<std::string> promise) {
     }
+    // One startup catch-up discovery round: probe distinct masterchain peers for a
+    // verified successor of the exact block `prev`, within `deadline` and at most
+    // `probe_budget` probes.
+    virtual void probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                              td::Promise<startup_catchup::RoundResult> promise) {
+      promise.set_error(td::Status::Error(ErrorCode::notready, "successor probing is not supported"));
+    }
     virtual void download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                               block::ImportedMsgQueueLimits limits, td::Timestamp timeout,
                                               td::Promise<std::vector<td::Ref<OutMsgQueueProof>>> promise) {
@@ -347,11 +364,33 @@ class ValidatorManagerInterface : public td::actor::Actor {
   virtual void install_callback(std::unique_ptr<Callback> new_callback, td::Promise<td::Unit> promise) = 0;
   virtual void add_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
   virtual void add_temp_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
+  // Post-quantum consensus custody: which validator identity this node holds consensus
+  // keys for, and which keys. Consensus membership follows this, not the Ed25519 keys
+  // above, which serve network and operator duties only. Several keys may be held for
+  // one validator during a rotation, each with its validity window (valid_from: the
+  // first election date it may sign a stake for; expire_at: when it stops being used,
+  // 0 for never); a group signs with the one its validator set records.
+  virtual void add_pq_consensus_key(tos::ValidatorId validator_id,
+                                    std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store, td::uint32 valid_from,
+                                    td::uint32 expire_at, td::Promise<td::Unit> promise) = 0;
+  // Stops custodying one key. Refuses (and changes nothing) when it is not held.
+  virtual void del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
+                                    td::Promise<td::Unit> promise) = 0;
   virtual void del_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
   virtual void del_temp_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
 
   virtual void validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
                                             td::Promise<td::Unit> promise) = 0;
+  // Startup catch-up discovery: verify that `proof` proves `next_block_id` is the
+  // successor of the exact block `prev_block_id`, which must still be the local
+  // masterchain tip (otherwise the verdict is FrontierMoved and nothing is checked).
+  // The verified proof may be stored; the block is neither stored nor applied. The
+  // check is not started with less than its own time left before `deadline`.
+  virtual void verify_startup_probe_successor(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
+                                              td::Timestamp deadline,
+                                              td::Promise<startup_catchup::SuccessorVerdict> promise) {
+    promise.set_error(td::Status::Error(ErrorCode::notready, "startup successor verification is not supported"));
+  }
   virtual void validate_block_proof(BlockIdExt block_id, td::BufferSlice proof, td::Promise<td::Unit> promise) = 0;
   virtual void validate_block_proof_link(BlockIdExt block_id, td::BufferSlice proof, td::Promise<td::Unit> promise) = 0;
   virtual void validate_block_proof_rel(BlockIdExt block_id, BlockIdExt rel_block_id, td::BufferSlice proof,
@@ -414,7 +453,8 @@ class ValidatorManagerInterface : public td::actor::Actor {
                                                           td::BufferSlice data, BroadcastSource source) {
     co_return td::Unit{};
   }
-  virtual td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source) {
+  virtual td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source,
+                                                         td::optional<PublicKeyHash> source_peer = {}) {
     co_return td::Unit{};
   }
 
@@ -426,7 +466,7 @@ class ValidatorManagerInterface : public td::actor::Actor {
 
   virtual void get_block_data_from_db(ConstBlockHandle handle, td::Promise<td::Ref<BlockData>> promise) = 0;
   virtual void get_block_data_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<BlockData>> promise) = 0;
-  virtual void get_block_candidate_from_db(PublicKey source, BlockIdExt id, FileHash collated_data_file_hash,
+  virtual void get_block_candidate_from_db(ValidatorId source, BlockIdExt id, FileHash collated_data_file_hash,
                                            td::Promise<BlockCandidate> promise) = 0;
   virtual void get_candidate_data_by_block_id_from_db(BlockIdExt id, td::Promise<td::BufferSlice> promise) = 0;
   virtual void get_shard_state_from_db(ConstBlockHandle handle, td::Promise<td::Ref<ShardState>> promise) = 0;

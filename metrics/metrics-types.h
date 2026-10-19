@@ -46,8 +46,19 @@ struct MetricFamily {
                                   std::optional<std::string> help = std::nullopt);
 };
 
+// A string whose capacity is at most max_bytes, from a reservation that asks for
+// max_bytes - allowance: a library may round a reservation up (libc++ by up to
+// 15 bytes, libstdc++ not at all), and the allowance absorbs that rounding so
+// the single allocation stays within the budget. Refuses when the granted
+// capacity still exceeds max_bytes, or when allowance >= max_bytes. The
+// terminator is outside max_bytes; callers account for it separately.
+[[nodiscard]] std::optional<std::string> reserve_bounded(std::size_t max_bytes, std::size_t allowance);
+
 struct MetricSet {
   std::vector<MetricFamily> families;
+
+  [[nodiscard]] std::optional<std::string> render_bounded(std::size_t max_bytes) &&;
+  [[nodiscard]] std::size_t resident_bytes() const;
 
   [[nodiscard]] MetricSet join(MetricSet other) &&;
   [[nodiscard]] std::string render() &&;

@@ -1,0 +1,224 @@
+{
+  "build_workflows": [
+    {
+      "artifact": "tos-arm64-linux",
+      "workflow": "build-tos-linux-arm64-appimage.yml"
+    },
+    {
+      "artifact": "tos-x86_64-linux",
+      "workflow": "build-tos-linux-x86-64-appimage.yml"
+    }
+  ],
+  "release_sets": {
+    "full": {
+      "assets": [
+        {
+          "artifact": "tos-x86_64-linux",
+          "zip": true,
+          "name": "tos-linux-x86_64.zip"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "fift",
+          "name": "fift-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "func",
+          "name": "func-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tol",
+          "name": "tol-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "lite-client",
+          "name": "lite-client-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "proxy-liteserver",
+          "name": "proxy-liteserver-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "rldp-http-proxy",
+          "name": "rldp-http-proxy-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "http-proxy",
+          "name": "http-proxy-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "storage-daemon-cli",
+          "name": "storage-daemon-cli-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "storage-daemon",
+          "name": "storage-daemon-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "libtoslibjson.so",
+          "name": "toslibjson-linux-x86_64.so"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "libemulator.so",
+          "name": "libemulator-linux-x86_64.so"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "toslib-cli",
+          "name": "toslib-cli-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tos-pq-consensus-key",
+          "name": "tos-pq-consensus-key-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tos-pq-controller",
+          "name": "tos-pq-controller-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tos-pq-key",
+          "name": "tos-pq-key-linux-x86_64"
+        },
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tos-pq-vote",
+          "name": "tos-pq-vote-linux-x86_64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "zip": true,
+          "name": "tos-linux-arm64.zip"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "fift",
+          "name": "fift-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "func",
+          "name": "func-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tol",
+          "name": "tol-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "lite-client",
+          "name": "lite-client-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "proxy-liteserver",
+          "name": "proxy-liteserver-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "rldp-http-proxy",
+          "name": "rldp-http-proxy-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "http-proxy",
+          "name": "http-proxy-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "storage-daemon-cli",
+          "name": "storage-daemon-cli-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "storage-daemon",
+          "name": "storage-daemon-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "libtoslibjson.so",
+          "name": "toslibjson-linux-arm64.so"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "libemulator.so",
+          "name": "libemulator-linux-arm64.so"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "toslib-cli",
+          "name": "toslib-cli-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tos-pq-consensus-key",
+          "name": "tos-pq-consensus-key-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tos-pq-controller",
+          "name": "tos-pq-controller-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tos-pq-key",
+          "name": "tos-pq-key-linux-arm64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tos-pq-vote",
+          "name": "tos-pq-vote-linux-arm64"
+        }
+      ],
+      "bundles": [
+        {
+          "artifact": "tos-x86_64-linux",
+          "directories": [
+            "smartcont",
+            "lib"
+          ],
+          "name": "smartcont_lib.zip"
+        }
+      ],
+      "tag_prefix": "v"
+    },
+    "tol": {
+      "tag_prefix": "tol-v",
+      "assets": [
+        {
+          "artifact": "tos-x86_64-linux",
+          "path": "tol",
+          "name": "tol-linux-x86_64"
+        },
+        {
+          "artifact": "tos-arm64-linux",
+          "path": "tol",
+          "name": "tol-linux-arm64"
+        }
+      ],
+      "bundles": [
+        {
+          "artifact": "tos-x86_64-linux",
+          "directories": [
+            "smartcont",
+            "lib"
+          ],
+          "name": "smartcont_lib.zip"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,12 @@
+Script started on 2026-09-29 12:39:42+00:00 [<not executed on terminal>]
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.97s
+     Running tests/witness_poll.rs (target/debug/deps/witness_poll-a64ed631cd879ce5)
+
+running 1 test
+test actual_development_process_serves_heartbeat_with_bad_source_and_failed_delayed_notice ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 47.05s
+
+
+Script done on 2026-09-29 12:40:30+00:00 [COMMAND_EXIT_CODE="0"]

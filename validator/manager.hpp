@@ -21,11 +21,18 @@
 
 #include <list>
 #include <map>
+#include <optional>
 #include <queue>
 #include <set>
+#include <tuple>
 
 #include "collator-node/collator-node.hpp"
 #include "common/refcnt.hpp"
+#include "consensus/session-compat.h"
+#include "consensus/startup-orphan-reconcile.h"
+#include "consensus/validator-cleanup-manager.h"
+#include "consensus/validator-cleanup-worker.h"
+#include "consensus/validator-cleanup.h"
 #include "db/db-event-publisher.hpp"
 #include "impl/ext-message-pool.hpp"
 #include "interfaces/db.h"
@@ -40,19 +47,20 @@
 #include "td/utils/port/Poll.h"
 #include "td/utils/port/StdStreams.h"
 
+#include "candidate-data-cache.h"
+#include "finality-cache-policy.h"
 #include "liteserver-admission.h"
 #include "manager-init.h"
 #include "manager-resource-policy.h"
-#include "consensus/session-compat.h"
-#include "consensus/validator-cleanup.h"
-#include "consensus/validator-cleanup-manager.h"
-#include "consensus/validator-cleanup-worker.h"
+#include "node-consensus-status.h"
+#include "pending-finality-ingress.h"
 #include "queue-size-counter.hpp"
 #include "shard-block-retainer.hpp"
 #include "shard-block-verifier.hpp"
 #include "shard-client.hpp"
 #include "state-serializer.hpp"
 #include "storage-stat-cache.hpp"
+#include "sync-stall-alerts.h"
 #include "token-manager.h"
 #include "validator-group.hpp"
 #include "weak-ptr-registry.hpp"
@@ -66,8 +74,10 @@ class WaitZeroState;
 class WaitShardState;
 class WaitBlockData;
 class AppliedExtMessageCleanupActor;
+class PendingFinalityManagerActorProbe;
+class N5ManagerDbFixture;
 
-struct PendingBlockFinality {
+struct PendingBlockFinalityCandidate {
   td::Ref<block::BlockSignatureSet> sig_set;
   BroadcastSource source;
 };
@@ -88,6 +98,12 @@ class BlockHandleLru : public td::ListNode {
 };
 
 class ValidatorManagerImpl : public ValidatorManager {
+  friend class PendingFinalityManagerActorProbe;
+  friend class N5ManagerDbFixture;
+  friend class TwostepManagerProbe;
+  friend class ExtMessageManagerTestHarness;
+  friend class StartupCatchupManagerProbe;
+
  private:
   // WAITERS
   //
@@ -97,6 +113,8 @@ class ValidatorManagerImpl : public ValidatorManager {
     td::Timestamp timeout;
     td::uint32 priority;
     td::Promise<ResType> promise;
+    // When the wait was registered; the health gauges report the oldest one.
+    td::Timestamp created = td::Timestamp::now();
 
     Waiter() {
     }
@@ -114,8 +132,10 @@ class ValidatorManagerImpl : public ValidatorManager {
     std::pair<td::Timestamp, td::uint32> get_timeout() const {
       return get_timeout_impl(waiting_);
     }
-    void check_timers() {
-      check_timers_impl(waiting_);
+    // One pass: expire timed-out waiters and, when asked, count the survivors
+    // and find the earliest creation time among them for the health sample.
+    void check_timers(std::uint64_t *depth = nullptr, double *oldest_created = nullptr) {
+      check_timers_impl(waiting_, depth, oldest_created);
     }
 
    protected:
@@ -132,7 +152,8 @@ class ValidatorManagerImpl : public ValidatorManager {
       }
       return {td::Timestamp::at(t.at() + 10.0), prio};
     }
-    static void check_timers_impl(std::vector<Waiter<ResType>> &waiting) {
+    static void check_timers_impl(std::vector<Waiter<ResType>> &waiting, std::uint64_t *depth = nullptr,
+                                  double *oldest_created = nullptr) {
       td::uint32 j = 0;
       auto f = waiting.begin();
       auto t = waiting.end();
@@ -142,6 +163,10 @@ class ValidatorManagerImpl : public ValidatorManager {
           t--;
           std::swap(*f, *t);
         } else {
+          if (depth != nullptr) {
+            ++*depth;
+            *oldest_created = std::min(*oldest_created, f->created.at());
+          }
           f++;
           j++;
         }
@@ -160,9 +185,9 @@ class ValidatorManagerImpl : public ValidatorManager {
       auto t2 = WaitList<ActorT, ResType>::get_timeout_impl(waiting_preliminary_);
       return {std::max(t1.first, t2.first), std::max(t1.second, t2.second)};
     }
-    void check_timers() {
-      WaitList<ActorT, ResType>::check_timers_impl(this->waiting_);
-      WaitList<ActorT, ResType>::check_timers_impl(waiting_preliminary_);
+    void check_timers(std::uint64_t *depth = nullptr, double *oldest_created = nullptr) {
+      WaitList<ActorT, ResType>::check_timers_impl(this->waiting_, depth, oldest_created);
+      WaitList<ActorT, ResType>::check_timers_impl(waiting_preliminary_, depth, oldest_created);
     }
   };
   std::map<BlockIdExt, WaitListPreliminary<WaitBlockState, td::Ref<ShardState>>> wait_state_;
@@ -221,22 +246,35 @@ class ValidatorManagerImpl : public ValidatorManager {
   static constexpr std::size_t MAX_ACTIVE_SHARD_BLOCK_DESC_GENERATIONS = 64;
   BoundedActiveOperations<BlockIdExt> active_shard_block_desc_generations_{MAX_ACTIVE_SHARD_BLOCK_DESC_GENERATIONS};
 
-  td::LRUCache<BlockIdExt, td::BufferSlice> cached_block_data_{/* max_size = */ 128};
-  td::LRUCache<BlockIdExt, td::BufferSlice> cached_masterchain_block_candidates_{/* max_size = */ 128};
+  // The largest block data any ingress accepts, FullNode::max_block_size();
+  // manager.cpp asserts the two agree.
+  static constexpr std::size_t kMaxCandidateDataSize = std::size_t{4} << 20;
+  // Block data received before the block is validated. Both caches are bounded
+  // by entry count and by the bytes of their allocations still alive,
+  // including clones held by pending finality verification and block
+  // processing after eviction: with 128 entries of up to kMaxCandidateDataSize
+  // each, a count bound alone would let them hold 1 GiB.
+  static constexpr CandidateDataCacheLimits kCandidateDataCacheLimits{
+      .max_entries = 128, .max_bytes = std::size_t{64} << 20, .max_entry_size = kMaxCandidateDataSize};
+  CandidateDataCache<BlockIdExt> cached_block_data_{kCandidateDataCacheLimits};
+  CandidateDataCache<BlockIdExt> cached_masterchain_block_candidates_{kCandidateDataCacheLimits};
+  // Candidate broadcasts being applied ahead of finality. Each holds its block
+  // data until done, so at most this many, of max_block_size each, are pending.
+  static constexpr std::size_t MAX_ACTIVE_CANDIDATE_BROADCASTS = 16;
+  BoundedActiveOperations<BlockIdExt> active_candidate_broadcasts_{MAX_ACTIVE_CANDIDATE_BROADCASTS};
   td::LRUCache<BlockIdExt, td::Unit> cached_checked_shard_block_descriptions_{/* max_size = */ 1024};
-  td::LRUCache<BlockIdExt, PendingBlockFinality> pending_block_finality_{/* max_size = */ 256};
+  PendingFinalityStore<BlockIdExt, PendingBlockFinalitySender, PendingBlockFinalityCandidate> pending_block_finality_;
+  td::optional<BlockIdExt> pending_finality_authority_memo_state_;
+  PendingFinalityAuthorityMemo pending_finality_authority_memo_;
 
   td::actor::ActorOwn<ExtMessagePool> ext_message_pool_;
   td::actor::ActorOwn<AppliedExtMessageCleanupActor> applied_ext_message_cleanup_actor_;
 
  private:
   // VALIDATOR GROUPS
-  ValidatorSessionId get_validator_set_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set,
-                                          td::Bits256 opts_hash, BlockSeqno last_key_block_seqno,
-                                          const consensus::ValidatorSessionOptions &opts);
   td::actor::ActorOwn<IValidatorGroup> create_validator_group(ValidatorSessionId session_id, ShardIdFull shard,
                                                               td::Ref<block::ValidatorSet> validator_set,
-                                                              BlockSeqno key_seqno,
+                                                              BlockSeqno key_seqno, NewConsensusConfig config,
                                                               consensus::ValidatorSessionOptions opts,
                                                               bool create_catchain);
   td::actor::ActorOwn<IValidatorGroup> create_observer_group(ValidatorSessionId session_id, ShardIdFull shard,
@@ -245,6 +283,8 @@ class ValidatorManagerImpl : public ValidatorManager {
                                                              NewConsensusConfig config);
   std::set<adnl::AdnlNodeIdShort> get_observer_adnl_ids(td::Ref<block::ValidatorSet> validator_set) const;
   std::vector<adnl::AdnlNodeIdShort> get_all_validator_adnl_ids() const;
+  // std::nullopt: use the legacy relay policy (all permanent peers).
+  std::optional<std::set<adnl::AdnlNodeIdShort>> get_twostep_relay_snapshot() const;
   td::actor::ActorId<CollationManager> get_collation_manager(adnl::AdnlNodeIdShort adnl_id);
 
   struct ValidatorGroupEntry {
@@ -261,6 +301,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   std::map<ValidatorSessionId, ValidatorGroupEntry> next_validator_groups_;
   using ObserverGroupId = std::pair<ValidatorSessionId, adnl::AdnlNodeIdShort>;
   std::map<ObserverGroupId, ValidatorGroupEntry> observer_groups_;
+  std::map<ShardIdFull, std::tuple<bool, bool, std::optional<std::size_t>>> observer_group_diagnostic_states_;
   std::map<adnl::AdnlNodeIdShort, td::actor::ActorOwn<CollationManager>> collation_managers_;
   std::set<ValidatorSessionId> destroyed_validator_sessions_;
   // Exact directory names of retired consensus groups whose per-group RocksDB
@@ -272,33 +313,18 @@ class ValidatorManagerImpl : public ValidatorManager {
   // plus multiple observers).
   std::set<std::string> pending_consensus_db_cleanup_;
 
-  // Validator-group consensus-DB cleanup adapter (Finding 1 / PR B/B2-8). Owns the
-  // durable cleanup records, per-incarnation generations, closure tracking, and
-  // the in-flight-delete reservation. Fed by the group lifecycle events below and
-  // driven by try_validator_consensus_db_cleanup(). Actual deletion is gated OFF
-  // by kValidatorConsensusCleanupEnabled until a post-genesis enablement; with the
-  // gate off the adapter only accumulates shadow state and deletes nothing.
+  // Validator-group consensus-DB cleanup driver. The durable store is the backlog;
+  // the driver holds only open retirements, in-flight deletes and its scan cursor
+  // (see validator-cleanup-manager.h). Fed by the group lifecycle events below and
+  // driven by a fixed-period tick (validator_cleanup_timer), which deletes only when the
+  // runtime option (on by default) is set and the four-condition safety gate proves
+  // a retired session obsolete against the durable GC snapshot. With cleanup
+  // disabled nothing is scanned or deleted; records keep accumulating on disk.
   consensus::ValidatorCleanupManager validator_cleanup_manager_;
 
   // Dedicated actor that runs the blocking validator-DB filesystem delete off the
-  // manager actor thread (created lazily on the first gated cleanup dispatch).
+  // manager actor thread (created lazily on the first cleanup dispatch).
   td::actor::ActorOwn<consensus::ValidatorConsensusCleanupWorker> validator_cleanup_worker_;
-
-  // Compile-time gate for enabling validator consensus-DB deletion. Deliberately
-  // false: a normal build must never delete. Live deletion is turned on ONLY via an
-  // explicit runtime opt-in for acceptance (never a blanket compile-time enable that
-  // would arm every build from this branch). The four-condition safety gate +
-  // GC-snapshot oracles remain the runtime protection against wrongful deletion.
-  static constexpr bool kValidatorConsensusCleanupEnabled = false;
-  // Max directory deletions dispatched per cleanup pass, so a large backlog cannot
-  // make a single manager turn do unbounded filesystem work.
-  static constexpr size_t kValidatorConsensusCleanupBudget = 16;
-  // Max records examined per cleanup pass (bounds scan cost on a big backlog; the
-  // round-robin cursor still covers all records over successive passes).
-  static constexpr size_t kValidatorConsensusCleanupScanBudget = 256;
-  // Max concurrent in-flight (Deleting+Erasing) cleanup operations across passes,
-  // bounding outstanding filesystem/erase work once deletion runs asynchronously.
-  static constexpr size_t kValidatorConsensusCleanupMaxOutstanding = 64;
 
  private:
   // MASTERCHAIN LAST BLOCK
@@ -338,6 +364,17 @@ class ValidatorManagerImpl : public ValidatorManager {
   void got_next_gc_masterchain_state(BlockHandle handle, td::Ref<MasterchainState> state);
   void advance_gc(BlockHandle handle, td::Ref<MasterchainState> state);
   void try_advance_gc_masterchain_block();
+  struct HealthWaiterSample {
+    std::uint64_t depth = 0;
+    std::uint64_t oldest_age_ms = 0;
+  };
+  void publish_health_node_state(const HealthWaiterSample &block_data, const HealthWaiterSample &state,
+                                 const HealthWaiterSample &shard_client);
+  // Warns while the last masterchain block or the applied state (shard
+  // client) is older than the lag threshold, and publishes both block times
+  // for the metrics exporter.
+  void check_masterchain_lag();
+  MasterchainLagAlertState masterchain_lag_alert_;
   void update_gc_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) override;
   void update_shard_client_block_handle(BlockHandle handle, td::Ref<MasterchainState> state,
                                         td::Promise<td::Unit> promise) override;
@@ -349,6 +386,82 @@ class ValidatorManagerImpl : public ValidatorManager {
   void checked_archive_slice(BlockSeqno new_last_mc_seqno, BlockSeqno new_shard_client_seqno);
   void finish_prestart_sync();
   void completed_prestart_sync();
+
+  // Startup archive catch-up of a stale validator (startup-catchup.h). The decision
+  // is taken once, before the first group could be built; the mode ends in
+  // end_startup_catchup, which opens the group fence and builds the groups the
+  // resulting state selects.
+  startup_catchup::SyncReason classify_startup_sync();
+  void decide_startup_catchup();
+  td::actor::Task<> run_startup_catchup_mode();
+  void end_startup_catchup(startup_catchup::ExitReason reason);
+  // Validator groups may be selected, built and activated. Further readiness
+  // conditions join this predicate with AND.
+  bool validator_groups_permitted() const;
+  bool observer_groups_permitted() const;
+  // Prestart completion: the startup inventory of orphaned session directories runs
+  // once, after all startup advancement, and the shard client starts only after it.
+  void finish_prestart_completion();
+
+  startup_catchup::Mode startup_catchup_;
+  consensus::StartupOrphanReconcile startup_orphan_reconcile_;
+  bool prestart_completion_started_ = false;
+  bool startup_reconciled_ = false;
+  bool prestart_finished_ = false;
+
+ protected:
+  // The shard client is started here once prestart completed.
+  virtual void start_shard_client();
+  // The one point where a validator or observer group actor is constructed.
+  virtual td::actor::ActorOwn<IValidatorGroup> construct_group(
+      bool observer, ValidatorSessionId session, ShardIdFull shard,
+      const std::function<td::actor::ActorOwn<IValidatorGroup>()> &make);
+
+ public:
+  // The owner surface of the catch-up mode loop (startup-catchup-driver.h).
+  double catchup_monotonic_now();
+  BlockIdExt catchup_tip();
+  BlockSeqno catchup_masterchain_seqno();
+  BlockSeqno catchup_shard_client_seqno();
+  bool catchup_out_of_sync();
+  void catchup_phase(startup_catchup::Phase phase);
+  td::actor::Task<startup_catchup::RoundResult> catchup_probe_round(BlockIdExt prev, double deadline,
+                                                                    std::uint32_t budget);
+  td::actor::Task<startup_catchup::ImportOutcome> catchup_import_attempt(double attempt_deadline);
+  td::actor::Task<td::Unit> catchup_persist_shard_client(BlockSeqno seqno);
+  td::actor::Task<td::Unit> catchup_sleep(double seconds);
+
+  // The owner surface of the startup orphan inventory (consensus/startup-orphan-reconcile.h).
+  consensus::StartupOrphanReconcile &startup_orphan_reconcile() {
+    return startup_orphan_reconcile_;
+  }
+  bool startup_orphan_session_live(const ValidatorSessionId &session) {
+    return validator_groups_.contains(session) || next_validator_groups_.contains(session);
+  }
+  std::set<ValidatorSessionId> &startup_orphan_destroyed_sessions() {
+    return destroyed_validator_sessions_;
+  }
+  consensus::ValidatorCleanupManager &startup_orphan_cleanup_manager() {
+    return validator_cleanup_manager_;
+  }
+  std::optional<CatchainSeqno> startup_orphan_current_catchain_seqno(ShardIdFull shard);
+  BlockIdExt startup_orphan_retirement_checkpoint() {
+    return last_masterchain_block_id_;
+  }
+  void startup_orphan_read_record(ValidatorSessionId session,
+                                  td::Promise<std::optional<consensus::PendingValidatorConsensusDbCleanup>> promise);
+  void startup_orphan_persist(std::vector<ValidatorSessionId> destroyed,
+                              std::vector<consensus::PendingValidatorConsensusDbCleanup> records,
+                              td::Promise<td::Unit> promise);
+  void startup_orphan_point_read(td::uint64 token, consensus::StartupOrphanCandidate candidate,
+                                 td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> record);
+  void startup_orphan_persisted(td::uint64 token, std::vector<std::pair<ValidatorSessionId, td::uint64>> retired,
+                                td::Result<td::Unit> result);
+  void startup_orphan_reconcile_finished(consensus::StartupOrphanSummary summary);
+
+  void verify_startup_probe_successor(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
+                                      td::Timestamp deadline,
+                                      td::Promise<startup_catchup::SuccessorVerdict> promise) override;
 
  public:
   void install_callback(std::unique_ptr<Callback> new_callback, td::Promise<td::Unit> promise) override {
@@ -372,6 +485,24 @@ class ValidatorManagerImpl : public ValidatorManager {
     temp_keys_.erase(key);
     promise.set_value(td::Unit());
   }
+  // Declaring that this node holds the consensus key for a validator identity. This is
+  // what makes it that validator; the Ed25519 setters above cannot. The key identity is
+  // recorded so membership lapses on its own once the set records a different one,
+  // rather than a node continuing to act for a validator that has rotated away from it.
+  void add_pq_consensus_key(tos::ValidatorId validator_id, std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store,
+                            td::uint32 valid_from, td::uint32 expire_at, td::Promise<td::Unit> promise) override {
+    auto status = pq_custody_.install(validator_id, std::move(store), valid_from, expire_at);
+    if (status.is_error()) {
+      promise.set_error(std::move(status));
+      return;
+    }
+    promise.set_value(td::Unit());
+  }
+  // Refuses an unexpired key that a previous, current or next validator set lists for this
+  // validator, judged here, at the moment of removal, against this manager's own state:
+  // a group for such a set signs with it.
+  void del_pq_consensus_key(tos::ValidatorId validator_id, tos::ConsensusKeyId key_id,
+                            td::Promise<td::Unit> promise) override;
 
   void validate_block_is_next_proof(BlockIdExt prev_block_id, BlockIdExt next_block_id, td::BufferSlice proof,
                                     td::Promise<td::Unit> promise) override;
@@ -382,7 +513,8 @@ class ValidatorManagerImpl : public ValidatorManager {
   void validate_block(ReceivedBlock block, td::Promise<BlockHandle> promise) override;
   void new_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
                            td::Promise<td::Unit> promise) override;
-  td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source) override;
+  td::actor::Task<> new_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source,
+                                                 td::optional<PublicKeyHash> source_peer = {}) override;
   void validate_block_broadcast_signatures(BlockBroadcast broadcast, td::Promise<td::Unit> promise) override;
   td::actor::Task<> validated_accepted_block_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno);
   td::actor::Task<> generate_shard_block_description(BlockIdExt block_id, Ref<block::BlockSignatureSet> sig_set);
@@ -517,7 +649,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void get_block_data_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<BlockData>> promise) override;
   void get_shard_state_from_db(ConstBlockHandle handle, td::Promise<td::Ref<ShardState>> promise) override;
   void get_shard_state_from_db_short(BlockIdExt block_id, td::Promise<td::Ref<ShardState>> promise) override;
-  void get_block_candidate_from_db(PublicKey source, BlockIdExt id, FileHash collated_data_file_hash,
+  void get_block_candidate_from_db(ValidatorId source, BlockIdExt id, FileHash collated_data_file_hash,
                                    td::Promise<BlockCandidate> promise) override;
   void get_candidate_data_by_block_id_from_db(BlockIdExt id, td::Promise<td::BufferSlice> promise) override;
   void get_block_proof_from_db(ConstBlockHandle handle, td::Promise<td::Ref<Proof>> promise) override;
@@ -598,6 +730,17 @@ class ValidatorManagerImpl : public ValidatorManager {
   void add_shard_block_description(td::Ref<ShardTopBlockDescription> desc);
   void add_cached_block_data(BlockIdExt block_id, td::BufferSlice data);
   void try_process_pending_block_finality(BlockIdExt block_id);
+  void failed_pending_block_proof(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token,
+                                  PendingBlockProofFailureSource source, td::Status error);
+  void failed_pending_block_finality(BlockIdExt block_id, PendingFinalityAttemptToken attempt_token, td::Status error,
+                                     td::Slice operation);
+  void schedule_pending_block_finality_retry(BlockIdExt block_id, double retry_at);
+  void expire_pending_block_finality(BlockIdExt block_id);
+  void checked_pending_block_finality(BlockIdExt block_id, BlockBroadcast broadcast, BroadcastSource source,
+                                      bool was_final, PendingFinalityAttemptToken attempt_token,
+                                      td::Result<td::Unit> result);
+  void processed_pending_block_finality(BlockIdExt block_id, bool was_final, PendingFinalityAttemptToken attempt_token,
+                                        td::Result<td::Unit> result);
   void preload_msg_queue_to_masterchain(td::Ref<ShardTopBlockDescription> desc, td::Promise<td::Unit> promise);
   void loaded_msg_queue_to_masterchain(td::Ref<ShardTopBlockDescription> desc, td::Ref<OutMsgQueueProof> res,
                                        td::Promise<td::Unit> promise);
@@ -611,7 +754,20 @@ class ValidatorManagerImpl : public ValidatorManager {
   void started(ValidatorManagerInitResult result);
   void got_destroyed_validator_sessions(std::vector<ValidatorSessionId> sessions);
   void got_pending_consensus_db_cleanup(std::vector<std::string> dirs);
-  void got_pending_validator_consensus_db_cleanup(std::vector<consensus::PendingValidatorConsensusDbCleanup> records);
+  // Steps of one validator cleanup pass (see validator-cleanup-dispatch.h): the page
+  // read, each candidate's point read, a reservation, and the end of the pass.
+  void validator_cleanup_page_loaded(consensus::ValidatorCleanupPageRequest request,
+                                     td::Result<consensus::ValidatorCleanupPage> R);
+  void validator_cleanup_point_read(td::uint64 pass_token, consensus::PendingValidatorConsensusDbCleanup candidate,
+                                    td::Result<std::optional<consensus::PendingValidatorConsensusDbCleanup>> R);
+  // The cleanup tick timer fired (see validator-cleanup-dispatch.h).
+  void validator_cleanup_timer();
+  bool validator_cleanup_enabled();
+  bool validator_cleanup_reserved(const consensus::ReservedValidatorDelete &reserved);
+  void validator_cleanup_pass_finished(consensus::ValidatorCleanupPassSummary summary, td::Status status);
+  // The deletion-gate inputs bound to the current durable GC snapshot, or nothing when
+  // there is no consistent snapshot yet.
+  std::optional<consensus::ValidatorCleanupOracles> validator_cleanup_oracles();
   // Called by a validator group once it has confirmed its own consensus
   // directory is deleted, so the cleanup queue is pruned during normal uptime
   // (not only at the next startup sweep).
@@ -620,10 +776,6 @@ class ValidatorManagerImpl : public ValidatorManager {
   // Reclaims the observer per-group databases still queued for cleanup; see the
   // definition. Validator directories are never reclaimed here.
   void sweep_destroyed_consensus_dbs();
-  // Drives one validator-group cleanup pass through validator_cleanup_manager_:
-  // builds the GC-snapshot oracles, deletes eligible directories, and erases their
-  // durable records. A no-op while kValidatorConsensusCleanupEnabled is false.
-  void try_validator_consensus_db_cleanup();
   // The async delete worker reported a completed delete ATTEMPT (session,
   // generation, attempt_id) with its confirmed-gone result: feed it to the adapter.
   void validator_cleanup_delete_done(ValidatorSessionId session_id, td::uint64 generation, td::uint64 attempt_id,
@@ -634,9 +786,15 @@ class ValidatorManagerImpl : public ValidatorManager {
   td::actor::Task<> finish_start_up();
   td::actor::Task<> start_up_advance_mc();
 
-  bool is_validator();
+  // Whether this node holds any validator keys at all, which decides operational
+  // behaviour such as mempool admission, monitoring and non-final queries.
+  //
+  // This is NOT consensus membership and must never be used as it. Holding an Ed25519
+  // network or operator key says nothing about whether this node is a validator in a
+  // given set; get_validator_id() and local_consensus_member() answer that, from custody.
+  bool has_local_validator_keys();
   bool validating_masterchain();
-  PublicKeyHash get_validator(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set);
+  tos::ValidatorId get_validator_id(ShardIdFull shard, td::Ref<block::ValidatorSet> val_set);
   bool is_shard_collator(ShardIdFull shard);
 
   ValidatorManagerImpl(td::Ref<ValidatorManagerOptions> opts, std::string db_root,
@@ -716,7 +874,7 @@ class ValidatorManagerImpl : public ValidatorManager {
   void process_lookup_block_for_litequery_error(AccountIdPrefixFull account, int type, td::uint64 value,
                                                 td::Result<ConstBlockHandle> r_handle,
                                                 td::Promise<ConstBlockHandle> promise);
-  void get_block_candidate_for_litequery(PublicKey source, BlockIdExt block_id, FileHash collated_data_hash,
+  void get_block_candidate_for_litequery(ValidatorId source, BlockIdExt block_id, FileHash collated_data_hash,
                                          td::Promise<BlockCandidate> promise) override;
   void get_validator_groups_info_for_litequery(
       td::optional<ShardIdFull> shard,
@@ -740,6 +898,7 @@ class ValidatorManagerImpl : public ValidatorManager {
  private:
   td::Timestamp resend_shard_blocks_at_;
   td::Timestamp check_waiters_at_;
+  td::Timestamp health_statvfs_at_;
   td::Timestamp check_shard_clients_;
   td::Timestamp log_status_at_;
   void alarm() override;
@@ -751,6 +910,15 @@ class ValidatorManagerImpl : public ValidatorManager {
  private:
   std::set<PublicKeyHash> permanent_keys_;
   std::set<PublicKeyHash> temp_keys_;
+  // Which post-quantum consensus keys this node actually holds, by the validator
+  // identity each belongs to. Consensus membership is decided from this; the Ed25519
+  // sets above are for network and operator duties and cannot confer it.
+  PqConsensusCustody pq_custody_;
+  // The local time custody decisions are made at: a consensus key whose expiry has
+  // passed answers for nothing from then on.
+  static td::uint32 pq_custody_now() {
+    return static_cast<td::uint32>(td::Clocks::system());
+  }
 
  private:
   td::Ref<ValidatorManagerOptions> opts_;

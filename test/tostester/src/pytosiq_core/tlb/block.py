@@ -1,11 +1,11 @@
 import typing
+from typing import Any, Optional
 
-from .tlb import TlbScheme, TlbError
-from .account import ShardAccount, AccountBlock
-from .utils import MerkleUpdate, deserialize_shard_hashes, uint64_to_int64
-from ..boc import Slice, Cell, Builder
+from ..boc import Builder, Cell, Slice
 from ..boc.hashmap.hashmap import HashMap
-
+from .account import AccountBlock, ShardAccount
+from .tlb import TlbError, TlbScheme
+from .utils import MerkleUpdate, deserialize_shard_hashes, uint64_to_int64
 
 # TODO provide in each constructor already deserialized args, not slice
 
@@ -21,7 +21,15 @@ class Block(TlbScheme):
     state_update:^(MERKLE_UPDATE ShardState)
     extra:^BlockExtra = Block;
     """
-    def __init__(self, global_id: int, info: "BlockInfo", value_flow: "ValueFlow", state_update: MerkleUpdate, extra: "BlockExtra"):
+
+    def __init__(
+        self,
+        global_id: int,
+        info: typing.Optional["BlockInfo"],
+        value_flow: typing.Optional["ValueFlow"],
+        state_update: typing.Optional[MerkleUpdate],
+        extra: typing.Optional["BlockExtra"],
+    ):
         self.global_id = global_id
         self.info = info
         self.value_flow = value_flow
@@ -34,8 +42,8 @@ class Block(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.load_bytes(4)
-        if tag != b'\x11\xefU\xaa':
-            raise BlockError(f'Block deserialization error: unknown prefix tag: {tag}')
+        if tag != b"\x11\xefU\xaa":
+            raise BlockError(f"Block deserialization error: unknown prefix tag: {tag}")
 
         global_id = cell_slice.load_int(32)
         info = BlockInfo.deserialize(cell_slice.load_ref().begin_parse())
@@ -57,6 +65,7 @@ class BlockInfo(TlbScheme):
     gen_software:flags . 0?GlobalVersion master_ref:not_master?^BlkMasterInfo prev_ref:^(BlkPrevInfo after_merge)
     prev_vert_ref:vert_seqno_incr?^(BlkPrevInfo 0) = BlockInfo;
     """
+
     def __init__(self, cell_slice: Slice):
         self.version = cell_slice.load_uint(32)
         self.not_master = cell_slice.load_bit()
@@ -69,11 +78,13 @@ class BlockInfo(TlbScheme):
         self.vert_seqno_incr = cell_slice.load_bit()
         self.flags = cell_slice.load_uint(8)
         if not (self.flags <= 1):
-            raise BlockError(f'deserialization error: flags = {self.flags} > 1')
+            raise BlockError(f"deserialization error: flags = {self.flags} > 1")
         self.seqno = cell_slice.load_uint(32)
         self.vert_seqno = cell_slice.load_uint(32)
         if not (self.vert_seqno >= self.vert_seqno_incr):
-            raise BlockError(f'deserialization error: vert_seqno = {self.vert_seqno} < vert_seqno_incr = {self.vert_seqno_incr}')
+            raise BlockError(
+                f"deserialization error: vert_seqno = {self.vert_seqno} < vert_seqno_incr = {self.vert_seqno_incr}"
+            )
         self.shard = ShardIdent.deserialize(cell_slice)
         self.gen_utime = cell_slice.load_uint(32)
         self.start_lt = cell_slice.load_uint(64)
@@ -84,11 +95,13 @@ class BlockInfo(TlbScheme):
         self.prev_key_block_seqno = cell_slice.load_uint(32)
         self.gen_software = None
         self.master_ref = None
-        if bin(self.flags)[-1] == '1':
+        if bin(self.flags)[-1] == "1":
             self.gen_software = GlobalVersion.deserialize(cell_slice)
         if self.not_master:
             self.master_ref = BlkMasterInfo.deserialize(cell_slice.load_ref().begin_parse())
-        self.prev_ref = BlkPrevInfo.deserialize(cell_slice.load_ref().begin_parse(), self.after_merge)
+        self.prev_ref = BlkPrevInfo.deserialize(
+            cell_slice.load_ref().begin_parse(), self.after_merge
+        )
         self.prev_vert_ref = None
         if self.vert_seqno_incr:
             self.prev_vert_ref = BlkPrevInfo.deserialize(cell_slice.load_ref().begin_parse(), 0)
@@ -100,8 +113,8 @@ class BlockInfo(TlbScheme):
         if cell_slice.is_special():
             return None
         tag = cell_slice.load_bytes(4)
-        if tag != b'\x9b\xc7\xa9\x87':
-            raise BlockError(f'BlockInfo deserialization error unknown prefix tag: {tag}')
+        if tag != b"\x9b\xc7\xa9\x87":
+            raise BlockError(f"BlockInfo deserialization error unknown prefix tag: {tag}")
         return cls(cell_slice)
 
 
@@ -120,9 +133,13 @@ class ShardIdent(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.load_bits(2).to01()
-        if tag != '00':
-            raise BlockError(f'ShardIdent deserialization error: unknown prefix: {tag}')
-        return cls(shard_pfx_bits=cell_slice.load_uint(int(60).bit_length()), workchain_id=cell_slice.load_int(32), shard_prefix=cell_slice.load_uint(64))
+        if tag != "00":
+            raise BlockError(f"ShardIdent deserialization error: unknown prefix: {tag}")
+        return cls(
+            shard_pfx_bits=cell_slice.load_uint(int(60).bit_length()),
+            workchain_id=cell_slice.load_int(32),
+            shard_prefix=cell_slice.load_uint(64),
+        )
 
     def calculate_shard(self) -> int:
         """
@@ -152,8 +169,8 @@ class GlobalVersion(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.load_bytes(1)
-        if tag[:1] != b'\xc4':
-            raise BlockError(f'GlobalVersion deserialization error: unknown prefix: {tag}')
+        if tag[:1] != b"\xc4":
+            raise BlockError(f"GlobalVersion deserialization error: unknown prefix: {tag}")
         return cls(version=cell_slice.load_int(32), capabilities=cell_slice.load_uint(64))
 
 
@@ -193,12 +210,12 @@ class BlkPrevInfo(TlbScheme):
     def deserialize(cls, cell_slice: Slice, after_merge: int):
         kwargs = {}
         if not after_merge:
-            type_ = 'prev_blk_info'
-            kwargs['prev'] = ExtBlkRef.deserialize(cell_slice)
+            type_ = "prev_blk_info"
+            kwargs["prev"] = ExtBlkRef.deserialize(cell_slice)
         else:
-            type_ = 'prev_blks_info'
-            kwargs['prev1'] = ExtBlkRef.deserialize(cell_slice.load_ref().begin_parse())
-            kwargs['prev2'] = ExtBlkRef.deserialize(cell_slice.load_ref().begin_parse())
+            type_ = "prev_blks_info"
+            kwargs["prev1"] = ExtBlkRef.deserialize(cell_slice.load_ref().begin_parse())
+            kwargs["prev2"] = ExtBlkRef.deserialize(cell_slice.load_ref().begin_parse())
 
         return cls(type_, **kwargs)
 
@@ -268,23 +285,37 @@ class ValueFlow(TlbScheme):
             return None
         kwargs = {}
         tag = cell_slice.load_bytes(4)
-        if tag == b'\xb8\xe4\x8d\xfb':
-            type_ = 'value_flow'
+        if tag == b"\xb8\xe4\x8d\xfb":
+            type_ = "value_flow"
             ref1 = cell_slice.load_ref().begin_parse()
             ref2 = cell_slice.load_ref().begin_parse()
-            kwargs['from_prev_blk'], kwargs['to_next_blk'], kwargs['imported'], kwargs['exported'] = [CurrencyCollection.deserialize(ref1) for _ in range(4)]
-            kwargs['fees_collected'] = CurrencyCollection.deserialize(cell_slice)
-            kwargs['fees_imported'], kwargs['recovered'], kwargs['created'], kwargs['minted'] = [CurrencyCollection.deserialize(ref2) for _ in range(4)]
-        elif tag == b'>\xbf\x98\xb7':
-            type_ = 'value_flow_v2'
+            (
+                kwargs["from_prev_blk"],
+                kwargs["to_next_blk"],
+                kwargs["imported"],
+                kwargs["exported"],
+            ) = [CurrencyCollection.deserialize(ref1) for _ in range(4)]
+            kwargs["fees_collected"] = CurrencyCollection.deserialize(cell_slice)
+            kwargs["fees_imported"], kwargs["recovered"], kwargs["created"], kwargs["minted"] = [
+                CurrencyCollection.deserialize(ref2) for _ in range(4)
+            ]
+        elif tag == b">\xbf\x98\xb7":
+            type_ = "value_flow_v2"
             ref1 = cell_slice.load_ref().begin_parse()
             ref2 = cell_slice.load_ref().begin_parse()
-            kwargs['from_prev_blk'], kwargs['to_next_blk'], kwargs['imported'], kwargs['exported'] = [CurrencyCollection.deserialize(ref1) for _ in range(4)]
-            kwargs['fees_collected'] = CurrencyCollection.deserialize(cell_slice)
-            kwargs['burned'] = CurrencyCollection.deserialize(cell_slice)
-            kwargs['fees_imported'], kwargs['recovered'], kwargs['created'], kwargs['minted'] = [CurrencyCollection.deserialize(ref2) for _ in range(4)]
+            (
+                kwargs["from_prev_blk"],
+                kwargs["to_next_blk"],
+                kwargs["imported"],
+                kwargs["exported"],
+            ) = [CurrencyCollection.deserialize(ref1) for _ in range(4)]
+            kwargs["fees_collected"] = CurrencyCollection.deserialize(cell_slice)
+            kwargs["burned"] = CurrencyCollection.deserialize(cell_slice)
+            kwargs["fees_imported"], kwargs["recovered"], kwargs["created"], kwargs["minted"] = [
+                CurrencyCollection.deserialize(ref2) for _ in range(4)
+            ]
         else:
-            raise BlockError(f'ValueFlow deserialization error unknown prefix tag: {tag}')
+            raise BlockError(f"ValueFlow deserialization error unknown prefix tag: {tag}")
         return cls(type_, **kwargs)
 
 
@@ -294,7 +325,9 @@ class CurrencyCollection(TlbScheme):
 
     """
 
-    def __init__(self, tomis: int = 0, *, other: "ExtraCurrencyCollection" = None) -> None:
+    def __init__(
+        self, tomis: int = 0, *, other: Optional["ExtraCurrencyCollection"] = None
+    ) -> None:
         self.tomis = tomis
         if other is None:
             other = ExtraCurrencyCollection({})
@@ -318,17 +351,20 @@ class ExtraCurrencyCollection(TlbScheme):
     extra_currencies$_ dict:(HashmapE 32 (VarUInteger 32)) = ExtraCurrencyCollection
     """
 
-    def __init__(self, dict_: dict):
+    def __init__(self, dict_: typing.Optional[dict[Any, Any]]):
         self.dict = dict_
 
     def serialize(self) -> Cell:
-        dict_cell = HashMap(32, map_=self.dict, value_serializer=lambda src, dest: dest.store_var_uint(src, 5)).serialize()
+        dict_cell = HashMap(
+            32, map_=self.dict, value_serializer=lambda src, dest: dest.store_var_uint(src, 5)
+        ).serialize()
         return Builder().store_dict(dict_cell).end_cell()
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         def value_deserializer(src):
             return src.load_var_uint(5)
+
         dict_ = cell_slice.load_dict(32, value_deserializer=value_deserializer)
         return cls(dict_)
 
@@ -350,13 +386,14 @@ class ShardState(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.preload_bytes(4)
-        if tag == b'_2}\xa5':
+        if tag == b"_2}\xa5":
             cell_slice.load_bytes(4)
-            return cls(type_='split_state',
-                       left=ShardStateUnsplit.deserialize(cell_slice.load_ref().begin_parse()),
-                       right=ShardStateUnsplit.deserialize(cell_slice.load_ref().begin_parse())
-                       )
-        return cls(type_='_', shard_state_unsplit=ShardStateUnsplit.deserialize(cell_slice))
+            return cls(
+                type_="split_state",
+                left=ShardStateUnsplit.deserialize(cell_slice.load_ref().begin_parse()),
+                right=ShardStateUnsplit.deserialize(cell_slice.load_ref().begin_parse()),
+            )
+        return cls(type_="_", shard_state_unsplit=ShardStateUnsplit.deserialize(cell_slice))
 
 
 class ShardStateUnsplit(TlbScheme):
@@ -373,25 +410,26 @@ class ShardStateUnsplit(TlbScheme):
     = ShardStateUnsplit;
     """
 
-    def __init__(self,
-                 global_id: int,
-                 shard_id: ShardIdent,
-                 seq_no: int,
-                 vert_seq_no: int,
-                 gen_utime: int,
-                 gen_lt: int,
-                 min_ref_mc_seqno: int,
-                 out_msg_queue_info: Cell,
-                 before_split: int,
-                 accounts: "ShardAccounts",
-                 overload_history: int,
-                 underload_history: int,
-                 total_balance: CurrencyCollection,
-                 total_validator_fees: CurrencyCollection,
-                 libraries: dict,
-                 master_ref: typing.Optional[BlkMasterInfo],
-                 custom: typing.Optional["McStateExtra"],
-                 ):
+    def __init__(
+        self,
+        global_id: int,
+        shard_id: ShardIdent,
+        seq_no: int,
+        vert_seq_no: int,
+        gen_utime: int,
+        gen_lt: int,
+        min_ref_mc_seqno: int,
+        out_msg_queue_info: Cell,
+        before_split: int,
+        accounts: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+        overload_history: typing.Optional[int],
+        underload_history: typing.Optional[int],
+        total_balance: typing.Optional[CurrencyCollection],
+        total_validator_fees: typing.Optional[CurrencyCollection],
+        libraries: typing.Optional[dict[Any, Any]],
+        master_ref: typing.Optional[BlkMasterInfo],
+        custom: typing.Optional["McStateExtra"],
+    ):
         self.global_id = global_id
         self.shard_id = shard_id
         self.seq_no = seq_no
@@ -418,8 +456,8 @@ class ShardStateUnsplit(TlbScheme):
         if cell_slice.is_special():
             return None
         tag = cell_slice.load_bytes(4)
-        if not tag == b'\x90#\xaf\xe2':
-            raise BlockError(f'ShardStateUnsplit deserialization error unknown prefix tag: {tag}')
+        if not tag == b"\x90#\xaf\xe2":
+            raise BlockError(f"ShardStateUnsplit deserialization error unknown prefix tag: {tag}")
 
         global_id = cell_slice.load_int(32)
         shard_id = ShardIdent.deserialize(cell_slice)
@@ -447,26 +485,47 @@ class ShardStateUnsplit(TlbScheme):
             total_validator_fees = CurrencyCollection.deserialize(ref)
             libraries = ref.load_dict(256)
             master_ref = BlkMasterInfo.deserialize(ref) if ref.load_bit() else None
-        custom = McStateExtra.deserialize(cell_slice.load_ref().begin_parse()) if cell_slice.load_bit() else None
+        custom = (
+            McStateExtra.deserialize(cell_slice.load_ref().begin_parse())
+            if cell_slice.load_bit()
+            else None
+        )
 
-        return cls(global_id, shard_id, seq_no, vert_seq_no, gen_utime,
-                   gen_lt, min_ref_mc_seqno, out_msg_queue_info, before_split, accounts,
-                   overload_history, underload_history, total_balance, total_validator_fees,
-                   libraries, master_ref, custom)
+        return cls(
+            global_id,
+            shard_id,
+            seq_no,
+            vert_seq_no,
+            gen_utime,
+            gen_lt,
+            min_ref_mc_seqno,
+            out_msg_queue_info,
+            before_split,
+            accounts,
+            overload_history,
+            underload_history,
+            total_balance,
+            total_validator_fees,
+            libraries,
+            master_ref,
+            custom,
+        )
 
 
 class ShardAccounts(TlbScheme):
     """
     _ (HashmapAugE 256 ShardAccount DepthBalanceInfo) = ShardAccounts;
     """
-    def serialize(self, *args):
-        ...
+
+    def serialize(self, *args): ...
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        return cell_slice.load_hashmap_aug_e(key_length=256,
-                                             x_deserializer=ShardAccount.deserialize,
-                                             y_deserializer=DepthBalanceInfo.deserialize)
+        return cell_slice.load_hashmap_aug_e(
+            key_length=256,
+            x_deserializer=ShardAccount.deserialize,
+            y_deserializer=DepthBalanceInfo.deserialize,
+        )
 
 
 class OutMsgQueueInfo(TlbScheme):
@@ -474,6 +533,7 @@ class OutMsgQueueInfo(TlbScheme):
     _ out_queue:OutMsgQueue proc_info:ProcessedInfo
     ihr_pending:IhrPendingInfo = OutMsgQueueInfo;
     """
+
     @classmethod
     def serialize(cls, *args):
         pass
@@ -487,6 +547,7 @@ class OutMsgQueue(TlbScheme):
     """
     _ (HashmapAugE 352 EnqueuedMsg uint64) = OutMsgQueue;
     """
+
     @classmethod
     def serialize(cls, *args):
         pass
@@ -511,8 +572,10 @@ class DepthBalanceInfo(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        return cls(cell_slice.load_uint(5),  # (#<= 30)
-                   CurrencyCollection.deserialize(cell_slice))
+        return cls(
+            cell_slice.load_uint(5),  # (#<= 30)
+            CurrencyCollection.deserialize(cell_slice),
+        )
 
 
 class McStateExtra(TlbScheme):
@@ -529,17 +592,18 @@ class McStateExtra(TlbScheme):
     = McStateExtra;
     """
 
-    def __init__(self,
-                 shard_hashes: dict,
-                 config: "ConfigParams",
-                 flags: int,
-                 validator_info: "ValidatorInfo",
-                 prev_blocks: "OldMcBlocksInfo",
-                 after_key_block: bool,
-                 last_key_block: typing.Optional[ExtBlkRef],
-                 block_create_stats: typing.Optional["BlockCreateStats"],
-                 global_balance: CurrencyCollection
-                 ):
+    def __init__(
+        self,
+        shard_hashes: typing.Optional[dict[Any, Any]],
+        config: "ConfigParams",
+        flags: int,
+        validator_info: "ValidatorInfo",
+        prev_blocks: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+        after_key_block: bool,
+        last_key_block: typing.Optional[ExtBlkRef],
+        block_create_stats: typing.Optional["BlockCreateStats"],
+        global_balance: CurrencyCollection,
+    ):
         self.shard_hashes = shard_hashes
         self.config = config
         self.flags = flags
@@ -559,24 +623,36 @@ class McStateExtra(TlbScheme):
         if cell_slice.is_special():
             return None
         tag = cell_slice.load_bytes(2)
-        if tag != b'\xcc&':
-            raise BlockError(f'McStateExtra deserialization error unknown prefix tag: {tag}')
+        if tag != b"\xcc&":
+            raise BlockError(f"McStateExtra deserialization error unknown prefix tag: {tag}")
         shard_hashes = deserialize_shard_hashes(cell_slice)
         config = ConfigParams.deserialize(cell_slice)
         ref = cell_slice.load_ref().begin_parse()
         flags = ref.load_uint(16)
         if not (flags <= 1):
-            raise BlockError(f'McStateExtra deserialization error expected flags <= 1, got: {flags}')
+            raise BlockError(
+                f"McStateExtra deserialization error expected flags <= 1, got: {flags}"
+            )
         validator_info = ValidatorInfo.deserialize(ref)
         prev_blocks = OldMcBlocksInfo.deserialize(ref)
         after_key_block = ref.load_bool()
         ref.load_bits(65)  # TODO why ?
         last_key_block = ExtBlkRef.deserialize(ref) if ref.load_bit() else None
         block_create_stats = None
-        if bin(flags)[-1] == '1':
+        if bin(flags)[-1] == "1":
             block_create_stats = BlockCreateStats.deserialize(ref)
         global_balance = CurrencyCollection.deserialize(cell_slice)
-        return cls(shard_hashes, config, flags, validator_info, prev_blocks, after_key_block, last_key_block, block_create_stats, global_balance)
+        return cls(
+            shard_hashes,
+            config,
+            flags,
+            validator_info,
+            prev_blocks,
+            after_key_block,
+            last_key_block,
+            block_create_stats,
+            global_balance,
+        )
 
 
 class McBlockExtra(TlbScheme):
@@ -593,15 +669,16 @@ class McBlockExtra(TlbScheme):
     config: key_block?ConfigParams
     """
 
-    def __init__(self,
-                 key_block: int,
-                 shard_hashes: dict,
-                 shard_fees: Cell,
-                 prev_blk_signatures: dict,
-                 recover_create_msg: typing.Optional[Cell],
-                 mint_msg: typing.Optional[Cell],
-                 config: typing.Optional["ConfigParams"]
-                 ):
+    def __init__(
+        self,
+        key_block: int,
+        shard_hashes: typing.Optional[dict[Any, Any]],
+        shard_fees: typing.Optional[Cell],
+        prev_blk_signatures: typing.Optional[dict[Any, Any]],
+        recover_create_msg: typing.Optional[Cell],
+        mint_msg: typing.Optional[Cell],
+        config: typing.Optional["ConfigParams"],
+    ):
         self.key_block = key_block
         self.shard_hashes = shard_hashes
         self.shard_fees = shard_fees
@@ -619,8 +696,8 @@ class McBlockExtra(TlbScheme):
         if cell_slice.is_special():
             return None
         tag = cell_slice.load_bytes(2)
-        if tag != b'\xcc\xa5':
-            raise BlockError(f'McBlockExtra deserialization error unknown prefix tag: {tag}')
+        if tag != b"\xcc\xa5":
+            raise BlockError(f"McBlockExtra deserialization error unknown prefix tag: {tag}")
         key_block = cell_slice.load_bit()
         shard_hashes = deserialize_shard_hashes(cell_slice)
         shard_fees = cell_slice.load_maybe_ref()
@@ -632,7 +709,15 @@ class McBlockExtra(TlbScheme):
         if key_block:
             config = ConfigParams.deserialize(cell_slice)
 
-        return cls(key_block, shard_hashes, shard_fees, prev_blk_signatures, recover_create_msg, mint_msg, config)
+        return cls(
+            key_block,
+            shard_hashes,
+            shard_fees,
+            prev_blk_signatures,
+            recover_create_msg,
+            mint_msg,
+            config,
+        )
 
 
 class ConfigParams(TlbScheme):
@@ -640,7 +725,7 @@ class ConfigParams(TlbScheme):
     _ config_addr:bits256 config:^(Hashmap 32 ^Cell) = ConfigParams;
     """
 
-    def __init__(self, config_addr: str, config: dict):
+    def __init__(self, config_addr: str, config: typing.Optional[dict[Any, Any]]):
         self.config_addr = config_addr
         self.config = config
 
@@ -650,8 +735,16 @@ class ConfigParams(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        return cls(config_addr=cell_slice.load_bytes(32).hex(),
-                   config=cell_slice.load_ref().begin_parse().load_hashmap(32, key_deserializer=lambda src: Builder().store_bits(src).to_slice().load_int(32), value_deserializer=lambda src: src.load_ref().begin_parse()))
+        return cls(
+            config_addr=cell_slice.load_bytes(32).hex(),
+            config=cell_slice.load_ref()
+            .begin_parse()
+            .load_hashmap(
+                32,
+                key_deserializer=lambda src: Builder().store_bits(src).to_slice().load_int(32),
+                value_deserializer=lambda src: src.load_ref().begin_parse(),
+            ),
+        )
 
 
 class ValidatorInfo(TlbScheme):
@@ -676,7 +769,7 @@ class ValidatorInfo(TlbScheme):
         return cls(
             validator_list_hash_short=cell_slice.load_uint(32),
             catchain_seqno=cell_slice.load_uint(32),
-            nx_cc_updated=cell_slice.load_bool()
+            nx_cc_updated=cell_slice.load_bool(),
         )
 
 
@@ -736,7 +829,11 @@ class BlockCreateStats(TlbScheme):
     block_create_stats_ext#34 counters:(HashmapAugE 256 CreatorStats uint32) = BlockCreateStats;
     """
 
-    def __init__(self, type_: str, counters: dict):
+    def __init__(
+        self,
+        type_: str,
+        counters: typing.Union[dict[int, Any], Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+    ):
         self.type_ = type_
         self.counters = counters
 
@@ -747,18 +844,25 @@ class BlockCreateStats(TlbScheme):
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.load_bytes(1)
-        if tag[:1] == b'\x17':
-            type_ = 'block_create_stats'
-            return cls(type_, cell_slice.load_dict(256, value_deserializer=CreatorStats.deserialize))
-        if tag[:1] == b'\x34':
-            type_ = 'block_create_stats_ext'
+        if tag[:1] == b"\x17":
+            type_ = "block_create_stats"
+            return cls(
+                type_, cell_slice.load_dict(256, value_deserializer=CreatorStats.deserialize)
+            )
+        if tag[:1] == b"\x34":
+            type_ = "block_create_stats_ext"
 
             def y_deserializer(src):
                 return src.load_uint(32)
-            return cls(type_, cell_slice.load_hashmap_aug_e(256, x_deserializer=CreatorStats.deserialize, y_deserializer=y_deserializer))
-        else:
-            raise BlockError(f'BlockCreateStats deserialization error tag: {tag}')
 
+            return cls(
+                type_,
+                cell_slice.load_hashmap_aug_e(
+                    256, x_deserializer=CreatorStats.deserialize, y_deserializer=y_deserializer
+                ),
+            )
+        else:
+            raise BlockError(f"BlockCreateStats deserialization error tag: {tag}")
 
 
 class CreatorStats(TlbScheme):
@@ -778,7 +882,7 @@ class CreatorStats(TlbScheme):
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.load_uint(4)
         if tag != 4:
-            raise BlockError(f'CreatorStats deserialization error tag: {tag}')
+            raise BlockError(f"CreatorStats deserialization error tag: {tag}")
         return cls(Counters.deserialize(cell_slice), Counters.deserialize(cell_slice))
 
 
@@ -799,7 +903,12 @@ class Counters(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        return cls(cell_slice.load_uint(32), cell_slice.load_uint(64), cell_slice.load_uint(64), cell_slice.load_uint(64))
+        return cls(
+            cell_slice.load_uint(32),
+            cell_slice.load_uint(64),
+            cell_slice.load_uint(64),
+            cell_slice.load_uint(64),
+        )
 
 
 class BlockExtra(TlbScheme):
@@ -812,13 +921,15 @@ class BlockExtra(TlbScheme):
     custom:(Maybe ^McBlockExtra) = BlockExtra;
     """
 
-    def __init__(self,
-                 in_msg_descr: typing.Tuple[dict, list],
-                 out_msg_descr: typing.Tuple[dict, list],
-                 account_blocks: typing.Tuple[dict, list],
-                 rand_seed: bytes,
-                 created_by: bytes,
-                 custom: typing.Optional[McBlockExtra]):
+    def __init__(
+        self,
+        in_msg_descr: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+        out_msg_descr: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+        account_blocks: typing.Union[Cell, typing.Tuple[dict[int, Any], list[Any]], None],
+        rand_seed: bytes,
+        created_by: bytes,
+        custom: typing.Optional[McBlockExtra],
+    ):
         self.in_msg_descr = in_msg_descr
         self.out_msg_descr = out_msg_descr
         self.account_blocks = account_blocks
@@ -832,18 +943,45 @@ class BlockExtra(TlbScheme):
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        from .transaction import InMsg, OutMsg, ImportFees
+        from .transaction import ImportFees, InMsg, OutMsg
+
         if cell_slice.is_special():
             return None
         tag = cell_slice.load_bytes(4)
-        if tag != b'J3\xf6\xfd':
-            raise BlockError(f'BlockExtra deserialization error tag: {tag}')
-        in_msg_descr = cell_slice.load_ref().begin_parse().load_hashmap_aug_e(256, x_deserializer=InMsg.deserialize, y_deserializer=ImportFees.deserialize)
-        out_msg_descr = cell_slice.load_ref().begin_parse().load_hashmap_aug_e(256, x_deserializer=OutMsg.deserialize, y_deserializer=CurrencyCollection.deserialize)
-        account_blocks = cell_slice.load_ref().begin_parse().load_hashmap_aug_e(256, x_deserializer=AccountBlock.deserialize, y_deserializer=CurrencyCollection.deserialize)
+        if tag != b"J3\xf6\xfd":
+            raise BlockError(f"BlockExtra deserialization error tag: {tag}")
+        in_msg_descr = (
+            cell_slice.load_ref()
+            .begin_parse()
+            .load_hashmap_aug_e(
+                256, x_deserializer=InMsg.deserialize, y_deserializer=ImportFees.deserialize
+            )
+        )
+        out_msg_descr = (
+            cell_slice.load_ref()
+            .begin_parse()
+            .load_hashmap_aug_e(
+                256,
+                x_deserializer=OutMsg.deserialize,
+                y_deserializer=CurrencyCollection.deserialize,
+            )
+        )
+        account_blocks = (
+            cell_slice.load_ref()
+            .begin_parse()
+            .load_hashmap_aug_e(
+                256,
+                x_deserializer=AccountBlock.deserialize,
+                y_deserializer=CurrencyCollection.deserialize,
+            )
+        )
         rand_seed = cell_slice.load_bytes(32)
         created_by = cell_slice.load_bytes(32)
-        custom = McBlockExtra.deserialize(cell_slice.load_ref().begin_parse()) if cell_slice.load_bit() else None
+        custom = (
+            McBlockExtra.deserialize(cell_slice.load_ref().begin_parse())
+            if cell_slice.load_bit()
+            else None
+        )
         return cls(in_msg_descr, out_msg_descr, account_blocks, rand_seed, created_by, custom)
 
 
@@ -853,19 +991,22 @@ class BinTree(TlbScheme):
     bt_fork$1 {X:Type} left:^(BinTree X) right:^(BinTree X)
     = BinTree X;
     """
-    def __init__(self, list_: list):
+
+    def __init__(self, list_: list[Any]):
         self.list = list_
 
     @classmethod
-    def serialize(cls, *args):
-        ...
+    def serialize(cls, *args): ...
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         if cell_slice.is_special():
             return cls([cell_slice])
         if cell_slice.load_bit():
-            return cls(cls.deserialize(cell_slice.load_ref().begin_parse()).list + cls.deserialize(cell_slice.load_ref().begin_parse()).list)
+            return cls(
+                cls.deserialize(cell_slice.load_ref().begin_parse()).list
+                + cls.deserialize(cell_slice.load_ref().begin_parse()).list
+            )
         else:
             return cls([cell_slice])
 
@@ -899,10 +1040,28 @@ class ShardDescr(TlbScheme):
     ] = ShardDescr;
     """
 
-    def __init__(self, seq_no: int, reg_mc_seqno: int, start_lt: int, end_lt: int, root_hash: bytes, file_hash: bytes,
-                 before_split: bool, before_merge: bool, want_split: bool, want_merge: bool, nx_cc_updated: bool,
-                 flags: int, next_catchain_seqno: int, next_validator_shard: int, min_ref_mc_seqno: int,
-                 gen_utime: int, split_merge_at: "FutureSplitMerge", fees_collected: CurrencyCollection, funds_created: CurrencyCollection):
+    def __init__(
+        self,
+        seq_no: int,
+        reg_mc_seqno: int,
+        start_lt: int,
+        end_lt: int,
+        root_hash: bytes,
+        file_hash: bytes,
+        before_split: bool,
+        before_merge: bool,
+        want_split: bool,
+        want_merge: bool,
+        nx_cc_updated: bool,
+        flags: int,
+        next_catchain_seqno: int,
+        next_validator_shard: int,
+        min_ref_mc_seqno: int,
+        gen_utime: int,
+        split_merge_at: typing.Optional["FutureSplitMerge"],
+        fees_collected: CurrencyCollection,
+        funds_created: CurrencyCollection,
+    ):
         self.seq_no = seq_no
         self.reg_mc_seqno = reg_mc_seqno
         self.start_lt = start_lt
@@ -925,14 +1084,13 @@ class ShardDescr(TlbScheme):
         self.funds_created = funds_created
 
     @classmethod
-    def serialize(cls, *args):
-        ...
+    def serialize(cls, *args): ...
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
         tag = cell_slice.load_bits(4).to01()
-        if tag not in ('1011', '1010'):  # b and a
-            raise BlockError(f'ShardDescr deserialization error unknown prefix tag: {tag}')
+        if tag not in ("1011", "1010"):  # b and a
+            raise BlockError(f"ShardDescr deserialization error unknown prefix tag: {tag}")
 
         seq_no = cell_slice.load_uint(32)
         reg_mc_seqno = cell_slice.load_uint(32)
@@ -947,24 +1105,43 @@ class ShardDescr(TlbScheme):
         nx_cc_updated = cell_slice.load_bool()
         flags = cell_slice.load_uint(3)
         if flags != 0:
-            raise BlockError(f'ShardDescr deserialization error flags expected to be zero, got: {flags}')
+            raise BlockError(
+                f"ShardDescr deserialization error flags expected to be zero, got: {flags}"
+            )
         next_catchain_seqno = cell_slice.load_uint(32)
         next_validator_shard = cell_slice.load_uint(64)
         min_ref_mc_seqno = cell_slice.load_uint(32)
         gen_utime = cell_slice.load_uint(32)
         split_merge_at = FutureSplitMerge.deserialize(cell_slice)
 
-        if tag == '1011':  # b
+        if tag == "1011":  # b
             fees_collected = CurrencyCollection.deserialize(cell_slice)
             funds_created = CurrencyCollection.deserialize(cell_slice)
         else:  # a
             ref = cell_slice.load_ref().begin_parse()
             fees_collected = CurrencyCollection.deserialize(ref)
             funds_created = CurrencyCollection.deserialize(ref)
-        return cls(seq_no, reg_mc_seqno, start_lt, end_lt, root_hash, file_hash,
-                   before_split, before_merge, want_split, want_merge, nx_cc_updated,
-                   flags, next_catchain_seqno, next_validator_shard, min_ref_mc_seqno,
-                   gen_utime, split_merge_at, fees_collected, funds_created)
+        return cls(
+            seq_no,
+            reg_mc_seqno,
+            start_lt,
+            end_lt,
+            root_hash,
+            file_hash,
+            before_split,
+            before_merge,
+            want_split,
+            want_merge,
+            nx_cc_updated,
+            flags,
+            next_catchain_seqno,
+            next_validator_shard,
+            min_ref_mc_seqno,
+            gen_utime,
+            split_merge_at,
+            fees_collected,
+            funds_created,
+        )
 
 
 class FutureSplitMerge(TlbScheme):
@@ -988,5 +1165,9 @@ class FutureSplitMerge(TlbScheme):
         if not cell_slice.load_bit():  # 0
             return None
         if not cell_slice.load_bit():  # 10
-            return cls('fsm_split', split_utime=cell_slice.load_uint(32), interval=cell_slice.load_uint(32))
-        return cls('fsm_merge', merge_utime=cell_slice.load_uint(32), interval=cell_slice.load_uint(32))  # 11
+            return cls(
+                "fsm_split", split_utime=cell_slice.load_uint(32), interval=cell_slice.load_uint(32)
+            )
+        return cls(
+            "fsm_merge", merge_utime=cell_slice.load_uint(32), interval=cell_slice.load_uint(32)
+        )  # 11

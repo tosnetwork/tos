@@ -25,8 +25,10 @@
 #include "td/actor/actor.h"
 #include "td/utils/port/IPAddress.h"
 
+#include "adnl-ext-query-failure.h"
 #include "adnl-node-id.hpp"
 #include "adnl-node.h"
+#include "adnl-query-answer.h"
 
 namespace tos {
 
@@ -44,6 +46,11 @@ class AdnlExtServer : public td::actor::Actor {
  public:
   virtual void add_local_id(AdnlNodeIdShort id) = 0;
   virtual void add_tcp_port(td::uint16 port) = 0;
+  virtual void wait_listening(td::Promise<td::Unit> promise) = 0;
+  // Installs the service's failure answer for queries it cannot serve (admission
+  // limits, handler errors, oversized results). Without one, such queries close
+  // their connection; they are never left unanswered.
+  virtual void set_query_failure_encoder(std::shared_ptr<const ExtQueryFailureEncoder> encoder) = 0;
   virtual ~AdnlExtServer() = default;
 };
 
@@ -76,6 +83,12 @@ class Adnl : public AdnlSenderInterface {
       // ADNL messages but not queries used to leave callers hanging on
       // their own timeout, as in message-only callbacks such as ShardBlockVerifier.
       promise.set_error(td::Status::Error("ADNL Callback subclass does not handle queries"));
+    }
+    // A query whose answer may carry delivery metadata. A subscriber that only
+    // answers with plain data keeps the default: its answers carry none.
+    virtual void receive_query_ex(AdnlNodeIdShort src, AdnlNodeIdShort dst, td::BufferSlice data,
+                                  td::Promise<AdnlQueryAnswer> promise) {
+      receive_query(src, dst, std::move(data), drop_answer_metadata(std::move(promise)));
     }
     virtual ~Callback() = default;
   };

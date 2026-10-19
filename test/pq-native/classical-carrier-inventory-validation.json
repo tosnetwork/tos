@@ -1,0 +1,91 @@
+{
+  "base_commit": "be826d7f75a6a20663aa66915433b1203bc9610b",
+  "failed_ci": "https://github.com/tosnetwork/tos/actions/runs/38702363747/job/116313368712",
+  "boundary": "classical carrier scan and its inventory; no C++ or RPC runtime changes",
+  "local_checks": [
+    {
+      "command": [
+        "scripts/check-descriptor-classical-key.sh",
+        "."
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "scripts/check-classical-carrier-sites.py",
+        "."
+      ],
+      "exit": 0
+    }
+  ],
+  "unit_tests_passed": 6,
+  "sensitivity_controls": [
+    {
+      "control": "checked-parser-marker",
+      "test": "test_unlisted_checked_parser_is_rejected",
+      "mutant_exit": 1,
+      "source_restored": true
+    },
+    {
+      "control": "unlisted-site-guard",
+      "test": "test_missing_renderer_row_is_rejected",
+      "mutant_exit": 1,
+      "source_restored": true
+    }
+  ],
+  "source_files": [
+    {
+      "path": "scripts/check-classical-carrier-sites.py",
+      "bytes": 7040,
+      "sha256": "ff8be0548431df19205c26130cacc437a17765754f744bfc66c0cc52655ccfb7"
+    },
+    {
+      "path": "test/pq-native/classical-carrier-sites.tsv",
+      "bytes": 10768,
+      "sha256": "3c3a3609be8fc1fe379147e4a501f3c9aa3b394676c9e572835a4ca9ccc522b8"
+    },
+    {
+      "path": "test/pq-native/test_classical_carrier_inventory.py",
+      "bytes": 3843,
+      "sha256": "2cd74450675f966aed948cae7150c002be0366815c66ebaa0cf258b0d94a1a55"
+    },
+    {
+      "path": ".github/workflows/classical-key-inventory.yml",
+      "bytes": 1051,
+      "sha256": "81c16baac3e9e73c56f4ef90375242b6b8d76c1ede7c3e55729148341ed134cf"
+    }
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-pr215-ci-20261015/checked-parser-marker.log",
+      "bytes": 1199,
+      "sha256": "7952f5daaa1626d46e68dc94d7848e0fedccadee563075efdc3083af266cfcab"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-pr215-ci-20261015/classical-carrier.log",
+      "bytes": 67,
+      "sha256": "ea17baf5450a65bc22af47474814b72f9d68876fee0d7f638aa1a9febe6adf06"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-pr215-ci-20261015/classical-key.log",
+      "bytes": 90,
+      "sha256": "4b4f0b2717894eb74f9379e9013a8c4a428d8e65ed27fdf1cb14bfae9bdbb371"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-pr215-ci-20261015/controls.json",
+      "bytes": 497,
+      "sha256": "d7bc8dd5a26d733c50fac30d0a129d63d1e07b2b5eac5fab504412c834b7333d"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-pr215-ci-20261015/restored.log",
+      "bytes": 1018,
+      "sha256": "99470dada15e6ba21fa4b3725e779b902b37bfa1d4ec8fd4d3aeacfa927d7e87"
+    },
+    {
+      "path": "/Users/tomisetsu/.codex/artifacts/tos-pr215-ci-20261015/unlisted-site-guard.log",
+      "bytes": 907,
+      "sha256": "1f7f4f3af2e55d2402873d852c2593f27b8625a062c6f7f076f5afd159dd0353"
+    }
+  ],
+  "retained_through": "2026-11-14"
+}

@@ -16,45 +16,118 @@ Fund your app wallet address (repeatable):
 
 Stop: Ctrl-C. In the Android emulator the wallet base url is http://10.0.2.2:18545 (10.0.2.2 = emulator -> host).
 """
+
 import argparse
 import asyncio
 import json
+import logging
+import os
+import re
+import shutil
 import threading
 import time
-import os
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import shutil
-import logging
-import nacl.signing
 
-from tostester.install import Install
-from tostester.network import FullNode, Network, StartOptions
+import nacl.signing
 from contract import WalletV1, WalletV1Blueprint, tos
+from e03_http_trace import record as record_e03_http
 from pytosiq_core import (
-    Address, Builder, Cell, InternalMsgInfo, MessageAny, WalletMessage,
+    Address,
+    Cell,
+    InternalMsgInfo,
+    MessageAny,
+    WalletMessage,
 )
 from tosapi import tos_api
+from tostester.install import Install
+from tostester.network import FullNode, Network, StartOptions
+from tostester.pq_initial_validator import make_deterministic_pq_initial_validator
+
 from toslib import ToslibClient
 
 REPO = Path(__file__).resolve().parents[1]
 BUILD_DIR = Path(os.environ.get("TOS_BUILD_DIR", REPO / "build"))
 
 
-def rpc_call(rpc_addr: str, method: str, **params):
-    """Read path identical to the Android wallet: POST http://<rpc>/jsonRPC."""
+class JsonRpcError(RuntimeError):
+    """A JSON-RPC error answer: {"error": {code, message, data: {reason, retryable}}}."""
+
+    def __init__(self, method: str, error: dict):
+        data = error.get("data") if isinstance(error.get("data"), dict) else {}
+        self.method = method
+        self.code = error.get("code")
+        self.message = str(error.get("message", ""))
+        self.reason = data.get("reason")
+        self.retryable = data.get("retryable") is True
+        super().__init__(f"{method}: {self.code} {self.reason}: {self.message}")
+
+
+def rpc_call(rpc_addr: str, method: str, *, timeout: float = 8, **params):
+    """Read path identical to the Android wallet: POST http://<rpc>/jsonRPC.
+
+    Returns the decoded answer. Method errors are HTTP 200 answers carrying an
+    ``error`` object; only refusals made before dispatch raise HTTPError.
+    """
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
         f"http://{rpc_addr}/jsonRPC", data=body, headers={"Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read()
+            record_e03_http(req.full_url, body, resp.status, raw)
+            return json.loads(raw.decode())
+    except urllib.error.HTTPError as error:
+        raw = error.read()
+        record_e03_http(req.full_url, body, error.code, raw)
+        error.json_rpc_body = raw
+        raise
 
 
-def rpc_balance_nano(rpc_addr: str, address: str) -> int:
-    r = rpc_call(rpc_addr, "getAddressInformation", address=address)
-    return int(r["result"]["balance"])
+def rpc_result(rpc_addr: str, method: str, *, timeout: float = 8, **params):
+    """The ``result`` of a method call; an error answer raises JsonRpcError."""
+    answer = rpc_call(rpc_addr, method, timeout=timeout, **params)
+    error = answer.get("error")
+    if isinstance(error, dict):
+        raise JsonRpcError(method, error)
+    if "result" not in answer:
+        raise RuntimeError(f"{method}: answer has neither result nor error: {answer}")
+    return answer["result"]
+
+
+def rpc_balance_nano(rpc_addr: str, address: str, *, timeout: float = 8) -> int:
+    r = rpc_result(rpc_addr, "getAddressInformation", address=address, timeout=timeout)
+    return int(r["balance"])
+
+
+async def wait_initial_balance_readable(rpc_addr: str, address: str, timeout: float = 40.0) -> int:
+    """Wait only for the fresh basechain account-state block to enter the DB.
+
+    A masterchain-ready localnet can answer its faucet while basechain block 0
+    is not yet loadable. Other JSON-RPC failures remain immediate errors.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("fresh basechain account state was not readable within 40s")
+            return await asyncio.to_thread(
+                rpc_balance_nano, rpc_addr, address, timeout=min(8, remaining)
+            )
+        except JsonRpcError as error:
+            if not re.search(
+                r"cannot load block \(0,8000000000000000,0\):[^\n]+: not in db", error.message
+            ):
+                raise
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "fresh basechain account state was not readable within 40s"
+                ) from error
+            await asyncio.sleep(0.5)
 
 
 async def wait_masterchain_info(rpc_addr: str, timeout: float):
@@ -81,7 +154,7 @@ async def wait_masterchain_info(rpc_addr: str, timeout: float):
 
 
 def fmt(nano: int) -> str:
-    return f"{nano/1e9:.9f} TOS"
+    return f"{nano / 1e9:.9f} TOS"
 
 
 def make_transfer(faucet, dest: Address, amount_tos) -> WalletMessage:
@@ -89,9 +162,16 @@ def make_transfer(faucet, dest: Address, amount_tos) -> WalletMessage:
         send_mode=3,
         message=MessageAny(
             info=InternalMsgInfo(
-                ihr_disabled=True, bounce=False, bounced=False,
-                src=faucet.address, dest=dest, value=tos(amount_tos),
-                ihr_fee=0, fwd_fee=0, created_lt=0, created_at=0,
+                ihr_disabled=True,
+                bounce=False,
+                bounced=False,
+                src=faucet.address,
+                dest=dest,
+                value=tos(amount_tos),
+                ihr_fee=0,
+                fwd_fee=0,
+                created_lt=0,
+                created_at=0,
             ),
             init=None,
             body=Cell.empty(),
@@ -101,6 +181,7 @@ def make_transfer(faucet, dest: Address, amount_tos) -> WalletMessage:
 
 async def wait_balance_at_least(rpc_addr, address, target_nano, timeout=30.0):
     import time
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -173,10 +254,12 @@ def saved_network_exists(workdir: Path, num_validators: int) -> bool:
         workdir / "node0/config.json",
     ]
     for index in range(1, num_validators + 1):
-        required.extend([
-            workdir / f"node{index}/config.global.json",
-            workdir / f"node{index}/config.json",
-        ])
+        required.extend(
+            [
+                workdir / f"node{index}/config.global.json",
+                workdir / f"node{index}/config.json",
+            ]
+        )
     return all(path.exists() for path in required)
 
 
@@ -216,17 +299,17 @@ async def wait_rpc_ready(rpc_addr: str, timeout: float):
 
 
 async def load_saved_faucet(install: Install, workdir: Path):
-    config = tos_api.Liteclient_config_global.from_json(
-        (workdir / "lite-client.json").read_text()
-    )
+    config = tos_api.Liteclient_config_global.from_json((workdir / "lite-client.json").read_text())
     client = ToslibClient(config, install.toslibjson)
     await client.init()
     key = nacl.signing.SigningKey((workdir / "state/main-wallet.pk").read_bytes())
     address_data = (workdir / "state/main-wallet.addr").read_bytes()
-    address = Address((
-        int.from_bytes(address_data[32:36], "big", signed=True),
-        address_data[:32],
-    ))
+    address = Address(
+        (
+            int.from_bytes(address_data[32:36], "big", signed=True),
+            address_data[:32],
+        )
+    )
     return client, WalletV1(client, address, key)
 
 
@@ -253,31 +336,42 @@ async def resume_saved_network(
     ]
     for index in range(num_validators):
         node_dir = workdir / f"node{index + 1}"
-        commands.append((
-            install.validator_engine_exe,
-            node_dir,
-            [
-                "--initial-sync-delay", "5",
-                "--session-logs", str(node_dir / "session-logs"),
-                "--quic-flood-control", "-1",
-                "--json-rpc-address", rpc_addresses[index],
-            ],
-        ))
+        commands.append(
+            (
+                install.validator_engine_exe,
+                node_dir,
+                [
+                    "--initial-sync-delay",
+                    "5",
+                    "--session-logs",
+                    str(node_dir / "session-logs"),
+                    "--quic-flood-control",
+                    "-1",
+                    "--json-rpc-address",
+                    rpc_addresses[index],
+                ],
+            )
+        )
 
     try:
         for executable, node_dir, extra in commands:
             process = await asyncio.create_subprocess_exec(
                 executable,
-                "--global-config", node_dir / "config.global.json",
-                "--local-config", node_dir / "config.json",
-                "--db", ".", "-v1", *extra,
+                "--global-config",
+                node_dir / "config.global.json",
+                "--local-config",
+                node_dir / "config.json",
+                "--db",
+                ".",
+                "-v1",
+                *extra,
                 cwd=node_dir,
                 stderr=asyncio.subprocess.PIPE,
             )
             processes.append(process)
-            drainers.append(asyncio.create_task(
-                drain_stderr(process.stderr, node_dir / "restart.log")
-            ))
+            drainers.append(
+                asyncio.create_task(drain_stderr(process.stderr, node_dir / "restart.log"))
+            )
 
         print("[localnet] resuming saved validator database; waiting for JSON-RPC ...")
         await wait_rpc_ready(rpc_addr, boot_timeout)
@@ -290,7 +384,9 @@ async def resume_saved_network(
             print("=" * 70)
             print(" TOS LOCALNET RESUMED")
             print(f"   masterchain seqno: {info['last']['seqno']}")
-            print(f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}")
+            print(
+                f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}"
+            )
             print(f"   control  : http://{control_addr}")
             print(f"   faucet   : {faucet.address.to_str()}")
             print("=" * 70)
@@ -305,6 +401,20 @@ async def resume_saved_network(
         await asyncio.gather(*drainers, return_exceptions=True)
 
 
+def configure_quantum_candidate(config, auth_network_tag, version_override=None):
+    """Explicit frozen candidate for a fresh disposable network; never a default switch."""
+    tag = bytes.fromhex("42" * 32)
+    if auth_network_tag is not None and auth_network_tag != tag:
+        raise ValueError("Quantum candidate requires the frozen 0x42 AUTH namespace")
+    if version_override is not None and int(version_override) != 16:
+        raise ValueError("Quantum candidate conflicts with TOS_GLOBAL_VERSION")
+    config.global_version = 16
+    config.global_id = 1
+    config.auth_network_tag = tag
+    config.deployment_fee_schedule = True
+    config.quantum_admission_candidate = True
+
+
 async def main(
     rpc_addr,
     control_addr,
@@ -316,9 +426,32 @@ async def main(
     reuse,
     base_port,
     bootstrap_validator_set_valid_for,
+    auth_network_tag=None,
+    quantum_admission_candidate=False,
+    basechain_fixture=None,
 ):
+    fixture_bytes = None
+    if basechain_fixture is not None:
+        if not quantum_admission_candidate:
+            raise ValueError("basechain fixture requires --quantum-admission-candidate")
+        from tostester.zerostate import basechain_fixture_balance
+
+        fixture_path = Path(basechain_fixture)
+        if not 1 <= fixture_path.stat().st_size <= 64 * 1024 * 1024:
+            raise ValueError("basechain fixture size")
+        fixture_bytes = fixture_path.read_bytes()
+        basechain_fixture_balance(fixture_bytes, 1)
+    if quantum_admission_candidate and saved_network_exists(workdir, num_validators):
+        raise ValueError("Quantum candidate cannot overwrite an existing network")
     install = Install(BUILD_DIR, REPO)
+    if reuse and quantum_admission_candidate:
+        raise ValueError("Quantum candidate is fresh-network only; cannot use --reuse")
     if reuse and saved_network_exists(workdir, num_validators):
+        if auth_network_tag is not None:
+            raise ValueError(
+                "--auth-network-tag only applies while creating a fresh localnet; "
+                "refuse to imply it changed an existing genesis"
+            )
         if bootstrap_validator_set_valid_for is not None:
             raise ValueError(
                 "--bootstrap-validator-set-valid-for only applies while creating "
@@ -331,6 +464,14 @@ async def main(
         )
         return
 
+    version = int(os.environ.get("TOS_GLOBAL_VERSION", "16"))
+    if (
+        not quantum_admission_candidate
+        and version >= 16
+        and (not isinstance(auth_network_tag, bytes) or len(auth_network_tag) != 32)
+    ):
+        raise ValueError("version 16 Genesis requires an explicit 32-byte AUTH network tag")
+
     shutil.rmtree(workdir, ignore_errors=True)
     workdir.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(message)s")
@@ -338,23 +479,28 @@ async def main(
     async with Network(install, workdir, base_port=base_port) as network:
         # The zerostate is generated lazily, so a version override must be set
         # before the first node starts. Used to rehearse a protocol version this
-        # build does not advertise; see doc/macos-local-node.md.
+        # build does not advertise; ConfigParam 8 is the execution gate.
         if os.environ.get("TOS_GLOBAL_VERSION"):
             network.config.global_version = int(os.environ["TOS_GLOBAL_VERSION"])
             print(f"   version  : global_version={network.config.global_version}", flush=True)
+        if quantum_admission_candidate:
+            configure_quantum_candidate(
+                network.config, auth_network_tag, os.environ.get("TOS_GLOBAL_VERSION")
+            )
+        elif auth_network_tag is not None:
+            network.config.auth_network_tag = auth_network_tag
+        network.config.basechain_fixture = fixture_bytes
         if bootstrap_validator_set_valid_for is not None:
             # A long-running acceptance chain without an election exercise
             # must retain an active ConfigParam 34 for its entire run. The
             # NetworkConfig validator checks this test-only override during
             # fresh zerostate generation.
-            network.config.bootstrap_validator_set_valid_for = (
-                bootstrap_validator_set_valid_for
-            )
+            network.config.bootstrap_validator_set_valid_for = bootstrap_validator_set_valid_for
         dht = network.create_dht_node()
         nodes: list[FullNode] = []
-        for _ in range(num_validators):
+        for validator_index in range(num_validators):
             node = network.create_full_node()
-            node.make_initial_validator()
+            make_deterministic_pq_initial_validator(node, validator_index)
             node.announce_to(dht)
             nodes.append(node)
 
@@ -362,7 +508,9 @@ async def main(
         lite_client_config.write_text(nodes[0].liteserver_config.to_json())
 
         rpc_host, rpc_port_text = rpc_addr.rsplit(":", 1)
-        rpc_addresses = [f"{rpc_host}:{int(rpc_port_text) + index}" for index in range(num_validators)]
+        rpc_addresses = [
+            f"{rpc_host}:{int(rpc_port_text) + index}" for index in range(num_validators)
+        ]
         node_tasks = [asyncio.create_task(dht.run())]
         for i, node in enumerate(nodes):
             extra = ["--json-rpc-address", rpc_addresses[i]]
@@ -374,15 +522,21 @@ async def main(
         client = await nodes[0].toslib_client()
         faucet = network.zerostate.main_wallet(client)
         faucet_addr = faucet.address.to_str()
-        control_server = start_control_server(control_addr, asyncio.get_running_loop(), faucet, rpc_addr)
+        control_server = start_control_server(
+            control_addr, asyncio.get_running_loop(), faucet, rpc_addr
+        )
         port = rpc_addr.rsplit(":", 1)[-1]
 
         print("=" * 70)
         print(" TOS LOCALNET READY")
-        print(f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}")
+        print(
+            f"   JSON-RPC : {', '.join(f'http://{address}/jsonRPC' for address in rpc_addresses)}"
+        )
         print(f"   control  : http://{control_addr} (localhost test faucet only)")
         print(f"   lite     : {lite_client_config}")
-        print(f"   faucet   : {faucet_addr}  balance {fmt(rpc_balance_nano(rpc_addr, faucet_addr))}")
+        print(
+            f"   faucet   : {faucet_addr}  balance {fmt(rpc_balance_nano(rpc_addr, faucet_addr))}"
+        )
         print(f"   emulator : http://10.0.2.2:{port}")
         print("=" * 70)
 
@@ -391,16 +545,18 @@ async def main(
             bp = WalletV1Blueprint(workchain=0)
             new_addr = bp.address.to_str()
             print(f"[demo] new wallet address: {new_addr}")
-            before = rpc_balance_nano(rpc_addr, new_addr)
+            before = await wait_initial_balance_readable(rpc_addr, new_addr)
             print(f"[demo] balance before (via JSON-RPC): {fmt(before)}")
             print("[demo] faucet deploys and funds 5 TOS ...")
             _ = await faucet.deploy(bp, tos(5))
             ok = await wait_balance_at_least(rpc_addr, new_addr, before + 1, timeout=40)
             after = rpc_balance_nano(rpc_addr, new_addr)
-            print(f"[demo] balance after (via JSON-RPC): {fmt(after)}   changed={'ok' if ok else 'TIMEOUT'} (+{fmt(after-before)})")
+            print(
+                f"[demo] balance after (via JSON-RPC): {fmt(after)}   changed={'ok' if ok else 'TIMEOUT'} (+{fmt(after - before)})"
+            )
 
         # ---- Fund an arbitrary address (your app wallet) ----
-        for spec in (fund or []):
+        for spec in fund or []:
             if ":" in spec and not spec.split(":", 1)[0].lstrip("-").isdigit():
                 # form like 0:hex:amount -- the last segment is the amount
                 addr_str, amt = spec.rsplit(":", 1)
@@ -416,7 +572,9 @@ async def main(
             await faucet.send(make_transfer(faucet, dest, amount))
             ok = await wait_balance_at_least(rpc_addr, dest.to_str(), before + 1, timeout=40)
             after = rpc_balance_nano(rpc_addr, dest.to_str())
-            print(f"[fund] done: {fmt(after)}  {'ok' if ok else 'TIMEOUT'} (+{fmt(after-before)})")
+            print(
+                f"[fund] done: {fmt(after)}  {'ok' if ok else 'TIMEOUT'} (+{fmt(after - before)})"
+            )
 
         print("[localnet] resident; press Ctrl-C to exit.")
         try:
@@ -428,13 +586,38 @@ async def main(
             await asyncio.gather(*node_tasks, return_exceptions=True)
 
 
-if __name__ == "__main__":
+def parse_auth_network_tag(value):
+    if re.fullmatch(r"[0-9a-fA-F]{64}", value) is None:
+        raise argparse.ArgumentTypeError("AUTH network tag must be exactly 64 hexadecimal digits")
+    return bytes.fromhex(value)
+
+
+def parse_args(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--rpc", default="127.0.0.1:18545")
     p.add_argument("--control", default="127.0.0.1:18745")
     p.add_argument("--validators", type=int, default=1)
     p.add_argument("--workdir", default=str(REPO / "test/integration/.localnet"))
     p.add_argument("--boot-timeout", type=float, default=120.0)
+    p.add_argument(
+        "--quantum-admission-candidate",
+        action="store_true",
+        help="fresh test-only v18/global-ID-1/0x42 candidate with deployment fees and basechain credit 20000",
+    )
+    p.add_argument(
+        "--auth-network-tag",
+        type=parse_auth_network_tag,
+        default=os.environ.get("TOS_AUTH_NETWORK_TAG"),
+        help=(
+            "explicit public 32-byte AUTH namespace for a fresh version >=16 genesis "
+            "(64 hex digits; defaults to TOS_AUTH_NETWORK_TAG when set)"
+        ),
+    )
+    p.add_argument(
+        "--basechain-fixture",
+        type=Path,
+        help="test-only funded basechain genesis BOC for a fresh Quantum candidate",
+    )
     p.add_argument(
         "--base-port",
         type=int,
@@ -449,19 +632,37 @@ if __name__ == "__main__":
             "a long-running localnet that does not exercise elections"
         ),
     )
-    p.add_argument("--demo", action="store_true", help="self-test faucet -> new wallet balance change")
+    p.add_argument(
+        "--demo", action="store_true", help="self-test faucet -> new wallet balance change"
+    )
     p.add_argument("--fund", action="append", help="fund an address, form 0:hex or 0:hex:25")
     p.add_argument(
         "--reuse",
         action="store_true",
         help="resume an existing validator database; create it when absent",
     )
-    a = p.parse_args()
+    return p.parse_args(argv)
+
+
+if __name__ == "__main__":
+    a = parse_args()
     try:
-        asyncio.run(main(
-            a.rpc, a.control, a.validators, Path(a.workdir), a.boot_timeout,
-            a.demo, a.fund, a.reuse, a.base_port,
-            a.bootstrap_validator_set_valid_for,
-        ))
+        asyncio.run(
+            main(
+                a.rpc,
+                a.control,
+                a.validators,
+                Path(a.workdir),
+                a.boot_timeout,
+                a.demo,
+                a.fund,
+                a.reuse,
+                a.base_port,
+                a.bootstrap_validator_set_valid_for,
+                a.auth_network_tag,
+                a.quantum_admission_candidate,
+                basechain_fixture=a.basechain_fixture,
+            )
+        )
     except KeyboardInterrupt:
         print("\n[localnet] stopped.")

@@ -607,6 +607,11 @@ pub enum PoolConfig {
         address: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<String>,
+        /// The validator controller this pool relays its stake through.
+        ///
+        /// Part of the contract's storage and therefore of its address, like the other
+        /// two roles.
+        controller: String,
     },
     #[serde(rename = "core")]
     CorePool { addresses: [String; 2], validator_share: u64 },
@@ -616,6 +621,12 @@ pub enum PoolConfig {
         address: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         owner: Option<String>,
+        /// The validator controller this pool relays its stake through.
+        ///
+        /// A pool no longer reaches the elector by itself, so this is part of what its
+        /// address is derived from: a pool named without it is a different account than
+        /// the one the operator means, and there is nothing to fall back on.
+        controller: String,
         validator_reward_share: u16,
         max_nominators: u16,
         min_validator_stake: u64,
@@ -636,6 +647,17 @@ pub struct AdnlConfig {
     pub server_key: KeyConfig,
     pub client_key: KeyConfig,
     pub timeouts: TimeoutVariant,
+}
+
+/// Why a node's control client key cannot be used, and how to fix it: the
+/// control connection needs the raw Ed25519 private key, which the vault only
+/// hands out for a key stored as extractable.
+pub fn non_extractable_console_key_error(name: &str) -> String {
+    format!(
+        "control client key '{name}' is stored as non-extractable, but the node control \
+         connection needs its raw private key; re-import the key from its private key with \
+         `tosctl key import --name {name} --extractable`"
+    )
 }
 
 impl AdnlConfig {
@@ -660,6 +682,15 @@ impl AdnlConfig {
             _ => anyhow::bail!("Unsupported secret type"),
         };
 
+        // The control handshake runs a key agreement and signs the server's
+        // nonce with the raw private key, so the vault must hand it out.
+        if !client_keypair.extractable().await? {
+            let name = match &self.client_key {
+                KeyConfig::VaultKey { name } => name.as_str(),
+                _ => "<inline>",
+            };
+            anyhow::bail!(non_extractable_console_key_error(name));
+        }
         let client_pvt_key = client_keypair.private_key().await?;
         let pvt_key = client_pvt_key.lock().await?;
         if pvt_key.len() < 32 {
@@ -753,6 +784,10 @@ fn default_tick_interval() -> u64 {
 pub fn default_indexer_retention_blocks() -> u32 {
     1_000_000
 }
+/// The explorer indexer runs unless a configuration turns it off.
+pub fn default_indexer_enabled() -> bool {
+    true
+}
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct ElectionsConfig {
     #[serde(default)]
@@ -767,6 +802,46 @@ pub struct ElectionsConfig {
     /// Interval for elections runner in seconds
     #[serde(default = "default_tick_interval")]
     pub tick_interval: u64,
+    /// When the pool controller's operating authorization is reported as running low.
+    #[serde(default)]
+    pub operating_authorization: OperatingAuthorizationWarnings,
+}
+
+/// Warning thresholds for a controller's operating authorization (kind 4). The
+/// elections task only reports; renewal is signed offline by the controller root.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct OperatingAuthorizationWarnings {
+    /// The runway an authorization is sized for, in days.
+    #[serde(default = "default_operating_target_days")]
+    pub target_days: u32,
+    /// Warn when the funded runway falls below this percentage of the target.
+    #[serde(default = "default_operating_warn_percent")]
+    pub warn_percent: u8,
+    /// Warn when the authorization expires within this many days.
+    #[serde(default = "default_operating_expiry_warn_days")]
+    pub expiry_warn_days: u32,
+}
+
+fn default_operating_target_days() -> u32 {
+    30
+}
+
+fn default_operating_warn_percent() -> u8 {
+    25
+}
+
+fn default_operating_expiry_warn_days() -> u32 {
+    7
+}
+
+impl Default for OperatingAuthorizationWarnings {
+    fn default() -> Self {
+        Self {
+            target_days: default_operating_target_days(),
+            warn_percent: default_operating_warn_percent(),
+            expiry_warn_days: default_operating_expiry_warn_days(),
+        }
+    }
 }
 
 impl ElectionsConfig {
@@ -780,6 +855,13 @@ impl ElectionsConfig {
         if !(1.0..=3.0).contains(&self.max_factor) {
             anyhow::bail!("max_factor must be in range [1.0..3.0]");
         }
+        let warnings = &self.operating_authorization;
+        if warnings.target_days == 0 {
+            anyhow::bail!("operating_authorization.target_days must be positive");
+        }
+        if !(1..=100).contains(&warnings.warn_percent) {
+            anyhow::bail!("operating_authorization.warn_percent must be in range [1..100]");
+        }
         Ok(())
     }
 }
@@ -791,6 +873,7 @@ impl Default for ElectionsConfig {
             policy_overrides: HashMap::new(),
             max_factor: default_max_factor(),
             tick_interval: default_tick_interval(),
+            operating_authorization: OperatingAuthorizationWarnings::default(),
         }
     }
 }
@@ -838,6 +921,10 @@ pub struct NodeBinding {
     pub wallet: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pool: Option<String>,
+    /// Absolute path to the controller's original, public deployment StateInit BOC.
+    /// Old bindings remain readable; a missing artifact refuses first PQ stake locally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_birth_state_init_boc: Option<String>,
     /// Whether this binding participates in elections. Defaults to `false`.
     #[serde(default)]
     pub enable: bool,
@@ -983,6 +1070,106 @@ pub enum AlertRule {
     BalanceLow { address: String, threshold_tos: f64 },
 }
 
+/// Local provisioning for reads that must be proven rather than reported.
+///
+/// Every field is chosen by the operator in local configuration. No endpoint
+/// answer can select the verifier executable, the anchor it starts from, or the
+/// age a live read may have: an endpoint only ever supplies proof material,
+/// which the verifier checks from the anchor.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProofVerifierConfig {
+    /// Absolute path of the trusted `tos-proof-verify` executable.
+    pub executable: PathBuf,
+    /// Absolute path of the anchor file, produced locally by
+    /// `tos-proof-verify anchor --zerostate FILE` from an independently
+    /// obtained zerostate (or an explicitly provisioned trusted key block).
+    pub anchor_file: PathBuf,
+    /// Lite-server global config the verifier fetches proof material through.
+    /// Exactly one of this and `material_dir` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liteserver_config: Option<PathBuf>,
+    /// Directory of previously recorded proof material, for offline
+    /// re-verification. Material carries no authority of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material_dir: Option<PathBuf>,
+    /// The verifier's record of the newest block it authenticated. Required
+    /// for live reads, which refuse a rollback or a conflicting block against it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_state_file: Option<PathBuf>,
+    /// Oldest a live read's block may be, by the local clock. Required for
+    /// live reads; there is no unbounded live read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_max_age_seconds: Option<u32>,
+    /// Wall-clock limit on one verifier run, after which it is killed and the
+    /// read refused.
+    #[serde(default = "default_proof_verifier_timeout_seconds")]
+    pub timeout_seconds: u32,
+    /// Minimum spacing of the verifier's lite-server queries.
+    #[serde(default = "default_proof_verifier_min_interval_ms")]
+    pub min_interval_ms: u32,
+}
+
+/// Upper bound the verifier itself enforces on a live read's maximum age.
+pub const PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS: u32 = 7 * 24 * 3600;
+
+fn default_proof_verifier_timeout_seconds() -> u32 {
+    300
+}
+
+fn default_proof_verifier_min_interval_ms() -> u32 {
+    200
+}
+
+impl ProofVerifierConfig {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.executable.is_absolute(),
+            "proof_verifier.executable must be an absolute path"
+        );
+        anyhow::ensure!(
+            self.anchor_file.is_absolute(),
+            "proof_verifier.anchor_file must be an absolute path"
+        );
+        anyhow::ensure!(
+            self.liteserver_config.is_some() != self.material_dir.is_some(),
+            "proof_verifier needs exactly one of liteserver_config and material_dir"
+        );
+        for (name, path) in [
+            ("liteserver_config", &self.liteserver_config),
+            ("material_dir", &self.material_dir),
+            ("live_state_file", &self.live_state_file),
+        ] {
+            if let Some(path) = path {
+                anyhow::ensure!(
+                    path.is_absolute(),
+                    "proof_verifier.{name} must be an absolute path"
+                );
+            }
+        }
+        if let Some(age) = self.live_max_age_seconds {
+            anyhow::ensure!(
+                (1..=PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS).contains(&age),
+                "proof_verifier.live_max_age_seconds must be between 1 and {}",
+                PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS
+            );
+        }
+        anyhow::ensure!(
+            self.live_max_age_seconds.is_some() == self.live_state_file.is_some(),
+            "proof_verifier live reads need both live_state_file and live_max_age_seconds"
+        );
+        anyhow::ensure!(
+            (1..=3600).contains(&self.timeout_seconds),
+            "proof_verifier.timeout_seconds must be between 1 and 3600"
+        );
+        anyhow::ensure!(
+            self.min_interval_ms <= 60_000,
+            "proof_verifier.min_interval_ms must be at most 60000"
+        );
+        Ok(())
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct AppConfig {
     pub nodes: HashMap<String, AdnlConfig>,
@@ -1023,11 +1210,21 @@ pub struct AppConfig {
     /// tables. 0 keeps all history (unbounded). See default_indexer_retention_blocks.
     #[serde(default = "default_indexer_retention_blocks")]
     pub indexer_retention_blocks: u32,
+    /// Whether `tosctl service` runs the explorer indexer. A host that only
+    /// needs elections and voting can turn it off: the indexer database is
+    /// then neither created nor opened, and every HTTP route that reads it
+    /// answers 503 with kind `indexer_disabled`. Read once at service start;
+    /// the `explorer` profile refuses to start with it off.
+    #[serde(default = "default_indexer_enabled")]
+    pub indexer_enabled: bool,
     pub log: Option<LogConfig>,
     #[serde(default)]
     pub bookmarks: HashMap<String, String>,
     #[serde(default)]
     pub alerts: AlertsConfig,
+    /// Proven reads (pool snapshots). Without it no snapshot is produced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_verifier: Option<ProofVerifierConfig>,
 }
 
 impl AppConfig {
@@ -1092,6 +1289,7 @@ impl AppConfig {
     fn validate(&self) -> anyhow::Result<()> {
         self.elections.as_ref().map(|e| e.validate()).transpose()?;
         self.http.auth.as_ref().map(|a| a.validate()).transpose()?;
+        self.proof_verifier.as_ref().map(|v| v.validate()).transpose()?;
         Ok(())
     }
 }
@@ -1099,6 +1297,53 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn proof_verifier() -> ProofVerifierConfig {
+        ProofVerifierConfig {
+            executable: PathBuf::from("/opt/tos/bin/tos-proof-verify"),
+            anchor_file: PathBuf::from("/etc/tos/anchor.json"),
+            liteserver_config: Some(PathBuf::from("/etc/tos/liteserver.json")),
+            material_dir: None,
+            live_state_file: Some(PathBuf::from("/var/lib/tos/proof-state.json")),
+            live_max_age_seconds: Some(600),
+            timeout_seconds: 300,
+            min_interval_ms: 200,
+        }
+    }
+
+    #[test]
+    fn proof_verifier_config_is_local_absolute_and_bounded() {
+        assert!(proof_verifier().validate().is_ok());
+        let refused = |edit: &dyn Fn(&mut ProofVerifierConfig)| {
+            let mut config = proof_verifier();
+            edit(&mut config);
+            config.validate().is_err()
+        };
+        assert!(refused(&|c| c.executable = PathBuf::from("tos-proof-verify")));
+        assert!(refused(&|c| c.anchor_file = PathBuf::from("anchor.json")));
+        assert!(refused(&|c| c.material_dir = Some(PathBuf::from("/tmp/material"))));
+        assert!(refused(&|c| c.liteserver_config = None));
+        assert!(refused(&|c| c.live_state_file = Some(PathBuf::from("state.json"))));
+        assert!(refused(&|c| c.live_max_age_seconds = Some(0)));
+        assert!(refused(&|c| {
+            c.live_max_age_seconds = Some(PROOF_VERIFIER_MAX_LIVE_AGE_SECONDS + 1)
+        }));
+        assert!(refused(&|c| c.live_max_age_seconds = None));
+        assert!(refused(&|c| c.live_state_file = None));
+        assert!(refused(&|c| c.timeout_seconds = 0));
+        // Historical-only provisioning needs neither live field.
+        let mut historical = proof_verifier();
+        historical.live_state_file = None;
+        historical.live_max_age_seconds = None;
+        assert!(historical.validate().is_ok());
+    }
+
+    #[test]
+    fn unknown_proof_verifier_fields_are_refused() {
+        let text = r#"{"executable":"/a","anchor_file":"/b","liteserver_config":"/c",
+                       "trust_endpoint":true}"#;
+        assert!(serde_json::from_str::<ProofVerifierConfig>(text).is_err());
+    }
 
     #[test]
     fn auth_config_rejects_an_unbounded_token_ttl() {
@@ -1172,6 +1417,8 @@ mod tests {
         "-1:bd313e9e1114bbbe7af6f28ef59be0ff3f02ac795423f10397a70dc16396c4ea";
     const OWNER: &'static str =
         "0:c5770dc489bef32419959c174b787ab95ff9109e0e43239c18059509819697fb";
+    const CONTROLLER: &'static str =
+        "-1:1a6b2f0e4d8c7b5a39e2c1f04b8d6a7e5c3910284f6b7d1e8a2c4f60b3d597e1";
 
     fn minimal_config_json() -> serde_json::Value {
         serde_json::json!({
@@ -1181,6 +1428,26 @@ mod tests {
             "master_wallet": null,
             "log": null
         })
+    }
+
+    #[test]
+    fn the_indexer_is_enabled_unless_turned_off() {
+        let config: AppConfig = serde_json::from_value(minimal_config_json()).unwrap();
+        assert!(config.indexer_enabled, "an absent key keeps the indexer on");
+
+        let mut json = minimal_config_json();
+        json["indexer_enabled"] = serde_json::json!(false);
+        let config = AppConfig::parse(&json.to_string(), "json", "test").unwrap();
+        assert!(!config.indexer_enabled);
+        // The setting survives the save/load round trip the service performs
+        // when it writes its configuration back.
+        let saved = serde_json::to_value(&config).unwrap();
+        assert_eq!(saved["indexer_enabled"], false);
+
+        let yaml = "nodes: {}\nchain_rpc:\n  urls: ['http://127.0.0.1:3301/']\nhttp: {}\n\
+                    master_wallet: null\nlog: null\nindexer_enabled: false\n";
+        let config = AppConfig::parse(yaml, "yaml", "test").unwrap();
+        assert!(!config.indexer_enabled);
     }
 
     #[test]
@@ -1315,17 +1582,39 @@ mod tests {
             "kind": "snp",
             "address": addr,
             "owner": owner,
+            "controller": CONTROLLER,
         });
         let cfg: PoolConfig = serde_json::from_value(value).unwrap();
         assert_eq!(
             cfg,
-            PoolConfig::SNP { address: Some(addr.to_string()), owner: Some(owner.to_string()) }
+            PoolConfig::SNP {
+                address: Some(addr.to_string()),
+                owner: Some(owner.to_string()),
+                controller: CONTROLLER.to_string(),
+            }
         );
 
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(json["kind"], "snp");
         assert_eq!(json["address"], addr);
         assert_eq!(json["owner"], owner);
+        assert_eq!(json["controller"], CONTROLLER);
+    }
+
+    /// A pool written before a stake travelled through a controller.
+    ///
+    /// Such a config describes a contract that no longer exists: the controller is part of
+    /// the storage the address is derived from, so there is nothing to default to and the
+    /// only honest answer is to refuse the file and say which field is missing.
+    #[test]
+    fn a_pool_without_a_controller_is_refused_rather_than_guessed() {
+        let value = serde_json::json!({
+            "kind": "snp",
+            "address": ADDR,
+            "owner": OWNER,
+        });
+        let err = serde_json::from_value::<PoolConfig>(value).unwrap_err().to_string();
+        assert!(err.contains("controller"), "the refusal did not name the missing field: {err}");
     }
 
     #[test]
@@ -1334,9 +1623,17 @@ mod tests {
         let value = serde_json::json!({
             "kind": "snp",
             "address": addr,
+            "controller": CONTROLLER,
         });
         let cfg: PoolConfig = serde_json::from_value(value).unwrap();
-        assert_eq!(cfg, PoolConfig::SNP { address: Some(addr.to_string()), owner: None });
+        assert_eq!(
+            cfg,
+            PoolConfig::SNP {
+                address: Some(addr.to_string()),
+                owner: None,
+                controller: CONTROLLER.to_string(),
+            }
+        );
 
         let json = serde_json::to_value(&cfg).unwrap();
         assert_eq!(json["kind"], "snp");
@@ -1400,10 +1697,17 @@ mod tests {
         let binding = NodeBinding {
             wallet: "w1".to_string(),
             pool: Some("p1".to_string()),
+            controller_birth_state_init_boc: None,
             enable: true,
             status: BindingStatus::Validating,
         };
         let json = serde_json::to_value(&binding).unwrap();
+        assert!(json.get("controller_birth_state_init_boc").is_none());
+        let old: NodeBinding = serde_json::from_value(serde_json::json!({
+            "wallet": "w1", "pool": "p1", "enable": true, "status": "validating"
+        }))
+        .unwrap();
+        assert!(old.controller_birth_state_init_boc.is_none());
         assert_eq!(json["enable"], true);
         assert_eq!(json["status"], "validating");
         assert_eq!(json["wallet"], "w1");

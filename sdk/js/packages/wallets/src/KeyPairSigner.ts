@@ -15,13 +15,13 @@ import { sign } from "@tos/crypto";
 import type {
   Signer,
   SenderArguments,
-  SendConfirmation,
+  PendingTransfer,
 } from "@tos/client";
 import type { SendTransferArgs } from "./types.js";
 
 interface TransferCapableWallet {
   readonly address: Address;
-  sendTransfer(via: Signer, args: SendTransferArgs): Promise<SendConfirmation>;
+  sendTransfer(via: Signer, args: SendTransferArgs): Promise<PendingTransfer>;
 }
 
 function toAddress(address: SenderArguments["to"]): Address {
@@ -82,7 +82,8 @@ function toStateInit(init: SenderArguments["init"]): StateInit | undefined {
  * import { mnemonicToPrivateKey } from "@tos/crypto";
  *
  * const keys = await mnemonicToPrivateKey(mnemonic);
- * const wallet = open(WalletV4R2.create({ publicKey: keys.publicKey }), client);
+ * const networkGlobalId = await client.getNetworkGlobalId();
+ * const wallet = open(WalletV4R2.create({ publicKey: keys.publicKey, networkGlobalId }), client);
  * const signer = new KeyPairSigner(keys, wallet);
  *
  * // Use signer to send a transfer

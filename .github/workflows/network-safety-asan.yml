@@ -6,7 +6,7 @@ name: Network safety ASAN
 # tests run -- and instrumented, so a use-after-free or overflow is caught. The
 # ADNL and overlay cases already run in the normal CTest pass; this workflow
 # builds a second time with AddressSanitizer and runs the whole "network-safety"
-# label, the QUIC regressions included.
+# label, including HTTP listener limits and CONNECT tunnel backpressure/drain.
 #
 # It also checks execution completeness: every expected test must be registered
 # (a removed or relabelled test fails the gate), and the run must actually
@@ -25,10 +25,16 @@ on:
       - 'adnl/**'
       - 'overlay/**'
       - 'quic/**'
+      - 'http/**'
+      - 'rldp-http-proxy/**'
       - 'tdactor/**'
       - 'test/test-adnl-peer-pair-cap.cpp'
       - 'test/test-overlay-broadcast-capacity.cpp'
       - 'test/net/test-quic-sender.cpp'
+      - 'test/test-http-server-limits.cpp'
+      - 'test/test-rldp-http-tunnel.cpp'
+      - 'test/pq-native/adnl-ext-output-backpressure-test.cpp'
+      - 'test/pq-native/adnl-ext-refusal-close-test.cpp'
       - 'tdutils/td/utils/tests.*'
       - 'CMakeLists.txt'
       - '.github/workflows/network-safety-asan.yml'
@@ -45,12 +51,15 @@ env:
   # detecting them globally would surface unrelated pre-existing reports.
   ASAN_OPTIONS: detect_leaks=0:abort_on_error=1:halt_on_error=1
 
+permissions:
+  contents: read
+
 jobs:
   network-safety:
     name: instrumented network-safety tests
     runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install system libraries
       run: |
@@ -59,9 +68,7 @@ jobs:
 
     - name: Install Clang 21
       run: |
-        wget -q https://apt.llvm.org/llvm.sh
-        chmod +x llvm.sh
-        sudo ./llvm.sh 21 all
+        sudo scripts/install-llvm-toolchain.sh 21 all
 
     - name: Configure with AddressSanitizer
       run: |
@@ -84,7 +91,12 @@ jobs:
         ninja -C build-asan \
           test-quic-sender \
           test-adnl-peer-pair-cap \
-          test-overlay-broadcast-capacity
+          test-overlay-broadcast-capacity \
+          test-http-server-limits \
+          test-json-rpc-transport \
+          test-adnl-ext-output-backpressure \
+          test-adnl-ext-refusal-close \
+          test-rldp-http-tunnel
 
     - name: Verify the expected network-safety tests are registered
       working-directory: build-asan
@@ -97,13 +109,26 @@ jobs:
             "quic-inbound-stream-timeout",
             "quic-outbound-query-deadline",
             "quic-connection-count-cap",
+            "quic-admission-global-limit",
+            "quic-admission-full-table",
+            "quic-inbound-budget",
+            "quic-transport-budget",
+            "quic-source-share",
             "test-adnl-peer-pair-cap",
             "test-overlay-broadcast-capacity",
+            "test-http-server-limits",
+            "test-json-rpc-transport",
+            "test-adnl-ext-output-backpressure",
+            "test-adnl-ext-refusal-close",
+            "test-rldp-http-tunnel",
         }
-        got = {t["name"] for t in json.load(open("network-safety-tests.json"))["tests"]}
-        missing = expected - got
+        tests = {t["name"]: t for t in json.load(open("network-safety-tests.json"))["tests"]}
+        missing = expected - tests.keys()
         if missing:
             raise SystemExit(f"network-safety gate is missing expected tests: {sorted(missing)}")
+        timeout_command = tests["quic-inbound-stream-timeout"].get("command", [])
+        if "-f" not in timeout_command or timeout_command[timeout_command.index("-f") + 1:] != ["QuicInboundStreamTimeout"]:
+            raise SystemExit("network-safety gate must run the full QuicInboundStreamTimeout suite")
         print(f"all {len(expected)} expected network-safety tests are registered")
         PY
 

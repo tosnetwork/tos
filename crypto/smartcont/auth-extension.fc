@@ -91,6 +91,8 @@ int auth_request_hash(cell request) inline {
     .store_ref(request).end_cell());
 }
 
+;; Refuses every Ed25519 key anyone can sign for: the set strong-ed25519-key.fc
+;; documents (torsion points in every accepted spelling, and y >= 2^255-19).
 () auth_require_strong_classical_key(int public_key) impure inline {
   ;; Ed25519 encodes y little-endian in 255 bits and x's sign in the high bit
   ;; of the last byte. y >= 2^255-19 is non-canonical. In byte order this can
@@ -116,6 +118,10 @@ int auth_request_hash(cell request) inline {
     0x0000000000000000000000000000000000000000000000000000000000000000);
   throw_if(auth::bad_signature, public_key ==
     0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+  throw_if(auth::bad_signature, public_key ==
+    0x0100000000000000000000000000000000000000000000000000000000000080);
+  throw_if(auth::bad_signature, public_key ==
+    0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
 }
 
 (cell, int, cell) auth_validate(cell state, slice sender, slice body, int classical_key, int max_ttl) inline_ref {

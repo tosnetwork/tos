@@ -6,7 +6,7 @@ using namespace tos;
 class ExampleActor : public td::actor::Actor, public virtual metrics::CollectorWrapper {
  public:
   ExampleActor() {
-    add_collector(collector_.get());
+    add_collector("example_internal", collector_.get());
   }
 
  private:
@@ -34,12 +34,13 @@ int main() {
   td::actor::ActorOwn<ExampleActor> example;
   scheduler.run_in_context([&] {
     exporter = PrometheusExporter::create();
-    void (PrometheusExporter::*f)(td::actor::ActorId<PrometheusExporter>) =
+    void (PrometheusExporter::*f)(std::string, td::actor::ActorId<PrometheusExporter>) =
         &PrometheusExporter::register_collector<PrometheusExporter>;
-    td::actor::send_closure(exporter.get(), f, exporter.get());
+    td::actor::send_closure(exporter.get(), f, "exporter", exporter.get());
 
     example = td::actor::create_actor<ExampleActor>("example");
-    td::actor::send_closure(exporter.get(), &PrometheusExporter::register_collector<ExampleActor>, example.get());
+    td::actor::send_closure(exporter.get(), &PrometheusExporter::register_collector<ExampleActor>, "example",
+                            example.get());
   });
   scheduler.run();
 }

@@ -1,0 +1,1718 @@
+{
+  "schema": "twostep-relays-r7-validation/v1",
+  "authority": {
+    "memo_commit": "1e055bfb1c53f106ae20687e6b5d850217f3bb9e",
+    "ruling": "R7",
+    "work_order_sha256": "cc6d2692f5c79d8e70ff649c2cd4351af4abdfa919fd771f23b26960602cf212"
+  },
+  "base": "2483ea590b736f018a0fac8daf190510e0cef506",
+  "parent": "8edb093e8cb7e4ae6aeb2a505ffa8fc4c3b156f3",
+  "tested_code_commit": "efb88c6b9fe406ef7461ff158eab6357082deb16",
+  "scope_files": {
+    "scripts/check-pq-unsafe-rotation.py": "986e54c53c39ab02f6055d02698559fe3b64ddc5f74bf4af2c598723adef33dc",
+    "test/pq-native/c04-real-state-proof-test.cpp": "fe5e7cbdd54a686955a5bd08384b572f2ff4d82ccd384988730a9ec593adc089",
+    "test/validator/consensus/test-consensus.cpp": "08a0a0b9ac71288aa3ae90399542c75a6fb1fd0717e8c81ef3dea793f6972775",
+    "test/validator/consensus/test-merkle-prospective-notar.cpp": "4f3e2d9ead85e07e93051c1cc74fbca0b873a4e529d201963a4ad3c5086cff83",
+    "test/validator/consensus/test-notarize-after-transient-resolve.cpp": "7fd92773324580eba5d44ef449692221da7d37771192ac77d75f5c4ad2a8be46",
+    "test/validator/consensus/test-twostep-wiring.cpp": "29b6edf93e4717c37c901fa615a32a7689b68545e8e0437f11beac11011445e6",
+    "validator/consensus/block-sync-overlay.cpp": "857269dd07188a31bd9ec7bf9af897c6e76968ecbdc606718b523908429c2153",
+    "validator/consensus/bridge.cpp": "2d328e3deb214bdd32ac5d7590f93e0b34de55efaf932801dedeb90a96ab6a88",
+    "validator/consensus/bus.h": "dc547e58628e93bcbaf293b5f38a6a2ff79cbad578e225f6a2d7a5f03c68baef",
+    "validator/consensus/private-overlay.cpp": "7ac7281144515d7b06f5e558a7e5e012e65575b53eb425a22c4b9df3157fdd12",
+    "validator/manager.cpp": "61b8aa8f9fe4ac14c76d27c1337052532c227c8e96de4d638efd055a7bc20a4c",
+    "validator/manager.hpp": "ed0d7e585c5eeb94c035a5c2dc433b5d16421689e4ab108d629f896395ddada3",
+    "validator/validator-group.hpp": "e33e6c416a25cec584f4cc5460d1acfe871dd8cfb5f3ac602bf265b1a2dcb06e"
+  },
+  "configuration": {
+    "host": "Ubuntu 22.04.5",
+    "compiler": "Clang 21.1.8",
+    "build_type": "Release",
+    "use_quic": true,
+    "build_parallelism": 8
+  },
+  "scope_checks": {
+    "update_shards_equals_main_except_observer_empty_actor_guard": true,
+    "unsafe_rotation_guard_byte_identical_to_main": true,
+    "no_receive_protocol_or_session_id_changes": true
+  },
+  "clean_runs": [
+    {
+      "stage": "build",
+      "command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "create-state",
+        "plumtree-graph-sim",
+        "test-certificate-conformance",
+        "test-config-transition",
+        "test-consensus",
+        "test-consensus-config-admission",
+        "test-consensus-db-path",
+        "test-consensus-key-file",
+        "test-consensus-verify",
+        "test-current-validator-adnl-ids",
+        "test-merkle-prospective-notar",
+        "test-node-consensus-membership",
+        "test-overlay-broadcast-capacity",
+        "test-overlay-content-metrics",
+        "test-overlay-peer-cleanup",
+        "test-overlay-plumtree-policy",
+        "test-overlay-plumtree-repair",
+        "test-overlay-plumtree-stats",
+        "test-overlay-twostep-relays",
+        "test-pq-block-signature-conformance",
+        "test-pq-block-signature-no-legacy",
+        "test-pq-block-signature-vectors",
+        "test-pq-broadcast-semantics",
+        "test-pq-bytes",
+        "test-pq-carrier-capacity",
+        "test-pq-consensus",
+        "test-pq-lite-forward-proof",
+        "test-pq-signature-persistence",
+        "test-pq-signature-tl-vectors",
+        "test-pq-signer",
+        "test-pq-vote-body",
+        "test-simplex-carrier-bound",
+        "test-twostep-wiring",
+        "test-validator-auth-policy",
+        "test-validator-cleanup",
+        "test-validator-cleanup-integration",
+        "test-validator-cleanup-statedb",
+        "test-validator-cleanup-worker",
+        "test-validator-options",
+        "test-validator-transport-authority",
+        "tos-pq-consensus-key",
+        "validator-session-derivation-vectors-gen",
+        "test-c04-real-state-proof",
+        "test-n5-manager-db-fixture",
+        "test-notarize-after-transient-resolve",
+        "-j8"
+      ],
+      "admission": {
+        "cpu_used": 7.63379544860058,
+        "cores": 192,
+        "memory_used_gib": 12.898780822753906,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "started_at": 1790596975.775172,
+      "exit": 0,
+      "ended_at": 1790597011.3260868,
+      "log_sha256": "b1845856b5dd4e5419845758ab2f30494ab9f1cb2ee3c92db3eecb93c46b9c2a"
+    },
+    {
+      "stage": "regressions",
+      "command": [
+        "ctest",
+        "-V",
+        "--test-dir",
+        "build",
+        "--output-on-failure",
+        "-j4",
+        "--output-junit",
+        "${REPO_ROOT}/build/twostep-r7-validation-20260928/regressions.xml",
+        "-R",
+        "^(plumtree\\-graph\\-sim\\-smoke|plumtree\\-graph\\-sim\\-simple\\-smoke|plumtree\\-graph\\-sim\\-loss|plumtree\\-graph\\-sim\\-simple\\-loss|plumtree\\-graph\\-sim\\-partition\\-recovery|plumtree\\-graph\\-sim\\-selective\\-forwarding|plumtree\\-graph\\-sim\\-rotating\\-outage|plumtree\\-graph\\-sim\\-simple\\-selective\\-forwarding|plumtree\\-graph\\-sim\\-simple\\-rotating\\-outage|plumtree\\-graph\\-sim\\-fec\\-stress|plumtree\\-graph\\-sim\\-simple\\-stress|test\\-overlay\\-plumtree\\-stats|test\\-overlay\\-content\\-metrics|test\\-overlay\\-peer\\-cleanup|test\\-overlay\\-plumtree\\-policy|test\\-overlay\\-twostep\\-relays|test\\-current\\-validator\\-adnl\\-ids|test\\-overlay\\-plumtree\\-repair|test\\-overlay\\-broadcast\\-capacity|test\\-pq\\-signature\\-persistence|test\\-validator\\-transport\\-authority|test\\-pq\\-lite\\-forward\\-proof|test\\-config\\-transition|test\\-consensus\\-db\\-path|test\\-validator\\-cleanup|test\\-validator\\-cleanup\\-statedb|test\\-validator\\-cleanup\\-worker|test\\-validator\\-cleanup\\-integration|test\\-node\\-consensus\\-membership|test\\-validator\\-options|test\\-consensus\\-config\\-admission|validator\\-session\\-assembly\\-source|consensus\\-key\\-tool|pq\\-consensus|consensus\\-key\\-file|pq\\-signer|pq\\-bytes|pq\\-vote\\-body|validator\\-session\\-derivation|validator\\-session\\-param30|validator\\-session\\-global\\-id|validator\\-session\\-local\\-override|validator\\-session\\-governing\\-snapshot|validator\\-session\\-session\\-path|validator\\-session\\-constructor\\-selection|validator\\-session\\-manager\\-assembly|validator\\-session\\-state\\-global\\-id|simplex\\-carrier\\-bound|pq\\-node\\-finality\\-carrier\\-capacity|pq\\-lite\\-forward\\-proof\\-carrier\\-capacity|pq\\-broadcast\\-semantic\\-roundtrip|pq\\-signature\\-tl\\-vectors|pq\\-block\\-signature\\-vectors|pq\\-block\\-signature\\-conformance|pq\\-finality\\-boundary\\-source|pq\\-block\\-signature\\-no\\-legacy|test\\-validator\\-auth\\-policy|test\\-twostep\\-wiring|consensus\\-verify|simplex\\-preimages|test\\-consensus\\-simplex2\\-candidate\\-relay\\-eviction|test\\-consensus\\-simplex2\\-state\\-resolver\\-cache\\-unit|test\\-consensus\\-simplex2\\-state\\-resolver\\-inflight\\-admission\\-unit|test\\-consensus\\-simplex2\\-merkle\\-exact\\-parent\\-height\\-control|test\\-consensus\\-simplex2\\-candidate\\-resolver\\-retention\\-unit|test\\-consensus\\-simplex2\\-candidate\\-resolver\\-interleaving\\-unit|test\\-consensus\\-simplex2\\-db\\-finalized\\-slot\\-dedup\\-unit|test\\-consensus\\-validator\\-manager\\-resource\\-policy\\-unit|test\\-consensus\\-simplex2\\-pq\\-state\\-resolver\\-catch\\-up|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-single|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-multi|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-21|test\\-consensus\\-simplex2\\-pq\\-finality\\-e2e\\-100|test\\-consensus\\-simplex2\\-pq\\-finality\\-retry|test\\-consensus\\-simplex2\\-pq\\-finality\\-transient\\-recovery|test\\-consensus\\-simplex2\\-pq\\-finality\\-backpressure|test\\-consensus\\-simplex2\\-pq\\-finality\\-permanent|test\\-consensus\\-simplex2\\-pq\\-malicious\\-observer|test\\-consensus\\-simplex2\\-pq\\-relay\\-loop|test\\-consensus\\-simplex2\\-pq\\-adaptive\\-byzantine|test\\-consensus\\-simplex2\\-pq\\-manager\\-ingress\\-adversarial|test\\-consensus\\-simplex2\\-pq\\-byzantine\\-relay|test\\-consensus\\-simplex2\\-pq\\-query\\-abuse|test\\-consensus\\-simplex2\\-pq\\-loss|test\\-consensus\\-simplex2\\-pq\\-restart|test\\-consensus\\-simplex2\\-pq\\-partition|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-exact\\-ancestor|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-bounded\\-refusal|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-control|test\\-consensus\\-simplex2\\-merkle\\-peer\\-notar\\-leader\\-path|test\\-consensus\\-simplex2\\-merkle\\-prospective\\-notar\\-gate\\-control|simplex\\-exact\\-ancestor\\-source\\-guard|consensus\\-no\\-fallback|test\\-consensus\\-simplex2\\-vote\\-journal|test\\-consensus\\-simplex2\\-pq\\-empty\\-chain\\-restart|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-anchor|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-anchor\\-zerostate\\-control|test\\-consensus\\-simplex2\\-pq\\-restart\\-transient\\-origin|test\\-consensus\\-simplex2\\-pq\\-restart\\-permanent\\-origin|test\\-consensus\\-simplex2\\-codec\\-boundary|test\\-consensus\\-simplex2\\-genesis\\-config|test\\-c04\\-real\\-state\\-proof|test\\-n5\\-accept\\-block|test\\-n5\\-joined\\-finalcert|test\\-n5\\-cut1\\-finalcert\\-recovery|test\\-n5\\-cut2\\-signatures\\-recovery|test\\-n5\\-cut3\\-proof\\-recovery|test\\-n5\\-cut4\\-finalized\\-replay|test\\-n5\\-cut5\\-full\\-root\\-rebuild|test\\-n5\\-cut6\\-check\\-proof|test\\-n5\\-cold\\-continuation|test\\-n5\\-manager\\-db\\-fixture|c05\\-notarize\\-control|c05\\-notarize\\-genesis\\-notready|c05\\-notarize\\-genesis\\-timeout|c05\\-notarize\\-ancestor\\-notready|c05\\-notarize\\-permanent|c05\\-notarize\\-cancelled|c05\\-notarize\\-skip\\-before\\-recovery|c05\\-notarize\\-conflict\\-during\\-retry|c05\\-notarize\\-conflicting\\-cert\\-during\\-retry|c05\\-notarize\\-exhausted\\-notready|c05\\-notarize\\-simultaneous\\-recovery|c05\\-notarize\\-simultaneous\\-overbudget)$"
+      ],
+      "admission": {
+        "cpu_used": 0.6985446985447012,
+        "cores": 192,
+        "memory_used_gib": 13.55013656616211,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "started_at": 1790597011.5288112,
+      "exit": 0,
+      "ended_at": 1790597093.046371,
+      "log_sha256": "5df97210a83d88336ec0dfc89db6e4b33cc494af7091b2f8d406040a4b1db308"
+    },
+    {
+      "stage": "source-guards",
+      "command": [
+        "ctest",
+        "-V",
+        "--test-dir",
+        "build",
+        "--output-on-failure",
+        "--no-tests=error",
+        "--output-junit",
+        "${REPO_ROOT}/build/twostep-r7-validation-20260928/source-guards.xml",
+        "-L",
+        "source-guard"
+      ],
+      "admission": {
+        "cpu_used": 5.511482254697285,
+        "cores": 192,
+        "memory_used_gib": 14.058982849121094,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "started_at": 1790597093.2664068,
+      "exit": 0,
+      "ended_at": 1790597117.6368444,
+      "log_sha256": "30c18e1a6aba1fe2feb6a8f4312d0c3d767fedf83dd4e17f289b8aa8d5896ec1"
+    }
+  ],
+  "focused_native_cases": [
+    "Test_TwostepWiring_ManagerActiveObserverAndOptions",
+    "Test_TwostepWiring_FalsePrerequisiteFallbackAndRecovery",
+    "Test_TwostepWiring_MissingCurrentFallbackAndRecovery",
+    "Test_TwostepWiring_EmptyCurrentFallbackAndRecovery",
+    "Test_TwostepWiring_ObserverCeilingFailureIsNotStarted",
+    "Test_TwostepWiring_TotalSetSwitchRecreatesActiveAndObservers",
+    "Test_TwostepWiring_SameEpochTentativeCanBeReused",
+    "Test_TwostepWiring_ProtocolTwoCandidateThroughManagerObservers",
+    "Test_TwostepWiring_ProtocolOneBlockSyncCandidateThroughManagerObservers",
+    "Test_TwostepWiring_EmptyFactorySnapshotFallsBack",
+    "Test_TwostepWiring_OutsideFactorySnapshotFallsBack",
+    "Test_TwostepWiring_FlagFlipWhileRunningKeepsGroups",
+    "Test_TwostepWiring_LegacyTotalSetSwitchReusesBroadTentative",
+    "Test_Twostep_CurrentRelaysAndObserverDelivery",
+    "Test_Twostep_SimpleRelayCountFallback",
+    "Test_Twostep_OfflineNonCurrentRelays",
+    "Test_Twostep_FecRoundingUsesTransmittedPartSize",
+    "Test_Twostep_EmptyDefault",
+    "Test_Twostep_BoundariesAndDegenerateOptions",
+    "Test_Twostep_MixedPolicies",
+    "Test_CurrentValidatorAdnl_OffsetAndTransportIdentity",
+    "Test_CurrentValidatorAdnl_NormalizationAndMissingCurrent",
+    "Test_Twostep_KnownNonPermanentPeer",
+    "Test_Twostep_AuthenticationExtraAndReceiveBound"
+  ],
+  "regressions": {
+    "passed": 124,
+    "failed": 0,
+    "skipped": 0,
+    "selected": [
+      "c05-notarize-ancestor-notready",
+      "c05-notarize-cancelled",
+      "c05-notarize-conflict-during-retry",
+      "c05-notarize-conflicting-cert-during-retry",
+      "c05-notarize-control",
+      "c05-notarize-exhausted-notready",
+      "c05-notarize-genesis-notready",
+      "c05-notarize-genesis-timeout",
+      "c05-notarize-permanent",
+      "c05-notarize-simultaneous-overbudget",
+      "c05-notarize-simultaneous-recovery",
+      "c05-notarize-skip-before-recovery",
+      "consensus-key-file",
+      "consensus-key-tool",
+      "consensus-no-fallback",
+      "consensus-verify",
+      "plumtree-graph-sim-fec-stress",
+      "plumtree-graph-sim-loss",
+      "plumtree-graph-sim-partition-recovery",
+      "plumtree-graph-sim-rotating-outage",
+      "plumtree-graph-sim-selective-forwarding",
+      "plumtree-graph-sim-simple-loss",
+      "plumtree-graph-sim-simple-rotating-outage",
+      "plumtree-graph-sim-simple-selective-forwarding",
+      "plumtree-graph-sim-simple-smoke",
+      "plumtree-graph-sim-simple-stress",
+      "plumtree-graph-sim-smoke",
+      "pq-block-signature-conformance",
+      "pq-block-signature-no-legacy",
+      "pq-block-signature-vectors",
+      "pq-broadcast-semantic-roundtrip",
+      "pq-bytes",
+      "pq-consensus",
+      "pq-finality-boundary-source",
+      "pq-lite-forward-proof-carrier-capacity",
+      "pq-node-finality-carrier-capacity",
+      "pq-signature-tl-vectors",
+      "pq-signer",
+      "pq-vote-body",
+      "simplex-carrier-bound",
+      "simplex-exact-ancestor-source-guard",
+      "simplex-preimages",
+      "test-c04-real-state-proof",
+      "test-config-transition",
+      "test-consensus-config-admission",
+      "test-consensus-db-path",
+      "test-consensus-simplex2-candidate-relay-eviction",
+      "test-consensus-simplex2-candidate-resolver-interleaving-unit",
+      "test-consensus-simplex2-candidate-resolver-retention-unit",
+      "test-consensus-simplex2-codec-boundary",
+      "test-consensus-simplex2-db-finalized-slot-dedup-unit",
+      "test-consensus-simplex2-genesis-config",
+      "test-consensus-simplex2-merkle-exact-parent-height-control",
+      "test-consensus-simplex2-merkle-peer-notar-leader-path",
+      "test-consensus-simplex2-merkle-prospective-notar-bounded-refusal",
+      "test-consensus-simplex2-merkle-prospective-notar-control",
+      "test-consensus-simplex2-merkle-prospective-notar-exact-ancestor",
+      "test-consensus-simplex2-merkle-prospective-notar-gate-control",
+      "test-consensus-simplex2-pq-adaptive-byzantine",
+      "test-consensus-simplex2-pq-byzantine-relay",
+      "test-consensus-simplex2-pq-empty-chain-restart",
+      "test-consensus-simplex2-pq-finality-backpressure",
+      "test-consensus-simplex2-pq-finality-e2e-100",
+      "test-consensus-simplex2-pq-finality-e2e-21",
+      "test-consensus-simplex2-pq-finality-e2e-multi",
+      "test-consensus-simplex2-pq-finality-e2e-single",
+      "test-consensus-simplex2-pq-finality-permanent",
+      "test-consensus-simplex2-pq-finality-retry",
+      "test-consensus-simplex2-pq-finality-transient-recovery",
+      "test-consensus-simplex2-pq-loss",
+      "test-consensus-simplex2-pq-malicious-observer",
+      "test-consensus-simplex2-pq-manager-ingress-adversarial",
+      "test-consensus-simplex2-pq-partition",
+      "test-consensus-simplex2-pq-query-abuse",
+      "test-consensus-simplex2-pq-relay-loop",
+      "test-consensus-simplex2-pq-restart",
+      "test-consensus-simplex2-pq-restart-permanent-origin",
+      "test-consensus-simplex2-pq-restart-transient-anchor",
+      "test-consensus-simplex2-pq-restart-transient-anchor-zerostate-control",
+      "test-consensus-simplex2-pq-restart-transient-origin",
+      "test-consensus-simplex2-pq-state-resolver-catch-up",
+      "test-consensus-simplex2-state-resolver-cache-unit",
+      "test-consensus-simplex2-state-resolver-inflight-admission-unit",
+      "test-consensus-simplex2-vote-journal",
+      "test-consensus-validator-manager-resource-policy-unit",
+      "test-current-validator-adnl-ids",
+      "test-n5-accept-block",
+      "test-n5-cold-continuation",
+      "test-n5-cut1-finalcert-recovery",
+      "test-n5-cut2-signatures-recovery",
+      "test-n5-cut3-proof-recovery",
+      "test-n5-cut4-finalized-replay",
+      "test-n5-cut5-full-root-rebuild",
+      "test-n5-cut6-check-proof",
+      "test-n5-joined-finalcert",
+      "test-n5-manager-db-fixture",
+      "test-node-consensus-membership",
+      "test-overlay-broadcast-capacity",
+      "test-overlay-content-metrics",
+      "test-overlay-peer-cleanup",
+      "test-overlay-plumtree-policy",
+      "test-overlay-plumtree-repair",
+      "test-overlay-plumtree-stats",
+      "test-overlay-twostep-relays",
+      "test-pq-lite-forward-proof",
+      "test-pq-signature-persistence",
+      "test-twostep-wiring",
+      "test-validator-auth-policy",
+      "test-validator-cleanup",
+      "test-validator-cleanup-integration",
+      "test-validator-cleanup-statedb",
+      "test-validator-cleanup-worker",
+      "test-validator-options",
+      "test-validator-transport-authority",
+      "validator-session-assembly-source",
+      "validator-session-constructor-selection",
+      "validator-session-derivation",
+      "validator-session-global-id",
+      "validator-session-governing-snapshot",
+      "validator-session-local-override",
+      "validator-session-manager-assembly",
+      "validator-session-param30",
+      "validator-session-session-path",
+      "validator-session-state-global-id"
+    ]
+  },
+  "source_guards": {
+    "passed": 39,
+    "failed": 0,
+    "skipped": 0,
+    "selected": [
+      "adnl-query-id-analysis",
+      "adnl-query-id-trace-source",
+      "benchmark-exclusion-source",
+      "branch-chain-python-ci-source",
+      "classical-stake-callers-source",
+      "config-genesis-data-layout-source",
+      "config-validator-set-parity-source",
+      "consensus-no-fallback",
+      "dns-pq-vote-source",
+      "finality-evidence-admission-marker-mutations",
+      "finality-evidence-admission-source",
+      "frozen-boc-toolchain-resolution",
+      "jsonrpc-route-gating",
+      "lite-query-error-response-source",
+      "n6-acceptance-criteria",
+      "n6-cluster-runner",
+      "n6-diagnostic-observations",
+      "n6-manifest-completeness",
+      "n6-microbench-results",
+      "n6-scale-sweep-cardinality",
+      "n6-skip-vote-semantics",
+      "n6-threshold-proposal",
+      "nominator-pool-pq-route-source",
+      "pending-finality-retry-policy-source",
+      "pq-e2e-initial-validators-source",
+      "pq-election-fixture-source",
+      "pq-finality-boundary-source",
+      "pq-launch-cap-mutations",
+      "pq-launch-cap-source",
+      "pq-stake-auth-response-source",
+      "pq-unsafe-rotation-source",
+      "pq-unsafe-rotation-source-mutations",
+      "quic-ctest-isolation-source",
+      "simplex-exact-ancestor-source-guard",
+      "test-quorum-static-grep",
+      "tosctl-election-chain-reads-source",
+      "tosctl-pq-stake-builder-source",
+      "validator-id-key-hash-source",
+      "validator-session-assembly-source"
+    ],
+    "unsafe_rotation_mutations": 7
+  },
+  "distinct_ctests": 159,
+  "ctest_executions": 163,
+  "native_mutations": [
+    {
+      "name": "sender-persistent",
+      "file": "overlay/broadcast-twostep.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test-overlay-twostep-relays",
+            "--filter",
+            "CurrentRelaysAndObserverDelivery"
+          ],
+          "exit": 1,
+          "intended_failure": "first_.size()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:54:00.813345968][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (8 != 6)"
+          ],
+          "log_sha256": "f343caa93f4c328f7ab41a59207f8d36138654e0b5317cd827054b12c9367c38"
+        },
+        {
+          "command": [
+            "${REPO_ROOT}/build/test-overlay-twostep-relays",
+            "--filter",
+            "SimpleRelayCountFallback"
+          ],
+          "exit": 1,
+          "intended_failure": "first_.size()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:54:01.476253402][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (6 != 3)"
+          ],
+          "log_sha256": "a51a6f4d0b324d8ed22c80dffae98ae67030e74d084369151c3da6dfc4d69a96"
+        },
+        {
+          "command": [
+            "${REPO_ROOT}/build/test-overlay-twostep-relays",
+            "--filter",
+            "OfflineNonCurrentRelays"
+          ],
+          "exit": 1,
+          "intended_failure": "first_.size()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:54:02.273929796][test-overlay-twostep-relays.cpp:235]\tExpectation failed: first_.size() is not equal to destinations.size() (20 != 6)"
+          ],
+          "log_sha256": "e6bf28f3a810f3a63070e55ac4e3ee7548cd299a4d07fe62d5a73ab5b41e239c"
+        }
+      ],
+      "original_sha256": "42cf044b445be95c3a514257482b61f2879cbe219a89b415a909b412dfb712ee",
+      "mutated_sha256": "a4706381b2b3482910f9cbfdd51a506e3f7109bce380eff5d00626980526af0b",
+      "admission": {
+        "cpu_used": 7.170540611125617,
+        "cores": 192,
+        "memory_used_gib": 12.957145690917969,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-overlay-twostep-relays",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "selector-offset--1",
+      "file": "crypto/block/validator-session-members.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test-current-validator-adnl-ids",
+            "--filter",
+            ""
+          ],
+          "exit": 1,
+          "intended_failure": "Expectation failed",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:54:04.033582891][test-current-validator-adnl-ids.cpp:41]\tExpectation failed: calls == std::vector<int>{0}!"
+          ],
+          "log_sha256": "e22a34f36e8df195b538c65bfb9108b1170130246cc907e88a0c24b20a12e673"
+        }
+      ],
+      "original_sha256": "33fa693d09cf004e2623ba7fc0d0ae34982633b3f95f812b9f5baa16e07bee18",
+      "mutated_sha256": "b8f0f8577faef7dc645383765296388a752b320f7768b9bf85a94729022ffde1",
+      "admission": {
+        "cpu_used": 3.997917751171265,
+        "cores": 192,
+        "memory_used_gib": 13.18570327758789,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-current-validator-adnl-ids",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "selector-offset-1",
+      "file": "crypto/block/validator-session-members.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test-current-validator-adnl-ids",
+            "--filter",
+            ""
+          ],
+          "exit": 1,
+          "intended_failure": "Expectation failed",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:54:05.818606878][test-current-validator-adnl-ids.cpp:41]\tExpectation failed: calls == std::vector<int>{0}!"
+          ],
+          "log_sha256": "65972ec1f9378c16300724cbfd0adf83649919715b5d22e7e4c163abc65e30bb"
+        }
+      ],
+      "original_sha256": "33fa693d09cf004e2623ba7fc0d0ae34982633b3f95f812b9f5baa16e07bee18",
+      "mutated_sha256": "8312d2ab7468ec0be41dfa15ba4aeb2d01596dca993a38ac9a517f793f3adce0",
+      "admission": {
+        "cpu_used": 1.4451077082792523,
+        "cores": 192,
+        "memory_used_gib": 13.2386474609375,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-current-validator-adnl-ids",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "selector-union",
+      "file": "crypto/block/validator-session-members.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test-current-validator-adnl-ids",
+            "--filter",
+            ""
+          ],
+          "exit": 1,
+          "intended_failure": "Expectation failed",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:54:07.603920710][test-current-validator-adnl-ids.cpp:41]\tExpectation failed: calls == std::vector<int>{0}!"
+          ],
+          "log_sha256": "c6a3f893b7ff04e3a8cb9e2760c9ce0e847bde563a6450745eb651e3e8a2cf70"
+        }
+      ],
+      "original_sha256": "33fa693d09cf004e2623ba7fc0d0ae34982633b3f95f812b9f5baa16e07bee18",
+      "mutated_sha256": "50c3395593d7c39ba33020c32a6b3002655012fa78fac8d13ac977e2cf398e98",
+      "admission": {
+        "cpu_used": 5.70148476165668,
+        "cores": 192,
+        "memory_used_gib": 13.349555969238281,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-current-validator-adnl-ids",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "predicate-nonpermanent",
+      "file": "overlay/overlay-peers.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test-overlay-twostep-relays",
+            "--filter",
+            "KnownNonPermanentPeer"
+          ],
+          "exit": 1,
+          "intended_failure": "!is_twostep_intermediate_node",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:54:09.771193291][test-overlay-twostep-relays.cpp:38][!relay overlay]\tCheck `!is_twostep_intermediate_node(non_permanent_id_)` failed"
+          ],
+          "log_sha256": "a490ee76a7e968d6de899b1cd8a46fe22e9e2a947b64a2d947523585fdc62bf1"
+        }
+      ],
+      "original_sha256": "8f98d90cc7ce95ac3b62c91af049c9a3f06cc8a96d88d61600b6f79c58c81e64",
+      "mutated_sha256": "61ada7d66008a62e60f813af0e81c348a934074d3b20378652cef6c64dee3569",
+      "admission": {
+        "cpu_used": 2.597294484911558,
+        "cores": 192,
+        "memory_used_gib": 13.408187866210938,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-overlay-twostep-relays",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "factory-drop-active",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ProtocolTwoCandidateThroughManagerObservers"
+          ],
+          "exit": 1,
+          "intended_failure": "first_hops == remote",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:54:37.848408253][test-twostep-wiring.cpp:643]\tExpectation failed: first_hops == remote!"
+          ],
+          "log_sha256": "84c06ac0bea7189c43c6333c09ebe672782aa40d8d6d4dce2582772585bd389e"
+        }
+      ],
+      "original_sha256": "2d328e3deb214bdd32ac5d7590f93e0b34de55efaf932801dedeb90a96ab6a88",
+      "mutated_sha256": "f1daf5989f49cb3a48d17260d7a460377d8153ad8e03dbbf1793aacae5b6cdfa",
+      "admission": {
+        "cpu_used": 5.959311424100164,
+        "cores": 192,
+        "memory_used_gib": 13.479110717773438,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "factory-drop-observer",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ManagerActiveObserverAndOptions"
+          ],
+          "exit": 1,
+          "intended_failure": "bus->all_current_validators == f.current.ids()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:55:00.757018884][test-twostep-wiring.cpp:709]\tExpectation failed: bus->all_current_validators == f.current.ids()!"
+          ],
+          "log_sha256": "b0b479305319d6764866c1837e117e8012bea1a4cd47e667c7ef4cc0ba7f7a31"
+        }
+      ],
+      "original_sha256": "2d328e3deb214bdd32ac5d7590f93e0b34de55efaf932801dedeb90a96ab6a88",
+      "mutated_sha256": "63da80be9b797ec3b32f184f80fd3e60d65cf40520e9c5ef747c94f888089e15",
+      "admission": {
+        "cpu_used": 0.498960498960507,
+        "cores": 192,
+        "memory_used_gib": 13.207168579101562,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "bus-drop",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ProtocolTwoCandidateThroughManagerObservers"
+          ],
+          "exit": 1,
+          "intended_failure": "first_hops == remote",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:55:25.478074348][test-twostep-wiring.cpp:643]\tExpectation failed: first_hops == remote!"
+          ],
+          "log_sha256": "438fb9f7b52de46ac51c3e0491a770fcf8277793965da7e116b0aa0aabb98993"
+        }
+      ],
+      "original_sha256": "2d328e3deb214bdd32ac5d7590f93e0b34de55efaf932801dedeb90a96ab6a88",
+      "mutated_sha256": "726c620637439a87a2e1dbc29a56324c5d26479dc57178f205696d7cf303816b",
+      "admission": {
+        "cpu_used": 4.1923576813101135,
+        "cores": 192,
+        "memory_used_gib": 13.198432922363281,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "manager-union",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ManagerActiveObserverAndOptions"
+          ],
+          "exit": 1,
+          "intended_failure": "bus->all_current_validators == f.current.ids()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:56:13.055770221][test-twostep-wiring.cpp:722]\tExpectation failed: bus->all_current_validators == f.current.ids()!"
+          ],
+          "log_sha256": "fc96254877fc99a7a2f8f9ad87c18439983e2aa23d545557ede5302211390e2b"
+        }
+      ],
+      "original_sha256": "61b8aa8f9fe4ac14c76d27c1337052532c227c8e96de4d638efd055a7bc20a4c",
+      "mutated_sha256": "ab0a26cbbdf1f82919bbfb6d072b2934193e2ff7acf06e49c63d1205bc3bcd33",
+      "admission": {
+        "cpu_used": 0.9979209979209926,
+        "cores": 192,
+        "memory_used_gib": 13.271198272705078,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "bridge-union",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ManagerActiveObserverAndOptions"
+          ],
+          "exit": 1,
+          "intended_failure": "bus->all_current_validators == f.current.ids()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:56:36.184352489][test-twostep-wiring.cpp:722]\tExpectation failed: bus->all_current_validators == f.current.ids()!"
+          ],
+          "log_sha256": "49fe99405c7adb9ef88920205c0a13943af366fee541a6f3e205a1239129ebca"
+        }
+      ],
+      "original_sha256": "2d328e3deb214bdd32ac5d7590f93e0b34de55efaf932801dedeb90a96ab6a88",
+      "mutated_sha256": "23cefbb5a7985493c5a3d58ce42ed09cd6f9b12edf348cb5ea8fb0f52c1c9b1d",
+      "admission": {
+        "cpu_used": 0.848232848232847,
+        "cores": 192,
+        "memory_used_gib": 13.234081268310547,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "private-option-drop",
+      "file": "validator/consensus/private-overlay.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ProtocolTwoCandidateThroughManagerObservers"
+          ],
+          "exit": 1,
+          "intended_failure": "first_hops == remote",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:56:59.241162762][test-twostep-wiring.cpp:648]\tExpectation failed: first_hops == remote!"
+          ],
+          "log_sha256": "2744979ba489b3ca428f43d70b6a8a649de20ffde16eb85ca51bc15eb3317204"
+        }
+      ],
+      "original_sha256": "7ac7281144515d7b06f5e558a7e5e012e65575b53eb425a22c4b9df3157fdd12",
+      "mutated_sha256": "af8d5bf2608f39fb2c3f465c0a6a1cfa5f48487ec113ac6ba203f5c802985f4f",
+      "admission": {
+        "cpu_used": 0.7480519480519376,
+        "cores": 192,
+        "memory_used_gib": 13.344902038574219,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "blocksync-option-drop",
+      "file": "validator/consensus/block-sync-overlay.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ProtocolOneBlockSyncCandidateThroughManagerObservers"
+          ],
+          "exit": 1,
+          "intended_failure": "row.relays == f.current.ids()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:57:16.331139213][test-twostep-wiring.cpp:890]\tExpectation failed: row.relays == f.current.ids()!"
+          ],
+          "log_sha256": "436747b9a29191262f4a4584dba915ab8ea8b10d0d8234fe225087d57e5ac95b"
+        }
+      ],
+      "original_sha256": "857269dd07188a31bd9ec7bf9af897c6e76968ecbdc606718b523908429c2153",
+      "mutated_sha256": "d70db955c6492a18b5c1ad12c1f7e77373d4b78e6e3e19902d1e13fd832859ea",
+      "admission": {
+        "cpu_used": 5.907692307692308,
+        "cores": 192,
+        "memory_used_gib": 13.297565460205078,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "ignore-false-prerequisite",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "LegacyTotalSetSwitchReusesBroadTentative"
+          ],
+          "exit": 1,
+          "intended_failure": "first_hops == remote",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:58:12.280245738][test-twostep-wiring.cpp:648]\tExpectation failed: first_hops == remote!"
+          ],
+          "log_sha256": "e3d2b2cab22098e0a7bf747ee2d3040b1fcd3c494e622070abf905d60eb3798a"
+        }
+      ],
+      "original_sha256": "61b8aa8f9fe4ac14c76d27c1337052532c227c8e96de4d638efd055a7bc20a4c",
+      "mutated_sha256": "17d5cc7ddaaeb077f245a4e0fc130257e702a958358b21b5e0cf1a1814348bc8",
+      "admission": {
+        "cpu_used": 3.795058517555262,
+        "cores": 192,
+        "memory_used_gib": 13.549613952636719,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "prerequisite-refusal",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "FalsePrerequisiteFallbackAndRecovery"
+          ],
+          "exit": 1,
+          "intended_failure": "f.entries().size()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:59:00.477457756][test-twostep-wiring.cpp:747]\tExpectation failed: f.entries().size() is not equal to 3u (0 != 3)"
+          ],
+          "log_sha256": "97129a3f5271b87fc198ae30491e6a85b404c89b7db4d0373ae0cf31e9106587"
+        }
+      ],
+      "original_sha256": "61b8aa8f9fe4ac14c76d27c1337052532c227c8e96de4d638efd055a7bc20a4c",
+      "mutated_sha256": "d89797cddbc7b61060c9a2be60b05f7da0bcb345014b13368c95e73758f9f76d",
+      "admission": {
+        "cpu_used": 2.6493100755011767,
+        "cores": 192,
+        "memory_used_gib": 13.368927001953125,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "empty-current-refusal",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "EmptyCurrentFallbackAndRecovery"
+          ],
+          "exit": 1,
+          "intended_failure": "f.entries().size()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 11:59:48.083717891][test-twostep-wiring.cpp:747]\tExpectation failed: f.entries().size() is not equal to 3u (0 != 3)"
+          ],
+          "log_sha256": "d0d88118ecb78a188ee12d3e0a7d8482f944c0169c245967c173a2fe36558be7"
+        }
+      ],
+      "original_sha256": "61b8aa8f9fe4ac14c76d27c1337052532c227c8e96de4d638efd055a7bc20a4c",
+      "mutated_sha256": "e0ff0fc2d347c58dc288b798fc30bf0c0ed79ca2921f9a016302741eb6c4b789",
+      "admission": {
+        "cpu_used": 3.199166883624059,
+        "cores": 192,
+        "memory_used_gib": 13.426322937011719,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "factory-normalization-refusal",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "EmptyFactorySnapshotFallsBack"
+          ],
+          "exit": 1,
+          "intended_failure": "!actor.empty()",
+          "matched": [
+            "[ 0][t 0][2026-09-28 12:00:12.172303249][test-twostep-wiring.cpp:565]\tExpectation failed: !actor.empty()!"
+          ],
+          "log_sha256": "2ec8fe116d2d9340a731949a21e92c9bf47b14eb4233b00207a9e9f438230e9c"
+        }
+      ],
+      "original_sha256": "2d328e3deb214bdd32ac5d7590f93e0b34de55efaf932801dedeb90a96ab6a88",
+      "mutated_sha256": "4c123e14d38d5f906f0e0462699778baf8ca2506e33483b86c164a509d6e37c6",
+      "admission": {
+        "cpu_used": 2.147204161248368,
+        "cores": 192,
+        "memory_used_gib": 13.43947982788086,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "normalization-outside-removed",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "OutsideFactorySnapshotFallsBack"
+          ],
+          "exit": 1,
+          "intended_failure": "!buses.back()->all_current_validators",
+          "matched": [
+            "[ 0][t 0][2026-09-28 12:00:34.810464241][test-twostep-wiring.cpp:571]\tExpectation failed: !buses.back()->all_current_validators!"
+          ],
+          "log_sha256": "0ebc14da33c02be774f9915bbd9de2fd9fd86f67ce0cf155daace5fee76b7808"
+        }
+      ],
+      "original_sha256": "2d328e3deb214bdd32ac5d7590f93e0b34de55efaf932801dedeb90a96ab6a88",
+      "mutated_sha256": "8c6667cb6861bca6554d48246c64519a044743fd228273ca996fee39e8ec34ee",
+      "admission": {
+        "cpu_used": 0.5480020757654458,
+        "cores": 192,
+        "memory_used_gib": 13.381790161132812,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "normalization-empty-removed",
+      "file": "validator/consensus/bridge.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "EmptyFactorySnapshotFallsBack"
+          ],
+          "exit": 1,
+          "intended_failure": "!bus.all_current_validators->empty()",
+          "matched": [
+            "[ 0][t 1][2026-09-28 12:00:39.259678144][private-overlay.cpp:100][!fallback active.1.PrivateOverlay]\tCheck `!bus.all_current_validators->empty()` failed"
+          ],
+          "log_sha256": "20e3dd3b8b4f23d1237030132e73651fd03bb0479c9ecc3c23c0b0a443c523a7"
+        }
+      ],
+      "original_sha256": "2d328e3deb214bdd32ac5d7590f93e0b34de55efaf932801dedeb90a96ab6a88",
+      "mutated_sha256": "8c6667cb6861bca6554d48246c64519a044743fd228273ca996fee39e8ec34ee",
+      "admission": {
+        "cpu_used": 3.8560250391236295,
+        "cores": 192,
+        "memory_used_gib": 13.36288070678711,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true,
+      "abort_path_confirmed": true,
+      "abort_excerpts": [
+        "[ 0][t 1][2026-09-28 12:00:39.259678144][private-overlay.cpp:100][!fallback active.1.PrivateOverlay]\tCheck `!bus.all_current_validators->empty()` failed",
+        "/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x772d6cc287f3]",
+        "    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x772d6cc287f2]",
+        "#8  0x0000772d6cc287f3 in __GI_abort () at ./stdlib/abort.c:79"
+      ]
+    },
+    {
+      "name": "observer-empty-check-drop",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "ObserverCeilingFailureIsNotStarted"
+          ],
+          "exit": 1,
+          "intended_failure": "ActorOwn.h:81",
+          "matched": [
+            "[ 0][t 1][2026-09-28 12:01:27.725556496][ActorOwn.h:81][!relay manager]\tCheck `!empty()` failed"
+          ],
+          "log_sha256": "520e4479577ed4c389c6fdb9a2a1848e958a8b839dde592aa03acc35f6748571"
+        }
+      ],
+      "original_sha256": "61b8aa8f9fe4ac14c76d27c1337052532c227c8e96de4d638efd055a7bc20a4c",
+      "mutated_sha256": "5e87dd6148f4d3da51f914678a7dc41dda1377caf97ff9682b601f278eaf4686",
+      "admission": {
+        "cpu_used": 2.5959438377535164,
+        "cores": 192,
+        "memory_used_gib": 13.537994384765625,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true,
+      "abort_path_confirmed": true,
+      "abort_excerpts": [
+        "[ 0][t 1][2026-09-28 12:01:27.725556496][ActorOwn.h:81][!relay manager]\tCheck `!empty()` failed",
+        "/lib/x86_64-linux-gnu/libc.so.6(abort+0xd3)[0x733d19a287f3]",
+        "    #6  __GI_abort at abort.c:79 (libc.so.6+0x287f2) [0x733d19a287f2]",
+        "#8  0x0000733d19a287f3 in __GI_abort () at ./stdlib/abort.c:79"
+      ]
+    },
+    {
+      "name": "manager-stale-key-block",
+      "file": "validator/manager.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test/validator/consensus/test-twostep-wiring",
+            "--filter",
+            "TotalSetSwitchRecreatesActiveAndObservers"
+          ],
+          "exit": 1,
+          "intended_failure": "id != tentative[0]",
+          "matched": [
+            "[ 0][t 0][2026-09-28 12:02:15.106889301][test-twostep-wiring.cpp:832]\tExpectation failed: id != tentative[0]!"
+          ],
+          "log_sha256": "27067c73deb3574aaec30b066b3a6ad040acaf594a621468c09b58c65d384361"
+        }
+      ],
+      "original_sha256": "61b8aa8f9fe4ac14c76d27c1337052532c227c8e96de4d638efd055a7bc20a4c",
+      "mutated_sha256": "79e3070bb2f99bb06f447fb0a6c77304210b7142d6d270aff4aaa1f02da45fe4",
+      "admission": {
+        "cpu_used": 0.6486486486486527,
+        "cores": 192,
+        "memory_used_gib": 13.351730346679688,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-twostep-wiring",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    },
+    {
+      "name": "selector-without-sort",
+      "file": "crypto/block/validator-session-members.cpp",
+      "build_exit": 0,
+      "tests": [
+        {
+          "command": [
+            "${REPO_ROOT}/build/test-current-validator-adnl-ids",
+            "--filter",
+            "OffsetAndTransportIdentity"
+          ],
+          "exit": 1,
+          "intended_failure": "result == std::vector<td::Bits256>",
+          "matched": [
+            "[ 0][t 0][2026-09-28 12:02:17.125615692][test-current-validator-adnl-ids.cpp:42]\tExpectation failed: result == std::vector<td::Bits256>({bits(60), bits(61), bits(62)})!"
+          ],
+          "log_sha256": "7ddef6f0980d61e6fc6f91ae33207ee4b98f23ddaa3e281e8ee79cdcc2530a68"
+        }
+      ],
+      "original_sha256": "33fa693d09cf004e2623ba7fc0d0ae34982633b3f95f812b9f5baa16e07bee18",
+      "mutated_sha256": "9f352acae75c0e316a74377a9a2421fc1077e4672d62de2a2110bcc075023d12",
+      "admission": {
+        "cpu_used": 5.967093235831804,
+        "cores": 192,
+        "memory_used_gib": 13.2947998046875,
+        "memory_total_gib": 125.47024917602539,
+        "additional_cpu": 8,
+        "additional_memory_gib": 16
+      },
+      "build_command": [
+        "cmake",
+        "--build",
+        "build",
+        "--target",
+        "test-current-validator-adnl-ids",
+        "-j8"
+      ],
+      "killed": true,
+      "restored": true
+    }
+  ],
+  "native_mutation_variant_count": 21,
+  "native_mutation_execution_count": 23,
+  "werror_checks": [
+    {
+      "file": "test-current-validator-adnl-ids.cpp",
+      "command": [
+        "/usr/bin/clang++-21",
+        "-DSODIUM_STATIC",
+        "-D_FILE_OFFSET_BITS=64",
+        "-D_INTERNAL_COMPILE=1",
+        "-D_TOSLIB_COMPILE=1",
+        "-I${REPO_ROOT}/crypto",
+        "-I${REPO_ROOT}/crypto/block",
+        "-I${REPO_ROOT}/crypto/..",
+        "-I${REPO_ROOT}/build/third-party/secp256k1/include",
+        "-I${REPO_ROOT}/build/third-party/sodium/include",
+        "-I${REPO_ROOT}/tdutils",
+        "-I${REPO_ROOT}/build/tdutils",
+        "-I${REPO_ROOT}/tddb",
+        "-I${REPO_ROOT}/tdactor",
+        "-I${REPO_ROOT}/tl",
+        "-I${REPO_ROOT}/tl/..",
+        "-I${REPO_ROOT}/tl/../crypto",
+        "-I${REPO_ROOT}/tl/generate",
+        "-I${REPO_ROOT}/crypto/pq",
+        "-I${REPO_ROOT}/keys/..",
+        "-I${REPO_ROOT}/tl-utils/..",
+        "-isystem",
+        "${REPO_ROOT}/build/third-party/openssl/include",
+        "-isystem",
+        "${REPO_ROOT}/third-party/abseil-cpp",
+        "-march=x86-64",
+        "-fno-omit-frame-pointer",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-O3",
+        "-DNDEBUG",
+        "-fPIE",
+        "-Wall",
+        "-Wextra",
+        "-Wpointer-arith",
+        "-Wcast-qual",
+        "-Wsign-compare",
+        "-Wvla",
+        "-Wnon-virtual-dtor",
+        "-Wconversion",
+        "-Wno-tautological-compare",
+        "-Wno-unused-parameter",
+        "-Wno-sign-conversion",
+        "-Wno-unused-private-field",
+        "-Wno-redundant-move",
+        "-std=c++20",
+        "${REPO_ROOT}/test/test-current-validator-adnl-ids.cpp",
+        "-Werror",
+        "-fsyntax-only"
+      ],
+      "exit": 0
+    },
+    {
+      "file": "test-overlay-twostep-relays.cpp",
+      "command": [
+        "/usr/bin/clang++-21",
+        "-DSODIUM_STATIC",
+        "-DTDDB_USE_ROCKSDB",
+        "-D_FILE_OFFSET_BITS=64",
+        "-D_INTERNAL_COMPILE=1",
+        "-D_TOSLIB_COMPILE=1",
+        "-I${REPO_ROOT}/overlay",
+        "-I${REPO_ROOT}/overlay/..",
+        "-I${REPO_ROOT}/tdutils",
+        "-I${REPO_ROOT}/build/tdutils",
+        "-I${REPO_ROOT}/tdactor",
+        "-I${REPO_ROOT}/adnl/..",
+        "-I${REPO_ROOT}/crypto",
+        "-I${REPO_ROOT}/crypto/..",
+        "-I${REPO_ROOT}/build/third-party/secp256k1/include",
+        "-I${REPO_ROOT}/build/third-party/sodium/include",
+        "-I${REPO_ROOT}/tddb",
+        "-I${REPO_ROOT}/crypto/block",
+        "-I${REPO_ROOT}/tl",
+        "-I${REPO_ROOT}/tl/..",
+        "-I${REPO_ROOT}/tl/../crypto",
+        "-I${REPO_ROOT}/tl/generate",
+        "-I${REPO_ROOT}/crypto/pq",
+        "-I${REPO_ROOT}/keys/..",
+        "-I${REPO_ROOT}/tl-utils/..",
+        "-I${REPO_ROOT}/tdnet",
+        "-I${REPO_ROOT}/third-party/rocksdb/include",
+        "-I${REPO_ROOT}/keyring/..",
+        "-I${REPO_ROOT}/common",
+        "-I${REPO_ROOT}/common/..",
+        "-I${REPO_ROOT}/dht",
+        "-I${REPO_ROOT}/dht/..",
+        "-I${REPO_ROOT}/fec",
+        "-I${REPO_ROOT}/fec/..",
+        "-I${REPO_ROOT}/tdfec",
+        "-I${REPO_ROOT}/tdfec/..",
+        "-isystem",
+        "${REPO_ROOT}/build/third-party/openssl/include",
+        "-isystem",
+        "${REPO_ROOT}/third-party/abseil-cpp",
+        "-march=x86-64",
+        "-fno-omit-frame-pointer",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-O3",
+        "-DNDEBUG",
+        "-fPIE",
+        "-Wall",
+        "-Wextra",
+        "-Wpointer-arith",
+        "-Wcast-qual",
+        "-Wsign-compare",
+        "-Wvla",
+        "-Wnon-virtual-dtor",
+        "-Wconversion",
+        "-Wno-tautological-compare",
+        "-Wno-unused-parameter",
+        "-Wno-sign-conversion",
+        "-Wno-unused-private-field",
+        "-Wno-redundant-move",
+        "-std=c++20",
+        "${REPO_ROOT}/test/test-overlay-twostep-relays.cpp",
+        "-Werror",
+        "-fsyntax-only"
+      ],
+      "exit": 0
+    },
+    {
+      "file": "test-twostep-wiring.cpp",
+      "command": [
+        "/usr/bin/clang++-21",
+        "-DNGTCP2_STATICLIB",
+        "-DSODIUM_STATIC",
+        "-DTDDB_USE_ROCKSDB",
+        "-D_FILE_OFFSET_BITS=64",
+        "-D_INTERNAL_COMPILE=1",
+        "-D_TOSLIB_COMPILE=1",
+        "-I${REPO_ROOT}",
+        "-I${REPO_ROOT}/crypto",
+        "-I${REPO_ROOT}/validator",
+        "-I${REPO_ROOT}/validator/..",
+        "-I${REPO_ROOT}/validator/../crypto",
+        "-I${REPO_ROOT}/crypto/pq",
+        "-I${REPO_ROOT}/tdutils",
+        "-I${REPO_ROOT}/build/tdutils",
+        "-I${REPO_ROOT}/tdactor",
+        "-I${REPO_ROOT}/adnl/..",
+        "-I${REPO_ROOT}/crypto/..",
+        "-I${REPO_ROOT}/build/third-party/secp256k1/include",
+        "-I${REPO_ROOT}/build/third-party/sodium/include",
+        "-I${REPO_ROOT}/tddb",
+        "-I${REPO_ROOT}/crypto/block",
+        "-I${REPO_ROOT}/tl",
+        "-I${REPO_ROOT}/tl/..",
+        "-I${REPO_ROOT}/tl/../crypto",
+        "-I${REPO_ROOT}/tl/generate",
+        "-I${REPO_ROOT}/keys/..",
+        "-I${REPO_ROOT}/tl-utils/..",
+        "-I${REPO_ROOT}/tdnet",
+        "-I${REPO_ROOT}/third-party/rocksdb/include",
+        "-I${REPO_ROOT}/keyring/..",
+        "-I${REPO_ROOT}/common",
+        "-I${REPO_ROOT}/common/..",
+        "-I${REPO_ROOT}/dht",
+        "-I${REPO_ROOT}/dht/..",
+        "-I${REPO_ROOT}/tdfec",
+        "-I${REPO_ROOT}/tdfec/..",
+        "-I${REPO_ROOT}/overlay",
+        "-I${REPO_ROOT}/overlay/..",
+        "-I${REPO_ROOT}/quic",
+        "-I${REPO_ROOT}/quic/..",
+        "-I${REPO_ROOT}/metrics/..",
+        "-I${REPO_ROOT}/toslib",
+        "-I${REPO_ROOT}/toslib/..",
+        "-I${REPO_ROOT}/http/..",
+        "-I${REPO_ROOT}/third-party/ngtcp2/lib/includes",
+        "-I${REPO_ROOT}/build/third-party/ngtcp2/lib/includes",
+        "-I${REPO_ROOT}/third-party/ngtcp2/lib",
+        "-I${REPO_ROOT}/third-party/ngtcp2/crypto/includes",
+        "-I${REPO_ROOT}/build/third-party/ngtcp2/crypto/includes",
+        "-I${REPO_ROOT}/third-party/ngtcp2/crypto",
+        "-I${REPO_ROOT}/build/third-party/ngtcp2/crypto",
+        "-I${REPO_ROOT}/validator/impl",
+        "-I${REPO_ROOT}/validator/impl/..",
+        "-I${REPO_ROOT}/validator/impl/../crypto",
+        "-isystem",
+        "${REPO_ROOT}/build/third-party/openssl/include",
+        "-isystem",
+        "${REPO_ROOT}/third-party/abseil-cpp",
+        "-march=x86-64",
+        "-fno-omit-frame-pointer",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-O3",
+        "-DNDEBUG",
+        "-fPIE",
+        "-Wall",
+        "-Wextra",
+        "-Wpointer-arith",
+        "-Wcast-qual",
+        "-Wsign-compare",
+        "-Wvla",
+        "-Wnon-virtual-dtor",
+        "-Wconversion",
+        "-Wno-tautological-compare",
+        "-Wno-unused-parameter",
+        "-Wno-sign-conversion",
+        "-Wno-unused-private-field",
+        "-Wno-redundant-move",
+        "-std=c++20",
+        "${REPO_ROOT}/test/validator/consensus/test-twostep-wiring.cpp",
+        "-Werror",
+        "-fsyntax-only"
+      ],
+      "exit": 0
+    }
+  ],
+  "traces": [
+    "193: [ 3][t 0][2026-09-28 12:03:39.593669461][test-twostep-wiring.cpp:718]\twiring local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= active=true snapshot_present=true captured_relay_count=7",
+    "193: [ 3][t 0][2026-09-28 12:03:39.593717666][test-twostep-wiring.cpp:718]\twiring local=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= active=false snapshot_present=true captured_relay_count=7",
+    "193: [ 2][t 1][2026-09-28 12:03:39.659664770][manager.cpp:3817][!relay manager]\ttwo-step relays: no masterchain state; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:39.696707186][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:39.705662229][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:39.705723079][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:39.714088799][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:39.781537532][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 3][t 0][2026-09-28 12:03:39.792015054][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4= session=woqH+PGzr3qUNSOOxZhGaS8TDtIjn92YS9ZWZMKS8Hw=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985462757][test-twostep-wiring.cpp:644]\ttrace first hops actual=10 expected=10 overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985503131][test-twostep-wiring.cpp:647]\ttrace first-hop destination=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985516532][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985526031][test-twostep-wiring.cpp:647]\ttrace first-hop destination=T6q1JIx0qGd9NlLXv+SHXHnYk1cs8hJ4BLXmp7umqwo= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985538356][test-twostep-wiring.cpp:647]\ttrace first-hop destination=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985547268][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985555913][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985564448][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985573013][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985581808][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985590332][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/E0R7HHfk38ufc+mKmoPZmLkDOZ5cwwzuQK1WXeVeU8= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985601283][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=woqH+PGzr3qUNSOOxZhGaS8TDtIjn92YS9ZWZMKS8Hw= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:03:42.985613698][test-twostep-wiring.cpp:663]\tcandidate first hops=10 observers=0",
+    "193: [ 3][t 0][2026-09-28 12:03:43.091902955][test-twostep-wiring.cpp:602]\ttrace case=2 overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8= session=+FPvhdVXFOVIncPvyHnivaOm/yByDoy3+Hc+joxRf+0=",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283465062][test-twostep-wiring.cpp:644]\ttrace first hops actual=6 expected=6 overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283506168][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283521603][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283536458][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283551448][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283565998][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283580739][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283597758][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=+FPvhdVXFOVIncPvyHnivaOm/yByDoy3+Hc+joxRf+0= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8= candidate={0, DJ6MvFmkq/0Dzh955GnChfprKiih25PkgfgEhef8waI=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:03:46.283619433][test-twostep-wiring.cpp:663]\tcandidate first hops=6 observers=0",
+    "193: [ 2][t 1][2026-09-28 12:03:46.348031296][manager.cpp:3817][!relay manager]\ttwo-step relays: no masterchain state; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:46.389619118][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:46.403546273][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:46.403601423][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:46.412002300][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:46.474284964][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 3][t 0][2026-09-28 12:03:46.484852253][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY=",
+    "193: [ 3][t 0][2026-09-28 12:03:49.675006191][test-twostep-wiring.cpp:644]\ttrace first hops actual=4 expected=4 overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:49.675052571][test-twostep-wiring.cpp:647]\ttrace first-hop destination=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:49.675063581][test-twostep-wiring.cpp:647]\ttrace first-hop destination=T6q1JIx0qGd9NlLXv+SHXHnYk1cs8hJ4BLXmp7umqwo= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:49.675072990][test-twostep-wiring.cpp:647]\ttrace first-hop destination=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:49.675081536][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/E0R7HHfk38ufc+mKmoPZmLkDOZ5cwwzuQK1WXeVeU8= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:49.675091385][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:03:49.675103611][test-twostep-wiring.cpp:663]\tcandidate first hops=4 observers=0",
+    "193: [ 3][t 0][2026-09-28 12:03:49.760162555][test-twostep-wiring.cpp:602]\ttrace case=2 overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8= session=+FPvhdVXFOVIncPvyHnivaOm/yByDoy3+Hc+joxRf+0=",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955467466][test-twostep-wiring.cpp:644]\ttrace first hops actual=6 expected=6 overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955504625][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955518201][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955528247][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955537086][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955545976][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955554566][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955565141][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=+FPvhdVXFOVIncPvyHnivaOm/yByDoy3+Hc+joxRf+0= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8= candidate={0, DJ6MvFmkq/0Dzh955GnChfprKiih25PkgfgEhef8waI=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:03:52.955578066][test-twostep-wiring.cpp:663]\tcandidate first hops=6 observers=0",
+    "193: [ 2][t 1][2026-09-28 12:03:53.018029411][manager.cpp:3817][!relay manager]\ttwo-step relays: no masterchain state; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:53.050181359][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:53.058897057][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:53.058952614][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:53.066986133][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:03:53.135193606][manager.cpp:3828][!relay manager]\ttwo-step relays: current total validator set is missing or empty; using legacy relays",
+    "193: [ 3][t 0][2026-09-28 12:03:53.145645038][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY=",
+    "193: [ 3][t 0][2026-09-28 12:03:56.337833161][test-twostep-wiring.cpp:644]\ttrace first hops actual=4 expected=4 overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:56.337873071][test-twostep-wiring.cpp:647]\ttrace first-hop destination=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:56.337883521][test-twostep-wiring.cpp:647]\ttrace first-hop destination=T6q1JIx0qGd9NlLXv+SHXHnYk1cs8hJ4BLXmp7umqwo= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:56.337892410][test-twostep-wiring.cpp:647]\ttrace first-hop destination=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:56.337900671][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/E0R7HHfk38ufc+mKmoPZmLkDOZ5cwwzuQK1WXeVeU8= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:03:56.337910810][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:03:56.337924276][test-twostep-wiring.cpp:663]\tcandidate first hops=4 observers=0",
+    "193: [ 3][t 0][2026-09-28 12:03:56.423016140][test-twostep-wiring.cpp:602]\ttrace case=2 overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8= session=+FPvhdVXFOVIncPvyHnivaOm/yByDoy3+Hc+joxRf+0=",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614643848][test-twostep-wiring.cpp:644]\ttrace first hops actual=6 expected=6 overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614686589][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614700443][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614710188][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614719038][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614728049][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614736834][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8=",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614747283][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=+FPvhdVXFOVIncPvyHnivaOm/yByDoy3+Hc+joxRf+0= overlay=PhSlkpOi2Kw1yuYTRlhgJZMNQ5LIxUJvE4vI6rF4Bw8= candidate={0, DJ6MvFmkq/0Dzh955GnChfprKiih25PkgfgEhef8waI=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:03:59.614761110][test-twostep-wiring.cpp:663]\tcandidate first hops=6 observers=0",
+    "193: [ 1][t 1][2026-09-28 12:03:59.705073758][manager.cpp:3782][!relay manager]\trefusing to create observer group for (-1,8000000000000000): committee has 22 members, above launch ceiling 21",
+    "193: [ 3][t 0][2026-09-28 12:04:00.092423546][test-twostep-wiring.cpp:837]\trotation old tentative=4NDTW4fJUSCPeuyGzVuDH310pNJAtVGGAEhMc/VS4Mk= new active=miMoUTCTYFNyE5GIXyNxDyBxy8f0IrP96yrBPig0UaQ=",
+    "193: [ 3][t 0][2026-09-28 12:04:00.092470501][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=PKTEIzTZAN2bFOtYjlHsASMtxGr3gUPTEOZ+PNZru50= session=miMoUTCTYFNyE5GIXyNxDyBxy8f0IrP96yrBPig0UaQ=",
+    "193: [ 3][t 0][2026-09-28 12:04:03.282812918][test-twostep-wiring.cpp:644]\ttrace first hops actual=1 expected=1 overlay=PKTEIzTZAN2bFOtYjlHsASMtxGr3gUPTEOZ+PNZru50=",
+    "193: [ 3][t 0][2026-09-28 12:04:03.282838913][test-twostep-wiring.cpp:647]\ttrace first-hop destination=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= overlay=PKTEIzTZAN2bFOtYjlHsASMtxGr3gUPTEOZ+PNZru50=",
+    "193: [ 3][t 0][2026-09-28 12:04:03.282846356][test-twostep-wiring.cpp:653]\ttrace delivery local=T6q1JIx0qGd9NlLXv+SHXHnYk1cs8hJ4BLXmp7umqwo= session=miMoUTCTYFNyE5GIXyNxDyBxy8f0IrP96yrBPig0UaQ= overlay=PKTEIzTZAN2bFOtYjlHsASMtxGr3gUPTEOZ+PNZru50= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:03.282855964][test-twostep-wiring.cpp:653]\ttrace delivery local=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= session=miMoUTCTYFNyE5GIXyNxDyBxy8f0IrP96yrBPig0UaQ= overlay=PKTEIzTZAN2bFOtYjlHsASMtxGr3gUPTEOZ+PNZru50= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:03.282863884][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=miMoUTCTYFNyE5GIXyNxDyBxy8f0IrP96yrBPig0UaQ= overlay=PKTEIzTZAN2bFOtYjlHsASMtxGr3gUPTEOZ+PNZru50= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:03.282871122][test-twostep-wiring.cpp:663]\tcandidate first hops=1 observers=2",
+    "193: [ 3][t 0][2026-09-28 12:04:03.734261945][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY=",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926238352][test-twostep-wiring.cpp:644]\ttrace first hops actual=6 expected=6 overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926305717][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926316996][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926325863][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926334607][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926343292][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926351733][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc=",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926361932][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926374537][test-twostep-wiring.cpp:653]\ttrace delivery local=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926391827][test-twostep-wiring.cpp:653]\ttrace delivery local=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926401993][test-twostep-wiring.cpp:653]\ttrace delivery local=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926412158][test-twostep-wiring.cpp:653]\ttrace delivery local=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926423194][test-twostep-wiring.cpp:653]\ttrace delivery local=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926437714][test-twostep-wiring.cpp:653]\ttrace delivery local=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= session=PXAQQfvwZQfeksX8W+vN59EtQ5g1oFrvCUjudMproiY= overlay=tkMCR94LgBaRg4/RNVV++pE09vb6tTzyij0H9GBleuc= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:06.926448754][test-twostep-wiring.cpp:663]\tcandidate first hops=6 observers=6",
+    "193: [ 3][t 0][2026-09-28 12:04:07.147601983][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4= session=OGKbkW3booIntFwUFMA9GEsZj6u6sm7epUxGDtgxIGA=",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339288107][test-twostep-wiring.cpp:644]\ttrace first hops actual=6 expected=6 overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4=",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339328043][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4=",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339338557][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4=",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339347120][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4=",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339355649][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4=",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339363934][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4=",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339372378][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4=",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339382778][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=OGKbkW3booIntFwUFMA9GEsZj6u6sm7epUxGDtgxIGA= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339395894][test-twostep-wiring.cpp:653]\ttrace delivery local=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= session=OGKbkW3booIntFwUFMA9GEsZj6u6sm7epUxGDtgxIGA= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339405849][test-twostep-wiring.cpp:653]\ttrace delivery local=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= session=OGKbkW3booIntFwUFMA9GEsZj6u6sm7epUxGDtgxIGA= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339416137][test-twostep-wiring.cpp:653]\ttrace delivery local=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= session=OGKbkW3booIntFwUFMA9GEsZj6u6sm7epUxGDtgxIGA= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339426468][test-twostep-wiring.cpp:653]\ttrace delivery local=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= session=OGKbkW3booIntFwUFMA9GEsZj6u6sm7epUxGDtgxIGA= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339438009][test-twostep-wiring.cpp:653]\ttrace delivery local=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= session=OGKbkW3booIntFwUFMA9GEsZj6u6sm7epUxGDtgxIGA= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339447849][test-twostep-wiring.cpp:653]\ttrace delivery local=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= session=OGKbkW3booIntFwUFMA9GEsZj6u6sm7epUxGDtgxIGA= overlay=RfU6KwCe7dJH1yBdZVDD2EUwqUxYsKqYX8XxELz2lp4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:10.339462405][test-twostep-wiring.cpp:663]\tcandidate first hops=6 observers=6",
+    "193: [ 1][t 0][2026-09-28 12:04:10.392998086][bridge.cpp:44]\ttwo-step relays: empty snapshot; using legacy relays",
+    "193: [ 3][t 0][2026-09-28 12:04:10.446284297][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s= session=bwQcWhcmqy9Pdb790HYzjmXAh0tYLahMgoHtgJAXeBY=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.636996660][test-twostep-wiring.cpp:644]\ttrace first hops actual=10 expected=10 overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637046694][test-twostep-wiring.cpp:647]\ttrace first-hop destination=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637057315][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637066079][test-twostep-wiring.cpp:647]\ttrace first-hop destination=T6q1JIx0qGd9NlLXv+SHXHnYk1cs8hJ4BLXmp7umqwo= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637074679][test-twostep-wiring.cpp:647]\ttrace first-hop destination=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637083221][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637091686][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637100621][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637109130][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637117636][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637126200][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/E0R7HHfk38ufc+mKmoPZmLkDOZ5cwwzuQK1WXeVeU8= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s=",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637136976][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=bwQcWhcmqy9Pdb790HYzjmXAh0tYLahMgoHtgJAXeBY= overlay=dV2ZRY8DbyaOhehWBJ0Y0odUxMhX5Layc+IH76xj36s= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:13.637149749][test-twostep-wiring.cpp:663]\tcandidate first hops=10 observers=0",
+    "193: [ 1][t 0][2026-09-28 12:04:13.687088918][bridge.cpp:44]\ttwo-step relays: empty snapshot; using legacy relays",
+    "193: [ 1][t 0][2026-09-28 12:04:13.788616760][bridge.cpp:49]\ttwo-step relays: snapshot contains a non-member; using legacy relays",
+    "193: [ 3][t 0][2026-09-28 12:04:13.841705303][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE= session=inSb79s9cByqJzNqidBJeQ3lCBQwL7qFGJV3LA0WZxs=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030500004][test-twostep-wiring.cpp:644]\ttrace first hops actual=10 expected=10 overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030521483][test-twostep-wiring.cpp:647]\ttrace first-hop destination=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030527997][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030533499][test-twostep-wiring.cpp:647]\ttrace first-hop destination=T6q1JIx0qGd9NlLXv+SHXHnYk1cs8hJ4BLXmp7umqwo= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030538955][test-twostep-wiring.cpp:647]\ttrace first-hop destination=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030544660][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030554453][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030560312][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030565639][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030571285][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030576753][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/E0R7HHfk38ufc+mKmoPZmLkDOZ5cwwzuQK1WXeVeU8= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE=",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030583457][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=inSb79s9cByqJzNqidBJeQ3lCBQwL7qFGJV3LA0WZxs= overlay=iy1MjDU6frxTHwEEDWsgvoMe3/pb9jTQxh0OYq0wEfE= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:17.030591945][test-twostep-wiring.cpp:663]\tcandidate first hops=10 observers=0",
+    "193: [ 1][t 0][2026-09-28 12:04:17.079611717][bridge.cpp:49]\ttwo-step relays: snapshot contains a non-member; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:17.307917476][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:17.317726746][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:17.317774599][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:17.325912042][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 3][t 0][2026-09-28 12:04:17.392655174][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4= session=woqH+PGzr3qUNSOOxZhGaS8TDtIjn92YS9ZWZMKS8Hw=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.582954357][test-twostep-wiring.cpp:644]\ttrace first hops actual=10 expected=10 overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.582996427][test-twostep-wiring.cpp:647]\ttrace first-hop destination=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583007437][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583017077][test-twostep-wiring.cpp:647]\ttrace first-hop destination=T6q1JIx0qGd9NlLXv+SHXHnYk1cs8hJ4BLXmp7umqwo= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583026998][test-twostep-wiring.cpp:647]\ttrace first-hop destination=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583037303][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583046588][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583057263][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583066318][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583075652][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583086278][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/E0R7HHfk38ufc+mKmoPZmLkDOZ5cwwzuQK1WXeVeU8= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4=",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583103087][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=woqH+PGzr3qUNSOOxZhGaS8TDtIjn92YS9ZWZMKS8Hw= overlay=nteZ+IzkSm36/eKcLkdBgHnUhK6DYICeypP/c6GiRh4= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:20.583119494][test-twostep-wiring.cpp:663]\tcandidate first hops=10 observers=0",
+    "193: [ 3][t 0][2026-09-28 12:04:20.657533035][test-twostep-wiring.cpp:602]\ttrace case=2 overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA= session=ipt1sGpzQCHwVYbzqD+pK/TizKTEoAQtHx5wA6XXcUI=",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848404538][test-twostep-wiring.cpp:644]\ttrace first hops actual=6 expected=6 overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA=",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848446147][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA=",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848457508][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA=",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848466688][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA=",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848475548][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA=",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848484779][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA=",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848493293][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA=",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848509053][test-twostep-wiring.cpp:653]\ttrace delivery local=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= session=ipt1sGpzQCHwVYbzqD+pK/TizKTEoAQtHx5wA6XXcUI= overlay=nKsRUbnQGofdmZhv4kRu+CEXACMNCQoJouWv4lZ8mgA= candidate={0, DJ6MvFmkq/0Dzh955GnChfprKiih25PkgfgEhef8waI=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:23.848522789][test-twostep-wiring.cpp:663]\tcandidate first hops=6 observers=0",
+    "193: [ 2][t 1][2026-09-28 12:04:23.945383116][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:23.955753157][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:23.955810090][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:23.967572112][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:23.978691448][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:24.041028323][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 2][t 1][2026-09-28 12:04:24.054598425][manager.cpp:3822][!relay manager]\ttwo-step relays: new_catchain_ids=false; using legacy relays",
+    "193: [ 3][t 0][2026-09-28 12:04:24.125469132][test-twostep-wiring.cpp:602]\ttrace case=1 overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU= session=RdZd3heJX0EaJivwEsJ/Dpo4dswTNHNn9zh7XjlGvMg=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315173719][test-twostep-wiring.cpp:644]\ttrace first hops actual=10 expected=10 overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315215964][test-twostep-wiring.cpp:647]\ttrace first-hop destination=CaKZVM+FUSJT4txGa3ZuRcITYn/W+VtXMHwHrGkXxUU= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315228865][test-twostep-wiring.cpp:647]\ttrace first-hop destination=DeifnzDxzVDfvHK0PfWaQ4pwma/Y9Cmkaf/c2ggr7GU= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315238310][test-twostep-wiring.cpp:647]\ttrace first-hop destination=GkvxszGJxmpoVNJUk41ythJ4fpnCDvrPbwY2LH5T1HM= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315247155][test-twostep-wiring.cpp:647]\ttrace first-hop destination=mcyO8Y7KBpWsVnB2ye4/Kgk+jWHf21OwGFjMWZ6E7NY= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315256335][test-twostep-wiring.cpp:647]\ttrace first-hop destination=sJraDlSTSUD8uIg1D3rUsD0OWewapfpDJsRAJQT2MhU= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315292090][test-twostep-wiring.cpp:647]\ttrace first-hop destination=uD37kIL6vfOMDxdS1PJEHKF1ovNW5Kzaiid9xDPRj0g= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315300960][test-twostep-wiring.cpp:647]\ttrace first-hop destination=u2ovreJZ+owq0/LeyiXQahbXU2g6JTKJukvoGorT/dE= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315309401][test-twostep-wiring.cpp:647]\ttrace first-hop destination=6INa4aPjpCxbOoY9jgJoS9kAaWeMsieG2fNlPfzY2r0= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315318176][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/DzBCrE4YH8uJv1GYAJI/Os32z+MtzV+mA3atP0WJUg= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315327125][test-twostep-wiring.cpp:647]\ttrace first-hop destination=/E0R7HHfk38ufc+mKmoPZmLkDOZ5cwwzuQK1WXeVeU8= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU=",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315338431][test-twostep-wiring.cpp:653]\ttrace delivery local=T6q1JIx0qGd9NlLXv+SHXHnYk1cs8hJ4BLXmp7umqwo= session=RdZd3heJX0EaJivwEsJ/Dpo4dswTNHNn9zh7XjlGvMg= overlay=/lP/oUQRGCcubUAjz8GMc1bbtNMQwypSg8WaWv8UTVU= candidate={0, lv3geVwLjDf0W53PVEJM+nZLkNgTCTNG6EVOYLhJbJk=, ?}",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315351635][test-twostep-wiring.cpp:663]\tcandidate first hops=10 observers=0",
+    "193: [ 3][t 0][2026-09-28 12:04:27.315366081][test-twostep-wiring.cpp:986]\tlegacy rotation reused tentative=RdZd3heJX0EaJivwEsJ/Dpo4dswTNHNn9zh7XjlGvMg= with broad first hops"
+  ],
+  "initial_calibration": {
+    "failed_b2_observer_delivery_assumption": "initial-focused.log",
+    "corrected_scope": "B2 lifecycle and first-hop selection; mandatory positive observer decoding remains covered by C1/C3"
+  },
+  "ci": "Pending new final-head CI; old-head successes are not current-head evidence",
+  "merged": false,
+  "deployed": false,
+  "raw_evidence_sha256": {
+    "build/twostep-r7-validation-20260928/initial-admission.json": "e4637e7ce136533ac4faa91f0adb08abffbcb1fd7225c9a5b790bc88f06bd091",
+    "build/twostep-r7-validation-20260928/initial-build.log": "8113d2bcab2de282f370890ad98167d23dc30b34442781d7587236bcf913270b",
+    "build/twostep-r7-validation-20260928/initial-focused.log": "9a944d0b3d15f120dfddec33bb6addca75ad994a6a8b631d1f9c80dee5bcd0a7",
+    "build/twostep-r7-validation-20260928/focused-2.log": "b8f584f76a8c30fd4afee81b0542a194efa430895f28e363cdb891e724b4f3ee",
+    "build/twostep-r7-validation-20260928/final-build.log": "b1845856b5dd4e5419845758ab2f30494ab9f1cb2ee3c92db3eecb93c46b9c2a",
+    "build/twostep-r7-validation-20260928/final-regressions.log": "5df97210a83d88336ec0dfc89db6e4b33cc494af7091b2f8d406040a4b1db308",
+    "build/twostep-r7-validation-20260928/final-source-guards.log": "30c18e1a6aba1fe2feb6a8f4312d0c3d767fedf83dd4e17f289b8aa8d5896ec1",
+    "build/twostep-r7-validation-20260928/regressions.xml": "34672b217e3e2da5a4f3251c3560070ec43fd0bab3506d182318fa607cd55c9d",
+    "build/twostep-r7-validation-20260928/source-guards.xml": "036db70b4435343a1d2e2a275551c848c1acc3c9afa8beca0b0168e691a6c071",
+    "build/twostep-r7-validation-20260928/run_mutations.py": "f3a7289c908ac16bb34cd751a75773c2561df799bab5920f4cabb5c86475c1c9",
+    "build/twostep-r7-validation-20260928/run_final.py": "6dee6cc768e5fbaebc073f9a3ecae753488da5aec840db4c5fef4d152d9c5486",
+    "build/twostep-r7-validation-20260928/werror-checks.json": "4f80717c3da87aa269f0b7be1fb0dd223b2a722b5108538b39e86475086c90cf",
+    "build/twostep-r7-validation-20260928/unsafe-rotation.log": "087aebf78080590e2b7054bfb7baa5306987511fe6125ab3486703d5aa5a4a49"
+  },
+  "command_path_mapping": {
+    "${REPO_ROOT}": "repository root; expand this placeholder before executing public commands",
+    "raw_commands": "unaltered commands remain in the hash-listed local raw evidence"
+  },
+  "changed_line_format_check": {
+    "command": [
+      "git",
+      "clang-format-21",
+      "--binary",
+      "clang-format-21",
+      "--diff",
+      "--extensions",
+      "h,hpp,cpp",
+      "origin/main",
+      "--",
+      ":/",
+      ":(exclude)crypto/smartcont/tol-stdlib/",
+      ":(exclude)tol/",
+      ":(exclude)tol-tester/",
+      ":(exclude)third-party/"
+    ],
+    "exit": 0,
+    "stdout": "clang-format did not modify any files"
+  }
+}

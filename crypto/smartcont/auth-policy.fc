@@ -1,0 +1,81 @@
+;; Mandatory AUTH retirement policy shared by module, receiver and governance.
+;; Missing or invalid policy throws before PRIMARY authorization. RESCUE callers
+;; must not invoke this check: their fixed local profile survives policy failure.
+const int auth_policy::parameter = 48;
+const int auth_policy::invalid = 1820;
+const int auth_policy::retired = 1813;
+const int auth_policy::spec = 0x5e4380aedc95f8cb72de55f7506de0269b47c03ad1d1ed0e5184c332544262c0;
+
+int auth_policy_level(cell c) asm "CLEVEL";
+(slice, int) auth_policy_raw(cell c) asm "XCTOS";
+
+slice auth_policy_ordinary(cell c) impure inline {
+  throw_if(auth_policy::invalid, cell_null?(c));
+  (slice s, int exotic) = auth_policy_raw(c);
+  throw_unless(auth_policy::invalid, (exotic == 0) & (auth_policy_level(c) == 0));
+  return s;
+}
+
+;; v1 admits only daily suite 1. Reject unknown schedules rather than interpreting
+;; an unsupported suite/deadline as permission. A single-leaf dictionary is bounded.
+(int, int, int, int) auth_policy_unpack(cell value) impure inline_ref {
+  slice s = auth_policy_ordinary(value);
+  throw_unless(auth_policy::invalid, s~load_uint(8) == 0xa1);
+  int network = s~load_uint(256);
+  int sequence = s~load_uint(64);
+  int retired = s~load_uint(16);
+  throw_unless(auth_policy::invalid, (retired & ~ 2) == 0);
+  cell schedule = s~load_dict();
+  throw_unless(auth_policy::invalid, s~load_uint(256) == auth_policy::spec);
+  s.end_parse();
+  int deadline = 0;
+  ifnot (cell_null?(schedule)) {
+    auth_policy_ordinary(schedule);
+    (int key, slice entry, int found) = schedule.udict_get_next?(8, -1);
+    throw_unless(auth_policy::invalid, found & (key == 1));
+    deadline = entry~load_uint(32);
+    entry.end_parse();
+    throw_unless(auth_policy::invalid, deadline > 0);
+    (_, _, found) = schedule.udict_get_next?(8, key);
+    throw_if(auth_policy::invalid, found);
+  }
+  return (network, sequence, retired, deadline);
+}
+
+() auth_policy_require_primary(int network, int suite) impure inline_ref {
+  throw_unless(auth_policy::invalid, suite == 1);
+  var (policy_network, _, retired, deadline) = auth_policy_unpack(config_param(auth_policy::parameter));
+  throw_unless(auth_policy::invalid, network == policy_network);
+  throw_if(auth_policy::retired, (retired & 2) | ((deadline != 0) & (now() >= deadline)));
+}
+
+;; Governance callers get a normal refusal, never a malformed-value exception
+;; that rolls back the vote and leaves an impossible proposal pending forever.
+int auth_policy_transition_valid(cell previous, cell next) inline_ref {
+  int valid = false;
+  try {
+    var (network, sequence, retired, deadline) = auth_policy_unpack(next);
+    if (cell_null?(previous)) {
+      valid = sequence == 0;
+    } else {
+      var (old_network, old_sequence, old_retired, old_deadline) = auth_policy_unpack(previous);
+      valid = (network == old_network) & (sequence > old_sequence)
+        & ((retired & old_retired) == old_retired)
+        & ((old_deadline == 0) | ((deadline != 0) & (deadline <= old_deadline)));
+    }
+  } catch (_, _) {
+    valid = false;
+  }
+  return valid;
+}
+
+int auth_policy_membership_valid(cell list) inline_ref {
+  int valid = false;
+  try {
+    (slice entry, int found) = list.idict_get?(32, auth_policy::parameter);
+    if (found) { valid = entry.slice_empty?(); }
+  } catch (_, _) {
+    valid = false;
+  }
+  return valid;
+}

@@ -53,6 +53,14 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   size_t max_mempool_num() const override {
     return max_mempool_num_;
   }
+  td::optional<ExtMessageWorkProfile> get_ext_message_work_profile() const override {
+    return ext_message_work_profile_;
+  }
+  td::Status set_ext_message_work_profile(ExtMessageWorkProfile profile) override {
+    TRY_STATUS(profile.validate());
+    ext_message_work_profile_ = std::move(profile);
+    return td::Status::OK();
+  }
   double archive_ttl() const override {
     return archive_ttl_;
   }
@@ -379,6 +387,7 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   double block_ttl_;
   double state_ttl_;
   size_t max_mempool_num_;
+  td::optional<ExtMessageWorkProfile> ext_message_work_profile_;
   double archive_ttl_;
   double key_proof_ttl_;
   bool initial_sync_disabled_;
@@ -392,7 +401,8 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   size_t max_open_archive_files_ = ValidatorManagerOptions::default_max_open_archive_files();
   double archive_preload_period_ = 0.0;
   bool disable_rocksdb_stats_;
-  bool validator_consensus_cleanup_enabled_ = false;
+  // On by default; see ValidatorManagerOptions::get_validator_consensus_cleanup_enabled.
+  bool validator_consensus_cleanup_enabled_ = true;
   bool test_crash_cleanup_before_erase_ = false;
   bool nonfinal_ls_queries_enabled_ = false;
   td::optional<td::uint64> celldb_cache_size_;

@@ -52,11 +52,18 @@ use shielded_pool_circuit_crosscheck::{stdlib_path, ACTIVE_VERSION};
 use tos_sandbox::{compile_func, Blockchain, MessageBuilder};
 
 /// Section 14.1's ceilings, which are what a sender funds -- not what the path
-/// will use. `shielded_pool_sandbox.rs` fails if these stop agreeing with the
-/// contract's own constants.
-const DEPOSIT_GAS_CEILING: u64 = 220_000;
-const TRANSACT_GAS_CEILING: u64 = 1_470_000;
-const BOUNCE_GAS_CEILING: u64 = 220_000;
+/// will use.
+///
+/// Read out of the contract rather than written down here. They were copies
+/// until the ceilings were re-derived, and a copy is a number that agrees
+/// with itself: this fixture would have gone on funding messages at the old
+/// ceiling, the chain would have refused them at exit 203, and nothing in
+/// this file would have said why.
+fn gas_ceiling(name: &str) -> u64 {
+    let value = shielded_pool_circuit_crosscheck::pool::contract_gas_ceiling(name)
+        .unwrap_or_else(|error| panic!("the contract's {name}: {error}"));
+    u64::try_from(value).unwrap_or_else(|_| panic!("{name} is not a positive gas figure"))
+}
 
 /// Section 9's intent window is an hour. Half of it leaves room for a build,
 /// a chain to come up and three messages to land.
@@ -211,8 +218,9 @@ struct Scenario {
     payout: u64,
     /// Everything needed to predict the recovery note, except the one number
     /// the chain decides: how much of the payout survived the round trip.
-    /// Section 15.4 mints a note for `msg_value` as the bounce delivers it,
-    /// which depends on forward fees no prover can know in advance.
+    /// Section 15.4 mints a note for what the bounce delivers *less the
+    /// pool's charge for putting it back*, and the delivered part depends on
+    /// forward fees no prover can know in advance.
     recovery: Recovery,
 }
 
@@ -233,6 +241,11 @@ fn build_scenario(
     destination_account: &[u8; 32],
     the_notes: &[Note; 2],
     valid_until: u32,
+    // A transfer pays nobody. It is the one money path never put on a chain:
+    // the same handler takes a cheaper branch, which is an argument and not a
+    // run. Everything below that concerns a recipient is switched off by it,
+    // and the change keeps the whole input instead of what a payout left.
+    transfer: bool,
 ) -> Result<Scenario, Box<dyn std::error::Error>> {
     let domain = wire::execution_domain(global_id, pool_account);
 
@@ -248,11 +261,18 @@ fn build_scenario(
     }
     let anchor_root = roots_after_deposit[1];
 
-    // Two notes in, one denomination out to the destination, the configured
-    // fee leaving with it, the change staying inside as three output notes.
+    // Two notes in. On a withdrawal one denomination leaves for the
+    // destination with the configured fee beside it, and the change stays
+    // inside as three output notes. On a transfer nothing leaves at all, so
+    // the change is the whole of what came in -- which is exactly the
+    // property a transfer has to have and a withdrawal must not.
+    let public_amount_out = if transfer { 0 } else { DENOMINATION };
+    let withdrawal_fee = if transfer { 0 } else { WITHDRAWAL_FEE };
     let change =
-        u128::from(DENOMINATION) * 2 - u128::from(DENOMINATION) - u128::from(WITHDRAWAL_FEE);
-    let recovery_owner_commitment = Fr::from(0x5eedu64);
+        u128::from(DENOMINATION) * 2 - u128::from(public_amount_out) - u128::from(withdrawal_fee);
+    // A transfer names no recipient, so it commits to no recovery template
+    // either: there is no payout that could come back to be recovered.
+    let recovery_owner_commitment = if transfer { Fr::ZERO } else { Fr::from(0x5eedu64) };
     let recovery_payload = payload(0x77);
     let recovery_data_hash = output_data_hash(&recovery_payload);
     let output_payloads = [payload(1), payload(2), payload(3)];
@@ -273,13 +293,18 @@ fn build_scenario(
         execution_domain: domain,
         valid_until,
         intent_nonce: Fr::from(0xfeed_face_u64),
-        public_amount_out: Fr::from(u128::from(DENOMINATION)),
-        withdrawal_fee: Fr::from(u128::from(WITHDRAWAL_FEE)),
-        public_recipient_hash: wire::public_recipient_hash(destination_account),
-        recovery_template_hash: wire::recovery_template_hash(
-            recovery_owner_commitment,
-            recovery_data_hash,
-        ),
+        public_amount_out: Fr::from(u128::from(public_amount_out)),
+        withdrawal_fee: Fr::from(u128::from(withdrawal_fee)),
+        public_recipient_hash: if transfer {
+            Fr::ZERO
+        } else {
+            wire::public_recipient_hash(destination_account)
+        },
+        recovery_template_hash: if transfer {
+            Fr::ZERO
+        } else {
+            wire::recovery_template_hash(recovery_owner_commitment, recovery_data_hash)
+        },
         is_withdrawal: None,
         input_pq_auth_key_hash: [the_notes[0].key.hash(), the_notes[1].key.hash()],
         outputs,
@@ -323,11 +348,11 @@ fn build_scenario(
         keys: [&the_notes[0].key.public, &the_notes[1].key.public],
         signatures: &signatures,
         witnesses: &[witness_0, witness_1],
-        public_amount_out: DENOMINATION,
-        withdrawal_fee: WITHDRAWAL_FEE,
-        recipient: Some(Recipient(*destination_account)),
+        public_amount_out,
+        withdrawal_fee,
+        recipient: if transfer { None } else { Some(Recipient(*destination_account)) },
         recovery_owner_commitment,
-        recovery_payload: Some(recovery_payload),
+        recovery_payload: if transfer { None } else { Some(recovery_payload) },
     }
     .body()?;
 
@@ -355,7 +380,7 @@ fn build_scenario(
         nullifier_root_after: tree_state.root(),
         commitment_root_after,
         valid_until,
-        payout: DENOMINATION,
+        payout: public_amount_out,
         recovery: Recovery {
             owner_commitment: recovery_owner_commitment,
             output_data_hash: recovery_data_hash,
@@ -426,9 +451,9 @@ fn sandbox_gas(
     let mut gas = [0i64; 3];
     let mut bounce: Option<BounceRun> = None;
     let steps: [(&Cell, u64); 3] = [
-        (&scenario.deposits[0], DENOMINATION + compute_fee(DEPOSIT_GAS_CEILING)),
-        (&scenario.deposits[1], DENOMINATION + compute_fee(DEPOSIT_GAS_CEILING)),
-        (&scenario.transact, compute_fee(TRANSACT_GAS_CEILING)),
+        (&scenario.deposits[0], DENOMINATION + compute_fee(gas_ceiling("deposit_gas_ceiling"))),
+        (&scenario.deposits[1], DENOMINATION + compute_fee(gas_ceiling("deposit_gas_ceiling"))),
+        (&scenario.transact, compute_fee(gas_ceiling("transact_gas_ceiling"))),
     ];
     for (index, (body, value)) in steps.into_iter().enumerate() {
         let result = bc.send_message(
@@ -538,8 +563,11 @@ fn recovery_root(fixture: &Path, recovered: u128) -> Result<(), Box<dyn std::err
         leaves.push(dec_to_fr(trimmed)?);
     }
 
-    let (index, root) = predict_recovery(owner, data_hash, &leaves, recovered)?;
-    println!("{{\"leaf_index\": {index}, \"commitment_root\": \"{}\"}}", dec(root));
+    let (index, root, minted) = predict_recovery(owner, data_hash, &leaves, recovered)?;
+    println!(
+        "{{\"leaf_index\": {index}, \"commitment_root\": \"{}\", \"minted_nanotos\": {minted}}}",
+        dec(root)
+    );
     Ok(())
 }
 
@@ -557,8 +585,20 @@ fn predict_recovery(
     owner_commitment: Fr,
     output_data_hash: Fr,
     leaves: &[Fr],
-    recovered: u128,
-) -> Result<(u64, Fr), Box<dyn std::error::Error>> {
+    // What the bounce *delivered*, not what the note is minted for. The pool
+    // charges the recovery's own compute to the money it is recovering, so
+    // the note is worth the remainder; minting the whole of it would pay for
+    // the recovery out of the pool's reserve.
+    //
+    // The subtraction lives here because two callers need it -- the
+    // generation-time check against the sandbox, and `--recovery-root` with
+    // the value the chain reports -- and a subtraction each of them has to
+    // remember is one that one of them will not. That is how this broke: the
+    // charge was introduced, the contract's own suites moved with it, and the
+    // predictor did not. Nothing failed, because no CI runs a localnet.
+    delivered: u128,
+) -> Result<(u64, Fr, u128), Box<dyn std::error::Error>> {
+    let recovered = delivered.saturating_sub(u128::from(compute_fee(gas_ceiling("bounce_gas_ceiling"))));
     let mut frontier = tree::Frontier::new();
     for leaf in leaves {
         frontier.append(*leaf)?;
@@ -566,7 +606,10 @@ fn predict_recovery(
     let index = leaves.len() as u64;
     let body = notes::note_body_commitment(owner_commitment, Fr::from(recovered), output_data_hash);
     let (assigned, root) = frontier.append(notes::note_commitment(body, Fr::from(index)))?;
-    Ok((assigned, root))
+    // The amount as well as the tree. The pool owes what the note is worth,
+    // and a caller left to work that out for itself is a third place this
+    // subtraction can be forgotten. It was already forgotten in two.
+    Ok((assigned, root, recovered))
 }
 
 /// A canonical decimal field element, the way the fixture writes them.
@@ -596,6 +639,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let refuses = arguments.iter().any(|argument| argument == "--refuse");
+    let transfer = arguments.iter().any(|argument| argument == "--transfer");
+    if refuses && transfer {
+        return Err("--refuse and --transfer are different scenarios: a transfer has no \
+                    payout, so there is nothing for a destination to refuse"
+            .into());
+    }
     let mut args = arguments.into_iter().filter(|argument| !argument.starts_with("--"));
     let root = PathBuf::from(args.next().ok_or("usage: onchain-fixture <repo root> <out dir>")?);
     let out = PathBuf::from(args.next().ok_or("usage: onchain-fixture <repo root> <out dir>")?);
@@ -614,7 +663,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Where the withdrawal goes. A contract that takes the money, deployed by
     // the harness at the address its own code hashes to.
-    let destination_path = std::env::temp_dir().join(if refuses {
+    // A directory of this run's own. A fixed name under the shared temporary
+    // directory is truncated by a second run of this tool while the first is
+    // still compiling from it.
+    let destination_dir = tempfile::tempdir()?;
+    let destination_path = destination_dir.path().join(if refuses {
         "tos_shielded_onchain_refuser.fc"
     } else {
         "tos_shielded_onchain_accepter.fc"
@@ -636,7 +689,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let the_notes = [Note::new(0)?, Note::new(1)?];
     eprintln!("proving the withdrawal for global_id {global_id} ...");
     let scenario =
-        build_scenario(global_id, &pool_account, &destination_account, &the_notes, valid_until)?;
+        build_scenario(
+            global_id,
+            &pool_account,
+            &destination_account,
+            &the_notes,
+            valid_until,
+            transfer,
+        )?;
 
     eprintln!("running the same three messages in the sandbox ...");
     let run = sandbox_gas(&code, &state, &destination_code, &scenario, now)?;
@@ -658,7 +718,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // chain's recovered amount will be its own, and the harness will ask
         // for the root that goes with it; this is what says the asking is
         // worth anything.
-        let (index, root) = predict_recovery(
+        let (index, root, _minted) = predict_recovery(
             scenario.recovery.owner_commitment,
             scenario.recovery.output_data_hash,
             &scenario.recovery.leaves,
@@ -691,8 +751,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     write_cell(&out.join("deposit-1.boc"), &scenario.deposits[1])?;
     write_cell(&out.join("transact.boc"), &scenario.transact)?;
 
-    let deposit_value = DENOMINATION + compute_fee(DEPOSIT_GAS_CEILING);
-    let transact_value = compute_fee(TRANSACT_GAS_CEILING);
+    let deposit_value = DENOMINATION + compute_fee(gas_ceiling("deposit_gas_ceiling"));
+    let transact_value = compute_fee(gas_ceiling("transact_gas_ceiling"));
     let fixture = format!(
         concat!(
             "{{\n",
@@ -750,7 +810,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "      }}\n",
             "    }},\n",
             "    {{\n",
-            "      \"name\": \"the withdrawal\",\n",
+            "      \"name\": \"{transact_name}\",\n",
             "      \"body\": \"transact.boc\",\n",
             "      \"value_nanotos\": {transact_value},\n",
             "      \"gas_ceiling\": {transact_ceiling},\n",
@@ -798,9 +858,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         empty_root = dec(genesis.commitment_root),
         nullifier_root = dec(genesis.nullifier_root),
         deposit_value = deposit_value,
-        deposit_ceiling = DEPOSIT_GAS_CEILING,
+        deposit_ceiling = gas_ceiling("deposit_gas_ceiling"),
         transact_value = transact_value,
-        transact_ceiling = TRANSACT_GAS_CEILING,
+        transact_ceiling = gas_ceiling("transact_gas_ceiling"),
         gas0 = gas[0],
         gas1 = gas[1],
         gas2 = gas[2],
@@ -812,13 +872,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // between -- so on the refusing run they are checked after it and not
         // before. The nullifier tree is not touched by a bounce, so it is
         // checked either way.
+        transact_name = if transfer { "the transfer" } else { "the withdrawal" },
         withdrawal_expect = if refuses {
             String::new()
         } else {
             format!(
                 "        \"commitment_root\": \"{}\",\n        \"commitment_next_index\": 5,\n        \"native_liability\": {},\n",
                 dec(scenario.commitment_root_after),
-                2 * DENOMINATION - DENOMINATION - WITHDRAWAL_FEE
+                // The number that separates the two scenarios. A withdrawal
+                // owes less afterwards because value left the pool; a
+                // transfer owes exactly what it owed, because none did. If
+                // this ever reads as a withdrawal's figure on a transfer run,
+                // the pool paid somebody and the proof did not say so.
+                2 * DENOMINATION - scenario.payout - if transfer { 0 } else { WITHDRAWAL_FEE }
             )
         },
         // A step with no body: the chain does this one by itself. What it
@@ -828,7 +894,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         bounce_step = if refuses {
             format!(
                 ",\n    {{\n      \"name\": \"the bounce and its recovery note\",\n      \"body\": null,\n      \"gas_ceiling\": {},\n      \"expect\": {{\n        \"commitment_next_index\": {},\n        \"nullifier_next_index\": 3,\n        \"liability_before_recovery\": {}\n      }}\n    }}",
-                BOUNCE_GAS_CEILING,
+                gas_ceiling("bounce_gas_ceiling"),
                 scenario.recovery.leaf_index + 1,
                 2 * DENOMINATION - DENOMINATION - WITHDRAWAL_FEE
             )

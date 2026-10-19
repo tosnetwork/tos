@@ -17,12 +17,25 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include "td/utils/as.h"
+
 #include "adnl-ext-client.h"
 #include "adnl-ext-client.hpp"
 
 namespace tos {
 
 namespace adnl {
+
+td::int32 traced_lite_function_id(td::Slice data) {
+  auto query = fetch_tl_object<lite_api::liteServer_query>(td::BufferSlice{data}, true);
+  if (query.is_ok()) {
+    data = query.ok()->data_.as_slice();
+  } else {
+    fetch_tl_prefix<lite_api::liteServer_queryPrefix>(data, true).ignore();
+  }
+  fetch_tl_prefix<lite_api::liteServer_waitMasterchainSeqno>(data, true).ignore();
+  return data.size() >= sizeof(td::int32) ? td::as<td::int32>(data.data()) : 0;
+}
 
 void AdnlExtClientImpl::alarm() {
   if (is_closing_) {
@@ -190,6 +203,7 @@ td::actor::ActorOwn<AdnlExtClient> AdnlExtClient::create(AdnlNodeIdFull dst, Pri
 
 td::Status AdnlOutboundConnection::process_packet(td::BufferSlice data) {
   TRY_RESULT(F, fetch_tl_object<lite_api::adnl_message_answer>(std::move(data), true));
+  LOG(DEBUG) << "ADNL_EXT_QUERY client_answer id=" << F->query_id_.to_hex() << " answer_bytes=" << F->answer_.size();
   td::actor::send_closure(ext_client_, &AdnlExtClientImpl::answer_query, F->query_id_, std::move(F->answer_));
   return td::Status::OK();
 }
@@ -210,7 +224,8 @@ void AdnlExtMultiClientImpl::add_server(AdnlNodeIdFull dst, td::IPAddress dst_ad
   }
 
   auto g = ++generation_;
-  auto cli = std::make_unique<Client>(AdnlExtClient::create(dst, dst_addr, make_callback(g)), dst, dst_addr, g);
+  auto cli =
+      std::make_unique<Client>(AdnlExtClient::create(dst, local_id_, dst_addr, make_callback(g)), dst, dst_addr, g);
   clients_[g] = std::move(cli);
 }
 
@@ -298,7 +313,14 @@ std::unique_ptr<AdnlExtClient::Callback> AdnlExtMultiClientImpl::make_callback(t
 
 td::actor::ActorOwn<AdnlExtMultiClient> AdnlExtMultiClient::create(
     std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids, std::unique_ptr<AdnlExtClient::Callback> callback) {
-  return td::actor::create_actor<AdnlExtMultiClientImpl>("extmulticlient", std::move(ids), std::move(callback));
+  return create(std::move(ids), PrivateKey{}, std::move(callback));
+}
+
+td::actor::ActorOwn<AdnlExtMultiClient> AdnlExtMultiClient::create(
+    std::vector<std::pair<AdnlNodeIdFull, td::IPAddress>> ids, PrivateKey local_id,
+    std::unique_ptr<AdnlExtClient::Callback> callback) {
+  return td::actor::create_actor<AdnlExtMultiClientImpl>("extmulticlient", std::move(ids), std::move(local_id),
+                                                         std::move(callback));
 }
 
 }  // namespace adnl

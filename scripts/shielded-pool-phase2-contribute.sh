@@ -22,15 +22,14 @@
 #   They are the whole of the discipline. The scalar is drawn from
 #   /dev/urandom inside contribute(), used, and wiped; it is not a return
 #   value, not a parameter, and cannot be printed -- Secret has no Display and
-#   its Debug prints a placeholder, so logging it is a compile error.
+#   its Debug prints only a placeholder.
 #
-# WHY IT WILL NOT GENERATE A SIGNING KEY
+# SIGNING IDENTITY
 #
-#   A signature from a key nobody has seen before proves nothing: anyone can
-#   make one and sign anything. The attestation is worth something because a
-#   *known* person made it, so --sign-with must name a key that is already
-#   publicly yours. If you have none, publish the text unsigned from an
-#   account that is already yours; the identity comes from the account.
+# Supply an existing or newly generated signing key with --sign-with. Publish
+# its public half under your identity and register it before your contribution
+# is accepted. Registration remains open during the contribution window. The
+# script does not generate a key or publish identity evidence on your behalf.
 #
 # WHAT TOUCHES YOUR DISK
 #
@@ -141,7 +140,7 @@ ATTEST
 echo
 echo "attestation written to $ATTESTATION"
 
-# --- 5. sign it, with a key that is already yours ------------------------
+# --- 5. sign it, with your registered key ------------------------
 case "$SIGN_WITH" in
     "")
         echo

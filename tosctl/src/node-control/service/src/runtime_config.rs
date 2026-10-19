@@ -357,9 +357,7 @@ impl RuntimeConfigStore {
         // One save at a time, and the lock covers the snapshot as well as
         // the write and the hash update: with a narrower lock, a save that
         // snapshotted an older configuration could overwrite a newer file
-        // and then stamp the stale content as current. The temporary-file
-        // name in write_private_atomic is also per-process, so unserialized
-        // saves would clobber each other's in-flight file.
+        // and then stamp the stale content as current.
         static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = SAVE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
@@ -387,54 +385,11 @@ impl RuntimeConfigStore {
         }
     }
 
-    /// Writes `data` to `path` with mode 0600 via a same-directory temporary
-    /// file, fsync and rename.
+    /// Writes `data` to `path` through the shared private writer: mode 0600,
+    /// a random exclusive temporary in a directory only this user can modify,
+    /// fsync, and an atomic rename that never follows a link at the target.
     fn write_private_atomic(path: &Path, data: &[u8]) -> anyhow::Result<()> {
-        use std::io::Write;
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-
-        let dir = match path.parent() {
-            Some(p) if !p.as_os_str().is_empty() => p,
-            _ => Path::new("."),
-        };
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| anyhow::anyhow!("config path has no file name"))?;
-        // The pid keeps concurrent processes pointed at the same config from
-        // clobbering each other's in-flight temporary file.
-        let tmp_path = dir.join(format!(".{file_name}.tmp.{}", std::process::id()));
-
-        let result = (|| -> anyhow::Result<()> {
-            // Remove any stale leftover from a previous crash so create_new
-            // below both applies the restrictive mode and never reuses a
-            // file with looser permissions.
-            match std::fs::remove_file(&tmp_path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e).context("remove stale temporary config file"),
-            }
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&tmp_path)
-                .context("create temporary config file")?;
-            file.write_all(data).context("write temporary config file")?;
-            file.sync_all().context("sync temporary config file")?;
-            drop(file);
-            std::fs::rename(&tmp_path, path).context("rename config file into place")?;
-            // The creation mode is subject to the process umask; make the
-            // final permissions explicit regardless of it, and also tighten
-            // a pre-existing target that was created with a looser mode.
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-                .context("set config file permissions")?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(&tmp_path);
-        }
-        result
+        secrets_vault::private_file::write_private_atomic(path, data)
     }
 
     /// Reload config from the file if it has changed externally.
@@ -661,7 +616,9 @@ fn open_nominator_pool(
     validator_addr: &MsgAddressInt,
 ) -> anyhow::Result<Arc<dyn NominatorWrapper>> {
     match config {
-        PoolConfig::SNP { address, owner } => {
+        PoolConfig::SNP { address, owner, controller } => {
+            let controller_addr = MsgAddressInt::from_str(controller)
+                .context(format!("invalid validator controller address: {}", controller))?;
             let pool = match (address, owner) {
                 (Some(address), Some(owner)) => {
                     let addr = MsgAddressInt::from_str(address)
@@ -672,10 +629,15 @@ fn open_nominator_pool(
                         contract_provider!(rpc_client.clone()),
                         &owner_addr,
                         validator_addr,
+                        &controller_addr,
                         -1,
                     )?;
-                    let calculated_addr =
-                        NominatorWrapperImpl::calculate_address(-1, &owner_addr, validator_addr)?;
+                    let calculated_addr = NominatorWrapperImpl::calculate_address(
+                        -1,
+                        &owner_addr,
+                        validator_addr,
+                        &controller_addr,
+                    )?;
                     if calculated_addr != addr {
                         anyhow::bail!(
                             "calculated pool address does not match the defined address: defined={}, calculated={}",
@@ -692,6 +654,7 @@ fn open_nominator_pool(
                         contract_provider!(rpc_client.clone()),
                         &owner_addr,
                         validator_addr,
+                        &controller_addr,
                         -1,
                     )?
                 }
@@ -708,6 +671,7 @@ fn open_nominator_pool(
         }
         PoolConfig::NominatorPool {
             address,
+            controller,
             validator_reward_share,
             max_nominators,
             min_validator_stake,
@@ -721,6 +685,19 @@ fn open_nominator_pool(
             }
             validator_account.copy_from_slice(&validator_addr_bytes);
 
+            // The controller is part of the pool's initial data, so it is part of the
+            // address below. Getting it wrong does not produce a pool that stakes to the
+            // wrong place; it produces a different address entirely, which the comparison
+            // below catches.
+            let controller_addr = MsgAddressInt::from_str(controller)
+                .context(format!("invalid validator controller address: {}", controller))?;
+            let controller_bytes = controller_addr.address().get_bytestring(0);
+            let mut controller_account = [0u8; 32];
+            if controller_bytes.len() != controller_account.len() {
+                anyhow::bail!("validator controller address must be a 256-bit account id");
+            }
+            controller_account.copy_from_slice(&controller_bytes);
+
             // A pool's address is the hash of its code and its initial data, so
             // the configured address is checkable rather than trusted: if the
             // parameters in the config produce a different address, the operator
@@ -729,6 +706,7 @@ fn open_nominator_pool(
             let derived = NominatorPoolWrapperImpl::calculate_address(
                 -1,
                 &validator_account,
+                &controller_account,
                 *validator_reward_share,
                 *max_nominators,
                 *min_validator_stake,
@@ -777,6 +755,7 @@ mod tests {
             master_wallet: None,
             tick_interval: 30,
             indexer_retention_blocks: 0,
+            indexer_enabled: true,
             log: None,
             bookmarks: HashMap::new(),
             agent_wallets: HashMap::new(),
@@ -786,7 +765,17 @@ mod tests {
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
             alerts: Default::default(),
+            proof_verifier: None,
         })
+    }
+
+    /// The private writer refuses group- or other-writable directories, so
+    /// the fixture does not depend on the process umask.
+    fn private_tempdir() -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("tempdir")
     }
 
     fn assert_saved_config_is_private_and_valid(path: &Path) {
@@ -799,7 +788,7 @@ mod tests {
 
     #[test]
     fn save_to_file_writes_private_valid_file_and_leaves_no_temp() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = private_tempdir();
         let path = dir.path().join("config.json");
         let store = RuntimeConfigStore::from_app_config_at_path(
             test_app_config(),
@@ -827,11 +816,9 @@ mod tests {
 
     #[test]
     fn concurrent_saves_do_not_clobber_each_other() {
-        // The temporary name is per-process, so unserialized concurrent saves
-        // could unlink or rename each other's in-flight file. With the save
-        // lock, every interleaving leaves a valid, private target and no
-        // temporary residue.
-        let dir = tempfile::tempdir().expect("tempdir");
+        // With the save lock, every interleaving leaves a valid, private
+        // target and no temporary residue.
+        let dir = private_tempdir();
         let path = dir.path().join("config.json");
         let store = std::sync::Arc::new(RuntimeConfigStore::from_app_config_at_path(
             test_app_config(),
@@ -859,8 +846,40 @@ mod tests {
     }
 
     #[test]
+    fn save_to_file_refuses_links_and_planted_temporaries() {
+        use std::os::unix::fs::symlink;
+
+        let dir = private_tempdir();
+        let path = dir.path().join("config.json");
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, b"unchanged").expect("seed victim");
+        // The former temporary name was predictable; a link planted there
+        // must not receive the configuration.
+        symlink(&victim, dir.path().join(format!(".config.json.tmp.{}", std::process::id())))
+            .expect("plant temporary link");
+        let store = RuntimeConfigStore::from_app_config_at_path(
+            test_app_config(),
+            path.display().to_string(),
+        );
+        store.save_to_file();
+        assert_saved_config_is_private_and_valid(&path);
+        assert_eq!(std::fs::read(&victim).expect("read victim"), b"unchanged");
+
+        // A target replaced by a link is refused and the link's target is
+        // left alone.
+        std::fs::remove_file(&path).expect("remove config");
+        symlink(&victim, &path).expect("link config");
+        store.update_with(|cfg| cfg.tick_interval = 61).expect("update config");
+        store.save_to_file();
+        assert_eq!(std::fs::read(&victim).expect("read victim"), b"unchanged");
+        assert!(
+            std::fs::symlink_metadata(&path).expect("config metadata").file_type().is_symlink()
+        );
+    }
+
+    #[test]
     fn save_to_file_tightens_a_preexisting_loose_target() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = private_tempdir();
         let path = dir.path().join("config.json");
         std::fs::write(&path, b"old content").expect("seed target");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))

@@ -1,0 +1,67 @@
+;; Complete-wallet storage codec. No message entry points or deployment claim.
+;; Module identity comes from a compiled dependency supplied by the caller.
+;; Fee metadata contains no vault address: construction is module -> wallet -> vault.
+#include "wallet-quantum-identity.fc";
+#include "wallet-quantum-common.fc";
+
+const int quantumstate::invalid = 1819;
+
+;; Fixed one-level HSS LMS-SHA256-H20 / LMOTS-SHA256-W4 public-key profile.
+;; This proves encoding, not possession or safe signer state.
+() quantumstate_fee(cell metadata) impure inline_ref {
+  slice s = quantumid_ordinary(metadata);
+  throw_unless(quantumstate::invalid, s~load_uint(8) == 1);
+  throw_unless(quantumstate::invalid, s~load_uint(8) == 1);
+  s~load_uint(256); ;; public fee_tree_id: restore KDF input, not a key digest.
+  s~load_uint(32); ;; epoch0; authenticated chain time is checked by the vault.
+  throw_unless(quantumstate::invalid, s~load_uint(32) == 3600);
+  throw_unless(quantumstate::invalid, s~load_uint(16) == 4);
+  cell key = s~load_ref();
+  s.end_parse();
+  slice k = quantumid_ordinary(key);
+  throw_unless(quantumstate::invalid, (k.slice_bits() == 480) & (k.slice_refs() == 0));
+  throw_unless(quantumstate::invalid, k~load_uint(32) == 1);
+  throw_unless(quantumstate::invalid, k~load_uint(32) == 8);
+  throw_unless(quantumstate::invalid, k~load_uint(32) == 3);
+  k~skip_bits(128 + 256);
+  k.end_parse();
+}
+
+;; Returns ordinary fields followed by AUTH fields and canonical witnesses.
+;; Root/policy/key identities are derived from the witness, never duplicated
+;; writable assertions. Unknown retirement bits are retained across round trips.
+(int, int, int, int, int, int, int, int, cell, cell) quantumstate_load(
+    cell data, int module_code, int global_id, int network) impure inline_ref {
+  slice s = quantumid_ordinary(data);
+  throw_unless(quantumstate::invalid, s~load_uint(1) == 0);
+  int seqno = s~load_uint(32);
+  int wallet_id = s~load_uint(32);
+  int key = s~load_uint(256);
+  throw_unless(quantumstate::invalid, key == 0); ;; inert V5-shaped field; never an authority
+  throw_unless(quantumstate::invalid, cell_null?(s~load_dict()));
+  slice a = quantumid_ordinary(s~load_ref());
+  s.end_parse();
+  throw_unless(quantumstate::invalid, a~load_uint(8) == 4);
+  int mode = a~load_uint(2);
+  throw_unless(auth::bad_mode, mode == 2);
+  int retired = a~load_uint(16);
+  int epoch = a~load_uint(64);
+  int primary_nonce = a~load_uint(64);
+  int rescue_nonce = a~load_uint(64);
+  cell module = a~load_ref();
+  cell fee = a~load_ref();
+  a.end_parse();
+  quantumid_module(module, module_code, cell_hash(module), global_id, network);
+  quantumstate_fee(fee);
+  return (seqno, wallet_id, key, mode, retired, epoch, primary_nonce, rescue_nonce, module, fee);
+}
+
+;; Validation belongs to load/admission before apply; stores retain every field.
+cell quantumstate_store(int seqno, int wallet_id, int key, int mode, int retired,
+    int epoch, int primary_nonce, int rescue_nonce, cell module, cell fee) inline {
+  cell a = begin_cell().store_uint(4, 8).store_uint(mode, 2).store_uint(retired, 16)
+      .store_uint(epoch, 64).store_uint(primary_nonce, 64).store_uint(rescue_nonce, 64)
+      .store_ref(module).store_ref(fee).end_cell();
+  return begin_cell().store_uint(0, 1).store_uint(seqno, 32).store_uint(wallet_id, 32)
+      .store_uint(key, 256).store_dict(null()).store_ref(a).end_cell();
+}

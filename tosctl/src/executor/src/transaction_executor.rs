@@ -103,6 +103,10 @@ pub enum IncorrectCheckRewrite {
 #[path = "tests/test_transaction_executor_with_real_data.rs"]
 mod tests_with_real_data;
 
+#[cfg(test)]
+#[path = "tests/test_message_size_limits.rs"]
+mod tests_message_size_limits;
+
 #[derive(Clone, Default)]
 pub struct ExecuteParams {
     pub state_libs: HashmapE,
@@ -536,6 +540,9 @@ pub trait TransactionExecutor {
         let mut acc_remaining_balance = acc_balance.clone();
         let mut phase = TrActionPhase::default();
         let mut total_reserved_value = Coins::default();
+        // From version 15 the fines of messages that were sent successfully are
+        // also collected when a later step fails the action phase.
+        let mut fail_action_fine = Coins::zero();
         let mut bounce = false;
         phase.action_list_hash = actions_cell.repr_hash();
         let action_slices =
@@ -591,6 +598,7 @@ pub trait TransactionExecutor {
                     return finish_action_phase_with_fine(
                         tr,
                         phase,
+                        &fail_action_fine,
                         Some(msg_remaining_balance),
                         acc_balance,
                         bounce,
@@ -623,6 +631,7 @@ pub trait TransactionExecutor {
                         my_addr,
                         &total_reserved_value,
                         &mut account_deleted,
+                        &mut fail_action_fine,
                     );
                     match result {
                         Ok(_) => {
@@ -690,7 +699,14 @@ pub trait TransactionExecutor {
                 balance_to_string(Some(&init_balance))
             );
             // This is required here because changes to libraries are applied even if action phase fails
-            if err_code != 0 && !is_special && !check_account_size_limits(limits, &mut acc_copy)? {
+            if err_code != 0
+                && !is_special
+                && !check_account_size_limits(
+                    limits,
+                    self.config().global_version(),
+                    &mut acc_copy,
+                )?
+            {
                 fail!("Account size limits exceeded");
             }
             if err_code == -1 {
@@ -713,6 +729,7 @@ pub trait TransactionExecutor {
                 return finish_action_phase_with_fine(
                     tr,
                     phase,
+                    &fail_action_fine,
                     Some(msg_remaining_balance),
                     acc_balance,
                     bounce,
@@ -746,10 +763,19 @@ pub trait TransactionExecutor {
         if let Some(new_data) = new_data {
             acc_copy.set_data(new_data);
         }
-        if !is_special && !check_account_size_limits(limits, &mut acc_copy)? {
+        if !is_special
+            && !check_account_size_limits(limits, self.config().global_version(), &mut acc_copy)?
+        {
             log::debug!(target: "executor", "Account size limits exceeded. Taking fine and rolling back state");
             phase.result_code = RESULT_CODE_EXCEEDED_LIMITS;
-            return finish_action_phase_with_fine(tr, phase, None, acc_balance, true);
+            return finish_action_phase_with_fine(
+                tr,
+                phase,
+                &fail_action_fine,
+                None,
+                acc_balance,
+                true,
+            );
         }
 
         phase.add_action_fine();
@@ -971,7 +997,11 @@ fn compute_new_state(
                         Ok(Some(ComputeSkipReason::BadState))
                     }
                     Ok(_) => {
-                        if check_account_size_limits(config.size_limits_config(), acc)? {
+                        if check_account_size_limits(
+                            config.size_limits_config(),
+                            config.global_version(),
+                            acc,
+                        )? {
                             Ok(None)
                         } else {
                             *acc = original_state;
@@ -1006,7 +1036,11 @@ fn compute_new_state(
                     Ok(Some(ComputeSkipReason::BadState))
                 } else {
                     log::debug!(target: "executor", "message for frozen: activated");
-                    if check_account_size_limits(config.size_limits_config(), acc)? {
+                    if check_account_size_limits(
+                        config.size_limits_config(),
+                        config.global_version(),
+                        acc,
+                    )? {
                         Ok(None)
                     } else {
                         *acc = original_state;
@@ -1162,6 +1196,7 @@ fn outmsg_action_handler(
     my_addr: &MsgAddressInt,
     reserved_value: &Coins,
     account_deleted: &mut bool,
+    fail_action_fine: &mut Coins,
 ) -> std::result::Result<CurrencyCollection, i32> {
     if msg.is_inbound_external() {
         log::debug!(target: "executor", "outbound msg cannot be inbound external");
@@ -1324,7 +1359,9 @@ fn outmsg_action_handler(
                 },
             ),
         };
-        let mut sstat = StorageUsageCalc::with_limits(max_cells, limits.max_msg_bits as u64);
+        // As the native engine counts: past the cell limit by one, bits
+        // without a limit, so both size checks below can hold.
+        let mut sstat = StorageUsageCalc::with_cell_limit(max_cells);
         if let Some(body) = &body {
             sstat.append_cell(body, body_to_ref, &mut 0).map_err(|err| {
                 log::error!(target: "executor", "cannot calc msg storage used for body: {err}");
@@ -1340,7 +1377,8 @@ fn outmsg_action_handler(
 
         log::debug!(target: "executor", "msg_storage cells: {}, bits: {}", sstat.cells(), sstat.bits());
         if !is_special {
-            fine = Coins::from(fine_per_cell * sstat.cells());
+            // the native engine fines the visited cells, never more than max_cells
+            fine = Coins::from(fine_per_cell * sstat.cells().min(max_cells));
         }
         let mut acc_balance_copy = acc_balance.clone();
         let mut collect_fine = || {
@@ -1356,22 +1394,24 @@ fn outmsg_action_handler(
                 phase.action_fine += fine;
             }
         };
+        // The size checks apply to every account, special ones included; a
+        // special account only pays no fine and no forwarding fee.
+        if sstat.cells() > max_cells && max_cells < limits.max_msg_cells as u64 {
+            log::debug!(target: "executor", "not enough funds to process a message (max_cells={})", max_cells);
+            collect_fine();
+            return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
+        }
+        if sstat.bits() > limits.max_msg_bits as u64 || sstat.cells() > max_cells {
+            log::debug!(target: "executor", "message too large, invalid");
+            collect_fine();
+            return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
+        }
+        if sstat.max_merkle_depth() > MAX_MSG_MERKLE_DEPTH {
+            log::debug!(target: "executor", "message has too big merkle depth, invalid");
+            collect_fine();
+            return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
+        }
         let compute_fwd_fee = if !is_special {
-            if sstat.cells() > max_cells {
-                log::debug!(target: "executor", "not enough funds to process a message (max_cells={})", max_cells);
-                collect_fine();
-                return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
-            }
-            if sstat.bits() > limits.max_msg_bits as u64 {
-                log::debug!(target: "executor", "message too large, invalid");
-                collect_fine();
-                return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
-            }
-            if sstat.max_merkle_depth() > MAX_MSG_MERKLE_DEPTH {
-                log::debug!(target: "executor", "message has too big merkle depth, invalid");
-                collect_fine();
-                return check_skip_invalid(RESULT_CODE_INVALID_BALANCE);
-            }
             Coins::try_from(fwd_prices.calc_fwd_fee(sstat.bits(), sstat.cells()))
                 .map_err(|err| {
                     log::error!(target: "executor", "cannot calc fwd fee message in action phase : {}", err);
@@ -1520,6 +1560,12 @@ fn outmsg_action_handler(
         phase.add_action_fees(&fwd_mine_fee);
 
         phase.tot_msg_size.add_bits_and_cells(sstat.bits() + add_bits, sstat.cells() + 1);
+        if config.global_version() >= FAIL_ACTION_FINE_SINCE_VERSION
+            && !fail_action_fine.add_checked(&fine)
+        {
+            log::warn!(target: "executor", "failed-action fine overflow");
+            return Err(RESULT_CODE_INVALID_BALANCE);
+        }
 
         if mode.any(SENDMSG_ALL_BALANCE | SENDMSG_REMAINING_MSG_BALANCE) {
             *msg_balance = CurrencyCollection::default();
@@ -1842,13 +1888,28 @@ fn action_type(action: &OutAction) -> String {
     }
 }
 
+/// From this version a failed action phase also collects the fines of the
+/// messages that were sent before the failure, as the native engine does.
+const FAIL_ACTION_FINE_SINCE_VERSION: u32 = 15;
+
 fn finish_action_phase_with_fine(
     tr: &mut Transaction,
     mut phase: TrActionPhase,
+    fail_action_fine: &Coins,
     msg_remaining_balance: Option<&mut CurrencyCollection>,
     acc_balance: &mut CurrencyCollection,
     bounce: bool,
 ) -> Result<ActionPhaseResult> {
+    // The fine is the collected fines plus those of the sent messages, never
+    // more than the account holds.
+    let mut fine = phase.action_fine;
+    if !fine.add_checked(fail_action_fine) {
+        fail!("action fine overflow");
+    }
+    if fine > acc_balance.coins {
+        fine = acc_balance.coins;
+    }
+    phase.action_fine = fine;
     if let Some(msg_remaining_balance) = msg_remaining_balance {
         msg_remaining_balance.coins.sub_checked(&phase.action_fine);
     }
@@ -1881,12 +1942,23 @@ fn check_vm_init_params(ctrls: &SaveList, stack: &Stack) {
     debug_assert_eq!(balance_in_smc, balance_in_stack);
 }
 
-pub(super) fn check_account_size_limits(cfg: &SizeLimitsConfig, acc: &mut Account) -> Result<bool> {
+/// The masterchain-specific ceiling only exists from global version 12, which is the
+/// condition the other implementation applies. Without it the two disagree about how much
+/// state a masterchain account may hold on an older version, and that disagreement is a
+/// fork rather than a difference of opinion.
+const MC_ACC_STATE_CELLS_SINCE_VERSION: u32 = 12;
+
+pub(super) fn check_account_size_limits(
+    cfg: &SizeLimitsConfig,
+    global_version: u32,
+    acc: &mut Account,
+) -> Result<bool> {
     acc.update_storage_stat(cfg.acc_state_cells_for_storage_dict)?;
     let Some(stat) = acc.storage_stat() else {
         return Ok(true);
     };
-    let max_acc_state_cells = if acc.get_addr().is_some_and(|addr| addr.is_masterchain()) {
+    let masterchain = acc.get_addr().is_some_and(|addr| addr.is_masterchain());
+    let max_acc_state_cells = if masterchain && global_version >= MC_ACC_STATE_CELLS_SINCE_VERSION {
         cfg.max_mc_acc_state_cells as u64
     } else {
         cfg.max_acc_state_cells as u64

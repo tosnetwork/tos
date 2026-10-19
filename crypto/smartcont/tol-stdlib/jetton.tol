@@ -231,7 +231,9 @@ fun jettonMinterMintTokens(
         .storeRef(stateInit)
         .storeRef(masterMsg)
         .endCell();
-    sendRawMessage(msg, SEND_MODE_PAY_FEES_SEPARATELY);
+    // Bounce on action failure: a mint that cannot be sent bounces back to the
+    // admin instead of being counted in the supply without reaching anyone.
+    sendRawMessage(msg, SEND_MODE_PAY_FEES_SEPARATELY + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
 }
 
 @pure

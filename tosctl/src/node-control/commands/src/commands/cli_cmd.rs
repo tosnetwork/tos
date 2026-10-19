@@ -15,6 +15,7 @@ use crate::commands::{
         auth_cmd::AuthCmd,
         backup_cmd::BackupCmd,
         config_cmd::ConfigCmd,
+        controller_cmd::ControllerCmd,
         deploy_cmd::DeployCmd,
         domain_cmd::DomainCmd,
         host_cmd::HostCmd,
@@ -72,6 +73,9 @@ pub enum Commands {
     /// Pool lifecycle and staking operations
     #[command(name = "pool", visible_alias = "p")]
     Pool(PoolCmd),
+    /// Validator controller operating authorization
+    #[command(name = "controller")]
+    Controller(ControllerCmd),
     /// Validator governance: voting, elections, complaints
     #[command(name = "vote", visible_alias = "v")]
     Vote(VoteCmd),

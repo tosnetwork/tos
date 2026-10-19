@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "note": "Local user paths were anonymized. These log copies are redacted, not byte-exact raw originals. Historical acceptance states are unchanged.",
+  "replacement_prefix": "/workspace",
+  "logs": [
+    {
+      "path": "test/integration/.c03-sr1-d086-fixed/no-retry-mutation-test.log",
+      "original_sha256": "712c2be8c709ef217276fa9ee2e1c94415700be6dbcaf12c6cfa915efd8a06ac",
+      "redacted_sha256": "dd50022567955d13ad9c9818c30698cc987980b3674fea5fdf60b4ce35a4d56a"
+    },
+    {
+      "path": "test/integration/.c03-sr1-d086-fixed/source-guards.log",
+      "original_sha256": "f50bfc2d7938fa4bbeab8c07eec41bbee280415bfa2b23e3f4018dbb73386c83",
+      "redacted_sha256": "6cddfe4300ff09b29fc29410135b7c519dc863d9abb0458181db18920231b8c0"
+    },
+    {
+      "path": "test/integration/.c03-sr1-d086-fixed/targeted-ctest-final.log",
+      "original_sha256": "755a996424f8e236c95c8087f1e9f69bf9a6786d3e81f061159f4b9019680075",
+      "redacted_sha256": "fe09c2e9d17e0ac0d60ad5c0862e15fa7d4ef5a84c28a3f21f346c7c5d9469dc"
+    },
+    {
+      "path": "test/integration/.c03-sr1-d086-old/R2-same-harness.log",
+      "original_sha256": "07211ba324484d9b442e43a833f975eb3a92a99e763c5d64abe3a1e7362504e6",
+      "redacted_sha256": "95960e0aad2e585afcf149cc3bd1fa4dc93d2056fe141b7df45fc2fdf7f5a21c"
+    }
+  ]
+}

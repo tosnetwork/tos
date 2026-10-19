@@ -1,0 +1,10 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+retained=2561 contended_grant=2.265179ms
+retained_peak_grant=3.632721ms
+test pre_cursor_ledger_with_active_grant_catches_up_over_4096_history ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out; finished in 7.99s
+

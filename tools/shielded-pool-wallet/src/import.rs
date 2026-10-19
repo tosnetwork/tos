@@ -43,6 +43,14 @@ pub struct Imported {
     /// True for an ordinary output, which is the only kind a wallet may add
     /// to its balance and later spend.
     pub spendable: bool,
+    /// Whether the chain has published this note's nullifier.
+    ///
+    /// A restored wallet learns this by deriving the nullifier -- which needs
+    /// only the mnemonic and the note it already holds -- and looking it up in
+    /// the set the chain publishes. Until that reconciliation is done nothing
+    /// is known, so the honest default is "not known to be spent" and a
+    /// balance built from it is not a spendable balance.
+    pub spent: bool,
 }
 
 /// What the chain says about the slot this payload arrived in.
@@ -54,6 +62,14 @@ pub struct ChainSlot {
     pub output_data_hash: Fr,
     /// The note body the transaction published for this slot.
     pub note_body: Fr,
+    /// For a recovery slot after the bounce: what the note was minted for.
+    ///
+    /// `None` means the slot is still the template the withdrawal signed and
+    /// carries no money. `Some(v)` is the amount the contract computed as
+    /// `msg_value - recovery_charge`, read off the chain rather than assumed,
+    /// because the delivered part depends on forward fees no prover knows in
+    /// advance.
+    pub recovered: Option<u128>,
 }
 
 /// Section 3.1 in full, for one decrypted payload against one published slot.
@@ -104,7 +120,38 @@ pub fn import(
     // A recovery template is not a note yet -- its amount is not known until
     // a bounce returns -- so what it is checked against is the template hash
     // the withdrawal signed, not a published note body.
+    //
+    // Once the bounce has happened it *is* a note, for whatever the bounce
+    // delivered less the pool's charge, and `recovered` carries that amount.
+    // Without this branch a refused withdrawal strands the sender's money
+    // from the sender's point of view: the chain holds a note with a valid
+    // owner and the wallet can only ever import the zero-amount template.
+    // The person who causes that is the recipient, not the sender.
     if plaintext.kind == Kind::Recovery {
+        if let Some(amount) = slot.recovered {
+            // Rebuilt and matched against the body the chain published, the
+            // same way an ordinary output is. The template hash is what the
+            // withdrawal signed; this is what the bounce minted, and only the
+            // second one can be spent.
+            let minted = shielded_pool_circuit::notes::note_body_commitment(
+                owner_commitment,
+                Fr::from(amount),
+                slot.output_data_hash,
+            );
+            if minted != slot.note_body {
+                return Ok(Err(Rejection::NoteBodyMismatch));
+            }
+            return Ok(Ok(Imported {
+                kind: plaintext.kind,
+                note_key_index: plaintext.note_key_index,
+                amount,
+                note_secret: plaintext.note_secret,
+                owner_commitment,
+                note_body: minted,
+                spendable: true,
+                spent: false,
+            }));
+        }
         let template = shielded_pool_circuit::wire::recovery_template_hash(
             owner_commitment,
             slot.output_data_hash,
@@ -120,6 +167,7 @@ pub fn import(
             owner_commitment,
             note_body: template,
             spendable: false,
+            spent: false,
         }));
     }
 
@@ -135,5 +183,6 @@ pub fn import(
         owner_commitment,
         note_body,
         spendable: plaintext.kind == Kind::Ordinary,
+        spent: false,
     }))
 }

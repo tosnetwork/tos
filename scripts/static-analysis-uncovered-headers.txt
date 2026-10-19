@@ -1,0 +1,5 @@
+# Headers that no compilation in this build includes, so a change to them cannot
+# be analysed. scripts/static-analysis.py refuses a change to any header that no
+# compilation includes unless it is listed here, and prints every listed header a
+# change touches as UNCOVERED. One repository-relative path per line; add one
+# only with the reason in the commit that adds it.

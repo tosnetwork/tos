@@ -1,0 +1,6 @@
+#ifndef TOS_Quantum_MLDSA_CONFIG_H
+#define TOS_Quantum_MLDSA_CONFIG_H
+#define MLD_CONFIG_PARAMETER_SET 44
+#define MLD_CONFIG_NAMESPACE_PREFIX tos_quantum_mldsa44
+#define MLD_CONFIG_NO_RANDOMIZED_API
+#endif

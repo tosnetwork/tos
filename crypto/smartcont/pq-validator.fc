@@ -1,0 +1,458 @@
+;; Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: LGPL-2.0-or-later
+;;
+;; The post-quantum validator descriptor, as the contracts that produce and consume it
+;; need it. Every rule here has a counterpart in the node's decoder: a descriptor this
+;; accepts is one the node accepts, and a descriptor this refuses is one the node would
+;; have refused after it was already authoritative, which is a halt rather than a bad
+;; registration.
+;;
+;; Requires TVM version 16 for SHA256C. Nothing here verifies a signature; that is
+;; PQCHECKSIG_MLDSA44, declared in pq.fc.
+
+
+;; The key material the descriptor is built from: the admitted suite, the canonical
+;; stored shape, the identity derived from a key, and the network this chain is.
+#include "pq-bytes.fc";
+
+;; The post-quantum descriptor's constructor, frozen in TL-B as validator_pq#b3.
+const int pq::descriptor_tag = 0xb3;
+
+const int pq::error::tag = 60;
+const int pq::error::key_id = 64;
+const int pq::error::zero_validator_id = 65;
+const int pq::error::zero_adnl = 66;
+const int pq::error::zero_weight = 67;
+
+;; ---------------------------------------------------------------------------
+;; The controller a validator's authority is rooted in.
+;;
+;; An account can only be initialized with a state init whose hash is its address, so a
+;; sender that presents one has proved what it was deployed as. The proof carries the
+;; root's own bits and a pruned branch in place of each child, which is why it is three
+;; cells whatever the controller's code weighs -- and why the hash must be taken at level
+;; zero: `cell_hash` is the highest-level hash, and a tree holding pruned branches has a
+;; level above zero.
+;; ---------------------------------------------------------------------------
+
+const int pq::controller_policy_param = 47;
+
+int pq::hash_level0(cell c) asm "0 CHASHI";
+int pq::cell_level(cell c) asm "CLEVEL";
+
+;; The one accepted shape: split_depth absent, special absent, code present, data
+;; present, library empty. Five bits and two references, and nothing else.
+const int pq::state_init_shape = 0x06;  ;; 0b00110
+
+;; controller_birth_witness_v1
+;;   code_hash:uint256 code_depth:uint16 data_hash:uint256 data_depth:uint16
+;;
+;; Four numbers, 544 bits, no references, and ordinary. It replaces the pruned state-init
+;; proof it used to carry, which no contract can send: a message a contract builds may not
+;; contain a cell of level greater than zero, and a pruned branch has level one.
+const int pq::witness_bits = 256 + 16 + 256 + 16;
+
+;; The deepest child the state-init root can be built over. The root adds one level and
+;; the virtual machine refuses a cell deeper than 1024.
+const int pq::max_child_depth = 1023;
+
+;; A builder finalised as an exotic cell. The instruction takes the flag from the stack,
+;; so the constant is pushed here rather than by every caller.
+cell pq::end_exotic(builder b) asm "TRUE ENDXC";
+
+;; The pruned branch the platform would have produced for a level-zero child: its type,
+;; one level, the child's hash and the child's depth, in that order. The layout is held to
+;; the platform's own by a test that builds both and compares them.
+cell pq::pruned_branch(int hash, int depth) inline {
+  return pq::end_exotic(begin_cell()
+    .store_uint(1, 8)      ;; PrunedBranch
+    .store_uint(1, 8)      ;; one level
+    .store_uint(hash, 256)
+    .store_uint(depth, 16));
+}
+
+;; What a proof failed at, so a caller can say which rule refused it. The elector refuses
+;; the stake either way, but a rule nobody can tell apart from another is a rule nobody
+;; can test.
+const int pq::witness::ok = 0;
+const int pq::witness::bad_shape = 1;
+const int pq::witness::bad_address = 2;
+
+;; Returns the controller code hash the proof establishes, and what it failed at. Never
+;; throws: a malformed proof is a stake to refuse, not a transaction to bounce.
+(int, int) pq::controller_code_hash?(cell witness, int expected_address) {
+  ;; The witness is ordinary and carries nothing but four numbers. A special cell here
+  ;; would be a caller trying to supply a branch rather than the material to rebuild one.
+  (slice cs, int special) = pq::parse_maybe_special(witness);
+  if (special) {
+    return (0, pq::witness::bad_shape);
+  }
+  if (cs.slice_bits() != pq::witness_bits) {
+    return (0, pq::witness::bad_shape);
+  }
+  if (cs.slice_refs() != 0) {
+    return (0, pq::witness::bad_shape);
+  }
+  int code_hash = cs~load_uint(256);
+  int code_depth = cs~load_uint(16);
+  int data_hash = cs~load_uint(256);
+  int data_depth = cs~load_uint(16);
+
+  ;; A child one below the ceiling, because the state-init root this builds adds a level
+  ;; of its own. Checked before anything is built, so a depth that could not be finalised
+  ;; is refused rather than thrown over.
+  if (code_depth > pq::max_child_depth) {
+    return (0, pq::witness::bad_shape);
+  }
+  if (data_depth > pq::max_child_depth) {
+    return (0, pq::witness::bad_shape);
+  }
+
+  ;; Rebuild the state init this account would have been deployed with, standing the two
+  ;; children in as pruned branches. The branches exist only on the stack for the length
+  ;; of this call: a level-one cell cannot be stored or sent, and none of this is.
+  cell rebuilt = begin_cell()
+    .store_uint(pq::state_init_shape, 5)
+    .store_ref(pq::pruned_branch(code_hash, code_depth))
+    .store_ref(pq::pruned_branch(data_hash, data_depth))
+  .end_cell();
+
+  ;; An account exists at the hash of its state init and nowhere else, so a commitment
+  ;; that equals the sender's address is a state init the sender was deployed with. The
+  ;; four numbers are not believed; they are the only ones that produce this address.
+  if (pq::hash_level0(rebuilt) != expected_address) {
+    return (0, pq::witness::bad_address);
+  }
+
+  ;; The code hash is returned as it was carried rather than read back out of the branch
+  ;; that was just built from it: the two are the same value, and asking the branch would
+  ;; be a check that cannot fail.
+  return (code_hash, pq::witness::ok);
+}
+
+;; The admitted controller codes, and whether the configuration states any. An absent
+;; parameter admits nobody: authority fails closed, never open.
+(cell, int) pq::controller_policy() {
+  cell policy = config_param(pq::controller_policy_param);
+  if (cell_null?(policy)) {
+    return (null(), false);
+  }
+  slice cs = policy.begin_parse();
+  cell codes = cs~load_dict();
+  return (codes, true);
+}
+
+int pq::controller_admitted?(cell codes, int code_hash) inline {
+  (_, int found) = codes.udict_get?(256, code_hash);
+  return found;
+}
+
+;; The stake standing behind each admitted controller code.
+;;
+;; Retiring a code has to take its stake out of the election's accounting, and scanning
+;; every member on every stake would make that cost grow with the set. The aggregate is
+;; keyed by the code, of which there are at most eight, so a retirement takes effect by
+;; the sum skipping one key.
+cell pq::add_stake_by_code(cell by_code, int code_hash, int delta) {
+  (slice current, int found) = by_code.udict_get?(256, code_hash);
+  int total = found ? current~load_tomis() : 0;
+  total += delta;
+  throw_if(pq::error::malformed_key, total < 0);
+  by_code~udict_set_builder(256, code_hash, begin_cell().store_tomis(total));
+  return by_code;
+}
+
+;; What the election counts: the stake behind codes the configuration still admits.
+int pq::effective_stake(cell by_code, cell admitted) {
+  int total = 0;
+  int key = -1;
+  int scanning = true;
+  while (scanning) {
+    (int next, slice entry, int found) = admitted.udict_get_next?(256, key);
+    if (found) {
+      (slice standing, int present) = by_code.udict_get?(256, next);
+      if (present) {
+        total += standing~load_tomis();
+      }
+      key = next;
+    } else {
+      scanning = false;
+    }
+  }
+  return total;
+}
+
+;; validator_pq#b3 validator_id:bits256 algorithm_id:uint16 key_id:bits256
+;;   public_key:^Cell weight:uint64 adnl_addr:bits256 = ValidatorDescr;
+;;
+;; The key identity is re-derived rather than believed, and the transport address is
+;; required: a consensus key is never a transport identity, so nothing here invents one.
+(int, int, int, cell, int, int) pq::parse_descriptor(slice cs) {
+  throw_unless(pq::error::tag, cs~load_uint(8) == pq::descriptor_tag);
+  int validator_id = cs~load_uint(256);
+  int algorithm_id = cs~load_uint(16);
+  int key_id = cs~load_uint(256);
+  cell public_key = cs~load_ref();
+  int weight = cs~load_uint(64);
+  int adnl_addr = cs~load_uint(256);
+  cs.end_parse();
+  throw_if(pq::error::zero_validator_id, validator_id == 0);
+  throw_if(pq::error::zero_adnl, adnl_addr == 0);
+  throw_if(pq::error::zero_weight, weight == 0);
+  throw_unless(pq::error::key_id, key_id == pq::key_id(algorithm_id, public_key));
+  return (validator_id, algorithm_id, key_id, public_key, weight, adnl_addr);
+}
+
+;; The key identity is derived here too, so a descriptor this builds is one this parses.
+builder pq::pack_descriptor(int validator_id, int algorithm_id, cell public_key, int weight, int adnl_addr) {
+  throw_if(pq::error::zero_validator_id, validator_id == 0);
+  throw_if(pq::error::zero_adnl, adnl_addr == 0);
+  throw_if(pq::error::zero_weight, weight == 0);
+  int key_id = pq::key_id(algorithm_id, public_key);
+  return begin_cell()
+    .store_uint(pq::descriptor_tag, 8)
+    .store_uint(validator_id, 256)
+    .store_uint(algorithm_id, 16)
+    .store_uint(key_id, 256)
+    .store_ref(public_key)
+    .store_uint(weight, 64)
+    .store_uint(adnl_addr, 256);
+}
+
+;; The frozen signature domains, as the cells PQCHECKSIG_MLDSA44 takes for its context.
+;; Stated once so no caller writes a domain by hand.
+cell pq::election_context() inline {
+  return begin_cell().store_slice("TOS-VALIDATOR-ELECTION-v1").end_cell();
+}
+
+cell pq::config_vote_context() inline {
+  return begin_cell().store_slice("TOS-VALIDATOR-CONFIG-VOTE-v1").end_cell();
+}
+
+;; ---------------------------------------------------------------------------
+;; Elector state: a member is a controller account, and a key belongs to one of them
+;;
+;; Membership is keyed by the stable validator identity, which is the controlling account
+;; the elector saw, so rotating a key does not move a validator in or out of the set. The
+;; reverse index exists for the other direction: two controllers must not register the
+;; same consensus key, because the set that would produce is one the node refuses for
+;; duplicate key identity.
+;; ---------------------------------------------------------------------------
+
+
+;; ---------------------------------------------------------------------------
+;; Authorisation: the frozen tags, and the exact bytes a stake request signs
+;;
+;; The layout is frozen in test/pq-native/authorisation-preimage-vectors.tsv, which
+;; the node's and the tooling's builders are also held to. A contract that built a different preimage
+;; would reject every correctly signed request, and the failure would look like a bad key.
+;; ---------------------------------------------------------------------------
+
+;; The tags live in pq-bytes.fc, beside the rest of the wire: a contract that sends one of
+;; these messages needs the tag without needing the member book this file holds.
+
+
+;; TAG u32 | global_id i32 | stake_at u32 | max_factor u32 | validator_id u256 |
+;; stake_owner u256 | algorithm_id u16 | key_id u256 | adnl_addr u256  -- 146 bytes.
+;;
+;; The validator identity is the account the elector saw, and the key identity is derived
+;; from the key presented. Neither is taken from the request, which is what stops a
+;; request naming one validator while carrying another's key.
+;;
+;; The stake owner is the account the money came from, which need not be the validator: a
+;; pool holds nominators' funds and has no authority, and a controller has authority and
+;; need not hold the funds. The elector reads it from the sender, so an authorisation
+;; issued for one funding account does not verify when another presents it.
+;;
+;; Two cells, not one. A message is read as a canonical byte chain, and that shape
+;; requires every cell but the last to hold exactly 127 bytes; 146 bytes therefore splits
+;; 127 and 19, and the split lands inside the ADNL address because no field boundary is
+;; at 127. The other two sides build these bytes flat and never see a cell, so the shared
+;; vectors hold the bytes rather than the cells, and this split is the only place it
+;; matters.
+const int pq::chain_chunk_bytes = 127;
+const int pq::adnl_tail_bits = 152;      ;; 19 bytes, what the second cell carries
+const int pq::adnl_head_bits = 104;      ;; 13 bytes, what fits in the first
+
+cell pq::stake_preimage(int stake_at, int max_factor, int validator_id, int stake_owner,
+                        int algorithm_id, int key_id, int adnl_addr) inline {
+  int head = adnl_addr >> pq::adnl_tail_bits;
+  int tail = adnl_addr - (head << pq::adnl_tail_bits);
+  return begin_cell()
+    .store_uint(pq::tag::stake_sign, 32)
+    .store_int(pq::global_id(), 32)
+    .store_uint(stake_at, 32)
+    .store_uint(max_factor, 32)
+    .store_uint(validator_id, 256)
+    .store_uint(stake_owner, 256)
+    .store_uint(algorithm_id, 16)
+    .store_uint(key_id, 256)
+    .store_uint(head, pq::adnl_head_bits)
+    .store_ref(begin_cell().store_uint(tail, pq::adnl_tail_bits).end_cell())
+  .end_cell();
+}
+
+;; What one ML-DSA-44 verification costs the chain, as the instruction charges it.
+;;
+;; A path that verifies a signature for an unauthorised sender is a path that sender can
+;; make the chain pay for at will, so every such path requires the message to bring at
+;; least this much before it verifies anything. The value is derived from the configured
+;; gas price rather than frozen as an amount, because an amount would be a claim about a
+;; price that changes without this line changing with it.
+const int pq::mldsa44_verify_gas = 50000;
+
+int pq::verification_value(int workchain) inline {
+  return get_compute_fee(workchain, pq::mldsa44_verify_gas);
+}
+
+;; TAG u32 | global_id i32 | validator_set_id u256 | validator_id u256 | idx u16 |
+;; proposal_hash u256   -- 106 bytes, one cell.
+;;
+;; The set identity is the hash of the validator set the vote is counted against, so a
+;; signature made under one set cannot be replayed under the next: the same validator at
+;; the same index signs different bytes once the set changes. The validator identity is
+;; read from the descriptor at `idx` rather than from the message, so a vote cannot name
+;; one validator and be counted for another.
+cell pq::config_vote_preimage(int validator_set_id, int validator_id, int idx,
+                              int proposal_hash) inline {
+  return begin_cell()
+    .store_uint(pq::tag::config_vote_sign, 32)
+    .store_int(pq::global_id(), 32)
+    .store_uint(validator_set_id, 256)
+    .store_uint(validator_id, 256)
+    .store_uint(idx, 16)
+    .store_uint(proposal_hash, 256)
+  .end_cell();
+}
+
+;; TAG u32 | global_id i32 | validator_set_id u256 | validator_id u256 | idx u16 |
+;; election_id u32 | complaint_hash u256   -- 110 bytes, one cell.
+;;
+;; A complaint belongs to the election it was made against, so the election identity is
+;; signed as well: the same complaint hash against a different election is different
+;; bytes.
+cell pq::complaint_vote_preimage(int validator_set_id, int validator_id, int idx,
+                                 int election_id, int complaint_hash) inline {
+  return begin_cell()
+    .store_uint(pq::tag::complaint_sign, 32)
+    .store_int(pq::global_id(), 32)
+    .store_uint(validator_set_id, 256)
+    .store_uint(validator_id, 256)
+    .store_uint(idx, 16)
+    .store_uint(election_id, 32)
+    .store_uint(complaint_hash, 256)
+  .end_cell();
+}
+
+const int pq::error::key_owned = 68;
+const int pq::error::index_disagrees = 69;
+;; A member's stake_owner is fixed by its first stake. The elector refuses a change
+;; politely before it gets here; this is what makes the record unable to hold one.
+const int pq::error::owner_changed = 70;
+
+;; stake:Tomis registered_at:uint32 max_factor:uint32 algorithm_id:uint16 key_id:uint256
+;;   public_key:^Cell adnl_addr:uint256
+builder pq::pack_member(int stake, int registered_at, int max_factor, int algorithm_id, int key_id,
+                        cell public_key, int adnl_addr, int stake_owner,
+                        int controller_code_hash) inline {
+  return begin_cell()
+    .store_tomis(stake)
+    .store_uint(registered_at, 32)
+    .store_uint(max_factor, 32)
+    .store_uint(algorithm_id, 16)
+    .store_uint(key_id, 256)
+    .store_ref(public_key)
+    .store_uint(adnl_addr, 256)
+    ;; Who the money is, and what this controller was admitted as.
+    ;;
+    ;; `stake_owner` is the account the stake came from and the account everything goes
+    ;; back to. It is not the validator: a pool holds nominators' funds and has no
+    ;; authority, and the identity above has authority and need not hold the funds.
+    ;;
+    ;; `controller_code_hash` is the code this controller was admitted under, so a profile
+    ;; retired after it registered stops it changing anything and keeps it out of the next
+    ;; set.
+    ;;
+    ;; Both go behind a reference rather than inline. A single-entry dictionary keyed by
+    ;; 256 bits spends about 267 of a cell's 1023 on the label, which leaves a member
+    ;; record about 756 bits to live in; either of these inline overflows the dictionary
+    ;; write, which is exit 8 and was measured rather than reasoned about.
+    .store_ref(begin_cell()
+      .store_uint(stake_owner, 256)
+      .store_uint(controller_code_hash, 256)
+    .end_cell());
+}
+
+(int, int, int, int, int, cell, int, int, int) pq::unpack_member(slice ms) inline {
+  int stake = ms~load_tomis();
+  int registered_at = ms~load_uint(32);
+  int max_factor = ms~load_uint(32);
+  int algorithm_id = ms~load_uint(16);
+  int key_id = ms~load_uint(256);
+  cell public_key = ms~load_ref();
+  int adnl_addr = ms~load_uint(256);
+  slice rest = ms~load_ref().begin_parse();
+  int stake_owner = rest~load_uint(256);
+  int controller_code_hash = rest~load_uint(256);
+  rest.end_parse();
+  ms.end_parse();
+  return (stake, registered_at, max_factor, algorithm_id, key_id, public_key, adnl_addr,
+          stake_owner, controller_code_hash);
+}
+
+;; Registers a controller's key, or replaces the one it already registered, moving the
+;; reverse index with it.
+;;
+;; Both directions are decided here, together, because they are one fact: a key belongs to
+;; a controller. Updating the member record without the reverse index would let a released
+;; key stay claimed; updating the reverse index without the member record would leave a
+;; validator holding a key the index says is someone else's. A caller cannot get half of
+;; this, because a refusal throws and the transaction commits nothing.
+(cell, cell) pq::register_member(cell members, cell key_owner, int validator_id, int stake, int registered_at,
+                                 int max_factor, int algorithm_id, cell public_key, int adnl_addr,
+                                 int stake_owner, int controller_code_hash) {
+  throw_if(pq::error::zero_validator_id, validator_id == 0);
+  throw_if(pq::error::zero_adnl, adnl_addr == 0);
+  int key_id = pq::key_id(algorithm_id, public_key);
+
+  ;; A key already claimed by another controller is refused before anything is written.
+  (slice owner, int claimed) = key_owner.udict_get?(256, key_id);
+  if (claimed) {
+    throw_unless(pq::error::key_owned, owner~load_uint(256) == validator_id);
+  }
+
+  ;; A controller that is rotating releases the key it held, so the index never keeps a
+  ;; key nobody is registered with.
+  ;;
+  ;; Which entry to release is read from the member record, so the two halves are required
+  ;; to agree on it first. Both are arguments to this function: releasing an entry that
+  ;; names someone else would take a key from a controller that holds it, on the word of a
+  ;; record that has no authority over it.
+  (slice existing, int registered) = members.udict_get?(256, validator_id);
+  if (registered) {
+    (_, _, _, _, int held_key_id, _, _, int held_owner, _) = pq::unpack_member(existing);
+    ;; The owner is part of the record's identity, not one of its terms. A key may be
+    ;; rotated and a factor or address restated; the account the money belongs to may not.
+    ;; The elector refuses this with a reason before calling here, so reaching this line is
+    ;; a contract that skipped that check, and the book refuses to be the place it lands.
+    throw_unless(pq::error::owner_changed, held_owner == stake_owner);
+    if (held_key_id != key_id) {
+      (slice held_by, int indexed) = key_owner.udict_get?(256, held_key_id);
+      throw_unless(pq::error::index_disagrees, indexed);
+      throw_unless(pq::error::index_disagrees, held_by~load_uint(256) == validator_id);
+      key_owner~udict_delete?(256, held_key_id);
+    }
+  }
+
+  key_owner~udict_set_builder(256, key_id, begin_cell().store_uint(validator_id, 256));
+  members~udict_set_builder(256, validator_id,
+    pq::pack_member(stake, registered_at, max_factor, algorithm_id, key_id, public_key, adnl_addr,
+                    stake_owner, controller_code_hash));
+  return (members, key_owner);
+}
+
+;; Which controller holds a key, or zero. Zero is not a validator identity, so it cannot
+;; be mistaken for an answer.
+int pq::key_holder(cell key_owner, int key_id) inline {
+  (slice owner, int claimed) = key_owner.udict_get?(256, key_id);
+  return claimed ? owner~load_uint(256) : 0;
+}

@@ -1,0 +1,20 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/lib.rs (target/debug/deps/tos_health_services-829b31e3e4934d06)
+
+running 1 test
+
+thread 'diagnostic_relay::tests::bounded_queue_and_json_have_separate_accounting' (2325931) panicked at crates/health-services/src/diagnostic_relay.rs:182:9:
+assertion `left == right` failed
+  left: "unsupported diagnostic catalog"
+ right: "decoded payload limit"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test diagnostic_relay::tests::bounded_queue_and_json_have_separate_accounting ... FAILED
+
+failures:
+
+failures:
+    diagnostic_relay::tests::bounded_queue_and_json_have_separate_accounting
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p tos-health-services --lib`

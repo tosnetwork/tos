@@ -217,7 +217,7 @@ export async function mnemonicValidate(
  * const keys = await mnemonicToPrivateKey(mnemonic);
  *
  * // Use keys to create a wallet
- * const wallet = WalletV4R2.create({ publicKey: keys.publicKey });
+ * const wallet = WalletV4R2.create({ publicKey: keys.publicKey, networkGlobalId });
  * ```
  */
 export async function mnemonicToPrivateKey(

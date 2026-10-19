@@ -1,0 +1,2296 @@
+[0/1] Re-running CMake...
+-- Use openssl: $HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a
+Add rocksdb
+-- CMAKE_BUILD_TYPE is set to Release
+-- Could NOT find uring (missing: uring_LIBRARIES uring_INCLUDE_DIR) 
+-- Enabling RTTI in all builds
+-- ROCKSDB_PLUGINS: 
+-- ROCKSDB PLUGINS TO BUILD 
+-- JNI library is disabled
+Add abseil-cpp
+Add crc32c
+Add ngtcp2 with custom OpenSSL from $HOME/nhm-c04-build/third-party/openssl
+-- Found OpenSSL: $HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found suitable version "3.5.5", minimum required is "1.1.1")  
+-- Could NOT find Libev (missing: LIBEV_LIBRARY LIBEV_INCLUDE_DIR) (Required is at least version "4.11")
+-- Could NOT find Libnghttp3 (missing: LIBNGHTTP3_LIBRARY LIBNGHTTP3_INCLUDE_DIR) (Required is at least version "1.14.0")
+-- Could NOT find Libbrotlienc (missing: LIBBROTLIENC_LIBRARY LIBBROTLIENC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- Could NOT find Libbrotlidec (missing: LIBBROTLIDEC_LIBRARY LIBBROTLIDEC_INCLUDE_DIR) (Required is at least version "1.0.9")
+-- Looking for SSL_provide_quic_data
+-- Looking for SSL_provide_quic_data - not found
+-- Looking for SSL_set_quic_tls_cbs
+-- Looking for SSL_set_quic_tls_cbs - found
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:31 (message):
+  libngtcp2_crypto_quictls library is disabled due to lack of good quictls
+
+
+CMake Warning at third-party/ngtcp2/crypto/CMakeLists.txt:37 (message):
+  libngtcp2_crypto_libressl library is disabled due to lack of good LibreSSL
+
+
+-- summary of build options:
+
+    Package version: 1.22.0
+    Library version: 24:0:8
+    Install prefix:  /usr
+    Target system:   Linux
+    Compiler:
+      Build type:     Release
+      C compiler:     /usr/bin/clang-21
+      CFLAGS:         -O3  
+      C++ compiler:   /usr/bin/clang++-21
+      CXXFLAGS:       -O3  
+      WARNCFLAGS:       -Wextra -Wall -Wconversion -Winline -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wpointer-arith -Wshadow -Wundef -Wwrite-strings -Waddress -Wattributes -Wcast-align -Wdeclaration-after-statement -Wdiv-by-zero -Wempty-body -Wendif-labels -Wfloat-equal -Wformat-nonliteral -Wformat-security -Wmissing-field-initializers -Wmissing-noreturn -Wno-format-nonliteral -Wredundant-decls -Wsign-conversion -Wstrict-prototypes -Wunreachable-code -Wunused-macros -Wunused-parameter -Wvla -Wshorten-64-to-32 -Wlanguage-extension-token -Wpragmas -Wunreachable-code-break -Wheader-guard -Wsometimes-uninitialized -Wmissing-variable-declarations
+      WARNCXXFLAGS:     -Wall -Wformat-security -Wno-extern-c-compat -Wsometimes-uninitialized -Wno-noexcept-type
+    Library:
+      Shared:         ON
+      Static:         ON
+    Test:
+      Build Test:     OFF
+    Libs:
+      OpenSSL:        TRUE (LIBS='$HOME/nhm-c04-build/third-party/openssl/lib/libssl.a;$HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a;dl')
+      Libev:          FALSE (LIBS='')
+      Libnghttp3:     FALSE (LIBS='')
+      GnuTLS:         FALSE (LIBS='')
+      BoringSSL:      FALSE (LIBS='')
+      Picotls:        FALSE (LIBS='')
+      wolfSSL:        FALSE (LIBS='')
+      Jemalloc:        (LIBS='')
+      Libbrotlienc:   FALSE (LIBS='')
+      Libbrotlidec:   FALSE (LIBS='')
+
+Add tl-parser
+Add tos
+-- BuildSECP256K1: cached artifacts missing (library=$HOME/nhm-c04-build/third-party/secp256k1/lib/libsecp256k1.a, include=$HOME/nhm-c04-build/third-party/secp256k1/include); rebuilding
+-- Building libbacktrace from: $HOME/tos-node-health-c04/third-party/libbacktrace
+-- BuildZlib: cached artifacts missing (library=$HOME/nhm-c04-build/third-party/zlib/lib/libz.a, include=$HOME/nhm-c04-build/third-party/zlib/include); rebuilding
+-- Using ccache
+-- Using zlib $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Found ZLIB: $HOME/nhm-c04-build/third-party/zlib/include $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
+-- Using libbacktrace for enhanced stack traces
+-- Found LZ4 $HOME/nhm-c04-build/third-party/lz4/lib/liblz4.a $HOME/tos-node-health-c04/third-party/lz4/lib
+-- Checking for module 'benchmark'
+--   No package 'benchmark' found
+-- Google Benchmark not found via pkg-config - gbench-coro target disabled
+-- Found Readline: /usr/include /usr/lib/x86_64-linux-gnu/libreadline.so
+-- Using Sodium $HOME/nhm-c04-build/third-party/sodium/lib/libsodium.a
+-- Found OpenSSL: $HOME/nhm-c04-build/third-party/openssl/lib/libcrypto.a (found version "3.5.5") found components: Crypto 
+-- Configuring done
+-- Generating done
+-- Build files have been written to: $HOME/nhm-c04-build
+[1/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_civil_time.dir/internal/cctz/src/civil_time_detail.cc.o
+[2/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_kernel_timeout_internal.dir/internal/kernel_timeout.cc.o
+[3/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/barrier.cc.o
+[4/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/table_properties_collector.cc.o
+[5/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cord.dir/cord.cc.o
+[6/895] Creating directories for 'libbacktrace_external'
+[7/895] No download step for 'libbacktrace_external'
+[8/895] No update step for 'libbacktrace_external'
+[9/895] No patch step for 'libbacktrace_external'
+[10/895] Build blst
++ cc -O2 -fno-builtin -fPIC -Wall -Wextra -Werror -D__ADX__ -c $HOME/tos-node-health-c04/third-party/blst/src/server.c
++ cc -O2 -fno-builtin -fPIC -Wall -Wextra -Werror -D__ADX__ -c $HOME/tos-node-health-c04/third-party/blst/build/assembly.S
++ ar rc libblst.a assembly.o server.o
++ ranlib libblst.a
+[11/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/transaction_log_impl.cc.o
+[12/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/table_cache.cc.o
+[13/895] Build zlib
+Building static library libz.a version 1.3.1 with /usr/bin/clang-21.
+Checking for size_t... Yes.
+Checking for off64_t... Yes.
+Checking for fseeko... Yes.
+Checking for strerror... Yes.
+Checking for unistd.h... Yes.
+Checking for stdarg.h... Yes.
+Checking whether to use vs[n]printf() or s[n]printf()... using vs[n]printf().
+Checking for vsnprintf() in stdio.h... Yes.
+Checking for return value of vsnprintf()... Yes.
+Checking for attribute(visibility) support... Yes.
+cd contrib/minizip && { make clean ; cd ../.. ; }
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/zlib/src/contrib/minizip'
+/bin/rm -f *.o *~ minizip miniunz test.*
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/zlib/src/contrib/minizip'
+rm -f *.o *.lo *~ \
+   example minigzip examplesh minigzipsh \
+   example64 minigzip64 \
+   infcover \
+   libz.* foo.gz so_locations \
+   _match.s maketree contrib/infback9/*.o
+rm -rf objs
+rm -f *.gcda *.gcno *.gcov
+rm -f contrib/infback9/*.gcda contrib/infback9/*.gcno contrib/infback9/*.gcov
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN -I. -c -o example.o test/example.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o adler32.o adler32.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o crc32.o crc32.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o deflate.o deflate.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o infback.o infback.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o inffast.o inffast.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o inflate.o inflate.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o inftrees.o inftrees.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o trees.o trees.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o zutil.o zutil.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o compress.o compress.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o uncompr.o uncompr.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o gzclose.o gzclose.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o gzlib.o gzlib.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o gzread.o gzread.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -c -o gzwrite.o gzwrite.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN -I. -c -o minigzip.o test/minigzip.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN -I. -D_FILE_OFFSET_BITS=64 -c -o example64.o test/example.c
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN -I. -D_FILE_OFFSET_BITS=64 -c -o minigzip64.o test/minigzip.c
+/usr/bin/llvm-ar-21 rc libz.a adler32.o crc32.o deflate.o infback.o inffast.o inflate.o inftrees.o trees.o zutil.o compress.o uncompr.o gzclose.o gzlib.o gzread.o gzwrite.o 
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -o example example.o -L. libz.a
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -o minigzip minigzip.o -L. libz.a
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -o example64 example64.o -L. libz.a
+/usr/bin/clang-21 -fPIC -D_LARGEFILE64_SOURCE=1 -DHAVE_HIDDEN  -o minigzip64 minigzip64.o -L. libz.a
+rm -f $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
+cp libz.a $HOME/nhm-c04-build/third-party/zlib/lib
+chmod 644 $HOME/nhm-c04-build/third-party/zlib/lib/libz.a
+rm -f $HOME/nhm-c04-build/third-party/zlib/share/man/man3/zlib.3
+cp zlib.3 $HOME/nhm-c04-build/third-party/zlib/share/man/man3
+chmod 644 $HOME/nhm-c04-build/third-party/zlib/share/man/man3/zlib.3
+rm -f $HOME/nhm-c04-build/third-party/zlib/lib/pkgconfig/zlib.pc
+cp zlib.pc $HOME/nhm-c04-build/third-party/zlib/lib/pkgconfig
+chmod 644 $HOME/nhm-c04-build/third-party/zlib/lib/pkgconfig/zlib.pc
+rm -f $HOME/nhm-c04-build/third-party/zlib/include/zlib.h $HOME/nhm-c04-build/third-party/zlib/include/zconf.h
+cp zlib.h zconf.h $HOME/nhm-c04-build/third-party/zlib/include
+chmod 644 $HOME/nhm-c04-build/third-party/zlib/include/zlib.h $HOME/nhm-c04-build/third-party/zlib/include/zconf.h
+[14/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/cache_entry_roles.cc.o
+[15/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_follower.cc.o
+[16/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/cache_key.cc.o
+[17/895] Build lz4
+Patching LZ4 CMakeLists.txt
+-- Updated LZ4 cmake_minimum_required to 3.5
+-- The C compiler identification is GNU 15.2.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Performing Test CFLAG_Wall
+-- Performing Test CFLAG_Wall - Success
+-- Performing Test CFLAG_Wextra
+-- Performing Test CFLAG_Wextra - Success
+-- Performing Test CFLAG_Wundef
+-- Performing Test CFLAG_Wundef - Success
+-- Performing Test CFLAG_Wcast_qual
+-- Performing Test CFLAG_Wcast_qual - Success
+-- Performing Test CFLAG_Wcast_align
+-- Performing Test CFLAG_Wcast_align - Success
+-- Performing Test CFLAG_Wshadow
+-- Performing Test CFLAG_Wshadow - Success
+-- Performing Test CFLAG_Wswitch_enum
+-- Performing Test CFLAG_Wswitch_enum - Success
+-- Performing Test CFLAG_Wdeclaration_after_statement
+-- Performing Test CFLAG_Wdeclaration_after_statement - Success
+-- Performing Test CFLAG_Wstrict_prototypes
+-- Performing Test CFLAG_Wstrict_prototypes - Success
+-- Performing Test CFLAG_Wpointer_arith
+-- Performing Test CFLAG_Wpointer_arith - Success
+-- Performing Test CFLAG_W4
+-- Performing Test CFLAG_W4 - Failed
+-- Configuring done
+-- Generating done
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG
+
+
+-- Build files have been written to: $HOME/nhm-c04-build/third-party/lz4/cmake
+[1/5] Building C object CMakeFiles/lz4_static.dir$HOME/nhm-c04-build/third-party/lz4/src/lib/lz4.c.o
+[2/5] Building C object CMakeFiles/lz4_static.dir$HOME/nhm-c04-build/third-party/lz4/src/lib/lz4hc.c.o
+[3/5] Building C object CMakeFiles/lz4_static.dir$HOME/nhm-c04-build/third-party/lz4/src/lib/xxhash.c.o
+[4/5] Building C object CMakeFiles/lz4_static.dir$HOME/nhm-c04-build/third-party/lz4/src/lib/lz4frame.c.o
+[5/5] Linking C static library $HOME/nhm-c04-build/third-party/lz4/lib/liblz4.a
+[18/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/cache.cc.o
+[19/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/cache_helpers.cc.o
+[20/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/cache_reservation_manager.cc.o
+[21/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/charged_cache.cc.o
+[22/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/clock_cache.cc.o
+[23/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/compressed_secondary_cache.cc.o
+[24/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/secondary_cache.cc.o
+[25/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/lru_cache.cc.o
+[26/895] Performing configure step for 'libbacktrace_external'
+checking build system type... x86_64-pc-linux-gnu
+checking host system type... x86_64-pc-linux-gnu
+checking target system type... x86_64-pc-linux-gnu
+checking for gcc... /usr/bin/clang-21
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... no
+checking for suffix of object files... o
+checking whether we are using the GNU C compiler... yes
+checking whether /usr/bin/clang-21 accepts -g... yes
+checking for /usr/bin/clang-21 option to accept ISO C89... none needed
+checking whether /usr/bin/clang-21 understands -c and -o together... yes
+checking how to run the C preprocessor... /usr/bin/clang-21 -E
+checking for grep that handles long lines and -e... /usr/bin/grep
+checking for egrep... /usr/bin/grep -E
+checking for ANSI C header files... yes
+checking for sys/types.h... yes
+checking for sys/stat.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for memory.h... yes
+checking for strings.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for unistd.h... yes
+checking minix/config.h usability... no
+checking minix/config.h presence... no
+checking for minix/config.h... no
+checking whether it is safe to define __EXTENSIONS__... yes
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether build environment is sane... yes
+checking for a thread-safe mkdir -p... /usr/bin/mkdir -p
+checking for gawk... gawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking whether to enable maintainer-specific portions of Makefiles... no
+checking for gcc... (cached) /usr/bin/clang-21
+checking whether we are using the GNU C compiler... (cached) yes
+checking whether /usr/bin/clang-21 accepts -g... (cached) yes
+checking for /usr/bin/clang-21 option to accept ISO C89... (cached) none needed
+checking whether /usr/bin/clang-21 understands -c and -o together... (cached) yes
+checking for ranlib... /usr/bin/llvm-ranlib-21
+checking for gawk... (cached) gawk
+checking for dwz... no
+checking how to print strings... printf
+checking for a sed that does not truncate output... /usr/bin/sed
+checking for fgrep... /usr/bin/grep -F
+checking for ld used by /usr/bin/clang-21... /usr/bin/ld
+checking if the linker (/usr/bin/ld) is GNU ld... yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/bin/nm -B
+checking the name lister (/usr/bin/nm -B) interface... BSD nm
+checking whether ln -s works... yes
+checking the maximum length of command line arguments... 1572864
+checking whether the shell understands some XSI constructs... yes
+checking whether the shell understands "+="... yes
+checking for /usr/bin/ld option to reload object files... -r
+checking for objdump... objdump
+checking how to recognize dependent libraries... pass_all
+checking for ar... /usr/bin/llvm-ar-21
+checking for strip... strip
+checking for ranlib... (cached) /usr/bin/llvm-ranlib-21
+checking command to parse /usr/bin/nm -B output from /usr/bin/clang-21 object... ok
+checking for dlfcn.h... yes
+checking for objdir... .libs
+checking if /usr/bin/clang-21 supports -fno-rtti -fno-exceptions... yes
+checking for /usr/bin/clang-21 option to produce PIC... -fPIC -DPIC
+checking if /usr/bin/clang-21 PIC flag -fPIC -DPIC works... yes
+checking if /usr/bin/clang-21 static flag -static works... yes
+checking if /usr/bin/clang-21 supports -c -o file.o... yes
+checking if /usr/bin/clang-21 supports -c -o file.o... (cached) yes
+checking whether the /usr/bin/clang-21 linker (/usr/bin/ld -m elf_x86_64) supports shared libraries... yes
+checking dynamic linker characteristics... GNU/Linux ld.so
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... yes
+checking whether to build shared libraries... no
+checking whether to build static libraries... yes
+checking for special C compiler options needed for large files... no
+checking for _FILE_OFFSET_BITS value needed for large files... no
+checking unwind.h usability... yes
+checking unwind.h presence... yes
+checking for unwind.h... yes
+checking for _Unwind_Backtrace... yes
+checking for -funwind-tables option... yes
+checking for -frandom-seed=string option... yes
+checking whether /usr/bin/clang-21 supports -W... yes
+checking whether /usr/bin/clang-21 supports -Wall... yes
+checking whether /usr/bin/clang-21 supports -Wwrite-strings... yes
+checking whether /usr/bin/clang-21 supports -Wstrict-prototypes... yes
+checking whether /usr/bin/clang-21 supports -Wmissing-prototypes... yes
+checking whether /usr/bin/clang-21 supports -Wold-style-definition... yes
+checking whether /usr/bin/clang-21 supports -Wmissing-format-attribute... yes
+checking whether /usr/bin/clang-21 supports -Wcast-qual... yes
+checking whether /usr/bin/clang-21 supports -Wattributes... yes
+checking whether /usr/bin/clang-21 supports -Wunknown-attributes... yes
+checking whether /usr/bin/clang-21 supports -Wpointer-arith... yes
+checking for _Unwind_GetIPInfo... yes
+checking __sync extensions... yes
+checking __atomic extensions... yes
+checking output filetype... elf64
+checking sys/mman.h usability... yes
+checking sys/mman.h presence... yes
+checking for sys/mman.h... yes
+checking for mmap... yes
+checking link.h usability... yes
+checking link.h presence... yes
+checking for link.h... yes
+checking sys/link.h usability... no
+checking sys/link.h presence... no
+checking for sys/link.h... no
+checking for dl_iterate_phdr... yes
+checking mach-o/dyld.h usability... no
+checking mach-o/dyld.h presence... no
+checking for mach-o/dyld.h... no
+checking sys/ldr.h usability... no
+checking sys/ldr.h presence... no
+checking for sys/ldr.h... no
+checking windows.h usability... no
+checking windows.h presence... no
+checking for windows.h... no
+checking for tlhelp32.h... no
+checking for fcntl... yes
+checking whether strnlen is declared... yes
+checking whether getpagesize is declared... yes
+checking for lstat... yes
+checking for readlink... yes
+checking for getexecname... no
+checking whether _pgmptr is declared... no
+checking for KERN_PROC... no
+checking for KERN_PROG_ARGS... no
+checking for clock_gettime... yes
+checking whether -pthread is supported... yes
+checking whether -gdwarf-5 is supported... yes
+checking for compress in -lz... yes
+checking whether --build-id is supported... yes
+checking whether --compress-debug-sections=zlib-gnu is supported... yes
+checking whether --compress-debug-sections=zlib-gabi is supported... yes
+checking for ZSTD_compress in -lzstd... no
+checking whether --compress-debug-sections=zstd is supported... no
+checking for objcopy... objcopy
+checking for readelf... readelf
+checking whether objcopy supports debuglink... yes
+checking for dsymutil... no
+checking for nm... /usr/bin/nm -B
+checking for xz... xz
+checking for comm... comm
+checking for lzma_auto_decoder in -llzma... yes
+checking whether tests can run... yes
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+config.status: creating Makefile
+config.status: creating backtrace-supported.h
+config.status: creating install-debuginfo-for-buildid.sh
+config.status: creating config.h
+config.status: executing libtool commands
+config.status: executing default commands
+[27/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/secondary_cache_adapter.cc.o
+[28/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/attribute_group_iterator_impl.cc.o
+[29/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_contents.cc.o
+[30/895] Performing build step for 'libbacktrace_external'
+make  all-am
+make[1]: Entering directory '$HOME/nhm-c04-build/libbacktrace/src/libbacktrace_external-build'
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=atomic.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o atomic.lo $HOME/tos-node-health-c04/third-party/libbacktrace/atomic.c
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=dwarf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o dwarf.lo $HOME/tos-node-health-c04/third-party/libbacktrace/dwarf.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=atomic.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/atomic.c  -fPIC -DPIC -o atomic.o
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=dwarf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/dwarf.c  -fPIC -DPIC -o dwarf.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=fileline.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o fileline.lo $HOME/tos-node-health-c04/third-party/libbacktrace/fileline.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=fileline.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/fileline.c  -fPIC -DPIC -o fileline.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=posix.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o posix.lo $HOME/tos-node-health-c04/third-party/libbacktrace/posix.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=posix.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/posix.c  -fPIC -DPIC -o posix.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=print.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o print.lo $HOME/tos-node-health-c04/third-party/libbacktrace/print.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=print.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/print.c  -fPIC -DPIC -o print.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=sort.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o sort.lo $HOME/tos-node-health-c04/third-party/libbacktrace/sort.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=sort.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/sort.c  -fPIC -DPIC -o sort.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=state.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o state.lo $HOME/tos-node-health-c04/third-party/libbacktrace/state.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=state.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/state.c  -fPIC -DPIC -o state.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=backtrace.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o backtrace.lo $HOME/tos-node-health-c04/third-party/libbacktrace/backtrace.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=backtrace.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/backtrace.c  -fPIC -DPIC -o backtrace.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=simple.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o simple.lo $HOME/tos-node-health-c04/third-party/libbacktrace/simple.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=simple.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/simple.c  -fPIC -DPIC -o simple.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=elf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o elf.lo $HOME/tos-node-health-c04/third-party/libbacktrace/elf.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=elf.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/elf.c  -fPIC -DPIC -o elf.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=mmapio.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o mmapio.lo $HOME/tos-node-health-c04/third-party/libbacktrace/mmapio.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=mmapio.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/mmapio.c  -fPIC -DPIC -o mmapio.o
+/bin/bash ./libtool  --tag=CC   --mode=compile /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace    -funwind-tables -frandom-seed=mmap.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2 -c -o mmap.lo $HOME/tos-node-health-c04/third-party/libbacktrace/mmap.c
+libtool: compile:  /usr/bin/clang-21 -DHAVE_CONFIG_H -I. -I$HOME/tos-node-health-c04/third-party/libbacktrace -funwind-tables -frandom-seed=mmap.lo -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith -g -O2 -c $HOME/tos-node-health-c04/third-party/libbacktrace/mmap.c  -fPIC -DPIC -o mmap.o
+/bin/bash ./libtool  --tag=CC   --mode=link /usr/bin/clang-21 -funwind-tables -frandom-seed=libbacktrace.la -W -Wall -Wwrite-strings -Wstrict-prototypes -Wmissing-prototypes -Wold-style-definition -Wmissing-format-attribute -Wcast-qual -Wno-attributes -Wno-unknown-attributes -Wpointer-arith  -g -O2   -o libbacktrace.la -rpath $HOME/nhm-c04-build/libbacktrace/lib atomic.lo dwarf.lo fileline.lo posix.lo print.lo sort.lo state.lo backtrace.lo simple.lo elf.lo mmapio.lo mmap.lo 
+libtool: link: /usr/bin/llvm-ar-21 --plugin /usr/lib/gcc/x86_64-linux-gnu/15/liblto_plugin.so cru .libs/libbacktrace.a  atomic.o dwarf.o fileline.o posix.o print.o sort.o state.o backtrace.o simple.o elf.o mmapio.o mmap.o
+libtool: link: /usr/bin/llvm-ranlib-21 .libs/libbacktrace.a
+libtool: link: ( cd ".libs" && rm -f "libbacktrace.la" && ln -s "../libbacktrace.la" "libbacktrace.la" )
+make[1]: Leaving directory '$HOME/nhm-c04-build/libbacktrace/src/libbacktrace_external-build'
+[31/895] Performing install step for 'libbacktrace_external'
+make[1]: Entering directory '$HOME/nhm-c04-build/libbacktrace/src/libbacktrace_external-build'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/libbacktrace/include'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/libbacktrace/lib'
+ /bin/bash ./libtool   --mode=install /usr/bin/install -c   libbacktrace.la '$HOME/nhm-c04-build/libbacktrace/lib'
+ /usr/bin/install -c -m 644 $HOME/tos-node-health-c04/third-party/libbacktrace/backtrace.h backtrace-supported.h '$HOME/nhm-c04-build/libbacktrace/include'
+libtool: install: /usr/bin/install -c .libs/libbacktrace.lai $HOME/nhm-c04-build/libbacktrace/lib/libbacktrace.la
+libtool: install: /usr/bin/install -c .libs/libbacktrace.a $HOME/nhm-c04-build/libbacktrace/lib/libbacktrace.a
+libtool: install: chmod 644 $HOME/nhm-c04-build/libbacktrace/lib/libbacktrace.a
+libtool: install: /usr/bin/llvm-ranlib-21 $HOME/nhm-c04-build/libbacktrace/lib/libbacktrace.a
+libtool: finish: PATH="/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.codex/packages/standalone/releases/0.159.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0JQ9YaR:$HOME/.codex/tmp/arg0/codex-arg0QZLP6G:$HOME/.codex/packages/standalone/releases/0.158.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0XjWZLk:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0Gi4tjE:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.local/bin:$HOME/.local/share/pnpm:/usr/local/go/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/v24.13.0/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:$HOME/.foundry/bin:/sbin" ldconfig -n $HOME/nhm-c04-build/libbacktrace/lib
+----------------------------------------------------------------------
+Libraries have been installed in:
+   $HOME/nhm-c04-build/libbacktrace/lib
+
+If you ever happen to want to link against installed libraries
+in a given directory, LIBDIR, you must either use libtool, and
+specify the full pathname of the library, or use the `-LLIBDIR'
+flag during linking and do at least one of the following:
+   - add LIBDIR to the `LD_LIBRARY_PATH' environment variable
+     during execution
+   - add LIBDIR to the `LD_RUN_PATH' environment variable
+     during linking
+   - use the `-Wl,-rpath -Wl,LIBDIR' linker flag
+   - have your system administrator add LIBDIR to `/etc/ld.so.conf'
+
+See any operating system documentation about shared libraries for
+more information, such as the ld(1) and ld.so(8) manual pages.
+----------------------------------------------------------------------
+make[1]: Leaving directory '$HOME/nhm-c04-build/libbacktrace/src/libbacktrace_external-build'
+[32/895] Completed 'libbacktrace_external'
+[33/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/sharded_cache.cc.o
+[34/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/cache/tiered_secondary_cache.cc.o
+[35/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_file_addition.cc.o
+[36/895] Building CXX object tddb/CMakeFiles/tddb_utils.dir/td/db/utils/CyclicBuffer.cpp.o
+[37/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/arena_wrapped_db_iter.cc.o
+[38/895] Build secp256k1
+libtoolize: putting auxiliary files in AC_CONFIG_AUX_DIR, 'build-aux'.
+libtoolize: copying file 'build-aux/ltmain.sh'
+libtoolize: putting macros in AC_CONFIG_MACRO_DIRS, 'build-aux/m4'.
+libtoolize: copying file 'build-aux/m4/libtool.m4'
+libtoolize: copying file 'build-aux/m4/ltoptions.m4'
+libtoolize: copying file 'build-aux/m4/ltsugar.m4'
+libtoolize: copying file 'build-aux/m4/ltversion.m4'
+libtoolize: copying file 'build-aux/m4/lt~obsolete.m4'
+configure.ac:39: installing 'build-aux/ar-lib'
+configure.ac:37: installing 'build-aux/compile'
+configure.ac:24: installing 'build-aux/config.guess'
+configure.ac:24: installing 'build-aux/config.sub'
+configure.ac:27: installing 'build-aux/install-sh'
+configure.ac:27: installing 'build-aux/missing'
+Makefile.am: installing 'build-aux/depcomp'
+parallel-tests: installing 'build-aux/test-driver'
+
+Build Options:
+  with external callbacks = no
+  with benchmarks         = no
+  with tests              = no
+  with ctime tests        = no
+  with coverage           = no
+  with examples           = no
+  module ecdh             = yes
+  module recovery         = yes
+  module extrakeys        = yes
+  module schnorrsig       = yes
+
+  asm                     = x86_64
+  ecmult window size      = 15
+  ecmult gen prec. bits   = 4
+
+  valgrind                = no
+  CC                      = /usr/bin/clang-21
+  CPPFLAGS                = 
+  SECP_CFLAGS             = -O2  -std=c89 -pedantic -Wno-long-long -Wnested-externs -Wshadow -Wstrict-prototypes -Wundef -Wno-overlength-strings -Wall -Wno-unused-function -Wextra -Wcast-align -Wconditional-uninitialized -Wreserved-identifier -fvisibility=hidden 
+  CFLAGS                  = -fPIC
+  LDFLAGS                 = 
+test -z "precompute_ecmult precompute_ecmult_gen" || rm -f precompute_ecmult precompute_ecmult_gen
+test -z "libsecp256k1.la" || rm -f libsecp256k1.la
+rm -f ./so_locations
+rm -rf .libs _libs
+rm -rf src/.libs src/_libs
+rm -rf src/asm/.libs src/asm/_libs
+test -z "libsecp256k1_precomputed.la " || rm -f libsecp256k1_precomputed.la 
+rm -f ./so_locations
+ rm -f
+rm -f *.o
+rm -f examples/*.o
+rm -f src/*.o
+rm -f src/*.lo
+rm -f src/asm/*.o
+rm -f src/asm/*.lo
+test -z "" || rm -f 
+test -z "" || rm -f 
+test -z "test-suite.log" || rm -f test-suite.log
+rm -f *.lo
+make  all-am
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/secp256k1/src'
+  CC       src/libsecp256k1_la-secp256k1.lo
+  CC       src/libsecp256k1_precomputed_la-precomputed_ecmult.lo
+In file included from src/secp256k1.c:812:
+src/modules/schnorrsig/main_impl.h:48:46: warning: initializer-string for character array is too long, array size is 13 but initializer has size 14 (including the null terminating character); did you mean to use the 'nonstring' attribute? [-Wunterminated-string-initialization]
+   48 | static const unsigned char bip340_algo[13] = "BIP0340/nonce";
+      |                                              ^~~~~~~~~~~~~~~
+1 warning generated.
+  CC       src/libsecp256k1_precomputed_la-precomputed_ecmult_gen.lo
+  CCLD     libsecp256k1_precomputed.la
+  CCLD     libsecp256k1.la
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/secp256k1/src'
+make  install-am
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/secp256k1/src'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/secp256k1/src'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/secp256k1/lib'
+ /bin/bash ./libtool   --mode=install /usr/bin/install -c   libsecp256k1.la '$HOME/nhm-c04-build/third-party/secp256k1/lib'
+libtool: install: /usr/bin/install -c .libs/libsecp256k1.lai $HOME/nhm-c04-build/third-party/secp256k1/lib/libsecp256k1.la
+libtool: install: /usr/bin/install -c .libs/libsecp256k1.a $HOME/nhm-c04-build/third-party/secp256k1/lib/libsecp256k1.a
+libtool: install: chmod 644 $HOME/nhm-c04-build/third-party/secp256k1/lib/libsecp256k1.a
+libtool: install: /usr/bin/llvm-ranlib-21 $HOME/nhm-c04-build/third-party/secp256k1/lib/libsecp256k1.a
+libtool: finish: PATH="/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.codex/packages/standalone/releases/0.159.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0JQ9YaR:$HOME/.codex/tmp/arg0/codex-arg0QZLP6G:$HOME/.codex/packages/standalone/releases/0.158.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0XjWZLk:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0Gi4tjE:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.local/bin:$HOME/.local/share/pnpm:/usr/local/go/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/v24.13.0/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:$HOME/.foundry/bin:/sbin" ldconfig -n $HOME/nhm-c04-build/third-party/secp256k1/lib
+----------------------------------------------------------------------
+Libraries have been installed in:
+   $HOME/nhm-c04-build/third-party/secp256k1/lib
+
+If you ever happen to want to link against installed libraries
+in a given directory, LIBDIR, you must either use libtool, and
+specify the full pathname of the library, or use the '-LLIBDIR'
+flag during linking and do at least one of the following:
+   - add LIBDIR to the 'LD_LIBRARY_PATH' environment variable
+     during execution
+   - add LIBDIR to the 'LD_RUN_PATH' environment variable
+     during linking
+   - use the '-Wl,-rpath -Wl,LIBDIR' linker flag
+   - have your system administrator add LIBDIR to '/etc/ld.so.conf'
+
+See any operating system documentation about shared libraries for
+more information, such as the ld(1) and ld.so(8) manual pages.
+----------------------------------------------------------------------
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/secp256k1/include'
+ /usr/bin/install -c -m 644 include/secp256k1.h include/secp256k1_preallocated.h include/secp256k1_ecdh.h include/secp256k1_recovery.h include/secp256k1_extrakeys.h include/secp256k1_schnorrsig.h '$HOME/nhm-c04-build/third-party/secp256k1/include'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/secp256k1/lib/pkgconfig'
+ /usr/bin/install -c -m 644 libsecp256k1.pc '$HOME/nhm-c04-build/third-party/secp256k1/lib/pkgconfig'
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/secp256k1/src'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/secp256k1/src'
+[39/895] Building CXX object tddb/CMakeFiles/tddb.dir/td/db/binlog/Binlog.cpp.o
+[40/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_fetcher.cc.o
+[41/895] Building CXX object tddb/CMakeFiles/tddb_utils.dir/td/db/utils/BlobView.cpp.o
+[42/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_file_garbage.cc.o
+[43/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_file_cache.cc.o
+[44/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_log_format.cc.o
+[45/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_file_meta.cc.o
+[46/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_log_sequential_reader.cc.o
+[47/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_file_builder.cc.o
+[48/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_file_reader.cc.o
+[49/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_garbage_meter.cc.o
+[50/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_source.cc.o
+[51/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/prefetch_buffer_collection.cc.o
+[52/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/coalescing_iterator.cc.o
+[53/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/blob/blob_log_writer.cc.o
+[54/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/builder.cc.o
+[55/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/c.cc.o
+[56/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_iterator.cc.o
+[57/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_picker.cc.o
+[58/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/column_family.cc.o
+[59/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction.cc.o
+[60/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_picker_fifo.cc.o
+[61/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_job.cc.o
+[62/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_picker_level.cc.o
+[63/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_state.cc.o
+[64/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_picker_universal.cc.o
+[65/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/sst_partitioner.cc.o
+[66/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_outputs.cc.o
+[67/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/subcompaction_state.cc.o
+[68/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/compaction/compaction_service_job.cc.o
+[69/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/convenience.cc.o
+[70/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_filesnapshot.cc.o
+[71/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_debug.cc.o
+[72/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/compacted_db_impl.cc.o
+[73/895] Build sodium
+checking build system type... x86_64-pc-linux-gnu
+checking host system type... x86_64-pc-linux-gnu
+checking target system type... x86_64-pc-linux-gnu
+checking for a BSD-compatible install... /usr/bin/install -c
+checking whether sleep supports fractional seconds... yes
+checking filesystem timestamp resolution... 0.01
+checking whether build environment is sane... yes
+checking for a race-free mkdir -p... /usr/bin/mkdir -p
+checking for gawk... gawk
+checking whether make sets $(MAKE)... yes
+checking whether make supports nested variables... yes
+checking xargs -n works... yes
+checking whether UID '1000' is supported by ustar format... yes
+checking whether GID '1000' is supported by ustar format... yes
+checking how to create a ustar tar archive... gnutar
+checking whether to enable maintainer-specific portions of Makefiles... no
+checking for gcc... /usr/bin/clang-21
+checking whether the C compiler works... yes
+checking for C compiler default output file name... a.out
+checking for suffix of executables... 
+checking whether we are cross compiling... no
+checking for suffix of object files... o
+checking whether the compiler supports GNU C... yes
+checking whether /usr/bin/clang-21 accepts -g... yes
+checking for /usr/bin/clang-21 option to enable C11 features... none needed
+checking whether /usr/bin/clang-21 understands -c and -o together... yes
+checking whether make supports the include directive... yes (GNU style)
+checking dependency style of /usr/bin/clang-21... gcc3
+checking dependency style of /usr/bin/clang-21... gcc3
+checking for stdio.h... yes
+checking for stdlib.h... yes
+checking for string.h... yes
+checking for inttypes.h... yes
+checking for stdint.h... yes
+checking for strings.h... yes
+checking for sys/stat.h... yes
+checking for sys/types.h... yes
+checking for unistd.h... yes
+checking for wchar.h... yes
+checking for minix/config.h... no
+checking whether it is safe to define __EXTENSIONS__... yes
+checking whether _XOPEN_SOURCE should be defined... no
+checking if we are using FilC... no
+checking for a sed that does not truncate output... /usr/bin/sed
+checking how to run the C preprocessor... /usr/bin/clang-21 -E
+checking for egrep -e... /usr/bin/grep -E
+checking whether /usr/bin/clang-21 is Clang... yes
+checking whether pthreads work with "-pthread" and "-lpthread"... yes
+checking whether Clang needs flag to prevent "argument unused" warning when linking with -pthread... no
+checking for joinable pthread attribute... PTHREAD_CREATE_JOINABLE
+checking whether more special flags are required for pthreads... no
+checking for PTHREAD_PRIO_INHERIT... yes
+checking for variable-length arrays... yes
+checking for __wasi__ defined... no
+checking whether C compiler accepts -Werror... yes
+checking whether to add -D_FORTIFY_SOURCE=3 to CPPFLAGS... yes
+checking whether C compiler accepts -fvisibility=hidden... yes
+checking whether C compiler accepts -fPIC... yes
+checking whether C compiler accepts -fPIE... yes
+checking whether the linker accepts -pie... yes
+checking whether C compiler accepts -fno-strict-aliasing... yes
+checking whether C compiler accepts -fno-strict-overflow... yes
+checking whether C compiler accepts -fstack-protector... yes
+checking whether the linker accepts -fstack-protector... yes
+checking whether C compiler accepts -fPIC -pthread -fvisibility=hidden -fPIC -fPIE -fno-strict-aliasing -fno-strict-overflow -fstack-protector -Wall... yes
+checking whether C compiler accepts -fPIC -pthread -fvisibility=hidden -fPIC -fPIE -fno-strict-aliasing -fno-strict-overflow -fstack-protector -Wno-deprecated-declarations... yes
+checking whether C compiler accepts -fPIC -pthread -fvisibility=hidden -fPIC -fPIE -fno-strict-aliasing -fno-strict-overflow -fstack-protector -Wno-deprecated-declarations -Wno-unknown-pragmas... yes
+checking for clang... yes
+checking whether C compiler accepts -fPIC -pthread -fvisibility=hidden -fPIC -fPIE -fno-strict-aliasing -fno-strict-overflow -fstack-protector -Wall -Wno-unknown-warning-option... yes
+checking whether C compiler accepts -fPIC -pthread -fvisibility=hidden -fPIC -fPIE -fno-strict-aliasing -fno-strict-overflow -fstack-protector -Wall -Wno-unknown-warning-option -Wextra... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith -Wredundant-decls... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith -Wredundant-decls -Wrestrict... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith -Wredundant-decls -Wrestrict -Wshorten-64-to-32... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith -Wredundant-decls -Wrestrict -Wshorten-64-to-32 -Wsometimes-uninitialized... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith -Wredundant-decls -Wrestrict -Wshorten-64-to-32 -Wsometimes-uninitialized -Wstrict-prototypes... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith -Wredundant-decls -Wrestrict -Wshorten-64-to-32 -Wsometimes-uninitialized -Wstrict-prototypes -Wswitch-enum... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith -Wredundant-decls -Wrestrict -Wshorten-64-to-32 -Wsometimes-uninitialized -Wstrict-prototypes -Wswitch-enum -Wvariable-decl... yes
+checking whether C compiler accepts  -Wextra -Warray-bounds -Wbad-function-cast -Wcast-qual -Wdiv-by-zero -Wduplicated-branches -Wduplicated-cond -Wfloat-equal -Wformat=2 -Wlogical-op -Wmaybe-uninitialized -Wmisleading-indentation -Wmissing-declarations -Wmissing-prototypes -Wnested-externs -Wno-type-limits -Wno-unknown-pragmas -Wnormalized=id -Wnull-dereference -Wold-style-declaration -Wpointer-arith -Wredundant-decls -Wrestrict -Wshorten-64-to-32 -Wsometimes-uninitialized -Wstrict-prototypes -Wswitch-enum -Wvariable-decl -Wwrite-strings... yes
+checking whether the linker accepts -Wl,-z,relro... yes
+checking whether the linker accepts -Wl,-z,now... yes
+checking whether the linker accepts -Wl,-z,noexecstack... yes
+checking whether segmentation violations can be caught... yes
+checking whether SIGABRT can be caught... yes
+checking for thread local storage (TLS) class... _Thread_local
+thread local storage is supported
+checking whether C compiler accepts -ftls-model=local-dynamic... yes
+checking how to print strings... printf
+checking for a sed that does not truncate output... (cached) /usr/bin/sed
+checking for grep that handles long lines and -e... /usr/bin/grep
+checking for egrep... /usr/bin/grep -E
+checking for fgrep... /usr/bin/grep -F
+checking for ld used by /usr/bin/clang-21... /usr/bin/ld
+checking if the linker (/usr/bin/ld) is GNU ld... yes
+checking for BSD- or MS-compatible name lister (nm)... /usr/bin/nm -B
+checking the name lister (/usr/bin/nm -B) interface... BSD nm
+checking whether ln -s works... yes
+checking the maximum length of command line arguments... 1572864
+checking how to convert x86_64-pc-linux-gnu file names to x86_64-pc-linux-gnu format... func_convert_file_noop
+checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
+checking for /usr/bin/ld option to reload object files... -r
+checking for file... file
+checking for objdump... objdump
+checking how to recognize dependent libraries... pass_all
+checking for dlltool... no
+checking how to associate runtime and link libraries... printf %s\n
+checking for ranlib... /usr/bin/llvm-ranlib-21
+checking for archiver @FILE support... @
+checking for strip... strip
+checking command to parse /usr/bin/nm -B output from /usr/bin/clang-21 object... ok
+checking for sysroot... no
+checking for a working dd... /usr/bin/dd
+checking how to truncate binary pipes... /usr/bin/dd bs=4096 count=1
+checking for mt... mt
+checking if mt is a manifest tool... no
+checking for dlfcn.h... yes
+checking for objdir... .libs
+checking if /usr/bin/clang-21 supports -fno-rtti -fno-exceptions... yes
+checking for /usr/bin/clang-21 option to produce PIC... -fPIC -DPIC
+checking if /usr/bin/clang-21 PIC flag -fPIC -DPIC works... yes
+checking if /usr/bin/clang-21 static flag -static works... no
+checking if /usr/bin/clang-21 supports -c -o file.o... yes
+checking if /usr/bin/clang-21 supports -c -o file.o... (cached) yes
+checking whether the /usr/bin/clang-21 linker (/usr/bin/ld -m elf_x86_64) supports shared libraries... yes
+checking dynamic linker characteristics... GNU/Linux ld.so
+checking how to hardcode library paths into programs... immediate
+checking whether stripping libraries is possible... yes
+checking if libtool supports shared libraries... yes
+checking whether to build shared libraries... no
+checking whether to build static libraries... yes
+checking if we are using CompCert... no
+checking for ar... /usr/bin/llvm-ar-21
+checking for ARM64 target... no
+checking whether C compiler accepts -mmmx... yes
+checking for MMX instructions set... yes
+checking whether C compiler accepts -mmmx... (cached) yes
+checking whether C compiler accepts -msse2... yes
+checking for SSE2 instructions set... yes
+checking whether C compiler accepts -msse2... (cached) yes
+checking whether C compiler accepts -msse3... yes
+checking for SSE3 instructions set... yes
+checking whether C compiler accepts -msse3... (cached) yes
+checking whether C compiler accepts -mssse3... yes
+checking for SSSE3 instructions set... yes
+checking whether C compiler accepts -mssse3... (cached) yes
+checking whether C compiler accepts -msse4.1... yes
+checking for SSE4.1 instructions set... yes
+checking whether C compiler accepts -msse4.1... (cached) yes
+checking whether C compiler accepts -mavx... yes
+checking for AVX instructions set... yes
+checking whether C compiler accepts -mavx... (cached) yes
+checking whether C compiler accepts -mavx2... yes
+checking for AVX2 instructions set... yes
+checking whether C compiler accepts -mavx2... (cached) yes
+checking if _mm256_broadcastsi128_si256 is correctly defined... yes
+checking whether C compiler accepts -mavx512f... yes
+checking for AVX512F instructions set... yes
+checking whether C compiler accepts -mavx512f... (cached) yes
+checking whether C compiler accepts -maes... yes
+checking whether C compiler accepts -mpclmul... yes
+checking for AESNI instructions set and PCLMULQDQ... yes
+checking whether C compiler accepts -maes... (cached) yes
+checking whether C compiler accepts -mpclmul... (cached) yes
+checking whether C compiler accepts -mrdrnd... yes
+checking for RDRAND... yes
+checking whether C compiler accepts -mrdrnd... (cached) yes
+checking for sys/mman.h... yes
+checking for sys/param.h... yes
+checking for sys/random.h... yes
+checking for intrin.h... no
+checking for sys/auxv.h... yes
+checking for CommonCrypto/CommonRandom.h... no
+checking for cet.h... yes
+checking for threads.h... yes
+checking if _xgetbv() is available... no
+checking for inline... inline
+checking whether byte ordering is bigendian... (cached) no
+checking whether __STDC_LIMIT_MACROS is required... no
+checking whether we can use inline asm code... yes
+no
+checking whether we can use x86_64 asm code... yes
+checking whether we can assemble AVX opcodes... yes
+checking for 128-bit arithmetic... yes
+checking for cpuid instruction... yes
+checking if the .private_extern asm directive is supported... no
+checking if the .hidden asm directive is supported... yes
+checking if weak symbols are supported... yes
+checking if atomic operations are supported... yes
+checking if C11 memory fences are supported... yes
+checking if gcc memory fences are supported... yes
+checking for size_t... yes
+checking for working alloca.h... yes
+checking for alloca... yes
+checking for arc4random... no
+checking for arc4random_buf... no
+checking for mmap... yes
+checking for mlock... yes
+checking for madvise... yes
+checking for mprotect... yes
+checking for raise... yes
+checking for sysconf... yes
+checking for getrandom with a standard API... yes
+checking for getrandom... yes
+checking for getentropy with a standard API... yes
+checking for getentropy... yes
+checking for getpid... yes
+checking for getauxval... yes
+checking for elf_aux_info... no
+checking for posix_memalign... yes
+checking for nanosleep... yes
+checking for clock_gettime... yes
+checking for memset_s... no
+checking for explicit_bzero... yes
+checking for memset_explicit... no
+checking for explicit_memset... no
+checking if gcc/ld supports -Wl,--output-def... not needed, shared libraries are disabled
+checking that generated files are newer than configure... done
+configure: creating ./config.status
+config.status: creating Makefile
+config.status: creating builds/Makefile
+config.status: creating contrib/Makefile
+config.status: creating dist-build/Makefile
+config.status: creating libsodium.pc
+config.status: creating libsodium-uninstalled.pc
+config.status: creating src/Makefile
+config.status: creating src/libsodium/Makefile
+config.status: creating src/libsodium/include/Makefile
+config.status: creating src/libsodium/include/sodium/version.h
+config.status: creating test/default/Makefile
+config.status: creating test/Makefile
+config.status: executing depfiles commands
+config.status: executing libtool commands
+Making clean in builds
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/builds'
+rm -rf .libs _libs
+rm -f *.lo
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/builds'
+Making clean in contrib
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/contrib'
+rm -rf .libs _libs
+rm -f *.lo
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/contrib'
+Making clean in dist-build
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/dist-build'
+rm -rf .libs _libs
+rm -f *.lo
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/dist-build'
+Making clean in src
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+Making clean in libsodium
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+Making clean in include
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium/include'
+rm -rf .libs _libs
+rm -f *.lo
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+rm -f  
+rm -f  libsodium.la
+rm -f ./so_locations
+rm -rf .libs _libs
+rm -rf crypto_aead/aegis128l/.libs crypto_aead/aegis128l/_libs
+rm -rf crypto_aead/aegis256/.libs crypto_aead/aegis256/_libs
+rm -rf crypto_aead/aes256gcm/.libs crypto_aead/aes256gcm/_libs
+rm -rf crypto_aead/aes256gcm/aesni/.libs crypto_aead/aes256gcm/aesni/_libs
+rm -rf crypto_aead/aes256gcm/armcrypto/.libs crypto_aead/aes256gcm/armcrypto/_libs
+rm -rf crypto_aead/chacha20poly1305/.libs crypto_aead/chacha20poly1305/_libs
+rm -rf crypto_aead/xchacha20poly1305/.libs crypto_aead/xchacha20poly1305/_libs
+rm -rf crypto_auth/.libs crypto_auth/_libs
+rm -rf crypto_auth/hmacsha256/.libs crypto_auth/hmacsha256/_libs
+rm -rf crypto_auth/hmacsha512/.libs crypto_auth/hmacsha512/_libs
+rm -rf crypto_auth/hmacsha512256/.libs crypto_auth/hmacsha512256/_libs
+rm -rf crypto_box/.libs crypto_box/_libs
+rm -rf crypto_box/curve25519xchacha20poly1305/.libs crypto_box/curve25519xchacha20poly1305/_libs
+rm -rf crypto_box/curve25519xsalsa20poly1305/.libs crypto_box/curve25519xsalsa20poly1305/_libs
+rm -rf crypto_core/ed25519/.libs crypto_core/ed25519/_libs
+rm -rf crypto_core/ed25519/ref10/.libs crypto_core/ed25519/ref10/_libs
+rm -rf crypto_core/hchacha20/.libs crypto_core/hchacha20/_libs
+rm -rf crypto_core/hsalsa20/.libs crypto_core/hsalsa20/_libs
+rm -rf crypto_core/hsalsa20/ref2/.libs crypto_core/hsalsa20/ref2/_libs
+rm -rf crypto_core/keccak1600/.libs crypto_core/keccak1600/_libs
+rm -rf crypto_core/keccak1600/ref/.libs crypto_core/keccak1600/ref/_libs
+rm -rf crypto_core/salsa/ref/.libs crypto_core/salsa/ref/_libs
+rm -rf crypto_core/softaes/.libs crypto_core/softaes/_libs
+rm -rf crypto_generichash/.libs crypto_generichash/_libs
+rm -rf crypto_generichash/blake2b/.libs crypto_generichash/blake2b/_libs
+rm -rf crypto_generichash/blake2b/ref/.libs crypto_generichash/blake2b/ref/_libs
+rm -rf crypto_hash/.libs crypto_hash/_libs
+rm -rf crypto_hash/sha256/.libs crypto_hash/sha256/_libs
+rm -rf crypto_hash/sha256/cp/.libs crypto_hash/sha256/cp/_libs
+rm -rf crypto_hash/sha512/.libs crypto_hash/sha512/_libs
+rm -rf crypto_hash/sha512/cp/.libs crypto_hash/sha512/cp/_libs
+rm -rf crypto_ipcrypt/.libs crypto_ipcrypt/_libs
+rm -rf crypto_kdf/.libs crypto_kdf/_libs
+rm -rf crypto_kdf/blake2b/.libs crypto_kdf/blake2b/_libs
+rm -rf crypto_kdf/hkdf/.libs crypto_kdf/hkdf/_libs
+rm -rf crypto_kx/.libs crypto_kx/_libs
+rm -rf crypto_onetimeauth/.libs crypto_onetimeauth/_libs
+rm -rf crypto_onetimeauth/poly1305/.libs crypto_onetimeauth/poly1305/_libs
+rm -rf crypto_onetimeauth/poly1305/donna/.libs crypto_onetimeauth/poly1305/donna/_libs
+rm -rf crypto_onetimeauth/poly1305/sse2/.libs crypto_onetimeauth/poly1305/sse2/_libs
+rm -rf crypto_pwhash/.libs crypto_pwhash/_libs
+rm -rf crypto_pwhash/argon2/.libs crypto_pwhash/argon2/_libs
+rm -rf crypto_pwhash/scryptsalsa208sha256/.libs crypto_pwhash/scryptsalsa208sha256/_libs
+rm -rf crypto_pwhash/scryptsalsa208sha256/nosse/.libs crypto_pwhash/scryptsalsa208sha256/nosse/_libs
+rm -rf crypto_pwhash/scryptsalsa208sha256/sse/.libs crypto_pwhash/scryptsalsa208sha256/sse/_libs
+rm -rf crypto_scalarmult/.libs crypto_scalarmult/_libs
+rm -rf crypto_scalarmult/curve25519/.libs crypto_scalarmult/curve25519/_libs
+rm -rf crypto_scalarmult/curve25519/ref10/.libs crypto_scalarmult/curve25519/ref10/_libs
+rm -rf crypto_scalarmult/curve25519/sandy2x/.libs crypto_scalarmult/curve25519/sandy2x/_libs
+rm -rf crypto_scalarmult/ed25519/ref10/.libs crypto_scalarmult/ed25519/ref10/_libs
+rm -rf crypto_scalarmult/ristretto255/ref10/.libs crypto_scalarmult/ristretto255/ref10/_libs
+rm -rf crypto_secretbox/.libs crypto_secretbox/_libs
+rm -rf crypto_secretbox/xchacha20poly1305/.libs crypto_secretbox/xchacha20poly1305/_libs
+rm -rf crypto_secretbox/xsalsa20poly1305/.libs crypto_secretbox/xsalsa20poly1305/_libs
+rm -rf crypto_secretstream/xchacha20poly1305/.libs crypto_secretstream/xchacha20poly1305/_libs
+rm -rf crypto_shorthash/.libs crypto_shorthash/_libs
+rm -rf crypto_shorthash/siphash24/.libs crypto_shorthash/siphash24/_libs
+rm -rf crypto_shorthash/siphash24/ref/.libs crypto_shorthash/siphash24/ref/_libs
+rm -rf crypto_sign/.libs crypto_sign/_libs
+rm -rf crypto_sign/ed25519/.libs crypto_sign/ed25519/_libs
+rm -rf crypto_sign/ed25519/ref10/.libs crypto_sign/ed25519/ref10/_libs
+rm -rf crypto_stream/.libs crypto_stream/_libs
+rm -rf crypto_stream/chacha20/.libs crypto_stream/chacha20/_libs
+rm -rf crypto_stream/chacha20/dolbeau/.libs crypto_stream/chacha20/dolbeau/_libs
+rm -rf crypto_stream/chacha20/ref/.libs crypto_stream/chacha20/ref/_libs
+rm -rf crypto_stream/salsa20/.libs crypto_stream/salsa20/_libs
+rm -rf crypto_stream/salsa20/ref/.libs crypto_stream/salsa20/ref/_libs
+rm -rf crypto_stream/salsa20/xmm6/.libs crypto_stream/salsa20/xmm6/_libs
+rm -rf crypto_stream/salsa20/xmm6int/.libs crypto_stream/salsa20/xmm6int/_libs
+rm -rf crypto_stream/salsa2012/.libs crypto_stream/salsa2012/_libs
+rm -rf crypto_stream/salsa2012/ref/.libs crypto_stream/salsa2012/ref/_libs
+rm -rf crypto_stream/salsa208/.libs crypto_stream/salsa208/_libs
+rm -rf crypto_stream/salsa208/ref/.libs crypto_stream/salsa208/ref/_libs
+rm -rf crypto_stream/xchacha20/.libs crypto_stream/xchacha20/_libs
+rm -rf crypto_stream/xsalsa20/.libs crypto_stream/xsalsa20/_libs
+rm -rf crypto_verify/.libs crypto_verify/_libs
+rm -rf crypto_xof/shake128/.libs crypto_xof/shake128/_libs
+rm -rf crypto_xof/shake128/ref/.libs crypto_xof/shake128/ref/_libs
+rm -rf crypto_xof/shake256/.libs crypto_xof/shake256/_libs
+rm -rf crypto_xof/shake256/ref/.libs crypto_xof/shake256/ref/_libs
+rm -rf crypto_xof/turboshake128/.libs crypto_xof/turboshake128/_libs
+rm -rf crypto_xof/turboshake128/ref/.libs crypto_xof/turboshake128/ref/_libs
+rm -rf crypto_xof/turboshake256/.libs crypto_xof/turboshake256/_libs
+rm -rf crypto_xof/turboshake256/ref/.libs crypto_xof/turboshake256/ref/_libs
+rm -rf randombytes/.libs randombytes/_libs
+rm -rf randombytes/internal/.libs randombytes/internal/_libs
+rm -rf randombytes/sysrandom/.libs randombytes/sysrandom/_libs
+rm -rf sodium/.libs sodium/_libs
+rm -f  libaesni.la libarmcrypto.la libsse2.la libssse3.la libsse41.la libavx2.la libavx512f.la librdrand.la
+rm -f ./so_locations
+rm -f *.o
+rm -f crypto_aead/aegis128l/*.o
+rm -f crypto_aead/aegis128l/*.lo
+rm -f crypto_aead/aegis256/*.o
+rm -f crypto_aead/aegis256/*.lo
+rm -f crypto_aead/aes256gcm/*.o
+rm -f crypto_aead/aes256gcm/*.lo
+rm -f crypto_aead/aes256gcm/aesni/*.o
+rm -f crypto_aead/aes256gcm/aesni/*.lo
+rm -f crypto_aead/aes256gcm/armcrypto/*.o
+rm -f crypto_aead/aes256gcm/armcrypto/*.lo
+rm -f crypto_aead/chacha20poly1305/*.o
+rm -f crypto_aead/chacha20poly1305/*.lo
+rm -f crypto_aead/xchacha20poly1305/*.o
+rm -f crypto_aead/xchacha20poly1305/*.lo
+rm -f crypto_auth/*.o
+rm -f crypto_auth/*.lo
+rm -f crypto_auth/hmacsha256/*.o
+rm -f crypto_auth/hmacsha256/*.lo
+rm -f crypto_auth/hmacsha512/*.o
+rm -f crypto_auth/hmacsha512/*.lo
+rm -f crypto_auth/hmacsha512256/*.o
+rm -f crypto_auth/hmacsha512256/*.lo
+rm -f crypto_box/*.o
+rm -f crypto_box/*.lo
+rm -f crypto_box/curve25519xchacha20poly1305/*.o
+rm -f crypto_box/curve25519xchacha20poly1305/*.lo
+rm -f crypto_box/curve25519xsalsa20poly1305/*.o
+rm -f crypto_box/curve25519xsalsa20poly1305/*.lo
+rm -f crypto_core/ed25519/*.o
+rm -f crypto_core/ed25519/*.lo
+rm -f crypto_core/ed25519/ref10/*.o
+rm -f crypto_core/ed25519/ref10/*.lo
+rm -f crypto_core/hchacha20/*.o
+rm -f crypto_core/hchacha20/*.lo
+rm -f crypto_core/hsalsa20/*.o
+rm -f crypto_core/hsalsa20/*.lo
+rm -f crypto_core/hsalsa20/ref2/*.o
+rm -f crypto_core/hsalsa20/ref2/*.lo
+rm -f crypto_core/keccak1600/*.o
+rm -f crypto_core/keccak1600/*.lo
+rm -f crypto_core/keccak1600/ref/*.o
+rm -f crypto_core/keccak1600/ref/*.lo
+rm -f crypto_core/salsa/ref/*.o
+rm -f crypto_core/salsa/ref/*.lo
+rm -f crypto_core/softaes/*.o
+rm -f crypto_core/softaes/*.lo
+rm -f crypto_generichash/*.o
+rm -f crypto_generichash/*.lo
+rm -f crypto_generichash/blake2b/*.o
+rm -f crypto_generichash/blake2b/*.lo
+rm -f crypto_generichash/blake2b/ref/*.o
+rm -f crypto_generichash/blake2b/ref/*.lo
+rm -f crypto_hash/*.o
+rm -f crypto_hash/*.lo
+rm -f crypto_hash/sha256/*.o
+rm -f crypto_hash/sha256/*.lo
+rm -f crypto_hash/sha256/cp/*.o
+rm -f crypto_hash/sha256/cp/*.lo
+rm -f crypto_hash/sha512/*.o
+rm -f crypto_hash/sha512/*.lo
+rm -f crypto_hash/sha512/cp/*.o
+rm -f crypto_hash/sha512/cp/*.lo
+rm -f crypto_ipcrypt/*.o
+rm -f crypto_ipcrypt/*.lo
+rm -f crypto_kdf/*.o
+rm -f crypto_kdf/*.lo
+rm -f crypto_kdf/blake2b/*.o
+rm -f crypto_kdf/blake2b/*.lo
+rm -f crypto_kdf/hkdf/*.o
+rm -f crypto_kdf/hkdf/*.lo
+rm -f crypto_kx/*.o
+rm -f crypto_kx/*.lo
+rm -f crypto_onetimeauth/*.o
+rm -f crypto_onetimeauth/*.lo
+rm -f crypto_onetimeauth/poly1305/*.o
+rm -f crypto_onetimeauth/poly1305/*.lo
+rm -f crypto_onetimeauth/poly1305/donna/*.o
+rm -f crypto_onetimeauth/poly1305/donna/*.lo
+rm -f crypto_onetimeauth/poly1305/sse2/*.o
+rm -f crypto_onetimeauth/poly1305/sse2/*.lo
+rm -f crypto_pwhash/*.o
+rm -f crypto_pwhash/*.lo
+rm -f crypto_pwhash/argon2/*.o
+rm -f crypto_pwhash/argon2/*.lo
+rm -f crypto_pwhash/scryptsalsa208sha256/*.o
+rm -f crypto_pwhash/scryptsalsa208sha256/*.lo
+rm -f crypto_pwhash/scryptsalsa208sha256/nosse/*.o
+rm -f crypto_pwhash/scryptsalsa208sha256/nosse/*.lo
+rm -f crypto_pwhash/scryptsalsa208sha256/sse/*.o
+rm -f crypto_pwhash/scryptsalsa208sha256/sse/*.lo
+rm -f crypto_scalarmult/*.o
+rm -f crypto_scalarmult/*.lo
+rm -f crypto_scalarmult/curve25519/*.o
+rm -f crypto_scalarmult/curve25519/*.lo
+rm -f crypto_scalarmult/curve25519/ref10/*.o
+rm -f crypto_scalarmult/curve25519/ref10/*.lo
+rm -f crypto_scalarmult/curve25519/sandy2x/*.o
+rm -f crypto_scalarmult/curve25519/sandy2x/*.lo
+rm -f crypto_scalarmult/ed25519/ref10/*.o
+rm -f crypto_scalarmult/ed25519/ref10/*.lo
+rm -f crypto_scalarmult/ristretto255/ref10/*.o
+rm -f crypto_scalarmult/ristretto255/ref10/*.lo
+rm -f crypto_secretbox/*.o
+rm -f crypto_secretbox/*.lo
+rm -f crypto_secretbox/xchacha20poly1305/*.o
+rm -f crypto_secretbox/xchacha20poly1305/*.lo
+rm -f crypto_secretbox/xsalsa20poly1305/*.o
+rm -f crypto_secretbox/xsalsa20poly1305/*.lo
+rm -f crypto_secretstream/xchacha20poly1305/*.o
+rm -f crypto_secretstream/xchacha20poly1305/*.lo
+rm -f crypto_shorthash/*.o
+rm -f crypto_shorthash/*.lo
+rm -f crypto_shorthash/siphash24/*.o
+rm -f crypto_shorthash/siphash24/*.lo
+rm -f crypto_shorthash/siphash24/ref/*.o
+rm -f crypto_shorthash/siphash24/ref/*.lo
+rm -f crypto_sign/*.o
+rm -f crypto_sign/*.lo
+rm -f crypto_sign/ed25519/*.o
+rm -f crypto_sign/ed25519/*.lo
+rm -f crypto_sign/ed25519/ref10/*.o
+rm -f crypto_sign/ed25519/ref10/*.lo
+rm -f crypto_stream/*.o
+rm -f crypto_stream/*.lo
+rm -f crypto_stream/chacha20/*.o
+rm -f crypto_stream/chacha20/*.lo
+rm -f crypto_stream/chacha20/dolbeau/*.o
+rm -f crypto_stream/chacha20/dolbeau/*.lo
+rm -f crypto_stream/chacha20/ref/*.o
+rm -f crypto_stream/chacha20/ref/*.lo
+rm -f crypto_stream/salsa20/*.o
+rm -f crypto_stream/salsa20/*.lo
+rm -f crypto_stream/salsa20/ref/*.o
+rm -f crypto_stream/salsa20/ref/*.lo
+rm -f crypto_stream/salsa20/xmm6/*.o
+rm -f crypto_stream/salsa20/xmm6/*.lo
+rm -f crypto_stream/salsa20/xmm6int/*.o
+rm -f crypto_stream/salsa20/xmm6int/*.lo
+rm -f crypto_stream/salsa2012/*.o
+rm -f crypto_stream/salsa2012/*.lo
+rm -f crypto_stream/salsa2012/ref/*.o
+rm -f crypto_stream/salsa2012/ref/*.lo
+rm -f crypto_stream/salsa208/*.o
+rm -f crypto_stream/salsa208/*.lo
+rm -f crypto_stream/salsa208/ref/*.o
+rm -f crypto_stream/salsa208/ref/*.lo
+rm -f crypto_stream/xchacha20/*.o
+rm -f crypto_stream/xchacha20/*.lo
+rm -f crypto_stream/xsalsa20/*.o
+rm -f crypto_stream/xsalsa20/*.lo
+rm -f crypto_verify/*.o
+rm -f crypto_verify/*.lo
+rm -f crypto_xof/shake128/*.o
+rm -f crypto_xof/shake128/*.lo
+rm -f crypto_xof/shake128/ref/*.o
+rm -f crypto_xof/shake128/ref/*.lo
+rm -f crypto_xof/shake256/*.o
+rm -f crypto_xof/shake256/*.lo
+rm -f crypto_xof/shake256/ref/*.o
+rm -f crypto_xof/shake256/ref/*.lo
+rm -f crypto_xof/turboshake128/*.o
+rm -f crypto_xof/turboshake128/*.lo
+rm -f crypto_xof/turboshake128/ref/*.o
+rm -f crypto_xof/turboshake128/ref/*.lo
+rm -f crypto_xof/turboshake256/*.o
+rm -f crypto_xof/turboshake256/*.lo
+rm -f crypto_xof/turboshake256/ref/*.o
+rm -f crypto_xof/turboshake256/ref/*.lo
+rm -f randombytes/*.o
+rm -f randombytes/*.lo
+rm -f randombytes/internal/*.o
+rm -f randombytes/internal/*.lo
+rm -f randombytes/sysrandom/*.o
+rm -f randombytes/sysrandom/*.lo
+rm -f sodium/*.o
+rm -f sodium/*.lo
+rm -f *.lo
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+rm -rf .libs _libs
+rm -f *.lo
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+Making clean in test
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+Making clean in default
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test/default'
+rm -f  aead_aegis128l aead_aegis256 aead_aes256gcm aead_aes256gcm2 aead_chacha20poly1305 aead_chacha20poly13052 aead_xchacha20poly1305 auth auth2 auth3 auth5 auth6 auth7 box box2 box7 box8 box_easy box_easy2 box_seal box_seed chacha20 codecs core_keccak1600 core1 core2 core3 core4 core5 core6 ed25519_convert generichash generichash2 generichash3 hash hash3 ipcrypt kdf keygen kx metamorphic misuse onetimeauth onetimeauth2 onetimeauth7 pwhash_argon2i pwhash_argon2id randombytes scalarmult scalarmult2 scalarmult5 scalarmult6 scalarmult7 scalarmult8 secretbox secretbox2 secretbox7 secretbox8 secretbox_easy secretbox_easy2 secretstream_xchacha20poly1305 shorthash sign sodium_core sodium_utils sodium_version stream stream2 stream3 stream4 verify1 xof_shake128 xof_shake256 xof_turboshake128 xof_turboshake256 sodium_utils2 sodium_utils3 core_ed25519 core_ristretto255 kdf_hkdf pwhash_scrypt pwhash_scrypt_ll scalarmult_ed25519 scalarmult_ristretto255 siphashx24 xchacha20
+test -z "" || rm -f  aead_aegis128l aead_aegis256 aead_aes256gcm aead_aes256gcm2 aead_chacha20poly1305 aead_chacha20poly13052 aead_xchacha20poly1305 auth auth2 auth3 auth5 auth6 auth7 box box2 box7 box8 box_easy box_easy2 box_seal box_seed chacha20 codecs core_keccak1600 core1 core2 core3 core4 core5 core6 ed25519_convert generichash generichash2 generichash3 hash hash3 ipcrypt kdf keygen kx metamorphic misuse onetimeauth onetimeauth2 onetimeauth7 pwhash_argon2i pwhash_argon2id randombytes scalarmult scalarmult2 scalarmult5 scalarmult6 scalarmult7 scalarmult8 secretbox secretbox2 secretbox7 secretbox8 secretbox_easy secretbox_easy2 secretstream_xchacha20poly1305 shorthash sign sodium_core sodium_utils sodium_version stream stream2 stream3 stream4 verify1 xof_shake128 xof_shake256 xof_turboshake128 xof_turboshake256 sodium_utils2 sodium_utils3 core_ed25519 core_ristretto255 kdf_hkdf pwhash_scrypt pwhash_scrypt_ll scalarmult_ed25519 scalarmult_ristretto255 siphashx24 xchacha20
+rm -rf .libs _libs
+rm -f *.o
+rm -f  aead_aegis128l.log aead_aegis256.log aead_aes256gcm.log aead_aes256gcm2.log aead_chacha20poly1305.log aead_chacha20poly13052.log aead_xchacha20poly1305.log auth.log auth2.log auth3.log auth5.log auth6.log auth7.log box.log box2.log box7.log box8.log box_easy.log box_easy2.log box_seal.log box_seed.log chacha20.log codecs.log core_keccak1600.log core1.log core2.log core3.log core4.log core5.log core6.log ed25519_convert.log generichash.log generichash2.log generichash3.log hash.log hash3.log ipcrypt.log kdf.log keygen.log kx.log metamorphic.log misuse.log onetimeauth.log onetimeauth2.log onetimeauth7.log pwhash_argon2i.log pwhash_argon2id.log randombytes.log scalarmult.log scalarmult2.log scalarmult5.log scalarmult6.log scalarmult7.log scalarmult8.log secretbox.log secretbox2.log secretbox7.log secretbox8.log secretbox_easy.log secretbox_easy2.log secretstream_xchacha20poly1305.log shorthash.log sign.log sodium_core.log sodium_utils.log sodium_version.log stream.log stream2.log stream3.log stream4.log verify1.log xof_shake128.log xof_shake256.log xof_turboshake128.log xof_turboshake256.log sodium_utils2.log sodium_utils3.log core_ed25519.log core_ristretto255.log kdf_hkdf.log pwhash_scrypt.log pwhash_scrypt_ll.log scalarmult_ed25519.log scalarmult_ristretto255.log siphashx24.log xchacha20.log
+rm -f  aead_aegis128l.trs aead_aegis256.trs aead_aes256gcm.trs aead_aes256gcm2.trs aead_chacha20poly1305.trs aead_chacha20poly13052.trs aead_xchacha20poly1305.trs auth.trs auth2.trs auth3.trs auth5.trs auth6.trs auth7.trs box.trs box2.trs box7.trs box8.trs box_easy.trs box_easy2.trs box_seal.trs box_seed.trs chacha20.trs codecs.trs core_keccak1600.trs core1.trs core2.trs core3.trs core4.trs core5.trs core6.trs ed25519_convert.trs generichash.trs generichash2.trs generichash3.trs hash.trs hash3.trs ipcrypt.trs kdf.trs keygen.trs kx.trs metamorphic.trs misuse.trs onetimeauth.trs onetimeauth2.trs onetimeauth7.trs pwhash_argon2i.trs pwhash_argon2id.trs randombytes.trs scalarmult.trs scalarmult2.trs scalarmult5.trs scalarmult6.trs scalarmult7.trs scalarmult8.trs secretbox.trs secretbox2.trs secretbox7.trs secretbox8.trs secretbox_easy.trs secretbox_easy2.trs secretstream_xchacha20poly1305.trs shorthash.trs sign.trs sodium_core.trs sodium_utils.trs sodium_version.trs stream.trs stream2.trs stream3.trs stream4.trs verify1.trs xof_shake128.trs xof_shake256.trs xof_turboshake128.trs xof_turboshake256.trs sodium_utils2.trs sodium_utils3.trs core_ed25519.trs core_ristretto255.trs kdf_hkdf.trs pwhash_scrypt.trs pwhash_scrypt_ll.trs scalarmult_ed25519.trs scalarmult_ristretto255.trs siphashx24.trs xchacha20.trs
+rm -f  test-suite.log
+rm -f *.lo
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+rm -rf .libs _libs
+rm -f *.lo
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src'
+rm -rf .libs _libs
+rm -f *.lo
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src'
+Making all in builds
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/builds'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/builds'
+Making all in contrib
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/contrib'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/contrib'
+Making all in dist-build
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/dist-build'
+make[1]: Nothing to be done for 'all'.
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/dist-build'
+Making all in src
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+Making all in libsodium
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+Making all in include
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Nothing to be done for 'all'.
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+  CC       crypto_shorthash/siphash24/libsodium_la-shorthash_siphashx24.lo
+  CC       crypto_shorthash/siphash24/ref/libsodium_la-shorthash_siphashx24_ref.lo
+  CC       crypto_sign/ed25519/ref10/libsodium_la-obsolete.lo
+  CC       crypto_aead/aegis128l/libaesni_la-aegis128l_aesni.lo
+  CC       crypto_aead/aegis256/libaesni_la-aegis256_aesni.lo
+  CC       crypto_ipcrypt/libaesni_la-ipcrypt_aesni.lo
+  CC       crypto_aead/aegis128l/libarmcrypto_la-aegis128l_armcrypto.lo
+  CC       crypto_aead/aegis256/libarmcrypto_la-aegis256_armcrypto.lo
+  CC       crypto_ipcrypt/libarmcrypto_la-ipcrypt_armcrypto.lo
+  CC       crypto_generichash/blake2b/ref/libssse3_la-blake2b-compress-ssse3.lo
+  CC       crypto_pwhash/argon2/libssse3_la-argon2-fill-block-ssse3.lo
+  CC       crypto_generichash/blake2b/ref/libsse41_la-blake2b-compress-sse41.lo
+  CC       crypto_generichash/blake2b/ref/libavx2_la-blake2b-compress-avx2.lo
+  CC       crypto_pwhash/argon2/libavx2_la-argon2-fill-block-avx2.lo
+  CC       crypto_stream/chacha20/dolbeau/libavx2_la-chacha20_dolbeau-avx2.lo
+  CC       crypto_pwhash/argon2/libavx512f_la-argon2-fill-block-avx512f.lo
+  CC       crypto_aead/aegis128l/libsodium_la-aead_aegis128l.lo
+  CC       crypto_aead/aegis128l/libsodium_la-aegis128l_soft.lo
+  CC       crypto_aead/aegis256/libsodium_la-aead_aegis256.lo
+  CC       crypto_aead/aegis256/libsodium_la-aegis256_soft.lo
+  CC       crypto_aead/aes256gcm/libsodium_la-aead_aes256gcm.lo
+  CC       crypto_aead/chacha20poly1305/libsodium_la-aead_chacha20poly1305.lo
+  CC       crypto_aead/xchacha20poly1305/libsodium_la-aead_xchacha20poly1305.lo
+  CC       crypto_auth/libsodium_la-crypto_auth.lo
+  CC       crypto_auth/hmacsha256/libsodium_la-auth_hmacsha256.lo
+  CC       crypto_auth/hmacsha512/libsodium_la-auth_hmacsha512.lo
+  CC       crypto_auth/hmacsha512256/libsodium_la-auth_hmacsha512256.lo
+  CC       crypto_box/libsodium_la-crypto_box.lo
+  CC       crypto_box/libsodium_la-crypto_box_easy.lo
+  CC       crypto_box/libsodium_la-crypto_box_seal.lo
+  CC       crypto_box/curve25519xsalsa20poly1305/libsodium_la-box_curve25519xsalsa20poly1305.lo
+  CC       crypto_core/ed25519/ref10/libsodium_la-ed25519_ref10.lo
+  CC       crypto_core/hchacha20/libsodium_la-core_hchacha20.lo
+  CC       crypto_core/hsalsa20/ref2/libsodium_la-core_hsalsa20_ref2.lo
+  CC       crypto_core/hsalsa20/libsodium_la-core_hsalsa20.lo
+  CC       crypto_core/keccak1600/libsodium_la-keccak1600.lo
+  CC       crypto_core/keccak1600/ref/libsodium_la-keccak1600_ref.lo
+  CC       crypto_core/salsa/ref/libsodium_la-core_salsa_ref.lo
+  CC       crypto_core/softaes/libsodium_la-softaes.lo
+  CC       crypto_generichash/libsodium_la-crypto_generichash.lo
+  CC       crypto_generichash/blake2b/libsodium_la-generichash_blake2.lo
+  CC       crypto_generichash/blake2b/ref/libsodium_la-blake2b-compress-ref.lo
+  CC       crypto_generichash/blake2b/ref/libsodium_la-blake2b-ref.lo
+  CC       crypto_generichash/blake2b/ref/libsodium_la-generichash_blake2b.lo
+  CC       crypto_hash/libsodium_la-crypto_hash.lo
+  CC       crypto_hash/sha256/libsodium_la-hash_sha256.lo
+  CC       crypto_hash/sha256/cp/libsodium_la-hash_sha256_cp.lo
+  CC       crypto_hash/sha512/libsodium_la-hash_sha512.lo
+  CC       crypto_hash/sha512/cp/libsodium_la-hash_sha512_cp.lo
+  CC       crypto_ipcrypt/libsodium_la-crypto_ipcrypt.lo
+  CC       crypto_ipcrypt/libsodium_la-ipcrypt_soft.lo
+  CC       crypto_kdf/blake2b/libsodium_la-kdf_blake2b.lo
+  CC       crypto_kdf/libsodium_la-crypto_kdf.lo
+  CC       crypto_kdf/hkdf/libsodium_la-kdf_hkdf_sha256.lo
+  CC       crypto_kdf/hkdf/libsodium_la-kdf_hkdf_sha512.lo
+  CC       crypto_kx/libsodium_la-crypto_kx.lo
+  CC       crypto_onetimeauth/libsodium_la-crypto_onetimeauth.lo
+  CC       crypto_onetimeauth/poly1305/libsodium_la-onetimeauth_poly1305.lo
+  CC       crypto_onetimeauth/poly1305/donna/libsodium_la-poly1305_donna.lo
+  CC       crypto_pwhash/argon2/libsodium_la-argon2-core.lo
+  CC       crypto_pwhash/argon2/libsodium_la-argon2-encoding.lo
+  CC       crypto_pwhash/argon2/libsodium_la-argon2-fill-block-ref.lo
+  CC       crypto_pwhash/argon2/libsodium_la-argon2.lo
+  CC       crypto_pwhash/argon2/libsodium_la-blake2b-long.lo
+  CC       crypto_pwhash/argon2/libsodium_la-pwhash_argon2i.lo
+  CC       crypto_pwhash/argon2/libsodium_la-pwhash_argon2id.lo
+  CC       crypto_pwhash/libsodium_la-crypto_pwhash.lo
+  CC       crypto_scalarmult/libsodium_la-crypto_scalarmult.lo
+  CC       crypto_scalarmult/curve25519/ref10/libsodium_la-x25519_ref10.lo
+  CC       crypto_scalarmult/curve25519/libsodium_la-scalarmult_curve25519.lo
+  CC       crypto_secretbox/libsodium_la-crypto_secretbox.lo
+  CC       crypto_secretbox/libsodium_la-crypto_secretbox_easy.lo
+  CC       crypto_secretbox/xsalsa20poly1305/libsodium_la-secretbox_xsalsa20poly1305.lo
+  CC       crypto_secretstream/xchacha20poly1305/libsodium_la-secretstream_xchacha20poly1305.lo
+  CC       crypto_shorthash/libsodium_la-crypto_shorthash.lo
+  CC       crypto_shorthash/siphash24/libsodium_la-shorthash_siphash24.lo
+  CC       crypto_shorthash/siphash24/ref/libsodium_la-shorthash_siphash24_ref.lo
+  CC       crypto_sign/libsodium_la-crypto_sign.lo
+  CC       crypto_sign/ed25519/libsodium_la-sign_ed25519.lo
+  CC       crypto_sign/ed25519/ref10/libsodium_la-keypair.lo
+  CC       crypto_sign/ed25519/ref10/libsodium_la-open.lo
+  CC       crypto_sign/ed25519/ref10/libsodium_la-sign.lo
+  CC       crypto_stream/chacha20/libsodium_la-stream_chacha20.lo
+  CC       crypto_stream/chacha20/ref/libsodium_la-chacha20_ref.lo
+  CC       crypto_stream/libsodium_la-crypto_stream.lo
+  CC       crypto_stream/salsa20/libsodium_la-stream_salsa20.lo
+  CC       crypto_stream/xsalsa20/libsodium_la-stream_xsalsa20.lo
+  CC       crypto_verify/libsodium_la-verify.lo
+  CC       crypto_xof/shake128/libsodium_la-xof_shake128.lo
+  CC       crypto_xof/shake128/ref/libsodium_la-shake128_ref.lo
+  CC       crypto_xof/shake256/libsodium_la-xof_shake256.lo
+  CC       crypto_xof/shake256/ref/libsodium_la-shake256_ref.lo
+  CC       crypto_xof/turboshake128/libsodium_la-xof_turboshake128.lo
+  CC       crypto_xof/turboshake128/ref/libsodium_la-turboshake128_ref.lo
+  CC       crypto_xof/turboshake256/libsodium_la-xof_turboshake256.lo
+  CC       crypto_xof/turboshake256/ref/libsodium_la-turboshake256_ref.lo
+  CC       randombytes/libsodium_la-randombytes.lo
+  CC       sodium/libsodium_la-codecs.lo
+  CC       sodium/libsodium_la-core.lo
+  CC       sodium/libsodium_la-runtime.lo
+  CC       sodium/libsodium_la-utils.lo
+  CC       sodium/libsodium_la-version.lo
+  CPPAS    crypto_stream/salsa20/xmm6/libsodium_la-salsa20_xmm6-asm.lo
+  CC       crypto_stream/salsa20/xmm6/libsodium_la-salsa20_xmm6.lo
+  CC       crypto_scalarmult/curve25519/sandy2x/libsodium_la-curve25519_sandy2x.lo
+  CC       crypto_scalarmult/curve25519/sandy2x/libsodium_la-fe51_invert.lo
+  CC       crypto_scalarmult/curve25519/sandy2x/libsodium_la-fe_frombytes_sandy2x.lo
+  CPPAS    crypto_scalarmult/curve25519/sandy2x/libsodium_la-sandy2x.lo
+  CC       crypto_box/curve25519xchacha20poly1305/libsodium_la-box_curve25519xchacha20poly1305.lo
+  CC       crypto_box/curve25519xchacha20poly1305/libsodium_la-box_seal_curve25519xchacha20poly1305.lo
+  CC       crypto_core/ed25519/libsodium_la-core_ed25519.lo
+  CC       crypto_core/ed25519/libsodium_la-core_ristretto255.lo
+  CC       crypto_pwhash/scryptsalsa208sha256/libsodium_la-crypto_scrypt-common.lo
+  CC       crypto_pwhash/scryptsalsa208sha256/libsodium_la-scrypt_platform.lo
+  CC       crypto_pwhash/scryptsalsa208sha256/libsodium_la-pbkdf2-sha256.lo
+  CC       crypto_pwhash/scryptsalsa208sha256/libsodium_la-pwhash_scryptsalsa208sha256.lo
+  CC       crypto_pwhash/scryptsalsa208sha256/nosse/libsodium_la-pwhash_scryptsalsa208sha256_nosse.lo
+  CC       crypto_scalarmult/ed25519/ref10/libsodium_la-scalarmult_ed25519_ref10.lo
+  CC       crypto_scalarmult/ristretto255/ref10/libsodium_la-scalarmult_ristretto255_ref10.lo
+  CC       crypto_secretbox/xchacha20poly1305/libsodium_la-secretbox_xchacha20poly1305.lo
+  CC       crypto_stream/salsa2012/ref/libsodium_la-stream_salsa2012_ref.lo
+  CC       crypto_stream/salsa2012/libsodium_la-stream_salsa2012.lo
+  CC       crypto_stream/salsa208/ref/libsodium_la-stream_salsa208_ref.lo
+  CC       crypto_stream/salsa208/libsodium_la-stream_salsa208.lo
+  CC       crypto_stream/xchacha20/libsodium_la-stream_xchacha20.lo
+  CC       randombytes/sysrandom/libsodium_la-randombytes_sysrandom.lo
+  CC       crypto_aead/aes256gcm/aesni/libaesni_la-aead_aes256gcm_aesni.lo
+  CC       crypto_aead/aes256gcm/armcrypto/libarmcrypto_la-aead_aes256gcm_armcrypto.lo
+  CC       crypto_onetimeauth/poly1305/sse2/libsse2_la-poly1305_sse2.lo
+  CC       crypto_pwhash/scryptsalsa208sha256/sse/libsse2_la-pwhash_scryptsalsa208sha256_sse.lo
+  CC       crypto_stream/chacha20/dolbeau/libssse3_la-chacha20_dolbeau-ssse3.lo
+  CCLD     libsse41.la
+libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
+  CC       crypto_stream/salsa20/xmm6int/libavx2_la-salsa20_xmm6int-avx2.lo
+  CCLD     libavx512f.la
+libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
+  CC       randombytes/internal/librdrand_la-randombytes_internal_random.lo
+  CCLD     libaesni.la
+libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
+  CCLD     libarmcrypto.la
+  CCLD     libsse2.la
+libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
+libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
+  CCLD     libssse3.la
+  CCLD     libavx2.la
+libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
+libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
+  CCLD     librdrand.la
+libtool: warning: '-version-info/-version-number' is ignored for convenience libraries
+  CCLD     libsodium.la
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+make[2]: Nothing to be done for 'all-am'.
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+Making all in test
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+Making all in default
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test/default'
+make[2]: Nothing to be done for 'all'.
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[2]: Nothing to be done for 'all-am'.
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src'
+make[1]: Nothing to be done for 'all-am'.
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src'
+Making install in builds
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/builds'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/builds'
+make[2]: Nothing to be done for 'install-exec-am'.
+make[2]: Nothing to be done for 'install-data-am'.
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/builds'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/builds'
+Making install in contrib
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/contrib'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/contrib'
+make[2]: Nothing to be done for 'install-exec-am'.
+make[2]: Nothing to be done for 'install-data-am'.
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/contrib'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/contrib'
+Making install in dist-build
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/dist-build'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/dist-build'
+make[2]: Nothing to be done for 'install-exec-am'.
+make[2]: Nothing to be done for 'install-data-am'.
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/dist-build'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/dist-build'
+Making install in src
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+Making install in libsodium
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+Making install in include
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium/include'
+make[4]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium/include'
+make[4]: Nothing to be done for 'install-exec-am'.
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/sodium/include'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/sodium/include/sodium'
+ /usr/bin/install -c -m 644  sodium/core.h sodium/crypto_aead_aes256gcm.h sodium/crypto_aead_aegis128l.h sodium/crypto_aead_aegis256.h sodium/crypto_aead_chacha20poly1305.h sodium/crypto_aead_xchacha20poly1305.h sodium/crypto_auth.h sodium/crypto_auth_hmacsha256.h sodium/crypto_auth_hmacsha512.h sodium/crypto_auth_hmacsha512256.h sodium/crypto_box.h sodium/crypto_box_curve25519xchacha20poly1305.h sodium/crypto_box_curve25519xsalsa20poly1305.h sodium/crypto_core_ed25519.h sodium/crypto_core_ristretto255.h sodium/crypto_core_hchacha20.h sodium/crypto_core_hsalsa20.h sodium/crypto_core_keccak1600.h sodium/crypto_core_salsa20.h sodium/crypto_core_salsa2012.h sodium/crypto_core_salsa208.h sodium/crypto_generichash.h sodium/crypto_generichash_blake2b.h sodium/crypto_hash.h sodium/crypto_hash_sha256.h sodium/crypto_hash_sha512.h sodium/crypto_ipcrypt.h sodium/crypto_kdf.h sodium/crypto_kdf_hkdf_sha256.h sodium/crypto_kdf_hkdf_sha512.h sodium/crypto_kdf_blake2b.h sodium/crypto_kx.h sodium/crypto_onetimeauth.h sodium/crypto_onetimeauth_poly1305.h sodium/crypto_pwhash.h sodium/crypto_pwhash_argon2i.h sodium/crypto_pwhash_argon2id.h sodium/crypto_pwhash_scryptsalsa208sha256.h sodium/crypto_scalarmult.h sodium/crypto_scalarmult_curve25519.h '$HOME/nhm-c04-build/third-party/sodium/include/sodium'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/sodium/include/sodium'
+ /usr/bin/install -c -m 644  sodium/crypto_scalarmult_ed25519.h sodium/crypto_scalarmult_ristretto255.h sodium/crypto_secretbox.h sodium/crypto_secretbox_xchacha20poly1305.h sodium/crypto_secretbox_xsalsa20poly1305.h sodium/crypto_secretstream_xchacha20poly1305.h sodium/crypto_shorthash.h sodium/crypto_shorthash_siphash24.h sodium/crypto_sign.h sodium/crypto_sign_ed25519.h sodium/crypto_sign_edwards25519sha512batch.h sodium/crypto_stream.h sodium/crypto_stream_chacha20.h sodium/crypto_stream_salsa20.h sodium/crypto_stream_salsa2012.h sodium/crypto_stream_salsa208.h sodium/crypto_stream_xchacha20.h sodium/crypto_stream_xsalsa20.h sodium/crypto_verify_16.h sodium/crypto_verify_32.h sodium/crypto_verify_64.h sodium/crypto_xof_shake128.h sodium/crypto_xof_shake256.h sodium/crypto_xof_turboshake128.h sodium/crypto_xof_turboshake256.h sodium/export.h sodium/randombytes.h sodium/randombytes_internal_random.h sodium/randombytes_sysrandom.h sodium/runtime.h sodium/utils.h '$HOME/nhm-c04-build/third-party/sodium/include/sodium'
+ /usr/bin/install -c -m 644  sodium.h '$HOME/nhm-c04-build/third-party/sodium/include/.'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/sodium/include'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/sodium/include/sodium'
+ /usr/bin/install -c -m 644  sodium/version.h '$HOME/nhm-c04-build/third-party/sodium/include/sodium'
+make[4]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium/include'
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+make[4]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/sodium/lib'
+ /bin/bash ../../libtool   --mode=install /usr/bin/install -c   libsodium.la '$HOME/nhm-c04-build/third-party/sodium/lib'
+libtool: install: /usr/bin/install -c .libs/libsodium.lai $HOME/nhm-c04-build/third-party/sodium/lib/libsodium.la
+libtool: install: /usr/bin/install -c .libs/libsodium.a $HOME/nhm-c04-build/third-party/sodium/lib/libsodium.a
+libtool: install: chmod 644 $HOME/nhm-c04-build/third-party/sodium/lib/libsodium.a
+libtool: install: /usr/bin/llvm-ranlib-21 $HOME/nhm-c04-build/third-party/sodium/lib/libsodium.a
+libtool: finish: PATH="/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.codex/packages/standalone/releases/0.159.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0JQ9YaR:$HOME/.codex/tmp/arg0/codex-arg0QZLP6G:$HOME/.codex/packages/standalone/releases/0.158.0-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0XjWZLk:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:$HOME/.codex/tmp/arg0/codex-arg0Gi4tjE:$HOME/.codex/packages/standalone/releases/0.157.1-x86_64-unknown-linux-musl/codex-path:/usr/local/go/bin:$HOME/.local/bin:$HOME/bin:$HOME/.local/bin:$HOME/.local/share/pnpm:/usr/local/go/bin:$HOME/.local/bin:$HOME/.nvm/versions/node/v24.13.0/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:$HOME/.foundry/bin:/sbin" ldconfig -n $HOME/nhm-c04-build/third-party/sodium/lib
+----------------------------------------------------------------------
+Libraries have been installed in:
+   $HOME/nhm-c04-build/third-party/sodium/lib
+
+If you ever happen to want to link against installed libraries
+in a given directory, LIBDIR, you must either use libtool, and
+specify the full pathname of the library, or use the '-LLIBDIR'
+flag during linking and do at least one of the following:
+   - add LIBDIR to the 'LD_LIBRARY_PATH' environment variable
+     during execution
+   - add LIBDIR to the 'LD_RUN_PATH' environment variable
+     during linking
+   - use the '-Wl,-rpath -Wl,LIBDIR' linker flag
+   - have your system administrator add LIBDIR to '/etc/ld.so.conf'
+
+See any operating system documentation about shared libraries for
+more information, such as the ld(1) and ld.so(8) manual pages.
+----------------------------------------------------------------------
+make[4]: Nothing to be done for 'install-data-am'.
+make[4]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src/libsodium'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+make[3]: Nothing to be done for 'install-exec-am'.
+make[3]: Nothing to be done for 'install-data-am'.
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/src'
+Making install in test
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+Making install in default
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test/default'
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test/default'
+make[3]: Nothing to be done for 'install-exec-am'.
+make[3]: Nothing to be done for 'install-data-am'.
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test/default'
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test/default'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[3]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[3]: Nothing to be done for 'install-exec-am'.
+make[3]: Nothing to be done for 'install-data-am'.
+make[3]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src/test'
+make[1]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src'
+make[2]: Entering directory '$HOME/nhm-c04-build/third-party/sodium/src'
+make[2]: Nothing to be done for 'install-exec-am'.
+ /usr/bin/mkdir -p '$HOME/nhm-c04-build/third-party/sodium/lib/pkgconfig'
+ /usr/bin/install -c -m 644 libsodium.pc '$HOME/nhm-c04-build/third-party/sodium/lib/pkgconfig'
+make[2]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src'
+make[1]: Leaving directory '$HOME/nhm-c04-build/third-party/sodium/src'
+[74/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_write.cc.o
+[75/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_files.cc.o
+[76/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_info_dumper.cc.o
+[77/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_experimental.cc.o
+[78/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_readonly.cc.o
+[79/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_compaction_flush.cc.o
+[80/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/dbformat.cc.o
+[81/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_open.cc.o
+[82/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl.cc.o
+[83/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_impl/db_impl_secondary.cc.o
+[84/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/event_helpers.cc.o
+[85/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/db_iter.cc.o
+[86/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/error_handler.cc.o
+[87/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/file_indexer.cc.o
+[88/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/logs_with_prep_tracker.cc.o
+[89/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/flush_scheduler.cc.o
+[90/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/external_sst_file_ingestion_job.cc.o
+[91/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/malloc_stats.cc.o
+[92/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/experimental.cc.o
+[93/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/flush_job.cc.o
+[94/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/import_column_family_job.cc.o
+[95/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/forward_iterator.cc.o
+[96/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/manifest_ops.cc.o
+[97/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/log_reader.cc.o
+[98/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/merge_operator.cc.o
+[99/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/log_writer.cc.o
+[100/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/internal_stats.cc.o
+[101/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/multi_scan.cc.o
+[102/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/plain/plain_table_index.cc.o
+[103/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/output_validator.cc.o
+[104/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/periodic_task_scheduler.cc.o
+[105/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/memtable.cc.o
+[106/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/merge_helper.cc.o
+[107/895] Building CXX object third-party/abseil-cpp/absl/hash/CMakeFiles/absl_hash.dir/internal/hash.cc.o
+[108/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/memtable_list.cc.o
+[109/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/snapshot_impl.cc.o
+[110/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/range_del_aggregator.cc.o
+[111/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/range_tombstone_fragmenter.cc.o
+[112/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/seqno_to_time_mapping.cc.o
+[113/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/trim_history_scheduler.cc.o
+[114/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/wal_edit.cc.o
+[115/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/wide/wide_columns.cc.o
+[116/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/wide/wide_column_serialization.cc.o
+[117/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/wide/wide_columns_helper.cc.o
+[118/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/repair.cc.o
+[119/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/write_batch_base.cc.o
+[120/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/version_edit.cc.o
+[121/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/write_controller.cc.o
+[122/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/version_builder.cc.o
+[123/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/version_edit_handler.cc.o
+[124/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/wal_manager.cc.o
+[125/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/write_stall_stats.cc.o
+[126/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/write_thread.cc.o
+[127/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/env_chroot.cc.o
+[128/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/composite_env.cc.o
+[129/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db_stress_tool/db_stress_compression_manager.cc.o
+[130/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/write_batch.cc.o
+[131/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/fs_remap.cc.o
+[132/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/fs_on_demand.cc.o
+[133/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/env.cc.o
+[134/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/file_system_tracer.cc.o
+[135/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/unique_id_gen.cc.o
+[136/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/env_encryption.cc.o
+[137/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/file_system.cc.o
+[138/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/mock_env.cc.o
+[139/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/file_prefetch_buffer.cc.o
+[140/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/db/version_set.cc.o
+[141/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/line_file_reader.cc.o
+[142/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/filename.cc.o
+[143/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/read_write_util.cc.o
+[144/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/delete_scheduler.cc.o
+[145/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/file_util.cc.o
+[146/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/random_access_file_reader.cc.o
+[147/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/logging/log_buffer.cc.o
+[148/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/sequence_file_reader.cc.o
+[149/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/logging/event_logger.cc.o
+[150/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memory/arena.cc.o
+[151/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/logging/auto_roll_logger.cc.o
+[152/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memory/concurrent_arena.cc.o
+[153/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memory/memkind_kmem_allocator.cc.o
+[154/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/readahead_raf.cc.o
+[155/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memtable/alloc_tracker.cc.o
+[156/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/writable_file_writer.cc.o
+[157/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/file/sst_file_manager_impl.cc.o
+[158/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memory/jemalloc_nodump_allocator.cc.o
+[159/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memory/memory_allocator.cc.o
+[160/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/histogram.cc.o
+[161/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/histogram_windowing.cc.o
+[162/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memtable/hash_skiplist_rep.cc.o
+[163/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memtable/hash_linklist_rep.cc.o
+[164/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memtable/vectorrep.cc.o
+[165/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memtable/skiplistrep.cc.o
+[166/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/perf_level.cc.o
+[167/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memtable/wbwi_memtable.cc.o
+[168/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/iostats_context.cc.o
+[169/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/thread_status_impl.cc.o
+[170/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/instrumented_mutex.cc.o
+[171/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/perf_context.cc.o
+[172/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/memtable/write_buffer_manager.cc.o
+[173/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/in_memory_stats_history.cc.o
+[174/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/thread_status_updater.cc.o
+[175/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/thread_status_util.cc.o
+[176/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/thread_status_util_debug.cc.o
+[177/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/statistics.cc.o
+[178/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/options/offpeak_time_info.cc.o
+[179/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/options/configurable.cc.o
+[180/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/monitoring/persistent_stats_history.cc.o
+[181/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/port/stack_trace.cc.o
+[182/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/port/mmap.cc.o
+[183/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/options/customizable.cc.o
+[184/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/options/options.cc.o
+[185/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/options/cf_options.cc.o
+[186/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/options/db_options.cc.o
+[187/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/adaptive/adaptive_table_factory.cc.o
+[188/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/binary_search_index_reader.cc.o
+[189/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block.cc.o
+[190/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/options/options_parser.cc.o
+[191/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/options/options_helper.cc.o
+[192/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block_builder.cc.o
+[193/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/data_block_hash_index.cc.o
+[194/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block_prefix_index.cc.o
+[195/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block_based_table_iterator.cc.o
+[196/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block_cache.cc.o
+[197/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block_prefetcher.cc.o
+[198/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block_based_table_builder.cc.o
+[199/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/data_block_footer.cc.o
+[200/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block_based_table_factory.cc.o
+[201/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/filter_block_reader_common.cc.o
+[202/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/full_filter_block.cc.o
+[203/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/flush_block_policy.cc.o
+[204/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/hash_index_reader.cc.o
+[205/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/index_builder.cc.o
+[206/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/block_based_table_reader.cc.o
+[207/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/filter_policy.cc.o
+[208/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/index_reader_common.cc.o
+[209/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/parsed_full_filter_block.cc.o
+[210/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/partitioned_index_iterator.cc.o
+[211/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/partitioned_filter_block.cc.o
+[212/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/reader_common.cc.o
+[213/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/uncompression_dict_reader.cc.o
+[214/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_based/partitioned_index_reader.cc.o
+[215/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/block_fetcher.cc.o
+[216/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/cuckoo/cuckoo_table_factory.cc.o
+[217/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/cuckoo/cuckoo_table_builder.cc.o
+[218/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/iterator.cc.o
+[219/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/format.cc.o
+[220/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/get_context.cc.o
+[221/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/cuckoo/cuckoo_table_reader.cc.o
+[222/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/external_table.cc.o
+[223/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/compaction_merging_iterator.cc.o
+[224/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/plain/plain_table_bloom.cc.o
+[225/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/persistent_cache_helper.cc.o
+[226/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/merging_iterator.cc.o
+[227/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/meta_blocks.cc.o
+[228/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/plain/plain_table_factory.cc.o
+[229/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/plain/plain_table_builder.cc.o
+[230/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/plain/plain_table_key_coding.cc.o
+[231/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/unique_id.cc.o
+[232/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/table_factory.cc.o
+[233/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/plain/plain_table_reader.cc.o
+[234/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/two_level_iterator.cc.o
+[235/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/sst_file_dumper.cc.o
+[236/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/tools/block_cache_analyzer/block_cache_trace_analyzer.cc.o
+[237/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/table_properties.cc.o
+[238/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/test_util/sync_point.cc.o
+[239/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/tools/io_tracer_parser_tool.cc.o
+[240/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/sst_file_reader.cc.o
+[241/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/table/sst_file_writer.cc.o
+[242/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/tools/trace_analyzer_tool.cc.o
+[243/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/test_util/sync_point_impl.cc.o
+[244/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/tools/dump/db_dump_tool.cc.o
+[245/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/tools/ldb_tool.cc.o
+[246/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/test_util/transaction_test_util.cc.o
+[247/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/trace_replay/trace_record_result.cc.o
+[248/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/trace_replay/trace_record_handler.cc.o
+[249/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/async_file_reader.cc.o
+[250/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/test_util/testutil.cc.o
+[251/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/cleanable.cc.o
+[252/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/trace_replay/trace_record.cc.o
+[253/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/coding.cc.o
+[254/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/compaction_job_stats_impl.cc.o
+[255/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/trace_replay/block_cache_tracer.cc.o
+[256/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/trace_replay/io_tracer.cc.o
+[257/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/auto_tune_compressor.cc.o
+[258/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/tools/sst_dump_tool.cc.o
+[259/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/simple_mixed_compressor.cc.o
+[260/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/concurrent_task_limiter_impl.cc.o
+[261/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/compression_context_cache.cc.o
+[262/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/comparator.cc.o
+[263/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/trace_replay/trace_replay.cc.o
+[264/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/crc32c.cc.o
+[265/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/compression.cc.o
+[266/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/murmurhash.cc.o
+[267/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/data_structure.cc.o
+[268/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/ribbon_config.cc.o
+[269/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/hash.cc.o
+[270/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/random.cc.o
+[271/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/status.cc.o
+[272/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/stderr_logger.cc.o
+[273/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/string_util.cc.o
+[274/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/thread_local.cc.o
+[275/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/dynamic_bloom.cc.o
+[276/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/rate_limiter.cc.o
+[277/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/write_batch_util.cc.o
+[278/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/slice.cc.o
+[279/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/xxhash.cc.o
+[280/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/file_checksum_helper.cc.o
+[281/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/threadpool_imp.cc.o
+[282/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/util/udt_util.cc.o
+[283/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/agg_merge/agg_merge.cc.o
+[284/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/tools/ldb_cmd.cc.o
+[285/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/blob_db/blob_compaction_filter.cc.o
+[286/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/blob_db/blob_db.cc.o
+[287/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/blob_db/blob_db_impl_filesnapshot.cc.o
+[288/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/cache_dump_load.cc.o
+[289/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/blob_db/blob_dump_tool.cc.o
+[290/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/blob_db/blob_file.cc.o
+[291/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/cassandra/format.cc.o
+[292/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/blob_db/blob_db_impl.cc.o
+[293/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/cassandra/merge_operator.cc.o
+[294/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/compaction_filters/remove_emptyvalue_compactionfilter.cc.o
+[295/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/cassandra/cassandra_compaction_filter.cc.o
+[296/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/backup/backup_engine.cc.o
+[297/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/cache_dump_load_impl.cc.o
+[298/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/compaction_filters.cc.o
+[299/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/env_mirror.cc.o
+[300/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/counted_fs.cc.o
+[301/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/env_timed.cc.o
+[302/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/leveldb_options/leveldb_options.cc.o
+[303/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/checkpoint/checkpoint_impl.cc.o
+[304/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/fault_injection_secondary_cache.cc.o
+[305/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/fault_injection_env.cc.o
+[306/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/merge_operators/max.cc.o
+[307/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/merge_operators/bytesxor.cc.o
+[308/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/merge_operators/put.cc.o
+[309/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/merge_operators/sortlist.cc.o
+[310/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/merge_operators/uint64add.cc.o
+[311/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/debug.cc.o
+[312/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/fault_injection_fs.cc.o
+[313/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/merge_operators.cc.o
+[314/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/merge_operators/string_append/stringappend.cc.o
+[315/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/object_registry.cc.o
+[316/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/merge_operators/string_append/stringappend2.cc.o
+[317/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/memory/memory_util.cc.o
+[318/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/persistent_cache/persistent_cache_tier.cc.o
+[319/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/options/options_util.cc.o
+[320/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/option_change_migration/option_change_migration.cc.o
+[321/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/persistent_cache/volatile_tier_impl.cc.o
+[322/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/secondary_index/secondary_index_iterator.cc.o
+[323/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/persistent_cache/block_cache_tier_metadata.cc.o
+[324/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/persistent_cache/block_cache_tier_file.cc.o
+[325/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/persistent_cache/block_cache_tier.cc.o
+[326/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/secondary_index/simple_secondary_index.cc.o
+[327/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/simulator_cache/cache_simulator.cc.o
+[328/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/simulator_cache/sim_cache.cc.o
+[329/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/table_properties_collectors/compact_for_tiering_collector.cc.o
+[330/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/trace/replayer_impl.cc.o
+[331/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/table_properties_collectors/compact_on_deletion_collector.cc.o
+[332/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/point/point_lock_tracker.cc.o
+[333/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/lock_manager.cc.o
+[334/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/trace/file_trace_reader_writer.cc.o
+[335/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/range_tree_lock_tracker.cc.o
+[336/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/optimistic_transaction.cc.o
+[337/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/optimistic_transaction_db_impl.cc.o
+[338/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/snapshot_checker.cc.o
+[339/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/range_tree_lock_manager.cc.o
+[340/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/pessimistic_transaction.cc.o
+[341/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/point/point_lock_manager.cc.o
+[342/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/transaction_db_mutex_impl.cc.o
+[343/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/pessimistic_transaction_db.cc.o
+[344/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/types_util.cc.o
+[345/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/transaction_base.cc.o
+[346/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/transaction_util.cc.o
+[347/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/wal_filter.cc.o
+[348/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/concurrent_tree.cc.o
+[349/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/keyrange.cc.o
+[350/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/write_prepared_txn.cc.o
+[351/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/write_unprepared_txn_db.cc.o
+[352/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/write_unprepared_txn.cc.o
+[353/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/range_buffer.cc.o
+[354/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/treenode.cc.o
+[355/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/write_prepared_txn_db.cc.o
+[356/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/txnid_set.cc.o
+[357/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/standalone_port.cc.o
+[358/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/wfg.cc.o
+[359/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/util/dbt.cc.o
+[360/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/util/memarena.cc.o
+[361/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/lock_request.cc.o
+[362/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/locktree.cc.o
+[363/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/port/port_posix.cc.o
+[364/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/transactions/lock/range/range_tree/lib/locktree/manager.cc.o
+[365/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/ttl/db_ttl_impl.cc.o
+[366/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/__/__/build_version.cc.o
+[367/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_base.dir/internal/thread_identity.cc.o
+[368/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_base.dir/internal/unscaledcycleclock.cc.o
+[369/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/write_batch_with_index/write_batch_with_index.cc.o
+[370/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_base.dir/internal/spinlock.cc.o
+[371/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_raw_logging_internal.dir/internal/raw_logging.cc.o
+[372/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_base.dir/internal/sysinfo.cc.o
+[373/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_log_severity.dir/log_severity.cc.o
+[374/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_spinlock_wait.dir/internal/spinlock_wait.cc.o
+[375/895] Linking CXX static library third-party/abseil-cpp/absl/base/libabsl_log_severity.a
+[376/895] Linking CXX static library third-party/abseil-cpp/absl/base/libabsl_spinlock_wait.a
+[377/895] Linking CXX static library third-party/abseil-cpp/absl/base/libabsl_raw_logging_internal.a
+[378/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_tracing_internal.dir/internal/tracing.cc.o
+[379/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/utilities/write_batch_with_index/write_batch_with_index_internal.cc.o
+[380/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/env_posix.cc.o
+[381/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_malloc_internal.dir/internal/low_level_alloc.cc.o
+[382/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_base.dir/internal/cycleclock.cc.o
+[383/895] Linking CXX static library third-party/abseil-cpp/absl/base/libabsl_base.a
+[384/895] Linking CXX static library third-party/abseil-cpp/absl/base/libabsl_malloc_internal.a
+[385/895] Linking CXX static library third-party/abseil-cpp/absl/base/libabsl_tracing_internal.a
+[386/895] Building CXX object third-party/abseil-cpp/absl/base/CMakeFiles/absl_throw_delegate.dir/internal/throw_delegate.cc.o
+[387/895] Linking CXX static library third-party/abseil-cpp/absl/base/libabsl_throw_delegate.a
+[388/895] Building CXX object third-party/abseil-cpp/absl/crc/CMakeFiles/absl_crc_cpu_detect.dir/internal/cpu_detect.cc.o
+[389/895] Linking CXX static library third-party/abseil-cpp/absl/crc/libabsl_crc_cpu_detect.a
+[390/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/io_posix.cc.o
+[391/895] Building CXX object third-party/rocksdb/CMakeFiles/rocksdb.dir/env/fs_posix.cc.o
+[392/895] Linking CXX static library third-party/rocksdb/librocksdb.a
+[393/895] Building CXX object third-party/abseil-cpp/absl/crc/CMakeFiles/absl_crc_internal.dir/internal/crc_x86_arm_combined.cc.o
+[394/895] Building CXX object third-party/abseil-cpp/absl/crc/CMakeFiles/absl_crc_internal.dir/internal/crc.cc.o
+[395/895] Linking CXX static library third-party/abseil-cpp/absl/crc/libabsl_crc_internal.a
+[396/895] Building CXX object third-party/abseil-cpp/absl/container/CMakeFiles/absl_hashtablez_sampler.dir/internal/hashtablez_sampler.cc.o
+[397/895] Building CXX object third-party/abseil-cpp/absl/container/CMakeFiles/absl_hashtablez_sampler.dir/internal/hashtablez_sampler_force_weak_definition.cc.o
+[398/895] Building CXX object third-party/abseil-cpp/absl/crc/CMakeFiles/absl_crc32c.dir/crc32c.cc.o
+[399/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_stacktrace.dir/stacktrace.cc.o
+[400/895] Building CXX object third-party/abseil-cpp/absl/crc/CMakeFiles/absl_crc32c.dir/internal/crc_memcpy_fallback.cc.o
+[401/895] Building CXX object third-party/abseil-cpp/absl/crc/CMakeFiles/absl_crc32c.dir/internal/crc_memcpy_x86_arm_combined.cc.o
+[402/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_debugging_internal.dir/internal/address_is_readable.cc.o
+[403/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_debugging_internal.dir/internal/vdso_support.cc.o
+[404/895] Building CXX object third-party/abseil-cpp/absl/container/CMakeFiles/absl_raw_hash_set.dir/internal/raw_hash_set.cc.o
+[405/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_debugging_internal.dir/internal/elf_mem_image.cc.o
+[406/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_utf8_for_code_point.dir/internal/utf8_for_code_point.cc.o
+[407/895] Building CXX object third-party/abseil-cpp/absl/crc/CMakeFiles/absl_crc32c.dir/internal/crc_non_temporal_memcpy.cc.o
+[408/895] Linking CXX static library third-party/abseil-cpp/absl/debugging/libabsl_debugging_internal.a
+[409/895] Linking CXX static library third-party/abseil-cpp/absl/debugging/libabsl_utf8_for_code_point.a
+[410/895] Linking CXX static library third-party/abseil-cpp/absl/debugging/libabsl_stacktrace.a
+[411/895] Building CXX object third-party/abseil-cpp/absl/crc/CMakeFiles/absl_crc_cord_state.dir/internal/crc_cord_state.cc.o
+[412/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_demangle_rust.dir/internal/demangle_rust.cc.o
+[413/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_symbolize.dir/symbolize.cc.o
+[414/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_decode_rust_punycode.dir/internal/decode_rust_punycode.cc.o
+[415/895] Linking CXX static library third-party/abseil-cpp/absl/debugging/libabsl_decode_rust_punycode.a
+[416/895] Linking CXX static library third-party/abseil-cpp/absl/debugging/libabsl_demangle_rust.a
+[417/895] Building CXX object third-party/abseil-cpp/absl/profiling/CMakeFiles/absl_exponential_biased.dir/internal/exponential_biased.cc.o
+[418/895] Linking CXX static library third-party/abseil-cpp/absl/profiling/libabsl_exponential_biased.a
+[419/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_string_view.dir/string_view.cc.o
+[420/895] Building CXX object third-party/abseil-cpp/absl/debugging/CMakeFiles/absl_demangle_internal.dir/internal/demangle.cc.o
+[421/895] Linking CXX static library third-party/abseil-cpp/absl/debugging/libabsl_demangle_internal.a
+[422/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_string_view.a
+[423/895] Building CXX object third-party/abseil-cpp/absl/numeric/CMakeFiles/absl_int128.dir/int128.cc.o
+[424/895] Linking CXX static library third-party/abseil-cpp/absl/numeric/libabsl_int128.a
+[425/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/ascii.cc.o
+[426/895] Building CXX object third-party/abseil-cpp/absl/hash/CMakeFiles/absl_city.dir/internal/city.cc.o
+[427/895] Linking CXX static library third-party/abseil-cpp/absl/hash/libabsl_city.a
+[428/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/internal/damerau_levenshtein_distance.cc.o
+[429/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/charconv.cc.o
+[430/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/internal/charconv_parse.cc.o
+[431/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/internal/memutil.cc.o
+[432/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/internal/stringify_sink.cc.o
+[433/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/Rfc.cpp.o
+[434/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/internal/charconv_bigint.cc.o
+[435/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/escaping.cc.o
+[436/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings_internal.dir/internal/utf8.cc.o
+[437/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/match.cc.o
+[438/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/str_cat.cc.o
+[439/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/str_split.cc.o
+[440/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/str_replace.cc.o
+[441/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings_internal.dir/internal/ostringstream.cc.o
+[442/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings_internal.dir/internal/escaping.cc.o
+[443/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/numbers.cc.o
+[444/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_strings_internal.a
+[445/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_strings.dir/substitute.cc.o
+[446/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_strings.a
+[447/895] Linking CXX static library third-party/abseil-cpp/absl/hash/libabsl_hash.a
+[448/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_str_format_internal.dir/internal/str_format/extension.cc.o
+[449/895] Linking CXX static library third-party/abseil-cpp/absl/debugging/libabsl_symbolize.a
+[450/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_str_format_internal.dir/internal/str_format/output.cc.o
+[451/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_str_format_internal.dir/internal/str_format/arg.cc.o
+[452/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_str_format_internal.dir/internal/str_format/bind.cc.o
+[453/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_str_format_internal.dir/internal/str_format/parser.cc.o
+[454/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cord_internal.dir/internal/cord_internal.cc.o
+[455/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cord_internal.dir/internal/cord_rep_btree_navigator.cc.o
+[456/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_str_format_internal.dir/internal/str_format/float_conversion.cc.o
+[457/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_str_format_internal.a
+[458/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cord_internal.dir/internal/cord_rep_btree_reader.cc.o
+[459/895] Linking CXX static library third-party/abseil-cpp/absl/crc/libabsl_crc32c.a
+[460/895] Linking CXX static library third-party/abseil-cpp/absl/crc/libabsl_crc_cord_state.a
+[461/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cordz_functions.dir/internal/cordz_functions.cc.o
+[462/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_cordz_functions.a
+[463/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cord_internal.dir/internal/cord_rep_crc.cc.o
+[464/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cord_internal.dir/internal/cord_rep_consume.cc.o
+[465/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cord_internal.dir/internal/cord_rep_btree.cc.o
+[466/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_cord_internal.a
+[467/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_graphcycles_internal.dir/internal/graphcycles.cc.o
+[468/895] Linking CXX static library third-party/abseil-cpp/absl/synchronization/libabsl_graphcycles_internal.a
+[469/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cordz_handle.dir/internal/cordz_handle.cc.o
+[470/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cord.dir/cord_analysis.cc.o
+[471/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/blocking_counter.cc.o
+[472/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/internal/futex_waiter.cc.o
+[473/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/internal/win32_waiter.cc.o
+[474/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/internal/create_thread_identity.cc.o
+[475/895] Building CXX object third-party/abseil-cpp/absl/strings/CMakeFiles/absl_cordz_info.dir/internal/cordz_info.cc.o
+[476/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/internal/per_thread_sem.cc.o
+[477/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/internal/pthread_waiter.cc.o
+[478/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/internal/sem_waiter.cc.o
+[479/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/internal/stdcpp_waiter.cc.o
+[480/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/internal/waiter_base.cc.o
+[481/895] Linking CXX static library third-party/abseil-cpp/absl/time/libabsl_civil_time.a
+[482/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/notification.cc.o
+[483/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time.dir/clock.cc.o
+[484/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time.dir/civil_time.cc.o
+[485/895] Building CXX object third-party/abseil-cpp/absl/synchronization/CMakeFiles/absl_synchronization.dir/mutex.cc.o
+[486/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/time_zone_fixed.cc.o
+[487/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time.dir/duration.cc.o
+[488/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time.dir/format.cc.o
+[489/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time.dir/time.cc.o
+[490/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/time_zone_posix.cc.o
+[491/895] Building CXX object third-party/crc32c/CMakeFiles/crc32c_arm64.dir/src/crc32c_arm64.cc.o
+[492/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/time_zone_if.cc.o
+[493/895] Building CXX object third-party/crc32c/CMakeFiles/crc32c_sse42.dir/src/crc32c_sse42.cc.o
+[494/895] Building CXX object third-party/crc32c/CMakeFiles/crc32c.dir/src/crc32c_portable.cc.o
+[495/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/zone_info_source.cc.o
+[496/895] Building C object third-party/tl-parser/CMakeFiles/tl-parser.dir/crc32.c.o
+[497/895] Building C object third-party/tl-parser/CMakeFiles/tl-parser.dir/tlc.c.o
+[498/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/time_zone_format.cc.o
+[499/895] Building CXX object third-party/crc32c/CMakeFiles/crc32c.dir/src/crc32c.cc.o
+[500/895] Linking CXX static library third-party/crc32c/libcrc32c.a
+[501/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/time_zone_impl.cc.o
+[502/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/time_zone_lookup.cc.o
+[503/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/time_zone_info.cc.o
+[504/895] Building CXX object third-party/abseil-cpp/absl/time/CMakeFiles/absl_time_zone.dir/internal/cctz/src/time_zone_libc.cc.o
+[505/895] Linking CXX static library third-party/abseil-cpp/absl/time/libabsl_time_zone.a
+[506/895] Building C object third-party/tl-parser/CMakeFiles/tl-parser.dir/tl-parser.c.o
+[507/895] Linking CXX static library third-party/abseil-cpp/absl/time/libabsl_time.a
+[508/895] Linking C executable third-party/tl-parser/tl-parser
+[509/895] Linking CXX static library third-party/abseil-cpp/absl/synchronization/libabsl_kernel_timeout_internal.a
+[510/895] Linking CXX static library third-party/abseil-cpp/absl/synchronization/libabsl_synchronization.a
+[511/895] Linking CXX static library third-party/abseil-cpp/absl/container/libabsl_hashtablez_sampler.a
+[512/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_cordz_handle.a
+[513/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/Clocks.cpp.o
+[514/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_cordz_info.a
+[515/895] Linking CXX static library third-party/abseil-cpp/absl/strings/libabsl_cord.a
+[516/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/FileFd.cpp.o
+[517/895] Linking CXX static library third-party/abseil-cpp/absl/container/libabsl_raw_hash_set.a
+[518/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/IPAddress.cpp.o
+[519/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/MemoryMapping.cpp.o
+[520/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/sleep.cpp.o
+[521/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/PollFlags.cpp.o
+[522/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/rlimit.cpp.o
+[523/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/path.cpp.o
+[524/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/ServerSocketFd.cpp.o
+[525/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/signals.cpp.o
+[526/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/stacktrace.cpp.o
+[527/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/wstring_convert.cpp.o
+[528/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/thread_local.cpp.o
+[529/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/EventFdBsd.cpp.o
+[530/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/SocketFd.cpp.o
+[531/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/EventFdWindows.cpp.o
+[532/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/Iocp.cpp.o
+[533/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/KQueue.cpp.o
+[534/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/user.cpp.o
+[535/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/StdStreams.cpp.o
+[536/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/Poll.cpp.o
+[537/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/Select.cpp.o
+[538/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/Stat.cpp.o
+[539/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/WineventPoll.cpp.o
+[540/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/uname.cpp.o
+[541/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/Epoll.cpp.o
+[542/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/EventFdLinux.cpp.o
+[543/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/NativeFd.cpp.o
+[544/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/ThreadIdGuard.cpp.o
+[545/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/UdpSocketFd.cpp.o
+[546/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/port/detail/ThreadPthread.cpp.o
+[547/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/base64.cpp.o
+[548/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/check.cpp.o
+[549/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/buffer.cpp.o
+[550/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/BigNum.cpp.o
+[551/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/BufferedUdp.cpp.o
+[552/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/FileLog.cpp.o
+[553/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/FlatHashTable.cpp.o
+[554/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/find_boundary.cpp.o
+[555/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/filesystem.cpp.o
+[556/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/crypto.cpp.o
+[557/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/GzipByteFlow.cpp.o
+[558/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/Gzip.cpp.o
+[559/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/HttpUrl.cpp.o
+[560/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/MpmcQueue.cpp.o
+[561/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/PathView.cpp.o
+[562/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/JsonBuilder.cpp.o
+[563/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/Hints.cpp.o
+[564/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/OptionParser.cpp.o
+[565/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/misc.cpp.o
+[566/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/SharedSlice.cpp.o
+[567/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/Slice.cpp.o
+[568/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/StackAllocator.cpp.o
+[569/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/Random.cpp.o
+[570/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/Status.cpp.o
+[571/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/StringBuilder.cpp.o
+[572/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/TsFileLog.cpp.o
+[573/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/Time.cpp.o
+[574/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/tl_parsers.cpp.o
+[575/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/logging.cpp.o
+[576/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/unicode.cpp.o
+[577/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/Timer.cpp.o
+[578/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/translit.cpp.o
+[579/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/utf8.cpp.o
+[580/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/lz4.cpp.o
+[581/895] Building CXX object tdactor/CMakeFiles/tdactor.dir/td/actor/MultiPromise.cpp.o
+[582/895] Building CXX object tdutils/CMakeFiles/tdutils.dir/td/utils/tests.cpp.o
+[583/895] Linking CXX static library tdutils/libtdutils.a
+[584/895] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/FramedPipe.cpp.o
+[585/895] Building CXX object tdactor/CMakeFiles/tdactor.dir/td/actor/core/ActorExecutor.cpp.o
+[586/895] Building CXX object tdactor/CMakeFiles/tdactor.dir/td/actor/core/IoWorker.cpp.o
+[587/895] Building CXX object tdactor/CMakeFiles/tdactor.dir/td/actor/core/CpuWorker.cpp.o
+[588/895] Building CXX object tdactor/CMakeFiles/tdactor.dir/td/actor/core/ActorTypeStat.cpp.o
+[589/895] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/FdListener.cpp.o
+[590/895] Building CXX object tdactor/CMakeFiles/tdactor.dir/td/actor/core/Scheduler.cpp.o
+[591/895] Building CXX object tddb/CMakeFiles/tddb_utils.dir/td/db/utils/ChainBuffer.cpp.o
+[592/895] Building CXX object tddb/CMakeFiles/tddb_utils.dir/td/db/utils/FileSyncState.cpp.o
+[593/895] Building CXX object tdactor/CMakeFiles/tdactor.dir/td/actor/ActorStats.cpp.o
+[594/895] Building CXX object tddb/CMakeFiles/tddb_utils.dir/td/db/utils/StreamInterface.cpp.o
+[595/895] Linking CXX static library tdactor/libtdactor.a
+[596/895] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/TcpListener.cpp.o
+[597/895] Building CXX object tdtl/CMakeFiles/tdtl.dir/td/tl/tl_core.cpp.o
+[598/895] Building CXX object tddb/CMakeFiles/tddb.dir/td/db/binlog/BinlogReaderHelper.cpp.o
+[599/895] Building CXX object tddb/CMakeFiles/tddb_utils.dir/td/db/utils/FileToStreamActor.cpp.o
+[600/895] Building CXX object tdtl/CMakeFiles/tdtl.dir/td/tl/tl_file_outputer.cpp.o
+[601/895] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/Pipe.cpp.o
+[602/895] Building CXX object tdtl/CMakeFiles/tdtl.dir/td/tl/tl_file_utils.cpp.o
+[603/895] Building CXX object tddb/CMakeFiles/tddb_utils.dir/td/db/utils/StreamToFileActor.cpp.o
+[604/895] Linking CXX static library tddb/libtddb_utils.a
+[605/895] Building CXX object tdtl/CMakeFiles/tdtl.dir/td/tl/tl_outputer.cpp.o
+[606/895] Building CXX object tdtl/CMakeFiles/tdtl.dir/td/tl/tl_string_outputer.cpp.o
+[607/895] Building CXX object tddb/CMakeFiles/tddb.dir/td/db/MemoryKeyValue.cpp.o
+[608/895] Building CXX object tdtl/CMakeFiles/tdtl.dir/td/tl/tl_generate.cpp.o
+[609/895] Building CXX object tdtl/CMakeFiles/tdtl.dir/td/tl/tl_writer.cpp.o
+[610/895] Building CXX object tdtl/CMakeFiles/tdtl.dir/td/tl/tl_config.cpp.o
+[611/895] Linking CXX static library tdtl/libtdtl.a
+[612/895] Building CXX object tl/generate/CMakeFiles/generate_common.dir/generate_common.cpp.o
+[613/895] Building CXX object tdnet/CMakeFiles/tdnet.dir/td/net/UdpServer.cpp.o
+[614/895] Linking CXX static library tdnet/libtdnet.a
+[615/895] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_writer_hpp.cpp.o
+[616/895] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_writer_td.cpp.o
+[617/895] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_writer_h.cpp.o
+[618/895] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_writer_jni_h.cpp.o
+[619/895] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_writer_cpp.cpp.o
+[620/895] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_json_converter.cpp.o
+[621/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/common/refcnt.cpp.o
+[622/895] Building CXX object tddb/CMakeFiles/tddb.dir/td/db/RocksDb.cpp.o
+[623/895] Building CXX object tl/generate/CMakeFiles/generate_common.dir/tl_writer_jni_cpp.cpp.o
+[624/895] Linking CXX static library tddb/libtddb.a
+[625/895] Linking CXX executable tl/generate/generate_common
+[626/895] Generating $HOME/tos-node-health-c04/tl/generate/scheme/tos_api.tlo
+[627/895] Generating $HOME/tos-node-health-c04/tl/generate/scheme/lite_api.tlo
+[628/895] Generating $HOME/tos-node-health-c04/tl/generate/scheme/toslib_api.tlo
+[629/895] Generate common tl source files
+Write tl to file auto/tl/tos_api.cpp
+Write tl to file auto/tl/tos_api.h
+Write tl to file auto/tl/tos_api.hpp
+Write tl to file auto/tl/lite_api.cpp
+Write tl to file auto/tl/lite_api.h
+Write tl to file auto/tl/lite_api.hpp
+Write tl to file auto/tl/toslib_api.cpp
+Write tl to file auto/tl/toslib_api.h
+Write tl to file auto/tl/toslib_api.hpp
+[630/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/common/bigexp.cpp.o
+[631/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/common/refint.cpp.o
+[632/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/common/util.cpp.o
+[633/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/common/bitstring.cpp.o
+[634/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/common/bigint.cpp.o
+[635/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/openssl/bignum.cpp.o
+[636/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/Ed25519.cpp.o
+[637/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/openssl/rand.cpp.o
+[638/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/openssl/residue.cpp.o
+[639/895] Building CXX object metrics/CMakeFiles/metrics-core.dir/tl-traffic-bucket.cpp.o
+[640/895] Building CXX object metrics/CMakeFiles/metrics-core.dir/metrics-types.cpp.o
+[641/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/keccak/keccak.cpp.o
+[642/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/tl/tlblib.cpp.o
+[643/895] Building CXX object fec/CMakeFiles/fec.dir/fec.cpp.o
+[644/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/large-boc-serializer.cpp.o
+[645/895] Building CXX object tl/CMakeFiles/tl_lite_api.dir/generate/auto/tl/lite_api.cpp.o
+[646/895] Linking CXX static library tl/libtl_lite_api.a
+[647/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/boc.cpp.o
+[648/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/dict.cpp.o
+[649/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/CellHash.cpp.o
+[650/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/CellTraits.cpp.o
+[651/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/Cell.cpp.o
+[652/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/LevelMask.cpp.o
+[653/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/CellBuilder.cpp.o
+[654/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/CellString.cpp.o
+[655/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/CellUsageTree.cpp.o
+[656/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/CellSlice.cpp.o
+[657/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/DataCell.cpp.o
+[658/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/ellcurve/secp256k1.cpp.o
+[659/895] Building CXX object crypto/CMakeFiles/src_parser.dir/parser/symtable.cpp.o
+[660/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/ellcurve/p256.cpp.o
+[661/895] Building CXX object crypto/CMakeFiles/src_parser.dir/parser/srcread.cpp.o
+[662/895] Building CXX object crypto/CMakeFiles/src_parser.dir/parser/lexer.cpp.o
+[663/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/Hasher.cpp.o
+[664/895] Building CXX object crypto/pq/CMakeFiles/tos_mldsa44.dir/mldsa44.cpp.o
+[665/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/MerkleProof.cpp.o
+[666/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/cells/MerkleUpdate.cpp.o
+[667/895] Building CXX object crypto/pq/CMakeFiles/tos_pq_consensus.dir/pq-consensus.cpp.o
+[668/895] Building C object crypto/pq/CMakeFiles/tos_mldsa_native.dir/__/__/third-party/mldsa-native/mldsa/mldsa_native.c.o
+[669/895] Linking C static library crypto/pq/libtos_mldsa_native.a
+[670/895] Linking CXX static library crypto/pq/libtos_mldsa44.a
+[671/895] Linking CXX static library crypto/pq/libtos_pq_consensus.a
+[672/895] Building CXX object crypto/CMakeFiles/tos_crypto_core.dir/vm/db/StaticBagOfCellsDb.cpp.o
+[673/895] Linking CXX static library crypto/libtos_crypto_core.a
+[674/895] Linking CXX static library crypto/libsrc_parser.a
+[675/895] Building CXX object crypto/pq/CMakeFiles/tos_pq_consensus_signer.dir/consensus-key-file.cpp.o
+[676/895] Building CXX object crypto/pq/CMakeFiles/tos_pq_consensus_signer.dir/consensus-pq-signer.cpp.o
+[677/895] Building C object crypto/pq/CMakeFiles/tos_pq_consensus_signer_backend.dir/__/__/third-party/mldsa-native/mldsa/mldsa_native.c.o
+[678/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/Encoder.cpp.o
+[679/895] Linking C static library crypto/pq/libtos_pq_consensus_signer_backend.a
+[680/895] Linking CXX static library crypto/pq/libtos_pq_consensus_signer.a
+[681/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/RawEncoder.cpp.o
+[682/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/common/SymbolsView.cpp.o
+[683/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/Decoder.cpp.o
+[684/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/online/Encoder.cpp.o
+[685/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/online/Rfc.cpp.o
+[686/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/online/Decoder.cpp.o
+[687/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/BeliefPropagationDecoding.cpp.o
+[688/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/raptorq/Solver.cpp.o
+[689/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/GaussianElimination.cpp.o
+[690/895] Building CXX object crypto/CMakeFiles/tlbc.dir/tl/tlbc.cpp.o
+[691/895] Linking CXX executable crypto/tlbc
+[692/895] Generate block tlb source files
+[693/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/SparseMatrixGF2.cpp.o
+[694/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/InactivationDecoding.cpp.o
+[695/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/MatrixGF2.cpp.o
+[696/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/Octet.cpp.o
+[697/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/algebra/MatrixGF256.cpp.o
+[698/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/boc-compression.cpp.o
+[699/895] Building CXX object keys/CMakeFiles/keys.dir/keys.cpp.o
+[700/895] Building CXX object keys/CMakeFiles/keys.dir/encryptor.cpp.o
+[701/895] Building CXX object overlay/CMakeFiles/overlay.dir/overlay-manager.cpp.o
+[702/895] Building CXX object tl-utils/CMakeFiles/tl-utils.dir/tl-utils.cpp.o
+[703/895] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node.cpp.o
+[704/895] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/top-shard-descr.cpp.o
+[705/895] Building CXX object tl-utils/CMakeFiles/tl-lite-utils.dir/lite-utils.cpp.o
+[706/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-db.cpp.o
+[707/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-ext-client.cpp.o
+[708/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-ext-connection.cpp.o
+[709/895] Building CXX object tl/CMakeFiles/tl_api.dir/generate/auto/tl/tos_api.cpp.o
+[710/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-ext-server.cpp.o
+[711/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-address-list.cpp.o
+[712/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-node-id.cpp.o
+[713/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-node.cpp.o
+[714/895] Building CXX object validator/impl/CMakeFiles/tos_validator.dir/validate-query.cpp.o
+[715/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-message.cpp.o
+[716/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-packet.cpp.o
+[717/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-network-manager.cpp.o
+[718/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-query.cpp.o
+[719/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-local-id.cpp.o
+[720/895] Building CXX object tl/CMakeFiles/tl_api.dir/generate/auto/tl/tos_api_json.cpp.o
+[721/895] Linking CXX static library tl/libtl_api.a
+[722/895] Linking CXX static library metrics/libmetrics-core.a
+[723/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-sender-ex.cpp.o
+[724/895] Building CXX object adnl/CMakeFiles/adnl.dir/utils.cpp.o
+[725/895] Building CXX object adnl/CMakeFiles/adnltest.dir/adnl-test-loopback-implementation.cpp.o
+[726/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-proxy-types.cpp.o
+[727/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/atom.cpp.o
+[728/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-channel.cpp.o
+[729/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/memo.cpp.o
+[730/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/stack.cpp.o
+[731/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-peer.cpp.o
+[732/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/continuation.cpp.o
+[733/895] Building CXX object adnl/CMakeFiles/adnl.dir/adnl-peer-table.cpp.o
+[734/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/dispatch.cpp.o
+[735/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/opctable.cpp.o
+[736/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/stackops.cpp.o
+[737/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/tupleops.cpp.o
+[738/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/arithops.cpp.o
+[739/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/cp0.cpp.o
+[740/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/dictops.cpp.o
+[741/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/contops.cpp.o
+[742/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/debugops.cpp.o
+[743/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/cellops.cpp.o
+[744/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/utils.cpp.o
+[745/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/poseidon2ops.cpp.o
+[746/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/bls.cpp.o
+[747/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/vm.cpp.o
+[748/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/pqops.cpp.o
+[749/895] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/CellDbExtCell.cpp.o
+[750/895] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/DynamicBagOfCellsDb.cpp.o
+[751/895] Building CXX object crypto/CMakeFiles/tos_crypto.dir/vm/tosops.cpp.o
+[752/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/validator-session-members.cpp.o
+[753/895] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/CellStorage.cpp.o
+[754/895] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/TosDb.cpp.o
+[755/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/Binlog.cpp.o
+[756/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/pq-vote.cpp.o
+[757/895] Building CXX object crypto/CMakeFiles/tos_block.dir/pq/pq-bytes.cpp.o
+[758/895] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/InMemoryBagOfCellsDb.cpp.o
+[759/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/validator-session-id.cpp.o
+[760/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-db.cpp.o
+[761/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block.cpp.o
+[762/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-parse.cpp.o
+[763/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/check-proof.cpp.o
+[764/895] Building CXX object crypto/CMakeFiles/tos_db.dir/vm/db/DynamicBagOfCellsDbV2.cpp.o
+[765/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/output-queue-merger.cpp.o
+[766/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/account-storage-stat.cpp.o
+[767/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/mc-config.cpp.o
+[768/895] Building CXX object crypto/CMakeFiles/tos_block.dir/common/stats.cpp.o
+[769/895] Building CXX object common/CMakeFiles/common.dir/errorlog.cpp.o
+[770/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/transaction.cpp.o
+[771/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/precompiled-smc/PrecompiledSmartContract.cpp.o
+[772/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/workchain-execution-dispatch.cpp.o
+[773/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/validator-set.cpp.o
+[774/895] Building CXX object tdfec/CMakeFiles/tdfec.dir/td/fec/fec.cpp.o
+[775/895] Linking CXX static library tdfec/libtdfec.a
+[776/895] Linking CXX static library fec/libfec.a
+[777/895] Building CXX object keyring/CMakeFiles/keyring.dir/keyring.cpp.o
+[778/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/signature-set.cpp.o
+[779/895] Building CXX object dht/CMakeFiles/dht.dir/dht-remote-node.cpp.o
+[780/895] Building CXX object dht/CMakeFiles/dht.dir/dht-bucket.cpp.o
+[781/895] Building CXX object dht/CMakeFiles/dht.dir/dht-node.cpp.o
+[782/895] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-plumtree-stats.cpp.o
+[783/895] Building CXX object dht/CMakeFiles/dht.dir/dht-types.cpp.o
+[784/895] Building CXX object crypto/CMakeFiles/tos_block.dir/block/block-auto.cpp.o
+[785/895] Linking CXX static library crypto/libtos_block.a
+[786/895] Linking CXX static library crypto/libtos_crypto.a
+[787/895] Linking CXX static library tl-utils/libtl-utils.a
+[788/895] Linking CXX static library keys/libkeys.a
+[789/895] Linking CXX static library tl-utils/libtl-lite-utils.a
+[790/895] Linking CXX static library crypto/libtos_db.a
+[791/895] Linking CXX static library common/libcommon.a
+[792/895] Linking CXX static library keyring/libkeyring.a
+[793/895] Linking CXX static library adnl/libadnl.a
+[794/895] Linking CXX static library adnl/libadnltest.a
+[795/895] Building CXX object dht/CMakeFiles/dht.dir/dht-query.cpp.o
+[796/895] Building CXX object dht/CMakeFiles/dht.dir/dht.cpp.o
+[797/895] Linking CXX static library dht/libdht.a
+[798/895] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-simple.cpp.o
+[799/895] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-fec.cpp.o
+[800/895] Building CXX object validator/CMakeFiles/validator-state-download-budget.dir/state-download-buffer.cpp.o
+[801/895] Building CXX object validator/CMakeFiles/validator-measurement.dir/measurement/measurement-contract.cpp.o
+[802/895] Linking CXX static library validator/libvalidator-measurement.a
+[803/895] Linking CXX static library validator/libvalidator-state-download-budget.a
+[804/895] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-twostep.cpp.o
+[805/895] Building CXX object overlay/CMakeFiles/overlay.dir/overlay-peers.cpp.o
+[806/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/staticfilesdb.cpp.o
+[807/895] Building CXX object overlay/CMakeFiles/overlay.dir/broadcast-plumtree.cpp.o
+[808/895] Building CXX object overlay/CMakeFiles/overlay.dir/overlay.cpp.o
+[809/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/archiver.cpp.o
+[810/895] Linking CXX static library overlay/liboverlay.a
+[811/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/permanent-celldb/permanent-celldb-utils.cpp.o
+[812/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/db-event-publisher.cpp.o
+[813/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/package.cpp.o
+[814/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/db-utils.cpp.o
+[815/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/statedb.cpp.o
+[816/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-slice.cpp.o
+[817/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/fileref.cpp.o
+[818/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/archive-manager.cpp.o
+[819/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/celldb.cpp.o
+[820/895] Building CXX object validator/CMakeFiles/validator-common.dir/block-handle.cpp.o
+[821/895] Building CXX object validator/CMakeFiles/validator-common.dir/wc0-block-hook.cpp.o
+[822/895] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state-merge.cpp.o
+[823/895] Building CXX object validator/CMakeFiles/validator-db.dir/db/rootdb.cpp.o
+[824/895] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/download-state.cpp.o
+[825/895] Building CXX object validator/CMakeFiles/validator-common.dir/manager-init.cpp.o
+[826/895] Building CXX object validator/CMakeFiles/validator-common.dir/validator-full-id.cpp.o
+[827/895] Building CXX object validator/CMakeFiles/validator-common.dir/apply-block.cpp.o
+[828/895] Building CXX object validator/CMakeFiles/validator-common.dir/downloaders/wait-block-state.cpp.o
+[829/895] Building CXX object validator/CMakeFiles/validator-common.dir/queue-size-counter.cpp.o
+[830/895] Building CXX object validator/CMakeFiles/validator.dir/collator-node/utils.cpp.o
+[831/895] Building CXX object validator/CMakeFiles/validator-common.dir/shard-client.cpp.o
+[832/895] Building CXX object validator/CMakeFiles/validator-common.dir/validator-options.cpp.o
+[833/895] Building CXX object validator/CMakeFiles/validator.dir/collator-node/collator-node-session.cpp.o
+[834/895] Building CXX object validator/CMakeFiles/validator.dir/collation-manager.cpp.o
+[835/895] Building CXX object validator/CMakeFiles/validator.dir/get-next-key-blocks.cpp.o
+[836/895] Building CXX object validator/CMakeFiles/validator.dir/downloaders/wait-block-data.cpp.o
+[837/895] Building CXX object validator/CMakeFiles/validator.dir/token-manager.cpp.o
+[838/895] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice.cpp.o
+[839/895] Building CXX object validator/CMakeFiles/validator.dir/validator-telemetry.cpp.o
+[840/895] Building CXX object validator/CMakeFiles/validator.dir/storage-stat-cache.cpp.o
+[841/895] Building CXX object validator/CMakeFiles/validator.dir/import-db-slice-local.cpp.o
+[842/895] Building CXX object validator/CMakeFiles/validator.dir/state-serializer.cpp.o
+[843/895] Building CXX object validator/CMakeFiles/validator.dir/shard-block-verifier.cpp.o
+[844/895] Building CXX object validator/CMakeFiles/validator.dir/validate-broadcast.cpp.o
+[845/895] Building CXX object validator/CMakeFiles/validator.dir/shard-block-retainer.cpp.o
+[846/895] Building CXX object validator/CMakeFiles/validator.dir/impl/applied-ext-message-cleanup.cpp.o
+[847/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[848/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[849/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[850/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[851/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[852/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[853/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/stats.cpp.o
+[854/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[855/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+FAILED: validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o 
+ccache /usr/bin/clang++-21 -DSODIUM_STATIC -DTDDB_USE_ROCKSDB -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I$HOME/tos-node-health-c04/validator -I$HOME/tos-node-health-c04/validator/.. -I$HOME/tos-node-health-c04/validator/../crypto -I$HOME/tos-node-health-c04/tdactor -I$HOME/tos-node-health-c04/tdutils -I$HOME/nhm-c04-build/tdutils -I$HOME/tos-node-health-c04/adnl/.. -I$HOME/tos-node-health-c04/crypto -I$HOME/tos-node-health-c04/crypto/.. -I$HOME/nhm-c04-build/third-party/secp256k1/include -I$HOME/nhm-c04-build/third-party/sodium/include -I$HOME/tos-node-health-c04/tddb -I$HOME/tos-node-health-c04/crypto/block -I$HOME/tos-node-health-c04/tl -I$HOME/tos-node-health-c04/tl/.. -I$HOME/tos-node-health-c04/tl/../crypto -I$HOME/tos-node-health-c04/tl/generate -I$HOME/tos-node-health-c04/crypto/pq -I$HOME/tos-node-health-c04/keys/.. -I$HOME/tos-node-health-c04/tl-utils/.. -I$HOME/tos-node-health-c04/tdnet -I$HOME/tos-node-health-c04/third-party/rocksdb/include -I$HOME/tos-node-health-c04/keyring/.. -I$HOME/tos-node-health-c04/common -I$HOME/tos-node-health-c04/common/.. -I$HOME/tos-node-health-c04/dht -I$HOME/tos-node-health-c04/dht/.. -I$HOME/tos-node-health-c04/tdfec -I$HOME/tos-node-health-c04/tdfec/.. -I$HOME/tos-node-health-c04/overlay -I$HOME/tos-node-health-c04/overlay/.. -I$HOME/tos-node-health-c04/validator/impl -I$HOME/tos-node-health-c04/validator/impl/.. -I$HOME/tos-node-health-c04/validator/impl/../crypto -isystem $HOME/nhm-c04-build/third-party/openssl/include -isystem $HOME/tos-node-health-c04/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIC -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o -MF validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o.d -o validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o -c $HOME/tos-node-health-c04/validator/consensus/simplex/pool.cpp
+$HOME/tos-node-health-c04/validator/consensus/simplex/pool.cpp:349:5: error: 'this' argument to member function 'start' has type 'const tos::health::SessionObservation', but function is not marked const
+  349 |     bus.health_session.start();
+      |     ^~~~~~~~~~~~~~~~~~
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:244:8: note: 'start' declared here
+  244 |   void start() noexcept {
+      |        ^
+$HOME/tos-node-health-c04/validator/consensus/simplex/pool.cpp:891:36: error: no matching constructor for initialization of 'tos::health::ActionObservation'
+  891 |     tos::health::ActionObservation observation(health_action(vote), tos::health::Origin::Live,
+      |                                    ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  892 |         tos::health::consensus_stats, &owning_bus()->health_session.vote_ledger, &observation_key);
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:172:3: note: candidate constructor not viable: 4th argument ('const ActionLedger *') would lose const qualifier
+  172 |   ActionObservation(Action action, Origin origin = Origin::Live, ConsensusStats &stats = consensus_stats,
+      |   ^
+  173 |                     ActionLedger *ledger = nullptr, const ActionLedger::Key *key = nullptr) noexcept
+      |                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:230:3: note: candidate constructor not viable: requires 1 argument, but 5 were provided
+  230 |   ActionObservation(const ActionObservation &) = delete;
+      |   ^                 ~~~~~~~~~~~~~~~~~~~~~~~~~
+$HOME/tos-node-health-c04/validator/consensus/simplex/pool.cpp:948:36: error: no matching constructor for initialization of 'tos::health::ActionObservation'
+  948 |     tos::health::ActionObservation observation(health_action(stored.vote), origin,
+      |                                    ^           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  949 |         tos::health::consensus_stats, &owning_bus()->health_session.vote_ledger, &observation_key);
+      |         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:172:3: note: candidate constructor not viable: 4th argument ('const ActionLedger *') would lose const qualifier
+  172 |   ActionObservation(Action action, Origin origin = Origin::Live, ConsensusStats &stats = consensus_stats,
+      |   ^
+  173 |                     ActionLedger *ledger = nullptr, const ActionLedger::Key *key = nullptr) noexcept
+      |                     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+$HOME/tos-node-health-c04/validator/../metrics/consensus-health.h:230:3: note: candidate constructor not viable: requires 1 argument, but 5 were provided
+  230 |   ActionObservation(const ActionObservation &) = delete;
+      |   ^                 ~~~~~~~~~~~~~~~~~~~~~~~~~
+3 errors generated.
+[856/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[857/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[858/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/candidate-codec.cpp.o
+[859/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[860/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+FAILED: validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o 
+ccache /usr/bin/clang++-21 -DSODIUM_STATIC -DTDDB_USE_ROCKSDB -D_FILE_OFFSET_BITS=64 -D_INTERNAL_COMPILE=1 -D_TOSLIB_COMPILE=1 -I$HOME/tos-node-health-c04/validator -I$HOME/tos-node-health-c04/validator/.. -I$HOME/tos-node-health-c04/validator/../crypto -I$HOME/tos-node-health-c04/tdactor -I$HOME/tos-node-health-c04/tdutils -I$HOME/nhm-c04-build/tdutils -I$HOME/tos-node-health-c04/adnl/.. -I$HOME/tos-node-health-c04/crypto -I$HOME/tos-node-health-c04/crypto/.. -I$HOME/nhm-c04-build/third-party/secp256k1/include -I$HOME/nhm-c04-build/third-party/sodium/include -I$HOME/tos-node-health-c04/tddb -I$HOME/tos-node-health-c04/crypto/block -I$HOME/tos-node-health-c04/tl -I$HOME/tos-node-health-c04/tl/.. -I$HOME/tos-node-health-c04/tl/../crypto -I$HOME/tos-node-health-c04/tl/generate -I$HOME/tos-node-health-c04/crypto/pq -I$HOME/tos-node-health-c04/keys/.. -I$HOME/tos-node-health-c04/tl-utils/.. -I$HOME/tos-node-health-c04/tdnet -I$HOME/tos-node-health-c04/third-party/rocksdb/include -I$HOME/tos-node-health-c04/keyring/.. -I$HOME/tos-node-health-c04/common -I$HOME/tos-node-health-c04/common/.. -I$HOME/tos-node-health-c04/dht -I$HOME/tos-node-health-c04/dht/.. -I$HOME/tos-node-health-c04/tdfec -I$HOME/tos-node-health-c04/tdfec/.. -I$HOME/tos-node-health-c04/overlay -I$HOME/tos-node-health-c04/overlay/.. -I$HOME/tos-node-health-c04/validator/impl -I$HOME/tos-node-health-c04/validator/impl/.. -I$HOME/tos-node-health-c04/validator/impl/../crypto -isystem $HOME/nhm-c04-build/third-party/openssl/include -isystem $HOME/tos-node-health-c04/third-party/abseil-cpp -march=native -fno-omit-frame-pointer -ffunction-sections -fdata-sections -O3 -DNDEBUG -fPIC -Wall -Wextra -Wpointer-arith -Wcast-qual -Wsign-compare -Wvla -Wnon-virtual-dtor -Wconversion -Wno-tautological-compare -Wno-unused-parameter -Wno-sign-conversion -Wno-unused-private-field -Wno-redundant-move -std=c++20 -MD -MT validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o -MF validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o.d -o validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o -c $HOME/tos-node-health-c04/validator/consensus/block-producer.cpp
+$HOME/tos-node-health-c04/validator/consensus/block-producer.cpp:126:21: error: no matching member function for call to 'emplace'
+  126 |         observation.emplace(tos::health::Action::Proposal, tos::health::Origin::Live,
+      |         ~~~~~~~~~~~~^~~~~~~
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../../include/c++/15/optional:1128:2: note: candidate template ignored: could not match 'initializer_list<_Up>' against 'tos::health::Action'
+ 1128 |         emplace(initializer_list<_Up> __il, _Args&&... __args)
+      |         ^
+/usr/lib/gcc/x86_64-linux-gnu/15/../../../../include/c++/15/optional:1116:2: note: candidate template ignored: requirement 'is_constructible_v<tos::health::ActionObservation, tos::health::Action, tos::health::Origin, tos::health::ConsensusStats &, const tos::health::ActionLedger *, const tos::health::ActionLedger::Key *>' was not satisfied [with _Args = <tos::health::Action, tos::health::Origin, ConsensusStats &, const ActionLedger *, const tos::health::ActionLedger::Key *>]
+ 1116 |         emplace(_Args&&... __args)
+      |         ^
+1 error generated.
+[861/895] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[862/895] Building CXX object validator/CMakeFiles/validator.dir/manager.cpp.o
+ninja: build stopped: subcommand failed.

@@ -60,7 +60,7 @@ struct DeployWalletsCmd {
 }
 
 #[derive(clap::Args, Clone)]
-struct DeployPoolCmd {
+pub(crate) struct DeployPoolCmd {
     #[arg(
         short = 'c',
         long = "config",
@@ -73,8 +73,14 @@ struct DeployPoolCmd {
 
     #[arg(long = "verbose", help = "Print progress", required = false)]
     verbose: bool,
-    #[arg(long = "owner", help = "Address of the pool owner")]
+    #[arg(allow_hyphen_values = true, long = "owner", help = "Address of the pool owner")]
     owner: MsgAddressInt,
+    #[arg(
+        allow_hyphen_values = true,
+        long = "controller",
+        help = "Validator controller address the pool relays its stake through"
+    )]
+    controller: MsgAddressInt,
     #[arg(long = "amount", help = "Amount to transfer")]
     amount: f64,
     #[arg(long = "node", help = "Node ID")]
@@ -83,7 +89,7 @@ struct DeployPoolCmd {
 
 #[derive(clap::Args, Clone)]
 #[command(about = "Deploy an arbitrary smart contract from a BOC file")]
-struct DeployContractCmd {
+pub(crate) struct DeployContractCmd {
     #[arg(
         short = 'c',
         long = "config",
@@ -103,7 +109,7 @@ struct DeployContractCmd {
     wait: bool,
 
     /// Contract address to monitor (required with --wait)
-    #[arg(long, help = "Address to watch (required with --wait)")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Address to watch (required with --wait)")]
     address: Option<String>,
 
     /// Output format
@@ -340,9 +346,13 @@ impl DeployPoolCmd {
             anyhow::bail!("Task cancelled");
         }
 
-        let pool_address =
-            NominatorWrapperImpl::calculate_address(-1, &self.owner, &wallet_address)
-                .map_err(set_err)?;
+        let pool_address = NominatorWrapperImpl::calculate_address(
+            -1,
+            &self.owner,
+            &wallet_address,
+            &self.controller,
+        )
+        .map_err(set_err)?;
         res.borrow_mut().address = pool_address.to_string();
 
         if self.verbose {
@@ -401,7 +411,11 @@ impl DeployPoolCmd {
                     false,
                     wallet_info.seqno,
                     None,
-                    Some(NominatorWrapperImpl::build_state_init(&self.owner, &wallet_address)?),
+                    Some(NominatorWrapperImpl::build_state_init(
+                        &self.owner,
+                        &wallet_address,
+                        &self.controller,
+                    )?),
                 )
                 .await
                 .map_err(set_err)?,

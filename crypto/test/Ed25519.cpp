@@ -259,7 +259,7 @@ BENCH(ed25519_verify, "ed25519_verify") {
   }
 }
 
-TEST(Crypto, ed25519_benchmark) {
+TEST(Crypto, BenchEd25519) {
   bench(ed25519_signBench());
   bench(ed25519_shared_secretBench());
   bench(ed25519_verifyBench());

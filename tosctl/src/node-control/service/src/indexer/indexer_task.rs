@@ -10,8 +10,13 @@
 //!
 //! There is no chain primitive to "list every Task Escrow"; the only
 //! enumeration primitive is per-block ("which accounts had a transaction in
-//! this block"). This task walks every shard block by block from its own
-//! checkpoint -- the masterchain itself (some actors deploy there directly)
+//! this block"). This task walks masterchain blocks sequentially and follows
+//! each referenced shard head's proof-derived predecessor IDs back to the
+//! exact shard heads of the previously published masterchain block --
+//! including split and merge branches. Each masterchain height is assembled
+//! as a durable batch and published atomically; nothing it writes is public
+//! before that. It covers the
+//! masterchain itself (some actors deploy there directly)
 //! plus every other workchain's current shard(s), since that is where
 //! almost every contract actually lives -- and for every account it hasn't
 //! seen before, checks its code hash against the recognized contract codes
@@ -32,12 +37,13 @@ use base64::Engine;
 use chain_block::{
     Cell, Deserializable, MsgAddressInt, SliceData, UInt256, read_single_root_boc, write_boc,
 };
+use chain_rpc_client::v2::data_models::BlockIdExt;
 use common::{app_config::AppConfig, task_cancellation::CancellationCtx, time_format};
 use contracts::contract_codes::NOMINATOR_POOL_CODE;
 use contracts::{
     AgentAccountContract, CapabilityRegistryContract, ChainProvider, DisputeContract,
-    MasterchainCheckpoint, NominatorPoolWrapper, NominatorPoolWrapperImpl, ServiceActorContract,
-    TaskEscrowContract, contract_provider_from,
+    MasterchainCheckpoint, PoolSnapshotSource, ProvenGetterProvider, ReadPolicy,
+    ServiceActorContract, TaskEscrowContract,
 };
 
 const DNS_ITEM_CODE_HASH: &str = "e469483aa8a8e5018f46cdd9c374b60153025847a6d4997692cfdd9b15be1d78";
@@ -46,15 +52,28 @@ const DNS_COLLECTION_ADDRESS: &str =
 const DNS_ITEM_CODE_DEPTH: u16 = 11;
 
 use crate::indexer::store::{
-    DnsDomainHistoryRecord, ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord,
-    IndexerStore, ServiceRequestRecord,
+    AddressRefresh, AddressTouch, BatchPhase, BlockFullId, DnsDomainHistoryRecord,
+    ExplorerBlockRecord, ExplorerTransactionRecord, IndexedRecord, IndexerStore, LedgerStatus,
+    ScannedTarget, ServiceRequestRecord, ShardStep,
 };
 use crate::runtime_config::RuntimeConfig;
 
-/// Upper bound on how many masterchain blocks a single tick will scan, so a
-/// long-idle indexer catching up on history doesn't stall the tick loop
+/// Upper bound on how many masterchain blocks a single tick will publish, so
+/// a long-idle indexer catching up on history doesn't stall the tick loop
 /// indefinitely -- the next tick picks up where this one left off.
 const MAX_BLOCKS_PER_TICK: u32 = 200;
+/// Shard-ancestry work units (a parent lookup or an exact block scan) one
+/// tick may spend. Reaching it is a normal yield: the pending batch resumes
+/// from durable state next tick, however deep the unindexed ancestry is.
+const MAX_SHARD_WORK_PER_TICK: usize = 4096;
+/// Published addresses selected per drain.
+const MAX_ADDRESS_REFRESH_PER_DRAIN: usize = 4096;
+/// Successive queued heights one address may be observed at in one drain.
+const ADDRESS_REFRESH_QUANTUM: usize = 32;
+/// Observations (one address at one height) one drain may make in total,
+/// across every address it selected.
+const MAX_ADDRESS_REFRESH_WORK_PER_DRAIN: usize = 4096;
+const NOMINATOR_POOL_KIND: &str = "contract.pool.nominator";
 /// Max transactions requested per `getBlockTransactions` page.
 const TRANSACTIONS_PAGE_SIZE: u32 = 256;
 /// Upper bound on how many *new* service-request ids one visit to a Service
@@ -139,14 +158,6 @@ fn new_service_request_id_range(
     let new_end = claimed_next_request_id.min(first_new.saturating_add(batch));
     first_new..new_end
 }
-/// How far back to rewind and rescan when a reorg is detected at the
-/// checkpoint boundary. Reorgs are a real, documented hazard on this chain
-/// (see `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md`'s replay-across-reorgs note), not a
-/// theoretical one; this bounds how much already-indexed data can go stale
-/// from a single detected divergence rather than only ever checking the one
-/// block at the checkpoint itself.
-#[cfg(test)]
-const REORG_REWIND_BLOCKS: u32 = 5;
 
 pub async fn run(
     cancellation_ctx: CancellationCtx,
@@ -155,45 +166,73 @@ pub async fn run(
     indexer_store: Arc<IndexerStore>,
 ) -> anyhow::Result<()> {
     let chain_provider = runtime_cfg.chain_provider();
+    let pool_snapshots = pool_snapshot_source(&app_config);
     let known = KnownCodeHashes::compute()?;
     let probe_budget = ProbeBudget::new();
     let mut interval = tokio::time::interval(Duration::from_secs(app_config.tick_interval));
     let mut cancel = cancellation_ctx.subscribe();
     let retention_blocks = app_config.indexer_retention_blocks;
-    // Only prune once the tip has advanced by this much past the last prune, so
-    // the referential transaction sweep does not run every tick.
-    let prune_step = (retention_blocks / 10).max(1000);
-    let mut last_prune_seqno: u32 = 0;
+    // Only prune once the published watermark has advanced by this much past
+    // the last prune, so the referential transaction sweep does not run every
+    // tick.
+    let mut prune = PruneState::new((retention_blocks / 10).max(1000));
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                match scan_new_blocks(&chain_provider, &indexer_store, &known, &probe_budget).await {
-                    Ok(mc_tip) => {
-                        if retention_blocks > 0 && mc_tip > retention_blocks {
-                            let keep_from = mc_tip - retention_blocks;
-                            if keep_from >= last_prune_seqno.saturating_add(prune_step) {
-                                match indexer_store.prune_history(keep_from) {
-                                    Ok(removed) => {
-                                        last_prune_seqno = keep_from;
-                                        if removed > 0 {
-                                            tracing::info!(
-                                                target: "indexer",
-                                                "pruned {removed} history rows older than mc seqno {keep_from}"
-                                            );
-                                        }
-                                    }
-                                    Err(e) => tracing::error!(target: "indexer", "prune error: {:#}", e),
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => tracing::error!(target: "indexer", "scan error: {:#}", e),
+                if let Err(e) = tick(
+                    &chain_provider,
+                    pool_snapshots.as_ref(),
+                    &indexer_store,
+                    &known,
+                    &probe_budget,
+                    &ScanLimits::production(),
+                    retention_blocks,
+                    &mut prune,
+                )
+                .await
+                {
+                    tracing::error!(target: "indexer", "scan error: {:#}", e);
                 }
             }
             _ = cancel.changed() => {
                 tracing::info!(target: "indexer", "cancel received");
                 return Ok(());
             }
+        }
+    }
+}
+
+/// Pool snapshots when no proof verifier is usable: there are none. Every
+/// pool refresh then stays pending rather than folding in an observation the
+/// indexer cannot prove.
+struct UnprovisionedPoolSnapshots {
+    reason: String,
+}
+
+#[async_trait::async_trait]
+impl PoolSnapshotSource for UnprovisionedPoolSnapshots {
+    async fn nominator_pool_snapshot(
+        &self,
+        _address: &MsgAddressInt,
+        _policy: &ReadPolicy,
+    ) -> anyhow::Result<contracts::NominatorPoolSnapshot> {
+        anyhow::bail!("no authoritative pool snapshot: {}", self.reason)
+    }
+}
+
+/// The only production source of pool snapshots: the locally configured
+/// proof verifier. The chain RPC endpoint is never one.
+fn pool_snapshot_source(app_config: &AppConfig) -> Arc<dyn PoolSnapshotSource> {
+    let Some(config) = &app_config.proof_verifier else {
+        return Arc::new(UnprovisionedPoolSnapshots {
+            reason: "no proof_verifier is configured".to_owned(),
+        });
+    };
+    match ProvenGetterProvider::new(config) {
+        Ok(provider) => Arc::new(provider),
+        Err(e) => {
+            tracing::error!(target: "indexer", "proof verifier unusable: {:#}", e);
+            Arc::new(UnprovisionedPoolSnapshots { reason: format!("{e:#}") })
         }
     }
 }
@@ -224,214 +263,419 @@ impl KnownCodeHashes {
     }
 }
 
-async fn scan_new_blocks(
-    chain_provider: &Arc<dyn ChainProvider>,
-    store: &IndexerStore,
-    known: &KnownCodeHashes,
-    probe_budget: &ProbeBudget,
-) -> anyhow::Result<u32> {
-    let mc_info = chain_provider.get_masterchain_info().await?;
-    let mc_target = mc_info.last.seqno;
-
-    scan_masterchain_history(
-        chain_provider,
-        store,
-        known,
-        mc_info.last.shard,
-        mc_target,
-        probe_budget,
-    )
-    .await?;
-    Ok(mc_target)
+/// How much work one tick may do. Every bound yields a normal, resumable
+/// return rather than an error: the next tick continues from durable state.
+#[derive(Clone, Debug)]
+struct ScanLimits {
+    /// Masterchain heights published per tick.
+    max_batches: u32,
+    /// Shard-ancestry work units per tick.
+    max_shard_work: usize,
+    /// Bounds of one drain of the address refresh queue.
+    refresh: RefreshBudget,
 }
 
-/// Advances the index from the masterchain timeline. For every masterchain
-/// block, `shards(seqno)` supplies the exact canonical shard heads referenced
-/// by that block. This avoids assuming a shard exists continuously from
-/// seqno 1 to its current head, an assumption that fails after shard
-/// split/merge topology changes.
-async fn scan_masterchain_history(
-    chain_provider: &Arc<dyn ChainProvider>,
-    store: &IndexerStore,
-    known: &KnownCodeHashes,
-    master_shard: i64,
-    target_seqno: u32,
-    probe_budget: &ProbeBudget,
-) -> anyhow::Result<()> {
-    let master_key = format!("-1:{master_shard}");
-    let mut next = store.checkpoint(&master_key)?.saturating_add(1).max(1);
-    let last_scanned = next.saturating_sub(1);
+/// Bounds of one drain of the address refresh queue.
+#[derive(Clone, Debug)]
+struct RefreshBudget {
+    /// Addresses selected from the queue.
+    addresses: usize,
+    /// Successive heights one selected address may be observed at.
+    per_address: usize,
+    /// Observations the whole drain may make.
+    work: usize,
+}
 
-    if last_scanned > 0 {
-        if let Some(expected_hash) = store.checkpoint_block_hash(&master_key)? {
-            if let Ok(Some(actual_hash)) =
-                fetch_block_hash(chain_provider, -1, master_shard, last_scanned).await
-            {
-                if actual_hash != expected_hash {
-                    tracing::warn!(
-                        target: "indexer",
-                        seqno = last_scanned,
-                        "masterchain reorg detected; rebuilding canonical explorer index",
-                    );
-                    store.reset_canonical_index()?;
-                    next = 1;
-                }
-            }
+impl RefreshBudget {
+    fn production() -> Self {
+        Self {
+            addresses: MAX_ADDRESS_REFRESH_PER_DRAIN,
+            per_address: ADDRESS_REFRESH_QUANTUM,
+            work: MAX_ADDRESS_REFRESH_WORK_PER_DRAIN,
         }
     }
+}
 
-    if next > target_seqno {
+impl ScanLimits {
+    fn production() -> Self {
+        Self {
+            max_batches: MAX_BLOCKS_PER_TICK,
+            max_shard_work: MAX_SHARD_WORK_PER_TICK,
+            refresh: RefreshBudget::production(),
+        }
+    }
+}
+
+/// What one scan pass achieved. `published_mc_seqno` is the only value any
+/// retention decision may be derived from; `remote_tip` is informational.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScanOutcome {
+    remote_tip: u32,
+    published_mc_seqno: u32,
+}
+
+/// Retention bookkeeping carried across ticks.
+struct PruneState {
+    last_prune_seqno: u32,
+    step: u32,
+}
+
+impl PruneState {
+    fn new(step: u32) -> Self {
+        Self { last_prune_seqno: 0, step: step.max(1) }
+    }
+}
+
+/// One indexer tick: scan, then prune strictly below the published
+/// watermark.
+#[allow(clippy::too_many_arguments)]
+async fn tick(
+    chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
+    store: &IndexerStore,
+    known: &KnownCodeHashes,
+    probe_budget: &ProbeBudget,
+    limits: &ScanLimits,
+    retention_blocks: u32,
+    prune: &mut PruneState,
+) -> anyhow::Result<ScanOutcome> {
+    let outcome =
+        scan_new_blocks(chain_provider, pool_snapshots, store, known, probe_budget, limits).await?;
+    if let Err(e) = prune_after_scan(store, retention_blocks, outcome.published_mc_seqno, prune) {
+        tracing::error!(target: "indexer", "prune error: {:#}", e);
+    }
+    Ok(outcome)
+}
+
+/// Retention is measured from what is published, never from the remote tip:
+/// `keep_from = published - retention`.
+fn prune_after_scan(
+    store: &IndexerStore,
+    retention_blocks: u32,
+    published_mc_seqno: u32,
+    prune: &mut PruneState,
+) -> anyhow::Result<()> {
+    if retention_blocks == 0 || published_mc_seqno <= retention_blocks {
         return Ok(());
     }
-    let end = next.saturating_add(MAX_BLOCKS_PER_TICK - 1).min(target_seqno);
-    while next <= end {
-        let block_hash = scan_one_seqno(
-            chain_provider,
-            store,
-            known,
-            -1,
-            master_shard,
-            next,
-            next,
-            probe_budget,
-        )
-        .await?;
+    let keep_from = published_mc_seqno.saturating_sub(retention_blocks);
+    if keep_from < prune.last_prune_seqno.saturating_add(prune.step) {
+        return Ok(());
+    }
+    let removed = store.prune_history(keep_from)?;
+    prune.last_prune_seqno = keep_from;
+    if removed > 0 {
+        tracing::info!(
+            target: "indexer",
+            "pruned {removed} history rows older than published mc seqno {keep_from}"
+        );
+    }
+    Ok(())
+}
 
-        // Anchor non-masterchain history to this exact masterchain block.
-        // Repeated descriptors are skipped by root hash; newly split shards
-        // can start at any seqno without a fabricated numeric backfill.
-        for shard in chain_provider.get_shards(next).await?.shards {
-            // A shard's zerostate descriptor is not an ordinary block and
-            // cannot be queried through getBlockTransactions. It only
-            // anchors the chain before that shard produces seqno 1.
-            if shard.seqno == 0 {
-                continue;
+async fn scan_new_blocks(
+    chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
+    store: &IndexerStore,
+    known: &KnownCodeHashes,
+    probe_budget: &ProbeBudget,
+    limits: &ScanLimits,
+) -> anyhow::Result<ScanOutcome> {
+    let mc_info = chain_provider.get_masterchain_info().await?;
+    let master_shard = mc_info.last.shard;
+    let target = mc_info.last.seqno;
+    store.set_remote_mc_tip(target)?;
+
+    // Published history is only trusted while the chain still reports the
+    // exact published masterchain block; otherwise everything derived from
+    // it is replayed.
+    if let Some(published) = store.canonical_state()? {
+        let actual = masterchain_block_id(chain_provider, master_shard, published.seqno).await?;
+        if !is_anchor(&actual, &published) {
+            tracing::warn!(
+                target: "indexer",
+                seqno = published.seqno,
+                "published masterchain block changed; rebuilding canonical explorer index",
+            );
+            store.reset_canonical_index()?;
+        }
+    }
+    // Lifetime ledger totals without canonical provenance are rebuilt by a
+    // replay of the whole index from genesis; they stay unavailable until it
+    // completes.
+    if store.nominator_ledger_state()?.status == LedgerStatus::RebuildRequired {
+        if store.canonical_state()?.is_some() || store.pending_batch()?.is_some() {
+            tracing::warn!(
+                target: "indexer",
+                "nominator ledger lacks canonical provenance; replaying the index from genesis",
+            );
+            store.reset_canonical_index()?;
+        }
+        store.begin_nominator_ledger_rebuild()?;
+    }
+    // A batch left pending by an earlier tick or process is resumed only if
+    // its anchor is still the chain's block at that height.
+    if let Some(batch) = store.pending_batch()? {
+        let expected = store.published_mc_seqno()?.saturating_add(1);
+        let actual = masterchain_block_id(chain_provider, master_shard, batch.anchor.seqno).await?;
+        if batch.anchor.seqno != expected || !is_anchor(&actual, &batch.anchor) {
+            tracing::warn!(
+                target: "indexer",
+                seqno = batch.anchor.seqno,
+                "pending masterchain block changed; discarding its hidden rows",
+            );
+            store.discard_pending_batch()?;
+        }
+    }
+    // Touches published before an interruption are refreshed first.
+    drain_address_refresh(
+        chain_provider,
+        pool_snapshots,
+        store,
+        known,
+        probe_budget,
+        &limits.refresh,
+    )
+    .await?;
+
+    let mut published_now = 0u32;
+    let mut work_left = limits.max_shard_work;
+    loop {
+        let Some(batch) = store.pending_batch()? else {
+            if published_now >= limits.max_batches {
+                break;
             }
-            let root_hash = hex::encode(&shard.root_hash);
-            let stored = store.explorer_block_root(shard.workchain, shard.shard, shard.seqno)?;
-            if stored.as_deref() != Some(root_hash.as_str()) {
-                scan_one_seqno(
+            let next = store.published_mc_seqno()?.saturating_add(1);
+            if next > target {
+                break;
+            }
+            let id = masterchain_block_id(chain_provider, master_shard, next).await?;
+            store.begin_batch(&checkpoint_of(&id))?;
+            continue;
+        };
+        match advance_batch(chain_provider, store, &batch.anchor, master_shard, &mut work_left)
+            .await?
+        {
+            BatchProgress::Pending => break,
+            BatchProgress::Assembled => {
+                let actual =
+                    masterchain_block_id(chain_provider, master_shard, batch.anchor.seqno).await?;
+                if !is_anchor(&actual, &batch.anchor) {
+                    tracing::warn!(
+                        target: "indexer",
+                        seqno = batch.anchor.seqno,
+                        "masterchain block changed while its batch was assembled; discarding it",
+                    );
+                    store.discard_pending_batch()?;
+                    continue;
+                }
+                store.publish_batch(master_shard, &batch.anchor)?;
+                published_now = published_now.saturating_add(1);
+                drain_address_refresh(
                     chain_provider,
+                    pool_snapshots,
                     store,
                     known,
-                    shard.workchain,
-                    shard.shard,
-                    shard.seqno,
-                    next,
                     probe_budget,
+                    &limits.refresh,
                 )
                 .await?;
             }
-            let shard_key = format!("{}:{}", shard.workchain, shard.shard);
-            if shard.seqno >= store.checkpoint(&shard_key)? {
-                store.set_checkpoint(&shard_key, shard.seqno)?;
-                store.set_checkpoint_block_hash(&shard_key, &root_hash)?;
-            }
         }
-
-        // Commit the masterchain cursor only after all shard heads it
-        // references are durable. A crash restarts this entire unit safely.
-        store.set_checkpoint(&master_key, next)?;
-        if let Some(hash) = block_hash {
-            store.set_checkpoint_block_hash(&master_key, &hash)?;
-        }
-        next += 1;
     }
-    Ok(())
+    Ok(ScanOutcome { remote_tip: target, published_mc_seqno: store.published_mc_seqno()? })
 }
 
-#[cfg(test)]
-async fn scan_shard(
+fn is_anchor(actual: &BlockFullId, anchor: &MasterchainCheckpoint) -> bool {
+    actual.workchain == -1
+        && actual.seqno == anchor.seqno
+        && actual.root_hash == anchor.root_hash
+        && actual.file_hash == anchor.file_hash
+}
+
+fn checkpoint_of(id: &BlockFullId) -> MasterchainCheckpoint {
+    MasterchainCheckpoint {
+        seqno: id.seqno,
+        root_hash: id.root_hash.clone(),
+        file_hash: id.file_hash.clone(),
+    }
+}
+
+enum BatchProgress {
+    /// The work budget ran out; the batch resumes from durable state.
+    Pending,
+    /// Every shard block the height references is indexed or at the frontier.
+    Assembled,
+}
+
+/// Advances the pending batch as far as the work budget allows. Each unit
+/// of work is one durable step, so stopping anywhere is safe.
+async fn advance_batch(
     chain_provider: &Arc<dyn ChainProvider>,
     store: &IndexerStore,
-    known: &KnownCodeHashes,
-    workchain: i32,
-    shard: i64,
-    target_seqno: u32,
-    probe_budget: &ProbeBudget,
-) -> anyhow::Result<()> {
-    let shard_key = format!("{workchain}:{shard}");
-    let mut next = store.checkpoint(&shard_key)?.saturating_add(1).max(1);
-
-    // Reorg check: if a block has already been scanned here, verify the
-    // hash recorded for it still matches what the chain reports now. A
-    // mismatch means that block -- and everything already scanned after
-    // it -- was reorganized out from under us; rewind by a safety margin
-    // and rescan rather than silently trusting stale data forever.
-    let last_scanned = next.saturating_sub(1);
-    if last_scanned > 0 {
-        if let Some(expected_hash) = store.checkpoint_block_hash(&shard_key)? {
-            if let Ok(Some(actual_hash)) =
-                fetch_block_hash(chain_provider, workchain, shard, last_scanned).await
-            {
-                if actual_hash != expected_hash {
-                    tracing::warn!(
-                        target: "indexer",
-                        shard = %shard_key,
-                        seqno = last_scanned,
-                        "reorg detected (block hash changed since last scan), rewinding",
-                    );
-                    next =
-                        last_scanned.saturating_sub(REORG_REWIND_BLOCKS).saturating_add(1).max(1);
-                    store.rewind_explorer(workchain, shard, next)?;
+    anchor: &MasterchainCheckpoint,
+    master_shard: i64,
+    work_left: &mut usize,
+) -> anyhow::Result<BatchProgress> {
+    loop {
+        let batch = store
+            .pending_batch()?
+            .ok_or_else(|| anyhow::anyhow!("pending masterchain batch disappeared"))?;
+        anyhow::ensure!(batch.anchor == *anchor, "pending masterchain batch was replaced");
+        match batch.phase {
+            BatchPhase::ScanMaster => {
+                if *work_left == 0 {
+                    return Ok(BatchProgress::Pending);
                 }
+                *work_left = work_left.saturating_sub(1);
+                let id = BlockFullId {
+                    workchain: -1,
+                    shard: master_shard,
+                    seqno: anchor.seqno,
+                    root_hash: anchor.root_hash.clone(),
+                    file_hash: anchor.file_hash.clone(),
+                };
+                let scanned = scan_exact_block(chain_provider, &id, anchor.seqno).await?;
+                store.commit_scanned_block(
+                    anchor.seqno,
+                    &ScannedTarget::Master,
+                    &scanned.block,
+                    &scanned.transactions,
+                    &scanned.touches,
+                )?;
             }
+            BatchPhase::SeedShards => {
+                let shards = chain_provider.get_shards(anchor.seqno).await?.shards;
+                let heads = shards.iter().map(full_id).collect::<anyhow::Result<Vec<_>>>()?;
+                store.seed_batch_heads(anchor.seqno, &heads)?;
+            }
+            BatchPhase::Traverse => loop {
+                let step = store.next_shard_step(anchor.seqno)?;
+                if step == ShardStep::Done {
+                    return Ok(BatchProgress::Assembled);
+                }
+                if *work_left == 0 {
+                    return Ok(BatchProgress::Pending);
+                }
+                *work_left = work_left.saturating_sub(1);
+                match step {
+                    ShardStep::Resolve(id) => {
+                        if store.resolve_at_frontier(anchor.seqno, &id)? {
+                            continue;
+                        }
+                        let parents = chain_provider.get_block_parents(&rpc_block_id(&id)?).await?;
+                        let parents = proof_parents(&id, &parents)?;
+                        store.record_parents(anchor.seqno, &id, &parents)?;
+                    }
+                    ShardStep::Scan(id) => {
+                        let scanned = scan_exact_block(chain_provider, &id, anchor.seqno).await?;
+                        store.commit_scanned_block(
+                            anchor.seqno,
+                            &ScannedTarget::Shard(id),
+                            &scanned.block,
+                            &scanned.transactions,
+                            &scanned.touches,
+                        )?;
+                    }
+                    ShardStep::Done => return Ok(BatchProgress::Assembled),
+                }
+            },
         }
     }
-
-    if next > target_seqno {
-        return Ok(());
-    }
-    let end = next.saturating_add(MAX_BLOCKS_PER_TICK - 1).min(target_seqno);
-
-    while next <= end {
-        let block_hash = scan_one_seqno(
-            chain_provider,
-            store,
-            known,
-            workchain,
-            shard,
-            next,
-            next,
-            probe_budget,
-        )
-        .await?;
-        store.set_checkpoint(&shard_key, next)?;
-        if let Some(hash) = block_hash {
-            store.set_checkpoint_block_hash(&shard_key, &hash)?;
-        }
-        next += 1;
-    }
-    Ok(())
 }
 
-/// Fetches just the block's own identity hash (a minimal, one-transaction
-/// page is enough) -- used only for the reorg check above, never to walk
-/// transactions.
-async fn fetch_block_hash(
-    chain_provider: &Arc<dyn ChainProvider>,
-    workchain: i32,
-    shard: i64,
-    seqno: u32,
-) -> anyhow::Result<Option<String>> {
-    let page =
-        chain_provider.get_block_transactions_page(workchain, shard, seqno, None, None, 1).await?;
-    Ok(page.id.map(|id| hex::encode(&id.root_hash)))
+fn rpc_block_id(id: &BlockFullId) -> anyhow::Result<BlockIdExt> {
+    Ok(BlockIdExt {
+        r#type: "tos.blockIdExt".to_owned(),
+        workchain: id.workchain,
+        shard: id.shard,
+        seqno: id.seqno,
+        root_hash: hex::decode(&id.root_hash)?,
+        file_hash: hex::decode(&id.file_hash)?,
+    })
 }
 
-async fn scan_one_seqno(
+/// Shard prefix one level up, if `shard` is not the whole workchain.
+fn shard_parent(shard: i64) -> Option<i64> {
+    let value = shard as u64;
+    let low = value & value.wrapping_neg();
+    if low == 0 || low == 1 << 63 {
+        return None;
+    }
+    let parent = value.checked_sub(low)? | low.checked_shl(1)?;
+    Some(parent as i64)
+}
+
+/// The two halves `shard` splits into, if it can split further.
+fn shard_children(shard: i64) -> Option<(i64, i64)> {
+    let value = shard as u64;
+    let low = value & value.wrapping_neg();
+    if low <= 1 {
+        return None;
+    }
+    let half = low >> 1;
+    Some((value.checked_sub(half)? as i64, value.checked_add(half)? as i64))
+}
+
+/// Validates proof-derived parents before they become durable edges: one or
+/// two of them, full identities, same workchain, strictly lower seqno, and
+/// the shard shape of a continuation, split or merge.
+fn proof_parents(child: &BlockFullId, parents: &[BlockIdExt]) -> anyhow::Result<Vec<BlockFullId>> {
+    anyhow::ensure!(
+        !parents.is_empty() && parents.len() <= 2,
+        "shard block {}:{}:{} has {} parents",
+        child.workchain,
+        child.shard,
+        child.seqno,
+        parents.len()
+    );
+    anyhow::ensure!(child.workchain != -1, "masterchain blocks are not shard ancestry");
+    let parents = parents.iter().map(full_id).collect::<anyhow::Result<Vec<_>>>()?;
+    for parent in &parents {
+        anyhow::ensure!(
+            parent.workchain == child.workchain && parent.shard != 0 && parent.seqno < child.seqno,
+            "shard block {}:{}:{} names an invalid parent {}:{}:{}",
+            child.workchain,
+            child.shard,
+            child.seqno,
+            parent.workchain,
+            parent.shard,
+            parent.seqno
+        );
+    }
+    let shape_ok = match parents.as_slice() {
+        [only] => only.shard == child.shard || shard_parent(child.shard) == Some(only.shard),
+        [left, right] => shard_children(child.shard).is_some_and(|(low, high)| {
+            (left.shard == low && right.shard == high) || (left.shard == high && right.shard == low)
+        }),
+        _ => false,
+    };
+    anyhow::ensure!(
+        shape_ok,
+        "parents of shard block {}:{}:{} are not a continuation, split or merge",
+        child.workchain,
+        child.shard,
+        child.seqno
+    );
+    Ok(parents)
+}
+
+/// One exact block's explorer rows and per-address touch counts.
+struct ScannedBlock {
+    block: ExplorerBlockRecord,
+    transactions: Vec<ExplorerTransactionRecord>,
+    touches: Vec<AddressTouch>,
+}
+
+/// Reads every transaction page of one exact block. Every page must report
+/// exactly the requested identity; nothing is written here.
+async fn scan_exact_block(
     chain_provider: &Arc<dyn ChainProvider>,
-    store: &IndexerStore,
-    known: &KnownCodeHashes,
-    workchain: i32,
-    shard: i64,
-    seqno: u32,
+    id: &BlockFullId,
     observed_mc_seqno: u32,
-    probe_budget: &ProbeBudget,
-) -> anyhow::Result<Option<String>> {
-    let mut addresses: HashSet<String> = HashSet::new();
-    let mut block_hash: Option<String> = None;
-    let mut explorer_block: Option<ExplorerBlockRecord> = None;
+) -> anyhow::Result<ScannedBlock> {
+    let (workchain, shard, seqno) = (id.workchain, id.shard, id.seqno);
+    let mut touches: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
     let mut explorer_transactions: Vec<ExplorerTransactionRecord> = Vec::new();
     let indexed_at = time_format::now();
     let mut observed_gen_utime = 0;
@@ -448,7 +692,7 @@ async fn scan_one_seqno(
                 TRANSACTIONS_PAGE_SIZE,
             )
             .await;
-        let (id, incomplete, transactions) = match extended {
+        let (page_id, incomplete, transactions) = match extended {
             Ok(page) => (
                 page.id,
                 page.incomplete,
@@ -495,22 +739,13 @@ async fn scan_one_seqno(
                 )
             }
         };
-        if block_hash.is_none() {
-            block_hash = id.as_ref().map(|id| hex::encode(&id.root_hash));
-        }
-        if explorer_block.is_none() {
-            explorer_block = id.as_ref().map(|id| ExplorerBlockRecord {
-                workchain: id.workchain,
-                shard: id.shard,
-                seqno: id.seqno,
-                root_hash: hex::encode(&id.root_hash),
-                file_hash: hex::encode(&id.file_hash),
-                gen_utime: 0,
-                tx_count: 0,
-                indexed_at,
-                observed_mc_seqno,
-            });
-        }
+        let actual = page_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("block transaction page omitted exact block id"))?;
+        anyhow::ensure!(
+            full_id(actual)? == *id,
+            "block transaction page for {workchain}:{shard}:{seqno} reports a different block"
+        );
         for (account, lt, hash, fee, in_msg_hash, utime) in &transactions {
             if account.is_empty() {
                 continue;
@@ -521,14 +756,12 @@ async fn scan_one_seqno(
             // which need not match `MsgAddressInt::to_string()`'s canonical
             // form -- and every other lookup (direct `/x/{address}` HTTP
             // routes, CLI address args) goes through that canonical form.
-            // A mismatch here means list endpoints (which the test suite's
-            // own comparison also re-normalizes) appear to work while
-            // direct by-address lookups silently 404.
             let Ok(addr) = MsgAddressInt::from_str(&format!("{workchain}:{account}")) else {
                 continue;
             };
             let address = addr.to_string();
-            addresses.insert(address.clone());
+            let count = touches.entry(address.clone()).or_insert(0);
+            *count = count.saturating_add(1);
             if observed_gen_utime == 0 {
                 observed_gen_utime = *utime;
             }
@@ -555,58 +788,162 @@ async fn scan_one_seqno(
         after_account = Some(last.0.clone());
     }
 
-    let block_gen_utime = if observed_gen_utime > 0 {
+    let gen_utime = if observed_gen_utime > 0 {
         observed_gen_utime
     } else {
         chain_provider.get_block_timestamp(workchain, shard, seqno).await?
     };
-    if let Some(mut block) = explorer_block {
-        block.gen_utime = block_gen_utime;
-        for transaction in &mut explorer_transactions {
-            transaction.gen_utime = block.gen_utime;
-        }
-        block.tx_count = explorer_transactions.len();
-        store.index_explorer_block(&block, &explorer_transactions)?;
+    for transaction in &mut explorer_transactions {
+        transaction.gen_utime = gen_utime;
     }
+    let block = ExplorerBlockRecord {
+        workchain,
+        shard,
+        seqno,
+        root_hash: id.root_hash.clone(),
+        file_hash: id.file_hash.clone(),
+        gen_utime,
+        tx_count: explorer_transactions.len(),
+        indexed_at,
+        observed_mc_seqno,
+    };
+    let touches = touches
+        .into_iter()
+        .map(|(address, count)| AddressTouch { address, count, block_seqno: seqno, gen_utime })
+        .collect();
+    Ok(ScannedBlock { block, transactions: explorer_transactions, touches })
+}
 
-    let dns_checkpoint =
-        store.masterchain_block(observed_mc_seqno)?.map(|block| MasterchainCheckpoint {
-            seqno: block.seqno,
-            root_hash: block.root_hash,
-            file_hash: block.file_hash,
-        });
+/// Refreshes contract state for addresses touched by published history,
+/// each bound to the exact published masterchain block that made its
+/// touches canonical. A failure that could hide a nominator-pool
+/// observation keeps the row for another attempt; other contract kinds are
+/// best-effort, as before.
+///
+/// The queue selects each address at its lowest pending height, with rows
+/// that keep failing held to a fixed share so they cannot hold fresh work
+/// back. Selected addresses are then drained through their successive queued
+/// heights in order, in rounds: every selected address gets its next height
+/// before any gets one more, an address leaves the rotation at its first
+/// failure or once it has used `per_address` heights, and the drain stops
+/// once it has made `work` observations. A pool touched every block thus
+/// works its backlog down whenever the pass has room, and no address can
+/// take the whole pass.
+async fn drain_address_refresh(
+    chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
+    store: &IndexerStore,
+    known: &KnownCodeHashes,
+    probe_budget: &ProbeBudget,
+    budget: &RefreshBudget,
+) -> anyhow::Result<()> {
+    let mut rotation = store.address_refresh_queue(budget.addresses)?;
+    let mut work_left = budget.work;
+    let mut round = 0usize;
+    'pass: while !rotation.is_empty() && round < budget.per_address {
+        round = round.saturating_add(1);
+        let mut next_round = Vec::with_capacity(rotation.len());
+        for refresh in rotation {
+            let Some(remaining) = work_left.checked_sub(1) else {
+                break 'pass;
+            };
+            work_left = remaining;
+            let address = refresh.address.clone();
+            if refresh_one_height(
+                chain_provider,
+                pool_snapshots,
+                store,
+                known,
+                probe_budget,
+                refresh,
+            )
+            .await?
+                == HeightOutcome::Observed
+                && let Some(next) = store.next_address_refresh(&address)?
+            {
+                next_round.push(next);
+            }
+        }
+        rotation = next_round;
+    }
+    store.settle_nominator_ledger()?;
+    Ok(())
+}
 
-    for address in addresses {
-        if let Err(e) = visit_address(
-            chain_provider,
-            store,
-            known,
-            &address,
-            seqno,
-            observed_mc_seqno,
-            u64::from(block_gen_utime),
-            dns_checkpoint.as_ref(),
-            probe_budget,
-        )
-        .await
+/// Whether a drain may move on to the address's next queued height.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeightOutcome {
+    /// The height was observed and removed; the next one may follow.
+    Observed,
+    /// The address is done for this pass: its height failed and stays
+    /// queued, or one visit stood for every height it had queued.
+    Stop,
+}
+
+/// Observes one address at one queued height.
+async fn refresh_one_height(
+    chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
+    store: &IndexerStore,
+    known: &KnownCodeHashes,
+    probe_budget: &ProbeBudget,
+    refresh: AddressRefresh,
+) -> anyhow::Result<HeightOutcome> {
+    let kind_before = store.kind_of(&refresh.address)?;
+    let ledger_relevant = match kind_before.as_deref() {
+        None | Some("unclassified") => true,
+        Some(kind) => kind == NOMINATOR_POOL_KIND,
+    };
+    // Other contract kinds keep no per-height history: visit them once, at
+    // their highest queued height (some read state at that height), and drop
+    // the heights below it.
+    if !ledger_relevant {
+        let latest = store.latest_address_refresh(&refresh.address)?.unwrap_or(refresh);
+        if let Err(e) =
+            visit_address(chain_provider, pool_snapshots, store, known, &latest, probe_budget).await
         {
-            tracing::warn!(target: "indexer", address = %address, error = %format!("{e:#}"), "failed to index account");
+            tracing::warn!(
+                target: "indexer",
+                address = %latest.address,
+                error = %format!("{e:#}"),
+                "failed to index account"
+            );
+        }
+        store.complete_address_refresh_through(&latest.address, latest.checkpoint.seqno)?;
+        return Ok(HeightOutcome::Stop);
+    }
+    // A pool is folded in strictly in height order: an unreadable height
+    // keeps it (and the ledger) waiting rather than being skipped.
+    match visit_address(chain_provider, pool_snapshots, store, known, &refresh, probe_budget).await
+    {
+        Ok(()) => {
+            store.complete_address_refresh(&refresh)?;
+            Ok(HeightOutcome::Observed)
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "indexer",
+                address = %refresh.address,
+                mc_seqno = refresh.checkpoint.seqno,
+                error = %format!("{e:#}"),
+                "failed to index account; keeping it for another attempt"
+            );
+            store.defer_address_refresh(&refresh)?;
+            Ok(HeightOutcome::Stop)
         }
     }
-    Ok(block_hash)
 }
 
 async fn visit_address(
     chain_provider: &Arc<dyn ChainProvider>,
+    pool_snapshots: &dyn PoolSnapshotSource,
     store: &IndexerStore,
     known: &KnownCodeHashes,
-    address: &str,
-    seqno: u32,
-    observed_mc_seqno: u32,
-    block_time: u64,
-    dns_checkpoint: Option<&MasterchainCheckpoint>,
+    refresh: &AddressRefresh,
     probe_budget: &ProbeBudget,
 ) -> anyhow::Result<()> {
+    let address = refresh.address.as_str();
+    let seqno = refresh.last_block_seqno;
     let existing_kind = store.kind_of(address)?;
     let kind = match existing_kind {
         // A funded address can be observed while it is still uninitialized;
@@ -639,22 +976,64 @@ async fn visit_address(
         }
     };
 
+    if kind == NOMINATOR_POOL_KIND {
+        return refresh_nominator_pool(pool_snapshots, store, address, refresh).await;
+    }
     if kind == "dns_domain" {
         return decode_dns_domain(
             chain_provider,
             store,
             address,
             seqno,
-            observed_mc_seqno,
-            block_time,
-            dns_checkpoint.ok_or_else(|| {
-                anyhow::anyhow!("DNS observation lacks its canonical masterchain block")
-            })?,
+            refresh.checkpoint.seqno,
+            u64::from(refresh.last_gen_utime),
+            &refresh.checkpoint,
         )
         .await;
     }
     decode_and_store(chain_provider, store, address, &kind, seqno, time_format::now(), probe_budget)
         .await
+}
+
+/// Converts an RPC block id into a full identity, refusing ids whose hashes
+/// are not 32 bytes: a truncated hash is not an identity.
+fn full_id(id: &BlockIdExt) -> anyhow::Result<BlockFullId> {
+    anyhow::ensure!(
+        id.root_hash.len() == 32 && id.file_hash.len() == 32,
+        "block id {}:{}:{} lacks full 32-byte hashes",
+        id.workchain,
+        id.shard,
+        id.seqno
+    );
+    Ok(BlockFullId {
+        workchain: id.workchain,
+        shard: id.shard,
+        seqno: id.seqno,
+        root_hash: hex::encode(&id.root_hash),
+        file_hash: hex::encode(&id.file_hash),
+    })
+}
+
+/// The exact identity the chain currently reports for one masterchain seqno.
+async fn masterchain_block_id(
+    chain_provider: &Arc<dyn ChainProvider>,
+    master_shard: i64,
+    seqno: u32,
+) -> anyhow::Result<BlockFullId> {
+    let page =
+        chain_provider.get_block_transactions_page(-1, master_shard, seqno, None, None, 1).await?;
+    let id = page
+        .id
+        .ok_or_else(|| anyhow::anyhow!("masterchain block {seqno} lookup omitted its id"))?;
+    let id = full_id(&id)?;
+    anyhow::ensure!(
+        id.workchain == -1 && id.shard == master_shard && id.seqno == seqno,
+        "masterchain block lookup for {seqno} returned {}:{}:{}",
+        id.workchain,
+        id.shard,
+        id.seqno
+    );
+    Ok(id)
 }
 
 async fn classify_address(
@@ -777,108 +1156,124 @@ async fn decode_and_store(
                 dto_json: serde_json::to_string(&CapabilityRegistryRecordDto::from(&data))?,
             })
         }
-        "contract.pool.nominator" => {
-            let address_value = address.parse::<MsgAddressInt>()?;
-            let wrapper = NominatorPoolWrapperImpl::new(
-                contract_provider_from(chain_provider.clone()),
-                address_value,
-            );
-            let data = wrapper.get_pool_data().await?;
-            let nominators = wrapper.list_nominators().await?;
-            let nominator_stake = nominators
-                .iter()
-                .map(|position| position.amount.saturating_add(position.pending_deposit))
-                .sum::<u64>();
-
-            // What guard 68 would compare against for the next new depositor:
-            // the depth of the dictionary as it stands now, against the bound
-            // derived from a count that has already been incremented.
-            let addresses: Vec<[u8; 32]> = nominators
-                .iter()
-                .filter_map(|position| {
-                    let hex_part = position.address.split(':').nth(1)?;
-                    let bytes = hex::decode(hex_part).ok()?;
-                    <[u8; 32]>::try_from(bytes.as_slice()).ok()
-                })
-                .collect();
-            let depth_headroom = deposit_depth_bound(data.nominators_count.saturating_add(1))
-                - nominator_dictionary_depth(&addresses)
-                - 1;
-            let status = match data.state {
-                0 => "idle",
-                1 => "staking",
-                2 => "staked",
-                _ => "unknown",
-            };
-            let dto = NominatorPoolRecordDto {
-                state: data.state,
-                nominators_count: data.nominators_count,
-                stake_amount_sent: data.stake_amount_sent.to_string(),
-                validator_amount: data.validator_amount.to_string(),
-                nominator_stake: nominator_stake.to_string(),
-                total_balance_at_risk: data
-                    .validator_amount
-                    .saturating_add(nominator_stake)
-                    .to_string(),
-                validator_address: format!("0:{}", hex::encode(data.validator_address)),
-                validator_reward_share_bps: data.validator_reward_share,
-                max_nominators_count: data.max_nominators_count,
-                min_validator_stake: data.min_validator_stake.to_string(),
-                min_nominator_stake: data.min_nominator_stake.to_string(),
-                stake_at: data.stake_at,
-                saved_validator_set_hash: hex::encode(data.saved_validator_set_hash),
-                validator_set_changes_count: data.validator_set_changes_count,
-                validator_set_change_time: data.validator_set_change_time,
-                stake_held_for: data.stake_held_for,
-                capacity_headroom: data
-                    .max_nominators_count
-                    .saturating_sub(data.nominators_count.min(u32::from(u16::MAX)) as u16),
-                deposit_depth_headroom: depth_headroom,
-                accepting_deposits: u32::from(data.max_nominators_count) > data.nominators_count
-                    && depth_headroom > 0,
-                nominators,
-            };
-
-            // Attribute this observation before the record is overwritten: the
-            // contract's ledger says what a depositor is owed now, and the
-            // difference from the last observation is the only place the reason
-            // for the change is still visible. A withdrawal deletes the entry
-            // outright, so nothing can be reconstructed after the fact.
-            let observed_positions: Vec<(String, u64, u64)> = dto
-                .nominators
-                .iter()
-                .map(|position| {
-                    (position.address.clone(), position.amount, position.pending_deposit)
-                })
-                .collect();
-            if let Err(error) = store.observe_nominator_positions(
-                address,
-                dto.state,
-                common::time_format::now(),
-                &observed_positions,
-            ) {
-                tracing::warn!(
-                    target: "indexer",
-                    pool = %address,
-                    error = %format!("{error:#}"),
-                    "could not attribute nominator positions"
-                );
-            }
-            store.upsert(&IndexedRecord {
-                address: address.to_owned(),
-                kind: kind.to_owned(),
-                creator: Some(dto.validator_address.clone()),
-                counterparty: None,
-                status: Some(status.to_owned()),
-                deadline: (data.stake_at > 0 && data.stake_held_for > 0)
-                    .then_some(u64::from(data.stake_at).saturating_add(data.stake_held_for)),
-                last_seqno: seqno,
-                updated_at: now,
-                dto_json: serde_json::to_string(&dto)?,
-            })
+        NOMINATOR_POOL_KIND => {
+            anyhow::bail!("nominator pools are only refreshed at an exact published checkpoint")
         }
         other => anyhow::bail!("unknown indexed contract kind: {other}"),
     }
+}
+
+/// Refreshes one nominator pool from a proven snapshot taken explicitly at
+/// the exact published masterchain block its touches became canonical in,
+/// and folds that snapshot into the lifetime ledger. The snapshot comes only
+/// from `pool_snapshots`, which computes both get-methods locally on the
+/// pool's proven state; the chain RPC endpoint is not consulted for it at
+/// all. Any failure -- a block the verifier cannot authenticate from its
+/// anchor, missing proof material, a local execution failure -- leaves the
+/// refresh pending, so the ledger never advances past an observation it
+/// could not prove.
+async fn refresh_nominator_pool(
+    pool_snapshots: &dyn PoolSnapshotSource,
+    store: &IndexerStore,
+    address: &str,
+    refresh: &AddressRefresh,
+) -> anyhow::Result<()> {
+    let address_value = address.parse::<MsgAddressInt>()?;
+    let snapshot = pool_snapshots
+        .nominator_pool_snapshot(
+            &address_value,
+            &ReadPolicy::Historical(refresh.checkpoint.clone()),
+        )
+        .await?;
+    anyhow::ensure!(
+        snapshot.checkpoint == refresh.checkpoint,
+        "pool snapshot answers for masterchain {} instead of {}",
+        snapshot.checkpoint.seqno,
+        refresh.checkpoint.seqno
+    );
+    let data = snapshot.pool;
+    let nominators = snapshot.nominators;
+    let nominator_stake = nominators.iter().fold(0u64, |total, position| {
+        total.saturating_add(position.amount.saturating_add(position.pending_deposit))
+    });
+
+    // What guard 68 would compare against for the next new depositor:
+    // the depth of the dictionary as it stands now, against the bound
+    // derived from a count that has already been incremented.
+    let addresses: Vec<[u8; 32]> = nominators
+        .iter()
+        .filter_map(|position| {
+            let hex_part = position.address.split(':').nth(1)?;
+            let bytes = hex::decode(hex_part).ok()?;
+            <[u8; 32]>::try_from(bytes.as_slice()).ok()
+        })
+        .collect();
+    let depth_headroom = deposit_depth_bound(data.nominators_count.saturating_add(1))
+        .saturating_sub(nominator_dictionary_depth(&addresses))
+        .saturating_sub(1);
+    let status = match data.state {
+        0 => "idle",
+        1 => "staking",
+        2 => "staked",
+        _ => "unknown",
+    };
+    let dto = NominatorPoolRecordDto {
+        state: data.state,
+        nominators_count: data.nominators_count,
+        stake_amount_sent: data.stake_amount_sent.to_string(),
+        validator_amount: data.validator_amount.to_string(),
+        nominator_stake: nominator_stake.to_string(),
+        total_balance_at_risk: data.validator_amount.saturating_add(nominator_stake).to_string(),
+        validator_address: format!("0:{}", hex::encode(data.validator_address)),
+        validator_reward_share_bps: data.validator_reward_share,
+        max_nominators_count: data.max_nominators_count,
+        min_validator_stake: data.min_validator_stake.to_string(),
+        min_nominator_stake: data.min_nominator_stake.to_string(),
+        stake_at: data.stake_at,
+        saved_validator_set_hash: hex::encode(data.saved_validator_set_hash),
+        validator_set_changes_count: data.validator_set_changes_count,
+        validator_set_change_time: data.validator_set_change_time,
+        stake_held_for: data.stake_held_for,
+        capacity_headroom: data
+            .max_nominators_count
+            .saturating_sub(u16::try_from(data.nominators_count).unwrap_or(u16::MAX)),
+        deposit_depth_headroom: depth_headroom,
+        accepting_deposits: u32::from(data.max_nominators_count) > data.nominators_count
+            && depth_headroom > 0,
+        nominators,
+    };
+
+    // Attribute this observation before the record is overwritten: the
+    // contract's ledger says what a depositor is owed now, and the
+    // difference from the last observation is the only place the reason
+    // for the change is still visible. A withdrawal deletes the entry
+    // outright, so the ledger zeroes whoever is missing.
+    let observed_positions: Vec<(String, u64, u64)> = dto
+        .nominators
+        .iter()
+        .map(|position| (position.address.clone(), position.amount, position.pending_deposit))
+        .collect();
+    let now = time_format::now();
+    store.observe_nominator_snapshot(
+        address,
+        dto.state,
+        now,
+        &observed_positions,
+        &refresh.checkpoint,
+        refresh.touch_count,
+    )?;
+    store.upsert(&IndexedRecord {
+        address: address.to_owned(),
+        kind: NOMINATOR_POOL_KIND.to_owned(),
+        creator: Some(dto.validator_address.clone()),
+        counterparty: None,
+        status: Some(status.to_owned()),
+        deadline: (data.stake_at > 0 && data.stake_held_for > 0)
+            .then_some(u64::from(data.stake_at).saturating_add(data.stake_held_for)),
+        last_seqno: refresh.last_block_seqno,
+        updated_at: now,
+        dto_json: serde_json::to_string(&dto)?,
+    })
 }
 
 async fn decode_dns_domain(
@@ -893,7 +1288,7 @@ async fn decode_dns_domain(
     anyhow::ensure!(mc_seqno > 0, "DNS observation lacks a masterchain checkpoint");
     anyhow::ensure!(checkpoint.seqno == mc_seqno, "DNS checkpoint seqno mismatch");
     let nft = chain_provider
-        .run_get_method_at(address.to_owned(), "get_nft_data", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_nft_data", vec![], checkpoint)
         .await?;
     anyhow::ensure!(nft.bool(0)?, "DNS Domain Item is not initialized");
     let index = nft.decimal_string(1)?.to_owned();
@@ -911,7 +1306,7 @@ async fn decode_dns_domain(
     let content = nft.cell(4)?;
 
     let domain_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_domain", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_domain", vec![], checkpoint)
         .await?;
     let domain_slice = domain_stack.slice(0)?;
     anyhow::ensure!(
@@ -946,7 +1341,7 @@ async fn decode_dns_domain(
     );
 
     let auction_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_auction_info", vec![], checkpoint)
+        .run_get_method_at_unverified(address.to_owned(), "get_auction_info", vec![], checkpoint)
         .await?;
     let auction_end_time = auction_stack.i64(2)?;
     let max_bid_amount = auction_stack.decimal_string(1)?.parse::<u128>()?;
@@ -959,7 +1354,12 @@ async fn decode_dns_domain(
         auction_end_time,
     });
     let fill_stack = chain_provider
-        .run_get_method_at(address.to_owned(), "get_last_fill_up_time", vec![], checkpoint)
+        .run_get_method_at_unverified(
+            address.to_owned(),
+            "get_last_fill_up_time",
+            vec![],
+            checkpoint,
+        )
         .await?;
     let last_fill_up_time = fill_stack.i64(0)?;
     anyhow::ensure!(last_fill_up_time > 0, "DNS Domain Item lacks a renewal clock");
@@ -1263,6 +1663,12 @@ async fn refresh_service_request_lifecycle(
         store.set_service_scan_high_water(address, high_water)?;
     }
     Ok(())
+}
+
+/// A source that never yields a pool snapshot, for tests that index no pool.
+#[cfg(test)]
+fn no_pool_snapshots() -> UnprovisionedPoolSnapshots {
+    UnprovisionedPoolSnapshots { reason: "not provisioned in this test".to_owned() }
 }
 
 #[cfg(test)]
@@ -1590,6 +1996,9 @@ mod tests {
             permission_hash: [0; 32],
             dispute_hash: [0; 32],
             attestor_pubkey: None,
+            dispute_fallback_agent_bps:
+                contracts::TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
+            dispute_deadline: 0,
         };
         let json = serde_json::to_string(&TaskEscrowRecordDto::from(&data)).unwrap();
         let dto = crate::http::agent_query_api::indexed_dto::<TaskDto>(&json, "0:aa", true);
@@ -1680,9 +2089,7 @@ mod tests {
     /// A [`ChainProvider`] whose `get_block_transactions_page` answers are
     /// scripted per-seqno and can be mutated mid-test, so a reorg (the same
     /// seqno later reporting a different block hash) can be simulated
-    /// without a real chain. Every other trait method is unreachable from
-    /// `scan_shard` (only `scan_new_blocks` -- not exercised by these tests
-    /// -- calls `get_masterchain_info`/`get_shards`), so they're stubbed.
+    /// without a real chain. Methods the scanner never calls are stubbed.
     struct ScriptedBlocksProvider {
         // Keyed by (workchain, shard, seqno): `scan_new_blocks` scans the
         // masterchain and every other shard in the same call, so a mock
@@ -1694,35 +2101,25 @@ mod tests {
                 contracts::chain_provider::BlockTransactionsPage,
             >,
         >,
-        /// Total `get_block_transactions_page` calls made so far, and (if
-        /// set) the call count after which every subsequent call fails --
-        /// simulating an RPC disruption partway through a scan.
+        /// Total `get_block_transactions_page` calls made so far.
         call_count: std::sync::Mutex<usize>,
-        fail_after_calls: std::sync::Mutex<Option<usize>>,
         masterchain_info: std::sync::Mutex<Option<contracts::chain_provider::MasterchainInfo>>,
         shards: std::sync::Mutex<Option<contracts::chain_provider::ShardsInfo>>,
+        shards_by_mc:
+            std::sync::Mutex<std::collections::HashMap<u32, contracts::chain_provider::ShardsInfo>>,
+        parents: std::sync::Mutex<std::collections::HashMap<(i32, i64, u32), Vec<BlockIdExt>>>,
     }
-
-    /// Default (workchain, shard) pair most tests scan; matches the id
-    /// baked into the `BlockIdExt`s `set` constructs.
-    const TEST_WORKCHAIN: i32 = 0;
-    const TEST_SHARD: i64 = -9223372036854775808;
 
     impl ScriptedBlocksProvider {
         fn new() -> Self {
             Self {
                 by_seqno: std::sync::Mutex::new(std::collections::HashMap::new()),
                 call_count: std::sync::Mutex::new(0),
-                fail_after_calls: std::sync::Mutex::new(None),
                 masterchain_info: std::sync::Mutex::new(None),
                 shards: std::sync::Mutex::new(None),
+                shards_by_mc: std::sync::Mutex::new(std::collections::HashMap::new()),
+                parents: std::sync::Mutex::new(std::collections::HashMap::new()),
             }
-        }
-
-        /// Scripts a block on the default test shard ([`TEST_WORKCHAIN`]/
-        /// [`TEST_SHARD`]), the shard every pre-existing test scans.
-        fn set(&self, seqno: u32, block_hash: &str) {
-            self.set_on(TEST_WORKCHAIN, TEST_SHARD, seqno, block_hash);
         }
 
         /// Scripts a block on an explicit (workchain, shard) -- needed once
@@ -1747,18 +2144,8 @@ mod tests {
             self.by_seqno.lock().unwrap().insert((workchain, shard, seqno), page);
         }
 
-        /// After this many `get_block_transactions_page` calls succeed,
-        /// every subsequent call fails -- simulating an RPC disruption.
-        fn fail_after(&self, n: usize) {
-            *self.fail_after_calls.lock().unwrap() = Some(n);
-        }
-
         fn calls_made(&self) -> usize {
             *self.call_count.lock().unwrap()
-        }
-
-        fn clear_failure(&self) {
-            *self.fail_after_calls.lock().unwrap() = None;
         }
 
         fn set_masterchain_info(&self, seqno: u32, shard: i64) {
@@ -1779,22 +2166,54 @@ mod tests {
         }
 
         fn set_shards(&self, entries: &[(i32, i64, u32)]) {
+            let blocks = self.by_seqno.lock().unwrap();
             *self.shards.lock().unwrap() = Some(contracts::chain_provider::ShardsInfo {
                 r#type: None,
                 shards: entries
                     .iter()
                     .map(|&(workchain, shard, seqno)| {
-                        chain_rpc_client::v2::data_models::BlockIdExt {
-                            r#type: "tos.blockIdExt".to_owned(),
-                            workchain,
-                            shard,
-                            seqno,
-                            root_hash: vec![0; 32],
-                            file_hash: vec![0; 32],
-                        }
+                        blocks
+                            .get(&(workchain, shard, seqno))
+                            .and_then(|page| page.id.clone())
+                            .unwrap_or_else(|| BlockIdExt {
+                                r#type: "tos.blockIdExt".to_owned(),
+                                workchain,
+                                shard,
+                                seqno,
+                                root_hash: vec![0; 32],
+                                file_hash: vec![0; 32],
+                            })
                     })
                     .collect(),
             });
+        }
+
+        fn set_shards_at(&self, mc_seqno: u32, entries: &[(i32, i64, u32)]) {
+            self.set_shards(entries);
+            self.shards_by_mc
+                .lock()
+                .unwrap()
+                .insert(mc_seqno, self.shards.lock().unwrap().clone().unwrap());
+        }
+
+        fn set_transaction_on(&self, key: (i32, i64, u32), account: &str, hash: &str) {
+            self.by_seqno.lock().unwrap().get_mut(&key).unwrap().transactions.push(
+                chain_rpc_client::v2::data_models::ShortTxId {
+                    r#type: None,
+                    account: account.to_owned(),
+                    lt: 4000003,
+                    hash: hash.to_owned(),
+                },
+            );
+        }
+
+        fn set_parents(&self, id: (i32, i64, u32), parents: Vec<(i32, i64, u32)>) {
+            let blocks = self.by_seqno.lock().unwrap();
+            let ids = parents
+                .into_iter()
+                .map(|key| blocks.get(&key).unwrap().id.clone().unwrap())
+                .collect();
+            self.parents.lock().unwrap().insert(id, ids);
         }
     }
 
@@ -1806,37 +2225,37 @@ mod tests {
             _method: &str,
             _stack: Vec<tl_api::tos::tvm::StackEntry>,
         ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
-            unimplemented!("not exercised by scan_shard reorg tests")
+            anyhow::bail!("not exercised by the scanner tests")
         }
         async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
-            unimplemented!()
+            anyhow::bail!("not exercised by the scanner tests")
         }
         async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
-            unimplemented!()
+            anyhow::bail!("not exercised by the scanner tests")
         }
         async fn get_config_param(
             &self,
             _param_id: u32,
         ) -> anyhow::Result<chain_block::ConfigParamEnum> {
-            unimplemented!()
+            anyhow::bail!("not exercised by the scanner tests")
         }
         async fn get_address_info(
             &self,
             _address: &MsgAddressInt,
         ) -> anyhow::Result<contracts::chain_provider::AddressInfo> {
-            unimplemented!()
+            anyhow::bail!("no scripted account state")
         }
         async fn get_extended_address_info(
             &self,
             _address: &MsgAddressInt,
         ) -> anyhow::Result<contracts::chain_provider::ExtendedAddressInfo> {
-            unimplemented!()
+            anyhow::bail!("not exercised by the scanner tests")
         }
         async fn get_wallet_info(
             &self,
             _address: &MsgAddressInt,
         ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
-            unimplemented!()
+            anyhow::bail!("not exercised by the scanner tests")
         }
         async fn get_masterchain_info(
             &self,
@@ -1849,9 +2268,30 @@ mod tests {
         }
         async fn get_shards(
             &self,
-            _seqno: u32,
+            seqno: u32,
         ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            if let Some(shards) = self.shards_by_mc.lock().unwrap().get(&seqno) {
+                return Ok(shards.clone());
+            }
             self.shards.lock().unwrap().clone().ok_or_else(|| anyhow::anyhow!("no scripted shards"))
+        }
+        async fn get_block_parents(&self, id: &BlockIdExt) -> anyhow::Result<Vec<BlockIdExt>> {
+            if let Some(parents) =
+                self.parents.lock().unwrap().get(&(id.workchain, id.shard, id.seqno))
+            {
+                return Ok(parents.clone());
+            }
+            if id.seqno == 1 {
+                return Ok(vec![BlockIdExt {
+                    r#type: "tos.blockIdExt".to_owned(),
+                    workchain: id.workchain,
+                    shard: id.shard,
+                    seqno: 0,
+                    root_hash: vec![0; 32],
+                    file_hash: vec![0; 32],
+                }]);
+            }
+            anyhow::bail!("no proof-derived predecessor for scripted block")
         }
         async fn get_block_transactions_page(
             &self,
@@ -1862,15 +2302,7 @@ mod tests {
             _after_hash: Option<&str>,
             _count: u32,
         ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
-            {
-                let mut count = self.call_count.lock().unwrap();
-                *count += 1;
-                if let Some(fail_at) = *self.fail_after_calls.lock().unwrap() {
-                    if *count > fail_at {
-                        anyhow::bail!("simulated RPC disruption");
-                    }
-                }
-            }
+            *self.call_count.lock().unwrap() += 1;
             self.by_seqno.lock().unwrap().get(&(workchain, shard, seqno)).cloned().ok_or_else(
                 || anyhow::anyhow!("no scripted block for ({workchain}, {shard}, {seqno})"),
             )
@@ -1879,179 +2311,6 @@ mod tests {
 
     fn known_code_hashes_for_test() -> KnownCodeHashes {
         KnownCodeHashes::compute().unwrap()
-    }
-
-    #[tokio::test]
-    async fn scan_shard_advances_the_checkpoint_and_records_the_block_hash() {
-        let provider = Arc::new(ScriptedBlocksProvider::new());
-        provider.set(1, &"11".repeat(32));
-        provider.set(2, &"22".repeat(32));
-        let store = IndexerStore::open_in_memory().unwrap();
-        let known = known_code_hashes_for_test();
-        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2, &ProbeBudget::new())
-            .await
-            .unwrap();
-
-        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
-        assert_eq!(
-            store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
-            Some("22".repeat(32))
-        );
-    }
-
-    #[tokio::test]
-    async fn scan_shard_detects_a_reorg_and_rewinds_to_rescan() {
-        let provider = Arc::new(ScriptedBlocksProvider::new());
-        provider.set(1, &"11".repeat(32));
-        provider.set(2, &"22".repeat(32));
-        let store = IndexerStore::open_in_memory().unwrap();
-        let known = known_code_hashes_for_test();
-        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2, &ProbeBudget::new())
-            .await
-            .unwrap();
-        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
-        assert_eq!(
-            store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
-            Some("22".repeat(32))
-        );
-
-        // Simulate a reorg: seqno 2 now has different content/hash, and a
-        // new seqno 3 is available.
-        provider.set(2, &"99".repeat(32));
-        provider.set(3, &"33".repeat(32));
-
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 3, &ProbeBudget::new())
-            .await
-            .unwrap();
-
-        // The checkpoint must reflect the corrected chain: re-scanned
-        // through the reorged block up to the new head, with the *new*
-        // hash recorded, not the stale pre-reorg one.
-        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 3);
-        assert_eq!(
-            store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
-            Some("33".repeat(32))
-        );
-    }
-
-    #[tokio::test]
-    async fn rpc_disruption_mid_scan_leaves_the_checkpoint_at_the_last_successful_seqno() {
-        let provider = Arc::new(ScriptedBlocksProvider::new());
-        for seqno in 1..=5u32 {
-            provider.set(seqno, &format!("{seqno:064x}"));
-        }
-        provider.fail_after(3); // seqnos 1-3 succeed; seqno 4's call fails
-        let store = IndexerStore::open_in_memory().unwrap();
-        let known = known_code_hashes_for_test();
-        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-
-        let result = scan_shard(
-            &dyn_provider,
-            &store,
-            &known,
-            0,
-            -9223372036854775808,
-            5,
-            &ProbeBudget::new(),
-        )
-        .await;
-        assert!(result.is_err(), "the simulated RPC disruption must propagate as an error");
-        assert_eq!(
-            store.checkpoint("0:-9223372036854775808").unwrap(),
-            3,
-            "checkpoint must stop at the last seqno actually scanned, not skip ahead or corrupt"
-        );
-
-        // The RPC recovers; a subsequent call must resume from seqno 4, not
-        // re-scan 1-3 or skip ahead.
-        let calls_before_retry = provider.calls_made();
-        provider.clear_failure();
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 5, &ProbeBudget::new())
-            .await
-            .unwrap();
-        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 5);
-        assert_eq!(
-            provider.calls_made() - calls_before_retry,
-            3,
-            "resuming must only make the reorg-check probe plus the 2 remaining calls \
-             (seqno 4 and 5), not re-scan from genesis"
-        );
-    }
-
-    #[tokio::test]
-    async fn rescanning_an_unchanged_range_only_probes_for_a_reorg_once() {
-        let provider = Arc::new(ScriptedBlocksProvider::new());
-        provider.set(1, &"11".repeat(32));
-        provider.set(2, &"22".repeat(32));
-        let store = IndexerStore::open_in_memory().unwrap();
-        let known = known_code_hashes_for_test();
-        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2, &ProbeBudget::new())
-            .await
-            .unwrap();
-        let calls_after_first_scan = provider.calls_made();
-
-        // Nothing changed on chain. Re-running against the same target
-        // must make exactly one call -- the reorg-verification probe that
-        // re-checks the checkpoint's block hash still matches -- not a
-        // full rescan, and not zero calls either (skipping verification
-        // once "done" would miss a reorg that happens afterward).
-        scan_shard(&dyn_provider, &store, &known, 0, -9223372036854775808, 2, &ProbeBudget::new())
-            .await
-            .unwrap();
-        assert_eq!(provider.calls_made(), calls_after_first_scan + 1);
-        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 2);
-        assert_eq!(
-            store.checkpoint_block_hash("0:-9223372036854775808").unwrap(),
-            Some("22".repeat(32))
-        );
-    }
-
-    #[tokio::test]
-    async fn long_catch_up_advances_in_capped_steps_across_multiple_calls() {
-        let provider = Arc::new(ScriptedBlocksProvider::new());
-        for seqno in 1..=250u32 {
-            provider.set(seqno, &format!("{seqno:064x}"));
-        }
-        let store = IndexerStore::open_in_memory().unwrap();
-        let known = known_code_hashes_for_test();
-        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-
-        // Far behind (250 available, checkpoint at 0): must cap at
-        // MAX_BLOCKS_PER_TICK in a single call, not consume everything at
-        // once and stall the tick loop.
-        scan_shard(
-            &dyn_provider,
-            &store,
-            &known,
-            0,
-            -9223372036854775808,
-            250,
-            &ProbeBudget::new(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), MAX_BLOCKS_PER_TICK);
-
-        // A second call continues from exactly where it left off, without
-        // gaps or re-scanning, until the real head is reached.
-        scan_shard(
-            &dyn_provider,
-            &store,
-            &known,
-            0,
-            -9223372036854775808,
-            250,
-            &ProbeBudget::new(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(store.checkpoint("0:-9223372036854775808").unwrap(), 250);
     }
 
     #[tokio::test]
@@ -2070,7 +2329,16 @@ mod tests {
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
 
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
         assert_eq!(store.checkpoint(&format!("0:{shard_a}")).unwrap(), 1);
         assert_eq!(store.checkpoint("-1:-9223372036854775808").unwrap(), 1);
 
@@ -2082,7 +2350,16 @@ mod tests {
         provider.set_on(0, shard_b, 1, &"dd".repeat(32));
         provider.set_shards(&[(0, shard_b, 1)]);
 
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
 
         // The new shard is scanned from its own reported head with no
         // prior checkpoint -- it starts fresh, exactly as a genuinely new
@@ -2096,28 +2373,211 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn newly_split_shard_is_indexed_from_its_masterchain_reported_head() {
+    async fn newly_reported_shard_is_indexed_from_its_exact_parent() {
         let provider = Arc::new(ScriptedBlocksProvider::new());
         let mc_shard = i64::MIN;
         let child_shard = 4_611_686_018_427_387_904i64;
 
         provider.set_on(-1, mc_shard, 1, &"aa".repeat(32));
-        provider.set_on(0, child_shard, 900, &"bb".repeat(32));
+        provider.set_on(0, child_shard, 1, &"bb".repeat(32));
         provider.set_masterchain_info(1, mc_shard);
-        provider.set_shards(&[(0, child_shard, 900)]);
+        provider.set_shards(&[(0, child_shard, 1)]);
 
         let store = IndexerStore::open_in_memory().unwrap();
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(store.checkpoint(&format!("0:{child_shard}")).unwrap(), 900);
-        assert!(store.explorer_block_root(0, child_shard, 900).unwrap().is_some());
+        assert_eq!(store.checkpoint(&format!("0:{child_shard}")).unwrap(), 1);
+        assert!(store.explorer_block_root(0, child_shard, 1).unwrap().is_some());
         assert_eq!(
             provider.calls_made(),
-            2,
-            "only the masterchain block and the reported child head may be fetched"
+            4,
+            "two exact-identity lookups of the masterchain block (open and pre-publish), \
+             then one transaction page each for it and its child head"
         );
+    }
+
+    #[tokio::test]
+    async fn masterchain_head_jump_indexes_intermediate_deployment_block() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let shard = i64::MIN;
+        provider.set_on(-1, shard, 1, &"a1".repeat(32));
+        provider.set_on(-1, shard, 2, &"a2".repeat(32));
+        for seqno in 1..=5 {
+            provider.set_on(0, shard, seqno, &format!("{seqno:064x}"));
+            if seqno > 1 {
+                provider.set_parents((0, shard, seqno), vec![(0, shard, seqno - 1)]);
+            }
+        }
+        let deployment = "de".repeat(32);
+        provider.set_transaction_on((0, shard, 4), &"ab".repeat(32), &deployment);
+        provider.set_shards_at(1, &[(0, shard, 2)]);
+        provider.set_shards_at(2, &[(0, shard, 5)]);
+        provider.set_masterchain_info(2, shard);
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider;
+        scan_new_blocks(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(store.checkpoint(&format!("0:{shard}")).unwrap(), 5);
+        assert!(store.explorer_block_root(0, shard, 3).unwrap().is_some());
+        assert!(store.explorer_block_root(0, shard, 4).unwrap().is_some());
+        assert_eq!(store.explorer_transaction(&deployment).unwrap().unwrap().seqno, 4);
+    }
+
+    #[tokio::test]
+    async fn shard_ancestry_follows_split_and_both_merge_parents() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let root = i64::MIN;
+        let left = 4_611_686_018_427_387_904i64;
+        let right = -4_611_686_018_427_387_904i64;
+        provider.set_on(-1, root, 1, &"a1".repeat(32));
+        for (shard, seqno, tag) in
+            [(root, 1, "11"), (root, 2, "22"), (left, 3, "33"), (right, 3, "44"), (root, 4, "55")]
+        {
+            provider.set_on(0, shard, seqno, &tag.repeat(32));
+        }
+        provider.set_parents((0, root, 2), vec![(0, root, 1)]);
+        provider.set_parents((0, left, 3), vec![(0, root, 2)]);
+        provider.set_parents((0, right, 3), vec![(0, root, 2)]);
+        provider.set_parents((0, root, 4), vec![(0, left, 3), (0, right, 3)]);
+        provider.set_masterchain_info(1, root);
+        provider.set_shards(&[(0, root, 4)]);
+        let store = IndexerStore::open_in_memory().unwrap();
+        let dyn_provider: Arc<dyn ChainProvider> = provider;
+        scan_new_blocks(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
+        for (shard, seqno) in [(root, 1), (root, 2), (left, 3), (right, 3), (root, 4)] {
+            assert!(
+                store.explorer_block_root(0, shard, seqno).unwrap().is_some(),
+                "missing exact ancestor {shard}:{seqno}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn changed_shard_head_at_a_published_coordinate_fails_closed() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let shard = i64::MIN;
+        provider.set_on(-1, shard, 1, &"a1".repeat(32));
+        provider.set_on(0, shard, 1, &"11".repeat(32));
+        provider.set_on(0, shard, 2, &"22".repeat(32));
+        provider.set_parents((0, shard, 2), vec![(0, shard, 1)]);
+        provider.set_masterchain_info(1, shard);
+        provider.set_shards_at(1, &[(0, shard, 2)]);
+        let store = IndexerStore::open_in_memory().unwrap();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        scan_new_blocks(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
+        provider.set_on(-1, shard, 2, &"a2".repeat(32));
+        provider.set_on(0, shard, 2, &"99".repeat(32));
+        provider.set_shards_at(2, &[(0, shard, 2)]);
+        provider.set_masterchain_info(2, shard);
+        let err = scan_new_blocks(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap_err();
+        // Masterchain block 1 is unchanged, yet block 2 claims a different
+        // block at the coordinate block 1 published. That is conflicting
+        // evidence, not progress: nothing of height 2 may be published.
+        assert!(err.to_string().contains("published frontier holds"), "{err}");
+        assert_eq!(store.published_mc_seqno().unwrap(), 1);
+        assert_eq!(store.explorer_block_root(0, shard, 2).unwrap(), Some("22".repeat(32)));
+        assert_eq!(store.canonical_shard_frontier().unwrap()[0].root_hash, "22".repeat(32));
+        assert!(store.masterchain_block(2).unwrap().is_none());
+    }
+
+    /// A remote tip far ahead of what is published, a small retention
+    /// window, and a scanner that publishes a bounded number of heights per
+    /// tick. Retention must be measured from the published watermark: the
+    /// freshly published window stays, progress is monotone, and the scanner
+    /// catches up.
+    #[tokio::test]
+    async fn retention_is_measured_from_the_published_watermark_not_the_remote_tip() {
+        let provider = Arc::new(ScriptedBlocksProvider::new());
+        let mc_shard = i64::MIN;
+        let tip = 600u32;
+        for seqno in 1..=tip {
+            provider.set_on(-1, mc_shard, seqno, &format!("{seqno:064x}"));
+        }
+        provider.set_masterchain_info(tip, mc_shard);
+        provider.set_shards(&[]);
+        let store = IndexerStore::open_in_memory().unwrap();
+        let known = known_code_hashes_for_test();
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        let retention = 50u32;
+        let limits = ScanLimits { max_batches: 200, ..ScanLimits::production() };
+        let mut prune = PruneState::new(1);
+        let mut previous = 0u32;
+        for _ in 0..4 {
+            let outcome = tick(
+                &dyn_provider,
+                &no_pool_snapshots(),
+                &store,
+                &known,
+                &ProbeBudget::new(),
+                &limits,
+                retention,
+                &mut prune,
+            )
+            .await
+            .unwrap();
+            assert_eq!(outcome.remote_tip, tip);
+            assert!(outcome.published_mc_seqno >= previous, "published watermark regressed");
+            previous = outcome.published_mc_seqno;
+            let keep_from = previous.saturating_sub(retention);
+            for seqno in keep_from.max(1)..=previous {
+                assert!(
+                    store.masterchain_block(seqno).unwrap().is_some(),
+                    "published height {seqno} inside the retention window was pruned \
+                     (published {previous}, remote tip {tip})"
+                );
+            }
+            if keep_from > 1 {
+                assert!(store.explorer_block_root(-1, mc_shard, keep_from - 1).unwrap().is_none());
+            }
+        }
+        assert_eq!(previous, tip, "the scanner must catch up to the remote tip");
     }
 
     #[tokio::test]
@@ -2131,9 +2591,23 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let known = known_code_hashes_for_test();
         let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
-        scan_new_blocks(&dyn_provider, &store, &known, &ProbeBudget::new()).await.unwrap();
+        scan_new_blocks(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known,
+            &ProbeBudget::new(),
+            &ScanLimits::production(),
+        )
+        .await
+        .unwrap();
 
-        assert_eq!(provider.calls_made(), 1, "only the masterchain block is queryable");
+        assert_eq!(
+            provider.calls_made(),
+            3,
+            "two identity lookups and one page of the masterchain block; the zerostate \
+             descriptor is never fetched as a block"
+        );
         assert_eq!(store.checkpoint(&format!("0:{}", i64::MIN)).unwrap(), 0);
         assert_eq!(store.checkpoint(&format!("-1:{mc_shard}")).unwrap(), 1);
     }
@@ -2540,10 +3014,68 @@ mod tests {
     /// arbitrary.
     struct NotFoundLifecycleProvider {
         get_method_calls: StdMutex<usize>,
+        /// Heights of checkpoint-pinned reads, which then fail.
+        pinned_reads: StdMutex<Vec<u32>>,
+    }
+
+    #[tokio::test]
+    async fn a_kind_without_height_history_is_visited_once_at_its_highest_height() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let address = "0:".to_owned() + &"ab".repeat(32);
+        store
+            .upsert(&IndexedRecord {
+                address: address.clone(),
+                kind: "dns_domain".to_owned(),
+                creator: None,
+                counterparty: None,
+                status: None,
+                deadline: None,
+                last_seqno: 1,
+                updated_at: time_format::now(),
+                dto_json: "{}".to_owned(),
+            })
+            .unwrap();
+        for height in [5, 6, 7] {
+            store.queue_address_refresh_for_test(&address, height, 0).unwrap();
+        }
+        let provider = Arc::new(NotFoundLifecycleProvider {
+            get_method_calls: StdMutex::new(0),
+            pinned_reads: StdMutex::new(Vec::new()),
+        });
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        drain_address_refresh(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            &store,
+            &known_code_hashes_for_test(),
+            &ProbeBudget::new(),
+            &RefreshBudget { addresses: 10, ..RefreshBudget::production() },
+        )
+        .await
+        .unwrap();
+        // A DNS domain is read at a checkpoint: the visit that stands for all
+        // three heights reads the newest one, and only once.
+        assert_eq!(*provider.pinned_reads.lock().unwrap(), vec![7]);
+        assert!(store.address_refresh_queue(10).unwrap().is_empty());
+
+        // A height published after the visit is not dropped with the others.
+        store.queue_address_refresh_for_test(&address, 9, 0).unwrap();
+        store.complete_address_refresh_through(&address, 7).unwrap();
+        assert_eq!(store.address_refresh_queue(10).unwrap().len(), 1);
     }
 
     #[async_trait::async_trait]
     impl ChainProvider for NotFoundLifecycleProvider {
+        async fn run_get_method_at_unverified(
+            &self,
+            _address: String,
+            _method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+            checkpoint: &contracts::chain_provider::MasterchainCheckpoint,
+        ) -> anyhow::Result<TvmStackParser> {
+            self.pinned_reads.lock().unwrap().push(checkpoint.seqno);
+            anyhow::bail!("pinned read recorded")
+        }
         async fn run_get_method(
             &self,
             _address: String,
@@ -2649,7 +3181,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_hostile_next_request_id_only_materialises_a_bounded_batch_per_visit() {
-        let provider = Arc::new(NotFoundLifecycleProvider { get_method_calls: StdMutex::new(0) });
+        let provider = Arc::new(NotFoundLifecycleProvider {
+            get_method_calls: StdMutex::new(0),
+            pinned_reads: StdMutex::new(Vec::new()),
+        });
         let provider_dyn: Arc<dyn ChainProvider> = provider.clone();
         let store = IndexerStore::open_in_memory().unwrap();
         // The counter is contract-controlled state: a deployer can report any
@@ -2722,6 +3257,298 @@ mod tests {
         assert_eq!(*provider.get_method_calls.lock().unwrap(), cap * 4);
     }
 }
+
+#[cfg(test)]
+mod refresh_drain_tests {
+    //! Scheduling of the address refresh drain: per-address quantum, pass
+    //! budget, rotation, and failure isolation. Addresses here are
+    //! unclassified accounts, which the drain treats like pools: each queued
+    //! height is observed in order and a failure keeps the height queued.
+    use super::*;
+    use chain_rpc_client::v2::data_models::{AccountState, TransactionId};
+    use std::collections::{HashMap, HashSet};
+    use std::sync::Mutex as StdMutex;
+
+    /// Answers every account lookup with an uninitialized account, except
+    /// for addresses scripted to fail, and records each lookup.
+    #[derive(Default)]
+    struct ScriptedVisits {
+        visits: StdMutex<Vec<String>>,
+        always_fail: HashSet<String>,
+        /// Fail only the n-th (1-based) lookup of an address.
+        fail_on_visit: HashMap<String, usize>,
+    }
+
+    impl ScriptedVisits {
+        fn visits_of(&self, address: &str) -> usize {
+            self.visits.lock().unwrap().iter().filter(|visited| *visited == address).count()
+        }
+
+        fn total_visits(&self) -> usize {
+            self.visits.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ChainProvider for ScriptedVisits {
+        async fn run_get_method(
+            &self,
+            _address: String,
+            _method: &str,
+            _stack: Vec<tl_api::tos::tvm::StackEntry>,
+        ) -> anyhow::Result<common::tvm_stack_parser::TvmStackParser> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_balance(&self, _address: &MsgAddressInt) -> anyhow::Result<u64> {
+            anyhow::bail!("not exercised")
+        }
+        async fn send_boc(&self, _boc: &[u8]) -> anyhow::Result<()> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_config_param(
+            &self,
+            _param_id: u32,
+        ) -> anyhow::Result<chain_block::ConfigParamEnum> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_address_info(
+            &self,
+            address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::AddressInfo> {
+            let address = address.to_string();
+            let visit = {
+                let mut visits = self.visits.lock().unwrap();
+                visits.push(address.clone());
+                visits.iter().filter(|visited| **visited == address).count()
+            };
+            anyhow::ensure!(!self.always_fail.contains(&address), "scripted failure");
+            anyhow::ensure!(
+                self.fail_on_visit.get(&address) != Some(&visit),
+                "scripted failure on visit {visit}"
+            );
+            Ok(contracts::chain_provider::AddressInfo {
+                r#type: "raw.fullAccountState".to_owned(),
+                balance: 0,
+                code: None,
+                data: None,
+                last_transaction_id: TransactionId {
+                    r#type: "internal.transactionId".to_owned(),
+                    lt: 0,
+                    hash: vec![0; 32],
+                },
+                block_id: BlockIdExt {
+                    r#type: "tos.blockIdExt".to_owned(),
+                    workchain: -1,
+                    shard: i64::MIN,
+                    seqno: 0,
+                    root_hash: vec![0; 32],
+                    file_hash: vec![0; 32],
+                },
+                sync_utime: 0,
+                extra_currencies: Vec::new(),
+                state: AccountState::default(),
+                frozen_hash: String::new(),
+                storage_stat: None,
+            })
+        }
+        async fn get_extended_address_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::ExtendedAddressInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_wallet_info(
+            &self,
+            _address: &MsgAddressInt,
+        ) -> anyhow::Result<contracts::chain_provider::WalletInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_masterchain_info(
+            &self,
+        ) -> anyhow::Result<contracts::chain_provider::MasterchainInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_shards(
+            &self,
+            _seqno: u32,
+        ) -> anyhow::Result<contracts::chain_provider::ShardsInfo> {
+            anyhow::bail!("not exercised")
+        }
+        async fn get_block_transactions_page(
+            &self,
+            _workchain: i32,
+            _shard: i64,
+            _seqno: u32,
+            _after_lt: Option<u64>,
+            _after_hash: Option<&str>,
+            _count: u32,
+        ) -> anyhow::Result<contracts::chain_provider::BlockTransactionsPage> {
+            anyhow::bail!("not exercised")
+        }
+    }
+
+    fn account(n: u8) -> String {
+        format!("0:{}", format!("{n:02x}").repeat(32))
+    }
+
+    fn budget(addresses: usize, per_address: usize, work: usize) -> RefreshBudget {
+        RefreshBudget { addresses, per_address, work }
+    }
+
+    fn queue(store: &IndexerStore, address: &str, heights: impl IntoIterator<Item = u32>) {
+        for height in heights {
+            store.queue_address_refresh_for_test(address, height, 0).unwrap();
+        }
+    }
+
+    fn heights(store: &IndexerStore, address: &str) -> Vec<u32> {
+        store.queued_heights_for_test(address).unwrap().into_iter().map(|(h, _)| h).collect()
+    }
+
+    async fn drain(provider: &Arc<ScriptedVisits>, store: &IndexerStore, budget: &RefreshBudget) {
+        let dyn_provider: Arc<dyn ChainProvider> = provider.clone();
+        drain_address_refresh(
+            &dyn_provider,
+            &no_pool_snapshots(),
+            store,
+            &KnownCodeHashes::compute().unwrap(),
+            &ProbeBudget::new(),
+            budget,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_backlog_shrinks_while_one_new_height_arrives_each_block() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let provider = Arc::new(ScriptedVisits::default());
+        let pool = account(1);
+        let neighbours = [account(2), account(3), account(4)];
+        // Twenty heights owed from before, e.g. while the node could not
+        // serve them.
+        queue(&store, &pool, 1..=20);
+        let limits = budget(16, 4, 64);
+        let mut backlog = vec![heights(&store, &pool).len()];
+        for block in 21..=40 {
+            // The pool and its neighbours are touched in every block.
+            queue(&store, &pool, [block]);
+            for neighbour in &neighbours {
+                queue(&store, neighbour, [block]);
+            }
+            drain(&provider, &store, &limits).await;
+            backlog.push(heights(&store, &pool).len());
+        }
+        // Four heights per pass against one arriving: the backlog falls by
+        // three each block until it is gone, and stays gone.
+        assert_eq!(&backlog[..8], &[20, 17, 14, 11, 8, 5, 2, 0], "{backlog:?}");
+        assert!(backlog[8..].iter().all(|owed| *owed == 0), "{backlog:?}");
+        for neighbour in &neighbours {
+            assert!(heights(&store, neighbour).is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failing_address_cannot_block_others() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let bad = account(1);
+        let provider = Arc::new(ScriptedVisits {
+            always_fail: HashSet::from([bad.clone()]),
+            ..Default::default()
+        });
+        // The failing address owes the oldest heights, so it is selected first.
+        queue(&store, &bad, 1..=50);
+        let good = [account(2), account(3), account(4)];
+        for address in &good {
+            queue(&store, address, 10..=14);
+        }
+        let limits = budget(16, 8, 64);
+        for pass in 1..=3u32 {
+            drain(&provider, &store, &limits).await;
+            // One attempt per pass, nothing skipped, nothing dropped.
+            assert_eq!(provider.visits_of(&bad), usize::try_from(pass).unwrap());
+            let owed = store.queued_heights_for_test(&bad).unwrap();
+            assert_eq!(owed.len(), 50);
+            assert_eq!(owed[0], (1, pass));
+            for address in &good {
+                assert!(heights(&store, address).is_empty(), "pass {pass}");
+                queue(&store, address, [100 + pass]);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_drain_stops_at_the_first_failure_and_skips_no_height() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let address = account(1);
+        let provider = Arc::new(ScriptedVisits {
+            fail_on_visit: HashMap::from([(address.clone(), 2)]),
+            ..Default::default()
+        });
+        queue(&store, &address, 1..=5);
+        let limits = budget(16, 8, 64);
+        drain(&provider, &store, &limits).await;
+        assert_eq!(provider.visits_of(&address), 2, "nothing after the failed height");
+        assert_eq!(store.queued_heights_for_test(&address).unwrap()[0], (2, 1));
+        assert_eq!(heights(&store, &address), vec![2, 3, 4, 5]);
+        // The next pass resumes at the failed height and drains the rest.
+        drain(&provider, &store, &limits).await;
+        assert_eq!(provider.visits_of(&address), 6);
+        assert!(heights(&store, &address).is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_quantum_bounds_one_address_in_one_pass() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let provider = Arc::new(ScriptedVisits::default());
+        let address = account(1);
+        queue(&store, &address, 1..=10);
+        drain(&provider, &store, &budget(16, 3, 100)).await;
+        assert_eq!(provider.visits_of(&address), 3);
+        assert_eq!(heights(&store, &address), (4..=10).collect::<Vec<u32>>());
+    }
+
+    #[tokio::test]
+    async fn the_pass_budget_bounds_total_work_and_rotation_shares_it() {
+        let store = IndexerStore::open_in_memory().unwrap();
+        let provider = Arc::new(ScriptedVisits::default());
+        let addresses = [account(1), account(2), account(3)];
+        for address in &addresses {
+            queue(&store, address, 1..=10);
+        }
+        drain(&provider, &store, &budget(16, 5, 7)).await;
+        assert_eq!(provider.total_visits(), 7, "the pass budget is the whole pass's work");
+        // Round by round: every address gets its next height before any gets
+        // one more, so seven observations split three, two, two.
+        let visits: Vec<usize> =
+            addresses.iter().map(|address| provider.visits_of(address)).collect();
+        assert_eq!(visits, vec![3, 2, 2]);
+        for (address, observed) in addresses.iter().zip(&visits) {
+            let next = u32::try_from(*observed).unwrap() + 1;
+            assert_eq!(heights(&store, address), (next..=10).collect::<Vec<u32>>());
+        }
+    }
+
+    #[tokio::test]
+    async fn rows_that_failed_before_still_drain_once_they_succeed() {
+        // A retried address is selected through the reserved share and,
+        // once its head succeeds, drains on like any other.
+        let store = IndexerStore::open_in_memory().unwrap();
+        let provider = Arc::new(ScriptedVisits::default());
+        let retried = account(1);
+        store.queue_address_refresh_for_test(&retried, 1, 3).unwrap();
+        queue(&store, &retried, 2..=4);
+        for n in 0..20u8 {
+            queue(&store, &account(10 + n), [100 + u32::from(n)]);
+        }
+        drain(&provider, &store, &budget(8, 4, 64)).await;
+        assert!(heights(&store, &retried).is_empty());
+    }
+}
+
+#[cfg(test)]
+#[path = "canonical_scan_tests.rs"]
+mod canonical_scan_tests;
 
 #[cfg(test)]
 mod deposit_capacity_tests {

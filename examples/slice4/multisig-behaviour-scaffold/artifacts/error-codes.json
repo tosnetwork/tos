@@ -1,3 +1,11 @@
 {
-  "error_codes": []
+  "error_codes": [
+    {"name": "MULTISIG_FUNC_THROW_BAD_THRESHOLD", "code": 1801},
+    {"name": "MULTISIG_FUNC_THROW_NOT_SIGNER", "code": 1802},
+    {"name": "MULTISIG_FUNC_THROW_PROPOSAL_REPLAY", "code": 1805},
+    {"name": "MULTISIG_FUNC_THROW_EXPIRED", "code": 1806},
+    {"name": "MULTISIG_FUNC_THROW_INVALID_ACTIONS", "code": 1807},
+    {"name": "MULTISIG_FUNC_THROW_WEAK_SIGNER", "code": 1808},
+    {"name": "MULTISIG_FUNC_THROW_BAD_SIGNATURE", "code": 1809}
+  ]
 }

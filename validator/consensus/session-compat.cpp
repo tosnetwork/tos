@@ -18,8 +18,7 @@
     Copyright 2025-2026 TOS Blockchain Teams
 */
 
-#include "auto/tl/tos_api.h"
-#include "tl-utils/tl-utils.hpp"
+#include "block/validator-session-id.h"
 
 #include "session-compat.h"
 
@@ -39,29 +38,18 @@ ValidatorSessionOptions::ValidatorSessionOptions(const ValidatorSessionConfig &c
 }
 
 td::Bits256 ValidatorSessionOptions::get_hash() const {
-  if (proto_version == 0) {
-    if (!new_catchain_ids) {
-      return create_hash_tl_object<tos_api::validatorSession_config>(
-          catchain_opts.idle_timeout, catchain_opts.max_deps, round_candidates, next_candidate_delay,
-          round_attempt_duration, max_round_attempts, max_block_size, max_collated_data_size);
-    } else {
-      return create_hash_tl_object<tos_api::validatorSession_configNew>(
-          catchain_opts.idle_timeout, catchain_opts.max_deps, round_candidates, next_candidate_delay,
-          round_attempt_duration, max_round_attempts, max_block_size, max_collated_data_size, new_catchain_ids);
-    }
-  } else if (proto_version == 1) {
-    return create_hash_tl_object<tos_api::validatorSession_configVersioned>(
-        catchain_opts.idle_timeout, catchain_opts.max_deps, round_candidates, next_candidate_delay,
-        round_attempt_duration, max_round_attempts, max_block_size, max_collated_data_size, proto_version);
-  } else {
-    return create_hash_tl_object<tos_api::validatorSession_configVersionedV2>(
-        create_tl_object<tos_api::validatorSession_catchainOptions>(
-            catchain_opts.idle_timeout, catchain_opts.max_deps,
-            static_cast<td::uint32>(catchain_opts.max_serialized_block_size), catchain_opts.block_hash_covers_data,
-            static_cast<td::uint32>(catchain_opts.max_block_height_coeff), catchain_opts.debug_disable_db),
-        round_candidates, next_candidate_delay, round_attempt_duration, max_round_attempts, max_block_size,
-        max_collated_data_size, proto_version);
-  }
+  ValidatorSessionConfig config;
+  config.catchain_opts = catchain_opts;
+  config.round_candidates = round_candidates;
+  config.next_candidate_delay = next_candidate_delay;
+  config.round_attempt_duration = round_attempt_duration;
+  config.max_round_attempts = max_round_attempts;
+  config.max_block_size = max_block_size;
+  config.max_collated_data_size = max_collated_data_size;
+  config.new_catchain_ids = new_catchain_ids;
+  config.use_quic = use_quic;
+  config.proto_version = proto_version;
+  return block::validator_session_options_hash(config);
 }
 
 }  // namespace tos::validator::consensus

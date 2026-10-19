@@ -24,6 +24,9 @@
 #include "rocksdb/db.h"
 #pragma GCC diagnostic pop
 
+#include <chrono>
+#include <cstdlib>
+
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/filter_policy.h"
@@ -34,10 +37,9 @@
 #include "rocksdb/write_batch.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "td/db/RocksDb.h"
+#include "td/utils/StorageHealth.h"
 #include "td/utils/memory-tracker.h"
 #include "td/utils/misc.h"
-
-#include <cstdlib>
 
 namespace td {
 struct RocksDb::MemoryDiagnosticsState {
@@ -555,20 +557,54 @@ Status RocksDb::begin_transaction() {
   return Status::OK();
 }
 
+namespace {
+// After a committed write, record whether RocksDB reports a write stop; the
+// fact is published through the process-wide storage health for the exporter.
+// Reading the property takes the DB mutex, so it runs at most once per second
+// per database and only while health instrumentation is on; a write stop is a
+// sustained condition that a one-second sample cannot miss. With the
+// instrumentation off this function returns before any RocksDB call.
+void observe_write_stop(rocksdb::DB *db, std::uint64_t &last_probe_ms) {
+  if (db == nullptr || !storage_health.enabled.load(std::memory_order_relaxed)) {
+    return;
+  }
+  const auto now_ms = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+          .count());
+  if (last_probe_ms != 0 && now_ms - last_probe_ms < 1000) {
+    return;
+  }
+  last_probe_ms = now_ms;
+  uint64_t stopped = 0;
+  if (!db->GetIntProperty(rocksdb::DB::Properties::kIsWriteStopped, &stopped)) {
+    return;
+  }
+  storage_health.commits_observed.fetch_add(1, std::memory_order_relaxed);
+  storage_health.write_stopped_last.store(stopped != 0 ? 1 : 0, std::memory_order_relaxed);
+  if (stopped != 0) {
+    storage_health.write_stopped_total.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+}  // namespace
+
 Status RocksDb::commit_write_batch() {
   maybe_log_memory_stats();
   CHECK(write_batch_);
   auto write_batch = std::move(write_batch_);
   rocksdb::WriteOptions options;
   options.sync = true;
-  return from_rocksdb(db_->Write(options, write_batch.get()));
+  auto status = from_rocksdb(db_->Write(options, write_batch.get()));
+  observe_write_stop(db_.get(), write_stop_probe_ms_);
+  return status;
 }
 
 Status RocksDb::commit_transaction() {
   maybe_log_memory_stats();
   CHECK(transaction_);
   auto transaction = std::move(transaction_);
-  return from_rocksdb(transaction->Commit());
+  auto status = from_rocksdb(transaction->Commit());
+  observe_write_stop(db_.get(), write_stop_probe_ms_);
+  return status;
 }
 
 Status RocksDb::abort_write_batch() {

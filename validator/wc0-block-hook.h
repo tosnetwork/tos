@@ -2,8 +2,9 @@
 
 #include <functional>
 
-#include "vm/cells.h"
+#include "td/utils/Status.h"
 #include "tos/tos-types.h"
+#include "vm/cells.h"
 
 namespace tos {
 namespace validator {
@@ -18,10 +19,16 @@ namespace validator {
 // block, even across shard splits/merges where a different shard can reuse
 // the same seqno. The state root is the indexer's ground truth: token
 // ownership is verified against committed contract state, never against
-// message claims. It may be null (e.g. data re-indexed without state at
-// hand) — the callee must then degrade to state-independent indexing only.
-// Best-effort: the callee must not throw into the consensus path.
-extern std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, BlockIdExt)> g_wc0_block_index_hook;
+// message claims.
+// Either cell may be null: ApplyBlock passes only what it already holds and
+// never reads anything back for the hook, so a block whose data was already
+// in the database arrives as its id alone. The callee must then obtain the
+// data itself, off the block-application path.
+// The callee must return without waiting (no I/O, no lock held across I/O)
+// and must not throw into the consensus path.
+// The last argument is the block's masterchain reference seqno, under which
+// the archive files it (0 when not known).
+extern std::function<void(td::Ref<vm::Cell>, td::Ref<vm::Cell>, BlockIdExt, BlockSeqno)> g_wc0_block_index_hook;
 
 }  // namespace validator
 }  // namespace tos

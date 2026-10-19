@@ -18,12 +18,30 @@
 
 namespace tos::adnl {
 
+bool AdnlSenderEx::admit_mtu(td::uint64 mtu) {
+  auto status = check_mtu(mtu);
+  if (status.is_ok()) {
+    return true;
+  }
+  if (refused_mtus_logged_.size() < MAX_REFUSED_MTUS_LOGGED && refused_mtus_logged_.insert(mtu).second) {
+    LOG(ERROR) << "refusing to install a transfer allowance this transport cannot carry: " << status
+               << "; transfers above the existing allowance from the affected peers will be dropped";
+  }
+  return false;
+}
+
 void AdnlSenderEx::set_default_mtu(td::uint64 mtu) {
+  if (!admit_mtu(mtu)) {
+    return;
+  }
   default_mtu_ = mtu;
   on_mtu_updated({}, {});
 }
 
 void AdnlSenderEx::set_local_id_mtu(AdnlNodeIdShort local_id, td::uint64 mtu) {
+  if (!admit_mtu(mtu)) {
+    return;
+  }
   auto& s = mtu_local_ids_[local_id];
   s.mtu = mtu;
   if (s.mtu == 0 && s.mtu_peers.empty()) {
@@ -33,11 +51,18 @@ void AdnlSenderEx::set_local_id_mtu(AdnlNodeIdShort local_id, td::uint64 mtu) {
 }
 
 void AdnlSenderEx::add_peer_mtu(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id, td::uint64 mtu) {
+  if (!admit_mtu(mtu)) {
+    return;
+  }
   mtu_local_ids_[local_id].mtu_peers[peer_id].insert(mtu);
   on_mtu_updated(local_id, peer_id);
 }
 
 void AdnlSenderEx::remove_peer_mtu(AdnlNodeIdShort local_id, AdnlNodeIdShort peer_id, td::uint64 mtu) {
+  if (check_mtu(mtu).is_error()) {
+    // Refused when it was added, so there is nothing to remove.
+    return;
+  }
   auto it = mtu_local_ids_.find(local_id);
   if (it == mtu_local_ids_.end()) {
     LOG(WARNING) << "Removing nonexistent peer mtu " << local_id << " " << peer_id << " " << mtu;

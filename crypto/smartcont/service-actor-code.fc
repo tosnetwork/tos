@@ -64,6 +64,9 @@
 ;;   revoke_attestor#53564308 query_id:uint64 = InternalMsgBody;
 ;;   withdraw_revenue#53564309 query_id:uint64 amount:Coins = InternalMsgBody;
 
+#include "strong-ed25519-key.fc";
+#include "signing-domain.fc";
+
 const int op::call = 0x53564301;
 const int op::respond = 0x53564302;
 const int op::expire = 0x53564303;
@@ -99,6 +102,10 @@ const int err::insufficient_balance = 1921;
 const int err::insufficient_revenue = 1922;
 const int err::not_authorized = 1923;
 const int err::rate_limited = 1924;
+const int err::weak_attestor = 1925;
+
+;; The attestor signs: tag, network, this actor, then the request it answers.
+const int domain::respond = 0x53525032; ;; "SRP2"
 
 ;; ---- Protocol constants -------------------------------------------------
 ;; Not owner-configurable policy fields (see doc's Service Policy section):
@@ -198,7 +205,6 @@ int compute_terms_hash(int policy_version, int price_per_call, int storage_fee,
 int compute_response_domain_hash(slice caller, int request_id, int request_hash,
                                   int response_hash, int terms_hash, int price,
                                   int response_deadline, int refund_claim_deadline) inline {
-  (int wc, int addr) = my_address().parse_std_addr();
   cell tail = begin_cell()
     .store_slice(caller)
     .store_uint(terms_hash, 256)
@@ -206,8 +212,7 @@ int compute_response_domain_hash(slice caller, int request_id, int request_hash,
     .store_uint(response_deadline, 64)
     .store_uint(refund_claim_deadline, 64)
   .end_cell();
-  return cell_hash(begin_cell()
-    .store_int(wc, 8).store_uint(addr, 256)
+  return cell_hash(begin_signing_domain(domain::respond)
     .store_uint(request_id, 64)
     .store_uint(request_hash, 256)
     .store_uint(response_hash, 256)
@@ -523,6 +528,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
       slice signature = in_msg~load_bits(512);
       int domain_hash = compute_response_domain_hash(caller, request_id, request_hash,
         response_hash, terms_hash, price, response_deadline, refund_claim_deadline);
+      throw_if(err::weak_attestor, weak_ed25519_key?(req_attestor_pubkey));
       throw_unless(err::bad_response_signature,
         check_signature(domain_hash, signature, req_attestor_pubkey));
     }
@@ -717,6 +723,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     int new_attestor_pubkey = in_msg~load_uint(256);
     in_msg.end_parse();
+    throw_if(err::weak_attestor, weak_ed25519_key?(new_attestor_pubkey));
     save_state(owner, active, next_request_id, pending_count, live_count, policy_version,
       price_per_call, storage_fee, cleanup_bounty, response_sla, refund_claim_window, open_access,
       has_authorized_caller, authorized_caller, rate_limit_per_day, metadata_hash,

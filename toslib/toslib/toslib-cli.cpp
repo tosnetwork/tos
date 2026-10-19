@@ -514,6 +514,8 @@ class ToslibCli : public td::actor::Actor {
     } else {
       cmd_promise.set_error(td::Status::Error(PSLICE() << "Unkwnown query `" << cmd << "`"));
     }
+    // A moved-from Promise is empty; this tests whether a branch consumed it.
+    // NOLINTNEXTLINE(bugprone-use-after-move)
     if (cmd_promise) {
       cmd_promise.set_value(td::Unit());
     }
@@ -905,8 +907,10 @@ class ToslibCli : public td::actor::Actor {
         make_object<toslib_api::pchan_actionInit>(A.nano, B.nano, min_A.nano, min_B.nano));
 
     auto value = A.nano + B.nano;
-    send_query(make_object<toslib_api::createQuery>(addr.input_key(), channels_[pchan_id].to_address(), 60,
-                                                    std::move(action), channels_[pchan_id].to_init_state()),
+    // Built first: the continuation below moves addr, and arguments are unordered.
+    auto query = make_object<toslib_api::createQuery>(addr.input_key(), channels_[pchan_id].to_address(), 60,
+                                                      std::move(action), channels_[pchan_id].to_init_state());
+    send_query(std::move(query),
                promise.send_closure(actor_id(this), &ToslibCli::pchan_init_2, std::move(addr), pchan_id, value));
     return;
   }
@@ -933,8 +937,10 @@ class ToslibCli : public td::actor::Actor {
   void pchan_timeout(td::int32 pchan_id, td::ConstParser& parser, td::Promise<td::Unit> promise) {
     TRY_RESULT_PROMISE_PREFIX(promise, addr, to_account_address(parser.read_word(), true), "key_id");
     auto action = make_object<toslib_api::actionPchan>(make_object<toslib_api::pchan_actionTimeout>());
-    send_query(make_object<toslib_api::createQuery>(addr.input_key(), channels_[pchan_id].to_address(), 60,
-                                                    std::move(action), channels_[pchan_id].to_init_state()),
+    // Built first: the continuation below moves addr, and arguments are unordered.
+    auto query = make_object<toslib_api::createQuery>(addr.input_key(), channels_[pchan_id].to_address(), 60,
+                                                      std::move(action), channels_[pchan_id].to_init_state());
+    send_query(std::move(query),
                promise.send_closure(actor_id(this), &ToslibCli::pchan_init_2, std::move(addr), pchan_id, 1000000000));
   }
 

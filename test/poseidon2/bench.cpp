@@ -55,10 +55,16 @@ struct Subject {
 // same gas and take 67 ns and 32,441 ns: this one rejects before verifying and
 // the other does not. An anchor the two implementations disagree about by four
 // hundred times cannot calibrate either of them.
+// POSEIDON2_PATH7 appears three times because it is two numbers, not one: a
+// base and a per-level cost, which no single depth can separate. Depth 12 is
+// what both trees use and is measured rather than interpolated; 1 and 32 are
+// far enough either side that the base does not vanish into the noise.
 const std::vector<Subject> kSubjects = {
-    {"POSEIDON2_PERM8", 0, 118365, 113038},  {"POSEIDON2_HASH7", 0, 80881, 65739},
-    {"BLS_G1_ADD", 3900, 71435, 95410},      {"BLS_G1_NEG", 750, 79976, 121841},
-    {"BLS_G1_INGROUP", 2950, 118906, 70687}, {"BLS_G2_ADD", 6100, 129497, 116093},
+    {"POSEIDON2_PERM8", 0, 118365, 113038},       {"POSEIDON2_HASH7", 0, 80881, 65739},
+    {"POSEIDON2_PATH7_D1", 0, 93672, 77996},      {"POSEIDON2_PATH7_D12", 0, 82714, 99733},
+    {"POSEIDON2_PATH7_D32", 0, 75128, 124278},    {"BLS_G1_ADD", 3900, 71435, 95410},
+    {"BLS_G1_NEG", 750, 79976, 121841},           {"BLS_G1_INGROUP", 2950, 118906, 70687},
+    {"BLS_G2_ADD", 6100, 129497, 116093},
 };
 
 struct Sample {
@@ -73,7 +79,16 @@ Sample run_once(td::Ref<vm::Cell> code, unsigned method_id, int rounds) {
   stack.write().push_smallint(rounds);
   stack.write().push_smallint(static_cast<long long>(method_id));
   const long long budget = 1ll << 50;
-  vm::VmState state{vm::load_cell_slice_ref(code), 17, std::move(stack), vm::GasLimits{budget, budget}};
+  // flags = 1 is `same_c3`: c3 is the code, so `CALLDICT` reaches the probe's
+  // own functions. Without it `init_cregs` sets c3 to `QuitCont{11}` and every
+  // call out of a method exits 11 -- which is exactly what a subject needing a
+  // FunC helper did. Every earlier subject was an inline `asm` with no call in
+  // it, so this harness had never once executed a CALLDICT and the defect was
+  // invisible for as long as nothing needed one.
+  //
+  // All Poseidon2 instructions share the unified development baseline.
+  vm::VmState state{vm::load_cell_slice_ref(code), vm::poseidon2_path7_min_version, std::move(stack),
+                    vm::GasLimits{budget, budget}, 1};
   const auto started = std::chrono::steady_clock::now();
   const int exit = ~state.run();
   const auto elapsed = std::chrono::steady_clock::now() - started;
@@ -167,7 +182,9 @@ int main(int argc, char** argv) {
     return 1;
   }
   vm::init_op_cp0();
-  SET_VERBOSITY_LEVEL(verbosity_ERROR);
+  // A failing probe reports only an exit code, which says what kind of
+  // error and nothing about where. This lets a run be turned up.
+  SET_VERBOSITY_LEVEL(std::getenv("BENCH_VERBOSE") ? verbosity_DEBUG : verbosity_ERROR);
 
   std::printf("C++ VM, %d rounds, best of %d\n\n", rounds, repeats);
   std::printf("%-18s%10s%10s%12s%14s\n", "instruction", "ns/op", "gas/op", "known gas", "ns per gas");
@@ -217,6 +234,53 @@ int main(int argc, char** argv) {
       high = std::max(high, implied);
     }
     std::printf("%-18s%14.0f%14.0f\n", subject->name, low, high);
+  }
+
+  // PATH7 is two prices, so it needs a line rather than a bracket. Same fit
+  // the Rust half reports, so the two halves can be compared without either
+  // of them being reduced to arithmetic done by hand somewhere else.
+  auto nanos_for = [&unpriced](const char* name) -> double {
+    for (const auto& [subject, nanos] : unpriced) {
+      if (std::string(subject->name) == name) {
+        return nanos;
+      }
+    }
+    return -1;
+  };
+  const double d1 = nanos_for("POSEIDON2_PATH7_D1");
+  const double d12 = nanos_for("POSEIDON2_PATH7_D12");
+  const double d32 = nanos_for("POSEIDON2_PATH7_D32");
+  if (d1 > 0 && d12 > 0 && d32 > 0) {
+    std::printf("\nPOSEIDON2_PATH7, as a base plus a per-level cost:\n");
+    std::printf("%-26s%12s%12s%14s\n", "fitted over", "base gas", "gas/level", "at depth 12");
+    const std::pair<const char*, std::pair<std::pair<int, double>, std::pair<int, double>>> fits[] = {
+        {"depth 1 and 12", {{1, d1}, {12, d12}}},
+        {"depth 12 and 32", {{12, d12}, {32, d32}}},
+        {"depth 1 and 32 (widest)", {{1, d1}, {32, d32}}},
+    };
+    for (const auto& [label, pair] : fits) {
+      const auto& [lo, hi] = pair;
+      double lo_base = 1e300, hi_base = -1e300, lo_level = 1e300, hi_level = 0;
+      for (const auto& [anchor, anchor_nanos] : anchors) {
+        const double ratio = anchor_nanos / static_cast<double>(anchor->price);
+        if (ratio <= loosest / 10.0) {
+          continue;
+        }
+        const auto gas = [&](double ns) { return ns / anchor_nanos * static_cast<double>(anchor->price); };
+        const double level = (gas(hi.second) - gas(lo.second)) / static_cast<double>(hi.first - lo.first);
+        const double base = gas(lo.second) - level * lo.first;
+        lo_base = std::min(lo_base, base);
+        hi_base = std::max(hi_base, base);
+        lo_level = std::min(lo_level, level);
+        hi_level = std::max(hi_level, level);
+      }
+      char base_cell[64], level_cell[64], twelve_cell[64];
+      std::snprintf(base_cell, sizeof(base_cell), "%.0f..%.0f", lo_base, hi_base);
+      std::snprintf(level_cell, sizeof(level_cell), "%.0f..%.0f", lo_level, hi_level);
+      std::snprintf(twelve_cell, sizeof(twelve_cell), "%.0f..%.0f", lo_base + 12 * lo_level,
+                    hi_base + 12 * hi_level);
+      std::printf("%-26s%12s%12s%14s\n", label, base_cell, level_cell, twelve_cell);
+    }
   }
   return 0;
 }

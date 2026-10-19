@@ -23,6 +23,11 @@ cell controller_init_data (cell static_data) {
             .store_uint(0, 2) ;; sudoer addr_none
             .store_timestamp(0) ;; sudoer_set_at
             .store_share(0)     ;; max_expected_interest
+            ;; No Validator Controller yet. The pool deploys controllers for whichever
+            ;; validator asks and cannot know which account that validator stakes through,
+            ;; so the validator names it afterwards and the controller refuses to stake
+            ;; until it has.
+            .store_uint(0, 2) ;; validator_controller addr_none
             .store_ref(static_data)
            .end_cell();
 }

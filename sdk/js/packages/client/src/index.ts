@@ -22,6 +22,9 @@ export type {
   OutMsgQueueSizeShard,
   ShortTransaction,
   Transaction,
+  MessageSummary,
+  ComputePhaseSummary,
+  ActionPhaseSummary,
   NftItemData,
   NftCollectionData,
   JettonMasterData,
@@ -57,9 +60,13 @@ export {
   TosError,
   TosRpcError,
   TosContractError,
+  TosNotDeployedError,
+  TosNotDeliveredError,
+  INACTIVE_ACCOUNT_EXIT_CODE,
   ErrorCodes,
+  ErrorReasons,
 } from "./errors.js";
-export type { ErrorCode } from "./errors.js";
+export type { ErrorCode, ErrorReason, RpcErrorData } from "./errors.js";
 
 // Provider interfaces
 export type {
@@ -82,6 +89,7 @@ export type {
   ContractState,
   ContractGetResult,
   SendConfirmation,
+  ExternalSendResult,
   SendMode,
   StateInit,
   StackReader,
@@ -96,8 +104,13 @@ export type {
 } from "./provider/Signer.js";
 
 // open() and OpenedContract
-export { open, setCoreParser } from "./provider/open.js";
-export type { OpenedContract, ContractLike } from "./provider/open.js";
+export { open, setCoreParser, externalStateInit } from "./provider/open.js";
+export type {
+  OpenedContract,
+  ContractLike,
+  StateInitLike,
+  ExternalStateInitFields,
+} from "./provider/open.js";
 
 // Client
 export { TosClient } from "./client/TosClient.js";
@@ -108,5 +121,11 @@ export { Networks } from "./client/Networks.js";
 export type { NetworkConfig } from "./client/Networks.js";
 
 // Utilities
-export { waitForTransaction, waitForSeqnoChange } from "./utils/wait.js";
-export type { WaitOpts } from "./utils/wait.js";
+export {
+  waitForTransaction,
+  waitForTransfer,
+  waitForReceipt,
+  requireDelivered,
+  MAX_TRANSACTIONS_PER_POLL,
+} from "./utils/wait.js";
+export type { WaitOpts, PendingTransfer, Receipt } from "./utils/wait.js";

@@ -16,7 +16,6 @@
 */
 #pragma once
 
-#include <functional>
 #include <memory>
 
 #include "block/mc-config.h"
@@ -80,15 +79,7 @@ class ExtMessageChecker : public td::actor::Actor {
       return utime < other.utime;
     }
   };
-  struct ExecConfigPair {
-    std::unique_ptr<ExtMessageQ::ExecutionConfig> nolog;
-    std::unique_ptr<ExtMessageQ::ExecutionConfig> log;
-  };
-  std::map<ExecConfigKey, ExecConfigPair> exec_configs_;
-
-  td::Status run_message(WorkchainId wc, block::Account acc,
-                         const std::function<td::Result<block::Account>()>& rebuild_account, UnixTime utime,
-                         LogicalTime lt, const td::Ref<vm::Cell>& msg_root, ExecConfigPair& exec_config);
+  std::map<ExecConfigKey, std::unique_ptr<ExtMessageQ::ExecutionConfig>> exec_configs_;
 
   struct CachedState {
     BlockIdExt block_id;

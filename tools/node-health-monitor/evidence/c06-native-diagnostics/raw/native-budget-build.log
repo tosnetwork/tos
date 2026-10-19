@@ -1,0 +1,14 @@
+Running scope as unit: nhm-c06-native-budget-build.scope
+[1/67] Checking the git repository for changes...
+[2/13] Building CXX object CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o
+[3/13] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o
+[4/13] Linking CXX static library metrics/libmetrics.a
+[5/13] Linking CXX executable test-health-native-snapshot
+[6/13] Linking CXX executable test-health-core-registry
+[7/13] Linking CXX executable test-health-diagnostic-action
+[8/13] Building CXX object test/validator/consensus/CMakeFiles/test-health-actions.dir/test-health-actions.cpp.o
+[9/13] Linking CXX executable test/validator/consensus/test-health-actions
+[10/13] Building CXX object test/validator/consensus/CMakeFiles/test-health-c04-publisher.dir/__/__/test-health-c04-publisher.cpp.o
+[11/13] Linking CXX executable test/validator/consensus/test-health-c04-publisher
+[12/13] Building CXX object validator-engine/CMakeFiles/validator-engine.dir/validator-engine.cpp.o
+[13/13] Linking CXX executable validator-engine/validator-engine

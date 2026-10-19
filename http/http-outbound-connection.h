@@ -39,7 +39,7 @@ class HttpOutboundConnection : public HttpConnection {
   };
 
   HttpOutboundConnection(td::SocketFd fd, std::shared_ptr<HttpClient::Callback> http_callback)
-      : HttpConnection(std::move(fd), nullptr, false), http_callback_(std::move(http_callback)) {
+      : HttpConnection(std::move(fd), nullptr, true), http_callback_(std::move(http_callback)) {
   }
 
   td::Status receive_eof() override {
@@ -68,6 +68,11 @@ class HttpOutboundConnection : public HttpConnection {
     LOG(INFO) << "closing outbound HTTP connection because of request timeout";
     if (promise_) {
       answer_error(HttpStatusCode::status_gateway_timeout, "", std::move(promise_));
+    }
+    // The response was already handed over and its body is still arriving:
+    // the only way left to report the timeout is to fail the body.
+    if (reading_payload_) {
+      reading_payload_->fail();
     }
     stop();
   }

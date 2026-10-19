@@ -1,0 +1,10 @@
+[Unit]
+Description=Stop fresh-window C09 functional timer on sample failure
+
+[Service]
+Type=oneshot
+UMask=0077
+NoNewPrivileges=yes
+TimeoutStartSec=10s
+ExecStart=/usr/bin/systemctl --user stop nhm-c09-functional-v2.timer
+ExecStartPost=/usr/bin/logger -p user.err -t nhm-c09-functional-v2 C09-functional-v2-sample-failed-timer-stopped-review-private-window-log-and-inflight

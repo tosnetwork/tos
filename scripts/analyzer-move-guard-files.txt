@@ -1,0 +1,7 @@
+# Pass B of scripts/check-use-after-move.py: clang-analyzer-cplusplus.Move.
+#
+# The path-sensitive analyzer sees moved-from objects that are used later along a
+# branch, which bugprone-use-after-move does not follow. Same format as
+# scripts/use-after-move-guard-files.txt.
+storage/storage-daemon/StorageProvider.cpp
+storage/storage-daemon/storage-daemon.cpp

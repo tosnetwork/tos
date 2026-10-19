@@ -1,0 +1,21 @@
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-q-retention-starbridge/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.96s
+     Running tests/query_ledger.rs (target/debug/deps/query_ledger-e00883477a591ad7)
+
+running 1 test
+
+thread 'terminal_payload_compaction_is_atomic_and_seals_replay' (2340554) panicked at crates/health-services/tests/query_ledger.rs:56:5:
+assertion `left == right` failed
+  left: 2
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test terminal_payload_compaction_is_atomic_and_seals_replay ... FAILED
+
+failures:
+
+failures:
+    terminal_payload_compaction_is_atomic_and_seals_replay
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `-p tos-health-services --test query_ledger`

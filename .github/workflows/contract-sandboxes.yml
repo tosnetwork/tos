@@ -16,9 +16,45 @@ on:
     paths:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
+      # Proven pool snapshots run the shared proof verifier on recorded material.
+      - "lite-client/proof-verify/**"
+      - "lite-client/lite-client-common.*"
+      - "tosctl/src/node-control/common/src/app_config.rs"
+      - "tosctl/src/node-control/service/src/indexer/**"
+      - "test/proven-snapshot/**"
       - "tosctl/src/sandbox/**"
+      # The executor and block crates decide every sandbox transaction's
+      # outcome, including the outbound message size limits.
+      - "tosctl/src/executor/**"
+      - "tosctl/src/block/**"
+      # The token-bridge sandbox compiles these sources when it runs.
+      - "crosschain/token-bridge/tvm/**"
+      - "scripts/replay-token-bridge-trace.py"
+      - "test/auth-extensions/cells.py"
+      - "scripts/test_replay_token_bridge_trace.py"
+      - "crosschain/token-bridge/tests/**"
+      - "scripts/token-bridge-mutations.py"
+      - "test/pq-native/validator-set-cases.txt"
+      - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
+      # What the recorded answers depend on: the tests that record them, the record, its
+      # checker, and the code the four test binaries run.
+      - "crypto/test/**"
+      - "crypto/fift/**"
+      - "crypto/vm/**"
+      - "crypto/block/**"
+      - "crypto/pq/**"
+      - "test/regression-tests.ans"
+      - "scripts/check-regression-db.sh"
+      # The removed escrow v1 guard and the escrow deployment policy.
+      - "scripts/check-no-legacy-escrow.py"
+      - "scripts/test_check_no_legacy_escrow.py"
+      - "scripts/test_tos_service_escrow_deploy_policy.py"
+      - "scripts/tos_service_escrow_deploy_policy.py"
+      - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
+      - ".github/actions/native-cache/**"
+      - ".github/scripts/*native_executor_check.py"
     types: [opened, reopened, synchronize, ready_for_review]
   # Restricted to the integration branches on purpose. Without this, a push to
   # a PR branch fires here *and* through pull_request, running the same SHA
@@ -30,9 +66,45 @@ on:
     paths:
       - "crypto/smartcont/**"
       - "tosctl/src/node-control/contracts/**"
+      # Proven pool snapshots run the shared proof verifier on recorded material.
+      - "lite-client/proof-verify/**"
+      - "lite-client/lite-client-common.*"
+      - "tosctl/src/node-control/common/src/app_config.rs"
+      - "tosctl/src/node-control/service/src/indexer/**"
+      - "test/proven-snapshot/**"
       - "tosctl/src/sandbox/**"
+      # The executor and block crates decide every sandbox transaction's
+      # outcome, including the outbound message size limits.
+      - "tosctl/src/executor/**"
+      - "tosctl/src/block/**"
+      # The token-bridge sandbox compiles these sources when it runs.
+      - "crosschain/token-bridge/tvm/**"
+      - "scripts/replay-token-bridge-trace.py"
+      - "test/auth-extensions/cells.py"
+      - "scripts/test_replay_token_bridge_trace.py"
+      - "crosschain/token-bridge/tests/**"
+      - "scripts/token-bridge-mutations.py"
+      - "test/pq-native/validator-set-cases.txt"
+      - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
+      # What the recorded answers depend on: the tests that record them, the record, its
+      # checker, and the code the four test binaries run.
+      - "crypto/test/**"
+      - "crypto/fift/**"
+      - "crypto/vm/**"
+      - "crypto/block/**"
+      - "crypto/pq/**"
+      - "test/regression-tests.ans"
+      - "scripts/check-regression-db.sh"
+      # The removed escrow v1 guard and the escrow deployment policy.
+      - "scripts/check-no-legacy-escrow.py"
+      - "scripts/test_check_no_legacy_escrow.py"
+      - "scripts/test_tos_service_escrow_deploy_policy.py"
+      - "scripts/tos_service_escrow_deploy_policy.py"
+      - "scripts/tos-service-stablecoin-escrow-deploy.py"
       - ".github/workflows/contract-sandboxes.yml"
+      - ".github/actions/native-cache/**"
+      - ".github/scripts/*native_executor_check.py"
   workflow_dispatch:
 
 concurrency:
@@ -43,24 +115,250 @@ permissions:
   contents: read
 
 jobs:
-  sandboxes:
-    name: contract-sandboxes
+  # Native answers, generated vectors and the assertion-sensitivity mutation runs.
+  native:
+    name: contract-sandboxes (native)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Each half rebuilds the native tools it needs from the shared compile
+    # cache and then runs its share of the checks. One job held both halves and
+    # sat close to its limit: on a slower runner it was cancelled at 90 minutes.
+    timeout-minutes: 90
+    outputs:
+      executor_diagnostics: ${{ steps.executor.outputs.diagnostics }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # Native upgrade/rollback tests compile the pinned classic elector.
 
       - name: Install repository-pinned Rust toolchain
         run: scripts/install-rust-toolchain.sh
+
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: contract-sandboxes-release
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: contract-sandboxes-${{ github.job }}-${{ steps.native-cache.outputs.host-key }}
+          cache-bin: false
+          workspaces: tosctl/src -> target
 
       - name: Configure compiler toolchain
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
       # The sandbox compiles FunC in-process through tos_sandbox, which shells
-      # out to these two binaries via FUNC_PATH / FIFT_PATH. Nothing else from
-      # the node is needed, so this stays far cheaper than a full build.
-      - name: Build FunC and Fift
-        run: cmake --build build --target func fift -j2
+      # out to these binaries via FUNC_PATH / FIFT_PATH. The elector suite also
+      # generates a real zerostate, which needs create-state and the compiled
+      # system contracts it deploys. Still far cheaper than a full build.
+      - name: Build FunC, Fift and the zerostate tooling
+        run: cmake --build build --target func fift create-state gen_fif -j2
+
+      # The post-quantum elector suite signs real ML-DSA-44 requests. Signing is
+      # deliberately absent from the node's libraries, so it shells out to the operator
+      # key tool, which is its own project.
+      # The contracts depend on rules the executor enforces, not only on their own code.
+      # `test-fift` holds those, and no workflow ran it, so a change to the executor that
+      # invalidated one would have reached a green pull request.
+      - name: Check native executor diagnostic failure propagation
+        run: python3 .github/scripts/test_native_executor_check.py -v
+      - name: Executor rules the contracts depend on
+        id: executor
+        run: python3 .github/scripts/native_executor_check.py
+      - name: Retain bounded native executor diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-executor-${{ github.sha }}
+          path: ${{ runner.temp }}/native-executor-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
+
+      # The message bodies the node sends to the governance contracts, and the parsing
+      # of the subject an operator names. The contracts' side of these bytes is covered
+      # by the sandbox suites below; this is the producing side.
+      - name: Validator vote bodies
+        run: |
+          cmake --build build --target test-pq-vote-body test-vote-carrier -j2
+          ./build/crypto/pq/test-pq-vote-body
+          # The recorded carriers. The tooling's half of this lock is a Rust test, which
+          # the sandbox step below runs; both read the same file, so a layout that drifts
+          # on one side fails on that side rather than on chain.
+          ./build/crypto/pq/test-vote-carrier
+
+      # The node's own key file, and the tool that provisions one. Both are held to the
+      # same rules, because the tool linking a different copy of them is how a key that
+      # a provisioning run reported as written becomes one the node refuses at startup.
+      - name: Consensus key file
+        run: |
+          cmake --build build --target test-consensus-key-file tos-pq-consensus-key tos-pq-controller \
+            test-fsync-dir-failure-shim -j2
+          ./build/crypto/pq/test-consensus-key-file
+          python3 test/pq-mldsa44/consensus_key_tool_test.py \
+            --tool build/crypto/pq/tos-pq-consensus-key \
+            --fsync-shim build/crypto/pq/libtest-fsync-dir-failure-shim.so
+          # The controller's deployment commands, which take what the key tool prints.
+          python3 test/pq-mldsa44/controller_tool_test.py \
+            --controller build/crypto/tos-pq-controller \
+            --consensus-key build/crypto/pq/tos-pq-consensus-key
+
+      # `REGRESSION_VERIFY` compares nothing unless the binary is given `--regression`,
+      # and until this step nothing gave it. The recorded answers had drifted for as long
+      # as that was true.
+      - name: Recorded answers
+        run: |
+          cmake --build build --target test-fift test-cells test-vm test-smartcont -j2
+          ./scripts/check-regression-db.sh . build
+
+      # The shared vector files. Their readers compare against the file, so a generator
+      # that drifts away from what it once produced is invisible until someone tries to
+      # regenerate and cannot explain the diff. One of them is produced by the operator
+      # tooling instead, and the Rust test that writes it also verifies it; this step only
+      # requires it to still be there.
+      - name: Vector files match their generators
+        run: |
+          mapfile -t vector_generators < <(./scripts/check-vector-files.sh --list-generators)
+          if [ "${#vector_generators[@]}" -eq 0 ]; then
+            echo "vector check failed: generator manifest is empty" >&2
+            exit 1
+          fi
+          cmake --build build --target "${vector_generators[@]}" -j2
+          ./scripts/check-vector-files.sh . build
+
+      - name: Build the post-quantum key tool
+        run: |
+          cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-key -j2
+
+      # The two programs the suites run rather than imitate: the node's vote producer
+      # and the operator's root-authorisation tool. The tests that use them panic when
+      # they are absent, which is the right behaviour and also means this step is not
+      # optional -- without it those suites cannot run at all, and a job that never runs
+      # a test reports nothing about it.
+      - name: Build the post-quantum producers the suites drive
+        run: cmake --build build --target tos-pq-vote tos-pq-controller -j2
+
+      # The sandbox charges storage as the node does. The node's own
+      # compute_storage_fees checks every row of the shared vector file, and the
+      # Rust helper and the executor are then held to the same rows. A cargo
+      # filter that matches nothing passes, so each run must report its tests.
+      - name: Storage fees agree with the node
+        run: |
+          cmake --build build --target test-storage-fee-vectors -j2
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-storage-fee-vectors$'
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p chain_block --lib storage_fee_tests \
+            2>&1 | tee "$RUNNER_TEMP/storage-fee-helper.log"
+          grep -Eq "test result: ok\. [1-9][0-9]* passed" "$RUNNER_TEMP/storage-fee-helper.log"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_storage_fees \
+            2>&1 | tee "$RUNNER_TEMP/storage-fee-executor.log"
+          grep -Eq "test result: ok\. [1-9][0-9]* passed" "$RUNNER_TEMP/storage-fee-executor.log"
+
+      # A guard nothing reaches is decoration. This removes each rule the validator
+      # controller work added and requires a test to go red for it; a mutation that
+      # survives fails the job.
+      - name: Every controller rule is held by a test
+        run: python3 test/pq-native/contract-guard-mutations.py --out mutations.json
+
+      - name: R3 accounting and return recovery sensitivity
+        run: python3 test/pq-native/elector-r3-accounting-mutations.py --out r3-mutations
+
+      - name: Retain R3 native assertion receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: r3-accounting-${{ github.sha }}
+          path: |
+            r3-mutations
+            mutations.json
+            mutations-logs
+          if-no-files-found: warn
+          retention-days: 30
+
+      # The cutover deleted several validator-authority paths rather than refusing them
+      # by name, so nothing in the contracts announces their return. This fails if one
+      # comes back.
+      - name: No removed validator-authority path has returned
+        run: ./scripts/check-removed-validator-authority.sh .
+
+      # Escrow v1 was removed outright, and escrow v2 may be deployed only for
+      # non-production use. The tests first show both checks can fail (each kind
+      # of planted v1 fingerprint; a deploy script that stops applying the
+      # policy); the guard then holds the tree.
+      - name: Escrow v1 stays removed and escrow v2 stays non-production
+        run: |
+          python3 scripts/test_check_no_legacy_escrow.py
+          python3 scripts/test_tos_service_escrow_deploy_policy.py
+          python3 scripts/check-no-legacy-escrow.py .
+
+      - name: Frozen BOCs match their sources
+        run: git diff --exit-code
+      - name: Compile cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
+
+
+  # The contract sandbox suites and the proven-state guard controls.
+  suites:
+    name: contract-sandboxes (suites)
+    runs-on: ubuntu-24.04
+    # Each half rebuilds the native tools it needs from the shared compile
+    # cache and then runs its share of the checks. One job held both halves and
+    # sat close to its limit: on a slower runner it was cancelled at 90 minutes.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0 # Native upgrade/rollback tests compile the pinned classic elector.
+
+      - name: Install repository-pinned Rust toolchain
+        run: scripts/install-rust-toolchain.sh
+
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: contract-sandboxes-release
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: contract-sandboxes-${{ github.job }}-${{ steps.native-cache.outputs.host-key }}
+          cache-bin: false
+          workspaces: tosctl/src -> target
+
+      - name: Configure compiler toolchain
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      # The sandbox compiles FunC in-process through tos_sandbox, which shells
+      # out to these binaries via FUNC_PATH / FIFT_PATH. The elector suite also
+      # generates a real zerostate, which needs create-state and the compiled
+      # system contracts it deploys. Still far cheaper than a full build.
+      - name: Build FunC, Fift and the zerostate tooling
+        run: cmake --build build --target func fift create-state gen_fif -j2
+
+      - name: Build the post-quantum key tool
+        run: |
+          cmake -S crypto/pq/tools -B build-pq-key -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-pq-key -j2
+
+      # The two programs the suites run rather than imitate: the node's vote producer
+      # and the operator's root-authorisation tool. The tests that use them panic when
+      # they are absent, which is the right behaviour and also means this step is not
+      # optional -- without it those suites cannot run at all, and a job that never runs
+      # a test reports nothing about it.
+      - name: Build the post-quantum producers the suites drive
+        run: cmake --build build --target tos-pq-vote tos-pq-controller -j2
+
+      # Pool snapshots are computed by the proof verifier from proven state, never
+      # taken from an endpoint. Its suite re-verifies recorded proof material with
+      # the real verifier, so the verifier is built here; the suite fails, not
+      # skips, without it.
+      - name: Build the proof verifier the snapshot suite drives
+        run: cmake --build build --target tos-proof-verify test-proven-pool-fixture -j2
 
       # Runs every file under contracts/tests/, which is where the sandbox
       # suites live. Do not narrow this to a single --test target: the point
@@ -82,6 +380,8 @@ jobs:
           TOS_ROOT: ${{ github.workspace }}
           FUNC_PATH: ${{ github.workspace }}/build/crypto/func
           FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          CREATE_STATE_PATH: ${{ github.workspace }}/build/crypto/create-state
+          TOS_PROOF_VERIFY: ${{ github.workspace }}/build/lite-client/proof-verify/tos-proof-verify
         # --no-fail-fast is load-bearing, not tidiness. cargo stops after the
         # first test target that fails, so a single red unit test in --lib
         # means every suite under tests/ is never executed and the run reports
@@ -90,5 +390,113 @@ jobs:
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
 
+      - name: Raw account proof response binding guard controls
+        env:
+          TOS_PROOF_VERIFY: ${{ github.workspace }}/build/lite-client/proof-verify/tos-proof-verify
+        run: python3 test/wallet-quantum/raw_account_controls.py --output "$RUNNER_TEMP/raw-account-controls"
+
+      - name: Initial fee vault state binding guard controls
+        run: python3 test/wallet-quantum/fee_state_controls.py --output "$RUNNER_TEMP/fee-state-controls"
+
+      - name: Proven fee signing adapter guard controls
+        run: python3 test/wallet-quantum/proven_fee_sign_controls.py --output "$RUNNER_TEMP/proven-fee-sign-controls"
+
+      - name: Proven wallet state guard controls
+        run: python3 test/wallet-quantum/wallet_state_controls.py --output "$RUNNER_TEMP/wallet-state-controls"
+
+      - name: Proven configuration and PRIMARY policy guard controls
+        run: python3 test/wallet-quantum/primary_policy_controls.py --output "$RUNNER_TEMP/primary-policy-controls"
+
+      - name: Proven transaction receipt guard controls
+        run: python3 test/wallet-quantum/receipt_controls.py --output "$RUNNER_TEMP/receipt-controls"
+
+      - name: POP receipt guard controls
+        run: python3 test/wallet-quantum/pop_receipt_controls.py --output "$RUNNER_TEMP/pop-receipt-controls"
+
+      - name: Admission experiment output preservation
+        run: python3 test/wallet-quantum/test_admission_output.py
+
+      - name: Complete payment route guard controls
+        run: python3 test/wallet-quantum/payment_route_controls.py --output "$RUNNER_TEMP/payment-route-controls"
+
+      # The indexer folds a pool snapshot the real verifier proved from a signed
+      # chain while the endpoint reports different stacks. It is ignored in the
+      # service job, which has no native build, so it is run here by name and
+      # must actually run.
+      - name: Indexer takes pool snapshots only from the proof verifier
+        env:
+          TOS_PROOF_VERIFY: ${{ github.workspace }}/build/lite-client/proof-verify/tos-proof-verify
+        run: |
+          cargo test --manifest-path tosctl/src/Cargo.toml -p service --lib --locked \
+            the_indexer_folds_a_current_code_pool_snapshot_proven_by_the_real_verifier -- --ignored \
+            2>&1 | tee "$RUNNER_TEMP/proven-indexer.log"
+          grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/proven-indexer.log"
+
+      # The action phase refuses an outbound message over max_msg_cells or
+      # max_msg_bits, or over the cells the sender can be fined for, as the
+      # native engine does. These tests hold each limit at its exact value and
+      # one past it; restoring the saturating counter turns them red.
+      - name: Outbound message size limits hold on both sides
+        run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --lib tests_message_size_limits
+
+      # The token bridge's completion guarantees rest on fee arithmetic and on
+      # how send modes 1, 2, 16 and 64 fail and bounce. The sandbox runs the Rust
+      # executor; this records every transaction of its bridge suite and replays
+      # each in libemulator, the production engine, requiring the same outcome.
+      - name: Token-bridge transactions agree with the native engine
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          TOKEN_BRIDGE_TRACE_DIR: ${{ runner.temp }}/token-bridge-trace
+        run: |
+          python3 scripts/test_replay_token_bridge_trace.py
+          cmake --build build --target emulator -j2
+          cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --test token_bridge_sandbox
+          python3 scripts/replay-token-bridge-trace.py "$TOKEN_BRIDGE_TRACE_DIR"
+
+      # From version 15 a failed action phase also pays the fines of the
+      # messages it already sent; both executors must charge them identically.
+      - name: Failed-action fines agree between the executors
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+          EMULATOR_PATH: ${{ github.workspace }}/build/emulator/libemulator.so
+        run: |
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p tos_executor --example pq-tx-parity
+          python3 test/executor-parity/fail_action_fine.py \
+            --driver tosctl/src/target/debug/examples/pq-tx-parity --output "$RUNNER_TEMP/fail-action-fine"
+
+      # Each guard of the settlement protocol is removed in a copy of the
+      # sources and the test that names it must fail for its stated reason.
+      # The runner first runs every named test unmutated. A guard no test
+      # reaches fails the job, unless it is a recorded survivor with the reason
+      # it cannot go red (equivalent or redundant at the current constants).
+      - name: Every token-bridge guard is held by a test
+        env:
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: python3 scripts/token-bridge-mutations.py --tvm-only --results token-bridge-mutations.json
+
       - name: Frozen BOCs match their sources
         run: git diff --exit-code
+      - name: Compile cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi
+
+
+  # This only displays evidence; it never overrides the failing native job.
+  executor_diagnostic:
+    needs: native
+    if: ${{ always() && needs.native.outputs.executor_diagnostics != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        diagnostic: ${{ fromJSON(needs.native.outputs.executor_diagnostics) }}
+    name: "Executor diagnostic — ${{ matrix.diagnostic }}"
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Display native executor evidence without changing the gate
+        env:
+          DIAGNOSTIC: ${{ matrix.diagnostic }}
+        run: printf '%s\n' "$DIAGNOSTIC"

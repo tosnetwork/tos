@@ -38,6 +38,7 @@ import {
 } from "./errors.js";
 import {
   generateSessionKeypair,
+  isSafePeerPublicKey,
   saveSession,
   loadSession,
   clearSession,
@@ -186,7 +187,13 @@ export class TosConnect {
    */
   connect(
     wallet: WalletInfo,
-    request?: { items?: ConnectItem[] },
+    request?: {
+      items?: ConnectItem[];
+      /** Wallet session key obtained through a trusted pairing channel (wallet
+       * UI, authenticated rendezvous, or user-verified QR). Never use an SSE
+       * envelope or an unverified wallet-list entry as this trust anchor. */
+      walletSessionPublicKey?: string;
+    },
   ): string | null {
     // Reset any previous state.
     this.teardown();
@@ -208,13 +215,22 @@ export class TosConnect {
     }
 
     // ------ HTTP bridge path ------
+    const trustedKey = request?.walletSessionPublicKey;
+    if (!trustedKey || !/^[0-9a-fA-F]{64}$/.test(trustedKey)) {
+      throw new TosConnectError("HTTP bridge requires a trusted wallet session public key", "WALLET_NOT_FOUND");
+    }
+    this._walletPublicKey = hexToBytes(trustedKey);
     const keypair = generateSessionKeypair();
+    if (!isSafePeerPublicKey(this._walletPublicKey, keypair.secretKey)) {
+      this.teardown();
+      throw new TosConnectError("Invalid wallet session public key", "WALLET_NOT_FOUND");
+    }
     this._keypair = keypair;
     const bridgeUrl = wallet.bridgeUrl ?? this.defaultBridgeUrl;
     this.activeBridgeUrl = bridgeUrl;
 
     // Start listening for the wallet's connect response.
-    this.startBridgeClient(keypair, bridgeUrl);
+    this.startBridgeClient(keypair, bridgeUrl, this._walletPublicKey);
 
     // Build the universal link the DApp should present.
     if (!wallet.universalLink) {
@@ -545,6 +561,7 @@ export class TosConnect {
   }
 
   private handleBridgeMessage(fromHex: string, data: string): void {
+    if (!this._walletPublicKey || fromHex.toLowerCase() !== bytesToHex(this._walletPublicKey)) return;
     let parsed: unknown;
     try {
       parsed = JSON.parse(data);
@@ -568,6 +585,8 @@ export class TosConnect {
   private handleWalletEvent(fromHex: string, event: WalletEvent): void {
     switch (event.event) {
       case "connect": {
+        if (this._wallet) return; // one handshake per explicit connect()
+
         const payload = event.payload as ConnectEventPayload;
         const addrItem = payload.items.find(
           (i) => i.name === "tos_addr",
@@ -629,7 +648,7 @@ export class TosConnect {
 
       case "disconnect": {
         void clearSession(this.storage).catch(() => {});
-        this._wallet = null;
+        this.teardown();
         this.notifyStatusChange(null);
         break;
       }

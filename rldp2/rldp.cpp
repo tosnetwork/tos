@@ -17,6 +17,9 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <cstring>
+#include <mutex>
+
 #include "auto/tl/tos_api.h"
 #include "auto/tl/tos_api.hpp"
 #include "fec/fec.h"
@@ -28,6 +31,10 @@
 namespace tos {
 
 namespace rldp2 {
+
+// The connection would refuse a request beyond its own bound, after the query
+// was already sent; refusing here first keeps that from happening.
+static_assert(Rldp::MAX_PENDING_QUERIES_PER_CONNECTION <= RldpConnection::MAX_OUTSTANDING_REQUESTS);
 
 namespace detail {
 
@@ -46,18 +53,46 @@ struct RldpIn::Connection {
   td::Timestamp remove_at;
 };
 
+namespace {
+// The identity a connection charges its peer's unsolicited transfers to: the
+// peer's short id, which ADNL authenticated.
+RldpPeerIdentity peer_identity_of(adnl::AdnlNodeIdShort peer) {
+  RldpPeerIdentity identity;
+  auto id = peer.bits256_value();
+  static_assert(sizeof(identity) == 256 / 8);
+  std::memcpy(identity.data(), id.data(), identity.size());
+  return identity;
+}
+}  // namespace
+
 class RldpConnectionActor : public td::actor::Actor, private ConnectionCallback {
  public:
   RldpConnectionActor(td::actor::ActorId<RldpIn> rldp, adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst,
                       td::actor::ActorId<adnl::Adnl> adnl)
-      : rldp_(std::move(rldp)), src_(src), dst_(dst), adnl_(std::move(adnl)) {};
+      : rldp_(std::move(rldp)), src_(src), dst_(dst), adnl_(std::move(adnl)), connection_(peer_identity_of(dst)) {
+  }
 
   void send(TransferId transfer_id, td::BufferSlice query, td::Timestamp timeout = td::Timestamp::never()) {
     connection_.send(transfer_id, std::move(query), timeout);
     yield();
   }
+  // An answer that waited in this actor's mailbox past its deadline is
+  // dropped here rather than opened as a transfer that expires at once.
+  void send_answer(TransferId transfer_id, td::BufferSlice answer, td::Timestamp timeout) {
+    if (timeout && timeout.is_in_past()) {
+      return;
+    }
+    send(transfer_id, std::move(answer), timeout);
+  }
+  void outbound_transfer_stats(td::Promise<Rldp::OutboundTransferStats> promise) {
+    promise.set_value(
+        Rldp::OutboundTransferStats{connection_.outbound_transfer_count(), connection_.outbound_transfers_started()});
+  }
   void set_receive_limits(TransferId transfer_id, td::Timestamp timeout, td::uint64 max_size) {
-    connection_.set_receive_limits(transfer_id, timeout, max_size);
+    if (!connection_.set_receive_limits(transfer_id, timeout, max_size)) {
+      // A refusal may have a failure to report to the request's caller.
+      yield();
+    }
   }
   void receive_raw(td::BufferSlice data) {
     connection_.receive_raw(std::move(data));
@@ -166,6 +201,46 @@ void RldpIn::get_connection_stats(td::Promise<ConnectionStats> promise) {
   promise.set_value(std::move(stats));
 }
 
+void RldpIn::get_outbound_transfer_stats(adnl::AdnlNodeIdShort local_id, td::Promise<OutboundTransferStats> promise) {
+  struct Gather {
+    td::Promise<OutboundTransferStats> promise;
+    OutboundTransferStats total;
+    size_t remaining = 0;
+    // Connections answer from their own actors, possibly on other threads.
+    std::mutex mutex;
+    void add(td::Result<OutboundTransferStats> R) {
+      std::lock_guard lock(mutex);
+      // A connection that went away meanwhile no longer holds anything.
+      if (R.is_ok()) {
+        total.live += R.ok().live;
+        total.started += R.ok().started;
+      }
+      if (--remaining == 0) {
+        promise.set_value(std::move(total));
+      }
+    }
+  };
+  size_t matching = 0;
+  for (auto &[key, connection] : connections_) {
+    matching += key.first == local_id ? 1 : 0;
+  }
+  if (matching == 0) {
+    promise.set_value(OutboundTransferStats{});
+    return;
+  }
+  auto gather = std::make_shared<Gather>();
+  gather->promise = std::move(promise);
+  gather->remaining = matching;
+  for (auto &[key, connection] : connections_) {
+    if (key.first != local_id) {
+      continue;
+    }
+    td::actor::send_closure(
+        connection.actor, &RldpConnectionActor::outbound_transfer_stats,
+        td::PromiseCreator::lambda([gather](td::Result<OutboundTransferStats> R) { gather->add(std::move(R)); }));
+  }
+}
+
 void RldpIn::send_message(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::BufferSlice data) {
   return send_message_ex(src, dst, td::Timestamp::in(10.0), std::move(data));
 }
@@ -222,6 +297,14 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
     promise.set_error(td::Status::Error("too many RLDP queries are already awaiting an answer"));
     return;
   }
+  // Each query lets this peer answer with a solicited transfer, which may use
+  // the reserve of the inbound budget; one peer may not hold more than this
+  // many.
+  auto on_connection = queries_.find({src, dst});
+  if (on_connection != queries_.end() && on_connection->second.size() >= MAX_PENDING_QUERIES_PER_CONNECTION) {
+    promise.set_error(td::Status::Error("too many RLDP queries are already awaiting an answer from this peer"));
+    return;
+  }
   auto connection = get_or_create_connection(src, dst, false, timeout);
   if (connection.empty()) {
     promise.set_error(td::Status::Error("no RLDP connection available for this peer"));
@@ -236,6 +319,12 @@ void RldpIn::send_query_ex_with_transfer_id(adnl::AdnlNodeIdShort src, adnl::Adn
 
 void RldpIn::answer_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, td::Timestamp timeout,
                           adnl::AdnlQueryId query_id, TransferId transfer_id, td::BufferSlice data) {
+  // An answer whose deadline has passed on the way here is dropped before it
+  // can open a connection or a transfer.
+  if (timeout && timeout.is_in_past()) {
+    VLOG(RLDP_INFO) << "dropping answer " << src << " -> " << dst << " : its delivery deadline has passed";
+    return;
+  }
   auto B = serialize_tl_object(create_tl_object<tos_api::rldp_answer>(query_id, std::move(data)), true);
 
   auto connection = get_or_create_connection(src, dst, false, timeout);
@@ -243,7 +332,7 @@ void RldpIn::answer_query(adnl::AdnlNodeIdShort src, adnl::AdnlNodeIdShort dst, 
     VLOG(RLDP_INFO) << "dropping answer " << src << " -> " << dst << " : no connection available";
     return;
   }
-  send_closure(connection, &RldpConnectionActor::send, transfer_id, std::move(B), timeout);
+  send_closure(connection, &RldpConnectionActor::send_answer, transfer_id, std::move(B), timeout);
 }
 
 void RldpIn::receive_message_part(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort local_id, td::BufferSlice data) {
@@ -379,24 +468,30 @@ void RldpIn::process_message(adnl::AdnlNodeIdShort source, adnl::AdnlNodeIdShort
   auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), source, local_id,
                                        timeout = td::Timestamp::at_unix(message.timeout_), query_id = message.query_id_,
                                        max_answer_size = static_cast<td::uint64>(message.max_answer_size_),
-                                       transfer_id](td::Result<td::BufferSlice> R) mutable {
+                                       transfer_id](td::Result<adnl::AdnlQueryAnswer> R) mutable {
     if (R.is_ok()) {
-      auto data = R.move_as_ok();
-      if (data.size() > max_answer_size) {
+      auto answer = R.move_as_ok();
+      if (answer.data.size() > max_answer_size) {
         VLOG(RLDP_NOTICE) << "rldp query failed: answer too big";
       } else {
         if (!timeout || td::Timestamp::in(60.0) < timeout) {
           timeout = td::Timestamp::in(60.0);
         }
+        // The answer's own delivery deadline can only shorten that.
+        timeout = adnl::answer_delivery_deadline(timeout, answer);
+        if (timeout.is_in_past()) {
+          VLOG(RLDP_INFO) << "rldp query answered after its delivery deadline; not sent";
+          return;
+        }
         td::actor::send_closure(SelfId, &RldpIn::answer_query, local_id, source, timeout, query_id,
-                                transfer_id ^ TransferId::ones(), std::move(data));
+                                transfer_id ^ TransferId::ones(), std::move(answer.data));
       }
     } else {
       VLOG(RLDP_NOTICE) << "rldp query failed: " << R.move_as_error();
     }
   });
   VLOG(RLDP_DEBUG) << "delivering rldp query";
-  td::actor::send_closure(adnl_, &adnl::AdnlPeerTable::deliver_query, source, local_id, std::move(message.data_),
+  td::actor::send_closure(adnl_, &adnl::AdnlPeerTable::deliver_query_ex, source, local_id, std::move(message.data_),
                           std::move(P));
 }
 
@@ -516,6 +611,11 @@ std::unique_ptr<adnl::Adnl::Callback> RldpIn::make_adnl_callback() {
 
   return std::make_unique<Callback>(actor_id(this));
 }
+
+RldpIn::RldpIn(td::actor::ActorId<adnl::AdnlPeerTable> adnl) : adnl_(adnl) {
+}
+
+RldpIn::~RldpIn() = default;
 
 td::actor::ActorOwn<Rldp> Rldp::create(td::actor::ActorId<adnl::Adnl> adnl) {
   return td::actor::create_actor<RldpIn>("rldp", td::actor::actor_dynamic_cast<adnl::AdnlPeerTable>(adnl));

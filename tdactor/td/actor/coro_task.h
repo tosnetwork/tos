@@ -445,7 +445,7 @@ struct [[nodiscard]] StartedTask {
       co_await become_lightweight();
       auto r = co_await std::move(self).wrap();
       LOG_IF(FATAL, r.is_error()) << "Detached task <" << description << "> failed: " << r.error();
-      co_return {};
+      co_return td::Unit{};
     }(std::move(*this), std::move(description))
                                                   .start_immediate()
                                                   .detach_silent();

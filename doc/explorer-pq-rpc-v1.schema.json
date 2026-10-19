@@ -1,0 +1,2068 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:tos:explorer-pq-rpc:design:v1",
+  "title": "Proposed PQ explorer RPC request and result fragments",
+  "description": "Design-only schemas, not a shipped API. Select a $defs fragment to validate it. Native semantic checks remain mandatory. Definitions are closed in v1; clients must tolerate additive unknown fields outside these validated fragments.",
+  "$defs": {
+    "U8": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "U16": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 65535
+    },
+    "U32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "I32": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "U64": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,19})$",
+      "description": "Native parser must enforce <=18446744073709551615; string pattern alone does not prove range."
+    },
+    "Bytes": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$",
+      "description": "Standard padded base64; canonical pad bits and decoded budgets require native checks."
+    },
+    "Bits256": {
+      "$ref": "#/$defs/Bytes",
+      "minLength": 44,
+      "maxLength": 44,
+      "pattern": "^[A-Za-z0-9+/]{43}=$",
+      "description": "Exactly 32 decoded bytes; native parser must also enforce canonical pad bits."
+    },
+    "RawAddress": {
+      "type": "string",
+      "pattern": "^-?(?:0|[1-9][0-9]*):[0-9a-f]{64}$",
+      "description": "Workchain must fit int32; canonical normalization requires native validation."
+    },
+    "BlockId": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "type": "string"
+        },
+        "workchain": {
+          "$ref": "#/$defs/I32"
+        },
+        "shard": {
+          "type": "string",
+          "pattern": "^-?(0|[1-9][0-9]*)$"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "root_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "file_hash": {
+          "$ref": "#/$defs/Bits256"
+        }
+      },
+      "required": [
+        "workchain",
+        "shard",
+        "seqno",
+        "root_hash",
+        "file_hash"
+      ],
+      "additionalProperties": false
+    },
+    "MasterchainId": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/BlockId"
+        },
+        {
+          "properties": {
+            "workchain": {
+              "const": -1
+            },
+            "shard": {
+              "const": "-9223372036854775808"
+            }
+          }
+        }
+      ]
+    },
+    "SignatureRequest": {
+      "type": "object",
+      "properties": {
+        "seqno": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "block_id": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/MasterchainId"
+            },
+            {
+              "properties": {
+                "seqno": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 2147483647
+                }
+              }
+            }
+          ]
+        },
+        "with_proof": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "seqno"
+          ]
+        },
+        {
+          "required": [
+            "block_id"
+          ]
+        }
+      ],
+      "description": "Full selector equality and non-genesis constraints also apply to block_id."
+    },
+    "AccountRequest": {
+      "type": "object",
+      "properties": {
+        "address": {
+          "$ref": "#/$defs/RawAddress"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "block_id": {
+          "$ref": "#/$defs/MasterchainId"
+        },
+        "include_pq": {
+          "type": "boolean",
+          "default": false
+        },
+        "with_proof": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "with_proof": {
+                "const": true
+              }
+            },
+            "required": [
+              "with_proof"
+            ]
+          },
+          "then": {
+            "properties": {
+              "include_pq": {
+                "const": true
+              }
+            },
+            "required": [
+              "include_pq"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "block_id"
+            ]
+          },
+          "then": {
+            "properties": {
+              "include_pq": {
+                "const": true
+              }
+            },
+            "required": [
+              "include_pq"
+            ]
+          }
+        }
+      ]
+    },
+    "ConfigRequest": {
+      "type": "object",
+      "properties": {
+        "param": {
+          "$ref": "#/$defs/I32"
+        },
+        "seqno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "block_id": {
+          "$ref": "#/$defs/MasterchainId"
+        },
+        "include_decoded": {
+          "type": "boolean",
+          "default": false
+        },
+        "with_proof": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "param"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "block_id"
+            ]
+          },
+          "then": {
+            "properties": {
+              "include_decoded": {
+                "const": true
+              }
+            },
+            "required": [
+              "include_decoded"
+            ]
+          }
+        }
+      ]
+    },
+    "ProofRequest": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 4,
+          "maxLength": 21848,
+          "allOf": [
+            {
+              "if": {
+                "minLength": 21848
+              },
+              "then": {
+                "pattern": "==$"
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "ProofResult": {
+      "type": "object",
+      "properties": {
+        "reply": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 4,
+          "maxLength": 89478488,
+          "allOf": [
+            {
+              "if": {
+                "minLength": 89478488
+              },
+              "then": {
+                "pattern": "==$"
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "reply"
+      ],
+      "additionalProperties": false
+    },
+    "ErrorInfo": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "reason": {
+          "enum": [
+            "INVALID_ARGUMENT",
+            "UNSIGNED_BLOCK",
+            "BLOCK_ID_MISMATCH",
+            "BLOCK_UNAVAILABLE",
+            "CONFIG_PARAM_ABSENT",
+            "EVIDENCE_INVALID",
+            "UNSUPPORTED_CARRIER",
+            "STATE_INVALID",
+            "RESOURCE_LIMIT",
+            "UPSTREAM_UNAVAILABLE",
+            "VERIFICATION_BACKEND_FAILURE"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema_version",
+        "reason",
+        "retryable"
+      ],
+      "additionalProperties": false
+    },
+    "PqSignature": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "const": "blocks.signature.pq"
+        },
+        "validator_id": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "algorithm_id": {
+          "const": 1
+        },
+        "signature": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 3228,
+          "maxLength": 3228,
+          "pattern": "^[A-Za-z0-9+/]{3227}=$",
+          "description": "Exactly 2420 decoded bytes; native parser must also enforce canonical pad bits."
+        }
+      },
+      "required": [
+        "@type",
+        "validator_id",
+        "algorithm_id",
+        "signature"
+      ],
+      "additionalProperties": false
+    },
+    "FinalityVerification": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "node_verified"
+        },
+        "scope": {
+          "const": "anchored_finality"
+        },
+        "trust_anchor": {
+          "$ref": "#/$defs/MasterchainId"
+        },
+        "validator_set_source": {
+          "$ref": "#/$defs/MasterchainId"
+        },
+        "verified_weight": {
+          "$ref": "#/$defs/U64"
+        },
+        "total_weight": {
+          "$ref": "#/$defs/U64"
+        },
+        "quorum_threshold": {
+          "$ref": "#/$defs/U64"
+        },
+        "expected_session_id": {
+          "$ref": "#/$defs/Bits256"
+        }
+      },
+      "required": [
+        "status",
+        "scope",
+        "trust_anchor",
+        "validator_set_source",
+        "verified_weight",
+        "total_weight",
+        "quorum_threshold",
+        "expected_session_id"
+      ],
+      "additionalProperties": false
+    },
+    "FinalityProof": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "liteServer.partialBlockProof.tl"
+        },
+        "bytes": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 4,
+          "maxLength": 11184812,
+          "allOf": [
+            {
+              "if": {
+                "minLength": 11184812
+              },
+              "then": {
+                "pattern": "=$"
+              }
+            }
+          ]
+        },
+        "from": {
+          "$ref": "#/$defs/MasterchainId"
+        },
+        "to": {
+          "$ref": "#/$defs/MasterchainId"
+        }
+      },
+      "required": [
+        "format",
+        "bytes",
+        "from",
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    "PqSignaturesResult": {
+      "type": "object",
+      "properties": {
+        "@type": {
+          "const": "blocks.blockSignatures.simplexPq"
+        },
+        "schema_version": {
+          "const": 1
+        },
+        "id": {
+          "$ref": "#/$defs/MasterchainId"
+        },
+        "cc_seqno": {
+          "$ref": "#/$defs/U32"
+        },
+        "validator_set_hash": {
+          "$ref": "#/$defs/U32"
+        },
+        "session_id": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "slot": {
+          "$ref": "#/$defs/U32"
+        },
+        "candidate": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 4,
+          "maxLength": 1368,
+          "allOf": [
+            {
+              "if": {
+                "minLength": 1368
+              },
+              "then": {
+                "pattern": "==$"
+              }
+            }
+          ]
+        },
+        "signature_context": {
+          "const": "TOS-CONSENSUS-SIMPLEX-v1"
+        },
+        "signing_payload": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 4,
+          "maxLength": 4096
+        },
+        "signatures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PqSignature"
+          },
+          "minItems": 1,
+          "maxItems": 400
+        },
+        "verification": {
+          "$ref": "#/$defs/FinalityVerification"
+        },
+        "proof": {
+          "$ref": "#/$defs/FinalityProof"
+        }
+      },
+      "required": [
+        "@type",
+        "schema_version",
+        "id",
+        "cc_seqno",
+        "validator_set_hash",
+        "session_id",
+        "slot",
+        "candidate",
+        "signature_context",
+        "signing_payload",
+        "signatures",
+        "verification"
+      ],
+      "additionalProperties": false
+    },
+    "PrimaryKey": {
+      "type": "object",
+      "properties": {
+        "algorithm_id": {
+          "const": 1
+        },
+        "public_key": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 1752,
+          "maxLength": 1752,
+          "pattern": "^[A-Za-z0-9+/]{1750}==$",
+          "description": "Exactly 1312 decoded bytes; native parser must also enforce canonical pad bits."
+        }
+      },
+      "required": [
+        "algorithm_id",
+        "public_key"
+      ],
+      "additionalProperties": false
+    },
+    "RescueKey": {
+      "type": "object",
+      "properties": {
+        "algorithm_id": {
+          "const": 3
+        },
+        "public_key": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 44,
+          "maxLength": 44,
+          "pattern": "^[A-Za-z0-9+/]{43}=$",
+          "description": "Exactly 32 decoded bytes; native parser must also enforce canonical pad bits."
+        },
+        "policy": {
+          "enum": [
+            "ready",
+            "required"
+          ]
+        }
+      },
+      "required": [
+        "algorithm_id",
+        "public_key",
+        "policy"
+      ],
+      "additionalProperties": false
+    },
+    "QuantumModuleState": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "quantum_module_v1"
+        },
+        "global_id": {
+          "$ref": "#/$defs/I32"
+        },
+        "network_tag": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "primary": {
+          "$ref": "#/$defs/PrimaryKey"
+        },
+        "rescue": {
+          "$ref": "#/$defs/RescueKey"
+        }
+      },
+      "required": [
+        "kind",
+        "global_id",
+        "network_tag",
+        "primary",
+        "rescue"
+      ],
+      "additionalProperties": false
+    },
+    "FeeMetadata": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "profile": {
+          "const": "hss-lms-sha256-h20-lmots-sha256-w4"
+        },
+        "algorithm_id": {
+          "const": 4
+        },
+        "fee_tree_id": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "epoch0": {
+          "$ref": "#/$defs/U32"
+        },
+        "epoch_seconds": {
+          "const": 3600
+        },
+        "opening_horizon": {
+          "const": 4
+        },
+        "public_key": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 80,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9+/]{80}$",
+          "description": "Exactly 60 decoded bytes; native parser must also enforce canonical pad bits."
+        }
+      },
+      "required": [
+        "schema_version",
+        "profile",
+        "algorithm_id",
+        "fee_tree_id",
+        "epoch0",
+        "epoch_seconds",
+        "opening_horizon",
+        "public_key"
+      ],
+      "additionalProperties": false
+    },
+    "HighloadState": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "pq_highload_mldsa44_v1"
+        },
+        "algorithm_id": {
+          "const": 1
+        },
+        "public_key": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 1752,
+          "maxLength": 1752,
+          "pattern": "^[A-Za-z0-9+/]{1750}==$",
+          "description": "Exactly 1312 decoded bytes; native parser must also enforce canonical pad bits."
+        },
+        "consensus_key_id": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "subwallet_id": {
+          "$ref": "#/$defs/U32"
+        },
+        "last_clean_time": {
+          "$ref": "#/$defs/U64"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4194303
+        }
+      },
+      "required": [
+        "kind",
+        "algorithm_id",
+        "public_key",
+        "consensus_key_id",
+        "subwallet_id",
+        "last_clean_time",
+        "timeout_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "MldsaModuleState": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "mldsa44_auth_module_v1"
+        },
+        "algorithm_id": {
+          "const": 1
+        },
+        "global_id": {
+          "$ref": "#/$defs/I32"
+        },
+        "public_key": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 1752,
+          "maxLength": 1752,
+          "pattern": "^[A-Za-z0-9+/]{1750}==$",
+          "description": "Exactly 1312 decoded bytes; native parser must also enforce canonical pad bits."
+        }
+      },
+      "required": [
+        "kind",
+        "algorithm_id",
+        "global_id",
+        "public_key"
+      ],
+      "additionalProperties": false
+    },
+    "FalconModuleState": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "falcon512_padded_auth_module_v1"
+        },
+        "algorithm_id": {
+          "const": 2
+        },
+        "profile_version": {
+          "const": 1
+        },
+        "global_id": {
+          "$ref": "#/$defs/I32"
+        },
+        "public_key": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 1196,
+          "maxLength": 1196,
+          "pattern": "^[A-Za-z0-9+/]{1196}$",
+          "description": "Exactly 897 decoded bytes; native parser must also enforce canonical pad bits."
+        }
+      },
+      "required": [
+        "kind",
+        "algorithm_id",
+        "profile_version",
+        "global_id",
+        "public_key"
+      ],
+      "additionalProperties": false
+    },
+    "QuantumWalletState": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "quantum_wallet_v4"
+        },
+        "seqno": {
+          "$ref": "#/$defs/U32"
+        },
+        "wallet_id": {
+          "$ref": "#/$defs/U32"
+        },
+        "auth_mode": {
+          "const": 2
+        },
+        "retired_flags": {
+          "$ref": "#/$defs/U16"
+        },
+        "authority_epoch": {
+          "$ref": "#/$defs/U64"
+        },
+        "primary_nonce": {
+          "$ref": "#/$defs/U64"
+        },
+        "rescue_nonce": {
+          "$ref": "#/$defs/U64"
+        },
+        "legacy_signature_enabled": {
+          "const": false
+        },
+        "module_state_init_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "module": {
+          "$ref": "#/$defs/QuantumModuleState"
+        },
+        "fee": {
+          "$ref": "#/$defs/FeeMetadata"
+        }
+      },
+      "required": [
+        "kind",
+        "seqno",
+        "wallet_id",
+        "auth_mode",
+        "retired_flags",
+        "authority_epoch",
+        "primary_nonce",
+        "rescue_nonce",
+        "legacy_signature_enabled",
+        "module_state_init_hash",
+        "module",
+        "fee"
+      ],
+      "additionalProperties": false
+    },
+    "QuantumVaultState": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "quantum_fee_vault_v3"
+        },
+        "next_leaf": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "configuration_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "epoch0": {
+          "$ref": "#/$defs/U32"
+        },
+        "module_address": {
+          "$ref": "#/$defs/RawAddress"
+        },
+        "pop_parties_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "fee_public_key": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 80,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9+/]{80}$",
+          "description": "Exactly 60 decoded bytes; native parser must also enforce canonical pad bits."
+        },
+        "intent_prefix_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "global_id": {
+          "$ref": "#/$defs/I32"
+        },
+        "network_tag": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "wallet_address": {
+          "$ref": "#/$defs/RawAddress"
+        },
+        "auth_mode": {
+          "const": 2
+        }
+      },
+      "required": [
+        "kind",
+        "next_leaf",
+        "configuration_hash",
+        "epoch0",
+        "module_address",
+        "pop_parties_hash",
+        "fee_public_key",
+        "intent_prefix_hash",
+        "global_id",
+        "network_tag",
+        "wallet_address",
+        "auth_mode"
+      ],
+      "additionalProperties": false
+    },
+    "PublicState": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/HighloadState"
+        },
+        {
+          "$ref": "#/$defs/MldsaModuleState"
+        },
+        {
+          "$ref": "#/$defs/FalconModuleState"
+        },
+        {
+          "$ref": "#/$defs/QuantumModuleState"
+        },
+        {
+          "$ref": "#/$defs/QuantumWalletState"
+        },
+        {
+          "$ref": "#/$defs/QuantumVaultState"
+        }
+      ]
+    },
+    "AccountProof": {
+      "type": "object",
+      "properties": {
+        "format": {
+          "const": "liteServer.accountState.tl"
+        },
+        "bytes": {
+          "$ref": "#/$defs/Bytes",
+          "minLength": 4,
+          "maxLength": 5592408,
+          "allOf": [
+            {
+              "if": {
+                "minLength": 5592408
+              },
+              "then": {
+                "pattern": "==$"
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "format",
+        "bytes"
+      ],
+      "additionalProperties": false
+    },
+    "PublicAuthorization": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "recognition": {
+          "enum": [
+            "recognized",
+            "unknown_code",
+            "no_active_code"
+          ]
+        },
+        "code_hash": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bits256"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_family": {
+          "anyOf": [
+            {
+              "enum": [
+                "pq_highload_mldsa44_v1",
+                "mldsa44_auth_module_v1",
+                "falcon512_padded_auth_module_v1",
+                "quantum_module_v1",
+                "quantum_wallet_v4",
+                "quantum_fee_vault_v3"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "release_status": {
+          "enum": [
+            "review_candidate",
+            "not_asserted"
+          ]
+        },
+        "registry_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "observed_masterchain_block": {
+          "$ref": "#/$defs/MasterchainId"
+        },
+        "observed_shard_block": {
+          "$ref": "#/$defs/BlockId"
+        },
+        "state_verified": {
+          "const": true
+        },
+        "state_schema": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "public_state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PublicState"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "proof": {
+          "$ref": "#/$defs/AccountProof"
+        }
+      },
+      "required": [
+        "schema_version",
+        "recognition",
+        "code_hash",
+        "code_family",
+        "release_status",
+        "registry_revision",
+        "observed_masterchain_block",
+        "observed_shard_block",
+        "state_verified",
+        "state_schema",
+        "public_state"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "recognition": {
+                "const": "recognized"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code_hash": {
+                "$ref": "#/$defs/Bits256"
+              },
+              "code_family": {
+                "enum": [
+                  "pq_highload_mldsa44_v1",
+                  "mldsa44_auth_module_v1",
+                  "falcon512_padded_auth_module_v1",
+                  "quantum_module_v1",
+                  "quantum_wallet_v4",
+                  "quantum_fee_vault_v3"
+                ]
+              },
+              "state_schema": {
+                "type": "string",
+                "minLength": 1
+              },
+              "public_state": {
+                "$ref": "#/$defs/PublicState"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "code_family": {
+                "const": null
+              },
+              "state_schema": {
+                "const": null
+              },
+              "public_state": {
+                "const": null
+              },
+              "release_status": {
+                "const": "not_asserted"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code_family": {
+                "const": "pq_highload_mldsa44_v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "public_state": {
+                "$ref": "#/$defs/HighloadState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code_family": {
+                "const": "mldsa44_auth_module_v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "public_state": {
+                "$ref": "#/$defs/MldsaModuleState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code_family": {
+                "const": "falcon512_padded_auth_module_v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "public_state": {
+                "$ref": "#/$defs/FalconModuleState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code_family": {
+                "const": "quantum_module_v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "public_state": {
+                "$ref": "#/$defs/QuantumModuleState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code_family": {
+                "const": "quantum_wallet_v4"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "public_state": {
+                "$ref": "#/$defs/QuantumWalletState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code_family": {
+                "const": "quantum_fee_vault_v3"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "public_state": {
+                "$ref": "#/$defs/QuantumVaultState"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recognition": {
+                "const": "no_active_code"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code_hash": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "recognition": {
+                "const": "unknown_code"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "code_hash": {
+                "$ref": "#/$defs/Bits256"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code_family": {
+                "enum": [
+                  "mldsa44_auth_module_v1",
+                  "falcon512_padded_auth_module_v1",
+                  "quantum_module_v1",
+                  "quantum_wallet_v4",
+                  "quantum_fee_vault_v3"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "release_status": {
+                "const": "review_candidate"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Observation": {
+      "type": "object",
+      "properties": {
+        "block_id": {
+          "$ref": "#/$defs/MasterchainId"
+        },
+        "global_id": {
+          "$ref": "#/$defs/I32"
+        },
+        "chain_time": {
+          "$ref": "#/$defs/U32"
+        },
+        "vm_version": {
+          "$ref": "#/$defs/U32"
+        }
+      },
+      "required": [
+        "block_id",
+        "global_id",
+        "chain_time",
+        "vm_version"
+      ],
+      "additionalProperties": false
+    },
+    "GlobalVersion": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "global_version"
+        },
+        "version": {
+          "$ref": "#/$defs/U32"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/U64"
+        }
+      },
+      "required": [
+        "kind",
+        "version",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "ControllerPolicy": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "validator_controller_policy_v1"
+        },
+        "controller_codes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Bits256"
+          },
+          "minItems": 0,
+          "maxItems": 8,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kind",
+        "controller_codes"
+      ],
+      "additionalProperties": false
+    },
+    "AuthPolicy": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "auth_policy_v1"
+        },
+        "network_tag": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "policy_sequence": {
+          "$ref": "#/$defs/U64"
+        },
+        "retired_flags": {
+          "enum": [
+            0,
+            2
+          ]
+        },
+        "primary_deadline": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4294967295
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy_spec_hash": {
+          "$ref": "#/$defs/Bits256"
+        },
+        "primary_status": {
+          "enum": [
+            "not_retired",
+            "retired"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "network_tag",
+        "policy_sequence",
+        "retired_flags",
+        "primary_deadline",
+        "policy_spec_hash",
+        "primary_status"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "retired_flags": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "primary_status": {
+                "const": "retired"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "retired_flags": {
+                "const": 0
+              },
+              "primary_deadline": {
+                "const": null
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "primary_status": {
+                "const": "not_retired"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ConfiguredSizeLimits": {
+      "type": "object",
+      "properties": {
+        "max_msg_bits": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_msg_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_library_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_ext_msg_size": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_acc_state_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_mc_acc_state_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_acc_public_libraries": {
+          "$ref": "#/$defs/U32"
+        },
+        "defer_out_queue_size_limit": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_msg_extra_currencies": {
+          "$ref": "#/$defs/U32"
+        },
+        "acc_state_cells_for_storage_dict": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_total_msg_bits": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_total_msg_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_vm_data_depth": {
+          "$ref": "#/$defs/U16"
+        },
+        "max_ext_msg_depth": {
+          "$ref": "#/$defs/U16"
+        },
+        "max_acc_fixed_prefix_length": {
+          "$ref": "#/$defs/U8"
+        },
+        "max_transaction_library_loads": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/U32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "EffectiveSizeLimits": {
+      "type": "object",
+      "properties": {
+        "max_msg_bits": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_msg_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_library_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_ext_msg_size": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_acc_state_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_mc_acc_state_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_acc_public_libraries": {
+          "$ref": "#/$defs/U32"
+        },
+        "defer_out_queue_size_limit": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_msg_extra_currencies": {
+          "$ref": "#/$defs/U32"
+        },
+        "acc_state_cells_for_storage_dict": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_total_msg_bits": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_total_msg_cells": {
+          "$ref": "#/$defs/U32"
+        },
+        "max_vm_data_depth": {
+          "$ref": "#/$defs/U16"
+        },
+        "max_ext_msg_depth": {
+          "$ref": "#/$defs/U16"
+        },
+        "max_acc_fixed_prefix_length": {
+          "$ref": "#/$defs/U8"
+        },
+        "max_transaction_library_loads": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/U32"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "max_msg_bits",
+        "max_msg_cells",
+        "max_library_cells",
+        "max_ext_msg_size",
+        "max_acc_state_cells",
+        "max_mc_acc_state_cells",
+        "max_acc_public_libraries",
+        "defer_out_queue_size_limit",
+        "max_msg_extra_currencies",
+        "acc_state_cells_for_storage_dict",
+        "max_total_msg_bits",
+        "max_total_msg_cells",
+        "max_vm_data_depth",
+        "max_ext_msg_depth",
+        "max_acc_fixed_prefix_length",
+        "max_transaction_library_loads"
+      ],
+      "additionalProperties": false
+    },
+    "SizeLimits": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "size_limits"
+        },
+        "wire_version": {
+          "anyOf": [
+            {
+              "enum": [
+                1,
+                2,
+                3
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "configured": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfiguredSizeLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effective": {
+          "$ref": "#/$defs/EffectiveSizeLimits"
+        },
+        "defaulted_fields": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "max_msg_bits",
+              "max_msg_cells",
+              "max_library_cells",
+              "max_ext_msg_size",
+              "max_acc_state_cells",
+              "max_mc_acc_state_cells",
+              "max_acc_public_libraries",
+              "defer_out_queue_size_limit",
+              "max_msg_extra_currencies",
+              "acc_state_cells_for_storage_dict",
+              "max_total_msg_bits",
+              "max_total_msg_cells",
+              "max_vm_data_depth",
+              "max_ext_msg_depth",
+              "max_acc_fixed_prefix_length",
+              "max_transaction_library_loads"
+            ]
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "kind",
+        "wire_version",
+        "configured",
+        "effective",
+        "defaulted_fields"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "wire_version": {
+                "const": null
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "configured": {
+                "const": null
+              },
+              "defaulted_fields": {
+                "minItems": 16,
+                "maxItems": 16,
+                "items": {
+                  "enum": [
+                    "max_msg_bits",
+                    "max_msg_cells",
+                    "max_library_cells",
+                    "max_ext_msg_size",
+                    "max_acc_state_cells",
+                    "max_mc_acc_state_cells",
+                    "max_acc_public_libraries",
+                    "defer_out_queue_size_limit",
+                    "max_msg_extra_currencies",
+                    "acc_state_cells_for_storage_dict",
+                    "max_total_msg_bits",
+                    "max_total_msg_cells",
+                    "max_vm_data_depth",
+                    "max_ext_msg_depth",
+                    "max_acc_fixed_prefix_length",
+                    "max_transaction_library_loads"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "wire_version": {
+                "const": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "configured": {
+                "$ref": "#/$defs/ConfiguredSizeLimitsV1"
+              },
+              "defaulted_fields": {
+                "minItems": 10,
+                "maxItems": 10,
+                "items": {
+                  "enum": [
+                    "max_acc_state_cells",
+                    "max_mc_acc_state_cells",
+                    "max_acc_public_libraries",
+                    "defer_out_queue_size_limit",
+                    "max_msg_extra_currencies",
+                    "acc_state_cells_for_storage_dict",
+                    "max_total_msg_bits",
+                    "max_total_msg_cells",
+                    "max_acc_fixed_prefix_length",
+                    "max_transaction_library_loads"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "wire_version": {
+                "const": 2
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "configured": {
+                "$ref": "#/$defs/ConfiguredSizeLimitsV2"
+              },
+              "defaulted_fields": {
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                  "enum": [
+                    "max_total_msg_bits",
+                    "max_total_msg_cells",
+                    "max_transaction_library_loads"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "wire_version": {
+                "const": 3
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "configured": {
+                "$ref": "#/$defs/ConfiguredSizeLimitsV3"
+              },
+              "defaulted_fields": {
+                "minItems": 0,
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "DecodedConfig": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "param": {
+          "enum": [
+            8,
+            43,
+            47,
+            48
+          ]
+        },
+        "presence": {
+          "enum": [
+            "present",
+            "absent"
+          ]
+        },
+        "observation": {
+          "$ref": "#/$defs/Observation"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/GlobalVersion"
+                },
+                {
+                  "$ref": "#/$defs/SizeLimits"
+                },
+                {
+                  "$ref": "#/$defs/ControllerPolicy"
+                },
+                {
+                  "$ref": "#/$defs/AuthPolicy"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "param",
+        "presence",
+        "observation",
+        "value"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "param": {
+                "const": 8
+              },
+              "presence": {
+                "const": "present"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "#/$defs/GlobalVersion"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "param": {
+                "const": 43
+              },
+              "presence": {
+                "const": "present"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "#/$defs/SizeLimits"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "param": {
+                "const": 47
+              },
+              "presence": {
+                "const": "present"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "#/$defs/ControllerPolicy"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "param": {
+                "const": 48
+              },
+              "presence": {
+                "const": "present"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "$ref": "#/$defs/AuthPolicy"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "presence": {
+                "const": "absent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "param": {
+                "enum": [
+                  43,
+                  47,
+                  48
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "param": {
+                      "const": 43
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "value": {
+                      "$ref": "#/$defs/SizeLimits"
+                    }
+                  }
+                },
+                "else": {
+                  "properties": {
+                    "value": {
+                      "const": null
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "param": {
+                "const": 43
+              },
+              "presence": {
+                "const": "absent"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "properties": {
+                  "wire_version": {
+                    "const": null
+                  },
+                  "configured": {
+                    "const": null
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "param": {
+                "const": 48
+              },
+              "presence": {
+                "const": "absent"
+              },
+              "observation": {
+                "properties": {
+                  "vm_version": {
+                    "minimum": 17
+                  }
+                }
+              }
+            }
+          },
+          "then": false
+        },
+        {
+          "if": {
+            "properties": {
+              "param": {
+                "const": 43
+              },
+              "presence": {
+                "const": "present"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "value": {
+                "properties": {
+                  "wire_version": {
+                    "enum": [
+                      1,
+                      2,
+                      3
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ConfiguredSizeLimitsV1": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConfiguredSizeLimits"
+        },
+        {
+          "required": [
+            "max_msg_bits",
+            "max_msg_cells",
+            "max_library_cells",
+            "max_vm_data_depth",
+            "max_ext_msg_size",
+            "max_ext_msg_depth"
+          ],
+          "propertyNames": {
+            "enum": [
+              "max_msg_bits",
+              "max_msg_cells",
+              "max_library_cells",
+              "max_vm_data_depth",
+              "max_ext_msg_size",
+              "max_ext_msg_depth"
+            ]
+          }
+        }
+      ]
+    },
+    "ConfiguredSizeLimitsV2": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConfiguredSizeLimits"
+        },
+        {
+          "required": [
+            "max_msg_bits",
+            "max_msg_cells",
+            "max_library_cells",
+            "max_vm_data_depth",
+            "max_ext_msg_size",
+            "max_ext_msg_depth",
+            "max_acc_state_cells",
+            "max_mc_acc_state_cells",
+            "max_acc_public_libraries",
+            "defer_out_queue_size_limit",
+            "max_msg_extra_currencies",
+            "max_acc_fixed_prefix_length",
+            "acc_state_cells_for_storage_dict"
+          ],
+          "propertyNames": {
+            "enum": [
+              "max_msg_bits",
+              "max_msg_cells",
+              "max_library_cells",
+              "max_vm_data_depth",
+              "max_ext_msg_size",
+              "max_ext_msg_depth",
+              "max_acc_state_cells",
+              "max_mc_acc_state_cells",
+              "max_acc_public_libraries",
+              "defer_out_queue_size_limit",
+              "max_msg_extra_currencies",
+              "max_acc_fixed_prefix_length",
+              "acc_state_cells_for_storage_dict"
+            ]
+          }
+        }
+      ]
+    },
+    "ConfiguredSizeLimitsV3": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/ConfiguredSizeLimits"
+        },
+        {
+          "required": [
+            "max_msg_bits",
+            "max_msg_cells",
+            "max_library_cells",
+            "max_vm_data_depth",
+            "max_ext_msg_size",
+            "max_ext_msg_depth",
+            "max_acc_state_cells",
+            "max_mc_acc_state_cells",
+            "max_acc_public_libraries",
+            "defer_out_queue_size_limit",
+            "max_msg_extra_currencies",
+            "max_acc_fixed_prefix_length",
+            "acc_state_cells_for_storage_dict",
+            "max_transaction_library_loads",
+            "max_total_msg_bits",
+            "max_total_msg_cells"
+          ],
+          "propertyNames": {
+            "enum": [
+              "max_msg_bits",
+              "max_msg_cells",
+              "max_library_cells",
+              "max_vm_data_depth",
+              "max_ext_msg_size",
+              "max_ext_msg_depth",
+              "max_acc_state_cells",
+              "max_mc_acc_state_cells",
+              "max_acc_public_libraries",
+              "defer_out_queue_size_limit",
+              "max_msg_extra_currencies",
+              "max_acc_fixed_prefix_length",
+              "acc_state_cells_for_storage_dict",
+              "max_transaction_library_loads",
+              "max_total_msg_bits",
+              "max_total_msg_cells"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

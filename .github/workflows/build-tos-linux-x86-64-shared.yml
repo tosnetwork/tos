@@ -1,32 +1,12 @@
 name: Ubuntu TOS build (x86-64)
 
 on:
-  # The full native build is expensive, so it does not run per pull request.
-  # It runs once on what actually lands, and only when the merge carries
-  # something a native build can fail on. A documentation-only merge changes
-  # nothing this job compiles and is filtered out by the paths below.
+  # The full native build runs on everything that lands on main, and on
+  # demand. It is not filtered by path: every list of what the build reads
+  # has missed something (templates, export lists, generated inputs, test
+  # vectors), and main receives few pushes.
   push:
     branches: [main]
-    paths:
-      - 'CMakeLists.txt'
-      - '**/CMakeLists.txt'
-      - 'CMake/**'
-      - '**/*.cmake'
-      - '**/*.c'
-      - '**/*.cc'
-      - '**/*.cpp'
-      - '**/*.h'
-      - '**/*.hpp'
-      - '**/*.rs'
-      # A manifest or lockfile decides what the Rust half compiles, and the
-      # build script and toolchain pin decide how any of it is built, so a
-      # change to one of them can break the build without touching a source.
-      - '**/Cargo.toml'
-      - '**/Cargo.lock'
-      - 'assembly/native/**'
-      - 'scripts/install-rust-toolchain.sh'
-      - 'third-party/**'
-      - '.github/workflows/build-tos-linux-x86-64-shared.yml'
   workflow_dispatch:
 
 concurrency:
@@ -34,7 +14,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Explicit public namespace for disposable CI networks.
+  TOS_AUTH_NETWORK_TAG: "4343434343434343434343434343434343434343434343434343434343434343"
   REGISTRY: ghcr.io
+
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   build:
@@ -56,19 +42,26 @@ jobs:
 
     steps:
     - name: Check out repository
-      uses: actions/checkout@v7
-
-    - name: Date Stamp
-      id: date-stamp
-      run: |
-        echo "timestamp=$(date -u "+%Y%m%d%H%M_%S")" >> "$GITHUB_OUTPUT"
-
-    - name: Restore cache TOS
-      uses: actions/cache@v6
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       with:
-        path: ~/.ccache
-        key: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache-${{ steps.date-stamp.outputs.timestamp }}
-        restore-keys: ${{ runner.os }}-${{ runner.arch }}-${{ matrix.os }}-shared-ccache
+        fetch-depth: 0
+
+    - name: Trust this checkout for repository tests
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+    # test-quorum-static-grep is part of the full CTest registry and fails
+    # closed when its search tool is absent. Keep that dependency explicit
+    # rather than relying on the contents of the pre-built builder image.
+    - name: Install source-guard search tool
+      run: |
+        apt-get update
+        apt-get install -y ripgrep
+
+    - name: Reuse compatible native compiler objects
+      uses: ./.github/actions/native-cache
+      with:
+        profile: main-shared
+        max-size: 1G
 
     # Rust toolchain needed for Rust crates under tosctl/src.
     - name: Install repository-pinned Rust toolchain
@@ -92,12 +85,19 @@ jobs:
     - name: Run unit tests
       run: |
         cd build
-        ctest --output-on-failure --timeout 1800
+        python3 ../scripts/ci-ctest.py --build-dir .
 
     - name: Prepare Python environment
       run: |
         uv sync --no-dev
         uv run test/tostester/generate_tl.py
+
+    - name: Run Q01 and Z01 targeted Python tests
+      run: |
+        PYTHONDONTWRITEBYTECODE=1 uv run python -m pytest \
+          test/pq-native/test_n6_startup_not_synced.py \
+          test/pq-native/test_z01_final_capture.py \
+          test/pq-native/test_z01_proof_controls.py
 
     - name: Run tostester tests
       run: |
@@ -110,10 +110,17 @@ jobs:
         # multi-node artifacts; they must not be invoked implicitly.
         integration_tests=(
           test/integration/test_basic.py
+          test/integration/test_manager_session_identity.py
         )
         for script in "${integration_tests[@]}"; do
           echo "$script"
-          uv run python "$script"
+          if [ "$script" = "test/integration/test_manager_session_identity.py" ]; then
+            uv run python "$script" \
+              --build-dir build \
+              --artifact-dir "build/manager-session-identity-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          else
+            uv run python "$script"
+          fi
         done
         uv run python test/integration/test_simplex2_release.py --help
 

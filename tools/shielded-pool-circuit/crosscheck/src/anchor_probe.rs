@@ -85,7 +85,11 @@ impl AnchorProbe {
         bc.set_workchain(0);
         let payer = bc.treasury("anchor_deployer", 1_000 * TOS)?;
         let library = library_dir();
-        let probe_path = std::env::temp_dir().join("tos_shielded_anchor_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir()
+            .map_err(|error| CrossCheckError::Sandbox(format!("probe directory: {error}")))?;
+        let probe_path = probe_dir.path().join("tos_shielded_anchor_probe.fc");
         std::fs::write(&probe_path, PROBE)
             .map_err(|error| CrossCheckError::Sandbox(format!("write probe: {error}")))?;
         let code = compile_func(&[stdlib_path(), library.join("anchors.fc"), probe_path])?;
@@ -151,6 +155,41 @@ impl AnchorProbe {
             }
         }
         Ok(anchors)
+    }
+
+    /// The same store with more entries in the recent ring, rather than a
+    /// fresh one built from empty.
+    ///
+    /// A sweep over every occupancy a ring can reach is quadratic if each
+    /// point rebuilds its ring and linear if each point extends the last.
+    /// The occupancies a pool passes through are consecutive, so extending
+    /// is also the more faithful of the two.
+    pub fn extend_recent(&self, anchors: Cell, from: u64, to: u64) -> Result<Cell> {
+        self.extend("a_fill_recent", anchors, from, to)
+    }
+
+    /// The same, for the epoch ring.
+    pub fn extend_epoch(&self, anchors: Cell, from: u64, to: u64) -> Result<Cell> {
+        self.extend("a_fill_epoch", anchors, from, to)
+    }
+
+    fn extend(&self, method: &str, anchors: Cell, from: u64, to: u64) -> Result<Cell> {
+        let mut store = anchors;
+        let mut at = from;
+        while at < to {
+            let next = (at + Self::CHUNK).min(to);
+            store = self.store(
+                method,
+                vec![StackItem::cell(store), Self::integer(at)?, Self::integer(next)?],
+            )?;
+            at = next;
+        }
+        Ok(store)
+    }
+
+    /// The genesis store: both rings empty.
+    pub fn empty(&self) -> Result<Cell> {
+        self.store("a_empty", vec![])
     }
 
     /// What one `anchors_preserve` costs against rings of that occupancy.

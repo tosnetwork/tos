@@ -1,0 +1,13 @@
+[Unit]
+Description=Five-minute C09 private QueryService functional sample
+
+[Timer]
+OnActiveSec=5min
+OnUnitInactiveSec=5min
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=false
+Unit=nhm-c09-functional.service
+
+[Install]
+WantedBy=timers.target

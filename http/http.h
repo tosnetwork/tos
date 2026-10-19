@@ -19,8 +19,10 @@
 */
 #pragma once
 
+#include <atomic>
 #include <list>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -38,6 +40,7 @@ enum HttpStatusCode : td::uint32 {
   status_method_not_allowed = 405,
   status_internal_server_error = 500,
   status_bad_gateway = 502,
+  status_service_unavailable = 503,
   status_gateway_timeout = 504
 };
 
@@ -61,14 +64,116 @@ namespace util {
 
 td::Result<std::string> get_line(td::ChainBufferReader &input, std::string &cur_line, bool &read, size_t max_line_size);
 td::Result<HttpHeader> get_header(std::string line);
+// Size of a chunk from its chunk-size line: 1 to 15 hex digits, optionally
+// followed by chunk extensions, which are discarded.
+td::Result<td::uint64> parse_chunk_size(td::Slice line);
+
+// The options of one Connection or Proxy-Connection header: a comma-separated
+// list of tokens. "close" and "keep-alive" set the connection's persistence;
+// every other token names a hop-by-hop header to remove.
+struct ConnectionOptions {
+  bool close = false;
+  bool keep_alive = false;
+  std::vector<std::string> nominated;
+};
+td::Result<ConnectionOptions> parse_connection_options(td::Slice lower_case_value);
+void remove_nominated_headers(std::vector<HttpHeader> &headers, const std::vector<std::string> &nominated);
 
 }  // namespace util
+
+// The request-body capacity one listener shares among all its connections.
+// A connection reserves a request's body before it parses any of it and the
+// reservation travels with the body to whoever consumes it, so the bytes held
+// for request bodies across the listener never exceed the capacity, whether
+// they sit in a connection, in a payload, or in the consumer's copy.
+//
+// It also counts, separately, the socket read-ahead of connections whose
+// current request has not been admitted (see HttpInboundConnection): bytes
+// read while looking for the end of the request headers, which may include
+// the start of a body that is not charged to any reservation.
+class BodyBudget : public std::enable_shared_from_this<BodyBudget> {
+ public:
+  // Bytes of one request body; released when destroyed.
+  class Reservation {
+   public:
+    Reservation(std::shared_ptr<BodyBudget> budget, size_t bytes) : budget_(std::move(budget)), bytes_(bytes) {
+    }
+    Reservation(const Reservation &) = delete;
+    Reservation &operator=(const Reservation &) = delete;
+    ~Reservation() {
+      if (budget_) {
+        budget_->release(bytes_);
+      }
+    }
+    size_t bytes() const {
+      return bytes_;
+    }
+
+   private:
+    std::shared_ptr<BodyBudget> budget_;
+    size_t bytes_;
+  };
+
+  explicit BodyBudget(size_t capacity) : capacity_(capacity) {
+  }
+
+  // Reserves `bytes`, or returns null when they do not fit in what is left.
+  std::shared_ptr<Reservation> reserve(size_t bytes) {
+    size_t current = reserved_.load(std::memory_order_relaxed);
+    while (true) {
+      if (bytes > capacity_ || current > capacity_ - bytes) {
+        return nullptr;
+      }
+      if (reserved_.compare_exchange_weak(current, current + bytes, std::memory_order_acq_rel)) {
+        return std::make_shared<Reservation>(shared_from_this(), bytes);
+      }
+    }
+  }
+
+  size_t capacity() const {
+    return capacity_;
+  }
+  size_t reserved() const {
+    return reserved_.load(std::memory_order_acquire);
+  }
+
+  // Read-ahead accounting, updated by each connection as its unadmitted
+  // input grows and shrinks.
+  void add_read_ahead(size_t bytes) {
+    read_ahead_.fetch_add(bytes, std::memory_order_acq_rel);
+  }
+  void sub_read_ahead(size_t bytes) {
+    size_t current = read_ahead_.load(std::memory_order_relaxed);
+    while (!read_ahead_.compare_exchange_weak(current, current >= bytes ? current - bytes : 0,
+                                              std::memory_order_acq_rel)) {
+    }
+  }
+  size_t read_ahead() const {
+    return read_ahead_.load(std::memory_order_acquire);
+  }
+
+ private:
+  void release(size_t bytes) {
+    size_t current = reserved_.load(std::memory_order_relaxed);
+    while (
+        !reserved_.compare_exchange_weak(current, current >= bytes ? current - bytes : 0, std::memory_order_acq_rel)) {
+    }
+  }
+
+  const size_t capacity_;
+  std::atomic<size_t> reserved_{0};
+  std::atomic<size_t> read_ahead_{0};
+};
 
 class HttpPayload {
  public:
   enum class PayloadType { pt_empty, pt_eof, pt_chunked, pt_content_length, pt_tunnel };
   HttpPayload(PayloadType t, size_t low_watermark, size_t high_watermark, td::uint64 size)
-      : type_(t), low_watermark_(low_watermark), high_watermark_(high_watermark), cur_chunk_size_(size) {
+      : type_(t)
+      , low_watermark_(low_watermark)
+      , high_watermark_(high_watermark)
+      , cur_chunk_size_(size)
+      , framed_remaining_(size) {
     CHECK(t == PayloadType::pt_content_length);
     state_ = ParseState::reading_chunk_data;
   }
@@ -120,11 +225,14 @@ class HttpPayload {
     return ready_bytes_ > high_watermark_;
   }
   bool is_error() const {
-    return error_;
+    return error_.load(std::memory_order_acquire);
   }
-  void set_error() {
-    error_ = true;
-  }
+  // The payload will not be completed: mark it failed and tell its consumers,
+  // once, as completion would, so they see is_error() instead of waiting. A
+  // consumer added later is told when it is added. Completion and failure
+  // exclude each other: whichever comes first is the payload's end, and a
+  // failed payload accepts no more input.
+  void fail();
   PayloadType payload_type() const {
     return type_;
   }
@@ -132,6 +240,13 @@ class HttpPayload {
   void confirm_read(size_t s);
   void add_trailer(HttpHeader header);
   void add_chunk(td::BufferSlice data);
+  // Body bytes that arrive already framed by another transport (the RLDP
+  // proxy's payload parts) rather than parsed from an HTTP stream. The
+  // declared Content-Length is enforced: bytes beyond it, data for a payload
+  // that has no body or has already completed, and an end before every
+  // declared byte arrived are all refused.
+  td::Status add_framed_chunk(td::BufferSlice data);
+  td::Status complete_framed_parse();
   td::BufferSlice get_slice(size_t max_size);
   void slice_gc();
   HttpHeader get_header();
@@ -153,6 +268,19 @@ class HttpPayload {
     is_flushing_ = false;
   }
 
+  // The listener's reservation for this body. It is held by the payload
+  // while the body is read and buffered; a consumer that keeps the body, or a
+  // copy of it, past the payload takes it over with take_reservation() and
+  // holds it until it is done with the body.
+  void attach_reservation(std::shared_ptr<BodyBudget::Reservation> reservation) {
+    std::lock_guard<std::mutex> guard(reservation_mutex_);
+    reservation_ = std::move(reservation);
+  }
+  std::shared_ptr<BodyBudget::Reservation> take_reservation() {
+    std::lock_guard<std::mutex> guard(reservation_mutex_);
+    return std::move(reservation_);
+  }
+
  private:
   enum class ParseState { reading_chunk_header, reading_chunk_data, reading_trailer, reading_crlf, completed };
   PayloadType type_{PayloadType::pt_chunked};
@@ -164,11 +292,13 @@ class HttpPayload {
   size_t trailer_size_ = 0;
   size_t ready_bytes_ = 0;
   td::uint64 cur_chunk_size_ = 0;
+  // Declared Content-Length bytes not yet received through add_framed_chunk.
+  td::uint64 framed_remaining_ = 0;
   size_t last_chunk_free_ = 0;
   size_t chunk_size_ = 1 << 14;
   bool written_zero_chunk_ = false;
   bool written_trailer_ = false;
-  bool error_ = false;
+  std::atomic<bool> error_{false};
   bool is_flushing_ = false;
 
   std::list<std::unique_ptr<Callback>> callbacks_;
@@ -176,6 +306,9 @@ class HttpPayload {
 
   std::atomic<ParseState> state_{ParseState::reading_chunk_header};
   std::mutex mutex_;
+
+  std::mutex reservation_mutex_;
+  std::shared_ptr<BodyBudget::Reservation> reservation_;
 };
 
 class HttpRequest {
@@ -250,6 +383,24 @@ class HttpRequest {
   td::Status add_header(HttpHeader header);
   td::Result<std::shared_ptr<HttpPayload>> create_empty_payload();
   bool need_payload() const;
+  // A body is announced by a non-zero Content-Length or any Transfer-Encoding;
+  // "Content-Length: 0" announces nothing and is not a body.
+  bool announces_body() const {
+    return found_transfer_encoding_ || (found_content_length_ && content_length_ > 0);
+  }
+  // Bytes to reserve for this request's body before reading it: the declared
+  // Content-Length (already capped at max_payload_size() by add_header), the
+  // whole max_payload_size() for a chunked body whose size is not known in
+  // advance, and nothing for a request without a body.
+  size_t body_reservation_bytes() const {
+    if (found_content_length_) {
+      return content_length_;
+    }
+    if (found_transfer_encoding_) {
+      return max_payload_size();
+    }
+    return 0;
+  }
 
   const auto &method() const {
     return method_;
@@ -281,7 +432,8 @@ class HttpRequest {
             break;
           }
         }
-        if (match) return h.value;
+        if (match)
+          return h.value;
       }
     }
     return {};
@@ -321,6 +473,12 @@ class HttpRequest {
 
   bool parse_header_completed_ = false;
   bool keep_alive_ = false;
+  // A "close" option in any Connection header ends the connection, whatever
+  // other Connection headers say.
+  bool connection_close_ = false;
+  // Header names nominated as hop-by-hop by Connection; removed when the
+  // header block is complete.
+  std::vector<std::string> connection_nominated_;
 
   std::vector<HttpHeader> options_;
   std::string peer_ip_;
@@ -363,7 +521,7 @@ class HttpResponse {
 
   bool check_parse_header_completed() const;
   bool keep_alive() const {
-    return !force_no_payload_ && keep_alive_;
+    return !force_no_payload_ && !force_no_keep_alive_ && keep_alive_;
   }
 
   td::Status complete_parse_header();
@@ -396,6 +554,10 @@ class HttpResponse {
   bool found_content_length() const {
     return found_content_length_;
   }
+  // A body is announced by a non-zero Content-Length or by chunked coding.
+  bool announces_body() const {
+    return found_transfer_encoding_ || (found_content_length_ && content_length_ > 0);
+  }
 
  private:
   std::string proto_version_;
@@ -411,6 +573,8 @@ class HttpResponse {
 
   bool parse_header_completed_ = false;
   bool keep_alive_ = false;
+  bool connection_close_ = false;
+  std::vector<std::string> connection_nominated_;
   // Running total of header bytes, capped in parse() the same way the
   // request side is; a server cannot stream headers without bound.
   size_t total_headers_size_ = 0;
@@ -418,6 +582,18 @@ class HttpResponse {
   std::vector<HttpHeader> options_;
   bool is_tunnel_ = false;
 };
+
+// The response a relay forwards for `request`, rebuilt from the remote's TL
+// answer with `extra_headers` added. A HEAD answer and 1xx/204/304 responses
+// carry no body whatever their headers say; a CONNECT answered 200 becomes a
+// tunnel. A remote that says it sends no payload must not announce a body,
+// or the client would read the next response as this one's body.
+td::Result<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> relayed_response(
+    const HttpRequest &request, const tos_api::http_response &answer, std::vector<HttpHeader> extra_headers);
+
+// Adds one relayed payload part to a payload being received, enforcing its
+// declared length. Returns whether the part was the last one.
+td::Result<bool> add_payload_part(HttpPayload &payload, tos_api::http_payloadPart &part);
 
 void answer_error(HttpStatusCode code, std::string reason,
                   td::Promise<std::pair<std::unique_ptr<HttpResponse>, std::shared_ptr<HttpPayload>>> promise);

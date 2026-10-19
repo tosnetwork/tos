@@ -1,14 +1,27 @@
-// Golden first-testnet ConfigParam30 leaf for Simplex protocol v2.
-// Keep this encoding synchronized with crypto/smartcont/gen-zerostate.fif
-// and test/tostester/src/tostester/zerostate.py.
+// Golden canonical-genesis ConfigParam30 leaves for Simplex protocol v2: the
+// masterchain leaf, then the shard leaf.
+// Keep this encoding synchronized with crypto/smartcont/gen-zerostate.fif.
+// The local test harness (test/tostester/src/tostester/zerostate.py) keeps
+// its own defaults (1000 ms first_block_timeout, one leaf for both chains).
 
 "Config.fif" include
 
 dictnew
 <b 400 32 u, b> <s 0 rot 8 udict! drop
-<b 1000 32 u, b> <s 1 rot 8 udict! drop
+<b 700 32 u, b> <s 1 rot 8 udict! drop
 <b 250 32 u, b> <s 10 rot 8 udict! drop
+<b 300 32 u, b> <s 13 rot 8 udict! drop
 <b x{22} s, 0 5 u, 2 2 u, 1 1 u, 4 32 u, swap dict, b>
 
-hashu 0x6ADBFE8D74E95D62C7E2FC6F4615C7C628B476E1D06142F8A532F619BDD28814
-= not abort"unexpected Simplex v2 genesis cell hash"
+hashu 0x131A33C486174558385E855E497FCD8039019F82E43BE9DB953087FFF6C03457
+= not abort"unexpected Simplex v2 masterchain genesis cell hash"
+
+dictnew
+<b 400 32 u, b> <s 0 rot 8 udict! drop
+<b 700 32 u, b> <s 1 rot 8 udict! drop
+<b 64 32 u, b> <s 10 rot 8 udict! drop
+<b 300 32 u, b> <s 13 rot 8 udict! drop
+<b x{22} s, 0 5 u, 2 2 u, 1 1 u, 16 32 u, swap dict, b>
+
+hashu 0x8C97884D0AD8EA682D704782C056F846C33D57777FC01AD90C0F24E2B90E0B09
+= not abort"unexpected Simplex v2 shard genesis cell hash"

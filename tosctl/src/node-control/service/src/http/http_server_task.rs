@@ -84,7 +84,9 @@ pub struct AppState {
     pub jwt_auth: Arc<JwtAuth>,
     pub user_store: Arc<UserStore>,
     pub(crate) login_rate_limiter: Arc<tokio::sync::Mutex<LoginRateLimiter>>,
-    pub indexer_store: Arc<crate::indexer::IndexerStore>,
+    /// `None` when the explorer indexer is disabled; reads go through
+    /// [`AppState::indexer`], which refuses them instead of serving nothing.
+    pub indexer_store: Option<Arc<crate::indexer::IndexerStore>>,
     /// Whether serving without authentication is acceptable for the address
     /// this listener is actually bound to, decided once at bind time
     /// (loopback bind, or the explorer-only read router). The startup guard
@@ -94,12 +96,25 @@ pub struct AppState {
     pub unauthenticated_serving_allowed: bool,
 }
 
+impl AppState {
+    /// The explorer index, or a 503 `indexer_disabled` when this service runs
+    /// without it: an empty index would read as "nothing on chain".
+    pub(crate) fn indexer(&self) -> Result<&crate::indexer::IndexerStore, AppError> {
+        self.indexer_store.as_deref().ok_or_else(|| {
+            AppError::unavailable(
+                "indexer_disabled",
+                "the explorer indexer is disabled on this service (indexer_enabled = false)",
+            )
+        })
+    }
+}
+
 pub async fn run(
     cancellation_ctx: CancellationCtx,
     store: Arc<SnapshotStore>,
     runtime_cfg: Arc<RuntimeConfigStore>,
     tasks: HashMap<&'static str, Arc<TaskController>>,
-    indexer_store: Arc<crate::indexer::IndexerStore>,
+    indexer_store: Option<Arc<crate::indexer::IndexerStore>>,
     explorer_only: bool,
 ) {
     tracing::info!("http-server task started");
@@ -420,6 +435,12 @@ impl AppError {
         Self::with_kind(axum::http::StatusCode::SERVICE_UNAVAILABLE, "rpc_unavailable", message)
     }
 
+    /// The data exists but cannot be served truthfully right now; `kind` is a
+    /// stable machine-readable reason clients can branch on.
+    pub(crate) fn unavailable(kind: &'static str, message: impl Into<String>) -> Self {
+        Self::with_kind(axum::http::StatusCode::SERVICE_UNAVAILABLE, kind, message)
+    }
+
     /// The get-method call succeeded but the returned TVM stack did not
     /// decode into the expected contract data shape.
     pub(crate) fn invalid_contract_state(message: impl Into<String>) -> Self {
@@ -433,6 +454,11 @@ impl AppError {
     /// A chain query exceeded its per-request timeout budget.
     pub(crate) fn timeout(message: impl Into<String>) -> Self {
         Self::with_kind(axum::http::StatusCode::GATEWAY_TIMEOUT, "timeout", message)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn status(&self) -> axum::http::StatusCode {
+        self.status
     }
 
     pub(crate) fn message(&self) -> &str {
@@ -1201,6 +1227,7 @@ impl utoipa::Modify for BearerAuthAddon {
         common::snapshot::StakeSubmission,
         common::snapshot::ValidatorsSnapshot,
         common::snapshot::ValidatorNodeSnapshot,
+        common::snapshot::OperatingAuthorizationSnapshot,
         common::snapshot::TimeRange
     )),
     info(
@@ -1271,7 +1298,7 @@ mod tests {
             jwt_auth: test_jwt_auth().await,
             user_store,
             login_rate_limiter: Arc::new(tokio::sync::Mutex::new(LoginRateLimiter::default())),
-            indexer_store: Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()),
+            indexer_store: Some(Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap())),
             unauthenticated_serving_allowed: true,
         }
     }
@@ -1302,6 +1329,7 @@ mod tests {
             master_wallet: None,
             tick_interval: 30,
             indexer_retention_blocks: 0,
+            indexer_enabled: true,
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
             agent_wallets: HashMap::new(),
@@ -1311,6 +1339,7 @@ mod tests {
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
             alerts: Default::default(),
+            proof_verifier: None,
         })
     }
 
@@ -1327,6 +1356,7 @@ mod tests {
             master_wallet: None,
             tick_interval: 30,
             indexer_retention_blocks: 0,
+            indexer_enabled: true,
             log: Some(LogConfig::default()),
             bookmarks: HashMap::new(),
             agent_wallets: HashMap::new(),
@@ -1336,6 +1366,7 @@ mod tests {
             disputes: HashMap::new(),
             proof_attestations: HashMap::new(),
             alerts: Default::default(),
+            proof_verifier: None,
         })
     }
 
@@ -1410,7 +1441,7 @@ mod tests {
             Arc::new(RuntimeConfigStore::from_app_config(test_app_config_with_http(http)));
         let mut tasks: HashMap<&'static str, Arc<TaskController>> = HashMap::new();
         tasks.insert("elections", test_elections_task());
-        let indexer_store = Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap());
+        let indexer_store = Some(Arc::new(crate::indexer::IndexerStore::open_in_memory().unwrap()));
         run(ctx, store, runtime_cfg, tasks, indexer_store, false).await;
     }
 
@@ -1881,6 +1912,7 @@ mod tests {
             NodeBinding {
                 wallet: "w1".to_string(),
                 pool: None,
+                controller_birth_state_init_boc: None,
                 enable: true,
                 status: Default::default(),
             },
@@ -1890,6 +1922,7 @@ mod tests {
             NodeBinding {
                 wallet: "w2".to_string(),
                 pool: None,
+                controller_birth_state_init_boc: None,
                 enable: true,
                 status: Default::default(),
             },
@@ -1954,6 +1987,7 @@ mod tests {
             NodeBinding {
                 wallet: "w1".to_string(),
                 pool: None,
+                controller_birth_state_init_boc: None,
                 enable: false,
                 status: Default::default(),
             },
@@ -1963,6 +1997,7 @@ mod tests {
             NodeBinding {
                 wallet: "w2".to_string(),
                 pool: None,
+                controller_birth_state_init_boc: None,
                 enable: false,
                 status: Default::default(),
             },

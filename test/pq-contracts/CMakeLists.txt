@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+project(tos_pq_contracts_test_signer LANGUAGES C CXX)
+# An explicitly separate TEST ONLY build: signing never enters the VM library.
+set(MLDSA "${CMAKE_CURRENT_SOURCE_DIR}/../../third-party/mldsa-native/mldsa")
+add_library(pq_contracts_test_backend STATIC "${MLDSA}/mldsa_native.c")
+set_target_properties(pq_contracts_test_backend PROPERTIES C_STANDARD 90 C_STANDARD_REQUIRED YES)
+target_include_directories(pq_contracts_test_backend PRIVATE "${MLDSA}" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(pq_contracts_test_backend PRIVATE MLD_CONFIG_FILE="signer-config.h")
+add_executable(test-pq-contracts-sign signer.cpp)
+target_compile_features(test-pq-contracts-sign PRIVATE cxx_std_17)
+target_include_directories(test-pq-contracts-sign PRIVATE "${MLDSA}" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(test-pq-contracts-sign PRIVATE MLD_CONFIG_FILE="signer-config.h")
+target_link_libraries(test-pq-contracts-sign PRIVATE pq_contracts_test_backend)

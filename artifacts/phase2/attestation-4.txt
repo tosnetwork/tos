@@ -1,0 +1,52 @@
+TOS shielded pool, phase 2 -- contribution 4
+
+Contributor: BmswapProtocol
+Affiliation: not part of the TOS operating team, as declared by the participant.
+Independent of the operator: true (participant declaration, not external verification).
+The account has repository administrator access. That access is disclosed for
+external reviewers assessing the independence declaration.
+Public identity and signing key: https://gist.github.com/BmswapProtocol/60bcbe525d52446fee3775790baa7903
+Execution: automated agent over SSH on the participant-designated VPS.
+
+I delegated execution to an automated agent on the designated VPS.
+The contributor generated a scalar from the operating-system random source,
+applied it, and exited. The reviewed implementation wipes the secret on drop.
+The scalar was not printed, recorded, or transmitted by this workflow.
+This statement does not claim forensic proof of absence from operating-system
+memory or provider snapshots. Swap was disabled before running the contributor,
+and core dumps were disabled for that process.
+
+  built from     f7f141589a788c8aa06bee32d7799c25cbfab356
+  starting key   018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04
+  contribution   246b9d7406a6b349ba51a092aa69c111a429e8eab528142008b1d7f096f6413e
+  transcript     46166e20210e3a2fb753158d480cb556cf7a3fb95376ca65b92bf661a92f3b5a
+
+The built revision is the replacement for announced revision
+49ef58c0ab98f62b76ae3c61a510980dae131235 in the signed privacy provenance.
+The mapping signature verified against tosman's registered public key.
+The contribution-3 release archive SHA-256 matched the published digest, and
+14 ceremony, announcement, register, attestation and public key files matched
+the published branch. All three existing signatures verified.
+
+Signing key fingerprint: SHA256:uzShqE56Dj55ta2LjFffVSISz9Lqrl2mILSxjhKXIsk
+The signing key was newly generated on this VPS without a passphrase for this
+non-interactive workflow and is retained separately from public artifacts.
+
+This is a participant contribution to an open ceremony, not final parameters.
+
+Register revision: 424597fe05830222e4b43dd16b02d6cd75753674
+Register SHA-256: 554b2ad454bbc67bcdb55858d286a5499002fe34c5e5c49899cd293866ce9372
+
+Complete mathematical verification reported four audited contributions and
+NOT FINISHED, as expected before the announced beacon. Host swap was restored
+after verification and reported zero used bytes. The signing key is retained.
+
+Bitcoin observations before contributing and after verification:
+  blockstream.info: 968229 at 2026-09-23T05:51:36.889451+00:00
+  mempool.space: 968229 at 2026-09-23T05:51:37.124102+00:00
+  blockstream.info: 968229 at 2026-09-23T05:57:36.284794+00:00
+  mempool.space: 968229 at 2026-09-23T05:57:36.599976+00:00
+Both witnesses were below the announced close at 970141; beacon height 970285
+had not been reached. These are participant observations, not independent
+publication evidence. Final acceptance still requires the scheduled close and
+beacon, external review and verification, and deployment acceptance checks.

@@ -1,0 +1,73 @@
+{
+  "scope": "Android fee proof temporal policy and typed installed-vault integration; no funded signing/receipt acceptance",
+  "android_revision": "47ed1a8",
+  "validation": [
+    "Same-slot fresh/exact-age proof accepted",
+    "Cross-slot/future/stale/pre-epoch proofs and invalid age/u32 range refused",
+    "Four control variants compile and fail named runtime assertions; restored 29 related tests pass",
+    "Final account app module compiles"
+  ],
+  "binding": "Authenticated target and account shard times exposed only by native-created read; bound initial vault uses enrolled epoch and rechecks live wallet and fee-clock/slot at local authorization time.",
+  "artifacts": [
+    {
+      "file": "20261007-android-fee-time-baseline.log",
+      "bytes": 10810,
+      "sha256": "962ca9a5402a128dc2c6548d732f4430fba7eb83d4f9010ae225efeec178de97"
+    },
+    {
+      "file": "20261007-fee-time-restored-regressions.log",
+      "bytes": 9799,
+      "sha256": "bab82988f37169c1d39e9d6f479fcb5eaa63b210733ba6671c56ebf1e8b5e113"
+    },
+    {
+      "file": "20261007-android-fee-time-final-compile.log",
+      "bytes": 22073,
+      "sha256": "1fb007986b78891ce6ffac74707e1a96805d4128cfa4a3f4def955c163f8ffe8"
+    },
+    {
+      "file": "20261007-fee-time-slot-control.log",
+      "bytes": 10277,
+      "sha256": "8e7383cd6246e806d4989354c058c24c3073db77d9ff2e5b3b86cbab9c7e05a0"
+    },
+    {
+      "file": "20261007-fee-time-slot-control.xml",
+      "bytes": 4964,
+      "sha256": "960c0ccbf809255ac751f75cd419bb11ba0cd4ef69253ee7a06424616535744a"
+    },
+    {
+      "file": "20261007-fee-time-future-control.log",
+      "bytes": 10277,
+      "sha256": "14f74bf9884e9937252766c72bf2ffb720f5950dba7560ef14d1005205e750c3"
+    },
+    {
+      "file": "20261007-fee-time-future-control.xml",
+      "bytes": 4964,
+      "sha256": "3f961d281b32deab6fef3a1de8c19cb9ea0abfe0a7f24d6daebc037f9af332f5"
+    },
+    {
+      "file": "20261007-fee-time-age-control.log",
+      "bytes": 10277,
+      "sha256": "29339ffbc0bd580dee74b4a92c23477d305e1c5a75c587cd661478c81d5d6148"
+    },
+    {
+      "file": "20261007-fee-time-age-control.xml",
+      "bytes": 4963,
+      "sha256": "4cd98281c517502dfbd07d1ce068645c898bc67e7faa1bf652d3438fb3434754"
+    },
+    {
+      "file": "20261007-fee-time-epoch-control.log",
+      "bytes": 10277,
+      "sha256": "c434abb0ab87962fae84c176587d0373503e234515be5774e1fd2779b0544e66"
+    },
+    {
+      "file": "20261007-fee-time-epoch-control.xml",
+      "bytes": 4964,
+      "sha256": "8efd85797c4b9711ce986215da617e7f0cba81db20a3356e436483f3106418db"
+    }
+  ],
+  "pending": [
+    "Distinct deployed vault/masterchain proof timestamp integration",
+    "Solvency, durable signer/custody and actual fee intent pipeline",
+    "Successor descriptor/time rollover and transaction-bound recipient finality"
+  ]
+}

@@ -127,6 +127,10 @@ pub struct StorageUsageCalc {
     max_merkle_depth: u32,
     limit_bits: u64,
     limit_cells: u64,
+    /// Count the cell that crosses `limit_cells` and stop there, so that
+    /// `cells() > limit` reports an oversized tree; a limit of zero is a
+    /// limit, not "unlimited".
+    count_past_limit: bool,
     hashes: HashSet<UInt256>,
 }
 
@@ -148,19 +152,44 @@ impl StorageUsageCalc {
             max_merkle_depth: 0,
             limit_bits,
             limit_cells,
+            count_past_limit: false,
             hashes: HashSet::new(),
         }
     }
 
-    fn add_checked(&mut self, cells: u64, bits: u64) -> bool {
-        if self.limit_cells != 0 && self.cells + cells > self.limit_cells
-            || self.limit_bits != 0 && self.bits + bits > self.limit_bits
-        {
-            return false;
+    /// Counts a message as the native engine's action phase does: cells up
+    /// to and including the first one past `limit_cells`, after which the
+    /// walk stops; bits without a limit. A caller tells an oversized message
+    /// by `cells() > limit_cells`. Unlike `with_limits`, a zero cell limit
+    /// rejects the first counted cell instead of allowing an unlimited tree.
+    pub fn with_cell_limit(limit_cells: u64) -> Self {
+        Self {
+            bits: 0,
+            cells: 0,
+            max_merkle_depth: 0,
+            limit_bits: 0,
+            limit_cells,
+            count_past_limit: true,
+            hashes: HashSet::new(),
         }
-        self.cells += cells;
-        self.bits += bits;
-        true
+    }
+
+    fn add_checked(&mut self, cells: u64, bits: u64) -> Result<bool> {
+        if (self.count_past_limit || self.limit_cells != 0) && self.cells > self.limit_cells
+            || self.limit_bits != 0 && self.bits > self.limit_bits
+        {
+            return Ok(false);
+        }
+        let cells =
+            self.cells.checked_add(cells).ok_or_else(|| error!("storage cell count overflow"))?;
+        let bits =
+            self.bits.checked_add(bits).ok_or_else(|| error!("storage bit count overflow"))?;
+        // Callers reject counts above their limits. Preserve the first excess
+        // instead of silently reporting a truncated count equal to the limit.
+        self.cells = cells;
+        self.bits = bits;
+        Ok(((!self.count_past_limit && self.limit_cells == 0) || cells <= self.limit_cells)
+            && (self.limit_bits == 0 || bits <= self.limit_bits))
     }
 
     ///
@@ -175,9 +204,12 @@ impl StorageUsageCalc {
         add_root: bool,
         gas_consumer: &mut impl GasConsumer,
     ) -> Result<u32> {
+        if self.count_past_limit && self.cells > self.limit_cells {
+            return Ok(0); // the limit was crossed: the native walk stops here
+        }
         if add_root
             && (!self.hashes.insert(cell.repr_hash())
-                || !self.add_checked(1, cell.bit_length() as u64))
+                || !self.add_checked(1, cell.bit_length() as u64)?)
         {
             return Ok(0);
         }
@@ -203,7 +235,7 @@ impl StorageUsageCalc {
         add_root: bool,
         gas_consumer: &mut impl GasConsumer,
     ) -> Result<()> {
-        if add_root && !self.add_checked(1, root.bits_used() as u64) {
+        if add_root && !self.add_checked(1, root.bits_used() as u64)? {
             return Ok(());
         }
         for cell in root.references() {

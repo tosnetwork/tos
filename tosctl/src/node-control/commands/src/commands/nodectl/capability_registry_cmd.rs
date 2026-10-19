@@ -70,7 +70,7 @@ impl CapabilityRegistryCmd {
 pub struct CapabilityRegistryDeployCmd {
     #[arg(long, help = "Local registry record name; defaults to registry-<address prefix>")]
     name: Option<String>,
-    #[arg(long, help = "Owner address; must match the funding wallet")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner address; must match the funding wallet")]
     owner: String,
     #[arg(long, help = "Optional verifier allowed to adjust the reputation score")]
     verifier: Option<String>,
@@ -90,7 +90,7 @@ pub struct CapabilityRegistryDeployCmd {
     from: String,
     #[arg(long, default_value_t = 0.2, help = "Message value funding the deploy, in TOS")]
     amount: f64,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(long)]
     yes: bool,
@@ -103,7 +103,7 @@ pub struct CapabilityRegistryDeployCmd {
 pub struct CapabilityRegistryLsCmd {
     #[arg(long, help = "Read current bond, reputation and active status from each registry entry")]
     on_chain: bool,
-    #[arg(long, help = "Filter by owner address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Filter by owner address")]
     owner: Option<String>,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -112,7 +112,12 @@ pub struct CapabilityRegistryLsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show Capability Registry state by address or local record name")]
 pub struct CapabilityRegistryShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Capability Registry address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        conflicts_with = "name",
+        help = "Capability Registry address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local registry record name from `agent registry ls`")]
     name: Option<String>,
@@ -136,7 +141,12 @@ enum CapabilityRegistryOperation {
 pub struct CapabilityRegistrySendCmd {
     #[arg(long, value_enum)]
     operation: CapabilityRegistryOperation,
-    #[arg(long, conflicts_with = "name", help = "Capability Registry address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        conflicts_with = "name",
+        help = "Capability Registry address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local registry record name from `agent registry ls`")]
     name: Option<String>,
@@ -156,7 +166,11 @@ pub struct CapabilityRegistrySendCmd {
     verifier: Option<String>,
     #[arg(long, help = "Amount to withdraw from the bond, in TOS, for withdraw-bond")]
     withdraw_amount: Option<f64>,
-    #[arg(long, help = "Signed reputation delta for update-reputation")]
+    #[arg(
+        long,
+        allow_negative_numbers = true,
+        help = "Signed reputation delta for update-reputation"
+    )]
     delta: Option<i32>,
     #[arg(
         long,
@@ -171,7 +185,7 @@ pub struct CapabilityRegistrySendCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Build deterministic Capability Registry StateInit")]
 pub struct CapabilityRegistryBuildStateCmd {
-    #[arg(long, help = "Owner address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner address")]
     owner: String,
     #[arg(long, help = "Optional verifier allowed to adjust the reputation score")]
     verifier: Option<String>,
@@ -187,7 +201,7 @@ pub struct CapabilityRegistryBuildStateCmd {
     bond: f64,
     #[arg(long, help = "Unix registration timestamp; defaults to now")]
     registered_at: Option<u64>,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,

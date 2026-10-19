@@ -98,9 +98,13 @@ int main(int argc, char** argv) {
 
   for (size_t i = 0; i < nodes.size(); i++) {
     const auto& node = nodes[i];
-    auto pubkey = tos::PublicKey{tos::pubkeys::Ed25519{node.key.as_bits256()}};
-    auto short_id = pubkey.compute_short_id();
-    auto hash = short_id.bits256_value();
+    // What identifies a validator is its membership identity, which a post-quantum
+    // descriptor carries directly and a classical one derives from its key.
+    auto hash = node.validator_id.value;
+    if (hash.is_zero()) {
+      hash =
+          tos::PublicKey{tos::pubkeys::Ed25519{node.classical_key().as_bits256()}}.compute_short_id().bits256_value();
+    }
 
     std::cout << std::left << std::setw(4) << i << std::setw(46) << td::base64_encode(hash.as_slice()) << std::setw(66)
               << node.addr.to_hex() << node.weight << std::endl;

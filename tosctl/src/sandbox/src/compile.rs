@@ -140,8 +140,13 @@ pub fn compile_func(sources: &[impl AsRef<Path>]) -> SandboxResult<Cell> {
     }
 
     // Step 2: Fift assembly → BOC
+    //
+    // PQ.fif includes Asm.fif and then defines the post-quantum instruction, which is
+    // how the build tree's own assembly steps do it. Including only Asm.fif here left
+    // any contract that verifies a post-quantum signature failing to assemble, with a
+    // message naming the instruction rather than the missing definition.
     let fift_script = format!(
-        "\"Asm.fif\" include\n\"{}\" include\n2 boc+>B \"{}\" B>file\n",
+        "\"PQ.fif\" include\n\"{}\" include\n2 boc+>B \"{}\" B>file\n",
         fif_path.display(),
         boc_path.display()
     );

@@ -5,7 +5,7 @@
     real transaction-execution path (Codex review follow-up, 2026-07-21).
 
     emulator/test/vm-library-loads-fixture.cpp already pins the VmState-level
-    counting mechanism (ported from ton-c b647a8d5) and tvm-v14-v15-
+    counting mechanism (ported from upstream b647a8d5) and tvm-v14-v15-
     transaction-fixture.cpp already pins the TL-B parse of ConfigParam 43 v3.
     What neither covers is the wiring in between: does a real
     block::transaction::Transaction, given a ComputePhaseConfig whose

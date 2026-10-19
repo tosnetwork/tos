@@ -115,7 +115,7 @@ td::Result<FecType> FecType::create(tl_object_ptr<tos_api::fec_Type> obj) {
   // 768-byte symbol. A smaller symbol_size lets a peer inflate the symbol/
   // part count for a given data_size (up to ~16M parts at symbol_size==1),
   // bloating per-broadcast decoder state before the 60 s GC. Floor it at the
-  // canonical 768 (matches upstream TON); this also subsumes the ==0 guard.
+  // canonical 768 (matches upstream); this also subsumes the ==0 guard.
   if (symbol_size < 768) {
     return td::Status::Error("invalid fec type: symbol_size below floor (768)");
   }

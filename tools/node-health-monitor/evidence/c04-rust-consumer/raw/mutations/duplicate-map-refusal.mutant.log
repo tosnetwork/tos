@@ -1,0 +1,27 @@
+$ cargo test --locked -p tos-health-core --test native_v2_contract duplicate_raw_keys_refuse_before_hash_or_value_normalization -- --exact
+source_sha256=7768b8155cf6584afd952190b1286502d73a6bb0c18a16b5e8b9d306dfdeffad
+timeout_seconds=120
+   Compiling tos-health-core v0.1.0 ($HOME/tos-node-health-impl/tools/node-health-monitor/crates/health-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.08s
+     Running tests/native_v2_contract.rs (target/debug/deps/native_v2_contract-4dbc563f937d6516)
+
+running 1 test
+test duplicate_raw_keys_refuse_before_hash_or_value_normalization ... FAILED
+
+failures:
+
+---- duplicate_raw_keys_refuse_before_hash_or_value_normalization stdout ----
+
+thread 'duplicate_raw_keys_refuse_before_hash_or_value_normalization' (939460) panicked at crates/health-core/tests/native_v2_contract.rs:115:5:
+assertion failed: parse_native(phases.as_bytes()).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    duplicate_raw_keys_refuse_before_hash_or_value_normalization
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p tos-health-core --test native_v2_contract`
+
+EXIT=101

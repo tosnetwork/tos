@@ -45,33 +45,12 @@ using db_key_candidateRef = tl_object_ptr<db_key_candidate>;
 namespace {
 using BlockSignatureSetRef = td::Ref<block::BlockSignatureSet>;
 
-constexpr td::uint32 DEFAULT_CANDIDATE_RETENTION_SLOTS = 4096;
-// Bounds resolve_candidate_inner()'s peer-query retry loop. Without this, a
-// CandidateId that no peer can ever supply -- e.g. a slot that was
-// skip-certified via timeout, which never had any candidate (not even an
-// empty placeholder) broadcast for it -- is retried forever with a growing
-// (but capped) per-attempt timeout, never giving up. That in turn leaves the
-// StateResolver call that triggered this resolution permanently in-flight.
-// This is defense-in-depth: QuerySlotSkipped in state-resolver.cpp already
-// avoids ever starting this loop for a definitively skip-certified slot, but
-// any other reason a candidate can't be found (bug, malicious withholding,
-// partition) should still fail cleanly rather than retry indefinitely.
+// Bounds peer-query retries for an exact CandidateId. StateResolver never
+// replaces a signed parent with local skip evidence, so an unavailable exact
+// ancestor must fail cleanly instead of leaving resolution in flight forever.
+// New proposals choose their base in Pool before signing; this retry bound
+// also covers withholding, partitions, and malformed skip-only references.
 constexpr int DEFAULT_CANDIDATE_RESOLVE_MAX_ATTEMPTS = 16;
-
-td::uint32 candidate_retention_slots_from_env() {
-  const char* value = std::getenv("TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS");
-  if (value == nullptr) {
-    return DEFAULT_CANDIDATE_RETENTION_SLOTS;
-  }
-  auto parsed = td::to_integer_safe<td::uint32>(td::Slice(value));
-  if (parsed.is_error() || parsed.ok() == 0) {
-    LOG(WARNING) << "Simplex candidate-resolver: ignoring invalid "
-                    "TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS="
-                 << value;
-    return DEFAULT_CANDIDATE_RETENTION_SLOTS;
-  }
-  return parsed.move_as_ok();
-}
 
 int candidate_resolve_max_attempts_from_env() {
   const char* value = std::getenv("TOS_SIMPLEX_CANDIDATE_RESOLVE_MAX_ATTEMPTS");
@@ -266,6 +245,11 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     state.resolve_awaiters.push_back(std::move(promise));
 
     if (state.resolve_awaiters.size() == 1) {
+      // The task holds its own pin on the entry: once a store or a notarization completes
+      // the entry and resumes the awaiters, this coroutine returns and drops its pin while
+      // the task can still be suspended on a request or a cooldown. Taken here, before the
+      // task is started, so no scheduling order leaves it unpinned.
+      begin_operation(state);
       resolve_candidate_task(request->id, state).start().detach();
     }
 
@@ -628,7 +612,12 @@ class CandidateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::acto
     }
   }
 
+  // Requires the caller to have taken one operation pin on `state` for this task; the task
+  // releases it when it ends, which also evicts the entry if it has left the window.
   td::actor::Task<> resolve_candidate_task(CandidateId id, CandidateState &state) {
+    SCOPE_EXIT {
+      end_operation(id, state);
+    };
     auto result = co_await resolve_candidate_inner(id, state).wrap();
     if (result.is_ok()) {
       CHECK(state.candidate_and_cert.is_complete());

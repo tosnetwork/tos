@@ -1,0 +1,328 @@
+import "@stdlib/tvm-dicts"
+import "@stdlib/quorum-signatures"
+
+// Deterministic Ed25519 vectors: private key i = sha256("quorum-key-i"), each
+// signing HASH with CHKSIGNU semantics (the 32-byte big-endian hash).
+const HASH = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
+const K1 = 0xA0E39282B780E9EF18283DD09ED1CABA55B468EB9C5014967EA5CAA3256C6795
+const K2 = 0x282D5E174AB2122F1538944E31BEA38FAFE5A622656E6BE63CFAB47D16EE57BB
+const K3 = 0xECD0DF7591957F3EDA016B66417B8B1165138154D2AFA7184E1517AA324BECE9
+const K4 = 0xE77CF320BCB0DF1A4EE7727D1F059E721C61742B20EFA8ACF59803EE86B68BD3
+
+fun sig1(): slice { return "A2622A17A2AFAB596F3E424967925F73908AC39299D77CFCC462EFC9FA8A72EBF11D44355287786746C3F25431DBCC9B8E8C2EB2777FE26254AA2B6BBB512C01".hexToSlice(); }
+fun sig2(): slice { return "5C06E198E2E511567AB34AB78D0E3AF51C255A205855BA2FFF818EAE1902E63E8D573590C0FFA47A0B6B23CE31A276C36A04233766758DA090EE7E95A164C200".hexToSlice(); }
+fun sig3(): slice { return "323AFC2EC8E836160D7C714FF08B6705500FF5FEC91A665CA9256E2CC05EC4E3BA91EBEAECE1AA57EFD7BD28AB57C2DDFEA4BEF64D0E315B5195F6372058ED03".hexToSlice(); }
+fun sig4(): slice { return "C84898D958D8CB5F902745396CCD81E2C15EB3DBD71ABA3D716784403DFD074FDF20149980DD552E87B96FC5E58109DAAE5729C531A1CC228B1DE947F21E7A0F".hexToSlice(); }
+
+fun main(): int {
+    return 0;
+}
+
+fun expectThrow(code: int, expected: int, failCode: int): void {
+    assert(code == expected) throw failCode;
+}
+
+fun set123(): dict {
+    var v = createEmptyDict();
+    v = quorumAddVerifier(v, K1);
+    v = quorumAddVerifier(v, K2);
+    v = quorumAddVerifier(v, K3);
+    return v;
+}
+
+fun withSig(signatures: dict, key: int, signature: slice): dict {
+    var next = signatures;
+    next.uDictSet(QUORUM_KEY_BITS, key, signature);
+    return next;
+}
+
+@method_id(101)
+fun test_vectors_are_real(): int {
+    // Guards the fixtures themselves: if these stop verifying, every other
+    // case below would fail for the wrong reason.
+    assert(isSignatureValid(HASH, sig1(), K1)) throw 101;
+    assert(isSignatureValid(HASH, sig2(), K2)) throw 102;
+    assert(isSignatureValid(HASH, sig3(), K3)) throw 103;
+    assert(isSignatureValid(HASH, sig4(), K4)) throw 104;
+    assert(!isSignatureValid(HASH + 1, sig1(), K1)) throw 105;
+    return 1;
+}
+
+@method_id(102)
+fun test_config_validation(): int {
+    val c = quorumConfigNew(set123(), 2);
+    assert(c.verifierCount == 3 && c.quorum == 2) throw 111;
+    assert(c.isVerifier(K2) && !c.isVerifier(K4)) throw 112;
+    var rejected = 0;
+    try { quorumConfigNew(set123(), 0); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 113); rejected += 1; }
+    try { quorumConfigNew(set123(), 4); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 114); rejected += 1; }
+    try { quorumConfigNew(createEmptyDict(), 1); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 115); rejected += 1; }
+    try { quorumAddVerifier(set123(), K1); } catch (code) { expectThrow(code, QUORUM_THROW_DUPLICATE_VERIFIER, 116); rejected += 1; }
+    assert(rejected == 4) throw 117;
+    return 2;
+}
+
+@method_id(103)
+fun test_verifier_set_size_capped(): int {
+    var v = createEmptyDict();
+    var i = 1;
+    while (i <= QUORUM_MAX_VERIFIERS) {
+        v = quorumAddVerifier(v, i);
+        i += 1;
+    }
+    val full = quorumConfigNew(v, QUORUM_MAX_VERIFIERS);
+    assert(full.verifierCount == QUORUM_MAX_VERIFIERS) throw 121;
+    v = quorumAddVerifier(v, i);
+    var thrown = false;
+    try {
+        quorumConfigNew(v, 1);
+    } catch (code) {
+        expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 122);
+        thrown = true;
+    }
+    assert(thrown) throw 123;
+    return 3;
+}
+
+@method_id(104)
+fun test_set_cannot_shrink_below_quorum(): int {
+    val c = quorumConfigNew(set123(), 2);
+    var two = createEmptyDict();
+    two = quorumAddVerifier(two, K1);
+    two = quorumAddVerifier(two, K4);
+    val replaced = c.withVerifiers(two);
+    assert(replaced.verifierCount == 2 && replaced.quorum == 2 && replaced.isVerifier(K4)) throw 131;
+    var one = createEmptyDict();
+    one = quorumAddVerifier(one, K1);
+    var rejected = 0;
+    try { c.withVerifiers(one); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 132); rejected += 1; }
+    try { replaced.withQuorum(3); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 133); rejected += 1; }
+    assert(rejected == 2) throw 134;
+    assert(c.withQuorum(3).quorum == 3) throw 135;
+    return 4;
+}
+
+@method_id(105)
+fun test_quorum_met_and_missed(): int {
+    val c = quorumConfigNew(set123(), 2);
+    var s = withSig(createEmptyDict(), K1, sig1());
+    s = withSig(s, K3, sig3());
+    assert(c.countValidSignatures(HASH, s) == 2) throw 141;
+    c.requireQuorum(HASH, s);
+    val single = withSig(createEmptyDict(), K2, sig2());
+    var thrown = false;
+    try {
+        c.requireQuorum(HASH, single);
+    } catch (code) {
+        expectThrow(code, QUORUM_THROW_INSUFFICIENT_SIGNATURES, 142);
+        thrown = true;
+    }
+    assert(thrown) throw 143;
+    return 5;
+}
+
+@method_id(106)
+fun test_bad_entries_reject_whole_request(): int {
+    val c = quorumConfigNew(set123(), 2);
+    val base = withSig(withSig(createEmptyDict(), K1, sig1()), K2, sig2());
+    var rejected = 0;
+    // a correct signature from a key outside the set
+    try { c.requireQuorum(HASH, withSig(base, K4, sig4())); } catch (code) { expectThrow(code, QUORUM_THROW_UNKNOWN_SIGNER, 151); rejected += 1; }
+    // K1's signature filed under K3
+    try { c.requireQuorum(HASH, withSig(base, K3, sig1())); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_SIGNATURE, 152); rejected += 1; }
+    // valid signatures, wrong message
+    try { c.requireQuorum(HASH + 1, base); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_SIGNATURE, 153); rejected += 1; }
+    // truncated signature
+    try { c.requireQuorum(HASH, withSig(base, K3, sig3().getFirstBits(511))); } catch (code) { expectThrow(code, QUORUM_THROW_MALFORMED_SIGNATURE, 154); rejected += 1; }
+    // signature with trailing data
+    val padded = beginCell().storeSlice(sig3()).storeUint(0, 1).endCell().beginParse();
+    try { c.requireQuorum(HASH, withSig(base, K3, padded)); } catch (code) { expectThrow(code, QUORUM_THROW_MALFORMED_SIGNATURE, 155); rejected += 1; }
+    assert(rejected == 5) throw 156;
+    return 6;
+}
+
+fun setC7(c7: array<unknown>): void
+    asm "c7 POP"
+
+// GLOBALID reads ConfigParam 19 from c7[0][14][1]; NOW reads c7[0][3].
+fun installChain(globalId: int, nowTs: int): void {
+    var unpacked: array<unknown> = [];
+    var i = 0;
+    while (i < 7) {
+        unpacked.push(i == 1 ? beginCell().storeInt(globalId, 32).endCell().beginParse() as unknown : null);
+        i += 1;
+    }
+    var params: array<unknown> = [];
+    i = 0;
+    while (i < 17) {
+        params.push(null);
+        i += 1;
+    }
+    params.set(nowTs, 3);
+    params.set(unpacked, 14);
+    var c7: array<unknown> = [];
+    c7.push(params);
+    setC7(c7);
+}
+
+@method_id(107)
+fun test_signing_hash_binds_context(): int {
+    installChain(42, 1000);
+    val payload = beginCell().storeUint(7, 8).endCell();
+    val target = address("0:1111111111111111111111111111111111111111111111111111111111111111");
+    val other = address("0:2222222222222222222222222222222222222222222222222222222222222222");
+    val h = quorumSigningHash(1, target, 5, 2000, payload);
+    assert(h == quorumSigningHash(1, target, 5, 2000, payload)) throw 161;
+    assert(h != quorumSigningHash(2, target, 5, 2000, payload)) throw 162;
+    assert(h != quorumSigningHash(1, other, 5, 2000, payload)) throw 163;
+    assert(h != quorumSigningHash(1, target, 6, 2000, payload)) throw 164;
+    assert(h != quorumSigningHash(1, target, 5, 2000, beginCell().endCell())) throw 165;
+    assert(h != quorumSigningHash(1, target, 5, 2001, payload)) throw 166;
+    // the same request on another network is a different message
+    installChain(43, 1000);
+    assert(h != quorumSigningHash(1, target, 5, 2000, payload)) throw 167;
+    return 7;
+}
+
+@method_id(108)
+fun test_key_count_stops_at_limit(): int {
+    // The walk must stop as soon as the limit is passed, not merely report a
+    // large count afterwards: that early stop is the gas bound on huge sets.
+    assert(quorumCountKeys(set123(), 3, 77) == 3) throw 171;
+    var thrown = false;
+    try {
+        quorumCountKeys(set123(), 2, 77);
+    } catch (code) {
+        expectThrow(code, 77, 172);
+        thrown = true;
+    }
+    assert(thrown) throw 173;
+    return 8;
+}
+
+@method_id(109)
+fun test_expiry(): int {
+    installChain(42, 1000);
+    quorumRequireNotExpired(1000);
+    quorumRequireNotExpired(5000);
+    var thrown = false;
+    try {
+        quorumRequireNotExpired(999);
+    } catch (code) {
+        expectThrow(code, QUORUM_THROW_EXPIRED, 181);
+        thrown = true;
+    }
+    assert(thrown) throw 182;
+    return 9;
+}
+
+// The fourteen keys of tosctl/src/node-control/contracts/tests/weak_ed25519/mod.rs,
+// as loadUint(256) reads them.
+fun weakKeys(): array<int> {
+    var t: array<int> = [];
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000080);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85);
+    t.push(0x0000000000000000000000000000000000000000000000000000000000000000);
+    t.push(0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xedffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f);
+    t.push(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    t.push(0x0100000000000000000000000000000000000000000000000000000000000080);
+    t.push(0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    return t;
+}
+
+// The order-2 point (y = -1) and a signature of HASH under it that needs no
+// secret: R = the point itself, S = 0, which verifies because
+// k = H(R || A || HASH) is odd.
+const WEAK = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f
+
+fun forged(): slice { return "ECFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7F0000000000000000000000000000000000000000000000000000000000000000".hexToSlice(); }
+
+fun withVerifier(verifiers: dict, key: int): dict {
+    var next = verifiers;
+    next.uDictSetBuilder(QUORUM_KEY_BITS, key, beginCell());
+    return next;
+}
+
+@method_id(110)
+fun test_weak_verifiers_refused_at_admission(): int {
+    val weak = weakKeys();
+    var i = 0;
+    var rejected = 0;
+    while (i < 14) {
+        val key = weak.get(i);
+        try { quorumAddVerifier(createEmptyDict(), key); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 191); rejected += 1; }
+        // a prebuilt set that never went through quorumAddVerifier
+        val prebuilt = withVerifier(set123(), key);
+        try { quorumConfigNew(prebuilt, 2); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 192); rejected += 1; }
+        try { quorumConfigNew(set123(), 2).withVerifiers(prebuilt); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 193); rejected += 1; }
+        i += 1;
+    }
+    assert(rejected == 42) throw 194;
+    return 10;
+}
+
+@method_id(111)
+fun test_stored_weak_verifier_does_not_count(): int {
+    // The forged vector is real: CHKSIGNU accepts it with no secret behind it.
+    assert(isSignatureValid(HASH, forged(), WEAK)) throw 201;
+    // A config as a contract would load it from storage, never checked by
+    // quorumConfigNew.
+    val stored = QuorumConfig { verifiers: withVerifier(withVerifier(createEmptyDict(), K1), WEAK), verifierCount: 2, quorum: 2 };
+    var rejected = 0;
+    // K1 alone is one short of the quorum ...
+    try { stored.requireQuorum(HASH, withSig(createEmptyDict(), K1, sig1())); } catch (code) { expectThrow(code, QUORUM_THROW_INSUFFICIENT_SIGNATURES, 202); rejected += 1; }
+    // ... and the weak key's forged signature does not make up the difference.
+    try { stored.requireQuorum(HASH, withSig(withSig(createEmptyDict(), K1, sig1()), WEAK, forged())); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 203); rejected += 1; }
+    assert(rejected == 2) throw 204;
+    // The same stored shape with two strong keys still reaches its quorum.
+    val strong = QuorumConfig { verifiers: withVerifier(withVerifier(createEmptyDict(), K1), K2), verifierCount: 2, quorum: 2 };
+    strong.requireQuorum(HASH, withSig(withSig(createEmptyDict(), K1, sig1()), K2, sig2()));
+    return 11;
+}
+
+// The identity and the order-2 point spelled with the sign bit set: x = 0, so
+// these are non-canonical aliases whose y is in range. R = identity, S = 0 is a
+// signature of HASH under the first (for every message) and of HASH + 1 under
+// the second (k is even there).
+const ID_ALIAS = 0x0100000000000000000000000000000000000000000000000000000000000080
+const O2_ALIAS = 0xecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+
+fun forgedIdentity(): slice { return "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".hexToSlice(); }
+
+@method_id(112)
+fun test_sign_bit_aliases_do_not_count(): int {
+    // The forged vectors are real: CHKSIGNU accepts both with no secret behind them.
+    assert(isSignatureValid(HASH, forgedIdentity(), ID_ALIAS)) throw 211;
+    assert(isSignatureValid(HASH + 1, forgedIdentity(), O2_ALIAS)) throw 212;
+    var rejected = 0;
+    // A stored 2-of-2 that K1 alone cannot meet, completed by the identity alias.
+    val withId = QuorumConfig { verifiers: withVerifier(withVerifier(createEmptyDict(), K1), ID_ALIAS), verifierCount: 2, quorum: 2 };
+    try { withId.requireQuorum(HASH, withSig(withSig(createEmptyDict(), K1, sig1()), ID_ALIAS, forgedIdentity())); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 213); rejected += 1; }
+    // A stored 1-of-1 whose only verifier is the order-2 alias.
+    val withO2 = QuorumConfig { verifiers: withVerifier(createEmptyDict(), O2_ALIAS), verifierCount: 1, quorum: 1 };
+    try { withO2.requireQuorum(HASH + 1, withSig(createEmptyDict(), O2_ALIAS, forgedIdentity())); } catch (code) { expectThrow(code, QUORUM_THROW_WEAK_VERIFIER, 214); rejected += 1; }
+    assert(rejected == 2) throw 215;
+    return 12;
+}
+
+/**
+@testcase | 101 | | 1
+@testcase | 102 | | 2
+@testcase | 103 | | 3
+@testcase | 104 | | 4
+@testcase | 105 | | 5
+@testcase | 106 | | 6
+@testcase | 107 | | 7
+@testcase | 108 | | 8
+@testcase | 109 | | 9
+@testcase | 110 | | 10
+@testcase | 111 | | 11
+@testcase | 112 | | 12
+ */

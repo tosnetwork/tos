@@ -1,0 +1,135 @@
+{
+  "source_commit": "d32a6af52f3cb296d87a7e00f5b0309bc9cee2ec",
+  "branch": "codex/unify-protocol-v16",
+  "protocol_version": 16,
+  "previous_base": "9d470d7ccf809a5960ac68c3092b2551830d995d",
+  "status": "passed",
+  "validation_dates": "2026-10-04 through 2026-10-05 Asia/Tokyo",
+  "results": {
+    "cpp_poseidon2_suites": 9,
+    "falcon_cpp_rust_parity_scenarios": 160,
+    "rust_poseidon2_tests": 15,
+    "rust_executor_tests": 16,
+    "rust_contract_tests": 119,
+    "rust_contract_targets": 15,
+    "shielded_genesis_crosscheck_tests": 5,
+    "native_genesis_tests": 37,
+    "falcon_provider_tests": 9,
+    "android_wallet_tests": 3,
+    "android_security_native_build": "passed",
+    "ios_wallet_tests": 2,
+    "actual_mobile_transaction_vm_cases": 4,
+    "fresh_ios_transaction_vm_cases": 2,
+    "detected_gate_mutations": 6,
+    "linux_release_fullnode_build": "passed",
+    "linux_vm16_falcon_live_cases": 4,
+    "linux_vm16_actual_ios_profile_live_cases": 2
+  },
+  "mobile_commits": {
+    "android": "236fad728332907035c54ce8ca790a2aad3a0859",
+    "ios": "b613cf545e9cd2ff17fe2b45b07949201fed089f"
+  },
+  "evidence_root": "/Users/tomisetsu/.cache/tos-protocol-v16-validation-20261004",
+  "retention": "Retained in the named workspace cache for review; no automatic cleanup scheduled.",
+  "artifacts": [
+    {
+      "path": "cpp-poseidon2.log",
+      "sha256": "ca9156218aa07ba607bf0b60a532db16bcb1face2f4315656a7a4ec3aeaecc33",
+      "bytes": 181
+    },
+    {
+      "path": "falcon-parity/final-result.json",
+      "sha256": "b4125931e785f565e657c50b388387a7eaec9cf85bd25315cda0e3f2f8d21c3d",
+      "bytes": 360
+    },
+    {
+      "path": "rust-poseidon2-integration.log",
+      "sha256": "68c9d8599c656b679d2646b234fe62a4e8b175b8a49c53101b1d2784fd9d3dcb",
+      "bytes": 74885
+    },
+    {
+      "path": "rust-executor.log",
+      "sha256": "78389ef44385f4f2b2bd67ef44b08d4a9c918f1b17b7eb473e2fcbf7ee3504b4",
+      "bytes": 2808
+    },
+    {
+      "path": "rust-contract-sandboxes.log",
+      "sha256": "701ec12da9e60215e96f40cbe95c46c6dadb81f1c77f901da7615f1e98804103",
+      "bytes": 20336
+    },
+    {
+      "path": "shielded-genesis-crosscheck-restored-profile.log",
+      "sha256": "ab2eb8648693c1acfeb344341aac4665ea64dd389cbc4abde79a9611ab9e83d2",
+      "bytes": 9128
+    },
+    {
+      "path": "genesis-tests.log",
+      "sha256": "07170c570ef1176924b1d2168fa54010df81df4e2ae32c9a800e8908852c8ae3",
+      "bytes": 100
+    },
+    {
+      "path": "falcon-wallet-provider.log",
+      "sha256": "e98b42a57cda6e0a3ed843a3205398cd7e0e9989c95ec1911eca3a7bd85d0a10",
+      "bytes": 1280
+    },
+    {
+      "path": "android-wallet-version-tests.xml",
+      "sha256": "77705ded52e4e6c1503a9812bb788a60495bca69a945c731661d7e1e7104f1ad",
+      "bytes": 781
+    },
+    {
+      "path": "android-security-build.log",
+      "sha256": "b0773ca902af77685a18acf262fc166d6cb7b93eaa245d073872b3101386faba",
+      "bytes": 13075
+    },
+    {
+      "path": "ios-wallet-version-summary.json",
+      "sha256": "9e6dbfb941b4ee7afda2ab7eb576596edbfcb499d8bb4f1c5630f8ee74ef03fe",
+      "bytes": 1015
+    },
+    {
+      "path": "mobile-vm16-result.json",
+      "sha256": "8ba9aaf9290a960e0703213d794cf5305e41608d5a050daf9d384cd7f0868871",
+      "bytes": 20989
+    },
+    {
+      "path": "mobile-vm16-current-ios-result.json",
+      "sha256": "9bc0dc3b184e5446025692ce072760fae535706a063fe14ac891607036cf9657",
+      "bytes": 10633
+    },
+    {
+      "path": "mutations/result.json",
+      "sha256": "b023f3ec90dc1d798547afa9fa6c51da710253e8ca0c4cbba5dd9617002eff83",
+      "bytes": 900
+    },
+    {
+      "path": "linux-release-build-complete.log",
+      "sha256": "3a2bca7602aed71c24f614bc0da326abd921c2c26488073577a2820f2de11f0a",
+      "bytes": 42062
+    },
+    {
+      "path": "live-falcon-complete-tools.log",
+      "sha256": "9744ed33768c3682223c998d20e8266caf4747cde4cc98e41f32b031cb64d2ac",
+      "bytes": 265
+    },
+    {
+      "path": "ios-live-fullnode-records/live-result.json",
+      "sha256": "e875d81c7049a216246964de24c9a17104a93acf62841674a2b5a383c62f2bb1",
+      "bytes": 53277
+    },
+    {
+      "path": "ios-live-fullnode.log",
+      "sha256": "f7c5a2fdfd1a7553bf450d933fe82b38e2ca490f65f55d3da144dfac7d2e970a",
+      "bytes": 123
+    }
+  ],
+  "scope": "Local validation; selected owned node trust anchor. No hosted CI, public-network acceptance, merge or deployment claimed.",
+  "corrections": [
+    "The first Rust lib filter ran zero tests and is excluded; the actual integration target ran 15 tests.",
+    "The initial Mac build lacked SDKROOT; corrected build completed.",
+    "The genesis gas sandbox first found another checkout; explicit CREATE_STATE_PATH and this root build fixed it, all 119 tests passed.",
+    "Adding prose to the byte-frozen privacy profile changed genesis identity; that edit was withdrawn and all 5 frozen-state crosschecks passed.",
+    "The first live Falcon setup lacked the Tol compiler; after building it all 4 cases passed."
+  ],
+  "runtime_changes": "Only a new owned disposable VM16 chain and owned forwards/simulator were used; existing development nodes and mobile PRs unchanged."
+}

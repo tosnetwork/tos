@@ -1,38 +1,44 @@
 import typing
+from typing import Any, Optional
 
-from ..tlb import TlbScheme
+from ...boc import Builder, Cell, HashMap, Slice
+from ..tlb import TlbScheme, require
 from ..transaction import MessageAny
-from ...boc import Cell, Builder, Slice, HashMap
 
 
 class WalletV3Data(TlbScheme):
     """
     wallet_v3_data#_ seqno:uint32 wallet_id:uint32 public_key:bits256 = WalletV3Data;
     """
-    def __init__(self,
-                 seqno: typing.Optional[int] = 0,
-                 wallet_id: typing.Optional[int] = None,
-                 public_key: typing.Optional[bytes] = None
-                 ):
+
+    def __init__(
+        self,
+        seqno: typing.Optional[int] = 0,
+        wallet_id: typing.Optional[int] = None,
+        public_key: typing.Optional[bytes] = None,
+    ):
         self.seqno = seqno
         if wallet_id is None:
             wallet_id = 698983191
         self.wallet_id = wallet_id
         if public_key is None:
-            raise Exception('Public Key required for Wallet!')
+            raise Exception("Public Key required for Wallet!")
         self.public_key = public_key
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder\
-            .store_uint(self.seqno, 32)\
-            .store_uint(self.wallet_id, 32)\
-            .store_bytes(self.public_key)
+        builder.store_uint(require(self.seqno), 32).store_uint(self.wallet_id, 32).store_bytes(
+            self.public_key
+        )
         return builder.end_cell()
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        return cls(seqno=cell_slice.load_uint(32), wallet_id=cell_slice.load_uint(32), public_key=cell_slice.load_bytes(32))
+        return cls(
+            seqno=cell_slice.load_uint(32),
+            wallet_id=cell_slice.load_uint(32),
+            public_key=cell_slice.load_bytes(32),
+        )
 
 
 class WalletV4Data(TlbScheme):
@@ -40,33 +46,38 @@ class WalletV4Data(TlbScheme):
     // wc_n_address#_ wc:int8 addr_hash:uint256 = WcAndAddress;
     wallet_v4_data#_ seqno:uint32 wallet_id:uint32 public_key:bits256 plugins:(Maybe ^Cell) = WalletV4Data;
     """
-    def __init__(self,
-                 seqno: typing.Optional[int] = 0,
-                 wallet_id: typing.Optional[int] = None,
-                 public_key: typing.Optional[bytes] = None,
-                 plugins: typing.Optional[Cell] = None
-                 ):
+
+    def __init__(
+        self,
+        seqno: typing.Optional[int] = 0,
+        wallet_id: typing.Optional[int] = None,
+        public_key: typing.Optional[bytes] = None,
+        plugins: typing.Optional[Cell] = None,
+    ):
         self.seqno = seqno
         if wallet_id is None:
             wallet_id = 698983191
         self.wallet_id = wallet_id
         if public_key is None:
-            raise Exception('Public Key required for Wallet!')
+            raise Exception("Public Key required for Wallet!")
         self.public_key = public_key
         self.plugins = plugins
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder\
-            .store_uint(self.seqno, 32)\
-            .store_uint(self.wallet_id, 32)\
-            .store_bytes(self.public_key)\
-            .store_dict(self.plugins)
+        builder.store_uint(require(self.seqno), 32).store_uint(self.wallet_id, 32).store_bytes(
+            self.public_key
+        ).store_dict(self.plugins)
         return builder.end_cell()
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        return cls(seqno=cell_slice.load_uint(32), wallet_id=cell_slice.load_uint(32), public_key=cell_slice.load_bytes(32), plugins=cell_slice.load_maybe_ref())
+        return cls(
+            seqno=cell_slice.load_uint(32),
+            wallet_id=cell_slice.load_uint(32),
+            public_key=cell_slice.load_bytes(32),
+            plugins=cell_slice.load_maybe_ref(),
+        )
 
 
 class WalletV5R1Data(TlbScheme):
@@ -74,13 +85,15 @@ class WalletV5R1Data(TlbScheme):
     wallet_v5r1_data#_ is_signature_allowed:(## 1) seqno:# wallet_id:(## 32)
                        public_key:(## 256) extensions_dict:(HashmapE 256 int1) = WalletV5R1Data;
     """
-    def __init__(self,
-                 is_signature_allowed: bool = True,
-                 seqno: typing.Optional[int] = 0,
-                 wallet_id: typing.Optional[int] = None,
-                 public_key: typing.Optional[bytes] = None,
-                 extensions: typing.Optional[Cell] = None,
-                 ):
+
+    def __init__(
+        self,
+        is_signature_allowed: bool = True,
+        seqno: typing.Optional[int] = 0,
+        wallet_id: typing.Optional[int] = None,
+        public_key: typing.Optional[bytes] = None,
+        extensions: typing.Optional[Cell] = None,
+    ):
         self.is_signature_allowed = is_signature_allowed
         self.public_key = public_key
         self.seqno = seqno
@@ -89,12 +102,11 @@ class WalletV5R1Data(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder \
-            .store_bool(self.is_signature_allowed) \
-            .store_uint(self.seqno, 32) \
-            .store_uint(self.wallet_id, 32) \
-            .store_bytes(self.public_key) \
-            .store_dict(self.extensions)
+        builder.store_bool(self.is_signature_allowed).store_uint(
+            require(self.seqno), 32
+        ).store_uint(require(self.wallet_id), 32).store_bytes(require(self.public_key)).store_dict(
+            self.extensions
+        )
         return builder.end_cell()
 
     @classmethod
@@ -104,24 +116,32 @@ class WalletV5R1Data(TlbScheme):
         wallet_id = cell_slice.load_uint(32)
         public_key = cell_slice.load_bytes(32)
         extensions = cell_slice.load_maybe_ref()
-        return cls(is_signature_allowed=is_signature_allowed, seqno=seqno, wallet_id=wallet_id, public_key=public_key, extensions=extensions)
+        return cls(
+            is_signature_allowed=is_signature_allowed,
+            seqno=seqno,
+            wallet_id=wallet_id,
+            public_key=public_key,
+            extensions=extensions,
+        )
 
 
 class HighloadWalletData(TlbScheme):
     """
     highload_wallet_data#_ wallet_id:uint32 last_cleaned:uint64 public_key:bits256 old_queries:(HashmapE 64 WalletMessage) = HighloadWalletData;
     """
-    def __init__(self,
-                 wallet_id: typing.Optional[int] = None,
-                 last_cleaned: typing.Optional[int] = None,
-                 public_key: typing.Optional[bytes] = None,
-                 old_queries: typing.Optional[dict] = None
-                 ):
+
+    def __init__(
+        self,
+        wallet_id: typing.Optional[int] = None,
+        last_cleaned: typing.Optional[int] = None,
+        public_key: typing.Optional[bytes] = None,
+        old_queries: typing.Optional[dict[Any, Any]] = None,
+    ):
         if wallet_id is None:
             wallet_id = 698983191
         self.wallet_id = wallet_id
         if public_key is None:
-            raise Exception('Public Key required for Wallet!')
+            raise Exception("Public Key required for Wallet!")
         self.last_cleaned = last_cleaned
         self.public_key = public_key
         self.old_queries = old_queries
@@ -136,37 +156,43 @@ class HighloadWalletData(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder\
-            .store_uint(self.wallet_id, 32) \
-            .store_uint(self.last_cleaned, 64) \
-            .store_bytes(self.public_key)\
-            .store_dict(HashMap(key_size=64, value_serializer=self.old_queries_serializer).serialize())
+        builder.store_uint(self.wallet_id, 32).store_uint(
+            require(self.last_cleaned), 64
+        ).store_bytes(self.public_key).store_dict(
+            HashMap(key_size=64, value_serializer=self.old_queries_serializer).serialize()
+        )
         return builder.end_cell()
 
     @classmethod
     def deserialize(cls, cell_slice: Slice):
-        return cls(wallet_id=cell_slice.load_uint(32), last_cleaned=cell_slice.load_uint(64), public_key=cell_slice.load_bytes(32), old_queries=cell_slice.load_dict(key_length=64, value_deserializer=cls.old_queries_deserializer))
+        return cls(
+            wallet_id=cell_slice.load_uint(32),
+            last_cleaned=cell_slice.load_uint(64),
+            public_key=cell_slice.load_bytes(32),
+            old_queries=cell_slice.load_dict(
+                key_length=64, value_deserializer=cls.old_queries_deserializer
+            ),
+        )
 
 
 class HighloadWalletV3Data(TlbScheme):
-
     """
     storage$_ public_key:bits256 subwallet_id:uint32 old_queries:(HashmapE 14 ^Cell)
               queries:(HashmapE 14 ^Cell) last_clean_time:uint64 timeout:uint22 = Storage;
     """
 
     def __init__(
-            self,
-            public_key: typing.Optional[bytes] = None,
-            wallet_id: typing.Optional[int] = None,
-            old_queries: typing.Optional[dict] = None,
-            queries: typing.Optional[dict] = None,
-            last_clean_time: typing.Optional[int] = None,
-            timeout: int = None,
+        self,
+        public_key: typing.Optional[bytes] = None,
+        wallet_id: typing.Optional[int] = None,
+        old_queries: typing.Optional[dict[Any, Any]] = None,
+        queries: typing.Optional[dict[Any, Any]] = None,
+        last_clean_time: typing.Optional[int] = None,
+        timeout: Optional[int] = None,
     ) -> None:
         self.public_key = public_key
         if wallet_id is None:
-            wallet_id = 0x10ad
+            wallet_id = 0x10AD
         self.wallet_id = wallet_id
         self.old_queries = old_queries
         self.queries = queries
@@ -175,13 +201,11 @@ class HighloadWalletV3Data(TlbScheme):
 
     def serialize(self) -> Cell:
         builder = Builder()
-        builder\
-            .store_bytes(self.public_key) \
-            .store_uint(self.wallet_id, 32) \
-            .store_dict(HashMap(key_size=13, map_=self.old_queries).serialize()) \
-            .store_dict(HashMap(key_size=13, map_=self.queries).serialize()) \
-            .store_uint(self.last_clean_time, 64) \
-            .store_uint(self.timeout, 22)
+        builder.store_bytes(require(self.public_key)).store_uint(self.wallet_id, 32).store_dict(
+            HashMap(key_size=13, map_=self.old_queries).serialize()
+        ).store_dict(HashMap(key_size=13, map_=self.queries).serialize()).store_uint(
+            require(self.last_clean_time), 64
+        ).store_uint(require(self.timeout), 22)
 
         return builder.end_cell()
 
@@ -193,7 +217,7 @@ class HighloadWalletV3Data(TlbScheme):
             old_queries=cell_slice.load_dict(key_length=13),
             queries=cell_slice.load_dict(key_length=13),
             last_clean_time=cell_slice.load_uint(64),
-            timeout=cell_slice.load_uint(22)
+            timeout=cell_slice.load_uint(22),
         )
 
 

@@ -1,0 +1,5 @@
+COMMAND: cargo fmt --manifest-path tools/node-health-monitor/Cargo.toml --all -- --check
+FMT_EXIT=0
+COMMAND: CARGO_BUILD_JOBS=16 cargo clippy --manifest-path tools/node-health-monitor/Cargo.toml --workspace --all-targets --locked -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.23s
+CLIPPY_EXIT=0

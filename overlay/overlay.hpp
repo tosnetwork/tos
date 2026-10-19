@@ -220,7 +220,7 @@ class OverlayImpl : public Overlay {
   void receive_message(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
                        td::BufferSlice data) override;
   void receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
-                     td::BufferSlice data, td::Promise<td::BufferSlice> promise) override;
+                     td::BufferSlice data, td::Promise<adnl::AdnlQueryAnswer> promise) override;
   void send_message_to_neighbours(td::BufferSlice data) override;
   void send_broadcast(PublicKeyHash send_as, td::uint32 flags, td::BufferSlice data) override;
   void send_broadcast_fec(PublicKeyHash send_as, td::uint32 flags, td::BufferSlice data,
@@ -229,7 +229,6 @@ class OverlayImpl : public Overlay {
   void send_broadcast_plumtree(PublicKeyHash send_as, td::uint32 flags, td::Bits256 broadcast_id,
                                td::BufferSlice data) override;
   void receive_nodes_from_db(tl_object_ptr<tos_api::overlay_nodes> nodes) override;
-  void receive_nodes_from_db_v2(tl_object_ptr<tos_api::overlay_nodesV2> nodes) override;
 
   void get_self_node(td::Promise<OverlayNode> promise);
   td::actor::Task<OverlayNode> get_self_node_coro();
@@ -237,14 +236,13 @@ class OverlayImpl : public Overlay {
 
   void alarm() override;
   void start_up() override;
+  void tear_down() override;
+  void collect_metrics(td::Promise<td::Unit> done) override;
 
   void on_ping_result(adnl::AdnlNodeIdShort peer, bool success, double store_ping_time = -1.0);
   void receive_random_peers(adnl::AdnlNodeIdShort src, td::Result<td::BufferSlice> R, double elapsed);
-  void receive_random_peers_v2(adnl::AdnlNodeIdShort src, td::Result<td::BufferSlice> R, double elapsed);
   void send_random_peers(adnl::AdnlNodeIdShort dst, td::Promise<td::BufferSlice> promise);
-  void send_random_peers_v2(adnl::AdnlNodeIdShort dst, td::Promise<td::BufferSlice> promise);
   void send_random_peers_cont(adnl::AdnlNodeIdShort dst, OverlayNode node, td::Promise<td::BufferSlice> promise);
-  void send_random_peers_v2_cont(adnl::AdnlNodeIdShort dst, OverlayNode node, td::Promise<td::BufferSlice> promise);
   void ping_random_peers();
   void receive_pong(adnl::AdnlNodeIdShort peer, double elapsed);
   void get_overlay_random_peers(td::uint32 max_peers, td::Promise<std::vector<adnl::AdnlNodeIdShort>> promise) override;
@@ -314,6 +312,7 @@ class OverlayImpl : public Overlay {
   std::vector<adnl::AdnlNodeIdShort> get_neighbours(td::uint32 max_size = 0) const;
   std::vector<adnl::AdnlNodeIdShort> get_plumtree_neighbours(td::uint32 max_size = 0) const;
   bool peer_receives_broadcasts(adnl::AdnlNodeIdShort peer_id);
+  bool peer_receives_plumtree_broadcasts(adnl::AdnlNodeIdShort peer_id);
   void set_plumtree_eager_mtu_peers(std::vector<adnl::AdnlNodeIdShort> peers);
   td::actor::ActorId<OverlayManager> overlay_manager() const {
     return manager_;
@@ -351,6 +350,7 @@ class OverlayImpl : public Overlay {
 
   bool check_src_peer(const adnl::AdnlNodeIdShort &id, const tos_api::overlay_MemberCertificate *certificate);
   bool is_persistent_node(const adnl::AdnlNodeIdShort &id);
+  bool is_twostep_intermediate_node(const adnl::AdnlNodeIdShort &id);
   size_t persistent_node_count();
   void iterate_all_peers(std::function<void(const adnl::AdnlNodeIdShort &key, OverlayPeer &peer)> cb);
 
@@ -408,16 +408,29 @@ class OverlayImpl : public Overlay {
 
  private:
   friend class OverlayImplPeerCleanupTest;
+  friend class OverlayImplPlumtreePolicyTest;
+  friend class OverlayImplTwostepTest;
+  friend class OverlayImplPlumtreeRepairTest;
   friend class OverlayImplBroadcastCapacityTest;
 
+  // A query the overlay does not handle itself goes to its callback, whose
+  // answer is forwarded whole, delivery metadata included.
   template <class T>
-  void process_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<td::BufferSlice> promise) {
-    callback_->receive_query(src, overlay_id_, serialize_tl_object(&query, true), std::move(promise));
+  void process_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<adnl::AdnlQueryAnswer> promise) {
+    callback_->receive_query_ex(src, overlay_id_, serialize_tl_object(&query, true), std::move(promise));
+  }
+  // The overlay's own handlers answer with plain data, and so carry no
+  // delivery metadata.
+  template <class T>
+  void dispatch_query(adnl::AdnlNodeIdShort src, T &query, td::Promise<adnl::AdnlQueryAnswer> promise) {
+    if constexpr (requires(td::Promise<td::BufferSlice> plain) { this->process_query(src, query, std::move(plain)); }) {
+      process_query(src, query, adnl::drop_answer_metadata(std::move(promise)));
+    } else {
+      process_query(src, query, std::move(promise));
+    }
   }
 
   void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getRandomPeers &query,
-                     td::Promise<td::BufferSlice> promise);
-  void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getRandomPeersV2 &query,
                      td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_ping &query, td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::overlay_getBroadcast &query,
@@ -465,7 +478,6 @@ class OverlayImpl : public Overlay {
   void add_peer(OverlayNode node, bool verified, bool checked_signature = false);
   void add_peers(std::vector<OverlayNode> nodes, bool verified, bool checked_signature = false);
   void add_peers(const tl_object_ptr<tos_api::overlay_nodes> &nodes, bool verified, bool checked_signature = false);
-  void add_peers(const tl_object_ptr<tos_api::overlay_nodesV2> &nodes, bool verified, bool checked_signature = false);
   void process_pending_peers();
   td::actor::Task<> process_pending_peer(OverlayNode node);
   void del_some_peers();
@@ -510,6 +522,11 @@ class OverlayImpl : public Overlay {
   td::Timestamp private_ping_peers_at_ = td::Timestamp::now();
 
   std::unique_ptr<Overlays::Callback> callback_;
+  // Delivered application content; the manager accumulates actor-owned deltas.
+  metrics::TlTrafficBucket delivered_;
+  metrics::TlTrafficBucket drain_metrics() {
+    return std::exchange(delivered_, {});
+  }
 
   BroadcastsSimple broadcasts_simple_;
   BroadcastsFec broadcasts_fec_;

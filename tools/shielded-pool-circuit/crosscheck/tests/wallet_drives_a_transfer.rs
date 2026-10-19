@@ -22,6 +22,8 @@ mod support;
 
 use ark_ff::AdditiveGroup;
 
+use std::collections::BTreeSet;
+
 use shielded_pool_circuit::circuit::{
     HeldNote, OutputNote, ShieldedTransactionCircuit, TransactionBuilder,
 };
@@ -248,7 +250,11 @@ fn a_wallet_builds_a_transfers_outputs_and_recovers_them() {
     let observed: Vec<ObservedOutput> = std::iter::once(ObservedOutput {
         slot: 0,
         output_data: input_payload,
-        chain: ChainSlot { output_data_hash: input_data_hash, note_body: input_body },
+        chain: ChainSlot {
+            output_data_hash: input_data_hash,
+            note_body: input_body,
+            recovered: None,
+        },
     })
     .chain((0..3).map(|slot| ObservedOutput {
         slot: slot as u8,
@@ -256,24 +262,57 @@ fn a_wallet_builds_a_transfers_outputs_and_recovers_them() {
         chain: ChainSlot {
             output_data_hash: output_data_hash[slot],
             note_body: [public.note_body_0, public.note_body_1, public.note_body_2][slot],
+            recovered: None,
         },
     }))
     .collect();
-    let recovered = scan::recover(&restored, &observed).expect("recover");
+    let mut recovered = scan::recover(&restored, &observed).expect("recover");
 
     assert!(recovered.diagnostics.is_empty(), "a payload this wallet built was refused");
     assert_eq!(recovered.notes.len(), 4, "the restored wallet did not find every output");
+
+    // Restoration is not finished until the chain has been asked which of
+    // these are already spent. Discovering a payload says the wallet was sent
+    // something; it does not say the wallet still has it.
+    //
+    // Both nullifiers this transfer published, exactly as the chain carries
+    // them: the real input's, and the phantom the second slot used.
+    let published: BTreeSet<Fr> = [public.nullifier_0, public.nullifier_1].into_iter().collect();
+    recovered.reconcile_spent(&restored, &published).expect("reconcile against the chain");
     assert_eq!(
         scan::dummies(&recovered).len(),
         1,
         "the dummy was not recognised, or a real output was taken for one"
     );
 
-    // The dummy carries no balance. The deposit and the two real outputs do.
+    // The dummy carries no balance, and neither does the note this transfer
+    // spent.
+    //
+    // This assertion used to require `DENOMINATION * 2` and was green: it
+    // counted the deposit *and* the outputs that replaced it. A self-transfer
+    // conserves one denomination, so that figure is what the wallet was ever
+    // sent, not what it can spend -- and a wallet reporting twice its money
+    // will pick inputs that no longer exist and quote a number its owner
+    // cannot pay.
     assert_eq!(
         recovered.balance(),
+        u128::from(DENOMINATION),
+        "the spent input was counted as balance, the dummy was, or a real output was not"
+    );
+
+    // The historical figure still exists, under a name that says what it is.
+    assert_eq!(
+        recovered.received(),
         u128::from(DENOMINATION) * 2,
-        "the dummy was counted as balance, or a real output was not"
+        "the deposit and its replacements are what this wallet was ever sent"
+    );
+
+    // And the consumed note cannot be chosen as an input again.
+    let spendable: Vec<_> = recovered.spendable_notes().collect();
+    assert_eq!(spendable.len(), 2, "the spent input is still selectable");
+    assert!(
+        spendable.iter().all(|note| note.note_body != input_body),
+        "the note this transfer spent is still offered as an input"
     );
 
     // Gate 7: the dummy's index is consumed like any other, and the next

@@ -30,7 +30,11 @@ namespace toslib {
 class Client::Impl final {
  public:
   using OutputQueue = td::MpscPollableQueue<Client::Response>;
-  Impl() {
+  Impl(
+#ifdef TOSLIB_Q01_TEST_NETWORK
+      std::shared_ptr<PublicNetworkTestHook> hook = {}
+#endif
+  ) {
     output_queue_ = std::make_shared<OutputQueue>();
     output_queue_->init();
 
@@ -58,7 +62,12 @@ class Client::Impl final {
 
     scheduler_.run_in_context([&] {
       toslib_ = td::actor::create_actor<ToslibClient>(td::actor::ActorOptions().with_name("Toslib").with_poll(),
-                                                      td::make_unique<Callback>(output_queue_));
+                                                      td::make_unique<Callback>(output_queue_)
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                                                          ,
+                                                      std::move(hook)
+#endif
+      );
     });
 
     scheduler_thread_ = td::thread([&] { scheduler_.run(); });
@@ -70,9 +79,22 @@ class Client::Impl final {
       return;
     }
 
-    scheduler_.run_in_context(
-        [&] { send_closure(toslib_, &ToslibClient::request, request.id, std::move(request.function)); });
+    scheduler_.run_in_context([&] {
+      send_closure(toslib_, &ToslibClient::request, request.id, std::move(request.function)
+#ifdef TOSLIB_Q01_TEST_NETWORK
+                                                                    ,
+                   request.trace_context
+#endif
+      );
+    });
   }
+
+#ifdef TOSLIB_Q01_TEST_NETWORK
+  void test_arm(td::uint64 id, std::string nonce, td::Promise<QueryTraceContext> ack) {
+    scheduler_.run_in_context(
+        [&] { send_closure(toslib_, &ToslibClient::test_arm, id, std::move(nonce), std::move(ack)); });
+  }
+#endif
 
   Client::Response receive(double timeout) {
     VLOG(toslib_requests) << "Begin to wait for updates with timeout " << timeout;
@@ -147,6 +169,13 @@ Client::Client() : impl_(std::make_unique<Impl>()) {
   //td::init_openssl_threads();
 }
 
+#ifdef TOSLIB_Q01_TEST_NETWORK
+Client::Client(std::shared_ptr<PublicNetworkTestHook> hook) : impl_(std::make_unique<Impl>(std::move(hook))) {
+}
+void Client::test_arm(std::uint64_t id, std::string nonce, td::Promise<QueryTraceContext> ack) {
+  impl_->test_arm(id, std::move(nonce), std::move(ack));
+}
+#endif
 void Client::send(Request&& request) {
   impl_->send(std::move(request));
 }

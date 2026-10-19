@@ -1684,6 +1684,11 @@ class InferTypesAndCallsAndFieldsVisitor final {
   }
 
   FlowContext process_return_statement(V<ast_return_statement> v, FlowContext&& flow) {
+    // Parameter and field defaults, constant initializers and similar contexts are inferred
+    // outside any function body, and a braced `match` arm there can still hold a `return`.
+    if (!cur_f) {
+      err("`return` used outside a function").fire(v);
+    }
     if (v->has_return_value()) {
       flow = infer_any_expr(v->get_return_value(), std::move(flow), false, cur_f->declared_return_type).out_flow;
     } else {

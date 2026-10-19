@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "source_id": "host_cgroup",
+  "node_id": "v1",
+  "scope_id": "node",
+  "process_epoch": "fa86123d3210887c36045ec1ec657bfc",
+  "source_epoch": "edge-fixture-1",
+  "source_version": "cgroup-v2-effective-v1",
+  "generation": "1",
+  "availability": "available",
+  "observed_at": "2026-09-29T00:00:00Z",
+  "last_success_at": "2026-09-29T00:00:00Z",
+  "received_at": null,
+  "source_age_ms": 0,
+  "clock_quality": "valid",
+  "coverage": {
+    "status": "partial",
+    "missing_fields": ["host_pressure", "io_pressure", "fd_usage"],
+    "gaps": [],
+    "sampling_policy": "fixed_cgroup_v2_15s"
+  },
+  "content_hash": "924d5021d796885e2ed6f27a2ff62c73088ec1729ee7d0db432836a41648f96c",
+  "payload": {
+    "kind": "host_cgroup",
+    "memory_current_bytes": "5000000000",
+    "memory_max_bytes": "4294967296",
+    "cpu_usage_usec": "17",
+    "cpu_quota_usec": "100000",
+    "cpu_period_usec": "100000",
+    "oom_events": "2"
+  },
+  "quality": {
+    "instrumentation_complete": true,
+    "producer_dropped": "0",
+    "relay_dropped": "0",
+    "parse_errors": "0",
+    "shed_reason": null
+  }
+}

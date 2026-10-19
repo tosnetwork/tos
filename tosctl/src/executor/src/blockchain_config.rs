@@ -10,10 +10,10 @@
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
 use chain_block::{
-    fail, AccountId, BurningConfig, Coins, ConfigParam12, ConfigParam18, ConfigParam8,
-    ConfigParamEnum, ConfigParams, FundamentalSmcAddresses, GasLimitsPrices, GlobalCapabilities,
-    GlobalVersion, Mask, MsgAddressInt, MsgForwardPrices, Result, SizeLimitsConfig, StorageInfo,
-    StoragePrices, UInt256, WorkchainDescr, SUPPORTED_VERSION,
+    accrued_storage_fee, fail, AccountId, BurningConfig, Coins, ConfigParam12, ConfigParam18,
+    ConfigParam8, ConfigParamEnum, ConfigParams, FundamentalSmcAddresses, GasLimitsPrices,
+    GlobalCapabilities, GlobalVersion, Mask, MsgAddressInt, MsgForwardPrices, Result,
+    SizeLimitsConfig, StorageInfo, StoragePrices, UInt256, WorkchainDescr, SUPPORTED_VERSION,
 };
 use num::BigInt;
 
@@ -42,7 +42,8 @@ impl DefaultConfig for MsgForwardPrices {
             // crypto/smartcont/gen-zerostate.fif. Contracts use ConfigParam
             // 25 directly through GETFORWARDFEE, so an upstream-like default
             // here would invalidate production-contract fee/reserve tests.
-            // TON mainnet's live basechain ConfigParam25, read on 2026-09-21.
+            // The reference implementation's live mainnet basechain ConfigParam25,
+            // read on 2026-09-21.
             // Each was six times these for the same reason the gas price was.
             lump_price: 66667,
             bit_price: 4369067,
@@ -74,37 +75,19 @@ impl Default for AccStoragePrices {
 }
 
 impl AccStoragePrices {
-    /// Calculate storage fee for provided data
+    /// Storage fee accrued from `last_paid` to `now`, computed as the node does
+    /// (see `accrued_storage_fee`). Special accounts never reach this: the
+    /// storage phase does not charge them. A fee beyond u128 is an error.
     pub fn calc_storage_fees(
         &self,
         cells: u64,
         bits: u64,
-        mut last_paid: u32,
+        last_paid: u32,
         now: u32,
         is_masterchain: bool,
     ) -> Result<u128> {
-        if now <= last_paid
-            || last_paid == 0
-            || self.prices.is_empty()
-            || now <= self.prices[0].utime_since
-        {
-            return Ok(0);
-        }
-        let mut fee = BigInt::default();
-        // storage prices config contains prices array for some time intervals
-        // to calculate account storage fee we need to sum fees for all intervals since last
-        // storage fee pay calculated by formula `(cells * cell_price + bits * bits_price) * interval`
-        for i in 0..self.prices.len() {
-            let prices = &self.prices[i];
-            let end = if i < self.prices.len() - 1 { self.prices[i + 1].utime_since } else { now };
-
-            if end >= last_paid {
-                let delta = end - prices.utime_since.max(last_paid);
-                fee += prices.calc_storage_fee(cells, bits, delta as u64, is_masterchain);
-                last_paid = end;
-            }
-        }
-
+        let fee: BigInt =
+            accrued_storage_fee(&self.prices, cells, bits, last_paid, now, false, is_masterchain)?;
         let fee = fee.try_into()?;
         Ok(fee)
     }
@@ -134,36 +117,25 @@ impl DefaultConfig for GasLimitsPrices {
     }
 
     fn default_wc() -> Self {
-        GasLimitsPrices {
-            // ConfigParam 21 from the canonical basechain zero state
-            // (`crypto/smartcont/gen-zerostate.fif`). This yields 400
-            // nanotomi/gas beyond the flat segment, not the
-            // masterchain-derived 1,000 nanotomi/gas sandbox value.
-            //
-            // The three limits used to carry TON's basechain values -- a
-            // 1,000,000 gas transaction inside a 10,000,000 gas block -- while
-            // this chain's zero state grants thirty times that. A measurement
-            // taken against the old table said a path "does not fit the
-            // network" when it fits this network twenty-seven times over.
-            // `chain_gas_envelope_sandbox.rs` now generates the zero state and
-            // compares it against this table field by field, so the two cannot
-            // drift apart again without a named test going red.
-            //
-            // The prices are TON mainnet's live basechain values, read from
-            // ConfigParam21 on 2026-09-21. They used to be exactly six times
-            // these, which was what production charged before its fee cut.
-            // The limits above stay thirty times mainnet's on purpose.
+        let mut prices = GasLimitsPrices {
+            // Existing canonical basechain gas profile. Admission candidates
+            // load their generated ConfigParams through with_config; changing
+            // only the VM version must not activate a candidate gas profile.
             gas_price: 436907,
             flat_gas_limit: 100,
             flat_gas_price: 667,
-            gas_limit: 30000000,
-            special_gas_limit: 30000000,
+            gas_limit: 2000000,
+            special_gas_limit: 2000000,
             gas_credit: 10000,
-            block_gas_limit: 60000000,
+            block_gas_limit: 20000000,
             freeze_due_limit: 100000000,
             delete_due_limit: 1000000000,
-            max_gas_threshold: 1000000000,
-        }
+            max_gas_threshold: 0,
+        };
+        // Keep the cached execution threshold consistent with decoding the
+        // serialized gas table. Choosing this profile does not change credit.
+        prices.max_gas_threshold = prices.calc_max_gas_threshold(prices.gas_limit);
+        prices
     }
 }
 
@@ -419,3 +391,7 @@ impl BlockchainConfig {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/test_storage_fees.rs"]
+mod tests_storage_fees;

@@ -1,0 +1,4 @@
+Script started on 2026-09-29 14:05:57+00:00 [<not executed on terminal>]
+PASS: 24 closed schemas; six tool input/error fixtures; exact u64; source anchors; Python/C++ frozen IPC; production placeholders present
+
+Script done on 2026-09-29 14:05:59+00:00 [COMMAND_EXIT_CODE="0"]

@@ -10,7 +10,7 @@ R1  the summary transcript was outside the final audit
 R2  provenance and dimensions were printed as facts, never compared
 R3  a malformed digest string panicked instead of naming a refusal
 
-Findings and analysis: doc/shielded-pool-phase2-review-results.md
+Historical review notes are available in Git history.
 """
 import importlib.util
 import json

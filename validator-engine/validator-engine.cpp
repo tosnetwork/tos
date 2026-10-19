@@ -26,7 +26,10 @@
     Copyright 2017-2020 Telegram Systems LLP
     Copyright 2025-2026 TOS Blockchain Teams
 */
+#include <deque>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "adnl/adnl-node-id.hpp"
@@ -39,19 +42,21 @@
 #include "dht/dht.hpp"
 #include "keys/keys.hpp"
 #include "memprof/memprof.h"
+#include "metrics/core-health.h"
 #include "td/actor/MultiPromise.h"
 #include "td/actor/PromiseFuture.h"
 #include "td/actor/actor.h"
 #include "td/utils/OptionParser.h"
 #include "td/utils/Random.h"
 #include "td/utils/Status.h"
+#include "td/utils/StorageHealth.h"
 #include "td/utils/ThreadSafeCounter.h"
 #include "td/utils/Time.h"
 #include "td/utils/TsFileLog.h"
 #include "td/utils/buffer.h"
 #include "td/utils/filesystem.h"
-#include "td/utils/misc.h"
 #include "td/utils/memory-tracker.h"
+#include "td/utils/misc.h"
 #include "td/utils/overloaded.h"
 #include "td/utils/port/path.h"
 #include "td/utils/port/rlimit.h"
@@ -63,31 +68,40 @@
 #include "tos/tos-io.hpp"
 #include "tos/tos-tl.hpp"
 #include "tos/tos-types.h"
+#include "validator/impl/config.hpp"
+#include "validator/measurement/measurement-contract.h"
+#include "validator/state-download-buffer.h"
+#include "validator/wc0-block-hook.h"
 
 #include "errorcode.h"
-
-#include "wallet-index.h"
-#include "wallet-index-writer.h"
-#include "validator/wc0-block-hook.h"
 #include "overlay-manager.h"
 #include "overlays.h"
-#include "validator/impl/config.hpp"
-#include "validator/state-download-buffer.h"
 #include "validator-engine.hpp"
+#include "wallet-index-writer.h"
+#include "wallet-index.h"
 
 #if TD_DARWIN || TD_LINUX
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <set>
 
+#include "block/pq-vote.h"
 #include "block/precompiled-smc/PrecompiledSmartContract.h"
 #include "common/delay.h"
 #include "interfaces/validator-manager.h"
+#include "pq/consensus-config-json.h"
+#include "pq/consensus-key-file.h"
+#include "pq/consensus-key-schedule.h"
+#include "pq/consensus-node-config.h"
+#include "pq/pq-elector.h"
+#include "pq/pq-stake-authorization.h"
 #include "tl-utils/lite-utils.hpp"
 
 #include "block-auto.h"
@@ -95,7 +109,7 @@
 #include "git.h"
 
 #if TOS_USE_JEMALLOC
-#include <jemalloc/jemalloc.h>
+#include TOS_JEMALLOC_HEADER
 #endif
 
 static constexpr size_t k_ed25519_signature_size = 64;
@@ -278,6 +292,23 @@ Config::Config(const tos::tos_api::engine_validator_config &config) {
       auto key = tos::adnl::AdnlNodeIdShort{client->adnl_id_};
       fast_sync_overlay_clients.emplace_back(std::move(key), client->slot_);
     }
+    if (config.extraconfig_->pq_consensus_) {
+      // Read as written; whether the keys form a usable schedule is decided when they are
+      // loaded (start_validator), where a refusal stops the node with its reason.
+      const auto &pq = *config.extraconfig_->pq_consensus_;
+      PqConsensus parsed{tos::ValidatorId{pq.validator_id_}, {}};
+      if (!pq.consensus_key_file_.empty()) {
+        parsed.keys.push_back(PqConsensusKey{pq.consensus_key_file_, 0, 0});
+      }
+      for (const auto &key : pq.keys_) {
+        if (!key) {
+          continue;
+        }
+        parsed.keys.push_back(PqConsensusKey{key->consensus_key_file_, static_cast<td::uint32>(key->valid_from_),
+                                             static_cast<td::uint32>(key->expire_at_)});
+      }
+      pq_consensus = std::move(parsed);
+    }
   } else {
     state_serializer_enabled = true;
   }
@@ -385,7 +416,7 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_config> Config::tl() const {
 
   tos::tl_object_ptr<tos::tos_api::engine_validator_extraConfig> extra_config_obj = {};
   if (!state_serializer_enabled || !fast_sync_member_certificates.empty() || collator_node_whitelist_obj ||
-      !fast_sync_overlay_clients.empty()) {
+      !fast_sync_overlay_clients.empty() || pq_consensus) {
     // Non-default values
     extra_config_obj = tos::create_tl_object<tos::tos_api::engine_validator_extraConfig>();
     extra_config_obj->state_serializer_enabled_ = state_serializer_enabled;
@@ -399,6 +430,26 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_config> Config::tl() const {
       extra_config_obj->fast_sync_overlay_clients_.push_back(
           tos::create_tl_object<tos::tos_api::engine_validator_fastSyncOverlayClient>(client.id.bits256_value(),
                                                                                       client.slot));
+    }
+    if (pq_consensus) {
+      // One key valid for every election and never expiring is written as the single
+      // `consensus_key_file`, exactly as a node that never rotates has always had it.
+      // Anything else is written in `keys` alone with the single file empty, so a reader
+      // that predates `keys` finds no key file and refuses to start rather than taking
+      // one of several keys for the whole configuration (see consensus-config-json.h).
+      std::string primary_file;
+      std::vector<tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKey>> keys;
+      const auto &held = pq_consensus->keys;
+      if (held.size() == 1 && held.front().valid_from == 0 && held.front().expire_at == 0) {
+        primary_file = held.front().consensus_key_file;
+      } else {
+        for (const auto &key : held) {
+          keys.push_back(tos::create_tl_object<tos::tos_api::engine_validator_pqConsensusKey>(
+              key.consensus_key_file, static_cast<td::int32>(key.valid_from), static_cast<td::int32>(key.expire_at)));
+        }
+      }
+      extra_config_obj->pq_consensus_ = tos::create_tl_object<tos::tos_api::engine_validator_pqConsensus>(
+          pq_consensus->validator_id.value, std::move(primary_file), std::move(keys));
     }
   }
 
@@ -969,282 +1020,170 @@ td::Result<bool> Config::config_del_gc(tos::PublicKeyHash key) {
   return gc.erase(key);
 }
 
-class ValidatorElectionBidCreator : public td::actor::Actor {
+namespace {
+// A 32-byte identity in the form the operator tools print it.
+std::string pq_identity_hex(const td::Bits256 &value) {
+  return tos::pq::identity_hex(std::string_view(reinterpret_cast<const char *>(value.data()), 32));
+}
+}  // namespace
+
+// The permission a validator gives for one election.
+//
+// It replaced a creator that generated Ed25519 keys, registered them as this node's
+// validator keys, and ran a Fift script to build a stake transaction. The elector has one
+// stake operation and does not accept that one, so what it produced could not be placed;
+// and the stake itself is not this node's to make. The account that stakes is a
+// controller, authorised by a root key that by ruling never reaches a validator host.
+//
+// What a node can do is say, with its consensus key, that this validator agrees to
+// stand in this election with this money behind it. That is what this returns: a
+// signature, over the bytes the elector will rebuild, together with the exact
+// algorithm and public key held by the signer. It signs one tuple rather than
+// bytes it is handed, so the key cannot be asked to sign anything else.
+//
+// A node rotating its consensus key holds more than one. The key that signs is the one
+// the key schedule assigns to this election (the key the controller is bound to for it,
+// when the operator configured the rotation as documented), always; a request that names
+// a key only asserts which key that is, and is refused if the schedule disagrees. Never
+// simply whichever key was loaded first.
+class PqStakeAuthorizationCreator : public td::actor::Actor {
  public:
-  ValidatorElectionBidCreator(td::uint32 date, std::string addr, std::string wallet, std::string dir,
-                              std::vector<tos::PublicKeyHash> old_keys, td::actor::ActorId<ValidatorEngine> engine,
-                              td::actor::ActorId<tos::keyring::Keyring> keyring, td::Promise<td::BufferSlice> promise)
-      : date_(date)
-      , addr_(addr)
-      , wallet_(wallet)
-      , dir_(dir)
-      , old_keys_(std::move(old_keys))
+  PqStakeAuthorizationCreator(td::uint32 election_date, td::uint32 max_factor, td::Bits256 adnl_addr,
+                              td::Bits256 stake_owner, std::optional<tos::ConsensusKeyId> requested_key,
+                              td::actor::ActorId<ValidatorEngine> engine, td::Promise<td::BufferSlice> promise)
+      : election_date_(election_date)
+      , max_factor_(max_factor)
+      , adnl_addr_(adnl_addr)
+      , stake_owner_(stake_owner)
+      , requested_key_(std::move(requested_key))
       , engine_(engine)
-      , keyring_(keyring)
       , promise_(std::move(promise)) {
-    ttl_ = date_ + 7 * 86400;
   }
 
   void start_up() override {
-    if (old_keys_.size() > 0) {
-      CHECK(old_keys_.size() == 3);
-
-      adnl_addr_ = tos::adnl::AdnlNodeIdShort{old_keys_[2]};
-      perm_key_ = old_keys_[0];
-
-      auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<tos::PublicKey> R) {
-        if (R.is_error()) {
-          td::actor::send_closure(SelfId, &ValidatorElectionBidCreator::abort_query, R.move_as_error());
-        } else {
-          td::actor::send_closure(SelfId, &ValidatorElectionBidCreator::got_perm_public_key, R.move_as_ok());
-        }
-      });
-      td::actor::send_closure(keyring_, &tos::keyring::Keyring::get_public_key, perm_key_, std::move(P));
-      return;
-    }
-    auto pk1 = tos::PrivateKey{tos::privkeys::Ed25519::random()};
-    perm_key_full_ = pk1.compute_public_key();
-    perm_key_ = perm_key_full_.compute_short_id();
-
-    auto pk2 = tos::PrivateKey{tos::privkeys::Ed25519::random()};
-    adnl_key_full_ = tos::adnl::AdnlNodeIdFull{pk2.compute_public_key()};
-    adnl_addr_ = adnl_key_full_.compute_short_id();
-
-    td::MultiPromise mp;
-
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
+    // The local identity and not the current-set lookup: a stake is how a node enters a
+    // set, so the first one is always signed by a node that is not in one yet.
+    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<ValidatorEngine::LocalIdentity> R) {
       if (R.is_error()) {
-        td::actor::send_closure(SelfId, &ValidatorElectionBidCreator::abort_query,
-                                R.move_as_error_prefix("keyring fail: "));
+        td::actor::send_closure(SelfId, &PqStakeAuthorizationCreator::abort_query,
+                                R.move_as_error_prefix("this node cannot authorise a stake: "));
       } else {
-        td::actor::send_closure(SelfId, &ValidatorElectionBidCreator::written_keys);
+        td::actor::send_closure(SelfId, &PqStakeAuthorizationCreator::got_identity, R.move_as_ok());
       }
     });
-    auto ig = mp.init_guard();
-    ig.add_promise(std::move(P));
-
-    td::actor::send_closure(keyring_, &tos::keyring::Keyring::add_key, std::move(pk1), false, ig.get_promise());
-    td::actor::send_closure(keyring_, &tos::keyring::Keyring::add_key, std::move(pk2), false, ig.get_promise());
+    td::actor::send_closure(engine_, &ValidatorEngine::get_local_pq_identity, election_date_, requested_key_,
+                            std::move(P));
   }
 
-  void written_keys() {
-    td::MultiPromise mp;
-
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
-      if (R.is_error()) {
-        td::actor::send_closure(SelfId, &ValidatorElectionBidCreator::abort_query,
-                                R.move_as_error_prefix("update config fail: "));
-      } else {
-        td::actor::send_closure(SelfId, &ValidatorElectionBidCreator::updated_config);
-      }
-    });
-    auto ig = mp.init_guard();
-    ig.add_promise(std::move(P));
-
-    td::actor::send_closure(engine_, &ValidatorEngine::add_key_to_set, perm_key_full_);
-    td::actor::send_closure(engine_, &ValidatorEngine::add_key_to_set, adnl_key_full_.pubkey());
-    td::actor::send_closure(engine_, &ValidatorEngine::try_add_validator_permanent_key, perm_key_, date_, ttl_,
-                            ig.get_promise());
-    td::actor::send_closure(engine_, &ValidatorEngine::try_add_validator_temp_key, perm_key_, perm_key_, ttl_,
-                            ig.get_promise());
-    td::actor::send_closure(engine_, &ValidatorEngine::try_add_adnl_node, adnl_addr_.pubkey_hash(), cat_,
-                            ig.get_promise());
-    td::actor::send_closure(engine_, &ValidatorEngine::try_add_validator_adnl_addr, perm_key_, adnl_addr_.pubkey_hash(),
-                            ttl_, ig.get_promise());
-  }
-
-  void got_perm_public_key(tos::PublicKey pub) {
-    perm_key_full_ = pub;
-    updated_config();
-  }
-
-  void updated_config() {
-    auto codeR = td::read_file_str(dir_ + "/validator-elect-req.fif");
-    if (codeR.is_error()) {
-      abort_query(codeR.move_as_error_prefix("fif not found (validator-elect-req.fif)"));
+  void got_identity(ValidatorEngine::LocalIdentity self) {
+    if (adnl_addr_.is_zero()) {
+      abort_query(td::Status::Error("a validator is reachable at an address it states"));
       return;
     }
-    auto R = fift::mem_run_fift(codeR.move_as_ok(),
-                                {"validator-elect-req.fif", wallet_, td::to_string(date_), td::to_string(frac),
-                                 adnl_addr_.bits256_value().to_hex(), "OUTPUT"},
-                                dir_ + "/");
-    if (R.is_error()) {
-      abort_query(R.move_as_error_prefix("fift fail (validator-elect-req.fif)"));
+    if (stake_owner_.is_zero()) {
+      abort_query(td::Status::Error("a stake belongs to an account, and zero is not one"));
+      return;
+    }
+    if (max_factor_ < 0x10000) {
+      abort_query(td::Status::Error("a weight factor is at least one, which is 0x10000"));
       return;
     }
 
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-      if (R.is_error()) {
-        td::actor::send_closure(SelfId, &ValidatorElectionBidCreator::abort_query,
-                                R.move_as_error_prefix("sign fail: "));
-      } else {
-        td::actor::send_closure(SelfId, &ValidatorElectionBidCreator::signed_bid, R.move_as_ok());
-      }
-    });
-
-    auto res = R.move_as_ok();
-    auto to_signR = res.source_lookup.read_file("OUTPUT");
-    if (to_signR.is_error()) {
-      abort_query(td::Status::Error(PSTRING() << "strange error: no to sign file. Output: " << res.output));
+    // The one routine that assembles and signs a stake, shared with the operator tool so
+    // the two cannot diverge. It derives the key identity from the signer, under the
+    // election domain the elector shares with complaint votes and with nothing a wallet
+    // ever signs. A stake consults no validator set: this is a node's first entry into one.
+    auto authorization = tos::pq::sign_stake_authorization(*self.signer, self.global_id, election_date_, max_factor_,
+                                                           self.validator_id.value, adnl_addr_, stake_owner_);
+    if (!authorization.has_value()) {
+      abort_query(td::Status::Error("the post-quantum consensus key could not sign this stake"));
       return;
     }
 
-    td::actor::send_closure(keyring_, &tos::keyring::Keyring::sign_message, perm_key_,
-                            td::BufferSlice{to_signR.move_as_ok().data}, std::move(P));
-  }
-
-  void signed_bid(td::BufferSlice signature) {
-    signature_ = std::move(signature);
-
-    auto codeR = td::read_file_str(dir_ + "/validator-elect-signed.fif");
-    if (codeR.is_error()) {
-      abort_query(codeR.move_as_error_prefix("fif not found (validator-elect-req.fif)"));
-      return;
-    }
-    auto R = fift::mem_run_fift(
-        codeR.move_as_ok(),
-        {"validator-elect-signed.fif", wallet_, td::to_string(date_), td::to_string(frac),
-         adnl_addr_.bits256_value().to_hex(), td::base64_encode(perm_key_full_.export_as_slice().as_slice()),
-         td::base64_encode(signature_.as_slice()), "OUTPUT"},
-        dir_ + "/");
-    if (R.is_error()) {
-      abort_query(R.move_as_error_prefix("fift fail (validator-elect-req.fif)"));
-      return;
-    }
-
-    auto res = R.move_as_ok();
-    auto dataR = res.source_lookup.read_file("OUTPUT");
-    if (dataR.is_error()) {
-      abort_query(td::Status::Error("strage error: no result boc"));
-      return;
-    }
-
-    result_ = td::BufferSlice(dataR.move_as_ok().data);
-    finish_query();
+    const auto &held_key = self.signer->consensus_key();
+    promise_.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_pqStakeAuthorization>(
+        self.validator_id.value, authorization->key_id, static_cast<td::int32>(held_key.algorithm_id),
+        td::BufferSlice(held_key.public_key), td::BufferSlice(authorization->signature.signature)));
+    stop();
   }
 
   void abort_query(td::Status error) {
     promise_.set_value(ValidatorEngine::create_control_query_error(std::move(error)));
-    stop();
-  }
-  void finish_query() {
-    promise_.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_electionBid>(
-        date_, perm_key_.tl(), adnl_addr_.bits256_value(), std::move(result_)));
     stop();
   }
 
  private:
-  td::uint32 date_;
-  std::string addr_;
-  std::string wallet_;
-  std::string dir_;
-  std::vector<tos::PublicKeyHash> old_keys_;
+  td::uint32 election_date_;
+  td::uint32 max_factor_;
+  td::Bits256 adnl_addr_;
+  td::Bits256 stake_owner_;
+  std::optional<tos::ConsensusKeyId> requested_key_;
   td::actor::ActorId<ValidatorEngine> engine_;
-  td::actor::ActorId<tos::keyring::Keyring> keyring_;
-
   td::Promise<td::BufferSlice> promise_;
-
-  td::uint32 ttl_;
-  AdnlCategory cat_ = 2;
-  double frac = 2.7;
-
-  tos::PublicKeyHash perm_key_;
-  tos::PublicKey perm_key_full_;
-  tos::adnl::AdnlNodeIdShort adnl_addr_;
-  tos::adnl::AdnlNodeIdFull adnl_key_full_;
-
-  td::BufferSlice signature_;
-  td::BufferSlice result_;
 };
 
+// The two votes a validator casts as a member of the current set: on a configuration
+// proposal, and on a complaint against a validator of a past election. Both are signed
+// with this node's post-quantum consensus key, under their own frozen context, over a
+// preimage that names the exact validator set counting the vote.
+//
+// Neither the signed bytes nor the message body is built by a script any more. A script
+// is a second place the wire is written, and the signature it could produce -- Ed25519,
+// over a preimage that names no validator set -- is one no contract in this tree accepts.
 class ValidatorProposalVoteCreator : public td::actor::Actor {
  public:
-  ValidatorProposalVoteCreator(td::BufferSlice proposal, std::string dir, td::actor::ActorId<ValidatorEngine> engine,
-                               td::actor::ActorId<tos::keyring::Keyring> keyring, td::Promise<td::BufferSlice> promise)
-      : proposal_(std::move(proposal))
-      , dir_(std::move(dir))
-      , engine_(engine)
-      , keyring_(keyring)
-      , promise_(std::move(promise)) {
+  ValidatorProposalVoteCreator(td::BufferSlice proposal, td::actor::ActorId<ValidatorEngine> engine,
+                               td::Promise<td::BufferSlice> promise)
+      : proposal_(std::move(proposal)), engine_(engine), promise_(std::move(promise)) {
   }
 
   void start_up() override {
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<std::pair<tos::PublicKey, size_t>> R) {
+    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<ValidatorEngine::LocalValidator> R) {
       if (R.is_error()) {
         td::actor::send_closure(SelfId, &ValidatorProposalVoteCreator::abort_query,
-                                R.move_as_error_prefix("failed to find self permanent key: "));
+                                R.move_as_error_prefix("this node cannot vote: "));
       } else {
-        auto v = R.move_as_ok();
-        td::actor::send_closure(SelfId, &ValidatorProposalVoteCreator::got_id, v.first, v.second);
+        td::actor::send_closure(SelfId, &ValidatorProposalVoteCreator::got_validator, R.move_as_ok());
       }
     });
-    td::actor::send_closure(engine_, &ValidatorEngine::get_current_validator_perm_key, std::move(P));
+    td::actor::send_closure(engine_, &ValidatorEngine::get_current_validator, std::move(P));
   }
 
-  void got_id(tos::PublicKey pubkey, size_t idx) {
-    pubkey_ = std::move(pubkey);
-    idx_ = idx;
-    auto codeR = td::read_file_str(dir_ + "/config-proposal-vote-req.fif");
-    if (codeR.is_error()) {
-      abort_query(codeR.move_as_error_prefix("fif not found (validator-elect-req.fif)"));
+  void got_validator(ValidatorEngine::LocalValidator self) {
+    auto subjectR = block::pq::parse_vote_subject(proposal_.as_slice());
+    if (subjectR.is_error()) {
+      abort_query(subjectR.move_as_error());
       return;
     }
-    auto data = proposal_.as_slice().str();
-    auto R = fift::mem_run_fift(codeR.move_as_ok(), {"config-proposal-vote-req.fif", "-i", td::to_string(idx_), data},
-                                dir_ + "/");
-    if (R.is_error()) {
-      abort_query(R.move_as_error_prefix("fift fail (cofig-proposal-vote-req.fif)"));
+    auto proposal_hash = subjectR.move_as_ok();
+    if (self.idx > std::numeric_limits<td::uint16>::max()) {
+      abort_query(td::Status::Error("this node's index in the validator set does not fit in 16 bits"));
       return;
     }
-    auto res = R.move_as_ok();
-    auto to_signR = res.source_lookup.read_file("validator-to-sign.req");
-    if (to_signR.is_error()) {
-      abort_query(td::Status::Error(PSTRING() << "strange error: no to sign file. Output: " << res.output));
+    auto idx = static_cast<td::uint16>(self.idx);
+
+    auto preimage = tos::pq::config_vote_preimage(self.global_id, self.validator_set_id, self.validator_id.value, idx,
+                                                  proposal_hash);
+    auto signature = self.signer->sign_config_vote(preimage);
+    if (!signature.has_value()) {
+      abort_query(td::Status::Error("the post-quantum consensus key could not sign this vote"));
       return;
     }
-    auto to_sign = td::BufferSlice{to_signR.move_as_ok().data};
-
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-      if (R.is_error()) {
-        td::actor::send_closure(SelfId, &ValidatorProposalVoteCreator::abort_query,
-                                R.move_as_error_prefix("sign fail: "));
-      } else {
-        td::actor::send_closure(SelfId, &ValidatorProposalVoteCreator::signed_vote, R.move_as_ok());
-      }
-    });
-
-    td::actor::send_closure(keyring_, &tos::keyring::Keyring::sign_message, pubkey_.compute_short_id(),
-                            std::move(to_sign), std::move(P));
-  }
-
-  void signed_vote(td::BufferSlice signature) {
-    signature_ = std::move(signature);
-
-    auto codeR = td::read_file_str(dir_ + "/config-proposal-vote-signed.fif");
-    if (codeR.is_error()) {
-      abort_query(codeR.move_as_error_prefix("fif not found (config-proposal-vote-signed.fif)"));
+    auto bodyR = block::pq::config_vote_body(
+        block::pq::vote_query_id(static_cast<td::uint32>(td::Clocks::system()), proposal_hash), idx, proposal_hash,
+        td::Slice{signature->signature});
+    if (bodyR.is_error()) {
+      abort_query(bodyR.move_as_error());
+      return;
+    }
+    auto serialized = vm::std_boc_serialize(bodyR.move_as_ok(), 2);
+    if (serialized.is_error()) {
+      abort_query(serialized.move_as_error());
       return;
     }
 
-    auto key = td::base64_encode(pubkey_.export_as_slice().as_slice());
-    auto sig = td::base64_encode(signature_.as_slice());
-
-    auto data = proposal_.as_slice().str();
-    auto R = fift::mem_run_fift(
-        codeR.move_as_ok(), {"config-proposal-vote-signed.fif", "-i", td::to_string(idx_), data, key, sig}, dir_ + "/");
-    if (R.is_error()) {
-      abort_query(R.move_as_error_prefix("fift fail (config-proposal-vote-signed.fif)"));
-      return;
-    }
-
-    auto res = R.move_as_ok();
-    auto dataR = res.source_lookup.read_file("vote-msg-body.boc");
-    if (dataR.is_error()) {
-      abort_query(td::Status::Error("strage error: no result boc"));
-      return;
-    }
-
-    result_ = td::BufferSlice(dataR.move_as_ok().data);
+    validator_id_ = self.validator_id;
+    result_ = serialized.move_as_ok();
     finish_query();
   }
 
@@ -1253,123 +1192,78 @@ class ValidatorProposalVoteCreator : public td::actor::Actor {
     stop();
   }
   void finish_query() {
+    // The identity field carries the stable validator identity. There is no permanent
+    // key left to name: a post-quantum validator is its validator_id, and the key it
+    // signs with is the one the set records for that identity.
     promise_.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_proposalVote>(
-        pubkey_.compute_short_id().bits256_value(), std::move(result_)));
+        validator_id_.value, std::move(result_)));
     stop();
   }
 
  private:
   td::BufferSlice proposal_;
-  std::string dir_;
 
-  tos::PublicKey pubkey_;
-  size_t idx_;
-
-  td::BufferSlice signature_;
+  tos::ValidatorId validator_id_;
   td::BufferSlice result_;
   td::actor::ActorId<ValidatorEngine> engine_;
-  td::actor::ActorId<tos::keyring::Keyring> keyring_;
 
   td::Promise<td::BufferSlice> promise_;
-
-  tos::PublicKeyHash perm_key_;
-  tos::PublicKey perm_key_full_;
-  tos::adnl::AdnlNodeIdShort adnl_addr_;
-  tos::adnl::AdnlNodeIdFull adnl_key_full_;
 };
 
 class ValidatorPunishVoteCreator : public td::actor::Actor {
  public:
-  ValidatorPunishVoteCreator(td::uint32 election_id, td::BufferSlice proposal, std::string dir,
-                             td::actor::ActorId<ValidatorEngine> engine,
-                             td::actor::ActorId<tos::keyring::Keyring> keyring, td::Promise<td::BufferSlice> promise)
-      : election_id_(election_id)
-      , proposal_(std::move(proposal))
-      , dir_(std::move(dir))
-      , engine_(engine)
-      , keyring_(keyring)
-      , promise_(std::move(promise)) {
+  ValidatorPunishVoteCreator(td::uint32 election_id, td::BufferSlice proposal,
+                             td::actor::ActorId<ValidatorEngine> engine, td::Promise<td::BufferSlice> promise)
+      : election_id_(election_id), proposal_(std::move(proposal)), engine_(engine), promise_(std::move(promise)) {
   }
 
   void start_up() override {
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<std::pair<tos::PublicKey, size_t>> R) {
+    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<ValidatorEngine::LocalValidator> R) {
       if (R.is_error()) {
         td::actor::send_closure(SelfId, &ValidatorPunishVoteCreator::abort_query,
-                                R.move_as_error_prefix("failed to find self permanent key: "));
+                                R.move_as_error_prefix("this node cannot vote: "));
       } else {
-        auto v = R.move_as_ok();
-        td::actor::send_closure(SelfId, &ValidatorPunishVoteCreator::got_id, v.first, v.second);
+        td::actor::send_closure(SelfId, &ValidatorPunishVoteCreator::got_validator, R.move_as_ok());
       }
     });
-    td::actor::send_closure(engine_, &ValidatorEngine::get_current_validator_perm_key, std::move(P));
+    td::actor::send_closure(engine_, &ValidatorEngine::get_current_validator, std::move(P));
   }
 
-  void got_id(tos::PublicKey pubkey, size_t idx) {
-    pubkey_ = std::move(pubkey);
-    idx_ = idx;
-    auto codeR = td::read_file_str(dir_ + "/complaint-vote-req.fif");
-    if (codeR.is_error()) {
-      abort_query(codeR.move_as_error_prefix("fif not found (complaint-vote-req.fif)"));
+  void got_validator(ValidatorEngine::LocalValidator self) {
+    auto subjectR = block::pq::parse_vote_subject(proposal_.as_slice());
+    if (subjectR.is_error()) {
+      abort_query(subjectR.move_as_error());
       return;
     }
-    auto data = proposal_.as_slice().str();
-    auto R = fift::mem_run_fift(codeR.move_as_ok(),
-                                {"complaint-vote-req.fif", td::to_string(idx_), td::to_string(election_id_), data},
-                                dir_ + "/");
-    if (R.is_error()) {
-      abort_query(R.move_as_error_prefix("fift fail (complaint-vote-req.fif)"));
+    auto complaint_hash = subjectR.move_as_ok();
+    if (self.idx > std::numeric_limits<td::uint16>::max()) {
+      abort_query(td::Status::Error("this node's index in the validator set does not fit in 16 bits"));
       return;
     }
-    auto res = R.move_as_ok();
-    auto to_signR = res.source_lookup.read_file("validator-to-sign.req");
-    if (to_signR.is_error()) {
-      abort_query(td::Status::Error(PSTRING() << "strange error: no to sign file. Output: " << res.output));
+    auto idx = static_cast<td::uint16>(self.idx);
+
+    auto preimage = tos::pq::complaint_vote_preimage(self.global_id, self.validator_set_id, self.validator_id.value,
+                                                     idx, election_id_, complaint_hash);
+    auto signature = self.signer->sign_election(preimage);
+    if (!signature.has_value()) {
+      abort_query(td::Status::Error("the post-quantum consensus key could not sign this vote"));
       return;
     }
-    auto to_sign = td::BufferSlice{to_signR.move_as_ok().data};
-
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<td::BufferSlice> R) {
-      if (R.is_error()) {
-        td::actor::send_closure(SelfId, &ValidatorPunishVoteCreator::abort_query,
-                                R.move_as_error_prefix("sign fail: "));
-      } else {
-        td::actor::send_closure(SelfId, &ValidatorPunishVoteCreator::signed_vote, R.move_as_ok());
-      }
-    });
-
-    td::actor::send_closure(keyring_, &tos::keyring::Keyring::sign_message, pubkey_.compute_short_id(),
-                            std::move(to_sign), std::move(P));
-  }
-
-  void signed_vote(td::BufferSlice signature) {
-    signature_ = std::move(signature);
-
-    auto codeR = td::read_file_str(dir_ + "/complaint-vote-signed.fif");
-    if (codeR.is_error()) {
-      abort_query(codeR.move_as_error_prefix("fif not found (complaint-vote-signed.fif)"));
+    auto bodyR = block::pq::complaint_vote_body(
+        block::pq::vote_query_id(static_cast<td::uint32>(td::Clocks::system()), complaint_hash), idx, election_id_,
+        complaint_hash, td::Slice{signature->signature});
+    if (bodyR.is_error()) {
+      abort_query(bodyR.move_as_error());
+      return;
+    }
+    auto serialized = vm::std_boc_serialize(bodyR.move_as_ok(), 2);
+    if (serialized.is_error()) {
+      abort_query(serialized.move_as_error());
       return;
     }
 
-    auto key = td::base64_encode(pubkey_.export_as_slice().as_slice());
-    auto sig = td::base64_encode(signature_.as_slice());
-
-    auto data = proposal_.as_slice().str();
-    auto R = fift::mem_run_fift(
-        codeR.move_as_ok(),
-        {"complaint-vote-signed.fif", td::to_string(idx_), td::to_string(election_id_), data, key, sig}, dir_ + "/");
-    if (R.is_error()) {
-      abort_query(R.move_as_error_prefix("fift fail (complaint-vote-signed.fif)"));
-      return;
-    }
-
-    auto res = R.move_as_ok();
-    auto dataR = res.source_lookup.read_file("vote-query.boc");
-    if (dataR.is_error()) {
-      abort_query(td::Status::Error("strage error: no result boc"));
-      return;
-    }
-
-    result_ = td::BufferSlice(dataR.move_as_ok().data);
+    validator_id_ = self.validator_id;
+    result_ = serialized.move_as_ok();
     finish_query();
   }
 
@@ -1379,29 +1273,19 @@ class ValidatorPunishVoteCreator : public td::actor::Actor {
   }
   void finish_query() {
     promise_.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_proposalVote>(
-        pubkey_.compute_short_id().bits256_value(), std::move(result_)));
+        validator_id_.value, std::move(result_)));
     stop();
   }
 
  private:
   td::uint32 election_id_;
   td::BufferSlice proposal_;
-  std::string dir_;
 
-  tos::PublicKey pubkey_;
-  size_t idx_;
-
-  td::BufferSlice signature_;
+  tos::ValidatorId validator_id_;
   td::BufferSlice result_;
   td::actor::ActorId<ValidatorEngine> engine_;
-  td::actor::ActorId<tos::keyring::Keyring> keyring_;
 
   td::Promise<td::BufferSlice> promise_;
-
-  tos::PublicKeyHash perm_key_;
-  tos::PublicKey perm_key_full_;
-  tos::adnl::AdnlNodeIdShort adnl_addr_;
-  tos::adnl::AdnlNodeIdFull adnl_key_full_;
 };
 
 class CheckDhtServerStatusQuery : public td::actor::Actor {
@@ -1469,6 +1353,154 @@ class CheckDhtServerStatusQuery : public td::actor::Actor {
   td::actor::ActorId<tos::adnl::Adnl> adnl_;
   td::Promise<td::BufferSlice> promise_;
 };
+
+namespace {
+
+// Requests from the wallet-index worker for block data the block-apply hook
+// did not have. The worker is a plain thread and cannot send to an actor, so
+// it leaves requests here and the fetch actor below collects them.
+struct Wc0IndexFetchMailbox {
+  struct Request {
+    tos::BlockIdExt block_id;
+    bool need_state;
+    std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done;
+  };
+  struct StateRequest {
+    td::Bits256 address;
+    std::function<void(td::Result<tos_wallet_index::Wc0NewestState>)> done;
+  };
+  std::mutex mutex;
+  std::deque<Request> requests;
+  std::deque<StateRequest> state_requests;
+};
+
+// Reads the block data (and state) the wallet-index worker asks for from the
+// validator's databases. Block application never waits for these reads.
+class Wc0IndexBlockFetchActor : public td::actor::Actor {
+ public:
+  Wc0IndexBlockFetchActor(td::actor::ActorId<tos::validator::ValidatorManagerInterface> manager,
+                          std::shared_ptr<Wc0IndexFetchMailbox> mailbox)
+      : manager_(std::move(manager)), mailbox_(std::move(mailbox)) {
+  }
+
+  void start_up() override {
+    alarm_timestamp() = td::Timestamp::in(kPollInterval);
+  }
+
+  void alarm() override {
+    std::deque<Wc0IndexFetchMailbox::Request> requests;
+    std::deque<Wc0IndexFetchMailbox::StateRequest> state_requests;
+    {
+      std::lock_guard<std::mutex> guard(mailbox_->mutex);
+      requests.swap(mailbox_->requests);
+      state_requests.swap(mailbox_->state_requests);
+    }
+    for (auto &request : requests) {
+      fetch(std::move(request));
+    }
+    for (auto &request : state_requests) {
+      fetch_newest_state(std::move(request));
+    }
+    alarm_timestamp() = td::Timestamp::in(kPollInterval);
+  }
+
+ private:
+  static constexpr double kPollInterval = 0.01;
+
+  void fetch(Wc0IndexFetchMailbox::Request request) {
+    auto manager = manager_;
+    auto block_id = request.block_id;
+    auto need_state = request.need_state;
+    auto done = std::move(request.done);
+    td::actor::send_closure(
+        manager, &tos::validator::ValidatorManagerInterface::get_block_handle, block_id, false,
+        [manager, need_state, done = std::move(done)](td::Result<tos::validator::BlockHandle> R) mutable {
+          if (R.is_error()) {
+            done(R.move_as_error_prefix("block handle: "));
+            return;
+          }
+          auto handle = R.move_as_ok();
+          td::actor::send_closure(
+              manager, &tos::validator::ValidatorManagerInterface::get_block_data_from_db, handle,
+              [manager, handle, need_state,
+               done = std::move(done)](td::Result<td::Ref<tos::validator::BlockData>> R2) mutable {
+                if (R2.is_error()) {
+                  done(R2.move_as_error_prefix("block data: "));
+                  return;
+                }
+                if (R2.ok().is_null()) {
+                  done(td::Status::Error("block data: not found"));
+                  return;
+                }
+                tos_wallet_index::Wc0FetchedBlock fetched{R2.ok()->root_cell(), {}};
+                if (!need_state) {
+                  done(std::move(fetched));
+                  return;
+                }
+                td::actor::send_closure(
+                    manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, handle,
+                    [fetched = std::move(fetched),
+                     done = std::move(done)](td::Result<td::Ref<tos::validator::ShardState>> R3) mutable {
+                      // Without its state the block is still indexed; its
+                      // token candidates wait for a later block's state.
+                      if (R3.is_ok() && R3.ok().not_null()) {
+                        fetched.state_root = R3.ok()->root_cell();
+                      }
+                      done(std::move(fetched));
+                    });
+              });
+        });
+  }
+
+  // The newest committed state of the basechain shard holding the address:
+  // the top block of that shard in the newest masterchain state, which the
+  // node keeps however far archive pruning has gone.
+  void fetch_newest_state(Wc0IndexFetchMailbox::StateRequest request) {
+    auto manager = manager_;
+    auto address = request.address;
+    auto done = std::move(request.done);
+    td::actor::send_closure(
+        manager, &tos::validator::ValidatorManagerInterface::get_top_masterchain_state,
+        [manager, address, done = std::move(done)](td::Result<td::Ref<tos::validator::MasterchainState>> R) mutable {
+          if (R.is_error() || R.ok().is_null()) {
+            done(td::Status::Error("no masterchain state"));
+            return;
+          }
+          // The deepest possible shard of the address; the configuration
+          // answers with the shard that holds it.
+          tos::ShardIdFull leaf{0, tos::extract_top64(address) | 1};
+          auto shard = R.ok()->get_shard_from_config(leaf, false);
+          if (shard.is_null()) {
+            done(td::Status::Error("no basechain shard holds the address"));
+            return;
+          }
+          auto top = shard->top_block_id();
+          auto end_lt = shard->end_lt();
+          td::actor::send_closure(
+              manager, &tos::validator::ValidatorManagerInterface::get_block_handle, top, false,
+              [manager, top, end_lt, done = std::move(done)](td::Result<tos::validator::BlockHandle> R2) mutable {
+                if (R2.is_error()) {
+                  done(R2.move_as_error_prefix("block handle: "));
+                  return;
+                }
+                td::actor::send_closure(
+                    manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, R2.move_as_ok(),
+                    [top, end_lt, done = std::move(done)](td::Result<td::Ref<tos::validator::ShardState>> R3) mutable {
+                      if (R3.is_error() || R3.ok().is_null()) {
+                        done(td::Status::Error("the newest shard state is not available"));
+                        return;
+                      }
+                      done(tos_wallet_index::Wc0NewestState{top, end_lt, R3.ok()->root_cell()});
+                    });
+              });
+        });
+  }
+
+  td::actor::ActorId<tos::validator::ValidatorManagerInterface> manager_;
+  std::shared_ptr<Wc0IndexFetchMailbox> mailbox_;
+};
+
+}  // namespace
 
 #if TOS_USE_JEMALLOC
 class JemallocStatsWriter : public td::actor::Actor {
@@ -1558,6 +1590,16 @@ void ValidatorEngine::schedule_shutdown(double at) {
     tos::delay_action(
         []() {
           LOG(WARNING) << "Shutting down as scheduled";
+          // Mark every queued block for recovery before the process ends.
+          // The hook stays installed: block-apply actors may still read it,
+          // and from here on a block it receives is only recorded for
+          // recovery, without block application waiting for that. Blocks can
+          // still be applied until the process exits, so the run is not
+          // recorded as finished.
+          if (!tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::MayStillApply)) {
+            LOG(ERROR) << "wc0-index: indexing did not finish cleanly before shutdown; "
+                       << "the next start reports that the index needs a rebuild";
+          }
           std::_Exit(0);
         },
         ts);
@@ -1598,10 +1640,10 @@ void ValidatorEngine::alarm() {
       for (auto &val : config_.validators) {
         bool is_validator = false;
         if (validator_set_next_.not_null() &&
-            validator_set_next_->is_validator(tos::NodeIdShort{val.first.bits256_value()})) {
+            validator_set_next_->is_validator(tos::ValidatorId{val.first.bits256_value()})) {
           is_validator = true;
         }
-        if (validator_set_.not_null() && validator_set_->is_validator(tos::NodeIdShort{val.first.bits256_value()})) {
+        if (validator_set_.not_null() && validator_set_->is_validator(tos::ValidatorId{val.first.bits256_value()})) {
           is_validator = true;
         }
         if (!is_validator && val.second.election_date < cur_t.first && cur_t.first + 600 < state_->get_unix_time()) {
@@ -1610,16 +1652,36 @@ void ValidatorEngine::alarm() {
         }
       }
       for (auto &x : to_del) {
+        std::vector<tos::adnl::AdnlNodeIdShort> validator_adnl_ids;
+        if (auto it = config_.validators.find(x); it != config_.validators.end()) {
+          for (const auto &[id, _] : it->second.adnl_ids) {
+            validator_adnl_ids.emplace_back(id);
+          }
+        }
         config_.config_del_validator_permanent_key(x);
+        for (auto id : validator_adnl_ids) {
+          del_local_validator_adnl_id(id);
+        }
         if (!validator_manager_.empty()) {
           td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::del_permanent_key, x,
                                   [](td::Result<>) {});
         }
-        if (!full_node_.empty()) {
-          td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::del_permanent_key, x,
-                                  [](td::Result<>) {});
-        }
         need_write = true;
+      }
+
+      std::vector<std::pair<tos::PublicKeyHash, tos::PublicKeyHash>> expired_validator_adnl_ids;
+      for (const auto &[permanent_id, validator] : config_.validators) {
+        for (const auto &[adnl_id, expire_at] : validator.adnl_ids) {
+          if (expire_at <= state_->get_unix_time()) {
+            expired_validator_adnl_ids.emplace_back(permanent_id, adnl_id);
+          }
+        }
+      }
+      for (const auto &[permanent_id, adnl_id] : expired_validator_adnl_ids) {
+        if (config_.config_del_validator_adnl_id(permanent_id, adnl_id).move_as_ok()) {
+          del_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort{adnl_id});
+          need_write = true;
+        }
       }
 
       {
@@ -1629,14 +1691,14 @@ void ValidatorEngine::alarm() {
             fs_to_del.insert(x.first);
             continue;
           }
-          auto issued_by = x.second.issued_by().compute_short_id().bits256_value();
-          if (validator_set_.not_null() && validator_set_->is_validator(issued_by)) {
+          auto issued_by = x.second.issued_by().compute_short_id();
+          if (is_validator_transport_root(issued_by, validator_set_)) {
             continue;
           }
-          if (validator_set_prev_.not_null() && validator_set_prev_->is_validator(issued_by)) {
+          if (is_validator_transport_root(issued_by, validator_set_prev_)) {
             continue;
           }
-          if (validator_set_next_.not_null() && validator_set_next_->is_validator(issued_by)) {
+          if (is_validator_transport_root(issued_by, validator_set_next_)) {
             continue;
           }
           fs_to_del.insert(x.first);
@@ -1714,6 +1776,7 @@ void ValidatorEngine::got_state(td::Ref<tos::validator::MasterchainState> state)
   validator_set_ = state_->get_total_validator_set(0);
   validator_set_next_ = state_->get_total_validator_set(1);
   validator_set_prev_ = state_->get_total_validator_set(-1);
+  update_local_pq_validator_adnl_ids();
 }
 
 td::Status ValidatorEngine::load_global_config() {
@@ -1768,15 +1831,24 @@ td::Status ValidatorEngine::load_global_config() {
     }
   }
 
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_network,
+                          tos::health::network_identity(zero_state.root_hash.as_slice()));
   validator_options_ = tos::validator::ValidatorManagerOptions::create(zero_state, init_block);
   if (state_ttl_ != 0) {
     validator_options_.write().set_state_ttl(state_ttl_);
   }
-  if (enable_validator_consensus_cleanup_) {
-    validator_options_.write().set_validator_consensus_cleanup_enabled(true);
+  validator_options_.write().set_validator_consensus_cleanup_enabled(validator_consensus_cleanup_);
+  if (validator_consensus_cleanup_) {
+    LOG(INFO) << "validator consensus cleanup: enabled";
+  } else {
+    LOG(WARNING) << "validator consensus cleanup: disabled; retired validator consensus databases are kept and "
+                    "the database grows without bound";
   }
   if (test_crash_cleanup_before_erase_) {
     validator_options_.write().set_test_crash_cleanup_before_erase(true);
+  }
+  if (ext_message_work_profile_) {
+    TRY_STATUS(validator_options_.write().set_ext_message_work_profile(ext_message_work_profile_.value()));
   }
   if (max_mempool_num_ != 0) {
     validator_options_.write().set_max_mempool_num(max_mempool_num_);
@@ -2269,6 +2341,13 @@ void ValidatorEngine::load_config(td::Promise<> promise) {
   }
   auto conf_json = conf_json_R.move_as_ok();
 
+  // The consensus keys are checked as written, before the permissive decoder can default
+  // a misspelt or missing window field and the rewrite below makes that permanent.
+  if (auto refused = tos::pq::check_consensus_key_json(conf_json)) {
+    promise.set_error(td::Status::Error(PSLICE() << "post-quantum consensus configuration refused: " << *refused));
+    return;
+  }
+
   tos::tos_api::engine_validator_config conf;
   auto S = tos::tos_api::from_json(conf, conf_json.get_object());
   if (S.is_error()) {
@@ -2314,6 +2393,38 @@ void ValidatorEngine::write_config(td::Promise<> promise) {
   promise.set_value({});
 }
 
+td::Status ValidatorEngine::write_config_durably() {
+  // As write_config, and then the directory entry the rename created is flushed too: a
+  // consensus key change is reported as made only once it would survive a crash. A failed
+  // directory flush leaves the new configuration in place but is reported, like the
+  // operator tool's exit status 3.
+  auto s = td::json_encode<std::string>(td::ToJson(*config_.tl().get()), true);
+  td::WriteFileOptions options;
+  options.need_sync = true;
+  options.need_lock = true;
+  auto S = td::write_file(temp_config_file(), s, options);
+  if (S.is_error()) {
+    td::unlink(temp_config_file()).ignore();
+    return S.move_as_error_prefix("the configuration could not be written: ");
+  }
+  auto R = td::rename(temp_config_file(), config_file_);
+  if (R.is_error()) {
+    return R.move_as_error_prefix("the configuration could not be replaced: ");
+  }
+  const int dir = ::open(db_root_.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY);
+  const bool flushed = dir >= 0 && ::fsync(dir) == 0;
+  const int flush_errno = errno;
+  if (dir >= 0) {
+    ::close(dir);
+  }
+  if (!flushed) {
+    return td::Status::PosixError(flush_errno,
+                                  "the configuration is in place but not confirmed durable (the "
+                                  "directory flush failed); run sync before relying on it");
+  }
+  return td::Status::OK();
+}
+
 void ValidatorEngine::schedule_fast_sync_member_certificates_write() {
   if (!fast_sync_member_certificates_write_scheduled_) {
     fast_sync_member_certificates_write_scheduled_ = true;
@@ -2348,13 +2459,56 @@ void ValidatorEngine::got_key(tos::PublicKey key) {
 }
 
 void ValidatorEngine::start() {
+  check_full_node_master_and_slave_config();
+}
+
+// The full-node master service is allowlist-only, and a slave must sign in to
+// its masters with its full-node key. Both are checked before the node starts
+// anything, so a configuration that could never be served fails at once
+// rather than after the node has started syncing.
+void ValidatorEngine::check_full_node_master_and_slave_config() {
+  if (!config_.full_node_masters.empty()) {
+    auto S = tos::validator::fullnode::FullNodeMasterLimiter::check_trusted(full_node_master_trusted_);
+    if (S.is_error()) {
+      LOG(ERROR) << "refusing to start the full-node master: " << S;
+      std::_Exit(2);
+    }
+  }
+  if (config_.full_node_slaves.empty()) {
+    start_after_config_checks();
+    return;
+  }
+  auto full_node_id = tos::adnl::AdnlNodeIdShort{config_.full_node};
+  auto S = tos::validator::fullnode::check_full_node_slave_id(full_node_id);
+  if (S.is_error()) {
+    LOG(ERROR) << "refusing to start the full-node slave: " << S;
+    std::_Exit(2);
+  }
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this), full_node_id](td::Result<tos::PrivateKey> R) {
+    auto key = tos::validator::fullnode::full_node_slave_sign_in_key(full_node_id, std::move(R));
+    if (key.is_error()) {
+      LOG(ERROR) << "refusing to start the full-node slave: " << key.move_as_error();
+      std::_Exit(2);
+    }
+    td::actor::send_closure(SelfId, &ValidatorEngine::loaded_full_node_slave_key, key.move_as_ok());
+  });
+  td::actor::send_closure(keyring_, &tos::keyring::Keyring::export_private_key, full_node_id.pubkey_hash(),
+                          std::move(P));
+}
+
+void ValidatorEngine::loaded_full_node_slave_key(tos::PrivateKey key) {
+  full_node_slave_key_ = std::move(key);
+  start_after_config_checks();
+}
+
+void ValidatorEngine::start_after_config_checks() {
   set_shard_check_function();
   load_collators_list();
   load_shard_block_verifier_config();
   load_noncritical_params_overrides();
   read_config_ = true;
   td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::PrometheusExporter>,
-                          exporter_.get());
+                          "exporter", exporter_.get());
   start_adnl();
 }
 
@@ -2464,7 +2618,7 @@ void ValidatorEngine::start_rldp() {
   CHECK(!keyring_.empty());
   quic_ = td::actor::create_actor<tos::quic::QuicSender>("QuicSender", peer_table, keyring_.get());
   td::actor::send_closure(quic_.get(), &tos::quic::QuicSender::set_quic_options, quic_options_);
-  td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>,
+  td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::quic::QuicSender>, "quic",
                           quic_.get());
   td::actor::send_closure(rldp2_, &tos::rldp2::Rldp::set_default_mtu, 2048);
   started_rldp();
@@ -2482,6 +2636,8 @@ void ValidatorEngine::start_overlays() {
     };
     overlay_manager_ = tos::overlay::Overlays::create(db_root_, keyring_.get(), adnl_.get(),
                                                       dht_nodes_[default_dht_node_].get(), buffer_limits);
+    td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::overlay::Overlays>,
+                            "overlay", overlay_manager_.get());
   }
   started_overlays();
 }
@@ -2504,17 +2660,40 @@ void ValidatorEngine::start_validator() {
   // would report the index as disabled. When enabled, the hook is installed
   // before the validator manager exists so it is never written while
   // block-apply actors may already be reading it.
-  // Note: on RPC nodes the hook still runs synchronously on the block-apply
-  // path; moving it off that path is a separate change.
-  if (json_rpc_addr_) {
-    tos_wallet_index::open_wallet_index_db(db_root_);
-    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::wc0_index_block;
+  // The hook only queues the block for a dedicated indexing worker, so block
+  // application does not wait on index processing, its WAL writes, or a read
+  // of block data it did not have: the worker fetches that itself.
+  // When the index cannot be opened or made safe to index into, no worker is
+  // started and no hook installed: a worker with nothing to mark into would
+  // hold queued blocks forever, and the account-index RPC reports the index
+  // unavailable instead.
+  if (json_rpc_addr_ && tos_wallet_index::open_wallet_index_db(db_root_) &&
+      tos_wallet_index::start_wc0_index_worker(true)) {
+    tos::validator::g_wc0_block_index_hook = &tos_wallet_index::enqueue_wc0_index_block;
   }
 
   validator_manager_ = tos::validator::ValidatorManagerFactory::create(
       validator_options_, db_root_, keyring_.get(), adnl_.get(), rldp2_.get(), quic_.get(), overlay_manager_.get());
 
   if (json_rpc_addr_) {
+    if (tos::validator::g_wc0_block_index_hook) {
+      // Blocks the hook received without their data are read by the worker
+      // through this actor, never by block application.
+      auto mailbox = std::make_shared<Wc0IndexFetchMailbox>();
+      td::actor::create_actor<Wc0IndexBlockFetchActor>("wc0indexfetch", validator_manager_.get(), mailbox).release();
+      tos_wallet_index::set_wc0_index_block_fetcher(
+          [mailbox](const tos::BlockIdExt &block_id, bool need_state,
+                    std::function<void(td::Result<tos_wallet_index::Wc0FetchedBlock>)> done) {
+            std::lock_guard<std::mutex> guard(mailbox->mutex);
+            mailbox->requests.push_back({block_id, need_state, std::move(done)});
+          });
+      tos_wallet_index::set_wc0_index_state_fetcher(
+          [mailbox](const td::Bits256 &address,
+                    std::function<void(td::Result<tos_wallet_index::Wc0NewestState>)> done) {
+            std::lock_guard<std::mutex> guard(mailbox->mutex);
+            mailbox->state_requests.push_back({address, std::move(done)});
+          });
+    }
     recover_wc0_index();
   }
 
@@ -2523,9 +2702,118 @@ void ValidatorEngine::start_validator() {
     td::actor::send_closure(json_rpc_server_, &tos::JsonRpcServer::listen, json_rpc_addr_.value());
     // Register JSON-RPC server as a Prometheus metrics collector
     td::actor::send_closure(exporter_.get(), &tos::PrometheusExporter::register_collector<tos::JsonRpcServer>,
-                            json_rpc_server_.get());
+                            "json_rpc", json_rpc_server_.get());
   }
 
+  // The post-quantum secrets this host holds. A key that cannot be loaded, a schedule of
+  // keys that is ambiguous, or a binding that does not name a validator, is this
+  // machine's own misconfiguration: the node must not come up quietly as an observer while
+  // its operator believes it is validating. What the chain later says about this identity
+  // is a different matter and is not decided here.
+  //
+  // A node configured with one key loads exactly that key, as it always has. A node in
+  // the middle of a rotation loads every key that has not expired, and each is used only
+  // where the custody rules say: by a group whose set lists it, or for a stake in an
+  // election its window covers.
+  if (config_.pq_consensus) {
+    if (config_.pq_consensus->validator_id.is_zero()) {
+      LOG(FATAL) << "post-quantum consensus custody names no validator: validator_id is zero";
+    }
+    const auto now = pq_custody_now();
+    std::vector<tos::pq::ConfiguredConsensusKey> configured;
+    for (const auto &key : config_.pq_consensus->keys) {
+      configured.push_back(tos::pq::ConfiguredConsensusKey{key.consensus_key_file, key.valid_from, key.expire_at});
+    }
+    auto plan = tos::pq::plan_consensus_key_load(configured, now);
+    if (std::holds_alternative<std::string>(plan)) {
+      LOG(FATAL) << "post-quantum consensus custody refused: " << std::get<std::string>(plan);
+    }
+    const auto &load = std::get<std::vector<std::size_t>>(plan);
+    for (std::size_t i = 0; i < configured.size(); i++) {
+      if (std::find(load.begin(), load.end(), i) == load.end()) {
+        LOG(WARNING) << "post-quantum consensus key " << configured[i].key_file << " expired at "
+                     << configured[i].expire_at << " and is not loaded; remove it from the configuration";
+      }
+    }
+
+    struct Loaded {
+      std::shared_ptr<const tos::pq::ValidatorPQKeyStore> store;
+      td::uint32 valid_from;
+      td::uint32 expire_at;
+    };
+    std::vector<Loaded> loaded_keys;
+    std::vector<tos::pq::ConsensusKeyWindow> schedule;
+    for (const auto index : load) {
+      const auto &key = configured[index];
+      auto loaded = tos::pq::load_consensus_key(key.key_file);
+      if (std::holds_alternative<tos::pq::ConsensusKeyFileError>(loaded)) {
+        LOG(FATAL) << "post-quantum consensus key " << key.key_file << ": "
+                   << tos::pq::describe(std::get<tos::pq::ConsensusKeyFileError>(loaded));
+      }
+      // The window's end is the store's own signing deadline: from then on it signs
+      // nothing, wherever it is held.
+      std::get<tos::pq::ValidatorPQKeyStore>(loaded).set_expire_at(key.expire_at);
+      auto store = std::make_shared<const tos::pq::ValidatorPQKeyStore>(
+          std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
+      schedule.push_back(tos::pq::ConsensusKeyWindow{store->consensus_key().key_id, key.valid_from, key.expire_at});
+      // The identity of the key is what the key derives, never what the configuration
+      // says: a node cannot claim to hold a key it does not. Logged in the form
+      // `tos-pq-consensus-key show` and `bind-node` print, through the same formatter, so
+      // an operator compares the two as strings; one line per key held.
+      LOG(WARNING) << "post-quantum consensus custody: validator_id "
+                   << pq_identity_hex(config_.pq_consensus->validator_id.value) << " key_id "
+                   << pq_identity_hex(tos::validator::PqConsensusCustody::key_id_of(*store).value) << " valid_from "
+                   << key.valid_from << " expire_at " << key.expire_at;
+      pq_key_ids_by_file_[key.key_file] = tos::validator::PqConsensusCustody::key_id_of(*store);
+      loaded_keys.push_back(Loaded{std::move(store), key.valid_from, key.expire_at});
+    }
+    // Only now are the identities known, and the same key under two names is refused.
+    if (auto refused = tos::pq::check_consensus_key_schedule(schedule)) {
+      LOG(FATAL) << "post-quantum consensus custody refused: " << *refused;
+    }
+    for (const auto &key : loaded_keys) {
+      auto status = pq_custody_.install(config_.pq_consensus->validator_id, key.store, key.valid_from, key.expire_at);
+      if (status.is_error()) {
+        LOG(FATAL) << "post-quantum consensus custody refused: " << status;
+      }
+    }
+    // An expired key is not loaded, but its window stays in the schedule: a stake for an
+    // election it was scheduled for is refused, never signed with an older key.
+    for (std::size_t i = 0; i < configured.size(); i++) {
+      if (std::find(load.begin(), load.end(), i) == load.end()) {
+        auto status = pq_custody_.record_unloaded(config_.pq_consensus->validator_id, configured[i].valid_from,
+                                                  configured[i].expire_at);
+        if (status.is_error()) {
+          LOG(FATAL) << "post-quantum consensus custody refused: " << status;
+        }
+      }
+    }
+
+    // Registration crosses an actor boundary, so nothing else may start until every key
+    // has been answered for. Were the rest of startup to run here, a refused custody would
+    // kill the process only after the node had already begun serving as an observer.
+    td::MultiPromise mp;
+    auto ig = mp.init_guard();
+    ig.add_promise([SelfId = actor_id(this)](td::Result<td::Unit> result) {
+      if (result.is_error()) {
+        LOG(FATAL) << "post-quantum consensus custody was refused: " << result.move_as_error();
+      }
+      td::actor::send_closure(SelfId, &ValidatorEngine::finish_start_validator);
+    });
+    for (auto &key : loaded_keys) {
+      td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::add_pq_consensus_key,
+                              config_.pq_consensus->validator_id, std::move(key.store), key.valid_from, key.expire_at,
+                              ig.get_promise());
+    }
+    return;
+  }
+
+  finish_start_validator();
+}
+
+void ValidatorEngine::finish_start_validator() {
+  local_validator_adnl_ids_.clear();
+  local_pq_validator_adnl_ids_.clear();
   for (auto &v : config_.validators) {
     td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::add_permanent_key, v.first,
                             [](td::Result<>) {});
@@ -2533,6 +2821,11 @@ void ValidatorEngine::start_validator() {
     for (auto &t : v.second.temp_keys) {
       td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::add_temp_key, t.first,
                               [](td::Result<>) {});
+    }
+    for (const auto &[id, expire_at] : v.second.adnl_ids) {
+      if (expire_at > td::Clocks::system() && config_.adnl_ids.contains(id)) {
+        add_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort{id});
+      }
     }
   }
 
@@ -2548,101 +2841,14 @@ void ValidatorEngine::start_validator() {
     }
   }
 
+  update_local_pq_validator_adnl_ids();
   started_validator();
 }
 
 void ValidatorEngine::recover_wc0_index() {
-  auto *db = tos_wallet_index::wallet_index_db();
-  if (!db) {
-    return;
-  }
-  wc0_recovery_markers_.clear();
-  auto scan_status = db->for_each_incomplete_block([this](const tos::BlockIdExt &id) -> td::Status {
-    wc0_recovery_markers_.push_back(id);
-    return td::Status::OK();
-  });
-  if (scan_status.is_error()) {
-    LOG(ERROR) << "wc0-index: recovery: failed to scan incomplete-block markers: " << scan_status.message();
-  }
-  if (wc0_recovery_markers_.empty()) {
-    return;
-  }
-  LOG(WARNING) << "wc0-index: recovering " << wc0_recovery_markers_.size()
-              << " block(s) left incomplete by a previous crash/parse-failure";
-  wc0_recovery_index_ = 0;
-  recover_wc0_index_step();
-}
-
-// Continuation for recover_wc0_index(), one marker at a time. Deliberately
-// implemented as re-sending a message to this actor's own ActorId (via
-// wc0_recovery_markers_/wc0_recovery_index_ members) rather than a
-// shared_ptr<std::function<void()>> that captures itself — the latter is a
-// reference cycle (the closure stored *inside* the shared_ptr held a strong
-// copy of that same shared_ptr) that never gets freed. Re-sending to self
-// through the actor scheduler also means a destroyed ValidatorEngine simply
-// drops any in-flight continuation safely, with no lifetime bookkeeping
-// needed here at all.
-void ValidatorEngine::recover_wc0_index_step() {
-  if (wc0_recovery_index_ >= wc0_recovery_markers_.size()) {
-    wc0_recovery_markers_.clear();
-    wc0_recovery_markers_.shrink_to_fit();
-    return;
-  }
-  auto block_id = wc0_recovery_markers_[wc0_recovery_index_++];
-  auto manager = validator_manager_.get();
-  auto SelfId = actor_id(this);
-  // Exact lookup by full block id — deliberately not get_block_by_seqno_from_db
-  // (an account/shard-prefix search): after a shard split/merge, a different
-  // shard can reuse the same seqno, and a prefix search over the current
-  // shard layout is not guaranteed to land back on the one specific block
-  // this marker was written for.
-  td::actor::send_closure(
-      manager, &tos::validator::ValidatorManagerInterface::get_block_handle, block_id, false,
-      [SelfId, manager, block_id](td::Result<tos::validator::BlockHandle> R) {
-        if (R.is_error() || !R.ok()->is_applied()) {
-          LOG(WARNING) << "wc0-index: recovery: block " << block_id.id.to_str() << " not found/applied: "
-                      << (R.is_error() ? R.error().message().str() : "not yet applied");
-          td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-          return;
-        }
-        auto handle = R.move_as_ok();
-        td::actor::send_closure(
-            manager, &tos::validator::ValidatorManagerInterface::get_block_data_from_db, handle,
-            [SelfId, manager, handle, block_id](td::Result<td::Ref<tos::validator::BlockData>> R2) {
-              if (R2.is_error() || R2.ok().is_null()) {
-                LOG(WARNING) << "wc0-index: recovery: block data for " << block_id.id.to_str()
-                            << " unavailable: "
-                            << (R2.is_error() ? R2.error().message().str() : "null result");
-                td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                return;
-              }
-              auto block_root = R2.ok()->root_cell();
-              td::actor::send_closure(
-                  manager, &tos::validator::ValidatorManagerInterface::get_shard_state_from_db, handle,
-                  [SelfId, block_id, block_root](td::Result<td::Ref<tos::validator::ShardState>> R3) {
-                    if (R3.is_error() || R3.ok().is_null()) {
-                      // Do NOT call wc0_index_block() here: it would index
-                      // events-only (no token verification) and then delete
-                      // the marker on that partial success, permanently
-                      // losing the chance to backfill this block's jetton/NFT
-                      // data. Leave the marker so a later restart can retry
-                      // once state is available again.
-                      LOG(WARNING) << "wc0-index: recovery: state for " << block_id.id.to_str()
-                                  << " unavailable, leaving marker for a later attempt";
-                      td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                      return;
-                    }
-                    auto state_root = R3.ok()->root_cell();
-                    // wc0_index_block deletes the marker itself, atomically
-                    // with the block's entries, on success — and deliberately
-                    // leaves it if indexing fails again, so a repeated failure
-                    // stays visible instead of being masked here. Don't
-                    // duplicate or second-guess that decision.
-                    tos_wallet_index::wc0_index_block(block_root, state_root, block_id);
-                    td::actor::send_closure(SelfId, &ValidatorEngine::recover_wc0_index_step);
-                  });
-            });
-      });
+  // The worker indexes the blocks earlier runs left unfinished first, reading
+  // them back through the fetcher installed above, then this run's blocks.
+  tos_wallet_index::resume_wc0_index_worker();
 }
 
 void ValidatorEngine::started_validator() {
@@ -2650,56 +2856,66 @@ void ValidatorEngine::started_validator() {
 }
 
 void ValidatorEngine::start_full_node() {
-  if (!config_.full_node.is_zero() || !config_.full_node_slaves.empty()) {
-    full_node_id_ = tos::adnl::AdnlNodeIdShort{config_.full_node};
-    if (config_.full_node_slaves.size() > 0) {
-      std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
-      for (auto &x : config_.full_node_slaves) {
-        vec.emplace_back(tos::adnl::AdnlNodeIdFull{x.key}, x.addr);
-      }
-      class Cb : public tos::adnl::AdnlExtClient::Callback {
-       public:
-        void on_ready() override {
-        }
-        void on_stop_ready() override {
-        }
-      };
-      full_node_client_ = tos::adnl::AdnlExtMultiClient::create(std::move(vec), std::make_unique<Cb>());
-    }
-    auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
-      R.ensure();
-      td::actor::send_closure(SelfId, &ValidatorEngine::started_full_node);
-    });
-    tos::validator::fullnode::FullNodeOptions full_node_options = full_node_options_;
-    full_node_options.config_ = config_.full_node_config;
-    full_node_ = tos::validator::fullnode::FullNode::create(
-        full_node_id_, validator_options_->zero_block_id().file_hash, full_node_options, keyring_.get(), adnl_.get(),
-        rldp2_.get(), quic_.get(),
-        default_dht_node_.is_zero() ? td::actor::ActorId<tos::dht::Dht>{} : dht_nodes_[default_dht_node_].get(),
-        overlay_manager_.get(), validator_manager_.get(), full_node_client_.get(), db_root_, std::move(P));
-    for (auto &v : config_.validators) {
-      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_permanent_key, v.first,
-                              [](td::Result<>) {});
-    }
-    for (auto &[c, shards] : config_.collators) {
-      for (auto &_ : shards) {
-        td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_collator_adnl_id, c);
-      }
-    }
-    for (auto &x : config_.fast_sync_member_certificates) {
-      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::import_fast_sync_member_certificate,
-                              x.first, x.second);
-    }
-    if (!validator_telemetry_filename_.empty()) {
-      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::set_validator_telemetry_filename,
-                              validator_telemetry_filename_);
-    }
-    load_custom_overlays_config();
-    register_fast_sync_certificate_callback();
-    register_shard_overlay_certificate_callback();
-  } else {
+  if (config_.full_node.is_zero() && config_.full_node_slaves.empty()) {
     started_full_node();
+    return;
   }
+  full_node_id_ = tos::adnl::AdnlNodeIdShort{config_.full_node};
+  if (config_.full_node_slaves.size() > 0) {
+    // A slave signs in to its masters with the full node's ADNL key, loaded
+    // and checked at startup, so a master recognises it as one stable
+    // authenticated identity (see --full-node-master-trusted). Masters refuse
+    // anything else, so there is no anonymous fallback.
+    if (full_node_slave_key_.empty()) {
+      LOG(ERROR) << "refusing to start the full-node slave: its sign-in key was not loaded";
+      std::_Exit(2);
+    }
+    std::vector<std::pair<tos::adnl::AdnlNodeIdFull, td::IPAddress>> vec;
+    for (auto &x : config_.full_node_slaves) {
+      vec.emplace_back(tos::adnl::AdnlNodeIdFull{x.key}, x.addr);
+    }
+    class Cb : public tos::adnl::AdnlExtClient::Callback {
+     public:
+      void on_ready() override {
+      }
+      void on_stop_ready() override {
+      }
+    };
+    full_node_client_ =
+        tos::adnl::AdnlExtMultiClient::create(std::move(vec), full_node_slave_key_, std::make_unique<Cb>());
+  }
+  auto P = td::PromiseCreator::lambda([SelfId = actor_id(this)](td::Result<> R) {
+    R.ensure();
+    td::actor::send_closure(SelfId, &ValidatorEngine::started_full_node);
+  });
+  tos::validator::fullnode::FullNodeOptions full_node_options = full_node_options_;
+  full_node_options.config_ = config_.full_node_config;
+  full_node_ = tos::validator::fullnode::FullNode::create(
+      full_node_id_, validator_options_->zero_block_id().file_hash, full_node_options, keyring_.get(), adnl_.get(),
+      rldp2_.get(), quic_.get(),
+      default_dht_node_.is_zero() ? td::actor::ActorId<tos::dht::Dht>{} : dht_nodes_[default_dht_node_].get(),
+      overlay_manager_.get(), validator_manager_.get(), full_node_client_.get(), db_root_, std::move(P));
+  for (const auto &[id, references] : local_validator_adnl_ids_) {
+    for (std::size_t i = 0; i < references; ++i) {
+      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_validator_adnl_id, id);
+    }
+  }
+  for (auto &[c, shards] : config_.collators) {
+    for (auto &_ : shards) {
+      td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_collator_adnl_id, c);
+    }
+  }
+  for (auto &x : config_.fast_sync_member_certificates) {
+    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::import_fast_sync_member_certificate,
+                            x.first, x.second);
+  }
+  if (!validator_telemetry_filename_.empty()) {
+    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::set_validator_telemetry_filename,
+                            validator_telemetry_filename_);
+  }
+  load_custom_overlays_config();
+  register_fast_sync_certificate_callback();
+  register_shard_overlay_certificate_callback();
 }
 
 void ValidatorEngine::started_full_node() {
@@ -2782,11 +2998,14 @@ void ValidatorEngine::start_control_interface() {
         R.ensure();
         td::actor::send_closure(SelfId, &ValidatorEngine::started_control_interface, R.move_as_ok());
       });
+  // Not a Lite service: no query failure encoder is installed, so a query this server
+  // refuses or cannot answer closes its connection instead of being answered.
   td::actor::send_closure(adnl_, &tos::adnl::Adnl::create_ext_server, std::move(c_ids), std::move(ports), std::move(P));
 }
 
 void ValidatorEngine::started_control_interface(td::actor::ActorOwn<tos::adnl::AdnlExtServer> control_ext_server) {
   control_ext_server_ = std::move(control_ext_server);
+  start_control_getters();
   for (auto &s : config_.controls) {
     add_control_interface(s.second.key, static_cast<td::uint16>(s.first));
 
@@ -2798,12 +3017,29 @@ void ValidatorEngine::started_control_interface(td::actor::ActorOwn<tos::adnl::A
 }
 
 void ValidatorEngine::start_full_node_masters() {
+  if (!config_.full_node_masters.empty() && !full_node_master_limiter_) {
+    auto clock = []() -> td::uint64 {
+      return static_cast<td::uint64>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+              .count());
+    };
+    // An empty trusted set was already refused at startup; create() refuses
+    // it again so no path can start an open master.
+    auto R = tos::validator::fullnode::FullNodeMasterLimiter::create(full_node_master_trusted_, clock);
+    if (R.is_error()) {
+      LOG(ERROR) << "refusing to start the full-node master: " << R.move_as_error();
+      std::_Exit(2);
+    }
+    full_node_master_limiter_ = std::shared_ptr<tos::validator::fullnode::FullNodeMasterLimiter>(R.move_as_ok());
+    LOG(INFO) << "full-node master serves " << full_node_master_trusted_.size()
+              << " trusted slave id(s) only, each with an equal share of its request budget";
+  }
   for (auto &x : config_.full_node_masters) {
-    full_node_masters_.emplace(
-        static_cast<td::uint16>(x.first),
-        tos::validator::fullnode::FullNodeMaster::create(
-            tos::adnl::AdnlNodeIdShort{x.second}, static_cast<td::uint16>(x.first),
-            validator_options_->zero_block_id().file_hash, keyring_.get(), adnl_.get(), validator_manager_.get()));
+    full_node_masters_.emplace(static_cast<td::uint16>(x.first),
+                               tos::validator::fullnode::FullNodeMaster::create(
+                                   tos::adnl::AdnlNodeIdShort{x.second}, static_cast<td::uint16>(x.first),
+                                   validator_options_->zero_block_id().file_hash, keyring_.get(), adnl_.get(),
+                                   validator_manager_.get(), full_node_master_limiter_));
   }
   started_full_node_masters();
 }
@@ -2876,11 +3112,6 @@ void ValidatorEngine::try_add_validator_permanent_key(tos::PublicKeyHash key_has
     td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::add_permanent_key, key_hash,
                             ig.get_promise());
   }
-  if (!full_node_.empty()) {
-    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_permanent_key, key_hash,
-                            ig.get_promise());
-  }
-
   write_config(ig.get_promise());
 }
 
@@ -2910,6 +3141,13 @@ void ValidatorEngine::try_add_validator_temp_key(tos::PublicKeyHash perm_key, to
 
 void ValidatorEngine::try_add_validator_adnl_addr(tos::PublicKeyHash perm_key, tos::PublicKeyHash adnl_id,
                                                   td::uint32 ttl, td::Promise<> promise) {
+  const auto now = td::Clocks::system();
+  bool was_active = false;
+  if (auto validator = config_.validators.find(perm_key); validator != config_.validators.end()) {
+    if (auto adnl = validator->second.adnl_ids.find(adnl_id); adnl != validator->second.adnl_ids.end()) {
+      was_active = adnl->second > now && config_.adnl_ids.contains(adnl_id);
+    }
+  }
   auto R = config_.config_add_validator_adnl_id(perm_key, adnl_id, ttl);
   if (R.is_error()) {
     promise.set_error(R.move_as_error());
@@ -2919,6 +3157,13 @@ void ValidatorEngine::try_add_validator_adnl_addr(tos::PublicKeyHash perm_key, t
   if (!R.move_as_ok()) {
     promise.set_value({});
     return;
+  }
+
+  const bool is_active = ttl > now && config_.adnl_ids.contains(adnl_id);
+  if (!was_active && is_active) {
+    add_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort{adnl_id});
+  } else if (was_active && !is_active) {
+    del_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort{adnl_id});
   }
 
   write_config(std::move(promise));
@@ -3053,6 +3298,12 @@ void ValidatorEngine::try_del_dht_node(tos::PublicKeyHash pub, td::Promise<> pro
 }
 
 void ValidatorEngine::try_del_validator_permanent_key(tos::PublicKeyHash pub, td::Promise<> promise) {
+  std::vector<tos::adnl::AdnlNodeIdShort> validator_adnl_ids;
+  if (auto it = config_.validators.find(pub); it != config_.validators.end()) {
+    for (const auto &[id, _] : it->second.adnl_ids) {
+      validator_adnl_ids.emplace_back(id);
+    }
+  }
   auto R = config_.config_del_validator_permanent_key(pub);
   if (R.is_error()) {
     promise.set_error(R.move_as_error());
@@ -3064,15 +3315,14 @@ void ValidatorEngine::try_del_validator_permanent_key(tos::PublicKeyHash pub, td
     return;
   }
 
+  for (auto id : validator_adnl_ids) {
+    del_local_validator_adnl_id(id);
+  }
+
   if (!validator_manager_.empty()) {
     td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::del_permanent_key, pub,
                             [](td::Result<>) {});
   }
-  if (!full_node_.empty()) {
-    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::del_permanent_key, pub,
-                            [](td::Result<>) {});
-  }
-
   write_config(std::move(promise));
 }
 
@@ -3109,6 +3359,8 @@ void ValidatorEngine::try_del_validator_adnl_addr(tos::PublicKeyHash perm, tos::
     promise.set_value({});
     return;
   }
+
+  del_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort{adnl_id});
 
   write_config(std::move(promise));
 }
@@ -3383,14 +3635,14 @@ void ValidatorEngine::try_import_fast_sync_member_certificate(tos::adnl::AdnlNod
   TRY_STATUS_PROMISE_PREFIX(promise, certificate.check_signature(id), "invalid certificate: ");
 
   auto cert_score = [this](tos::overlay::OverlayMemberCertificate &cert) -> td::int64 {
-    auto issued_by = cert.issued_by().compute_short_id().bits256_value();
-    if (validator_set_next_.not_null() && validator_set_next_->is_validator(issued_by)) {
+    auto issued_by = cert.issued_by().compute_short_id();
+    if (is_validator_transport_root(issued_by, validator_set_next_)) {
       return cert.expire_at() + (1ll << 32);
     }
-    if (validator_set_.not_null() && validator_set_->is_validator(issued_by)) {
+    if (is_validator_transport_root(issued_by, validator_set_)) {
       return cert.expire_at() + (1ll << 32);
     }
-    if (validator_set_prev_.not_null() && validator_set_prev_->is_validator(issued_by)) {
+    if (is_validator_transport_root(issued_by, validator_set_prev_)) {
       return cert.expire_at() + (0ll << 32);
     }
     return -1;
@@ -3470,7 +3722,7 @@ void ValidatorEngine::try_import_shard_overlay_certificate(tos::adnl::AdnlNodeId
   auto issuer = certificate->issuer_hash();
   bool issuer_is_validator = false;
   for (const auto &val_set : {validator_set_, validator_set_prev_, validator_set_next_}) {
-    if (val_set.not_null() && val_set->is_validator(tos::NodeIdShort{issuer.bits256_value()})) {
+    if (is_validator_transport_root(issuer, val_set)) {
       issuer_is_validator = true;
       break;
     }
@@ -3627,17 +3879,80 @@ tos::PublicKeyHash ValidatorEngine::find_local_validator_for_cert_issuing() {
   if (state_.is_null()) {
     return tos::PublicKeyHash{};
   }
+  std::vector<tos::PublicKeyHash> roots;
   for (auto &val_set : {validator_set_, validator_set_next_, validator_set_prev_}) {
     if (val_set.is_null()) {
       continue;
     }
-    for (auto &[val_id, _] : config_.validators) {
-      if (val_set->is_validator(tos::NodeIdShort{val_id.bits256_value()})) {
-        return val_id;
+    for (const auto &descr : val_set->export_vector()) {
+      roots.push_back(tos::validator::validator_transport_root(descr));
+    }
+  }
+  return tos::validator::select_validator_transport_signer(
+      tos::validator::canonical_validator_transport_roots(std::move(roots)), local_validator_adnl_ids_);
+}
+
+void ValidatorEngine::update_local_pq_validator_adnl_ids() {
+  std::set<tos::adnl::AdnlNodeIdShort> next;
+  if (config_.pq_consensus) {
+    std::set<tos::PublicKeyHash> configured;
+    for (const auto &[id, category] : config_.adnl_ids) {
+      configured.insert(id);
+    }
+    // Every key this node may still use: during a rotation the previous, current and next
+    // sets can list this validator under different keys, and each is ours while held.
+    const auto held_keys = pq_custody_.usable_key_ids(config_.pq_consensus->validator_id, pq_custody_now());
+    for (const auto &set : {validator_set_, validator_set_next_, validator_set_prev_}) {
+      if (set.not_null()) {
+        for (const auto &held : held_keys) {
+          auto ids = tos::validator::local_pq_validator_adnl_ids(set->export_vector(),
+                                                                 config_.pq_consensus->validator_id, held, configured);
+          next.insert(ids.begin(), ids.end());
+        }
       }
     }
   }
-  return tos::PublicKeyHash::zero();
+  for (const auto &id : local_pq_validator_adnl_ids_) {
+    if (!next.contains(id)) {
+      del_local_validator_adnl_id(id);
+    }
+  }
+  for (const auto &id : next) {
+    if (!local_pq_validator_adnl_ids_.contains(id)) {
+      add_local_validator_adnl_id(id);
+    }
+  }
+  local_pq_validator_adnl_ids_ = std::move(next);
+}
+
+void ValidatorEngine::add_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort id) {
+  tos::validator::add_validator_adnl_reference(local_validator_adnl_ids_, id);
+  if (!full_node_.empty()) {
+    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::add_validator_adnl_id, id);
+  }
+}
+
+void ValidatorEngine::del_local_validator_adnl_id(tos::adnl::AdnlNodeIdShort id) {
+  if (!local_validator_adnl_ids_.contains(id)) {
+    return;
+  }
+  tos::validator::del_validator_adnl_reference(local_validator_adnl_ids_, id);
+  if (!full_node_.empty()) {
+    td::actor::send_closure(full_node_, &tos::validator::fullnode::FullNode::del_validator_adnl_id, id);
+  }
+}
+
+bool ValidatorEngine::is_validator_transport_root(tos::PublicKeyHash id,
+                                                  const td::Ref<block::ValidatorSet> &set) const {
+  if (set.is_null()) {
+    return false;
+  }
+  for (const auto &descr : set->export_vector()) {
+    if (tos::validator::validator_transport_root(descr) == id) {
+      return true;
+    }
+  }
+  return false;
 }
 
 void ValidatorEngine::load_custom_overlays_config() {
@@ -4306,12 +4621,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addListen
 
   std::vector<td::uint8> cats;
   for (auto cat : query.categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     cats.push_back(c);
   }
   std::vector<td::uint8> prio_cats;
   for (auto cat : query.priority_categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     prio_cats.push_back(c);
   }
   try_add_listening_port(query.ip_, query.port_, std::move(cats), std::move(prio_cats), std::move(P));
@@ -4339,12 +4654,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delListen
 
   std::vector<td::uint8> cats;
   for (auto cat : query.categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     cats.push_back(c);
   }
   std::vector<td::uint8> prio_cats;
   for (auto cat : query.priority_categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     prio_cats.push_back(c);
   }
   try_del_listening_port(query.ip_, query.port_, std::move(cats), std::move(prio_cats), std::move(P));
@@ -4378,12 +4693,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addProxy 
 
   std::vector<td::uint8> cats;
   for (auto cat : query.categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     cats.push_back(c);
   }
   std::vector<td::uint8> prio_cats;
   for (auto cat : query.priority_categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     prio_cats.push_back(c);
   }
   try_add_proxy(query.in_ip_, query.in_port_, query.out_ip_, query.out_port_, R.move_as_ok(), std::move(cats),
@@ -4412,12 +4727,12 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delProxy 
 
   std::vector<td::uint8> cats;
   for (auto cat : query.categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     cats.push_back(c);
   }
   std::vector<td::uint8> prio_cats;
   for (auto cat : query.priority_categories_) {
-    TRY_RESULT_PROMISE(promise, c, td::narrow_cast_safe<td::uint8>(cat));
+    TRY_RESULT_PROMISE(P, c, td::narrow_cast_safe<td::uint8>(cat));
     prio_cats.push_back(c);
   }
 
@@ -4638,9 +4953,13 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_getStats 
   td::actor::send_closure(validator_manager_, &tos::validator::ValidatorManagerInterface::prepare_stats, std::move(P));
 }
 
-void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createElectionBid &query, td::BufferSlice data,
-                                        tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise) {
-  if (!(perm & ValidatorEnginePermissions::vep_default)) {
+void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createPqStakeAuthorization &query,
+                                        td::BufferSlice data, tos::PublicKeyHash src, td::uint32 perm,
+                                        td::Promise<td::BufferSlice> promise) {
+  // This signs with the consensus key: it produces authority, the way the two vote
+  // creators do, and is gated the way they are. A client that may only read the node
+  // must not be able to have it commit somebody's stake to an election.
+  if (!(perm & ValidatorEnginePermissions::vep_modify)) {
     promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
     return;
   }
@@ -4649,29 +4968,307 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createEle
     return;
   }
 
-  if (fift_dir_.empty()) {
-    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "no fift dir")));
+  // No key is named: the key schedule picks the one for this election.
+  td::actor::create_actor<PqStakeAuthorizationCreator>(
+      "stakeauth", static_cast<td::uint32>(query.election_date_), static_cast<td::uint32>(query.max_factor_),
+      query.adnl_addr_, query.stake_owner_, std::nullopt, actor_id(this), std::move(promise))
+      .release();
+}
+
+void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createPqStakeAuthorizationWithKey &query,
+                                        td::BufferSlice data, tos::PublicKeyHash src, td::uint32 perm,
+                                        td::Promise<td::BufferSlice> promise) {
+  // Signs with the consensus key, exactly as the request above; only the key is named.
+  if (!(perm & ValidatorEnginePermissions::vep_modify)) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
+    return;
+  }
+  if (!started_) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "not started")));
+    return;
+  }
+  if (query.key_id_.is_zero()) {
+    promise.set_value(create_control_query_error(
+        td::Status::Error(tos::ErrorCode::protoviolation, "a consensus key is named by its non-zero key id")));
     return;
   }
 
-  std::vector<tos::PublicKeyHash> v;
-  for (auto &x : config_.validators) {
-    if (x.second.election_date == static_cast<tos::UnixTime>(query.election_date_)) {
-      if (x.second.temp_keys.size() == 0 || x.second.adnl_ids.size() == 0) {
-        promise.set_value(
-            create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "prev bid is partial")));
-        return;
+  td::actor::create_actor<PqStakeAuthorizationCreator>(
+      "stakeauth", static_cast<td::uint32>(query.election_date_), static_cast<td::uint32>(query.max_factor_),
+      query.adnl_addr_, query.stake_owner_, tos::ConsensusKeyId{query.key_id_}, actor_id(this), std::move(promise))
+      .release();
+}
+
+tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKeyInfo> ValidatorEngine::pq_consensus_key_info(
+    const Config::PqConsensusKey &key, td::uint32 now) const {
+  td::Bits256 key_id = td::Bits256::zero();
+  auto it = pq_key_ids_by_file_.find(key.consensus_key_file);
+  if (it != pq_key_ids_by_file_.end()) {
+    key_id = it->second.value;
+  }
+  return tos::create_tl_object<tos::tos_api::engine_validator_pqConsensusKeyInfo>(
+      key_id, key.consensus_key_file, static_cast<td::int32>(key.valid_from), static_cast<td::int32>(key.expire_at),
+      // A held key is judged by custody first, which retires it if it has expired; the
+      // timestamp alone is used only for a key this node does not hold.
+      config_.pq_consensus
+          ? pq_custody_.report_expired(
+                config_.pq_consensus->validator_id,
+                key_id.is_zero() ? std::nullopt : std::optional<tos::ConsensusKeyId>(tos::ConsensusKeyId{key_id}),
+                key.expire_at, now)
+          : tos::pq::consensus_key_expired(key.expire_at, now));
+}
+
+void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_getPqConsensusKeys &query, td::BufferSlice data,
+                                        tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise) {
+  // Identities, windows and file names; never a seed.
+  if (!(perm & ValidatorEnginePermissions::vep_default)) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
+    return;
+  }
+  if (!config_.pq_consensus) {
+    promise.set_value(create_control_query_error(
+        td::Status::Error(tos::ErrorCode::notready, "this node holds no post-quantum consensus key")));
+    return;
+  }
+  const auto now = pq_custody_now();
+  std::vector<tos::tl_object_ptr<tos::tos_api::engine_validator_pqConsensusKeyInfo>> keys;
+  for (const auto &key : config_.pq_consensus->keys) {
+    keys.push_back(pq_consensus_key_info(key, now));
+  }
+  promise.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_pqConsensusKeys>(
+      config_.pq_consensus->validator_id.value, std::move(keys)));
+}
+
+void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_addPqConsensusKey &query, td::BufferSlice data,
+                                        tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise) {
+  // A new key is new signing authority for this validator, gated as signing is.
+  if (!(perm & ValidatorEnginePermissions::vep_modify)) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
+    return;
+  }
+  if (!started_) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "not started")));
+    return;
+  }
+  auto refuse = [&](std::string why) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, why)));
+  };
+  if (!config_.pq_consensus) {
+    refuse("this node is not bound to a validator; bind it first (tos-pq-consensus-key bind-node)");
+    return;
+  }
+  // One key change at a time, from its checks to its durable configuration: two changes
+  // checked against the same starting state could each pass and together break a limit.
+  if (pq_key_mutation_in_flight_) {
+    refuse("another consensus key change is in progress; retry once it has completed");
+    return;
+  }
+  const std::string file = query.consensus_key_file_;
+  // The node runs with / as its working directory under a service manager, so a relative
+  // path would name a different file at the next start than it does now.
+  if (file.empty() || file.front() != '/') {
+    refuse("the key file must be given as an absolute path");
+    return;
+  }
+  const auto now = pq_custody_now();
+  if (query.valid_from_ < 0 || query.expire_at_ < 0) {
+    refuse("a window bound is a unix time between 0 and 2147483647");
+    return;
+  }
+  const Config::PqConsensusKey key{file, static_cast<td::uint32>(query.valid_from_),
+                                   static_cast<td::uint32>(query.expire_at_)};
+  if (tos::pq::consensus_key_expired(key.expire_at, now)) {
+    refuse("the key would already have expired at " + std::to_string(key.expire_at));
+    return;
+  }
+  // The whole configuration as it would be, checked as a start would check it.
+  std::vector<tos::pq::ConfiguredConsensusKey> configured;
+  for (const auto &held : config_.pq_consensus->keys) {
+    configured.push_back(tos::pq::ConfiguredConsensusKey{held.consensus_key_file, held.valid_from, held.expire_at});
+  }
+  configured.push_back(tos::pq::ConfiguredConsensusKey{key.consensus_key_file, key.valid_from, key.expire_at});
+  auto plan = tos::pq::plan_consensus_key_load(configured, now);
+  if (std::holds_alternative<std::string>(plan)) {
+    refuse(std::get<std::string>(plan));
+    return;
+  }
+  // Under the same rules as at startup, as the user the node runs as.
+  auto loaded = tos::pq::load_consensus_key(file);
+  if (std::holds_alternative<tos::pq::ConsensusKeyFileError>(loaded)) {
+    refuse(file + ": " + tos::pq::describe(std::get<tos::pq::ConsensusKeyFileError>(loaded)));
+    return;
+  }
+  std::get<tos::pq::ValidatorPQKeyStore>(loaded).set_expire_at(key.expire_at);
+  auto store =
+      std::make_shared<const tos::pq::ValidatorPQKeyStore>(std::move(std::get<tos::pq::ValidatorPQKeyStore>(loaded)));
+  const auto key_id = tos::validator::PqConsensusCustody::key_id_of(*store);
+  const auto validator_id = config_.pq_consensus->validator_id;
+  if (pq_custody_.held_keys(validator_id).count(key_id) != 0) {
+    refuse("consensus key " + key_id.value.to_hex() + " is already held");
+    return;
+  }
+  // The engine's custody first: it refuses a key that would make the schedule ambiguous,
+  // and nothing has changed anywhere if it does.
+  auto installed = pq_custody_.install(validator_id, store, key.valid_from, key.expire_at);
+  if (installed.is_error()) {
+    refuse(installed.message().str());
+    return;
+  }
+  pq_key_mutation_in_flight_ = true;
+  td::actor::send_closure(
+      validator_manager_, &tos::validator::ValidatorManagerInterface::add_pq_consensus_key, validator_id, store,
+      key.valid_from, key.expire_at,
+      [SelfId = actor_id(this), key, key_id, promise = std::move(promise)](td::Result<td::Unit> result) mutable {
+        td::actor::send_closure(SelfId, &ValidatorEngine::finish_add_pq_consensus_key, key, key_id, std::move(result),
+                                std::move(promise));
+      });
+}
+
+void ValidatorEngine::finish_add_pq_consensus_key(Config::PqConsensusKey key, tos::ConsensusKeyId key_id,
+                                                  td::Result<td::Unit> installed,
+                                                  td::Promise<td::BufferSlice> promise) {
+  pq_key_mutation_in_flight_ = false;
+  if (!config_.pq_consensus) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "the node was unbound")));
+    return;
+  }
+  const auto validator_id = config_.pq_consensus->validator_id;
+  if (installed.is_error()) {
+    // The manager refused what the engine accepted; undo the engine's half so the two
+    // custodies keep agreeing.
+    pq_custody_.remove_key(validator_id, key_id);
+    promise.set_value(create_control_query_error(installed.move_as_error_prefix("the validator manager refused: ")));
+    return;
+  }
+  LOG(WARNING) << "post-quantum consensus custody: validator_id " << pq_identity_hex(validator_id.value)
+               << " added key_id " << pq_identity_hex(key_id.value) << " valid_from " << key.valid_from << " expire_at "
+               << key.expire_at;
+  pq_key_ids_by_file_[key.consensus_key_file] = key_id;
+  config_.pq_consensus->keys.push_back(key);
+  update_local_pq_validator_adnl_ids();
+  auto info = pq_consensus_key_info(key, pq_custody_now());
+  auto written = write_config_durably();
+  if (written.is_error()) {
+    promise.set_value(create_control_query_error(written.move_as_error_prefix("the key is held, but ")));
+    return;
+  }
+  promise.set_value(tos::serialize_tl_object(info, true));
+}
+
+void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_delPqConsensusKey &query, td::BufferSlice data,
+                                        tos::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise) {
+  if (!(perm & ValidatorEnginePermissions::vep_modify)) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
+    return;
+  }
+  if (!started_) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "not started")));
+    return;
+  }
+  auto refuse = [&](std::string why) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, why)));
+  };
+  if (!config_.pq_consensus) {
+    refuse("this node holds no post-quantum consensus key");
+    return;
+  }
+  if (pq_key_mutation_in_flight_) {
+    refuse("another consensus key change is in progress; retry once it has completed");
+    return;
+  }
+  const auto validator_id = config_.pq_consensus->validator_id;
+  const tos::ConsensusKeyId key_id{query.key_id_};
+  const auto held = pq_custody_.held_keys(validator_id);
+  auto entry = held.find(key_id);
+  if (entry == held.end()) {
+    refuse("consensus key " + key_id.value.to_hex() +
+           " is not held; a key that had expired before the node started was never loaded, and is removed offline "
+           "with tos-pq-consensus-key remove-node-key");
+    return;
+  }
+  if (config_.pq_consensus->keys.size() <= 1) {
+    refuse("this is the node's last consensus key; a bound validator keeps at least one");
+    return;
+  }
+  // What remains must be a configuration the node would start with: not only a key, but
+  // an unexpired one, under a valid schedule.
+  {
+    std::vector<tos::pq::ConfiguredConsensusKey> remaining;
+    for (const auto &configured : config_.pq_consensus->keys) {
+      auto known = pq_key_ids_by_file_.find(configured.consensus_key_file);
+      if (known != pq_key_ids_by_file_.end() && known->second == key_id) {
+        continue;
       }
-      v.push_back(x.first);
-      v.push_back(x.second.temp_keys.begin()->first);
-      v.push_back(x.second.adnl_ids.begin()->first);
+      remaining.push_back(
+          tos::pq::ConfiguredConsensusKey{configured.consensus_key_file, configured.valid_from, configured.expire_at});
+    }
+    auto plan = tos::pq::plan_consensus_key_load(remaining, pq_custody_now());
+    if (std::holds_alternative<std::string>(plan)) {
+      refuse("removing consensus key " + key_id.value.to_hex() +
+             " would leave a configuration the node refuses: " + std::get<std::string>(plan));
+      return;
     }
   }
+  // A key a running, previous or next set lists for this validator is still the key this
+  // node signs that set with. Removing it now would take the validator out of that set's
+  // consensus until the set ends. Once the key has expired (or been retired in this
+  // process, whatever the clock now says) it signs nothing and may go.
+  if (!pq_custody_.key_expired(validator_id, key_id, pq_custody_now())) {
+    for (const auto &set : {validator_set_prev_, validator_set_, validator_set_next_}) {
+      if (set.is_null()) {
+        continue;
+      }
+      for (const auto &descr : set->export_vector()) {
+        if (descr.is_pq() && descr.validator_id == validator_id && descr.key_id == key_id) {
+          refuse("consensus key " + key_id.value.to_hex() +
+                 " is listed for this validator by a current, previous or next validator set; keep it until that "
+                 "set has ended");
+          return;
+        }
+      }
+    }
+  }
+  pq_key_mutation_in_flight_ = true;
+  td::actor::send_closure(
+      validator_manager_, &tos::validator::ValidatorManagerInterface::del_pq_consensus_key, validator_id, key_id,
+      [SelfId = actor_id(this), key_id, promise = std::move(promise)](td::Result<td::Unit> result) mutable {
+        td::actor::send_closure(SelfId, &ValidatorEngine::finish_del_pq_consensus_key, key_id, std::move(result),
+                                std::move(promise));
+      });
+}
 
-  td::actor::create_actor<ValidatorElectionBidCreator>("bidcreate", query.election_date_, query.election_addr_,
-                                                       query.wallet_, fift_dir_, std::move(v), actor_id(this),
-                                                       keyring_.get(), std::move(promise))
-      .release();
+void ValidatorEngine::finish_del_pq_consensus_key(tos::ConsensusKeyId key_id, td::Result<td::Unit> removed,
+                                                  td::Promise<td::BufferSlice> promise) {
+  pq_key_mutation_in_flight_ = false;
+  if (removed.is_error()) {
+    promise.set_value(create_control_query_error(removed.move_as_error_prefix("the validator manager refused: ")));
+    return;
+  }
+  if (!config_.pq_consensus) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "the node was unbound")));
+    return;
+  }
+  const auto validator_id = config_.pq_consensus->validator_id;
+  pq_custody_.remove_key(validator_id, key_id);
+  auto &keys = config_.pq_consensus->keys;
+  for (auto it = keys.begin(); it != keys.end();) {
+    auto known = pq_key_ids_by_file_.find(it->consensus_key_file);
+    if (known != pq_key_ids_by_file_.end() && known->second == key_id) {
+      pq_key_ids_by_file_.erase(known);
+      it = keys.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  LOG(WARNING) << "post-quantum consensus custody: validator_id " << pq_identity_hex(validator_id.value)
+               << " removed key_id " << pq_identity_hex(key_id.value);
+  update_local_pq_validator_adnl_ids();
+  auto written = write_config_durably();
+  if (written.is_error()) {
+    promise.set_value(create_control_query_error(written.move_as_error_prefix("the key is no longer used, but ")));
+    return;
+  }
+  promise.set_value(tos::create_serialize_tl_object<tos::tos_api::engine_validator_success>());
 }
 
 void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_checkDhtServers &query, td::BufferSlice data,
@@ -4715,13 +5312,8 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createPro
     return;
   }
 
-  if (fift_dir_.empty()) {
-    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "no fift dir")));
-    return;
-  }
-
-  td::actor::create_actor<ValidatorProposalVoteCreator>("votecreate", std::move(query.vote_), fift_dir_, actor_id(this),
-                                                        keyring_.get(), std::move(promise))
+  td::actor::create_actor<ValidatorProposalVoteCreator>("votecreate", std::move(query.vote_), actor_id(this),
+                                                        std::move(promise))
       .release();
 }
 
@@ -4741,13 +5333,8 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_createCom
     return;
   }
 
-  if (fift_dir_.empty()) {
-    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "no fift dir")));
-    return;
-  }
-
   td::actor::create_actor<ValidatorPunishVoteCreator>("votecomplaintcreate", query.election_id_, std::move(query.vote_),
-                                                      fift_dir_, actor_id(this), keyring_.get(), std::move(promise))
+                                                      actor_id(this), std::move(promise))
       .release();
 }
 
@@ -5868,6 +6455,31 @@ void ValidatorEngine::process_control_query(td::uint16 port, tos::adnl::AdnlNode
 
 void ValidatorEngine::run() {
   td::mkdir(db_root_).ensure();
+
+  // The configuration lock. The engine rewrites config.json whenever its configuration
+  // changes, so an operator tool that edits the file (tos-pq-consensus-key bind-node)
+  // must never run beside it. Both take this lock: the engine before it reads anything
+  // and for as long as it runs, the tool for its whole read-modify-write. A node started
+  // during such an edit stops here instead of reading the old file and writing it back.
+  {
+    const std::string lock_path = db_root_ + "/" + tos::pq::node_config_lock_name;
+    auto lock_R = td::FileFd::open(lock_path, td::FileFd::Read | td::FileFd::Write | td::FileFd::Create, 0600);
+    if (lock_R.is_error()) {
+      LOG(ERROR) << "cannot open the configuration lock " << lock_path << ": " << lock_R.move_as_error();
+      std::_Exit(2);
+    }
+    auto lock = lock_R.move_as_ok();
+    auto S = lock.lock(td::FileFd::LockFlags::Write, lock_path, 1);
+    if (S.is_error()) {
+      LOG(ERROR) << "the configuration lock " << lock_path
+                 << " is held by another process: a node already running on this database, or "
+                    "tos-pq-consensus-key bind-node editing its configuration: "
+                 << S;
+      std::_Exit(2);
+    }
+    config_lock_ = std::move(lock);
+  }
+
   tos::errorlog::ErrorLog::create(db_root_);
 
   auto Sr = load_global_config();
@@ -5888,6 +6500,21 @@ void ValidatorEngine::run() {
     }
   });
   load_config(std::move(P));
+}
+
+void ValidatorEngine::set_health_native_v2() {
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_native_v2);
+}
+void ValidatorEngine::set_health_native_v3() {
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_native_v3);
+}
+void ValidatorEngine::set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling) {
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_diagnostic, std::move(path), peer_pid,
+                          sampling);
+}
+
+void ValidatorEngine::set_health_node_id(std::string value) {
+  td::actor::send_closure(exporter_, &tos::PrometheusExporter::set_health_node, std::move(value));
 }
 
 void ValidatorEngine::export_metrics(td::IPAddress address) {
@@ -5919,6 +6546,10 @@ void ValidatorEngine::set_json_rpc_request_timeout(double seconds) {
   json_rpc_opts_.request_timeout = seconds;
 }
 
+void ValidatorEngine::set_json_rpc_response_timeout(double seconds) {
+  json_rpc_opts_.response_timeout = seconds;
+}
+
 void ValidatorEngine::set_json_rpc_api_key(std::string key) {
   json_rpc_opts_.api_key = std::move(key);
 }
@@ -5941,26 +6572,75 @@ void ValidatorEngine::add_json_rpc_trusted_proxy(std::string ip) {
   json_rpc_opts_.trusted_proxies.push_back(std::move(ip));
 }
 
-void ValidatorEngine::get_current_validator_perm_key(td::Promise<std::pair<tos::PublicKey, size_t>> promise) {
+void ValidatorEngine::get_local_pq_identity(td::uint32 election_date, std::optional<tos::ConsensusKeyId> requested,
+                                            td::Promise<LocalIdentity> promise) {
   if (state_.is_null()) {
     promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
     return;
   }
+  if (!config_.pq_consensus || pq_custody_.empty()) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no post-quantum consensus key is custodied"));
+    return;
+  }
+  // The identity is the configured controller account; the key is the custodied key the
+  // schedule assigns to this election (or the one requested), and its identity is what
+  // its seed derives. Nothing is looked up in a validator set, and nothing here can be, or
+  // a node could never place the stake that puts it into one.
+  auto store =
+      pq_custody_.select_stake_store(config_.pq_consensus->validator_id, election_date, pq_custody_now(), requested);
+  if (store.is_error()) {
+    promise.set_error(store.move_as_error());
+    return;
+  }
+  auto signer = store.move_as_ok();
+  promise.set_value(LocalIdentity{config_.pq_consensus->validator_id,
+                                  tos::validator::PqConsensusCustody::key_id_of(*signer), std::move(signer),
+                                  state_->get_global_id()});
+}
+
+void ValidatorEngine::get_current_validator(td::Promise<LocalValidator> promise) {
+  if (state_.is_null()) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not started"));
+    return;
+  }
+  if (!config_.pq_consensus || pq_custody_.empty()) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no post-quantum consensus key is custodied"));
+    return;
+  }
 
   CHECK(validator_set_.not_null());
-  auto vec = validator_set_->export_vector();
-  for (size_t idx = 0; idx < vec.size(); idx++) {
-    auto &el = vec[idx];
-    tos::PublicKey pub{tos::pubkeys::Ed25519{el.key.as_bits256()}};
-    auto pubkey_hash = pub.compute_short_id();
 
-    auto it = config_.validators.find(pubkey_hash);
-    if (it != config_.validators.end()) {
-      promise.set_value(std::make_pair(pub, idx));
-      return;
-    }
+  // The stored ConfigParam 34 cell, not the set decoded from it: the contract counting
+  // the vote hashes the cell it holds, so anything else would sign for a set nobody has.
+  auto holder = state_->get_config_holder();
+  if (holder.is_error()) {
+    promise.set_error(holder.move_as_error_prefix("masterchain configuration is unavailable: "));
+    return;
   }
-  promise.set_error(td::Status::Error(tos::ErrorCode::notready, "not a validator"));
+  auto *holder_q = dynamic_cast<const tos::validator::ConfigHolderQ *>(holder.ok().get());
+  if (holder_q == nullptr || holder_q->get_config() == nullptr) {
+    promise.set_error(td::Status::Error("masterchain config holder does not expose block::Config"));
+    return;
+  }
+  auto stored_set = holder_q->get_config()->get_config_param(34);
+  if (stored_set.is_null()) {
+    promise.set_error(td::Status::Error(tos::ErrorCode::notready, "no validator set is stored in the configuration"));
+    return;
+  }
+  td::Bits256 validator_set_id{stored_set->get_hash().bits()};
+
+  // The key that signs is the one this set records for this validator, among those held:
+  // during a rotation the node holds the key the running set lists and the key it rotates
+  // to, and a vote counted by this set is signed with the former.
+  auto member = tos::validator::pq_signer_for_set(validator_set_->export_vector(), config_.pq_consensus->validator_id,
+                                                  pq_custody_, pq_custody_now());
+  if (member.is_error()) {
+    promise.set_error(member.move_as_error_prefix("current set: "));
+    return;
+  }
+  auto self = member.move_as_ok();
+  promise.set_value(LocalValidator{self.descr.validator_id, self.descr.key_id, self.index, std::move(self.signer),
+                                   state_->get_global_id(), validator_set_id});
 }
 
 std::atomic<bool> need_stats_flag{false};
@@ -6032,6 +6712,18 @@ int main(int argc, char *argv[]) {
   LOG_STATUS(td::change_maximize_rlimit(td::RlimitType::nofile, 1572864));
 
   std::vector<std::function<void()>> acts;
+  std::set<tos::adnl::AdnlNodeIdShort> full_node_master_trusted;
+  // The full-node rate limits as the options set them, checked once parsing
+  // is complete.
+  tos::validator::fullnode::FullNodeOptions ratelimit_options;
+  std::string measurement_jsonl;
+  std::string measurement_node_id;
+  std::optional<td::IPAddress> json_rpc_bind_address;
+  bool json_rpc_readonly = false;
+  struct {
+    bool enable = false;
+    bool disable = false;
+  } validator_consensus_cleanup_flags;
 
   td::OptionParser p;
   p.set_description("validator or full node for TOS network");
@@ -6044,6 +6736,10 @@ int main(int argc, char *argv[]) {
               << ", Date: " << GitMetadata::CommitDate() << "]\n";
     std::exit(0);
   });
+  p.add_option('\0', "measurement-jsonl", "write bounded-vocabulary N6 trace events to this JSONL file",
+               [&](td::Slice path) { measurement_jsonl = path.str(); });
+  p.add_option('\0', "measurement-node-id", "stable node name written into N6 trace events",
+               [&](td::Slice value) { measurement_node_id = value.str(); });
   p.add_option('h', "help", "prints_help", [&]() {
     char b[10240];
     td::StringBuilder sb(td::MutableSlice{b, 10000});
@@ -6079,14 +6775,40 @@ int main(int argc, char *argv[]) {
     td::set_signal_handler(td::SignalType::HangUp, force_rotate_logs).ensure();
   });
   std::string session_logs_file;
+  // The log file is opened after every option is parsed, so --log-rotate-mb
+  // and --log-keep-files apply wherever they stand on the command line.
+  std::string log_file;
+  td::int64 log_rotate_mib = 10;
+  td::int32 log_keep_files = 1;
+  bool log_rotation_set = false;
   p.add_option('l', "logname", "log to file", [&](td::Slice fname) {
     if (session_logs_file.empty()) {
       session_logs_file = fname.str() + ".session-stats";
     }
-    logger_ = td::TsFileLog::create(fname.str()).move_as_ok();
-    td::log_interface = logger_.get();
-    td::set_log_fatal_error_callback([](td::CSlice s) { std::cerr << "FATAL_ERROR: " << s.c_str() << std::endl; });
+    log_file = fname.str();
   });
+  p.add_checked_option('\0', "log-rotate-mb",
+                       "rotate each log file (one per thread) when it passes this many MiB, 1 to 4096 (default 10)",
+                       [&](td::Slice arg) {
+                         TRY_RESULT(v, td::to_integer_safe<td::int64>(arg));
+                         if (v < 1 || v > 4096) {
+                           return td::Status::Error("--log-rotate-mb must be between 1 and 4096");
+                         }
+                         log_rotate_mib = v;
+                         log_rotation_set = true;
+                         return td::Status::OK();
+                       });
+  p.add_checked_option('\0', "log-keep-files",
+                       "rotated files kept per log file: <log>.old, then <log>.old.1 and so on, 1 to 1000 (default 1)",
+                       [&](td::Slice arg) {
+                         TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
+                         if (v < 1 || v > 1000) {
+                           return td::Status::Error("--log-keep-files must be between 1 and 1000");
+                         }
+                         log_keep_files = v;
+                         log_rotation_set = true;
+                         return td::Status::OK();
+                       });
   p.add_checked_option('s', "state-ttl", "state will be gc'd after this time (in seconds) default=86400",
                        [&](td::Slice fname) {
                          auto v = td::to_double(fname);
@@ -6094,6 +6816,21 @@ int main(int argc, char *argv[]) {
                            return td::Status::Error("state-ttl should be positive");
                          }
                          acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_state_ttl, v); });
+                         return td::Status::OK();
+                       });
+  bool work_profile_seen = false;
+  p.add_checked_option('\0', "ext-message-work-profile",
+                       "Explicit experimental work budget: "
+                       "config-root-hex,capacity,refill-units,interval-ns,attempt-units,max-bytes,max-depth",
+                       [&](td::Slice text) -> td::Status {
+                         if (work_profile_seen) {
+                           return td::Status::Error("ext-message-work-profile must be specified only once");
+                         }
+                         TRY_RESULT(profile, tos::validator::ExtMessageWorkProfile::parse(text));
+                         work_profile_seen = true;
+                         acts.push_back([&x, profile]() {
+                           td::actor::send_closure(x, &ValidatorEngine::set_ext_message_work_profile, profile);
+                         });
                          return td::Status::OK();
                        });
   p.add_checked_option('m', "mempool-num", "Maximal number of mempool external message", [&](td::Slice s) {
@@ -6129,17 +6866,29 @@ int main(int argc, char *argv[]) {
     acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_key_proof_ttl, v); });
     return td::Status::OK();
   });
-  p.add_option('\0', "enable-validator-consensus-cleanup",
-               "ACCEPTANCE ONLY: arm live deletion of obsolete validator consensus-DB directories (Finding 1). "
-               "Default off; a normal deployment must not set this.",
+  p.add_option(
+      '\0', "enable-validator-consensus-cleanup",
+      "delete the consensus database directory (<db>/consensus/) of each retired validator-set session once "
+      "it is provably obsolete: its retirement block is an ancestor of the durable GC block, the session is "
+      "obsolete on-chain, no current or next group can use it, and its database is closed. On by default; "
+      "this flag states the default explicitly",
+      [&]() {
+        validator_consensus_cleanup_flags.enable = true;
+        acts.push_back([&x]() { td::actor::send_closure(x, &ValidatorEngine::set_validator_consensus_cleanup, true); });
+      });
+  p.add_option('\0', "disable-validator-consensus-cleanup",
+               "keep retired validator consensus database directories on disk (e.g. for forensics). A validator grows "
+               "without bound in this mode; retirements are still recorded and are reclaimed after a restart without "
+               "this flag",
                [&]() {
+                 validator_consensus_cleanup_flags.disable = true;
                  acts.push_back(
-                     [&x]() { td::actor::send_closure(x, &ValidatorEngine::set_enable_validator_consensus_cleanup, true); });
+                     [&x]() { td::actor::send_closure(x, &ValidatorEngine::set_validator_consensus_cleanup, false); });
                });
   p.add_option('\0', "test-consensus-cleanup-crash-before-erase",
-               "ACCEPTANCE FAULT INJECTION ONLY: after the consensus directory is confirmed deleted but before the "
-               "durable cleanup record is erased, exit abruptly to reproduce the mid-flight crash state. Default off; "
-               "a normal deployment must never set this.",
+               "TEST-ONLY FAULT INJECTION: after a consensus directory is confirmed deleted but before its durable "
+               "cleanup record is erased, exit abruptly to reproduce the mid-flight crash state. Default off; never "
+               "set this on a real node.",
                [&]() {
                  acts.push_back([&x]() {
                    td::actor::send_closure(x, &ValidatorEngine::set_test_crash_cleanup_before_erase, true);
@@ -6168,7 +6917,8 @@ int main(int argc, char *argv[]) {
         acts.push_back([&x, seq]() { td::actor::send_closure(x, &ValidatorEngine::add_unsafe_catchain, seq); });
         return td::Status::OK();
       });
-  p.add_checked_option('F', "unsafe-catchain-rotate", "use forceful and DANGEROUS catchain rotation",
+  p.add_checked_option('F', "unsafe-catchain-rotate",
+                       "forceful DANGEROUS classical catchain rotation; PQ rejects a nonzero tag before group creation",
                        [&](td::Slice params) {
                          auto pos1 = params.find(':');
                          TRY_RESULT(b_seq, td::to_integer_safe<tos::BlockSeqno>(params.substr(0, pos1)));
@@ -6424,6 +7174,7 @@ int main(int argc, char *argv[]) {
         if (v < 0) {
           return td::Status::Error("ratelimit-window-size should be non-negative");
         }
+        ratelimit_options.ratelimit_window_size_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_window_size, v); });
         return td::Status::OK();
       });
@@ -6431,6 +7182,7 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-global", "ratelimit for all kind of requests (in request-cost units per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_global_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_global, v); });
         return td::Status::OK();
       });
@@ -6438,6 +7190,7 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-heavy", "ratelimit for heavy requests (in 2 MiB request-cost units per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_heavy_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_heavy, v); });
         return td::Status::OK();
       });
@@ -6445,7 +7198,26 @@ int main(int argc, char *argv[]) {
       0, "fullnode-ratelimit-medium", "ratelimit for medium requests (in counts per window)",
       [&](td::Slice s) -> td::Status {
         TRY_RESULT(v, td::to_integer_safe<size_t>(s));
+        ratelimit_options.ratelimit_medium_ = v;
         acts.push_back([&x, v]() { td::actor::send_closure(x, &ValidatorEngine::set_ratelimit_medium, v); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "full-node-master-trusted",
+      "full-node slave ADNL id (hex) that a full-node master serves; repeatable, at most 8. The master service is "
+      "allowlist-only: it serves these ids and refuses every other source, each id gets an equal share of the "
+      "request budget, and a node configured as a master with none of these ids refuses to start. Read once at "
+      "startup: changing the set needs a restart. A slave is recognised only while it signs in with the full-node "
+      "ADNL key of that id; a slave that cannot load that key refuses to start, and a slave whose full-node ADNL id "
+      "changes must be restarted to sign in with the new key",
+      [&](td::Slice s) -> td::Status {
+        TRY_RESULT(id, parse_adnl_id_hex(s));
+        full_node_master_trusted.insert(id);
+        if (full_node_master_trusted.size() > tos::validator::fullnode::FullNodeMasterLimiter::kMaxTrusted) {
+          return td::Status::Error(PSLICE()
+                                   << "at most " << tos::validator::fullnode::FullNodeMasterLimiter::kMaxTrusted
+                                   << " --full-node-master-trusted ids are supported");
+        }
         return td::Status::OK();
       });
   p.add_checked_option(
@@ -6501,6 +7273,53 @@ int main(int argc, char *argv[]) {
   p.add_option('\0', "db-event-fifo", "path to FIFO pipe for publishing DB events", [&](td::Slice s) {
     acts.push_back([&x, s = s.str()]() { td::actor::send_closure(x, &ValidatorEngine::set_db_event_fifo_path, s); });
   });
+  p.add_checked_option(
+      '\0', "health-node-id", "approved node alias for loopback typed health snapshot", [&](td::Slice arg) {
+        if (!tos::health::node_alias(arg.str()))
+          return td::Status::Error("invalid health node alias");
+        acts.push_back(
+            [&x, value = arg.str()] { td::actor::send_closure(x, &ValidatorEngine::set_health_node_id, value); });
+        return td::Status::OK();
+      });
+  p.add_option('\0', "health-native-core-v2",
+               "select the bounded C04 typed native snapshot (requires health-core-metrics)", [&]() {
+                 tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
+                 acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v2); });
+               });
+  p.add_option('\0', "health-native-core-v3",
+               "select bounded typed native snapshot with partial cached chain anchors (requires health-core-metrics)",
+               [&]() {
+                 tos::health::consensus_enabled.store(true, std::memory_order_relaxed);
+                 acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_health_native_v3); });
+               });
+  p.add_option('\0', "health-core-metrics",
+               "enable bounded consensus PQ operation metrics (requires performance acceptance)", []() {
+                 tos::health::enabled.store(true, std::memory_order_relaxed);
+                 td::storage_health.enabled.store(true, std::memory_order_relaxed);
+               });
+  p.add_checked_option(
+      '\0', "health-diagnostic", "private socket path,approved edge PID,sample every N (core metrics and v2 required)",
+      [&](td::Slice arg) {
+        const auto value = arg.str();
+        const auto first = value.find(',');
+        const auto second = first == std::string::npos ? std::string::npos : value.find(',', first + 1);
+        if (first == std::string::npos || second == std::string::npos ||
+            value.find(',', second + 1) != std::string::npos)
+          return td::Status::Error("invalid diagnostic startup mapping");
+        const auto path = value.substr(0, first);
+        auto pid = td::to_integer_safe<int>(value.substr(first + 1, second - first - 1));
+        auto every = td::to_integer_safe<std::uint32_t>(value.substr(second + 1));
+        if (path.empty() || path[0] != '/' || path.size() > 100 || pid.is_error() || every.is_error())
+          return td::Status::Error("invalid diagnostic startup mapping");
+        const auto peer = pid.move_as_ok();
+        const auto sample = every.move_as_ok();
+        if (peer <= 0 || sample == 0)
+          return td::Status::Error("invalid diagnostic startup mapping");
+        acts.push_back([&x, path, peer, sample] {
+          td::actor::send_closure(x, &ValidatorEngine::set_health_diagnostic, path, peer, sample);
+        });
+        return td::Status::OK();
+      });
   p.add_checked_option('\0', "exporter-address", "address to bind for HTTP metrics exporter", [&](td::Slice arg) {
     td::BufferSlice buff{arg};
     td::IPAddress addr;
@@ -6508,14 +7327,19 @@ int main(int argc, char *argv[]) {
     acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::export_metrics, addr); });
     return td::Status::OK();
   });
-  p.add_checked_option('\0', "json-rpc-address", "address to bind for JSON-RPC HTTP server", [&](td::Slice arg) {
-    td::BufferSlice buff{arg};
-    td::IPAddress addr;
-    TRY_STATUS(addr.init_host_port(td::CSlice{buff.as_slice()}));
-    acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::serve_json_rpc, addr); });
-    return td::Status::OK();
-  });
+  p.add_checked_option(
+      '\0', "json-rpc-address",
+      "address to bind for the plaintext JSON-RPC HTTP server; loopback only unless --json-rpc-readonly",
+      [&](td::Slice arg) {
+        td::BufferSlice buff{arg};
+        td::IPAddress addr;
+        TRY_STATUS(addr.init_host_port(td::CSlice{buff.as_slice()}));
+        json_rpc_bind_address = addr;
+        acts.push_back([&x, addr] { td::actor::send_closure(x, &ValidatorEngine::serve_json_rpc, addr); });
+        return td::Status::OK();
+      });
   p.add_option('\0', "json-rpc-readonly", "disable write methods (sendBoc, sendQuery) on JSON-RPC server", [&]() {
+    json_rpc_readonly = true;
     acts.push_back([&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readonly, true); });
   });
   p.add_option('\0', "json-rpc-expose-consensus-status",
@@ -6523,46 +7347,58 @@ int main(int argc, char *argv[]) {
                "validator-set membership). Default off. This flag does NOT enforce a loopback-only listener: "
                "restricting access is the operator's responsibility (bind --json-rpc-address to loopback).",
                [&]() {
-    acts.push_back(
-        [&x] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_expose_consensus_status, true); });
-  });
+                 acts.push_back([&x] {
+                   td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_expose_consensus_status, true);
+                 });
+               });
   p.add_checked_option('\0', "json-rpc-cors-origin",
                        "CORS origin for the JSON-RPC server (default: unset, no CORS header is sent)",
                        [&](td::Slice arg) {
-    std::string origin{arg.data(), arg.size()};
-    acts.push_back([&x, origin] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cors_origin, origin); });
-    return td::Status::OK();
-  });
+                         std::string origin{arg.data(), arg.size()};
+                         acts.push_back([&x, origin] {
+                           td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cors_origin, origin);
+                         });
+                         return td::Status::OK();
+                       });
   p.add_checked_option('\0', "json-rpc-readyz-threshold", "sync lag threshold in seconds for /readyz (default: 60)", [&](td::Slice arg) {
     TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
     acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_readyz_threshold, v); });
     return td::Status::OK();
   });
-  p.add_checked_option('\0', "json-rpc-request-timeout",
+  p.add_checked_option(
+      '\0', "json-rpc-request-timeout",
       "per-request timeout in seconds for JSON-RPC liteserver queries (default: 30, 0 = no timeout)",
       [&](td::Slice arg) {
-    auto v = td::to_double(arg);
-    if (v < 0) {
-      return td::Status::Error("timeout must be >= 0");
-    }
-    acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_request_timeout, v); });
-    return td::Status::OK();
-  });
-  p.add_checked_option('\0', "json-rpc-api-key", "require API key for JSON-RPC access", [&](td::Slice arg) {
-    std::string key{arg.data(), arg.size()};
-    acts.push_back([&x, key] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_api_key, key); });
-    return td::Status::OK();
-  });
-  p.add_checked_option('\0', "json-rpc-cache-ttl",
-      "cache TTL in seconds for read-only JSON-RPC methods (default: 0 = disabled)",
+        TRY_RESULT(v, tos::json_rpc::parse_timeout_seconds(arg));
+        acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_request_timeout, v); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "json-rpc-response-timeout",
+      "total seconds to write a JSON-RPC response to the client before the connection is closed "
+      "(default: 60; must be greater than 0 and at most 86400)",
       [&](td::Slice arg) {
-    TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
-    if (v < 0) {
-      return td::Status::Error("cache TTL must be >= 0");
-    }
-    acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
-    return td::Status::OK();
-  });
+        TRY_RESULT(v, tos::json_rpc::parse_response_timeout_seconds(arg));
+        acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_response_timeout, v); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "json-rpc-api-key",
+      "require API key for JSON-RPC access (it does not permit a non-loopback write listener)", [&](td::Slice arg) {
+        std::string key{arg.data(), arg.size()};
+        acts.push_back([&x, key] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_api_key, key); });
+        return td::Status::OK();
+      });
+  p.add_checked_option(
+      '\0', "json-rpc-cache-ttl", "cache TTL in seconds for read-only JSON-RPC methods (default: 0 = disabled)",
+      [&](td::Slice arg) {
+        TRY_RESULT(v, td::to_integer_safe<td::int32>(arg));
+        if (v < 0) {
+          return td::Status::Error("cache TTL must be >= 0");
+        }
+        acts.push_back([&x, v] { td::actor::send_closure(x, &ValidatorEngine::set_json_rpc_cache_ttl, v); });
+        return td::Status::OK();
+      });
   // M-01 hardening: control whether the JSON-RPC server honours
   // X-Forwarded-For / X-Real-IP headers when attributing a request to
   // a per-IP rate-limit bucket. Default off — direct public listeners
@@ -6750,7 +7586,7 @@ int main(int argc, char *argv[]) {
                        });
   p.add_checked_option('\0', "persistent-state-spool-per-import-cap",
                        "max temporary CellDb streaming-import spool bytes reserved per import "
-                       "(default 48 GiB)",
+                       "(default 96 GiB)",
                        [&](td::Slice arg) -> td::Status {
                          td::uint64 v = 0;
                          TRY_STATUS(parse_budget_bytes(arg, v));
@@ -6760,7 +7596,7 @@ int main(int argc, char *argv[]) {
                        });
   p.add_checked_option('\0', "persistent-state-spool-total-cap",
                        "process-wide temporary CellDb streaming-import spool budget in bytes "
-                       "(default 96 GiB)",
+                       "(default 192 GiB)",
                        [&](td::Slice arg) -> td::Status {
                          td::uint64 v = 0;
                          TRY_STATUS(parse_budget_bytes(arg, v));
@@ -6770,7 +7606,7 @@ int main(int argc, char *argv[]) {
                        });
   p.add_checked_option('\0', "persistent-state-spool-reservation-ratio-percent",
                        "percentage of the source persistent-state file size reserved for import spool "
-                       "plus rollback manifest (default 300)",
+                       "plus rollback manifest (default 600)",
                        [&](td::Slice arg) -> td::Status {
                          TRY_RESULT(v, td::to_integer_safe<td::uint32>(arg));
                          auto cfg = tos::validator::fullnode::persistent_state_budget_config();
@@ -6783,6 +7619,49 @@ int main(int argc, char *argv[]) {
   if (S.is_error()) {
     LOG(ERROR) << "failed to parse options: " << S.move_as_error();
     std::_Exit(2);
+  }
+  if (!log_file.empty()) {
+    auto r_logger = td::TsFileLog::create(log_file, log_rotate_mib << 20, true, log_keep_files);
+    if (r_logger.is_error()) {
+      LOG(ERROR) << "cannot open log file " << log_file << ": " << r_logger.move_as_error();
+      std::_Exit(2);
+    }
+    logger_ = r_logger.move_as_ok();
+    td::log_interface = logger_.get();
+    td::set_log_fatal_error_callback([](td::CSlice s) { std::cerr << "FATAL_ERROR: " << s.c_str() << std::endl; });
+  } else if (log_rotation_set) {
+    LOG(ERROR) << "--log-rotate-mb and --log-keep-files need -l/--logname";
+    std::_Exit(2);
+  }
+  if (validator_consensus_cleanup_flags.enable && validator_consensus_cleanup_flags.disable) {
+    LOG(ERROR) << "--enable-validator-consensus-cleanup and --disable-validator-consensus-cleanup are mutually "
+                  "exclusive";
+    std::_Exit(2);
+  }
+  if (json_rpc_bind_address) {
+    auto admission = tos::json_rpc::check_listen_admission(json_rpc_bind_address.value(), json_rpc_readonly);
+    if (admission.is_error()) {
+      LOG(ERROR) << admission.message();
+      std::_Exit(2);
+    }
+  }
+  auto ratelimits_ok = tos::validator::fullnode::FullNode::check_rate_limits(ratelimit_options);
+  if (ratelimits_ok.is_error()) {
+    LOG(ERROR) << "full-node rate limits would refuse a mandatory request from every peer: " << ratelimits_ok;
+    std::_Exit(2);
+  }
+  if (!full_node_master_trusted.empty()) {
+    acts.push_back([&x, ids = full_node_master_trusted]() mutable {
+      td::actor::send_closure(x, &ValidatorEngine::set_full_node_master_trusted, std::move(ids));
+    });
+  }
+  if (!measurement_jsonl.empty() || !measurement_node_id.empty()) {
+    if (measurement_jsonl.empty() || measurement_node_id.empty()) {
+      LOG(ERROR) << "--measurement-jsonl and --measurement-node-id must be supplied together";
+      std::_Exit(2);
+    }
+    tos::validator::measurement::install_sink(
+        tos::validator::measurement::create_jsonl_file_sink(measurement_jsonl, measurement_node_id).move_as_ok());
   }
 
   // H-03 startup invariant: log the effective persistent-state budget
@@ -6882,5 +7761,19 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Stop the indexing worker while the index it writes to still exists;
+  // blocks it did not reach stay marked for the next start.
+  // The scheduler has stopped, so no block-apply actor runs any more. This is
+  // what makes clearing the run marker crash-safe: the index relies on
+  // producers being genuinely quiesced here. Its re-recording of the run
+  // after an unexpected late block is a defence, not a substitute; a crash
+  // before the recorder gets to it would lose that block's trace.
+  tos::validator::g_wc0_block_index_hook = nullptr;
+  if (!tos_wallet_index::flush_wc0_index_for_exit(tos_wallet_index::Wc0IndexProducers::Quiesced)) {
+    LOG(ERROR) << "wc0-index: indexing did not finish cleanly; the next start reports that the index needs a rebuild";
+  }
+  tos_wallet_index::stop_wc0_index_worker();
+  tos_wallet_index::set_wc0_index_block_fetcher(nullptr);
+  tos_wallet_index::set_wc0_index_state_fetcher(nullptr);
   return 0;
 }

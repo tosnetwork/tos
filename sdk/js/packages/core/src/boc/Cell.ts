@@ -198,7 +198,7 @@ export class Cell {
      * ```
      */
     hash(level: number = 3): Uint8Array {
-        return this._hashes[Math.min(this._hashes.length - 1, level)]!;
+        return this._hashes[Math.min(this._hashes.length - 1, level)]!.slice();
     }
 
     /**

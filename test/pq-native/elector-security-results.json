@@ -1,0 +1,1474 @@
+{
+  "schema": 1,
+  "date_utc": "2026-10-02",
+  "branch": "elector-security-audit-2026-10-01",
+  "tested_parent_commit": "483f7c92023c8e4a0a554476efe77be5a07caf90",
+  "result": "Applicable A01-A10 / N01-N12 native sandbox matrix passed for fresh compatible contracts; no deployment approval.",
+  "source_manifest_fingerprint_sha256": "ca64b668fa0cbdfb44ffcee6405ea0cdd61819dace19772cdb6e62705c0a1867",
+  "source_manifest": [
+    {
+      "path": ".github/workflows/contract-sandboxes.yml",
+      "bytes": 9188,
+      "sha256": "3a642c709e97e4dfe1f4b4f42cc2043ab7d12f3bdc74c31f901ccc34edbab205"
+    },
+    {
+      "path": "crypto/CMakeLists.txt",
+      "bytes": 27493,
+      "sha256": "9ec0e26ad063a148f58e30fccae96d34300e7a43edd4b38bc8022534819878b4"
+    },
+    {
+      "path": "crypto/smartcont/create-elector-upgrade-proposal.fif",
+      "bytes": 2644,
+      "sha256": "8066b485e4036448a90105758e363b2db89f3f8709c648ccb4fd8906d9c55c54"
+    },
+    {
+      "path": "crypto/smartcont/elector-code.fc",
+      "bytes": 66079,
+      "sha256": "f374bec1af48b3ce405f1a8f74f191648c55459aeb6ae384c1cf56f3048d11a1"
+    },
+    {
+      "path": "crypto/smartcont/nominator-pool/pool.fc",
+      "bytes": 43644,
+      "sha256": "391d1770958c48e900e98d97efe2dbc0c5158b4a609d7524e9359627f584564f"
+    },
+    {
+      "path": "crypto/smartcont/nominator-pool/stdlib.fc",
+      "bytes": 36010,
+      "sha256": "68dacd8131aa2b3df981af8489b18d5afab036e04f772184c5abc2491dce5251"
+    },
+    {
+      "path": "crypto/smartcont/pq-bytes.fc",
+      "bytes": 6817,
+      "sha256": "0ef93769adb8db5c2665e9e9a78d239683a0a975e2ffc0034f9f58cb5f9fd011"
+    },
+    {
+      "path": "crypto/smartcont/pq-validator.fc",
+      "bytes": 21411,
+      "sha256": "0fbd20af712f01511b2d4324b6ef414a2170c4e97a08cfb4661a89f01b71f9c2"
+    },
+    {
+      "path": "crypto/smartcont/pq.fc",
+      "bytes": 271,
+      "sha256": "e8979cce6e2d6a30eaa4a00c306c25af797ecbec0203450d8bb3d9dd0ae9f505"
+    },
+    {
+      "path": "crypto/smartcont/single-nominator-pool/single-nominator-code.fc",
+      "bytes": 14848,
+      "sha256": "4a022aa09d24704759180c98d37ce74eec65a4ee48ad890ed61dc88140b720ca"
+    },
+    {
+      "path": "crypto/smartcont/single-nominator-pool/single-nominator-code.hex",
+      "bytes": 3373,
+      "sha256": "16d5eb83bd5b7da5a0d9fa1b703645640f15ec6b259d116ba7b2eeb83746c507"
+    },
+    {
+      "path": "crypto/smartcont/stake-relay.fc",
+      "bytes": 4403,
+      "sha256": "d5b88f56342cbf8eb81850b77d1d51cfd48fa2ee446000bd98e3110600508327"
+    },
+    {
+      "path": "crypto/smartcont/stdlib.fc",
+      "bytes": 37585,
+      "sha256": "77d121550d99c533cffe10d5f479c04777e6e7c34b712421473cfe6a24615717"
+    },
+    {
+      "path": "crypto/smartcont/validator-controller-v1.fc",
+      "bytes": 22372,
+      "sha256": "2c420240db18d1e2472e617e8ecd105eb001dd6c99dfbe04823bd17cd967dcd9"
+    },
+    {
+      "path": "scripts/build-nominator-pool-v1.sh",
+      "bytes": 3165,
+      "sha256": "25a57407b48d22ab0074c515a1121d35003aca357c7c25ac687edbad407c3ac5"
+    },
+    {
+      "path": "scripts/check-nominator-pool-code-lock.sh",
+      "bytes": 2416,
+      "sha256": "8488d4f16058a05980a447113b5feaac39babf5d6731a6a40675e9f8f68f1719"
+    },
+    {
+      "path": "scripts/check-nominator-pool-pq-route.py",
+      "bytes": 23500,
+      "sha256": "87033e2227888723ea5fd708904c0d9888416b0fdcaf24a11b784a63ce34a04c"
+    },
+    {
+      "path": "scripts/check-regression-db.sh",
+      "bytes": 5023,
+      "sha256": "34934bb9b3e41fb90321c89d31ed42b14444712cfc34c45fa0f14434960b81a4"
+    },
+    {
+      "path": "scripts/check-removed-validator-authority.sh",
+      "bytes": 7154,
+      "sha256": "4608981ae266b9d85cf016a156158422035663b6cb2bdc01447775f31f016ac8"
+    },
+    {
+      "path": "scripts/check-single-nominator-code-lock.sh",
+      "bytes": 2629,
+      "sha256": "8b42d8eedc8074084d4b6ea982fcde0eff8addfe6e0c63874c0a43ff1845a5f0"
+    },
+    {
+      "path": "scripts/check-vector-files.sh",
+      "bytes": 5266,
+      "sha256": "5e55779de87692dfabfc1939741628e85ef2fd429b695d26dda69c5b3c8738f0"
+    },
+    {
+      "path": "scripts/nominator-pool-lifecycle-e2e.py",
+      "bytes": 216418,
+      "sha256": "11ca1c68177ae4d2a367459305f0c23e14bc07553da8518dcc24a3914711c203"
+    },
+    {
+      "path": "scripts/pq-config-wallet-first-stake-e2e.py",
+      "bytes": 28156,
+      "sha256": "6e49b831bd785b7eb415e00a7949521160ae37384ba6b62f0cac69c6a9f3e1bf"
+    },
+    {
+      "path": "test/pq-native/contract-guard-mutations.py",
+      "bytes": 23154,
+      "sha256": "a42cc16a7856fc8828cad7dbf50c3cc65929e260147ca6ed352f023e7569ec10"
+    },
+    {
+      "path": "test/pq-native/elector-relay-mutations.py",
+      "bytes": 13329,
+      "sha256": "96082476c36443e30974af166b61f0c3dd8479725f61e62d105b0319c8cfb1f3"
+    },
+    {
+      "path": "test/pq-native/elector-security-audit.md",
+      "bytes": 8959,
+      "sha256": "2bbab62faa27498166538469d98a28a144333c12b0609f3c91784d05e131e646"
+    },
+    {
+      "path": "test/pq-native/elector-selection-mutations.py",
+      "bytes": 8435,
+      "sha256": "953945d0875c2a5e22d44f587c8442a75d179f3fef1d6c77c9b47e0dee21fb0d"
+    },
+    {
+      "path": "test/regression-tests.ans",
+      "bytes": 8734,
+      "sha256": "00b91e441745ec3f937c70b9c841289d4172eadb2288da82f913e270d655cd26"
+    },
+    {
+      "path": "test/test-account-model-detection.cpp",
+      "bytes": 4700,
+      "sha256": "44af88973b0c245d3491f35151331653de4152f22f236c0b506868e97f3896ea"
+    },
+    {
+      "path": "test/tostester/src/tostester/pq_election_fixture.py",
+      "bytes": 14075,
+      "sha256": "a08ad6606a28d9016ed72d55e1c1ac7741ff822f8218da48de4efbf005966ee6"
+    },
+    {
+      "path": "test/tostester/tests/tostester/test_nominator_pool_encoding.py",
+      "bytes": 83204,
+      "sha256": "c4fb9122f31cb5777556633c4fff3fa32f60b6eb049a15845cea8d43c8fd0486"
+    },
+    {
+      "path": "test/tostester/tests/tostester/test_pq_election_fixture.py",
+      "bytes": 11695,
+      "sha256": "55c3584afa6cc10a9315c63f4088e908d845292cb6e2c58dd11429aab413a202"
+    },
+    {
+      "path": "tosctl/src/Cargo.lock",
+      "bytes": 148421,
+      "sha256": "5ef28c068b94021240867896ce1bf4960ac1f909df88ae97c46d1794631d80cb"
+    },
+    {
+      "path": "tosctl/src/Cargo.toml",
+      "bytes": 559,
+      "sha256": "3f063ec45d72bccad1de1114bcc7c9e286cbc74362d65710c368f136361a8ccb"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/contract_codes.rs",
+      "bytes": 26026,
+      "sha256": "1f0aae93a90031267a29700f6c3f59c8db1da04f82f1f4fe784dc1b637dac2c0"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/nominator/single_nominator.rs",
+      "bytes": 14760,
+      "sha256": "12c84c8b1950c7f086dc676392a2c3a4a5a732f23ec23b41d83bdc61f81e3163"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/src/nominator_pool/pool_impl.rs",
+      "bytes": 45049,
+      "sha256": "d9e80fd70b95a8f1593ebc19aaf5b14ce1fab492ae15613fd59824cd094be0bf"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_sandbox.rs",
+      "bytes": 342520,
+      "sha256": "ec3e8bdc396e4edaf8887ec6ce11605ec11b211d6b630ee2f3c6c15b9ea30d16"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/mod.rs",
+      "bytes": 43702,
+      "sha256": "1da0d8a046c182d9bbe43c16a13a77ebf98864b54c6356046afb7033dcb55bc2"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/relay.rs",
+      "bytes": 79719,
+      "sha256": "c4b75ca6e4528d83377020bd92d88b49999ac2823ce981386031d2797c6a1a2f"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/nominator_pool_sandbox.rs",
+      "bytes": 20806,
+      "sha256": "2507a3a75311e82fb46f63bf8e0b9fb81b0443481324f187d38f51a2c0e9852d"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/single_nominator_sandbox.rs",
+      "bytes": 18542,
+      "sha256": "03e41fca07840350870dc1c5412b5602959f958bed3b86c52b883779dbcb301e"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/validator_controller_sandbox.rs",
+      "bytes": 45701,
+      "sha256": "ac47ebec248f0269fa2dec2a06e52b1e5156d268cf4e310ed73e8ea5ad44f79d"
+    },
+    {
+      "path": "tosctl/src/node-control/elections/src/runner.rs",
+      "bytes": 59687,
+      "sha256": "9eab231f038ff78f4df43821dba496f9af950597019d74ede30cc309ce3ba387"
+    },
+    {
+      "path": "tosctl/src/node-control/elections/src/runner_tests.rs",
+      "bytes": 79729,
+      "sha256": "f0f9c443b46eb6e4ddc40e2c97d83c00bc91dc648fefdd1b7a643c1f5ac17a3c"
+    },
+    {
+      "path": "tosctl/src/sandbox/src/blockchain.rs",
+      "bytes": 25729,
+      "sha256": "cd0dd3703de60049668cd69aa2d6daa6708f49c7fe6e3efb21d84d86801e3d29"
+    },
+    {
+      "path": "validator-engine/json-rpc-account-model.cpp",
+      "bytes": 5961,
+      "sha256": "b6ae521360aa49c35183228ea92eb063de0dc19741a5681d0008277ca905297a"
+    }
+  ],
+  "environment": {
+    "cargo": "1.97.1",
+    "rustc": "1.97.1",
+    "cmake": "3.22.1",
+    "python": "3.14.4",
+    "build_jobs": 64,
+    "TOS_ROOT": "repository root",
+    "TMPDIR": ".git/elector-security-audit-artifacts",
+    "CARGO_TARGET_DIR": ".git/elector-security-audit-artifacts/cargo-target",
+    "binaries": [
+      {
+        "path": "build/crypto/func",
+        "bytes": 1073368,
+        "sha256": "dea49006df7513e1121629e0ce7d6d6737e8ad4e3377e2a51c95909d27c7a8cd"
+      },
+      {
+        "path": "build/crypto/fift",
+        "bytes": 10873520,
+        "sha256": "5513ff45784e7729fe2ea5c42f6b23f74292c35591b0876367e10eb9f025ae7d"
+      },
+      {
+        "path": "build/crypto/create-state",
+        "bytes": 12388208,
+        "sha256": "45154d19a4807cfb225e62e988cb0f6763ce75d22ec44d84d562ad020d2d7c16"
+      },
+      {
+        "path": "build/crypto/tos-pq-controller",
+        "bytes": 6397672,
+        "sha256": "092840f619688b6f44e9b9939bb21a86857e29ce3c1431188f82edbfff2b3d0b"
+      },
+      {
+        "path": "build/crypto/tos-pq-vote",
+        "bytes": 6380208,
+        "sha256": "abd8fa0127b928778f4342ba2178bea0b8bb9b0be2b52bbc31dd05c4b4d64464"
+      },
+      {
+        "path": "build/crypto/pq/tos-pq-consensus-key",
+        "bytes": 5994248,
+        "sha256": "3d6f86df9f04bb99fd32537ce33549b88cb51f97dd41a39b5a55dc6ab9db4a64"
+      },
+      {
+        "path": "build/test-account-model-detection",
+        "bytes": 6755040,
+        "sha256": "a5d27f3bec5df4cdb84cac89666ccb357dd57a54cd80e2753ec76aeeef419b90"
+      },
+      {
+        "path": ".git/elector-security-audit-artifacts/cargo-target/debug/deps/elector_sandbox-507c0cdf5f243e9d",
+        "bytes": 256732096,
+        "sha256": "b8773e6efd9c82b2cfbcf51711a64be11fcac9732850db25c58f2f7d33399735"
+      },
+      {
+        "path": "build-pq-key/tos-pq-key",
+        "bytes": 93952,
+        "sha256": "f58c38633e1d0f196debf79c170f236bef1ea58eb8f285b74278a811fb385c4b"
+      }
+    ],
+    "submodules": []
+  },
+  "generated_elector_fif": {
+    "path": "build/crypto/smartcont/auto/elector-code.fif",
+    "bytes": 254411,
+    "sha256": "13a511a392b8097a232f5825d9d43bd553c6dbbedcf49365a2f8b0ce828457c9"
+  },
+  "frozen_artifacts": {
+    "multi_pool": {
+      "boc_bytes": 4510,
+      "boc_sha256": "5f726a3578c2455aa6c18806b3e732e45748266a79d7410ace817af6f5ef8b04",
+      "cell_code_hash": "beb3408ba3e849a81173c54d2f2d53b4c9ccb6b67d112bd293e038f2cd126d58",
+      "fixture_address": "-1:a353c04bd88ede55ee3833ef4de8217346e5e568ed62e063a5300855d5f0db34"
+    },
+    "single_pool": {
+      "boc_bytes": 1686,
+      "boc_sha256": "46a53b6dd9308c3de6fea9409a78bbf565a9482319462a7f222e8e8b83e6da05"
+    }
+  },
+  "gates": [
+    {
+      "name": "contracts complete package",
+      "command": "cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast -j64",
+      "exit": 0,
+      "counts": {
+        "passed": 647,
+        "failed": 0,
+        "ignored": 5
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/published-contracts.log",
+        "bytes": 75297,
+        "sha256": "97b0e0a15e80d35f1d9cf4e65a144e0be00d79d949dc3bc1876f1a11d21735e0"
+      }
+    },
+    {
+      "name": "elections complete package",
+      "command": "cargo test --manifest-path tosctl/src/Cargo.toml -p elections --locked -j64",
+      "exit": 0,
+      "counts": {
+        "passed": 43,
+        "failed": 0,
+        "ignored": 0
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/published-elections.log",
+        "bytes": 5857,
+        "sha256": "79c5f08a50bde24d60a465f84d1c662ad4a34f6ce94d270d978d97b37e0e420f"
+      }
+    },
+    {
+      "name": "exact restored relay",
+      "command": "python3 test/pq-native/elector-relay-mutations.py --out .git/elector-security-audit-artifacts/completion/pinned-relay --jobs 64",
+      "exit": 0,
+      "counts": {
+        "passed": 23,
+        "failed": 0,
+        "ignored": 0
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/pinned-relay/restored.log",
+        "bytes": 11668,
+        "sha256": "6ab055da53f9ad5f624a3c43b927681eaa4fe6a17f66ab363aa48ecc84ac0ea8"
+      }
+    },
+    {
+      "name": "exact restored selection",
+      "command": "python3 test/pq-native/elector-selection-mutations.py --out .git/elector-security-audit-artifacts/completion/published-selection --jobs 64",
+      "exit": 0,
+      "counts": {
+        "passed": 38,
+        "failed": 0,
+        "ignored": 1
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/published-selection/restored.log",
+        "bytes": 13870,
+        "sha256": "6cbf5e5d57589966ae0305826059f04b216b471d45d6b0f4f1450afd2af200c6"
+      }
+    },
+    {
+      "name": "native dependency build",
+      "command": "cmake --build build --target test-fift test-cells test-vm test-smartcont test-pq-vote-body test-vote-carrier test-consensus-key-file tos-pq-consensus-key tos-pq-controller tos-pq-vote json-rpc-account-model -j64",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-native-build.log",
+        "bytes": 2179,
+        "sha256": "3367ad0e2517074af68ae05e07a3df7c5b873d50736d7ae91c93915574a02695"
+      }
+    },
+    {
+      "name": "executor Fift",
+      "command": "build/test-fift",
+      "exit": 0,
+      "counts": {
+        "passed": 49
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-fift.log",
+        "bytes": 14334458,
+        "sha256": "b85b80a0f38c1b971cdee71fe40b7b8c5a760095f4657afb59ae51800144ff6e"
+      }
+    },
+    {
+      "name": "cells",
+      "command": "build/test-cells",
+      "exit": 0,
+      "counts": {
+        "passed": 12
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-cells.log",
+        "bytes": 142146,
+        "sha256": "cc894c1d23f588003ee56697a0f8d6f4b27e3de170e600c32b7619ed468f2789"
+      }
+    },
+    {
+      "name": "vote body",
+      "command": "build/crypto/pq/test-pq-vote-body",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-vote-body.log",
+        "bytes": 14,
+        "sha256": "90926f0df38257ef8483dddb85b4d60e7bb9322bd25a1d4a7850f1c2d20e2c0e"
+      }
+    },
+    {
+      "name": "vote carriers",
+      "command": "build/crypto/pq/test-vote-carrier",
+      "exit": 0,
+      "counts": {
+        "carriers": 8
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-vote-carrier.log",
+        "bytes": 123,
+        "sha256": "da77aa3465fcbf05ab974afda62cc37988ef00c979ea331e6f46e50270e32067"
+      }
+    },
+    {
+      "name": "consensus key file",
+      "command": "build/crypto/pq/test-consensus-key-file",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-key-file.log",
+        "bytes": 204,
+        "sha256": "561884141ff23116623ed5e5e8e858cc064506855cd704f78643ce4f066d3872"
+      }
+    },
+    {
+      "name": "consensus key tool",
+      "command": "python3 test/pq-mldsa44/consensus_key_tool_test.py --tool build/crypto/pq/tos-pq-consensus-key",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-key-tool.log",
+        "bytes": 147,
+        "sha256": "b3766774172cd2ee33ed3bd431202738bccc68a375a839f931cb4b5de5668f6a"
+      }
+    },
+    {
+      "name": "recorded answers including upgrade proposal and zerostate",
+      "command": "scripts/check-regression-db.sh . build",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/closure-recorded-answers.log",
+        "bytes": 75,
+        "sha256": "96db7d96f9e379cd531b400f9dee34f3abca4a55365bca29c15372ff0c343e70"
+      }
+    },
+    {
+      "name": "vector generator build",
+      "command": "cmake --build build --target $(scripts/check-vector-files.sh --list-generators) -j64",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-vector-build.log",
+        "bytes": 10659,
+        "sha256": "6b27164dcc419bd2be1f5418eb6ff9ed67e1d7d046b55d46a4e1611fa9018b24"
+      }
+    },
+    {
+      "name": "recorded vectors",
+      "command": "scripts/check-vector-files.sh . build",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-vectors.log",
+        "bytes": 80,
+        "sha256": "d07cf4ec02f9ec6683a33f6f42dec40d1015488a3cdb44fb83df807cd235fa52"
+      }
+    },
+    {
+      "name": "multi pool lock",
+      "command": "scripts/check-nominator-pool-code-lock.sh",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/published-multi-lock.log",
+        "bytes": 100,
+        "sha256": "b73e6fca7aadb445cff999804d28fbcfb2cc357a025ee3ad393a92548f15a8fa"
+      }
+    },
+    {
+      "name": "single pool lock",
+      "command": "scripts/check-single-nominator-code-lock.sh",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/published-single-lock.log",
+        "bytes": 48,
+        "sha256": "bb47dda1297f11f4b3684f1443471cfc8bda509fc848fb09f9f4a873cc1874e9"
+      }
+    },
+    {
+      "name": "removed authority routes",
+      "command": "scripts/check-removed-validator-authority.sh .",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-authority.log",
+        "bytes": 49,
+        "sha256": "97ec4623c58103ce35d522da01d59082388b3331d8996aa48279943c7fab1448"
+      }
+    },
+    {
+      "name": "Python pool/receipt codec",
+      "command": "PYTHONPATH=test/tostester/src .venv/bin/python -m pytest -q test/tostester/tests/tostester/test_nominator_pool_encoding.py test/tostester/tests/tostester/test_pq_election_fixture.py",
+      "exit": 0,
+      "counts": {
+        "passed": 81
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/published-python.log",
+        "bytes": 179,
+        "sha256": "93b397482e5aad5ed02c4f02a7aadd0bf721d3519abd955d3097c39be70871f8"
+      }
+    },
+    {
+      "name": "pool route/source checks",
+      "command": "python3 scripts/check-nominator-pool-pq-route.py",
+      "exit": 0,
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/published-pool-route.log",
+        "bytes": 352,
+        "sha256": "53924cfedebe54431c5c5471bc0e1146c3e3d45c55edd8dfbef06536e719fc53"
+      }
+    },
+    {
+      "name": "native pool recognition",
+      "command": "build/test-account-model-detection",
+      "exit": 0,
+      "counts": {
+        "passed": 7
+      },
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/pinned-account/restored.log",
+        "bytes": 722,
+        "sha256": "c2e568e8bd3ffb26507f593aa25336785132ef493e619edb32ffce43883fd9e3"
+      }
+    }
+  ],
+  "mutations": {
+    "compiled_native_rust": 95,
+    "compiled_native_cpp": 1,
+    "python_codec": 3,
+    "all_intended": true,
+    "variants": [
+      {
+        "family": "relay",
+        "name": "pool-source",
+        "oracle": "unbound source receipt",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "pool-query",
+        "oracle": "unbound query receipt",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "pool-hash",
+        "oracle": "unbound hash receipt",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "pool-forwarded",
+        "oracle": "unbound forwarded receipt",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "pool-accepted",
+        "oracle": "unbound accepted receipt",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "controller-source",
+        "oracle": "controller unbound source",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "controller-query",
+        "oracle": "controller unbound query",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "controller-hash",
+        "oracle": "controller unbound hash",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "controller-received",
+        "oracle": "controller unbound received",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "controller-accepted",
+        "oracle": "controller unbound accepted",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "bounce-prefix",
+        "oracle": "unbound bounce prefix",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "premature-ack",
+        "oracle": "premature ack retains claim",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "ack-owner",
+        "oracle": "unbound ack retains PAID",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "single-flight",
+        "oracle": "assertion failed: tx.read_description()",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "query-replay",
+        "oracle": "accepted query cannot replay",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "root-pending-spend",
+        "oracle": "root send must not spend pending",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "root-callback-namespace",
+        "oracle": "root callback namespace",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "owner-capital",
+        "oracle": "third-party fees cannot fund root",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "ignored-ready-action",
+        "oracle": "failed payment action must retain READY",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "bouncing-refund",
+        "oracle": "assertion failed: !payment.int_header()",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "public-retry-disabled",
+        "oracle": "compute must actually succeed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "ignored-recovery-action",
+        "oracle": "failed recover action cannot delete credit",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "recovery-principal-repeated",
+        "oracle": "paid recovery repeats only caller fees",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "recovery-replay",
+        "oracle": "acknowledged old recovery cannot consume a later credit",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "recovery-upgrade-liability",
+        "oracle": "only outstanding recovery blocks upgrade",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "recovery-metadata-lost",
+        "oracle": "outstanding receipt book after unfreeze",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "single-pool-commitment",
+        "oracle": "single pool unbound receipt",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "bounce-source",
+        "oracle": "unbound bounce source",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "signature-before-state",
+        "oracle": "actual controller must refuse",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "paid-retry-spends-capital",
+        "oracle": "PAID receipt retry must never contain the old principal",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "pool-recovery-reack-disabled",
+        "oracle": "duplicate recovery must re-acknowledge",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "installation-tool-marker",
+        "oracle": "official installation hook must be present",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "nominator-reward-lost",
+        "oracle": "pool business principal plus partitioned reward equals gross credit",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "owner-tombstone-deleted",
+        "oracle": "one replay tombstone per actual distinct creditor",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "relay",
+        "name": "mature-recovery-elector-rebound",
+        "oracle": "mature recovery must use original stake elector",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "capped-principal",
+        "oracle": "owner principal not conserved",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "permanent-failure",
+        "oracle": "configuration 16 changed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "omit-config-16",
+        "oracle": "configuration 16 changed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "omit-config-17",
+        "oracle": "configuration 17 changed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "omit-config-47",
+        "oracle": "configuration 47 changed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "repeat-identical-failure",
+        "oracle": "unchanged selection ran again",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "capped-boundary-principal",
+        "oracle": "boundary principal increment",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "unbounded-registration",
+        "oracle": "the 257th identity must be refused",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "omitted-claimant-fine-share",
+        "oracle": "claimant fine share",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "omitted-system-fine-share",
+        "oracle": "system fine share",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "unsafe-installation",
+        "oracle": "expected first transaction to be aborted, but it succeeded",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "rollback-ignores-active-book",
+        "oracle": "live liabilities must refuse rollback: cached",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "rollback-ignores-frozen-book",
+        "oracle": "live liabilities must refuse rollback: frozen-only",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "rollback-ignores-credits",
+        "oracle": "live liabilities must refuse rollback: credits-only",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "selection",
+        "name": "missing-books-treated-as-empty",
+        "oracle": "absent books need explicit migration",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-network",
+        "oracle": "validator_controller_sandbox::every_field_of_an_authorisation",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-epoch",
+        "oracle": "validator_controller_sandbox::every_field_of_an_authorisation",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-nonce",
+        "oracle": "validator_controller_sandbox::an_authorised_send_happens_once",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-expiry-past",
+        "oracle": "validator_controller_sandbox::every_field_of_an_authorisation",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-expiry-window",
+        "oracle": "validator_controller_sandbox::every_field_of_an_authorisation",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-kind",
+        "oracle": "validator_controller_sandbox::every_field_of_an_authorisation",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-owner-masterchain",
+        "oracle": "validator_controller_sandbox::outside_the_masterchain",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "elector-owner-fixed",
+        "oracle": "elector_sandbox::a_members_stake_owner_is_fixed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "book-owner-fixed",
+        "oracle": "pq_elector_state_sandbox::a_members_owner_cannot_be_changed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-stray-cosignature",
+        "oracle": "validator_controller_sandbox::every_field_of_an_authorisation",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-destroy-mode",
+        "oracle": "validator_controller_sandbox::every_field_of_an_authorisation",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-root-signature",
+        "oracle": "validator_controller_sandbox::every_field_of_an_authorisation",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-successor-proof",
+        "oracle": "validator_controller_sandbox::a_root_rotation_needs_both",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "controller-consensus-key-proof",
+        "oracle": "validator_controller_sandbox::binding_a_consensus_key_needs_the_root_and_the_key_itself",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-shape-bits",
+        "oracle": "controller_admission_sandbox::each_refusal_is_reachable",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-shape-refs",
+        "oracle": "controller_admission_sandbox::each_refusal_is_reachable",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-code-depth-bound",
+        "oracle": "controller_admission_sandbox::each_refusal_is_reachable",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-data-depth-bound",
+        "oracle": "controller_admission_sandbox::each_refusal_is_reachable",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-branch-type",
+        "oracle": "controller_admission_sandbox::each_refusal_is_reachable",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-branch-level",
+        "oracle": "controller_admission_sandbox::each_refusal_is_reachable",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-state-init-shape",
+        "oracle": "controller_admission_sandbox::each_refusal_is_reachable",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-address-binding",
+        "oracle": "elector_sandbox::a_stake_carrying_another_accounts_witness",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "witness-level-zero-hash",
+        "oracle": "controller_admission_sandbox::each_refusal_is_reachable",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "policy-absent-fails-closed",
+        "oracle": "elector_sandbox::a_stake_from_an_unadmitted_controller",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "policy-lookup",
+        "oracle": "elector_sandbox::a_stake_from_an_unadmitted_controller",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "elector-witness-required",
+        "oracle": "elector_sandbox::a_stake_carrying_another_accounts_witness",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "elector-retirement",
+        "oracle": "elector_sandbox::retiring_a_controller_code",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "elector-effective-floor",
+        "oracle": "elector_sandbox::a_retired_profile_stops_raising",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "config-ceiling",
+        "oracle": "elector_sandbox::the_controller_policy_cannot_grow",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "vote-signature",
+        "oracle": "elector_sandbox::a_vote_signed_by_a_key_that_is_not_at_that_index_is_refused",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "vote-identity-from-the-set",
+        "oracle": "elector_sandbox::a_validator_votes_for_a_proposal_with_the_key_in_the_current_set",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "vote-bound-to-its-set",
+        "oracle": "elector_sandbox::a_validator_votes_for_a_proposal_with_the_key_in_the_current_set",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "vote-funding",
+        "oracle": "elector_sandbox::an_underfunded_configuration_vote_is_refused_before_the_verification",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "vote-minimum-value",
+        "oracle": "elector_sandbox::the_minimum_value_a_configuration_vote_must_carry",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "complaint-vote-funding",
+        "oracle": "elector_sandbox::an_underfunded_complaint_vote_is_refused_before_the_verification",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "complaint-vote-minimum-value",
+        "oracle": "elector_sandbox::the_minimum_value_a_complaint_vote_must_carry",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "complaint-vote-signature",
+        "oracle": "elector_sandbox::a_complaint_vote_signed_by_another_validator_is_refused",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "complaint-vote-identity",
+        "oracle": "elector_sandbox::a_validator_votes_to_punish_a_validator_of_a_past_election",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "set-duplicate-validator",
+        "oracle": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "set-duplicate-key",
+        "oracle": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "set-weight-sum",
+        "oracle": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "set-count-agreement",
+        "oracle": "elector_sandbox::a_set_the_node_would_refuse_is_refused_before_it_is_installed",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "no-administrator-appointment",
+        "oracle": "elector_sandbox::governance_cannot_vote_itself_an_administrator",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "no-external-authority",
+        "oracle": "elector_sandbox::an_external_validator_vote_has_no_authorization_path",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "existing guards",
+        "name": "readiness-on-effective-stake",
+        "oracle": "elector_sandbox::a_retired_profile_cannot_make_an_election_look_ready",
+        "compile_exit": 0,
+        "mutant_exit": 101,
+        "intended": true
+      },
+      {
+        "family": "native C++",
+        "name": "pool recognition table case",
+        "oracle": "AccountModel.nominator_pool_is_recognised_by_the_locked_code_hash",
+        "compile_exit": 0,
+        "mutant_exit": 1,
+        "intended": true,
+        "reproduction": "Lower-case only the locked pool hash literal in validator-engine/json-rpc-account-model.cpp; rebuild test-account-model-detection; expected assertion failure; restore and rebuild."
+      },
+      {
+        "family": "Python codec",
+        "name": "controller-source",
+        "mutant_exit": 1,
+        "intended": true
+      },
+      {
+        "family": "Python codec",
+        "name": "domain-query",
+        "mutant_exit": 1,
+        "intended": true
+      },
+      {
+        "family": "Python codec",
+        "name": "amount-consistency",
+        "mutant_exit": 1,
+        "intended": true
+      }
+    ],
+    "raw_indices": [
+      {
+        "path": ".git/elector-security-audit-artifacts/completion/pinned-relay/index.json",
+        "bytes": 55794,
+        "sha256": "4d2579c9b6590e75022e6524678f896fa67dc29b2ba465ce8c8c87a8b00fa016"
+      },
+      {
+        "path": ".git/elector-security-audit-artifacts/completion/published-selection/index.json",
+        "bytes": 24846,
+        "sha256": "c6beb41dcf7fd299d9419ce93137a84683a7cdd51931f568b92421035f6e13cb"
+      },
+      {
+        "path": ".git/elector-security-audit-artifacts/completion/published-guards.json",
+        "bytes": 41186,
+        "sha256": "49a39bb9a1eb9054cddd32f9c97e8758100e7819182bce1b41ead78a47176eaa"
+      },
+      {
+        "path": ".git/elector-security-audit-artifacts/completion/pinned-account/index.json",
+        "bytes": 2220,
+        "sha256": "68f12897723d6ad5b9d679b8a54ddf2d82faa8d8e29c93eafe97dcc4388d14d9"
+      },
+      {
+        "path": ".git/elector-security-audit-artifacts/completion/python-wire-mutations/index.json",
+        "bytes": 1499,
+        "sha256": "120d6180d4c7e7e54a44c7f5e5dbc3970d9755c006f40044b3dcbc5f165ed0d4"
+      }
+    ]
+  },
+  "measurements": {
+    "controller_verification_gas": 122560,
+    "controller_live_cells": 70,
+    "controller_live_bits": 34991,
+    "recovery_owners": 256,
+    "recovery_book_cells": 512,
+    "maximum_measured_recovery_payment_gas": 16848,
+    "maximum_measured_256_registration_selection_gas": 19859969,
+    "profile": "Current native sandbox fee/VM profile only."
+  },
+  "ignored_tests": [
+    "Optional broader participant profile; mandatory 256 registration controls passed.",
+    "Unrelated prediction-market 10011-transaction release scale gate.",
+    "Three provider documentation examples."
+  ],
+  "historical_runs": [
+    {
+      "reason": "Uncapped 4097-registration tick OOG at the actual 70M gas limit; motivates the admitted-registration bound.",
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/participant-cost-first.log",
+        "bytes": 9692,
+        "sha256": "a1d58c735700a7e5252ce934e8dc3f669b14d43680dd6813f6d4619f1498806b"
+      }
+    },
+    {
+      "reason": "Early frozen-only mutant survived a mixed-credit fixture; replacement isolates frozen-only liabilities and fails as required.",
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/expanded-mutations-final/index.json",
+        "bytes": 21967,
+        "sha256": "47202cdbeb0ad229ab18d62aecc10e0bbc7217c35373877f8c6f51ee5e76e3a5"
+      }
+    },
+    {
+      "reason": "Effective-stake readiness test strengthened after a weak mutant survived; final-guards contains the final intended failure.",
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/controller-readiness-closed.json",
+        "bytes": 984,
+        "sha256": "404b54a193d4e55dcd560ade0d0c33200990a105315990f4ec69bc3704e30d54"
+      }
+    },
+    {
+      "reason": "Old governance proposal recorded hash failed after code change.",
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-recorded-answers.log",
+        "bytes": 259,
+        "sha256": "dc0d130c80c44aa399c036acd8d8372ff83b86bb078ec3eca5a756fc5e963829"
+      }
+    },
+    {
+      "reason": "Old zerostate recorded hash failed after governance hash was updated; final closure verifies all answers.",
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-recorded-answers-restored.log",
+        "bytes": 247,
+        "sha256": "09e27fc17b99b0cf261c37a521fb8a17f97986f09079e4bd83adb0db37236f24"
+      }
+    },
+    {
+      "reason": "Resource fixture first lacked actual payment collateral; not counted as final product evidence.",
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/relay-owner-book-cost.log",
+        "bytes": 10557,
+        "sha256": "22e998b0909211fda025c6e474f29f8bae565da8d2b41f075bae050a48ef89ee"
+      }
+    },
+    {
+      "reason": "Static route checker still expected legacy parser call; exact new controller-bound call is checked by restored run.",
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/final-pool-route.log",
+        "bytes": 95,
+        "sha256": "4dc656cd57f51a4420d4cd00b8ca3549ce1955195806e845bd56fff65b76087b"
+      }
+    },
+    {
+      "reason": "Selection runner called without explicit TOS_ROOT: final batch failed on required official-proposal fixture. Not a product failure or accepted final run. Correct environment and final published-selection restored38/ignored1 passed.",
+      "raw": {
+        "path": ".git/elector-security-audit-artifacts/completion/pinned-selection/restored.log",
+        "bytes": 14320,
+        "sha256": "5fd706a69e00ba3a2195642b899bbdc90b50dae9529060ec71118f75215023da"
+      }
+    }
+  ],
+  "raw_retention": {
+    "location": ".git/elector-security-audit-artifacts/completion",
+    "policy": "Keep through audit-branch integration plus at least 90 days.",
+    "access": "Local retained artifacts in this checkout; repository owner/reviewer may inspect them here. Public Git contains only sources, controls and this index. Hashes alone without raw access are not independent proof."
+  },
+  "boundaries": [
+    "Fresh compatible pool/controller identities and admission are required; existing immutable controllers are not upgraded.",
+    "Classic nonempty books are explicitly refused without code/data change. Only tested debt-free installation/rollback is accepted.",
+    "The 256-registration bound is distinct from validator seats; the 256-seat proposal is refused by config and principal credited back.",
+    "Controller has one unfinished relay slot. Elector has one replay tombstone per distinct historical recovery owner, not globally constant or TTL-pruned storage.",
+    "No live transactions, deployment, live fund migration or universal future-fee safety claim.",
+    "ACKED, dual IDs, 32-ticket/64-nominator limits and maintenance bond from the withdrawn candidate are not part of the chosen implementation.",
+    "Mature recovery retains the original accepted-stake elector even after Config1 changes; rebound-to-current-elector mutant fails at the destination assertion."
+  ]
+}

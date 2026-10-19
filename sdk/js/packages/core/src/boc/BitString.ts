@@ -31,7 +31,7 @@ export class BitString {
     }
 
     /**
-     * @param data   Backing byte array (must not be modified externally)
+     * @param data   Byte array copied into immutable backing storage
      * @param offset Bit offset from the start of data
      * @param length Number of bits in this string
      */
@@ -40,7 +40,7 @@ export class BitString {
             throw new Error(`Length ${length} is out of bounds`);
         }
         this._length = length;
-        this._data = data;
+        this._data = data.slice();
         this._offset = offset;
     }
 
@@ -109,7 +109,7 @@ export class BitString {
         }
         const start = (this._offset + offset) >> 3;
         const end = start + (length >> 3);
-        return this._data.subarray(start, end);
+        return this._data.slice(start, end);
     }
 
     equals(b: BitString): boolean {

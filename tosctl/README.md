@@ -32,27 +32,36 @@ src/target/release/tosctl
 docker pull ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1
 ```
 
+tosctl keeps its configuration (which can hold inline keys) and a file-backed
+vault in one directory that only you can modify: it refuses to write into a
+directory that is group- or other-writable, owned by another user, or reached
+through a symbolic link. Create it once:
+
+```bash
+export TOSCTL_HOME="$HOME/.tosctl"
+mkdir -p "$TOSCTL_HOME" && chmod 700 "$TOSCTL_HOME"
+```
+
+The container runs as your user (`--user`) so that the files it writes are
+owned by you, and the whole directory is mounted (a single bind-mounted file
+cannot be replaced atomically).
+
 Shell alias for convenience:
 
 ```bash
 alias tosctl='docker run --rm \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
+  --user "$(id -u):$(id -g)" \
+  -v "$TOSCTL_HOME":/tosctl \
   -e VAULT_URL="$VAULT_URL" \
   -e CONFIG_PATH="/tosctl/config.json" \
   ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
   tosctl'
 ```
 
-If using the file-backed vault, also mount the vault file:
+With the file-backed vault, keep the vault in the same directory:
 
 ```bash
-alias tosctl='docker run --rm \
-  -v "$(pwd)/tosctl-config.json":/tosctl/config.json \
-  -v "$(pwd)/vault.json":/tosctl/vault.json \
-  -e VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY" \
-  -e CONFIG_PATH="/tosctl/config.json" \
-  ghcr.io/gtosnetwork/tos-rust-node/tosctl:v0.1.1 \
-  tosctl'
+export VAULT_URL="file:///tosctl/vault.json?master_key=$MASTER_KEY"
 ```
 
 ## Quick Start
@@ -532,8 +541,13 @@ tosctl service -c tosctl-config.json
 tosctl wallet create --name wallet0
 tosctl wallet ls
 
-# Generate a recoverable TVM identity, then recover it into the vault
+# Generate a recoverable TVM identity, then recover it into the vault.
+# --mnemonic-file (like --private-key-file and the vault's --data-file) must be
+# a regular file, not a symlink, owned by you with no group or other
+# permissions (chmod 600); anything else is refused. --mnemonic-fd reads an
+# inherited descriptor instead, and with neither the mnemonic is prompted for.
 tosctl wallet mnemonic-generate --words 24 --version V3R2 --workchain 0 --subwallet-id 0
+chmod 600 mnemonic.txt
 tosctl wallet mnemonic-import --name wallet1 --mnemonic-file mnemonic.txt --workchain 0 --subwallet-id 0
 
 # Generate actual signed test identities instead of placeholder key material
@@ -557,14 +571,17 @@ tosctl config-param -c tosctl-config.json 34
 ### Deploying a single-nominator pool
 
 ```bash
-# Add pool to config with the owner address
-tosctl config pool add --name pool0 --owner "-1:owner_address"
+# Add pool to config with the owner address and the validator controller
+# its stake will be relayed through
+tosctl config pool add --name pool0 --owner "-1:owner_address" \
+  --controller "-1:validator_controller_address"
 
 # Bind pool to node
 tosctl config bind add --node node0 --wallet wallet0 --pool pool0
 
 # Deploy pool contract (sends TOS from the wallet)
-tosctl deploy pool --node node0 --owner "-1:owner_address" --amount 1.5 --verbose
+tosctl deploy pool --node node0 --owner "-1:owner_address" \
+  --controller "-1:validator_controller_address" --amount 1.5 --verbose
 
 # Verify pool state
 tosctl pool get
@@ -694,10 +711,24 @@ Optional runtime flags on the validator-engine side:
 
 | Flag | Purpose |
 |------|---------|
-| `--json-rpc-address` | Bind address for the JSON-RPC server |
+| `--json-rpc-address` | Bind address for the JSON-RPC server (loopback only unless `--json-rpc-readonly`) |
 | `--json-rpc-readonly` | Disable `sendBoc` and other write methods |
 | `--json-rpc-cors-origin` | Set allowed CORS origin |
 | `--json-rpc-readyz-threshold` | Sync lag seconds before readyz fails |
+
+The native JSON-RPC listener speaks plaintext HTTP. While write methods are
+enabled, the engine refuses to start unless `--json-rpc-address` is a loopback
+address (`127.0.0.1`, any `127.0.0.0/8` address, or `[::1]`). An API key does
+not lift this restriction: on a plaintext connection anyone who can observe the
+traffic can read the `X-API-Key` header and replay it.
+
+To accept writes from other hosts, keep the listener on loopback and put an
+authenticated TLS reverse proxy in front of it on the same host. The proxy
+terminates TLS, authenticates the client itself (for example with client
+certificates or its own credential check) and forwards to the loopback
+listener. The node does not read `X-Forwarded-Proto` or any other header to
+decide whether a request arrived encrypted. Only a read-only listener
+(`--json-rpc-readonly`) may bind a non-loopback address.
 
 ## Alert System
 

@@ -1053,7 +1053,11 @@ class InMemoryBagOfCellsDb : public DynamicBagOfCellsDb {
       CHECK(it->diff_refcnt != std::numeric_limits<td::int32>::min());
       --it->diff_refcnt;
     } else {
-      auto info = *storage_->get_info(cell_hash);
+      // A decrement of a cell the database never stored is a caller bug that would
+      // otherwise continue with an invented reference count; stop and name the cell.
+      auto o_info = storage_->get_info(cell_hash);
+      LOG_CHECK(o_info) << "in-memory celldb: dec of unknown cell " << cell_hash.to_hex();
+      auto info = std::move(*o_info);
       it = info_.emplace(Info{.db_refcnt = info.db_refcnt, .diff_refcnt = -1, .cell = info.cell}).first;
     }
     if (it->diff_refcnt + it->db_refcnt != 0) {

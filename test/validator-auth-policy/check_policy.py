@@ -8,7 +8,7 @@ agreement is model-level conformance only, not evidence of signature validity.
 `ed_valid` and `pq_valid` are supplied verification outcomes, not signatures.
 This has no cryptographic implementation, does not run TOS consensus, and is
 not evidence that any phase beyond the classical one is enabled in production.
-See doc/tip-0002-p0-readiness.md for what is and is not implemented.
+The current source is the authority for implemented policy.
 """
 from __future__ import annotations
 

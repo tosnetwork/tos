@@ -1,0 +1,12 @@
+ceremony   artifacts/phase2/ceremony
+steps      6
+
+verifying key 3675550c26b589d295a079adfbb48ecf38b094262a2eec2e40edc41fc8867b31
+  length     1248 bytes
+  IC points  19
+  pool       0:528feb5482074c16d19986a91a78b2e2e7a76c539ecfa0a60aa265c3c0bd9608
+  transact   exit 0 at 1145564 gas
+
+ACCEPTED: the chain takes a real private transfer under this key.
+That is what the gate establishes and all it establishes -- whether the
+scalars behind it were destroyed is not visible here or anywhere.

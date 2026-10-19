@@ -1,7 +1,7 @@
 # Official TOS Docker image
 
 1. [Dockerfile](#docker)
-2. [Kubernetes deployment on-premises](#deploy-on-premises-with-metallb-load-balancer-)
+2. [Kubernetes deployment on-premises](#deploy-on-premises-with-metallb-load-balancer)
 3. [Kubernetes deployment on AWS](#deploy-on-aws-cloud-amazon-web-services)
 4. [Kubernetes deployment on GCP](#deploy-on-gcp-google-cloud-platform)
 5. [Kubernetes deployment on AliCloud](#deploy-on-ali-cloud)
@@ -18,7 +18,26 @@ It is recommended to everyone to read Docker chapter first in order to get a bet
 ## Docker
 
 ### Installation
-```docker pull ghcr.io/tosnetwork/tos:latest```
+Release images are published under their release tag and referenced by digest.
+Each run of the release image workflow publishes an `image-release` artifact
+whose `image-release.json` records the image digest, the release tag, the
+source commit and the run that built it, and the image's build provenance is
+attested in the registry. Pull the digest from that record:
+```
+docker pull ghcr.io/tosnetwork/tos@sha256:<digest from image-release.json>
+gh attestation verify oci://ghcr.io/tosnetwork/tos@sha256:<digest> --repo tosnetwork/tos
+```
+There is no `latest` tag: a deployment that follows a moving tag runs whatever
+was pushed last, not the release it was reviewed against. In the commands below
+`<IMAGE>` stands for `ghcr.io/tosnetwork/tos@sha256:<digest>`.
+
+The Kubernetes manifests in this directory reference the image by digest too.
+In the repository they carry an all-zero placeholder digest, which cannot be
+pulled, until a release pins them: use the manifests from the release's
+`image-release` artifact, or pin a checkout yourself with
+`scripts/pin-image-digest.py --record image-release.json docker/tos-*.yaml`,
+which also records the release tag, source commit and build run above the
+image line.
 
 ### Configuration
 TOS validator-engine supports number of command line parameters,
@@ -29,11 +48,17 @@ Below is the list of supported arguments and their default values:
 |:------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------:|:-------------------------------------------------------:|
 | PUBLIC_IP         | This will be a public IP address of your TOS node. Normally it is the same IP address as your server's external IP. This also can be your proxy server or load balancer IP address.       |    yes     |                                                         |
 | GLOBAL_CONFIG_URL | TOS global configuration file. Mainnet - https://tos.network/global-config.json, Testnet - https://tos.network/testnet-global.config.json                                                         |     no     | https://tos.network/global-config.json |
-| DUMP_URL          | URL to TOS dump. Specify dump from https://dump.tos.network. If you are using testnet dump, make sure to download global config for testnet.                                                  |     no     |                                                         |
+| SNAPSHOT_IMPORT   | Set to 1 to import a database snapshot into a new node. Import is off unless set; see [Database snapshots](#database-snapshots).                                                  |     no     |                                                         |
+| DUMP_URL          | https:// URL of the snapshot archive (.tar.lz). Requires SNAPSHOT_IMPORT, DUMP_SHA256 and DUMP_ZEROSTATE_ROOT_HASH; the container refuses to start otherwise.                       |     no     |                                                         |
+| DUMP_SHA256       | SHA-256 of the snapshot archive. It is the only thing that authenticates the archive, and only if you obtained it independently of the snapshot download. A checksum downloaded from the same place as the archive does not authenticate it. |     no     |                                                         |
+| DUMP_ZEROSTATE_ROOT_HASH | `validator.zero_state.root_hash` of the network the snapshot belongs to; must match the node's global config. This is a consistency check, not authentication of either value. |     no     |                                                         |
+| SNAPSHOT_STAGING_DIR | Directory, outside the database directory, where the archive is downloaded and unpacked before it is moved into place.                                                         |     no     |             /var/tos-work/snapshot-staging              |
 | VALIDATOR_PORT    | UDP port that must be available from the outside. Used for communication with other nodes.                                                                                                |     no     |                          30001                          |
 | CONSOLE_PORT      | This TCP port is used to access validator's console. Not necessarily to be opened for external access.                                                                                    |     no     |                          30002                          |
 | LITE_PORT         | Lite-server's TCP port. Used by lite-client.                                                                                                                                              |     no     |                          30003                          |
-| LITESERVER        | true or false. Set to true if you want up and running lite-server.                                                                                                                        |     no     |                          false                          |
+| LITESERVER        | Any non-empty value starts a lite-server; leave it unset for none. Refused together with the validator role.                                                                              |     no     |                         unset                           |
+| VALIDATOR_ID      | Validator role: the controller account's 256-bit id, 64 hex digits or `-1:<64 hex digits>`. Requires PQ_CONSENSUS_KEY_FILE. See [Run a validator](#run-a-validator).                    |     no     |                                                         |
+| PQ_CONSENSUS_KEY_FILE | Validator role: absolute path, inside the container, of the mounted 32-byte consensus seed. Requires VALIDATOR_ID.                                                                   |     no     |                                                         |
 | STATE_TTL         | Node's state will be gc'd after this time (in seconds).                                                                                                                                   |     no     |                          86400                          |
 | ARCHIVE_TTL       | Node's archived blocks will be deleted after this time (in seconds).                                                                                                                      |     no     |                          86400                          |
 | THREADS           | Number of threads used by validator-engine.                                                                                                                                               |     no     |                            8                            |
@@ -49,7 +74,7 @@ This approach simplifies networking configuration for the container, and usually
 
 Keep in mind that this option can also introduce security concerns because the container has access to the host's network interfaces directly, which might not be desirable in a multi-tenant environment.
 
-Check your firewall configuration and make sure that at least UDP port 43677 is publicly available.
+Check your firewall configuration and make sure that at least the UDP port VALIDATOR_PORT (default 30001) is publicly available.
 Find out your PUBLIC_IP:
 ```
 curl -4 ifconfig.me
@@ -59,9 +84,8 @@ and replace it in the command below:
 docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
 -e "LITESERVER=true" \
--e "DUMP_URL=https://dump.tos.network/dumps/latest.tar.lz" \
 --network host \
--it ghcr.io/tosnetwork/tos
+-it <IMAGE>
 ```
 If you don't need Lite-server, then remove -e "LITESERVER=true".
 
@@ -72,7 +96,6 @@ This is ideal for running multiple containers with isolated networks on the same
 ```
 docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
--e "DUMP_URL=https://dump.tos.network/dumps/latest.tar.lz" \
 -e "VALIDATOR_PORT=443" \
 -e "CONSOLE_PORT=88" \
 -e "LITE_PORT=443" \
@@ -80,10 +103,172 @@ docker run -d --name tos-node -v /data/db:/var/tos-work/db \
 -p 443:443/udp \
 -p 88:88/tcp \
 -p 443:443/tcp \
--it ghcr.io/tosnetwork/tos
+-it <IMAGE>
 ```
 Adjust ports per your need.
 Check your firewall configuration and make sure that customized ports (443/udp, 88/tcp and 443/tcp in this example) are publicly available.
+
+### Run a validator
+The image runs a full node unless the validator role is requested. The role
+needs two things the image cannot provide: the controller account the
+validator is registered as, and its post-quantum consensus key.
+
+Generate the key once, on the validator host, with the `tos-pq-consensus-key`
+tool shipped in the image and in the release archives. It refuses to
+overwrite a key and prints the key id and public key, never the seed. Run it
+as the user the node container runs as (root, unless you start the container
+with `-u`), because the node only loads a key owned by its own user:
+```
+install -d -m 700 /data/keys
+docker run --rm -v /data/keys:/keys --entrypoint tos-pq-consensus-key \
+  <IMAGE> generate /keys/pq-consensus.seed
+```
+Mount the key read-only and name it together with the controller id:
+```
+docker run -d --name tos-validator -v /data/db:/var/tos-work/db \
+-v /data/keys/pq-consensus.seed:/var/tos-work/keys/pq-consensus.seed:ro \
+-e "PUBLIC_IP=<PUBLIC_IP>" \
+-e "VALIDATOR_ID=<64 hex digits of the controller account id>" \
+-e "PQ_CONSENSUS_KEY_FILE=/var/tos-work/keys/pq-consensus.seed" \
+-p 30001:30001/udp \
+-it <IMAGE>
+```
+On every start the entrypoint checks the key with the rules the node applies
+when it loads it, and stops with exit status 4 before anything else happens if
+one fails:
+- the path is absolute and not a symbolic link;
+- it is a regular file of exactly 32 bytes;
+- it is owned by the user the node runs as;
+- it has no group or other permission bits (`chmod 600`);
+- its directory is not group- or world-writable.
+
+On the first start it then records the binding as
+`extraconfig.pq_consensus {validator_id, consensus_key_file}` in
+`/var/tos-work/db/config.json` with `tos-pq-consensus-key bind-node`, the same
+command an operator uses outside the container. It holds the node's
+configuration lock while it edits, writes through the node's own configuration
+schema, refuses content that schema would drop or an interrupted node write
+(`config.json.tmp`), and flushes the file to disk. The binding is never
+rewritten from the environment afterwards: if `config.json` already names
+another validator or key file, the container refuses to start; changing the
+identity a node signs for is a deliberate
+`tos-pq-consensus-key bind-node --replace` by the operator, with the node
+stopped. Only the binding goes through `bind-node`: on a first start the
+entrypoint still adds the console control entry (and, on a lite server, the
+lite server entry) to `config.json` itself, before the binding is written.
+
+A validator serves no public queries. The role is refused together with
+`LITESERVER`, with lite servers already configured in `config.json` (a node
+that ran as a lite server cannot be turned into a validator by setting the
+variables), and with any `--json-rpc-address` in `CUSTOM_ARG` that is not a
+literal loopback address (`127.x.y.z:port` or `[::1]:port`; host names are
+refused because the node resolves them). Once `config.json` binds a
+validator, the same rules apply on every start even if the variables are
+removed. When `config.json` is missing, the `config.json.tmp` the node would
+recover in its place is checked instead. Keep the console port (CONSOLE_PORT)
+unpublished; wallets and explorers use separate RPC nodes.
+
+For every role, `CUSTOM_ARG` may not move the database or its configuration:
+`-D`/`--db` and `-c`/`--local-config` are refused, because the entrypoint
+checks the configuration in `/var/tos-work/db`. `CUSTOM_ARG` is read the way
+the node reads its command line, with the node's own option table: an option
+that takes a value takes the next word even when it starts with `-`
+(`--logname -v --db /x` sets the database), short options may be bundled
+(`-dD/x` sets it; `-vD` is verbosity "D"), and nothing after `--` is an
+option. An unknown option, a value given to a flag, or a missing value is
+refused, as the node would refuse it. `STATE_TTL`, `ARCHIVE_TTL`, `THREADS`,
+`VERBOSITY` and the port settings must be decimal numbers.
+
+Back the seed up offline and encrypted, never on the host. The controller root
+key (`tos-pq-key`) and the controller actions it signs (`tos-pq-controller`)
+belong to an offline machine, not to the validator host.
+
+### Database snapshots
+A new node can start from a database snapshot instead of synchronizing from
+scratch. The snapshot replaces chain state the node would otherwise check for
+itself, so the container imports one only when the operator asks for it and
+names its content:
+
+```
+-e "SNAPSHOT_IMPORT=1" \
+-e "DUMP_URL=https://<snapshot host>/<archive>.tar.lz" \
+-e "DUMP_SHA256=<SHA-256 of the archive>" \
+-e "DUMP_ZEROSTATE_ROOT_HASH=<validator.zero_state.root_hash of the network>" \
+-v /data/snapshot-staging:/var/tos-work/snapshot-staging \
+```
+
+`DUMP_SHA256` is the trust anchor. It authenticates the archive only if you
+obtained it independently of the snapshot download, for example from a
+release announcement you verified, rather than from the server, page or
+mirror that serves the archive. HTTPS only proves which server answered, and a
+checksum served next to the archive proves nothing more.
+
+`DUMP_ZEROSTATE_ROOT_HASH` must equal the zero state in the node's global
+config. That is a consistency check between two of your own settings: it stops
+a digest meant for one network from being used on a node configured for
+another. It does not authenticate the global config; the node trusts that
+config as configured.
+
+**Prerequisite: the import must be the database's only writer.** Stop the
+validator and any other importer before the import, and make sure no other
+container mounts the database volume read-write until it ends; in Kubernetes,
+run one replica per volume. The script checks the database again immediately
+before installing, which detects a write that happened while the archive was
+staged and refuses. That check does not make the installation atomic against
+a writer that is still running, and nothing recovers an installation
+interrupted by a crash: start again from a new database.
+
+The import script (`docker/import-snapshot.sh`) then:
+
+- refuses to start when `DUMP_URL` is set without `SNAPSHOT_IMPORT=1`, or when
+  the digest or the network binding is missing or does not match;
+- holds the node's configuration lock (`config.json.lock`, the record lock
+  `validator-engine` holds while it runs and `bind-node` holds while it edits)
+  from before it reads the database until it exits, and refuses if another
+  process holds it. A node started during the import refuses to start. The
+  lock catches a node that was not stopped; it does not replace stopping it.
+  The lock file is created if missing and left in place. It also refuses if
+  any RocksDB `LOCK` file under the database is held (RocksDB takes the same
+  kind of lock on every database it opens). `flock` is a different lock that
+  the node neither takes nor sees; holding the files with it excludes nothing.
+  In the container the import runs before the entrypoint initializes or starts
+  the node, once, so the lock is a second line of defence there;
+- imports only into a new database: before downloading, and again immediately
+  before installing, the database directory may hold nothing but the node's
+  `config.json`, `keyring/` and `tos-global.config`, the empty
+  configuration lock `config.json.lock`, the empty error log
+  `validator-engine` creates when it initializes a database (`error/` holding
+  only an empty `files/` and an empty `log.txt`), and an empty `lost+found`.
+  Any other content, even with names the snapshot does not use, is refused.
+  `init.sh` runs the import before `validator-engine` initializes the
+  database, so on a first start the database holds only the global config;
+- downloads into `SNAPSHOT_STAGING_DIR`, which must be outside the database
+  directory (mount it on the same filesystem as the database so the final step
+  is a rename), and checks the SHA-256 before anything is unpacked;
+- accepts only regular files and directories with relative names, never `..`,
+  and never a top-level name the database already reserves (`config.json`,
+  `config.json.lock`, `keyring`, `tos-global.config`, `error`, `lost+found`,
+  `config.json.tmp`,
+  the import markers), however
+  the name is spelled (`././keyring`, `.//keyring` and `keyring/` are all
+  `keyring`);
+- checks the unpacked tree itself again before installing it: its real
+  top-level names, and nothing but regular, singly linked files and
+  directories anywhere in it;
+- moves the verified entries into place, and only then writes the
+  `.snapshot-imported` marker.
+
+Any refusal or failure stops the container before the node starts. A refusal
+during validation, which covers everything up to and including the final
+check of the database immediately before installation, leaves the database as
+it was. A failure during installation itself (moving the checked entries into
+place) can leave it partially installed and without the `.snapshot-imported`
+marker; the next start then refuses it as not new. Delete the database
+directory's contents except `config.json`, `config.json.lock`, `keyring/` and
+`tos-global.config`,
+or start from a new database, before trying again. A database imported by an
+earlier image without verification (it carries a `dump_downloaded` marker) is
+refused; start from an empty database.
 
 ### Verify if TOS node is operating correctly
 After executing above command check the log files:
@@ -162,6 +347,38 @@ If you use lite-client outside the Docker container, copy the **liteserver.pub**
 docker stop tos-node
 ```
 
+### Database lock
+The node holds `/var/tos-work/db/config.json.lock` while it runs. A second
+container started on the same database volume exits with status 2 and names
+the lock. Stop the running container before starting a replacement, and before
+running any tool that edits `config.json`.
+
+### Validator operations
+The full procedure for a post-quantum validator (controller deployment,
+elections, operating authorization, configuration votes) is in
+[doc/validator-operator-guide.md](../doc/validator-operator-guide.md). Points
+specific to the image:
+
+- Retired validator consensus databases under `/var/tos-work/db/consensus/`
+  are deleted by default. To keep them, add
+  `--disable-validator-consensus-cleanup` to `CUSTOM_ARG`; the database then
+  grows without bound.
+- The key tools (`tos-pq-consensus-key`, `tos-pq-vote`) run in a one-off
+  container with the same volumes and user as the node, for example
+  `docker run --rm -v /data/keys:/var/tos-work/keys --entrypoint tos-pq-vote <IMAGE> ...`.
+  `tos-pq-key` and `tos-pq-controller` sign with the controller root key and
+  belong on an offline machine.
+- To rotate the consensus key, stop the container, mount the new key file,
+  and run
+  `tos-pq-consensus-key bind-node --replace /var/tos-work/db <new key path> <VALIDATOR_ID>`
+  in a one-off container with the database volume. Then start the node with
+  `PQ_CONSENSUS_KEY_FILE` naming the new key: the entrypoint refuses a
+  variable that differs from the binding in `config.json`. Rotation is safe
+  only in the interval the guide describes.
+- `GLOBAL_CONFIG_URL` must serve a global config whose `validator.init_block`
+  is a recent key block; a stale one leaves a new node unable to prove its way
+  to the current chain.
+
 ## Kubernetes
 ### Deploy in a quick way (without load balancer)
 If the nodes within your kubernetes cluster have external IPs,
@@ -180,7 +397,7 @@ kubectl describe node <NODE_NAME> | grep IPv4Address
 ```
 Double check if your Kubernetes node's external IP coincides with the host's IP address:
 ```
-kubectl run --image=ghcr.io/tosnetwork/tos:latest validator-engine-pod --env="HOST_IP=1.1.1.1" --env="PUBLIC_IP=1.1.1.1"
+kubectl run --image=ghcr.io/tosnetwork/tos@sha256:<digest> validator-engine-pod --env="HOST_IP=1.1.1.1" --env="PUBLIC_IP=1.1.1.1"
 kubectl exec -it validator-engine-pod -- curl -4 ifconfig.me
 kubectl delete pod validator-engine-pod
 ```
@@ -370,11 +587,11 @@ docker run -it -v /data/db:/var/tos-work/db \
 -e "HOST_IP=<PUBLIC_IP>" \
 -e "PUBLIC_IP=<PUBLIC_IP>" \
 -e "LITESERVER=true" \
--p 43677:43677/udp \
--p 43678:43678/tcp \
--p 43679:43679/tcp \
+-p 30001:30001/udp \
+-p 30002:30002/tcp \
+-p 30003:30003/tcp \
 --entrypoint /bin/bash \
-ghcr.io/tosnetwork/tos
+<IMAGE>
 ```
 identify your PUBLIC_IP:
 ```

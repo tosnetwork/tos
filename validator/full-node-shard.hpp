@@ -25,8 +25,8 @@
 #include "td/actor/PromiseFuture.h"
 #include "td/utils/port/Poll.h"
 
+#include "full-node-shard-admission.h"
 #include "full-node-shard.h"
-#include "rate-limiter.h"
 
 namespace tos {
 
@@ -150,13 +150,13 @@ class FullNodeShardImpl : public FullNodeShard {
                      td::Promise<td::BufferSlice> promise);
   void process_query(adnl::AdnlNodeIdShort src, tos_api::tosNode_getPersistentStateSizeV2 &query,
                      td::Promise<td::BufferSlice> promise);
-  void receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Promise<td::BufferSlice> promise);
+  void receive_query(adnl::AdnlNodeIdShort src, td::BufferSlice query, td::Promise<adnl::AdnlQueryAnswer> promise);
   void receive_message(adnl::AdnlNodeIdShort src, td::BufferSlice data);
 
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcast &query);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressed &query);
   void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 &query);
-  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query);
+  void process_broadcast(PublicKeyHash src, tos_api::tosNode_blockFinalityBroadcast &query, std::size_t received_bytes);
   void process_block_broadcast(PublicKeyHash src, tos_api::tosNode_Broadcast &query);
   void obtain_state_for_decompression(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query);
   void process_block_broadcast_with_state(PublicKeyHash src, tos_api::tosNode_blockBroadcastCompressedV2 query,
@@ -206,6 +206,8 @@ class FullNodeShardImpl : public FullNodeShard {
                            td::Promise<std::vector<BlockIdExt>> promise) override;
   void download_archive(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, std::string tmp_dir,
                         td::Timestamp timeout, td::Promise<std::string> promise) override;
+  void probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                    td::Promise<startup_catchup::RoundResult> promise) override;
   void download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                     block::ImportedMsgQueueLimits limits, td::Timestamp timeout,
                                     td::Promise<std::vector<td::Ref<OutMsgQueueProof>>> promise) override;
@@ -252,13 +254,13 @@ class FullNodeShardImpl : public FullNodeShard {
   }
 
   FullNodeShardImpl(ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id,
-                    FileHash zero_state_file_hash, FullNodeOptions opts, std::shared_ptr<RateLimiter<>> limiter,
-                    td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
-                    td::actor::ActorId<rldp2::Rldp> rldp2, td::actor::ActorId<quic::QuicSender> quic,
-                    td::actor::ActorId<overlay::Overlays> overlays,
+                    FileHash zero_state_file_hash, FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter,
+                    std::shared_ptr<RefusalAnswerBudget> refusal_answers, td::actor::ActorId<keyring::Keyring> keyring,
+                    td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
+                    td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
                     td::actor::ActorId<ValidatorManagerInterface> validator_manager,
-                    td::actor::ActorId<adnl::AdnlExtClient> client, td::actor::ActorId<FullNode> full_node,
-                    bool active, bool enable_plumtree_broadcast);
+                    td::actor::ActorId<adnl::AdnlExtClient> client, td::actor::ActorId<FullNode> full_node, bool active,
+                    bool enable_plumtree_broadcast);
 
  private:
   bool use_new_download() const {
@@ -307,7 +309,7 @@ class FullNodeShardImpl : public FullNodeShard {
   std::set<td::Bits256> processed_ext_msg_broadcasts_;
   td::Timestamp cleanup_processed_ext_msg_at_;
 
-  std::shared_ptr<RateLimiter<>> limiter_;
+  ShardQueryAdmission admission_;
 };
 
 }  // namespace fullnode

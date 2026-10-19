@@ -52,7 +52,9 @@ cd build
 Useful flags from the current binary:
 
 - `-C`: global config
-- `-c`: local config
+- `-c`: local config, read only when `<db>/config.json` does not exist: the
+  engine creates `<db>/config.json` from it and exits so that it can be
+  checked; every later start reads `<db>/config.json`
 - `-D`: database root
 - `-I`: advertised node address
 - `-f`: Fift script directory
@@ -60,6 +62,15 @@ Useful flags from the current binary:
 - `--parallel-validation`: enable parallel validation across accounts
 - `--permanent-celldb`: archival-style cell retention
 - `--unsynced-liteserver`: allow liteserver queries before full sync
+
+## Database Lock
+
+The engine holds `<db>/config.json.lock` from before it reads any
+configuration until it exits. A second engine started on the same database
+exits with status 2 and names the lock, as does an engine started while
+`tos-pq-consensus-key bind-node` is editing `<db>/config.json`. Stop the node
+before editing `config.json` by hand: the engine rewrites the file whenever its
+configuration changes.
 
 ## Sync and Storage
 
@@ -71,6 +82,97 @@ Plan separately for:
 - metrics
 
 Use dedicated storage paths and monitor disk growth continuously.
+
+## Wallet Index
+
+A node started with `--json-rpc-address` keeps a basechain wallet index under
+`<db root>/wc0-index` for the account-index JSON-RPC methods
+(`getAccountJettons`, `getAccountNfts`, `getAccountEvents`,
+`getAccountEvent`). The index is built in the background, so the token lists
+from `getAccountJettons` and `getAccountNfts` carry an `index_state`; read
+`"complete": false` as "this list may be missing entries", not as the whole
+truth.
+
+- **Token candidates are never dropped for lack of room.** Candidates a block
+  cannot verify at once wait in a bounded backlog (`pending`). When the
+  backlog is full, the rest of the block's candidates are stored with the
+  block, which stays unfinished (`unfinished_block`); the indexing worker
+  verifies them by itself, against the newest state the node has, also after
+  a restart and with no new block arriving. At most 1024 blocks can be
+  unfinished this way; past that the worker finishes them before indexing
+  more. A candidate whose verification stays indeterminate through every
+  attempt, or needs the state of another shard the node does not have yet
+  (a jetton master or NFT collection elsewhere), is `parked`: it is kept,
+  retried by the worker in bounded rounds against each shard's newest state,
+  and released only on a definite result. Any of these keeps
+  `"complete": false`.
+- **The index holds back archive pruning for blocks it has yet to read.** A
+  block applied but not yet indexed (still queued, or only marked because
+  the indexer was behind) is kept by the archive, past `--archive-ttl` if
+  need be, until its token candidates are indexed or stored with it. On the
+  next start the indexer reads such blocks back and indexes them first.
+  Pruning also never deletes a package that may hold a block still being
+  applied or not yet applied (one referenced at or after the shard client's
+  masterchain block).
+- **An index written by another schema version is reset.** When the node
+  opens an index database of any other layout, it empties it and starts a
+  fresh, forward-only index from the blocks applied from then on. Nothing of
+  the old database is imported or served, and no earlier history is
+  recovered.
+- **Stopping the node marks the index as incomplete.** Only an exit that
+  happens after block application has stopped records the indexing run as
+  finished. `systemctl stop` (SIGTERM), a crash, an out-of-memory kill and a
+  scheduled shutdown do not. The next start then reports `"needs_rebuild":
+  true` and `"complete": false` from then on, because a block applied just
+  before the stop may never have reached the index.
+- **There is no rebuild, only a reset.** Nothing recovers the entries such an
+  index may be missing. Deleting `<db root>/wc0-index` while the node is
+  stopped resets it to a fresh, forward-only index: the warning goes away,
+  but the new index holds only blocks applied after the reset. Entries for
+  earlier blocks, including any the old index was missing, are not recovered,
+  because the index never replays history.
+- **An index that cannot be opened is reported, not hidden.** If the index
+  database fails to open (for example a lock held by another process, a disk
+  fault, or a schema it cannot migrate), the node runs without indexing, logs
+  the reason once at startup, and these methods answer with error -32603
+  "wallet index unavailable on this node: ...". A node started without
+  `--json-rpc-address` keeps no index, and these methods answer -32601
+  "wallet index disabled on this node".
+
+## Full-Node Masters and Slaves
+
+A node can serve chain data to a fixed set of other nodes ("slaves") through
+the full-node master service, configured by `fullnodemasters` entries (an
+external port and an ADNL id) in the local config. A slave lists its masters in
+`fullnodeslaves` (each master's address and ADNL public key) and signs in to
+them with its own full-node ADNL key.
+
+The master service is **allowlist-only**:
+
+- Start the master with one `--full-node-master-trusted <adnl-id-hex>` per
+  slave it serves (at most 8). The id is the slave's full-node ADNL id.
+- A node configured with `fullnodemasters` but no `--full-node-master-trusted`
+  id **refuses to start** (exit code 2) with an error naming the missing
+  option. There is no open mode: remove the `fullnodemasters` entries if the
+  node should not serve slaves.
+- Every request from a source that is not a configured slave is refused before
+  it is charged to any budget. This includes external connections that do not
+  sign in, and connections that sign in with any other key.
+- The service budget is 16 requests of burst and 4 requests per second in
+  total, across every master port of the node. Each configured slave gets an
+  equal, independent share of both (with two slaves, 8 of burst and 2 per
+  second each). No other source, and no other slave, can use a slave's share;
+  a slave that has used its share is refused until it refills. The set is read
+  once at startup; changing it needs a restart.
+
+A slave must sign in with the key of its configured full-node ADNL id:
+
+- A node configured with `fullnodeslaves` but without a full-node ADNL id, or
+  whose keyring does not hold that id's private key, **refuses to start**
+  (exit code 2). It never falls back to an anonymous connection, which every
+  master would refuse.
+- A slave whose full-node ADNL id changes must be restarted to sign in with the
+  new key, and each of its masters must list the new id.
 
 ## Operational Checks
 
@@ -85,7 +187,10 @@ Use the console and lite client to confirm:
 
 - Run as a service user
 - Keep logs on a separate volume when possible
-- Pin a consistent global config per environment
+- Pin a consistent global config per environment, and use one whose
+  `validator.init_block` is a recent key block: a new node cannot prove its way
+  forward from blocks its peers no longer keep (see
+  [validator-operator-guide.md](validator-operator-guide.md#11-refresh-the-global-configs-init-block))
 - Upgrade binaries and configs together, not independently
 
 ## AI Actor Operations
@@ -100,5 +205,6 @@ Operators running AI agents or service actors should prefer a local full node wh
 ## Related Docs
 
 - [Validator.md](Validator.md)
+- [validator-operator-guide.md](validator-operator-guide.md)
 - [LiteClient.md](LiteClient.md)
 - [ai-actors.md](https://github.com/tosnetwork/doc/blob/main/tos-blockchain/ai-actors.md)

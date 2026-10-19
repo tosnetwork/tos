@@ -19,6 +19,7 @@
 
 #include "interfaces/validator-manager.h"
 #include "rldp2/rldp.h"
+#include "validator/shard-block-subscription.h"
 
 namespace tos::validator {
 
@@ -54,7 +55,7 @@ class ShardBlockRetainer : public td::actor::Actor {
 
   bool inited_ = false;
   std::set<adnl::AdnlNodeIdShort> validator_adnl_ids_;
-  std::map<std::pair<adnl::AdnlNodeIdShort, ShardIdFull>, td::Timestamp> subscribers_;
+  ShardBlockRetainerSubscriptions subscriptions_;
   std::set<BlockIdExt> confirmed_blocks_;
 
   void process_query(adnl::AdnlNodeIdShort src, td::BufferSlice data, td::Promise<td::BufferSlice> promise);
@@ -67,7 +68,6 @@ class ShardBlockRetainer : public td::actor::Actor {
 
   bool is_block_outdated(const BlockIdExt& block_id) const;
 
-  static constexpr double SUBSCRIPTION_TTL = 60.0;
   static constexpr size_t MAX_BLOCKS_PER_MESSAGE = 8;
 };
 

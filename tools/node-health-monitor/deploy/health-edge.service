@@ -1,0 +1,33 @@
+[Unit]
+Description=Bounded node health process sampler
+After=network.target
+ConditionPathExists=/etc/tos-health/edge-approved
+
+[Service]
+Type=simple
+User=tos-health
+Group=tos-health
+EnvironmentFile=/etc/tos-health/edge.env
+ExecStart=/opt/tos-health/bin/health-edge ${NODE_ID} ${VALIDATOR_PID} 127.0.0.1:9011 /etc/tos-health/edge.token
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=5
+CPUQuota=10%
+MemoryMax=128M
+MemorySwapMax=0
+TasksMax=32
+LimitNOFILE=64
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -186,7 +186,7 @@ async fn test_from_url_empty_query_segments() -> anyhow::Result<()> {
 #[tokio::test]
 #[serial_test::serial]
 async fn test_from_url_nested_path() -> anyhow::Result<()> {
-    let temp_dir = tempfile::tempdir()?;
+    let temp_dir = private_tempdir()?;
     let master_key_hex = "abcdef00000000000011223344556677889900112233445566778899001122ff";
     let nested_path = temp_dir.path().join("subdir/nested/vault.json");
     let url = format!("file://{}?master_key={}", nested_path.to_str().unwrap(), master_key_hex);

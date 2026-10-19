@@ -1,0 +1,54 @@
+RESTORED SOURCE: opt-in ceiling 128; observability grant guard restored
+COMMAND: NHM_C09_READONLY_M_DB=$HOME/nhm-supervision/c09-local/runtime/evidence/evidence.db NHM_C09_NETWORK=b7fba4bda348db54717b7930da7b874289d88642a4d3990fb41d03e0cb006004 cargo test --locked -p tos-health-services --test manager_query_source live_read_only_projection_cost_witness -- --ignored --exact --nocapture
+   Compiling tos-health-services v0.1.0 ($HOME/tos-node-health-c09-perf-docs-31fc/tools/node-health-monitor/crates/health-services)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.01s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+initial_page_ms=355
+grant_during_catchup=503
+page=3 rows=256 global_m_seq=7196 elapsed_ms=435
+page=4 rows=256 global_m_seq=8040 elapsed_ms=485
+page=5 rows=256 global_m_seq=8884 elapsed_ms=324
+page=6 rows=256 global_m_seq=9726 elapsed_ms=326
+page=7 rows=256 global_m_seq=10582 elapsed_ms=353
+page=8 rows=256 global_m_seq=11436 elapsed_ms=376
+page=9 rows=256 global_m_seq=12287 elapsed_ms=412
+page=10 rows=256 global_m_seq=13133 elapsed_ms=465
+page=11 rows=256 global_m_seq=13967 elapsed_ms=541
+page=12 rows=256 global_m_seq=14799 elapsed_ms=555
+page=13 rows=256 global_m_seq=15633 elapsed_ms=541
+page=14 rows=256 global_m_seq=16469 elapsed_ms=551
+page=15 rows=256 global_m_seq=17303 elapsed_ms=544
+page=16 rows=256 global_m_seq=18134 elapsed_ms=543
+page=17 rows=256 global_m_seq=18970 elapsed_ms=548
+page=18 rows=256 global_m_seq=19808 elapsed_ms=544
+page=19 rows=256 global_m_seq=20643 elapsed_ms=538
+page=20 rows=256 global_m_seq=21477 elapsed_ms=548
+page=21 rows=256 global_m_seq=22318 elapsed_ms=543
+page=22 rows=256 global_m_seq=23152 elapsed_ms=542
+page=23 rows=256 global_m_seq=23982 elapsed_ms=550
+page=24 rows=256 global_m_seq=24816 elapsed_ms=541
+page=25 rows=256 global_m_seq=25660 elapsed_ms=539
+page=26 rows=256 global_m_seq=26491 elapsed_ms=552
+page=27 rows=256 global_m_seq=27337 elapsed_ms=550
+page=28 rows=256 global_m_seq=28180 elapsed_ms=557
+page=29 rows=256 global_m_seq=29021 elapsed_ms=546
+page=30 rows=256 global_m_seq=29861 elapsed_ms=543
+page=31 rows=256 global_m_seq=30698 elapsed_ms=554
+page=32 rows=256 global_m_seq=31542 elapsed_ms=542
+page=33 rows=256 global_m_seq=32383 elapsed_ms=535
+page=34 rows=256 global_m_seq=33223 elapsed_ms=558
+page=35 rows=256 global_m_seq=34058 elapsed_ms=542
+page=36 rows=256 global_m_seq=34894 elapsed_ms=543
+page=37 rows=256 global_m_seq=35740 elapsed_ms=555
+page=38 rows=154 global_m_seq=36242 elapsed_ms=439
+caught_up_ms=19117 grant_after_catchup=200 revoked=200
+steady_rows=0 global_m_seq=36245 elapsed_ms=231
+test live_read_only_projection_cost_witness ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 19 filtered out; finished in 19.61s
+
+
+COMMAND_EXIT_CODE=0
+

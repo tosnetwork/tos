@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "node_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+      },
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true
+    },
+    "metric_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 96
+      },
+      "minItems": 1,
+      "maxItems": 6,
+      "uniqueItems": true
+    },
+    "scope_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "start": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 40
+    },
+    "end": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 40
+    },
+    "step_seconds": {
+      "type": "integer",
+      "enum": [
+        15,
+        30,
+        60,
+        300
+      ]
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "summary",
+        "series"
+      ]
+    },
+    "max_points_per_series": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 240
+    }
+  },
+  "required": [
+    "run_id",
+    "node_ids",
+    "metric_ids",
+    "scope_id",
+    "start",
+    "end",
+    "step_seconds",
+    "mode",
+    "max_points_per_series"
+  ],
+  "$defs": {}
+}

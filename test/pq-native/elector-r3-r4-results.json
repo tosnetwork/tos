@@ -1,0 +1,340 @@
+{
+  "base": "9615ff13a0e1859c917af796f3a77f6a4315e73e",
+  "candidate_zip_sha256": "bb68ee6751b90aa92fef3986f1121487760c8f5484e25a4fa2aa044c252807f0",
+  "status": "HOLD: R3 remains reproducibly vulnerable; not complete remediation",
+  "changes_from_zip": [
+    "Fix invalid FunC empty-body syntax in compiled unsupported-target fixture",
+    "Add a compiled wrong-schema target in addition to missing-schema and missing-hook controls",
+    "Rust formatting",
+    "Extend same-code upgrade test with repeated ACKs, immutable tombstone and no repeat principal payment"
+  ],
+  "checks": {
+    "new_native_cases": {
+      "passed": 4,
+      "exit": 0,
+      "log": {
+        "path": ".git/elector-security-audit-artifacts/r3-r4/target-restored.log",
+        "bytes": 9428,
+        "sha256": "46bd35600fef75fff84acb6cd5b9ab5f86f93cb6b10236d6daf863423d19ca85"
+      },
+      "note": "Wrong-schema target was added after this first four-case run and covered by subsequent full and mutation runs."
+    },
+    "full_contracts_and_elections": {
+      "passed": 698,
+      "failed": 0,
+      "ignored": 5,
+      "exit": 0,
+      "log": {
+        "path": ".git/elector-security-audit-artifacts/r3-r4/full.log",
+        "bytes": 80207,
+        "sha256": "d0ea14637546b683ad56779c2e4fe0a3a1bee6fe06ad4f26ab33557a1d9ef4c7"
+      },
+      "note": "Does not include the separately executed remaining-gap probe. Historical test source: before the repeated-ACK extension; not rerun as a full suite on that extension."
+    },
+    "source_guards": {
+      "passed": 39,
+      "exit": 0,
+      "log": {
+        "path": ".git/elector-security-audit-artifacts/r3-r4/source-guards.log",
+        "bytes": 5410,
+        "sha256": "e5bbf8c78d564dc3ca7bdba5200dac972ee740545b07c7245464103d872b13b3"
+      }
+    },
+    "fmt": {
+      "exit": 0,
+      "log": {
+        "path": ".git/elector-security-audit-artifacts/r3-r4/fmt-check.log",
+        "bytes": 105,
+        "sha256": "70d2bece00e118a8345b19bc989d7942cb7dc532115d082370018b9cbf85cccf"
+      }
+    },
+    "gap": {
+      "exit": 101,
+      "assertion": "R3 remains open: retained failed-message credit must not fund another pool",
+      "source": {
+        "path": ".git/elector-security-audit-artifacts/r3-r4/r3-gap.rs",
+        "bytes": 2019,
+        "sha256": "a411bf6679c71b45d2fbb74b1e4c0a01fba20d0e84ddeed0078d533f4b3375ff"
+      },
+      "log": {
+        "path": ".git/elector-security-audit-artifacts/r3-r4/gap-red.log",
+        "bytes": 9643,
+        "sha256": "211873cbf7640a8871841eb8edd531b6190a7b8b0cadae2e45914c18ad3eea5d"
+      },
+      "meaning": "A real non-bounce malformed message aborts, leaves >490 TOS credited, and READY settlement pays that unrelated value to the pool. This is a real unfixed failure, not a mutation."
+    },
+    "latest_candidate_tests": {
+      "passed": 4,
+      "failed": 0,
+      "exit": 0,
+      "log": {
+        "path": ".git/elector-security-audit-artifacts/r3-r4/target-followup.log",
+        "bytes": 9347,
+        "sha256": "794c4891d088271a6f90fd97e947c02b615a529e8f7d6433905554ada2ffed9a"
+      }
+    }
+  },
+  "mutations": [
+    {
+      "case": "funding-credit",
+      "source": "crypto/smartcont/validator-controller-v1.fc",
+      "test": "controller_funding_in_wait_and_ready_is_not_relay_change",
+      "intended_assertion": "plain funding must not become",
+      "baseline": {
+        "exit": 0,
+        "source_sha256": "3f12fa82c217afa309f1990caadd5ea780fc6eabf625186f28f2a26a0128b10f",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/funding-credit-baseline.log",
+        "bytes": 9136,
+        "sha256": "3a0e57e160e75b0a931b0cf66b36292f4a27411f4029a53af905b308353e83cd"
+      },
+      "mutant": {
+        "exit": 101,
+        "source_sha256": "c3d5e1c569e5a1f63fa949220ba8ea0651c07c151a07ee104d3d7fe1c217cde3",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/funding-credit-mutant.log",
+        "bytes": 9655,
+        "sha256": "bdf01d64c350759ce43ea34e131e447d7b34e4776895f3eff6783f0b94dd4d1a"
+      },
+      "restored": {
+        "exit": 0,
+        "source_sha256": "3f12fa82c217afa309f1990caadd5ea780fc6eabf625186f28f2a26a0128b10f",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/funding-credit-restored.log",
+        "bytes": 9055,
+        "sha256": "518a219faf0b8c22e44570be1f9d58fd97bd4f1f3995f63993922e8338de5a5b"
+      }
+    },
+    {
+      "case": "legacy-credit",
+      "source": "crypto/smartcont/validator-controller-v1.fc",
+      "test": "late_root_recovery_is_not_paid_to_a_different_pool",
+      "intended_assertion": "late root recovery must remain",
+      "baseline": {
+        "exit": 0,
+        "source_sha256": "3f12fa82c217afa309f1990caadd5ea780fc6eabf625186f28f2a26a0128b10f",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/legacy-credit-baseline.log",
+        "bytes": 9049,
+        "sha256": "f2cc2d7b59bbecc3d3b65e4b4d40bd79c07676bc9c5cb1a28d29c36d5fa22c11"
+      },
+      "mutant": {
+        "exit": 101,
+        "source_sha256": "a8fed5c09db26dc37ea34954e1e95b21a034595b56e27f31835b882ed19087f6",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/legacy-credit-mutant.log",
+        "bytes": 9654,
+        "sha256": "9626f9f939e94fa3a801d9c3f2582c33a0f7bf7bf30ee332ba643963fc52b2f3"
+      },
+      "restored": {
+        "exit": 0,
+        "source_sha256": "3f12fa82c217afa309f1990caadd5ea780fc6eabf625186f28f2a26a0128b10f",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/legacy-credit-restored.log",
+        "bytes": 9049,
+        "sha256": "fbfbb0eed05b31de7e4a01a709866025dfa22be5b270caafc9019c221b6dff9a"
+      }
+    },
+    {
+      "case": "preserved-book",
+      "source": "crypto/smartcont/elector-code.fc",
+      "test": "same_code_upgrade_preserves_lost_confirmation_repair",
+      "intended_assertion": "same-code upgrade must retain",
+      "baseline": {
+        "exit": 0,
+        "source_sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/preserved-book-baseline.log",
+        "bytes": 9251,
+        "sha256": "6bacd30fb40a94b11bc05806603bec01594d1b563c174a10f40b63e430789aa7"
+      },
+      "mutant": {
+        "exit": 101,
+        "source_sha256": "1351ecef862e919857d832fb1d52d1d1eab11a78a2d9e889b5d4dda024a95f96",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/preserved-book-mutant.log",
+        "bytes": 9953,
+        "sha256": "cd46f2450b55e0173bde6c6dbe1adf2c7a1a6d41771aabcc4189deb0c9bd9192"
+      },
+      "restored": {
+        "exit": 0,
+        "source_sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/preserved-book-restored.log",
+        "bytes": 9251,
+        "sha256": "ae3edd8949b064511e95cb4c6cf447db75b0fa0af3fe99f12767d64613b95113"
+      }
+    },
+    {
+      "case": "target-schema",
+      "source": "crypto/smartcont/elector-code.fc",
+      "test": "a_nonempty_recovery_book_requires_the_target_schema_and_hook",
+      "intended_assertion": "missing recovery schema or hook must refuse",
+      "baseline": {
+        "exit": 0,
+        "source_sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/target-schema-baseline.log",
+        "bytes": 9259,
+        "sha256": "097301e23dd1eb98d6aef3bc2ca108a26e6a4a3f5533f703154c2c146f9bb215"
+      },
+      "mutant": {
+        "exit": 101,
+        "source_sha256": "89be80d9abc950f57b762f6ec443b1790804877a9a07678522f6555272d0c110",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/target-schema-mutant.log",
+        "bytes": 9788,
+        "sha256": "8b4b685e80fe42c2262aac794e7d0ff12cf5b23cf3c93d488a6fc3d67b406cc9"
+      },
+      "restored": {
+        "exit": 0,
+        "source_sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/target-schema-restored.log",
+        "bytes": 9259,
+        "sha256": "39fe068f532bd6a47b21ce2e579b74e7ec71ed195683151e9ce03c6796bca718"
+      }
+    },
+    {
+      "case": "target-hook",
+      "source": "crypto/smartcont/elector-code.fc",
+      "test": "a_nonempty_recovery_book_requires_the_target_schema_and_hook",
+      "intended_assertion": "missing recovery schema or hook must refuse",
+      "baseline": {
+        "exit": 0,
+        "source_sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/target-hook-baseline.log",
+        "bytes": 9259,
+        "sha256": "ead0e80e875ea10041c2fb463638a2cbc45c9b843cb778d619049a5cc1f48a4c"
+      },
+      "mutant": {
+        "exit": 101,
+        "source_sha256": "1952928e742e72cb4663414882995caf7a042e90d38dc4beec9fec6343d9168c",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/target-hook-mutant.log",
+        "bytes": 9788,
+        "sha256": "7f4852e80bd193ddbb7b58ccdbe77254691761aa93da3dbe62dbf4d168fb1a69"
+      },
+      "restored": {
+        "exit": 0,
+        "source_sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/mutations/target-hook-restored.log",
+        "bytes": 9259,
+        "sha256": "1a2b6df6d03aa81aeba6d4a97b5984376e70e4bebd2d7556c581c0134b9d0522"
+      }
+    },
+    {
+      "case": "duplicate-confirmation-principal",
+      "source": "crypto/smartcont/elector-code.fc",
+      "test": "same_code_upgrade_preserves_lost_confirmation_repair",
+      "intended_assertion": "confirmation cannot repay old principal",
+      "baseline": {
+        "exit": 0,
+        "source_sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/repeat-mutation/duplicate-confirmation-principal-baseline.log",
+        "bytes": 15111,
+        "sha256": "283c9a86ce989db85c94a0d3342cab8116dcefa690b00430f768e49e88e34152"
+      },
+      "mutant": {
+        "exit": 101,
+        "source_sha256": "3b17b1cbaac64fdb3828a012dea159cd46d1361eb939b0276fe47a00e02c8cec",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/repeat-mutation/duplicate-confirmation-principal-mutant.log",
+        "bytes": 9747,
+        "sha256": "561048f8ecc039b9375026e84d6e939574e5b4340187be2e8e9a94e2d240a42d"
+      },
+      "restored": {
+        "exit": 0,
+        "source_sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2",
+        "log": ".git/elector-security-audit-artifacts/r3-r4/repeat-mutation/duplicate-confirmation-principal-restored.log",
+        "bytes": 9251,
+        "sha256": "35c53370f9d2e0ee119860a8d8f6f73b16acb95d00b2b60aa44b798558cd9425"
+      }
+    }
+  ],
+  "limits": [
+    "R4 same-code repair test uses an explicit synthetic drained precondition; not a live drain or migration proof.",
+    "Generated elector Fift refreshed locally; release/golden answer updates and any deployment are held with R3 open.",
+    "Committed for PR review at owner request; no merge or deployment. R3 remains open."
+  ],
+  "raw_retention": "Retain .git/elector-security-audit-artifacts/r3-r4 for at least 90 days after resolution; raw logs are outside Git.",
+  "historical_sources_before_repeat_ack_extension": [
+    {
+      "path": "crypto/smartcont/validator-controller-v1.fc",
+      "bytes": 23199,
+      "sha256": "3f12fa82c217afa309f1990caadd5ea780fc6eabf625186f28f2a26a0128b10f"
+    },
+    {
+      "path": "crypto/smartcont/elector-code.fc",
+      "bytes": 67133,
+      "sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/relay.rs",
+      "bytes": 95479,
+      "sha256": "ed32b4c6ecf0724dad5aaa7585ebc404dc9edad13b595cc38493a546c53d0e73"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_r4.rs",
+      "bytes": 14594,
+      "sha256": "162900effb279ca7d7f39347f38835a7a9c4ec73c560be8295d62714078505cb"
+    }
+  ],
+  "historical_candidate_sources": [
+    {
+      "path": "crypto/smartcont/validator-controller-v1.fc",
+      "bytes": 23199,
+      "sha256": "3f12fa82c217afa309f1990caadd5ea780fc6eabf625186f28f2a26a0128b10f"
+    },
+    {
+      "path": "crypto/smartcont/elector-code.fc",
+      "bytes": 67133,
+      "sha256": "3466d72bf566a9eb54242b9c525db942e30a12d30b76a060e342dc8660f86fe2"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/relay.rs",
+      "bytes": 95479,
+      "sha256": "ed32b4c6ecf0724dad5aaa7585ebc404dc9edad13b595cc38493a546c53d0e73"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_r4.rs",
+      "bytes": 16268,
+      "sha256": "54a3e2bfab8b93e0844c110a1199718efed058cf118d621c987d394c130260b4"
+    }
+  ],
+  "sources": [
+    {
+      "path": "crypto/smartcont/validator-controller-v1.fc",
+      "bytes": 23199,
+      "sha256": "3f12fa82c217afa309f1990caadd5ea780fc6eabf625186f28f2a26a0128b10f"
+    },
+    {
+      "path": "crypto/smartcont/elector-code.fc",
+      "bytes": 67454,
+      "sha256": "07b4aea6f6dbdd3ac529ec846ad80e5fc5f59128d46598825b418b90f5e6277e"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/relay.rs",
+      "bytes": 95479,
+      "sha256": "ed32b4c6ecf0724dad5aaa7585ebc404dc9edad13b595cc38493a546c53d0e73"
+    },
+    {
+      "path": "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_r4.rs",
+      "bytes": 16279,
+      "sha256": "787aa9f6919e228a2f0aab35b5724cdb701541508c74f2c3dafb477906179df5"
+    }
+  ],
+  "integration": {
+    "remote_base": "1377e4863",
+    "preserved_remote_r4": "764a10c15",
+    "note": "Remote R4 implementation retained instead of local schema-and-mandatory-hook candidate. All earlier checks/mutations describe their recorded historical sources, not this integrated elector source. Compatible upgrades need not provide a hook; incompatible targets refuse even without a hook.",
+    "checks": [
+      {
+        "name": "candidate native tests",
+        "passed": 4,
+        "exit": 0,
+        "log": {
+          "path": ".git/elector-security-audit-artifacts/r3-r4/integrated-target.log",
+          "bytes": 9419,
+          "sha256": "a905e173e0c3b82210de9c3adfe18a0795b33b15ae6ee8335e12bb7b8770a134"
+        }
+      },
+      {
+        "name": "remote recovery-upgrade native tests",
+        "passed": 5,
+        "exit": 0,
+        "log": {
+          "path": ".git/elector-security-audit-artifacts/r3-r4/integrated-remote-r4.log",
+          "bytes": 4185,
+          "sha256": "26e436bd758de5b728a9f9dbddd802ea9110f4e31eb837d28ac41502328b8f88"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "android_commit": "1ef7360",
+  "scope": "Library instrumentation with Android application UID, private per-wallet noBackupFilesDir storage and native persisted live proof",
+  "device": "Dedicated API36.1 arm64 16KB emulator; physical-device/API24 runtime acceptance still open",
+  "validation": [
+    "Explicit enrollment required",
+    "Checkpoint file exists before successful return",
+    "Reopened session reads persisted state",
+    "Enrolled lost state cannot be reset"
+  ],
+  "control": "Change noBackupFilesDir to filesDir: named runtime assertion failed; restored test passed",
+  "artifacts": [
+    {
+      "file": "20261007-proof-session-kotlin-test.log",
+      "bytes": 34835,
+      "sha256": "1a32c503964a1e448d43a3e7a68f61c00c0618482c432fa475b674b57686c6f1"
+    },
+    {
+      "file": "20261007-proof-session-backup-control.xml",
+      "bytes": 914,
+      "sha256": "c306f3995d5e76e0b259bf404250d46623b98f43b7d7dd1934afedf1c2800345"
+    },
+    {
+      "file": "20261007-proof-session-restored.log",
+      "bytes": 25976,
+      "sha256": "3200eb9eccb8e9a4cb0c1a2f96131b8e7ea48d19742c798cd0456d9122d11c18"
+    }
+  ],
+  "remaining": [
+    "Wallet-authority and live transport integration",
+    "iOS integration",
+    "Full final-head cross-ABI application build and CI",
+    "Physical device/cold-device recovery/backup rollback threat-model acceptance",
+    "Creation, dual POP, rotation and transaction delivery"
+  ]
+}

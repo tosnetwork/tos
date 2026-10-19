@@ -79,7 +79,7 @@ impl ServiceActorCmd {
 pub struct ServiceActorDeployCmd {
     #[arg(long, help = "Local service record name; defaults to service-<address prefix>")]
     name: Option<String>,
-    #[arg(long, help = "Owner address; must match the funding wallet")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner address; must match the funding wallet")]
     owner: String,
     #[arg(
         long,
@@ -133,7 +133,7 @@ pub struct ServiceActorDeployCmd {
     from: String,
     #[arg(long, default_value_t = 0.2, help = "Message value funding the deploy, in TOS")]
     amount: f64,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(long)]
     yes: bool,
@@ -146,7 +146,7 @@ pub struct ServiceActorDeployCmd {
 pub struct ServiceActorLsCmd {
     #[arg(long, help = "Read current policy/accounting state from each service")]
     on_chain: bool,
-    #[arg(long, help = "Filter by owner address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Filter by owner address")]
     owner: Option<String>,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -155,7 +155,12 @@ pub struct ServiceActorLsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show Service Actor policy/accounting state by address or local record name")]
 pub struct ServiceActorShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        conflicts_with = "name",
+        help = "Service Actor address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local service record name from `agent service ls`")]
     name: Option<String>,
@@ -166,7 +171,12 @@ pub struct ServiceActorShowCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show a single request by ID")]
 pub struct ServiceActorRequestShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        conflicts_with = "name",
+        help = "Service Actor address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local service record name from `agent service ls`")]
     name: Option<String>,
@@ -179,7 +189,12 @@ pub struct ServiceActorRequestShowCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show a single unclaimed refund by request ID")]
 pub struct ServiceActorRefundShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        conflicts_with = "name",
+        help = "Service Actor address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local service record name from `agent service ls`")]
     name: Option<String>,
@@ -207,7 +222,12 @@ enum ServiceActorOperation {
 pub struct ServiceActorSendCmd {
     #[arg(long, value_enum)]
     operation: ServiceActorOperation,
-    #[arg(long, conflicts_with = "name", help = "Service Actor address")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        conflicts_with = "name",
+        help = "Service Actor address"
+    )]
     address: Option<String>,
     #[arg(long, help = "Local service record name from `agent service ls`")]
     name: Option<String>,
@@ -240,7 +260,7 @@ pub struct ServiceActorSendCmd {
                 first, since the domain binds them)"
     )]
     signer_vault_key: Option<String>,
-    #[arg(long, help = "Refund destination address for claim-refund")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Refund destination address for claim-refund")]
     destination: Option<String>,
     #[arg(long, help = "New price per call, in TOS, for update-policy")]
     price_per_call: Option<f64>,
@@ -294,7 +314,7 @@ pub struct ServiceActorSendCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Build deterministic Service Actor StateInit")]
 pub struct ServiceActorBuildStateCmd {
-    #[arg(long, help = "Owner address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Owner address")]
     owner: String,
     #[arg(long, conflicts_with = "open_access")]
     authorized_caller: Option<String>,
@@ -322,7 +342,7 @@ pub struct ServiceActorBuildStateCmd {
                 over the request-bound attestation domain"
     )]
     attestor_pubkey: Option<String>,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -580,6 +600,12 @@ impl ServiceActorShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_service_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::ServiceActor,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_service_data", vec![]).await?;
         let data = ServiceActorContract::decode_data(&stack)?;
@@ -688,6 +714,12 @@ impl ServiceActorRequestShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_service_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::ServiceActor,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider
             .get_method(
@@ -766,6 +798,12 @@ impl ServiceActorRefundShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_service_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::ServiceActor,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider
             .get_method(
@@ -942,6 +980,12 @@ impl ServiceActorSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination_service = resolve_service_address(&config, &self.address, &self.name)?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &destination_service,
+            contracts::VersionedContract::ServiceActor,
+        )
+        .await?;
         let wallet_config =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =
@@ -1007,6 +1051,7 @@ impl ServiceActorSendCmd {
                                     anyhow::anyhow!("request {id} is not pending on chain")
                                 })?;
                             let domain_hash = contracts::service_respond_domain_hash(
+                                super::utils::network_global_id(&rpc_client).await?,
                                 &destination_service,
                                 &request.caller,
                                 id,

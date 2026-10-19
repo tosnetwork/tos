@@ -1,0 +1,34 @@
+=== signed commit mapping, against tosman's registered key ===
+Good "file" signature for tosman with ED25519 key SHA256:vKF/wb8PUVfv4CorGJcKJl4sHgNygoenLQnP4OIFhJQ
+announced 49ef58c0... maps to: f7f141589a788c8aa06bee32d7799c25cbfab356
+HEAD is:                      f7f141589a788c8aa06bee32d7799c25cbfab356
+
+=== download the published contribution-2 bundle ===
+b7ccbe20ec1d6e7a07a8f89b3ebc3ada636718cc52ec86304f9a572586071413  contribution-2.tar.gz
+DIGEST OK (matches the recorded value)
+
+=== bundle vs the published branch ===
+same   ceremony/ceremony.json
+same   ceremony/contributions.bin
+same   ceremony/key.bin
+same   roster.json
+same   ANNOUNCEMENT.md
+same   attestation-1.txt
+same   attestation-1.txt.sig
+same   attestation-2.txt
+same   attestation-2.txt.sig
+same   keys/tosman.pub
+same   keys/tosdev2.pub
+
+=== both existing attestations, against the published register ===
+  1  signed by tosman -- NOT independent of the operator
+  2  signed by tosdev2 -- NOT independent of the operator
+
+2 contribution(s), 2 verified against the roster
+
+NOT YET SATISFIED: no verified contribution comes from a participant declared independent of the operator. The security argument is that one participant destroyed a scalar without the others being able to compel or observe them; with every contribution inside one party's control that reduces to 'trust us', which is what the ceremony existed to avoid.
+Reported rather than refused because --in-progress was passed. This is expected while the ceremony is still open, and it must be satisfied before the ceremony closes -- the final check is run without that flag.
+
+=== the two files the guide asks every participant to read ===
+d44fac7d683a48f223deb4bf73e76d135f12676bcf30568a0ca7bbbd6c47dede  /root/tos/tools/shielded-pool-ceremony/src/secret.rs
+f80e55c0da1b416d7f6d5f4a4a75e527f23ad9fd2f6185531bfaa196d9997b2d  /root/tos/tools/shielded-pool-ceremony/src/entropy.rs

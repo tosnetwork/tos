@@ -6,6 +6,10 @@
 #include "td/utils/crypto.h"
 
 namespace tos {
+std::shared_ptr<http::BodyBudget::Reservation> reserve_explorer_response(std::size_t bytes) {
+  static auto budget = std::make_shared<http::BodyBudget>(kExplorerResponseBudgetBytes);
+  return budget->reserve(bytes);
+}
 
 td::Result<block::StdAddress> parse_address_param(td::JsonObject& params) {
   auto addr_r = params.get_required_string_field("address");
@@ -13,17 +17,6 @@ td::Result<block::StdAddress> parse_address_param(td::JsonObject& params) {
   block::StdAddress addr;
   if (!addr.parse_addr(td::Slice(addr_r.ok()))) return td::Status::Error("Invalid address");
   return addr;
-}
-
-std::string format_block_id_json(const tos::lite_api::tosNode_blockIdExt& blk) {
-  return PSTRING()
-      << "{\"@type\":\"tos.blockIdExt\""
-      << ",\"workchain\":" << blk.workchain_
-      << ",\"shard\":\"" << blk.shard_ << "\""
-      << ",\"seqno\":" << blk.seqno_
-      << ",\"root_hash\":\"" << td::base64_encode(blk.root_hash_.as_slice()) << "\""
-      << ",\"file_hash\":\"" << td::base64_encode(blk.file_hash_.as_slice()) << "\""
-      << "}";
 }
 
 std::string format_zero_state_json(const tos::lite_api::tosNode_zeroStateIdExt& zs) {

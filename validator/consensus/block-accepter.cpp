@@ -59,8 +59,8 @@ class BlockAccepterImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       finality_broadcast_mode = 0;
     }
     co_await td::actor::ask(owning_bus()->manager, &ManagerFacade::accept_block, block.id, block_data,
-                            event->candidate->leader.value(), event->signatures, block_broadcast_mode,
-                            finality_broadcast_mode, send_shard_block_desc, true);
+                            event->candidate->leader.value(), event->signatures, owning_bus()->session_id,
+                            block_broadcast_mode, finality_broadcast_mode, send_shard_block_desc, true);
     owning_bus().publish<TraceEvent>(stats::BlockAccepted::create(event->candidate->id));
     co_return td::Unit{};
   }

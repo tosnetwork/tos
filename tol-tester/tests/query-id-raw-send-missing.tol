@@ -31,5 +31,5 @@ fun onInternalMessage(in: InMessage) {
 
 /**
 @testcase | 101 | | 0
-@stderr reply does not propagate inbound `queryId`
+@stderr cannot prove that the reply propagates inbound `queryId`
  */

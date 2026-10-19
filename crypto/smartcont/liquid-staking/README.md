@@ -24,6 +24,20 @@ Liquid staking system where validators borrow from a pool to increase their stak
 - **Validator** -- borrows from pool, stakes via controller
 - **Depositor** -- provides liquidity, receives Jetton tokens
 
+### How a stake leaves a controller
+
+A controller no longer sends its stake to the elector. It sends it to a post-quantum
+Validator Controller, which relays it and states the staking controller as whose money it
+is; principal, reward and refusals come back here.
+
+That account is named by the validator with `set_validator_controller` after deployment,
+and is stored rather than built into the controller's address: the pool deploys
+controllers for whichever validator asks and cannot know that validator's Validator
+Controller, and rotating one should not mean abandoning a controller that holds a loan. A
+controller that has not been told refuses to stake and says so, rather than sending money
+somewhere that cannot receive it. The name may only move while the controller is at rest
+and owes nothing.
+
 ## Files
 
 ### FunC Source (`*.func`)
@@ -59,7 +73,7 @@ Liquid staking system where validators borrow from a pool to increase their stak
 | `return_unused_loan.boc` | Return unused loan to pool |
 | `update_validator_hash.boc` | Update validator set hash |
 | `deposit.boc` | Deposit to pool |
-| `controller-elect-signed.fif` | Election entry via controller |
+| `crypto/test/fift/fixtures/liquid-controller-legacy-elect-signed.fif` | Test-only historical Ed25519 body; no liquid-staking election operator is distributed. This product is not launch-supported. |
 | `generate-loan-request.fif` | Generate loan request |
 | `withdraw-controller.fif` | Withdraw from controller |
 

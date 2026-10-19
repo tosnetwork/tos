@@ -21,6 +21,13 @@ pub struct NodeCmd {
     )]
     config: String,
 
+    #[arg(
+        long = "node",
+        help = "Configured node to talk to [default: the first node by name]",
+        global = true
+    )]
+    node: Option<String>,
+
     #[command(subcommand)]
     action: NodeAction,
 }
@@ -36,23 +43,30 @@ fn parse_shard_descriptor(s: &str) -> anyhow::Result<(i32, i64)> {
     })?;
     let workchain: i32 =
         wc_str.parse().map_err(|e| anyhow::anyhow!("Invalid workchain '{}': {}", wc_str, e))?;
-    let shard: i64 = i64::from_str_radix(shard_str.trim_start_matches("0x"), 16)
+    // A shard id is a 64-bit pattern; the full shard `8000000000000000` is
+    // above i64::MAX, so it is read unsigned and reinterpreted.
+    let shard = u64::from_str_radix(shard_str.trim_start_matches("0x"), 16)
         .map_err(|e| anyhow::anyhow!("Invalid shard hex '{}': {}", shard_str, e))?;
-    Ok((workchain, shard))
+    Ok((workchain, shard as i64))
 }
 
-/// Helper: create a connected control client from the config file path.
+/// The configuration file and the configured node a `tosctl node` command talks to.
+pub struct NodeTarget<'a> {
+    config: &'a str,
+    node: Option<&'a str>,
+}
+
+/// Helper: create a connected control client for the target node.
 async fn create_control_client(
-    config_path: &str,
+    target: &NodeTarget<'_>,
 ) -> anyhow::Result<(String, control_client::client_adnl::ControlClientAdnl)> {
     use common::app_config::AppConfig;
     use control_client::client_adnl::ControlClientAdnl;
     use std::path::Path;
 
-    let config = AppConfig::load(Path::new(config_path))?;
-    let (node_name, node_cfg) =
-        config.nodes.iter().next().ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
-    let adnl_config = node_cfg.to_node_adnl_config(None).await?;
+    let config = AppConfig::load(Path::new(target.config))?;
+    let (node_name, node_cfg) = super::utils::select_node(&config, target.node)?;
+    let adnl_config = super::utils::node_adnl_config(node_cfg, None).await?;
     let mut client = ControlClientAdnl::new(adnl_config, 1);
     client.connect().await?;
     Ok((node_name.clone(), client))
@@ -125,11 +139,18 @@ pub struct NodeCollatorLsCmd {
     format: super::output_format::OutputFormat,
 }
 
+/// clap value parser for a `workchain:shard_hex` flag. The flag allows hyphen
+/// values because a masterchain shard starts with `-1:`; this parser keeps a
+/// following option from being taken as the shard.
+fn shard_arg(value: &str) -> Result<String, String> {
+    parse_shard_descriptor(value).map(|_| value.to_owned()).map_err(|e| e.to_string())
+}
+
 #[derive(clap::Args, Clone)]
 pub struct NodeCollatorAddCmd {
     #[arg(long)]
     adnl_id: String,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true, value_parser = shard_arg)]
     shard: String,
 }
 
@@ -137,7 +158,7 @@ pub struct NodeCollatorAddCmd {
 pub struct NodeCollatorRmCmd {
     #[arg(long)]
     adnl_id: String,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true, value_parser = shard_arg)]
     shard: String,
 }
 
@@ -290,6 +311,10 @@ pub struct NodeNetQuicSetCmd {
 // ===========================================================================
 
 impl NodeCmd {
+    fn target(&self) -> NodeTarget<'_> {
+        NodeTarget { config: &self.config, node: self.node.as_deref() }
+    }
+
     pub async fn run(&self) -> anyhow::Result<()> {
         match &self.action {
             NodeAction::Status(cmd) => {
@@ -382,15 +407,12 @@ impl NodeCmd {
                 use std::path::Path;
 
                 let config = AppConfig::load(Path::new(&self.config))?;
-                let (node_name, node_adnl) = config
-                    .nodes
-                    .iter()
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("No nodes configured"))?;
+                let (node_name, node_adnl) =
+                    super::utils::select_node(&config, self.node.as_deref())?;
 
                 println!("Pinging node '{}'...", node_name);
 
-                let adnl_config = node_adnl.to_node_adnl_config(None).await?;
+                let adnl_config = super::utils::node_adnl_config(node_adnl, None).await?;
                 let mut client = ControlClientAdnl::new(adnl_config, 1);
                 client.connect().await?;
 
@@ -422,14 +444,11 @@ impl NodeCmd {
 
                 // --- ADNL control-client ping ---
                 let adnl_result: Result<(String, u128), String> = async {
-                    let (node_name, node_adnl) = config
-                        .nodes
-                        .iter()
-                        .next()
-                        .ok_or_else(|| "No nodes configured".to_string())?;
+                    let (node_name, node_adnl) =
+                        super::utils::select_node(&config, self.node.as_deref())
+                            .map_err(|e| e.to_string())?;
 
-                    let adnl_config = node_adnl
-                        .to_node_adnl_config(None)
+                    let adnl_config = super::utils::node_adnl_config(node_adnl, None)
                         .await
                         .map_err(|e| format!("ADNL config error: {e}"))?;
 
@@ -508,23 +527,23 @@ impl NodeCmd {
 
                 Ok(())
             }
-            NodeAction::Collator(cmd) => cmd.run(&self.config).await,
-            NodeAction::CollatorConfig(cmd) => cmd.run(&self.config).await,
-            NodeAction::CollationWhitelist(cmd) => cmd.run(&self.config).await,
-            NodeAction::Overlay(cmd) => cmd.run(&self.config).await,
-            NodeAction::Net(cmd) => cmd.run(&self.config).await,
+            NodeAction::Collator(cmd) => cmd.run(&self.target()).await,
+            NodeAction::CollatorConfig(cmd) => cmd.run(&self.target()).await,
+            NodeAction::CollationWhitelist(cmd) => cmd.run(&self.target()).await,
+            NodeAction::Overlay(cmd) => cmd.run(&self.target()).await,
+            NodeAction::Net(cmd) => cmd.run(&self.target()).await,
         }
     }
 }
 
 impl NodeCollatorCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         match &self.action {
             NodeCollatorAction::Ls(cmd) => {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (node_name, mut client) = create_control_client(config_path).await?;
+                let (node_name, mut client) = create_control_client(target).await?;
                 let result = client.show_collators_list().await?;
                 client.shutdown().await?;
 
@@ -587,7 +606,7 @@ impl NodeCollatorCmd {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (node_name, mut client) = create_control_client(config_path).await?;
+                let (node_name, mut client) = create_control_client(target).await?;
                 let stats = client.get_stats().await?;
                 client.shutdown().await?;
 
@@ -615,13 +634,13 @@ impl NodeCollatorCmd {
                 println!();
                 Ok(())
             }
-            NodeCollatorAction::Add(cmd) => cmd.run(config_path).await,
-            NodeCollatorAction::Rm(cmd) => cmd.run(config_path).await,
+            NodeCollatorAction::Add(cmd) => cmd.run(target).await,
+            NodeCollatorAction::Rm(cmd) => cmd.run(target).await,
             NodeCollatorAction::Reset => {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 client.clear_collators_list().await?;
                 client.shutdown().await?;
 
@@ -636,7 +655,7 @@ impl NodeCollatorCmd {
                 println!("{}", "\u{2500}".repeat(40).dimmed());
                 println!();
 
-                let (node_name, mut client) = create_control_client(config_path).await?;
+                let (node_name, mut client) = create_control_client(target).await?;
                 println!("  Connected to node '{}'", node_name.green());
 
                 // 1. Generate a new key pair
@@ -676,7 +695,7 @@ impl NodeCollatorCmd {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 client.clear_collators_list().await?;
                 client.shutdown().await?;
 
@@ -688,7 +707,7 @@ impl NodeCollatorCmd {
 }
 
 impl NodeCollatorAddCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         use colored::Colorize;
         use control_client::client_api::{AddCollatorRq, ClientAPI};
 
@@ -700,7 +719,7 @@ impl NodeCollatorAddCmd {
 
         let (workchain, shard) = parse_shard_descriptor(&self.shard)?;
 
-        let (_node_name, mut client) = create_control_client(config_path).await?;
+        let (_node_name, mut client) = create_control_client(target).await?;
         client.add_collator(&AddCollatorRq { adnl_id: adnl_id_bytes, workchain, shard }).await?;
         client.shutdown().await?;
 
@@ -716,7 +735,7 @@ impl NodeCollatorAddCmd {
 }
 
 impl NodeCollatorRmCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         use colored::Colorize;
         use control_client::client_api::{AddCollatorRq, ClientAPI};
 
@@ -728,7 +747,7 @@ impl NodeCollatorRmCmd {
 
         let (workchain, shard) = parse_shard_descriptor(&self.shard)?;
 
-        let (_node_name, mut client) = create_control_client(config_path).await?;
+        let (_node_name, mut client) = create_control_client(target).await?;
         client.del_collator(&AddCollatorRq { adnl_id: adnl_id_bytes, workchain, shard }).await?;
         client.shutdown().await?;
 
@@ -744,13 +763,13 @@ impl NodeCollatorRmCmd {
 }
 
 impl NodeCollatorConfigCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         match &self.action {
             NodeCollatorConfigAction::Set(cmd) => {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 client.set_collator_options_json(&cmd.json).await?;
                 client.shutdown().await?;
 
@@ -761,7 +780,7 @@ impl NodeCollatorConfigCmd {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 let json = client.get_collator_options_json().await?;
                 client.shutdown().await?;
 
@@ -776,7 +795,7 @@ impl NodeCollatorConfigCmd {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 let json = client.get_collator_options_json().await?;
                 client.shutdown().await?;
 
@@ -792,7 +811,7 @@ impl NodeCollatorConfigCmd {
 }
 
 impl NodeCollationWhitelistCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         match &self.action {
             NodeCollationWhitelistAction::Add(cmd) => {
                 use colored::Colorize;
@@ -807,7 +826,7 @@ impl NodeCollationWhitelistCmd {
                     );
                 }
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 client
                     .collator_node_set_whitelisted_validator(&CollatorNodeWhitelistRq {
                         adnl_id: adnl_id_bytes,
@@ -832,7 +851,7 @@ impl NodeCollationWhitelistCmd {
                     );
                 }
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 client
                     .collator_node_set_whitelisted_validator(&CollatorNodeWhitelistRq {
                         adnl_id: adnl_id_bytes,
@@ -852,7 +871,7 @@ impl NodeCollationWhitelistCmd {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 client.collator_node_set_whitelist_enabled(false).await?;
                 client.shutdown().await?;
 
@@ -863,7 +882,7 @@ impl NodeCollationWhitelistCmd {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (node_name, mut client) = create_control_client(config_path).await?;
+                let (node_name, mut client) = create_control_client(target).await?;
                 let result = client.show_collator_node_whitelist().await?;
                 client.shutdown().await?;
 
@@ -905,14 +924,14 @@ impl NodeCollationWhitelistCmd {
 }
 
 impl NodeOverlayCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         match &self.action {
-            NodeOverlayAction::Add(cmd) => cmd.run(config_path).await,
+            NodeOverlayAction::Add(cmd) => cmd.run(target).await,
             NodeOverlayAction::Ls => {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (node_name, mut client) = create_control_client(config_path).await?;
+                let (node_name, mut client) = create_control_client(target).await?;
                 let result = client.show_custom_overlays().await?;
                 client.shutdown().await?;
 
@@ -947,13 +966,13 @@ impl NodeOverlayCmd {
                 println!();
                 Ok(())
             }
-            NodeOverlayAction::Rm(cmd) => cmd.run(config_path).await,
+            NodeOverlayAction::Rm(cmd) => cmd.run(target).await,
         }
     }
 }
 
 impl NodeOverlayAddCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         use colored::Colorize;
         use control_client::client_api::{ClientAPI, CustomOverlayConfig};
 
@@ -966,7 +985,7 @@ impl NodeOverlayAddCmd {
 
         let overlay_name = config.name.clone();
 
-        let (_node_name, mut client) = create_control_client(config_path).await?;
+        let (_node_name, mut client) = create_control_client(target).await?;
         client.add_custom_overlay(&config).await?;
         client.shutdown().await?;
 
@@ -976,11 +995,11 @@ impl NodeOverlayAddCmd {
 }
 
 impl NodeOverlayRmCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         use colored::Colorize;
         use control_client::client_api::ClientAPI;
 
-        let (_node_name, mut client) = create_control_client(config_path).await?;
+        let (_node_name, mut client) = create_control_client(target).await?;
         client.del_custom_overlay(&self.name).await?;
         client.shutdown().await?;
 
@@ -990,21 +1009,21 @@ impl NodeOverlayRmCmd {
 }
 
 impl NodeNetCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         match &self.action {
-            NodeNetAction::Quic(cmd) => cmd.run(config_path).await,
+            NodeNetAction::Quic(cmd) => cmd.run(target).await,
         }
     }
 }
 
 impl NodeNetQuicCmd {
-    pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+    pub async fn run(&self, target: &NodeTarget<'_>) -> anyhow::Result<()> {
         match &self.action {
             NodeNetQuicAction::Set(cmd) => {
                 use colored::Colorize;
                 use control_client::client_api::ClientAPI;
 
-                let (_node_name, mut client) = create_control_client(config_path).await?;
+                let (_node_name, mut client) = create_control_client(target).await?;
                 client.add_quic_addr(0, cmd.port as i32, vec![], vec![]).await?;
                 client.shutdown().await?;
 

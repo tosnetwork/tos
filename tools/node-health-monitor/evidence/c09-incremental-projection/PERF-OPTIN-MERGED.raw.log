@@ -1,0 +1,52 @@
+COMMAND: cargo test --locked -p tos-health-services --test manager_query_source live_read_only_projection_cost_witness -- --ignored --exact --nocapture
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running tests/manager_query_source.rs (target/debug/deps/manager_query_source-723ab372f789f937)
+
+running 1 test
+initial_page_ms=360
+grant_during_catchup=503
+page=3 rows=256 global_m_seq=7196 elapsed_ms=254
+page=4 rows=256 global_m_seq=8040 elapsed_ms=304
+page=5 rows=256 global_m_seq=8884 elapsed_ms=534
+page=6 rows=256 global_m_seq=9726 elapsed_ms=573
+page=7 rows=256 global_m_seq=10582 elapsed_ms=541
+page=8 rows=256 global_m_seq=11436 elapsed_ms=386
+page=9 rows=256 global_m_seq=12287 elapsed_ms=406
+page=10 rows=256 global_m_seq=13133 elapsed_ms=466
+page=11 rows=256 global_m_seq=13967 elapsed_ms=562
+page=12 rows=256 global_m_seq=14799 elapsed_ms=547
+page=13 rows=256 global_m_seq=15633 elapsed_ms=540
+page=14 rows=256 global_m_seq=16469 elapsed_ms=551
+page=15 rows=256 global_m_seq=17303 elapsed_ms=537
+page=16 rows=256 global_m_seq=18134 elapsed_ms=548
+page=17 rows=256 global_m_seq=18970 elapsed_ms=553
+page=18 rows=256 global_m_seq=19808 elapsed_ms=539
+page=19 rows=256 global_m_seq=20643 elapsed_ms=549
+page=20 rows=256 global_m_seq=21477 elapsed_ms=542
+page=21 rows=256 global_m_seq=22318 elapsed_ms=539
+page=22 rows=256 global_m_seq=23152 elapsed_ms=556
+page=23 rows=256 global_m_seq=23982 elapsed_ms=546
+page=24 rows=256 global_m_seq=24816 elapsed_ms=538
+page=25 rows=256 global_m_seq=25660 elapsed_ms=553
+page=26 rows=256 global_m_seq=26491 elapsed_ms=535
+page=27 rows=256 global_m_seq=27337 elapsed_ms=537
+page=28 rows=256 global_m_seq=28180 elapsed_ms=579
+page=29 rows=256 global_m_seq=29021 elapsed_ms=540
+page=30 rows=256 global_m_seq=29861 elapsed_ms=544
+page=31 rows=256 global_m_seq=30698 elapsed_ms=551
+page=32 rows=256 global_m_seq=31542 elapsed_ms=538
+page=33 rows=256 global_m_seq=32383 elapsed_ms=551
+page=34 rows=256 global_m_seq=33223 elapsed_ms=542
+page=35 rows=256 global_m_seq=34058 elapsed_ms=548
+page=36 rows=256 global_m_seq=34894 elapsed_ms=554
+page=37 rows=256 global_m_seq=35740 elapsed_ms=541
+page=38 rows=256 global_m_seq=36579 elapsed_ms=552
+page=39 rows=1 global_m_seq=36585 elapsed_ms=270
+caught_up_ms=19816 grant_after_catchup=200 revoked=200
+steady_rows=0 global_m_seq=36585 elapsed_ms=223
+test live_read_only_projection_cost_witness ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 22 filtered out; finished in 20.30s
+
+
+COMMAND_EXIT_CODE=0

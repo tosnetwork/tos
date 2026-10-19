@@ -32,8 +32,12 @@ class FileLog : public LogInterface {
 
  public:
   static Result<td::unique_ptr<LogInterface>> create(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD,
-                                                     bool redirect_stderr = true);
-  Status init(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD, bool redirect_stderr = true);
+                                                     bool redirect_stderr = true, int32 keep_rotated = 1);
+  // keep_rotated is how many rotated files are kept: the newest is <path>.old,
+  // older ones <path>.old.1 up to <path>.old.<keep_rotated - 1>. Values below 1
+  // count as 1, which keeps only <path>.old.
+  Status init(string path, int64 rotate_threshold = DEFAULT_ROTATE_THRESHOLD, bool redirect_stderr = true,
+              int32 keep_rotated = 1);
 
   Slice get_path() const;
 
@@ -43,21 +47,46 @@ class FileLog : public LogInterface {
 
   int64 get_rotate_threshold() const;
 
+  void set_keep_rotated(int32 keep_rotated);
+
+  int32 get_keep_rotated() const;
+
   void append(CSlice cslice, int log_level) override;
 
   void rotate() override;
 
   void lazy_rotate();
 
+  // Process-wide counts of failures the log cannot report through itself: a
+  // rotated file that could not be shifted to the next generation, and a stale
+  // rotated file that could not be removed. Each failure is also written as
+  // one line to the process stderr. A file that is already missing is not a
+  // failure.
+  static uint64 rotation_failures();
+  static uint64 prune_failures();
+
+  // Counts and reports a failed removal of stale rotated files, for callers
+  // that prune on the log's behalf.
+  static void report_prune_failure(const Status &error);
+
+  // Whether `error` says the file it names does not exist.
+  static bool is_missing_file_error(const Status &error);
+
  private:
   FileFd fd_;
   string path_;
   int64 size_ = 0;
   int64 rotate_threshold_ = 0;
+  int32 keep_rotated_ = 1;
   bool redirect_stderr_ = false;
   std::atomic<bool> want_rotate_{};
 
+  // Above any kept number an engine accepts; bounds the stale-generation scan.
+  static constexpr int32 kMaxKeepRotated = 1000;
+
   void do_rotate();
+  void shift_rotated();
+  void prune_rotated();
 };
 
 }  // namespace td

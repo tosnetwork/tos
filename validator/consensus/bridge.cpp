@@ -4,12 +4,15 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <atomic>
 #include <cerrno>
+#include <mutex>
 
+#include "block/validator-session-members.h"
 #include "td/db/RocksDb.h"
+#include "td/utils/ScopeGuard.h"
 #include "td/utils/port/Stat.h"
 #include "td/utils/port/path.h"
-#include "candidate-relay-policy.h"
 #include "tos/lite-tl.hpp"
 #include "tos/quorum.h"
 #include "validator/consensus/db-path.h"
@@ -19,10 +22,144 @@
 #include "validator/interfaces/validator-full-id.h"
 #include "validator/validator-group.hpp"
 
+#include "candidate-relay-policy.h"
+#include "retry-backoff.h"
+
 namespace tos::validator {
 
 namespace consensus {
+
+td::actor::Task<> simplex::close_and_release_bus(simplex::BusHandle& bus) {
+  auto closed = co_await bus->db->close().wrap();
+  bus = {};
+  co_return closed;
+}
+
 namespace {
+std::mutex bridge_bus_observer_mutex;
+std::function<void(BusHandle)> bridge_bus_observer;
+}  // namespace
+void observe_bridge_bus_for_test(std::function<void(BusHandle)> observer) {
+  std::lock_guard lock(bridge_bus_observer_mutex);
+  bridge_bus_observer = std::move(observer);
+}
+
+namespace {
+std::mutex bridge_destroyed_observer_mutex;
+std::function<void(std::string)> bridge_destroyed_observer;
+
+void notify_bridge_destroyed(const std::string& name) {
+  std::function<void(std::string)> observer;
+  {
+    std::lock_guard lock(bridge_destroyed_observer_mutex);
+    observer = bridge_destroyed_observer;
+  }
+  if (observer) {
+    observer(name);
+  }
+}
+}  // namespace
+void observe_bridge_destroyed_for_test(std::function<void(std::string)> observer) {
+  std::lock_guard lock(bridge_destroyed_observer_mutex);
+  bridge_destroyed_observer = std::move(observer);
+}
+
+std::optional<std::set<adnl::AdnlNodeIdShort>> normalize_twostep_relay_snapshot(
+    const std::vector<adnl::AdnlNodeIdShort>& members, std::optional<std::set<adnl::AdnlNodeIdShort>> current) {
+  if (!current) {
+    return std::nullopt;
+  }
+  if (current->empty()) {
+    LOG(ERROR) << "two-step relays: empty snapshot; using legacy relays";
+    return std::nullopt;
+  }
+  for (const auto& id : *current) {
+    if (std::find(members.begin(), members.end(), id) == members.end()) {
+      LOG(ERROR) << "two-step relays: snapshot contains a non-member; using legacy relays";
+      return std::nullopt;
+    }
+  }
+  return current;
+}
+
+namespace {
+
+// Report, every 10 s, a consensus bus that has not stopped yet: the remaining
+// references to the bus and the spawned actors whose objects are still alive.
+// It runs beside the real wait and never delays it, and stops reporting at its
+// next wake-up after the stop completes. It runs on the scheduler, not on the
+// bridge actor, so it holds no reference that would keep the bridge alive.
+// The reference count includes the one the bus tree node itself holds, so a
+// bus kept alive by a single surviving actor shows two.
+td::actor::Task<> report_bus_stop_pending(std::shared_ptr<std::atomic<bool>> stopped,
+                                          std::weak_ptr<simplex::Bus> weak_bus,
+                                          std::weak_ptr<const td::actor::detail::BusTreeNode> weak_node,
+                                          std::string name) {
+  for (int waited = 10; waited <= 120; waited += 10) {
+    co_await td::actor::coro_sleep(td::Timestamp::in(10.0));
+    if (stopped->load(std::memory_order_acquire)) {
+      co_return td::Unit{};
+    }
+    td::StringBuilder sb;
+    sb << "MEMORY_DIAGNOSTICS bus-stop-pending group=" << name << " waited_s=" << waited
+       << " bus_refs=" << weak_bus.use_count() << " live_actors=";
+    bool first = true;
+    if (auto node = weak_node.lock()) {
+      for (const auto& owned : node->owned_actors) {
+        if (owned.installer.expired()) {
+          continue;
+        }
+        auto info = owned.id.actor_info_ptr();
+        sb << (first ? "" : ",") << (info ? info->get_name() : td::CSlice("?"));
+        first = false;
+      }
+    }
+    if (first) {
+      sb << "none";
+    }
+    LOG(WARNING) << sb.as_cslice();
+  }
+  co_return td::Unit{};
+}
+
+// Wait for the consensus bus to stop, with the pending-stop report running
+// alongside. The wait itself is the plain await it always was; a stop that has
+// already completed takes the fast path with no reporter at all.
+td::actor::Task<> await_bus_stop_with_diagnostics(td::actor::StartedTask<> waiter, std::weak_ptr<simplex::Bus> weak_bus,
+                                                  std::weak_ptr<const td::actor::detail::BusTreeNode> weak_node,
+                                                  std::string name) {
+  if (waiter.await_ready()) {
+    co_await std::move(waiter);
+    co_return td::Unit{};
+  }
+  auto stopped = std::make_shared<std::atomic<bool>>(false);
+  // Whichever way this coroutine ends (completion, error or cancellation), the
+  // reporter must learn that there is nothing left to watch.
+  SCOPE_EXIT {
+    stopped->store(true, std::memory_order_release);
+  };
+  auto reporter = report_bus_stop_pending(stopped, std::move(weak_bus), std::move(weak_node), std::move(name));
+  reporter.set_executor(td::actor::Executor::on_scheduler());
+  std::move(reporter).start().detach();
+  co_await std::move(waiter);
+  co_return td::Unit{};
+}
+
+}  // namespace
+
+namespace {
+
+// One wait for a group's initial chain state. It leaves the calling actor
+// before it asks the manager anything, and owns copies of everything it uses,
+// so a wait abandoned by a stopped group holds nothing of that group: the
+// group can be destroyed while the manager still owes the answer.
+td::actor::Task<td::Ref<ChainState>> wait_initial_chain_state(td::actor::ActorId<ManagerFacade> manager,
+                                                              ShardIdFull shard, std::vector<BlockIdExt> blocks,
+                                                              BlockIdExt min_mc_block_id, double timeout) {
+  co_await td::actor::detach_from_actor();
+  co_return co_await ChainState::from_manager(manager, shard, std::move(blocks), min_mc_block_id, std::nullopt,
+                                              timeout);
+}
 
 class ManagerFacadeImpl : public ManagerFacade {
  public:
@@ -57,27 +194,38 @@ class ManagerFacadeImpl : public ManagerFacade {
   }
 
   td::actor::Task<> accept_block(BlockIdExt id, td::Ref<BlockData> data, size_t creator_idx,
-                                 td::Ref<block::BlockSignatureSet> signatures, int block_broadcast_mode,
-                                 int finality_broadcast_mode, bool send_shard_block_desc, bool apply) override {
-    while (true) {
-      auto [task, promise] = td::actor::StartedTask<>::make_bridge();
-      run_accept_block_query(id, data, {}, validator_set_, signatures, block_broadcast_mode, finality_broadcast_mode,
-                             send_shard_block_desc, apply, manager_, std::move(promise));
-      auto result = co_await std::move(task).wrap();
-      if (result.is_ok() || result.error().code() == ErrorCode::cancelled) {
-        break;
-      }
-      LOG_CHECK(result.error().code() == ErrorCode::timeout || result.error().code() == ErrorCode::notready)
-          << "Failed to accept finalized block " << id.to_str() << " : " << result.error();
-      LOG(WARNING) << "Failed to accept finalized block " << id.to_str() << ", retrying : " << result.error();
-      block_broadcast_mode = 0;
-      finality_broadcast_mode = 0;
-      co_await td::actor::coro_sleep(td::Timestamp::in(1.0));
+                                 td::Ref<block::BlockSignatureSet> signatures, ValidatorSessionId expected_session_id,
+                                 int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc,
+                                 bool apply) override {
+    // Only a transient failure is retried. A cancellation or a permanent
+    // error is returned, so the caller never reports the block accepted.
+    auto result = co_await accept_with_retries(
+                      [&]() {
+                        auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+                        run_accept_block_query(id, data, {}, validator_set_, signatures, expected_session_id,
+                                               block_broadcast_mode, finality_broadcast_mode, send_shard_block_desc,
+                                               apply, manager_, std::move(promise));
+                        return std::move(task);
+                      },
+                      [&](const td::Status& error, td::uint32 delay) {
+                        LOG(WARNING) << "Failed to accept finalized block " << id.to_str() << ", retrying in " << delay
+                                     << " s : " << error;
+                        // Later attempts do not broadcast again.
+                        block_broadcast_mode = 0;
+                        finality_broadcast_mode = 0;
+                      })
+                      .wrap();
+    // A permanent failure leaves a finalized block this node did not accept;
+    // the block still reaches it through ordinary sync, but it must be seen.
+    if (result.is_error() && result.error().code() != ErrorCode::cancelled) {
+      LOG(ERROR) << "Failed to accept finalized block " << id.to_str() << " : " << result.error();
     }
-    co_return td::Unit{};
+    co_return std::move(result);
   }
 
-  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout) override {
+  td::actor::Task<td::Ref<vm::Cell>> wait_block_state_root(BlockIdExt block_id, td::Timestamp timeout,
+                                                           std::optional<CandidateId> requesting_candidate) override {
+    (void)requesting_candidate;
     auto state =
         co_await td::actor::ask(manager_, &ValidatorManager::wait_block_state_short, block_id, 0, timeout, false);
     co_return state->root_cell();
@@ -231,8 +379,7 @@ class CandidateBroadcastRelayImpl : public td::actor::SpawnsWith<Bus>, public td
     // this relay. Re-broadcast recent non-empty candidates as a bounded
     // recovery path; older candidates are already covered by normal sync.
     if (event->candidate->is_empty() ||
-        (last_mc_finalized_seqno_ >= 2 &&
-         event->candidate->block_id().seqno() + 4 <= last_mc_finalized_seqno_)) {
+        (last_mc_finalized_seqno_ >= 2 && event->candidate->block_id().seqno() + 4 <= last_mc_finalized_seqno_)) {
       return;
     }
     send_candidate(*bus, event->candidate);
@@ -244,11 +391,11 @@ class CandidateBroadcastRelayImpl : public td::actor::SpawnsWith<Bus>, public td
   }
 
  private:
-  void send_candidate(const Bus &bus, const CandidateRef &candidate) {
+  void send_candidate(const Bus& bus, const CandidateRef& candidate) {
     if (candidate->is_empty()) {
       return;
     }
-    const auto &block = std::get<BlockCandidate>(candidate->block);
+    const auto& block = std::get<BlockCandidate>(candidate->block);
     if (!sent_candidates_.should_relay(block.id)) {
       return;
     }
@@ -269,11 +416,15 @@ struct BridgeCreationParams {
   ShardIdFull shard;
   td::actor::ActorId<ValidatorManager> manager;
   td::actor::ActorId<keyring::Keyring> keyring;
+  // The exact post-quantum signer for the local validator, resolved from custody by the
+  // manager; null for an observer or a not-yet-custodied local validator.
+  std::shared_ptr<const tos::pq::ValidatorPQKeyStore> pq_signer;
   td::Ref<ValidatorManagerOptions> validator_opts;
 
   td::Ref<block::ValidatorSet> validator_set;
   std::vector<adnl::AdnlNodeIdShort> all_validators;
-  std::optional<PublicKeyHash> local_id;
+  std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators;
+  std::optional<tos::ValidatorId> local_id;
   adnl::AdnlNodeIdShort local_adnl_id;
   std::string db_suffix;
 
@@ -342,7 +493,25 @@ class BridgeImpl final : public IValidatorGroup {
     close_for_retirement_inner(generation).start().detach();
   }
 
+  ~BridgeImpl() override {
+    notify_bridge_destroyed(params_.name);
+  }
+
+  void tear_down() override {
+    start_cancellation_->cancel();
+  }
+
   void start_up() override {
+    // Defense in depth. The manager runs this exact check before it creates this group, so
+    // reaching a set the post-quantum consensus path cannot run is an invariant break, not
+    // an expected input -- refuse before building the manager facade, the database, the
+    // runtime, the bus or the overlay, and stay a full node.
+    if (auto usable = block::validate_simplex_pq_validator_set(*params_.validator_set); usable.is_error()) {
+      LOG(ERROR) << "consensus: refusing to start a Simplex group -- " << usable.move_as_error();
+      stop();
+      return;
+    }
+
     manager_facade_ = td::actor::create_actor<ManagerFacadeImpl>(params_.name + ".ManagerFacade", params_.manager,
                                                                  params_.collation_manager, params_.validator_set,
                                                                  params_.validator_opts);
@@ -352,25 +521,37 @@ class BridgeImpl final : public IValidatorGroup {
     bus->shard = params_.shard;
     bus->manager = manager_facade_.get();
     bus->keyring = params_.keyring;
+    bus->pq_signer = params_.pq_signer;
     bus->validator_opts = params_.validator_opts;
     bus->all_validators = params_.all_validators;
+    bus->all_current_validators = params_.all_current_validators;
 
     bool found = false;
     size_t idx = 0;
     ValidatorWeight total_weight = 0;
     for (const auto& el : params_.validator_set->export_vector()) {
-      PublicKey key{pubkeys::Ed25519{el.key}};
-      PublicKeyHash short_id = key.compute_short_id();
+      const auto algorithm_id = static_cast<tos::pq::PQAlgorithmId>(el.algorithm_id);
+
+      // The transport/overlay identity, from the descriptor's explicit ADNL address, never
+      // from the consensus key.
+      auto adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(el)};
+
+      tos::pq::ConsensusPQKey consensus_key;
+      consensus_key.algorithm_id = algorithm_id;
+      std::memcpy(consensus_key.key_id.data(), el.key_id.value.data(), 32);
+      consensus_key.public_key = el.pq_public_key;
 
       bus->validator_set.push_back(PeerValidator{
+          .validator_id = el.validator_id,
           .idx = PeerValidatorId{idx},
-          .key = key,
-          .short_id = short_id,
-          .adnl_id = adnl::AdnlNodeIdShort{el.addr.is_zero() ? short_id.bits256_value() : el.addr},
+          .consensus_key = std::move(consensus_key),
+          .transport_key_id = adnl_id.pubkey_hash(),
+          .adnl_id = adnl_id,
           .weight = el.weight,
       });
 
-      if (params_.local_id && short_id == *params_.local_id) {
+      // The local node is matched by its stable validator identity, not a key hash.
+      if (params_.local_id && el.validator_id == *params_.local_id) {
         found = true;
         bus->local_id = bus->validator_set.back();
         CHECK(bus->validator_set.back().adnl_id == params_.local_adnl_id);
@@ -396,7 +577,7 @@ class BridgeImpl final : public IValidatorGroup {
     bus->overlays = params_.overlays;
     bus->adnl_sender = params_.adnl_sender;
 
-    bus->db = std::make_unique<DbImpl>(db_path() + "/db/");
+    bus->db = open_rocksdb_consensus_db(db_path() + "/db/");
 
     auto [stop_waiter, stop_promise] = td::actor::StartedTask<>::make_bridge();
     stop_waiter_ = std::move(stop_waiter);
@@ -423,6 +604,14 @@ class BridgeImpl final : public IValidatorGroup {
     simplex::DefaultCollatorSchedule::provide_for(runtime);
 
     bus_ = runtime.start(bus, params_.name);
+    std::function<void(BusHandle)> observer;
+    {
+      std::lock_guard lock(bridge_bus_observer_mutex);
+      observer = bridge_bus_observer;
+    }
+    if (observer) {
+      observer(bus_);
+    }
   }
 
  private:
@@ -442,8 +631,7 @@ class BridgeImpl final : public IValidatorGroup {
     auto info = pool_result.move_as_ok();
 
     // Step 2: resolve the current chain state to obtain prev block ids and next seqno.
-    auto state_result =
-        co_await bus_.publish<simplex::ResolveState>(info.last_finalized_block).wrap();
+    auto state_result = co_await bus_.publish<simplex::ResolveState>(info.last_finalized_block).wrap();
     if (state_result.is_error()) {
       promise.set_error(state_result.move_as_error());
       co_return td::Unit{};
@@ -475,7 +663,10 @@ class BridgeImpl final : public IValidatorGroup {
         candidate_id->collated_data_hash_ =
             std::get<CandidateHashData::FullCandidate>(hash_data.candidate).collated_file_hash;
         if (c.leader.value() < bus.validator_set.size()) {
-          candidate_id->creator_ = bus.validator_set[c.leader.value()].key.ed25519_value().raw();
+          // Report the identity the set holds for this leader, not a value derived
+          // from its key: those are different bytes and only one of them is what the
+          // block is attributed to.
+          candidate_id->creator_ = bus.validator_set[c.leader.value()].validator_id.value;
         }
       } else {
         // Candidate data not yet available locally: fill in seqno from chain
@@ -506,13 +697,22 @@ class BridgeImpl final : public IValidatorGroup {
   }
 
   td::actor::Task<> destroy_inner() {
+    start_cancellation_->cancel();
     if (bus_) {
       LOG(INFO) << "Destroying validator group";
+      bus_->health_session.begin_stop();
       bus_.publish<StopRequested>();
-      co_await bus_->db->close();
-      bus_ = {};
-      co_await std::move(stop_waiter_.value());
+      auto weak_bus = bus_.weak_for_diagnostics();
+      auto bus_node = bus_.node_for_diagnostics();
+      auto closed = co_await simplex::close_and_release_bus(bus_).wrap();
+      co_await await_bus_stop_with_diagnostics(std::move(stop_waiter_.value()), std::move(weak_bus),
+                                               std::move(bus_node), params_.name);
       LOG(INFO) << "Consensus bus stopped";
+      if (closed.is_error()) {
+        LOG(ERROR) << "Consensus DB close failed during group destroy: " << closed.error();
+        stop();
+        co_return closed.move_as_error();
+      }
       td::RocksDb::destroy(db_path() + "/db/").ignore();
       td::rmrf(db_path()).ignore();
       // Confirm the directory is actually gone before telling the manager to
@@ -544,7 +744,7 @@ class BridgeImpl final : public IValidatorGroup {
     co_return td::Unit{};
   }
 
-  // Retirement close (validator-group cleanup, Finding 1 / PR B): mirror the
+  // Retirement close (validator-group cleanup): mirror the
   // stop/close sequence of destroy_inner() WITHOUT deleting the directory. The
   // bus destructor destroys `db` before satisfying stop_waiter_, so by the time
   // that waiter completes the actor no longer holds the database; only then is
@@ -552,13 +752,22 @@ class BridgeImpl final : public IValidatorGroup {
   // a checkpoint-bound eligibility check -- never here -- so a still-recreatable
   // session can never lose its consensus state through retirement.
   td::actor::Task<> close_for_retirement_inner(td::uint64 generation) {
+    start_cancellation_->cancel();
     if (bus_) {
       LOG(INFO) << "Closing validator group for retirement (no delete)";
+      bus_->health_session.begin_stop();
       bus_.publish<StopRequested>();
-      co_await bus_->db->close();
-      bus_ = {};
-      co_await std::move(stop_waiter_.value());
+      auto weak_bus = bus_.weak_for_diagnostics();
+      auto bus_node = bus_.node_for_diagnostics();
+      auto closed = co_await simplex::close_and_release_bus(bus_).wrap();
+      co_await await_bus_stop_with_diagnostics(std::move(stop_waiter_.value()), std::move(weak_bus),
+                                               std::move(bus_node), params_.name);
       LOG(INFO) << "Consensus bus stopped (retirement close)";
+      if (closed.is_error()) {
+        LOG(ERROR) << "Consensus DB close failed during retirement: " << closed.error();
+        stop();
+        co_return closed.move_as_error();
+      }
       auto dir_name = consensus_db_dir_name(params_.shard, params_.validator_set->get_catchain_seqno(),
                                             params_.session_id, params_.db_suffix);
       td::actor::send_closure(params_.manager, &ValidatorManager::consensus_db_closed, params_.session_id, generation,
@@ -568,21 +777,31 @@ class BridgeImpl final : public IValidatorGroup {
     co_return td::Unit{};
   }
 
+  // One long wait for the initial chain state, then retries with a growing
+  // delay for as long as the group lives. Stopping the group wakes the wait
+  // or the delay at once and the group is never started.
   td::actor::Task<> resolve_state_and_start(std::vector<BlockIdExt> blocks, BlockIdExt min_mc_block_id) {
-    td::Ref<ChainState> state;
-    while (true) {
-      auto r_state =
-          co_await ChainState::from_manager(manager_facade_.get(), params_.shard, blocks, min_mc_block_id).wrap();
-      if (!bus_) {
-        co_return td::Status::Error("validator group already destroyed");
-      }
-      if (r_state.is_error() && r_state.error().code() == ErrorCode::timeout) {
-        LOG(WARNING) << "Failed to resolve chain state: timeout, retrying";
-        continue;
-      }
-      state = CO_TRY(std::move(r_state));
-      break;
+    auto cancellation = start_cancellation_;
+    auto manager = manager_facade_.get();
+    auto shard = params_.shard;
+    RetryLogLimiter retry_log(INITIAL_STATE_RETRY_LOG_INTERVAL);
+    auto resolution = resolve_initial_state<td::Ref<ChainState>>(
+        cancellation,
+        [manager, shard, blocks, min_mc_block_id]() {
+          return wait_initial_chain_state(manager, shard, blocks, min_mc_block_id, INITIAL_STATE_WAIT_TIMEOUT);
+        },
+        [&](const td::Status& error, td::uint32 delay) {
+          td::uint64 held_back = 0;
+          if (retry_log.allow(td::Timestamp::now(), held_back)) {
+            LOG(WARNING) << "Failed to resolve chain state: " << error << ", retrying in " << delay << " s ("
+                         << held_back << " retries not logged)";
+          }
+        });
+    auto r_state = co_await std::move(resolution).wrap();
+    if (cancellation->is_cancelled() || !bus_) {
+      co_return td::Status::Error(ErrorCode::cancelled, "validator group already destroyed");
     }
+    auto state = CO_TRY(std::move(r_state));
     start_event_ = std::make_shared<Start>(state);
     maybe_start_group();
     co_return td::Unit{};
@@ -605,6 +824,8 @@ class BridgeImpl final : public IValidatorGroup {
 
   simplex::BusHandle bus_;
   td::optional<td::actor::StartedTask<>> stop_waiter_;
+  // Fired when the group stops, to end the initial chain-state resolution.
+  std::shared_ptr<Cancellation> start_cancellation_ = std::make_shared<Cancellation>();
 
   std::shared_ptr<Start> start_event_;
 
@@ -623,6 +844,10 @@ class BridgeImpl final : public IValidatorGroup {
 
 }  // namespace
 
+std::unique_ptr<Db> open_rocksdb_consensus_db(std::string path) {
+  return std::make_unique<DbImpl>(std::move(path));
+}
+
 void CandidateBroadcastRelay::register_in(td::actor::Runtime& runtime) {
   runtime.register_actor<CandidateBroadcastRelayImpl>("CandidateBroadcastRelay");
 }
@@ -630,32 +855,41 @@ void CandidateBroadcastRelay::register_in(td::actor::Runtime& runtime) {
 }  // namespace consensus
 
 td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
-    td::Slice name, ShardIdFull shard, PublicKeyHash local_id, ValidatorSessionId session_id,
+    td::Slice name, ShardIdFull shard, tos::ValidatorId local_id,
+    std::shared_ptr<const tos::pq::ValidatorPQKeyStore> pq_signer, ValidatorSessionId session_id,
     td::Ref<block::ValidatorSet> validator_set, BlockSeqno last_key_block_seqno, NewConsensusConfig config,
     td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
     td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
-    std::vector<adnl::AdnlNodeIdShort> all_validators, std::string db_root,
-    td::actor::ActorId<ValidatorManager> validator_manager,
-    td::actor::ActorId<CollationManager> collation_manager, bool create_session, bool allow_unsafe_self_blocks_resync,
-    td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard) {
+    std::vector<adnl::AdnlNodeIdShort> all_validators,
+    std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
+    td::actor::ActorId<ValidatorManager> validator_manager, td::actor::ActorId<CollationManager> collation_manager,
+    bool create_session, bool allow_unsafe_self_blocks_resync, td::Ref<ValidatorManagerOptions> opts,
+    bool monitoring_shard) {
+  all_current_validators =
+      consensus::normalize_twostep_relay_snapshot(all_validators, std::move(all_current_validators));
   LOG_CHECK(config.protocol_version_supported())
       << "Unsupported Simplex protocol version " << config.protocol_version << " (maximum supported is "
       << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION << ")";
   auto name_with_seqno =
       std::string(name.begin(), name.end()) + "." + std::to_string(validator_set->get_catchain_seqno());
-  auto descr = validator_set->get_validator(local_id.bits256_value());
+  auto descr = validator_set->get_validator(local_id);
   CHECK(descr);
-  auto local_adnl_id = adnl::AdnlNodeIdShort{
-      descr->addr.is_zero() ? ValidatorFullId{descr->key}.compute_short_id().bits256_value() : descr->addr};
+  // Only a classical descriptor may fall back to deriving an ADNL identity from its
+  // key. A post-quantum one always carries an explicit address, precisely so that a
+  // consensus key never doubles as a transport identity.
+  CHECK(!descr->is_pq() || !descr->addr.is_zero());
+  auto local_adnl_id = adnl::AdnlNodeIdShort{block::validator_adnl_identity(*descr)};
   consensus::BridgeCreationParams params{
       .name = name_with_seqno,
       .is_create_session_called = create_session,
       .shard = shard,
       .manager = validator_manager,
       .keyring = keyring,
+      .pq_signer = std::move(pq_signer),
       .validator_opts = opts,
       .validator_set = std::move(validator_set),
       .all_validators = std::move(all_validators),
+      .all_current_validators = std::move(all_current_validators),
       .local_id = std::move(local_id),
       .local_adnl_id = local_adnl_id,
       .db_suffix = "",
@@ -671,12 +905,14 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge(
 
 td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge_observer(
     td::Slice name, ShardIdFull shard, adnl::AdnlNodeIdShort local_adnl_id, ValidatorSessionId session_id,
-    td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config,
-    td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
-    td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender, td::actor::ActorId<overlay::Overlays> overlays,
-    std::vector<adnl::AdnlNodeIdShort> all_validators, std::string db_root,
-    td::actor::ActorId<ValidatorManager> validator_manager,
-    td::Ref<ValidatorManagerOptions> opts, bool monitoring_shard) {
+    td::Ref<block::ValidatorSet> validator_set, NewConsensusConfig config, td::actor::ActorId<keyring::Keyring> keyring,
+    td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<adnl::AdnlSenderEx> adnl_sender,
+    td::actor::ActorId<overlay::Overlays> overlays, std::vector<adnl::AdnlNodeIdShort> all_validators,
+    std::optional<std::set<adnl::AdnlNodeIdShort>> all_current_validators, std::string db_root,
+    td::actor::ActorId<ValidatorManager> validator_manager, td::Ref<ValidatorManagerOptions> opts,
+    bool monitoring_shard) {
+  all_current_validators =
+      consensus::normalize_twostep_relay_snapshot(all_validators, std::move(all_current_validators));
   LOG_CHECK(config.protocol_version_supported())
       << "Unsupported Simplex protocol version " << config.protocol_version << " (maximum supported is "
       << NewConsensusConfig::MAX_SUPPORTED_PROTOCOL_VERSION << ")";
@@ -690,9 +926,11 @@ td::actor::ActorOwn<IValidatorGroup> IValidatorGroup::create_bridge_observer(
       .shard = shard,
       .manager = validator_manager,
       .keyring = keyring,
+      .pq_signer = nullptr,  // an observer produces nothing, so it holds no consensus signer
       .validator_opts = opts,
       .validator_set = std::move(validator_set),
       .all_validators = std::move(all_validators),
+      .all_current_validators = std::move(all_current_validators),
       .local_id = std::nullopt,
       .local_adnl_id = local_adnl_id,
       .db_suffix = PSTRING() << ".observer." << local_adnl_id.pubkey_hash(),

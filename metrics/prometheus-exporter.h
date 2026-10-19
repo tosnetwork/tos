@@ -5,6 +5,8 @@
 #include "td/actor/coro_task.h"
 
 #include "metrics-collectors.h"
+#include "native-core-snapshot.h"
+#include "source-admission.h"
 
 namespace tos {
 class PrometheusExporter final : public td::actor::Actor, public virtual metrics::CollectorWrapper {
@@ -12,9 +14,15 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
   static td::actor::ActorOwn<PrometheusExporter> create(std::string prefix = "tos");
 
   template <std::derived_from<metrics::AsyncCollector> A>
-  void register_collector(td::actor::ActorId<A> collector);
+  void register_collector(std::string source_id, td::actor::ActorId<A> collector);
 
   void listen(td::IPAddress addr);
+  void set_health_node(std::string value);
+  void set_health_network(std::string value);
+  void set_health_native_v2();
+  void set_health_native_v3();
+  void set_health_diagnostic(std::string path, int peer_pid, std::uint32_t sampling);
+  void tear_down() override;
 
   explicit PrometheusExporter(std::string prefix);
 
@@ -44,6 +52,25 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
 
   void on_request(RequestPtr request, PayloadPtr payload, td::Promise<HttpReturn> promise);
 
+  void collection_completed(td::Result<metrics::MetricSet> result);
+  void alarm() override;
+  void respond_metrics(td::Promise<HttpReturn> promise);
+  void respond(td::Promise<HttpReturn> promise, int code, const char *reason, std::string body,
+               const char *content_type = "application/openmetrics-text; version=1.0.0; charset=utf-8");
+
+  health::NativeCorePublisher core_publisher_;
+  std::optional<health::NativeCoreSnapshot> core_snapshot_;
+  std::optional<td::Promise<HttpReturn>> waiter_;
+  bool loopback_ = false;
+  bool native_v2_ = false;
+  bool native_v3_ = false;
+
+  metrics::SourceAdmission admission_;
+  std::string snapshot_;
+  std::uint64_t skipped_ = 0;
+  std::uint64_t failures_ = 0;
+  std::uint64_t last_publisher_prepare_us_ = 0;
+
   std::string prefix_;
   td::actor::ActorOwn<http::HttpServer> http_ = {};
   td::actor::ActorOwn<metrics::MultiCollector> main_collector_ = metrics::MultiCollector::create(prefix_);
@@ -60,9 +87,10 @@ class PrometheusExporter final : public td::actor::Actor, public virtual metrics
 };
 
 template <std::derived_from<metrics::AsyncCollector> A>
-void PrometheusExporter::register_collector(td::actor::ActorId<A> collector) {
+void PrometheusExporter::register_collector(std::string source_id, td::actor::ActorId<A> collector) {
   collectors_->add(1);
-  td::actor::send_closure(main_collector_.get(), &metrics::MultiCollector::add_async_collector<A>, collector);
+  td::actor::send_closure(main_collector_.get(), &metrics::MultiCollector::add_async_collector<A>, std::move(source_id),
+                          collector);
 }
 
 }  // namespace tos

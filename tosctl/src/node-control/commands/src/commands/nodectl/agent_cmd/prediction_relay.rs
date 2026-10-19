@@ -55,7 +55,7 @@ pub struct AgentAccountPredictionRelayProfileCmd {
     zero_state_root_hash: String,
     #[arg(long)]
     zero_state_file_hash: String,
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     workchain_id: i32,
     #[arg(
         long = "quorum-config",
@@ -1944,7 +1944,12 @@ async fn verify_prediction_market_identity(
     };
     let state = PredictionMarketContractV1::decode_state(
         &provider
-            .run_get_method_at(market.to_string(), "get_prediction_state", vec![], &pinned)
+            .run_get_method_at_unverified(
+                market.to_string(),
+                "get_prediction_state",
+                vec![],
+                &pinned,
+            )
             .await?,
     )?;
     let market_id = format!("sha256:{}", hex::encode(state.market_id));

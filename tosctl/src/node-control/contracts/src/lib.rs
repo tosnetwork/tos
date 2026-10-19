@@ -27,20 +27,42 @@ pub mod capability_registry;
 pub mod chain_provider;
 pub mod config_contract;
 pub mod contract_codes;
+pub mod contract_version;
 pub mod dispute;
 pub mod dns;
 pub mod elector;
 pub mod liquid_controller;
+#[cfg(unix)]
+pub mod lms_fee_journal;
+pub mod lms_fee_schedule;
+#[cfg(feature = "native-wallet-vault")]
+pub mod lms_fee_vault;
+pub mod native_registry;
 pub mod nominator;
 pub mod nominator_pool;
 pub mod prediction_market;
 pub mod proof_attestation;
+pub mod proven_getters;
+pub mod proven_transactions;
 pub mod provider;
 pub mod service_actor;
 pub mod smart_contract;
 pub mod stack_utils;
 pub mod task_escrow;
+pub mod validator_controller;
 pub mod wallet;
+pub mod wallet_quantum;
+pub mod wallet_quantum_fee;
+pub mod wallet_quantum_genesis;
+pub mod wallet_quantum_manifest;
+mod wallet_quantum_policy;
+pub mod wallet_quantum_pop;
+pub mod wallet_quantum_prepare;
+pub mod wallet_quantum_receipts;
+pub mod wallet_quantum_state;
+#[cfg(feature = "native-wallet-vault")]
+pub mod wallet_quantum_vault;
+pub mod wallet_quantum_wallet_state;
 
 pub use agent_account::{
     AGENT_ACCOUNT_MAX_ACTION_GAS, AGENT_ACCOUNT_MAX_ACTION_VALUE,
@@ -56,8 +78,9 @@ pub use agent_account_custody::{
     controller_resolution_evidence_digest,
 };
 pub use attestation::{
-    domain_bound_hash, resolve_domain_hash, service_actor_terms_hash, service_respond_domain_hash,
-    settle_domain_hash,
+    DOMAIN_DISPUTE_RULING, DOMAIN_PROOF_ATTESTATION, DOMAIN_SERVICE_RESPOND, DOMAIN_TASK_RESOLVE,
+    DOMAIN_TASK_SETTLE, domain_bound_hash, resolve_domain_hash, ruling_domain_hash,
+    service_actor_terms_hash, service_respond_domain_hash, settle_domain_hash,
 };
 pub use capability_registry::{
     CapabilityRegistryContract, CapabilityRegistryData, CapabilityRegistryInit,
@@ -66,8 +89,10 @@ pub use chain_provider::{
     ChainProvider, DefaultChainProvider, MasterchainCheckpoint, contract_provider_from,
 };
 pub use config_contract::{
-    ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposedParam,
+    ConfigContractImpl, ConfigContractWrapper, ConfigProposal, ProposalAnswer, ProposalRead,
+    ProposedParam,
 };
+pub use contract_version::VersionedContract;
 pub use dispute::{
     DISPUTE_STATUS_EVIDENCE_SUBMITTED, DISPUTE_STATUS_OPEN, DISPUTE_STATUS_RESOLVED,
     DisputeContract, DisputeData, DisputeInit, RULING_CLAIMANT, RULING_NONE, RULING_RESPONDENT,
@@ -77,10 +102,15 @@ pub use elector::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, Participant
 pub use liquid_controller::{
     ControllerData, ControllerWrapper, ControllerWrapperImpl, LoanBalanceRequirement,
 };
+pub use native_registry::{
+    NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE, NATIVE_REGISTRY_GAS_CEILING,
+    NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS, NativePolicy, NativePolicyController,
+};
 pub use nominator::{NOMINATOR_POOL_WORKCHAIN, NominatorWrapper, NominatorWrapperImpl};
 pub use nominator_pool::{
-    NominatorData, NominatorPoolData, NominatorPoolWrapper, NominatorPoolWrapperImpl,
-    NominatorPosition,
+    NOMINATOR_POOL_SNAPSHOT_METHODS, NominatorData, NominatorPoolData, NominatorPoolSnapshot,
+    NominatorPoolSnapshotProof, NominatorPoolWrapper, NominatorPoolWrapperImpl, NominatorPosition,
+    PoolSnapshotSource, read_proven_nominator_pool_snapshot,
 };
 pub use prediction_market::{
     PREDICTION_MARKET_CODE_VERSION, PREDICTION_PRICE_SCALE, PredictionLiquidityRoleV1,
@@ -91,6 +121,10 @@ pub use prediction_market::{
     PredictionResolutionContextsV1, PredictionResolutionOutcomeV1,
 };
 pub use proof_attestation::{ProofAttestationContract, ProofAttestationData, ProofAttestationInit};
+pub use proven_getters::{
+    GetMethodArg, GetMethodCall, ProvenAccount, ProvenAccountState, ProvenGetMethod,
+    ProvenGetterProvider, ProvenGetterResults, ReadPolicy,
+};
 pub use provider::ContractProvider;
 pub use service_actor::{
     PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,
@@ -98,3 +132,5 @@ pub use service_actor::{
 pub use smart_contract::SmartContract;
 pub use task_escrow::{TaskEscrowContract, TaskEscrowData, TaskEscrowInit};
 pub use wallet::{Wallet, WalletContract};
+
+pub mod control_reads;

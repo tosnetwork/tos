@@ -8,6 +8,7 @@ export { pbkdf2_sha512 } from "./primitives/pbkdf2.js";
 
 // Key operations (Ed25519 via tweetnacl)
 export { keyPairFromSeed, keyPairFromSecretKey, sign, signVerify } from "./keys.js";
+export { isWeakEd25519PublicKey } from "./weakKeys.js";
 
 // Mnemonic
 export {

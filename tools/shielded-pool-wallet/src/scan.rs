@@ -27,6 +27,8 @@ use crate::error::{Rejection, Result};
 use crate::import::{self, ChainSlot, Imported};
 use crate::keys::PoolInstance;
 
+use shielded_pool_circuit::field::Fr;
+
 /// One output slot as the chain carries it.
 #[derive(Clone)]
 pub struct ObservedOutput {
@@ -62,10 +64,60 @@ pub struct Recovered {
 }
 
 impl Recovered {
-    /// Spendable balance. A dummy carries none by construction and a recovery
-    /// template has none until a bounce gives it one.
+    /// Reconcile against the nullifiers the chain has published.
+    ///
+    /// A note's nullifier is `H7("NULLIFIER", note_body, owner_nf_key)`, and
+    /// the owner key comes from the mnemonic by index. So whether a note is
+    /// spent is computable from the mnemonic and the chain and nothing else --
+    /// which is the whole test for whether it is a property of this system at
+    /// all. No wallet database, no kept payload, no device.
+    ///
+    /// Restoration is not finished until this has run. Before it, every note
+    /// this wallet ever received looks alike, including the ones it spent.
+    pub fn reconcile_spent(
+        &mut self,
+        instance: &PoolInstance,
+        published: &BTreeSet<Fr>,
+    ) -> Result<()> {
+        for note in &mut self.notes {
+            let key = instance.owner_nf_key(note.note_key_index)?;
+            let nullifier = shielded_pool_circuit::notes::nullifier(note.note_body, key);
+            note.spent = published.contains(&nullifier);
+        }
+        Ok(())
+    }
+
+    /// What this wallet can spend.
+    ///
+    /// A balance is a number somebody acts on, and the way they act is to
+    /// spend it, so a number that cannot be spent is not a balance. This one
+    /// excludes notes the chain has already consumed.
+    ///
+    /// It used to be `received()` under this name, which made a wallet report
+    /// twice its money after a self-transfer: the input it spent and the
+    /// outputs that replaced it were both counted. A green test asserted that
+    /// doubled figure.
     pub fn balance(&self) -> u128 {
+        self.notes
+            .iter()
+            .filter(|note| note.spendable && !note.spent)
+            .map(|note| note.amount)
+            .sum()
+    }
+
+    /// Everything this wallet was ever sent, spent or not.
+    ///
+    /// Kept because descriptor-index recovery needs every note that ever
+    /// arrived -- the next safe index is derived from all of them, not only
+    /// from the ones still unspent. It is a historical total and is named as
+    /// one, so it cannot be mistaken for money.
+    pub fn received(&self) -> u128 {
         self.notes.iter().filter(|note| note.spendable).map(|note| note.amount).sum()
+    }
+
+    /// The notes an input may be selected from.
+    pub fn spendable_notes(&self) -> impl Iterator<Item = &Imported> {
+        self.notes.iter().filter(|note| note.spendable && !note.spent)
     }
 
     /// Whether this index may be issued. False for an index already used, and

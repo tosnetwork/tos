@@ -1,4 +1,4 @@
-# Genesis Validator Bootstrap (`validator-keys.pub`)
+# Genesis Validator Bootstrap (`validator-pq.pub`)
 
 This document describes how the four original TOS validators are committed to
 the production zerostate and how control later passes to ordinary Elector
@@ -8,10 +8,11 @@ elections. The monetary parameters are specified in
 ## Bootstrap invariants
 
 - Genesis contains exactly four original validators in ConfigParam 34.
-- The four entries have equal weight and unique Ed25519 signing keys.
-- Every entry includes its ADNL identity.
-- The ADNL identity is the SHA-256 hash of the serialized `pub.ed25519` TL
-  object: the four-byte prefix `c6 b4 13 48` followed by the 32-byte public key.
+- The four entries have equal weight and unique ML-DSA-44 consensus keys.
+- Every PQ entry includes its stable controller ID and independent ADNL identity.
+- For an Ed25519 ADNL transport key, its ADNL identity is the SHA-256 of
+  the serialized `pub.ed25519` TL object (`c6 b4 13 48` plus the transport
+  public key). This is not the PQ consensus key ID.
 - Original validators are authorized directly by the zerostate and do not
   stake before the first block.
 - ConfigParam 16 has a four-validator minimum.
@@ -38,118 +39,118 @@ This authorization is temporary. The first successful ordinary election
 installs a stake-backed set, after which membership continues through the
 existing Elector process.
 
-## Public-key manifest
+## Protocol and version parameters
 
-The production generator reads `validator-keys<suffix>.pub` from the current
-working directory. With no suffix, the filename is `validator-keys.pub`.
+| Parameter | Canonical default | Purpose |
+| --- | --- | --- |
+| ConfigParam 8 version | 16 | Current VM/PQ and shielded-pool execution profile |
+| ConfigParam 19 global ID | 1 | Mainnet signature replay domain; local development uses 3 |
+| ConfigParam 34 descriptor | `validator_pq_addr#b3` | PQ-only bootstrap consensus identities |
+| PQ algorithm ID | 1 (ML-DSA-44) | 1,312-byte consensus public keys |
+| ConfigParam 11 proposal voting | ordinary 2/6/2/5, critical 4/7/3/5 (min_tot_rounds/max_tot_rounds/min_wins/max_losses) | A proposal can be voted on for 7 (ordinary) or 8 (critical) rounds, because the registering round counts; it is accepted at 2 / 3 winning rounds and removed after its sixth lost round |
+| ConfigParam 12 basechain | `workchain_v2`, `min_split` 0, `max_split` 2, persistent-state split depth 4 | One basechain shard at genesis; load may split it into at most four |
+| ConfigParam 30 | Simplex version 2, QUIC enabled, 400 ms target rate, 700 ms first-block timeout, 300 ms minimum block interval; leader windows of 4 slots (masterchain) and 16 slots (shards) | Consensus protocol; distinct from ConfigParam 8 |
+| ConfigParam 47 | Compiled controller v1 code hash | Admission for subsequent controller-based elections |
 
-The file is a raw concatenation with no headers, lengths, or separators:
+ConfigParams 8 and 47 are mandatory and critical. Changing a VM version is not
+itself enough to change the signing scheme: the validator descriptors and node
+keys must also be PQ. ADNL transport identities remain separate from consensus
+keys and are not converted to ML-DSA by this configuration.
 
-```text
-validator-keys.pub =
-    public_key_0 || public_key_1 || public_key_2 || public_key_3
+The canonical template retains its explicitly pinned `SOURCE_DATE_EPOCH` of
+1789434000 (2026-09-15 01:00:00 UTC). This is a reproducibility input, **not an
+approval to launch a new chain at an expired bootstrap date**. An actual launch
+must review and update the epoch and rehearse the initial-set lifetime before
+freezing the final hashes. This change does not alter supply, reward, stake,
+bootstrap lifetime or fee parameters.
 
-public-key size = 32 bytes
-manifest size   = 4 * 32 = 128 bytes
-```
+## Public-key manifest and operator ceremony
 
-Order is consensus-relevant because it determines validator indices. The
-generator aborts unless the file is exactly 128 bytes and all four public keys
-are unique.
-
-For every key, `gen-zerostate.fif` derives the corresponding ADNL identity and
-uses `add-adnl-validator` with equal weight 17. Operators must configure their
-validator-engine instances with the matching signing and ADNL private key.
-
-## Key-generation ceremony
-
-Each operator should generate its key on its own secured machine and disclose
-only the raw 32-byte public key. The launch coordinator must not collect
-production private keys.
-
-The helper defaults to four keys for isolated test ceremonies:
-
-```bash
-build/crypto/fift -I crypto/fift/lib \
-  -s scripts/gen-validator-keys.fif 4
-```
-
-It writes `val-key-1` through `val-key-4` and the concatenated
-`validator-keys.pub`. Coordinator-generated private keys are acceptable only
-for disposable local networks.
-
-For a production ceremony, each operator instead generates one key and submits
-the 32-byte public part. The coordinator verifies identity and proof of
-possession, then concatenates the four submissions in the published order:
+Each operator generates and retains its own consensus seed in a private
+directory. Only public output is submitted to the coordinator:
 
 ```bash
-cat operator-0.pub operator-1.pub operator-2.pub operator-3.pub \
-  > validator-keys.pub
-test "$(wc -c < validator-keys.pub)" = "128"
+umask 077
+mkdir -m 700 operator-key
+build/crypto/pq/tos-pq-consensus-key generate operator-key/consensus.seed
 ```
 
-Before generation, publish a signed manifest containing:
+The tool prints `algorithm`, `key_id` and the 1,312-byte `public` key in hex;
+it does not print the private seed. The controller account ID must be the
+operator's intended stable masterchain validator identity, derived from the
+controller StateInit with its separate root authority. The ADNL ID must match
+the node's configured transport identity. Neither ID is inferred from the PQ
+public key. Verify operator identity and proof of possession before accepting
+public submissions; packing a manifest does not prove possession or deploy a
+controller.
 
-- index;
-- raw public key;
-- derived ADNL identity;
-- controlling masterchain wallet;
-- operator and control disclosure; and
-- a hash of the complete ordered 128-byte manifest.
+The coordinator creates an ordered JSON array of exactly four records:
+
+```json
+[
+  {"controller_id": "<64 hex characters>",
+   "adnl_id": "<64 hex characters>",
+   "public_key": "<2624 hex characters>"}
+]
+```
+
+The example shows one record's shape; four records are required. Pack it with:
+
+```bash
+python3 scripts/prepare-pq-genesis-manifest.py operators.json validator-pq.pub
+```
+
+The output is public-only and is never overwritten. Each record is controller
+ID (32 bytes), ADNL ID (32 bytes), then ML-DSA-44 public key (1,312 bytes), for
+**5,504 bytes** total. Order determines validator indices. The production Fift
+generator independently checks the exact size and uniqueness of controller,
+consensus-key and ADNL identities. It derives the key ID as
+`SHA256("TOS-PQ-CONSENSUS-KEY-v1" || 0x0100 || public_key)`; the algorithm field
+in this hash uses little-endian encoding as in the native key tool.
+
+The canonical input is `validator-pq<suffix>.pub`. The old 128-byte
+`validator-keys.pub` and `scripts/gen-validator-keys.fif` output are classical
+test fixtures and are **not** accepted for canonical genesis. The generic test
+harness can still construct explicit classical regression fixtures; it defaults
+to VM version 16 and refuses PQ fixtures below the supported launch profile.
 
 ## Generate and inspect the zerostate
 
-Run the canonical production generator from the directory containing the key
-manifest:
+Build the generator and current system/controller artifacts:
 
 ```bash
-build/crypto/create-state \
-  -I crypto/fift/lib \
-  -I crypto/smartcont \
-  -s "$PWD/crypto/smartcont/gen-zerostate.fif"
+cmake --build build --target create-state gen_fif tos-pq-consensus-key
 ```
 
-The generator emits `zerostate.boc`, the basechain zerostate, their hashes, the
-main-wallet key, and the configuration-contract key. Production key custody
-must follow the launch ceremony rather than leaving generated private keys in
-an ordinary working directory.
-
-Inspect the initial validator set on a running node:
+From the ceremony directory containing `validator-pq.pub`, use an absolute
+checkout path (set `TOS_REPO` to that path):
 
 ```bash
-tos-lite-client -C /data/tos-global.json -v 0 \
-  -c "last" \
-  -c "getconfig 34" \
-  -c "quit"
+SOURCE_DATE_EPOCH=1789434000 "$TOS_REPO/build/crypto/create-state" \
+  -I "$TOS_REPO/crypto/fift/lib" \
+  -I "$TOS_REPO/build/crypto/smartcont" \
+  -I "$TOS_REPO/crypto/smartcont" \
+  -s "$TOS_REPO/crypto/smartcont/gen-zerostate.fif"
 ```
 
-ConfigParam 34 must show:
+The generator emits zerostates, their hashes, and bootstrap wallet/configuration
+keys. Protect those private files according to the launch ceremony. The generated
+ConfigParam 47 admits the exact controller artifact compiled from this checkout;
+it does not initialize any controller's operating authorization or deploy its
+account; both are part of each operator's validator onboarding.
 
-- `total=4` and `main=4`;
-- four `validator_addr` descriptors;
-- weight 17 for every descriptor;
-- the four published signing keys; and
-- the four independently derived ADNL identities.
-
-Also verify ConfigParams 14, 15, 16, 17, and 28 against the economic
-specification, and independently parse the zerostate to confirm its native
-balances.
+Independently decode the generated BOC and verify ConfigParams 8/19/30/34/47,
+the four published identities, algorithm 1, weight 17 each, and exact public-key
+hashes. On a running node also inspect Config34 via `tos-lite-client getconfig 34`.
+Check ConfigParams 14/15/16/17/28 and balances against the economic specification.
+Do not reuse an older zerostate hash after changing these inputs.
 
 ## Local three-process fault-tolerance rehearsal
 
-The local test infrastructure can commit four genesis identities while running
-only three validator processes:
-
-```bash
-sudo env \
-  VALIDATORS=3 \
-  GENESIS_VALIDATORS=4 \
-  VALIDATOR_ECONOMICS_PROFILE=1 \
-  ./scripts/setup-testnet.sh --clean
-
-./scripts/testnet-ctl.sh start
-```
-
+The local network installer, which is maintained outside this repository,
+prepares four PQ genesis identities and four independent services. To rehearse
+one unavailable validator, stop its own service after setup, for example
+`sudo systemctl stop tos-pq-validator@4`.
 This is deliberately a one-offline-validator test. It must prove that:
 
 - all three running nodes converge on the same masterchain and workchain
@@ -192,4 +193,23 @@ recovery. Observing only ConfigParam 34 or `funds_created` is insufficient.
 - [`Zerostate.md`](Zerostate.md)
 - [`ConfigParam.md`](ConfigParam.md)
 - [`Validator.md`](Validator.md)
-- [`Validator-Local.md`](Validator-Local.md)
+
+## Regression verification
+
+The native `create-state` tests generate real zerostate BOCs with public keys
+from `tos-pq-consensus-key`, then decode version 16, PQ identities and the exact
+controller admission hash. They also reject legacy manifests, duplicate IDs,
+wrong timestamps and pre-16 PQ test profiles:
+
+```bash
+uv run pytest -q test/tostester/tests/tostester/test_zerostate_supply.py \
+  test/tostester/tests/tostester/test_zerostate_fee_schedule.py \
+  test/pq-native/test_z01_genesis_source.py
+python3 scripts/check-config-genesis-data-layout.py
+python3 scripts/check-pq-launch-cap.py
+```
+
+Sensitivity was checked by changing the canonical version back to 14: the
+real-BOC positive test failed at `14 == 18`, and passed after restoring 18.
+This generation check does not replace an operational launch rehearsal or
+claim that an existing chain was upgraded by editing its genesis template.

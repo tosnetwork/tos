@@ -1,0 +1,119 @@
+# C07/C08 pinned AURA integration plan — approval boundary
+
+Status: implementation plan. The isolated pinned-client adapter and
+deterministic fixture control were subsequently implemented and are indexed
+in `evidence/c06-native-diagnostics/C08-PINNED-AURA-ADAPTER-CHECKPOINT.md`;
+this is **not** model judgment or production acceptance.
+Source baseline `da8f89877807c985a8ffb18b4307c91912e7d580` is clean and
+pushed. This plan precedes adapter implementation. It supersedes additional
+unrelated cursor/evidence test expansion.
+
+## Verified interfaces and exact dependencies
+
+- Pinned AURA source: `1000f119d38f4c4656ced0ae883c90f6f7610890`
+  (`$HOME/nhm-aura-source.dujJrk`). `McpServerConfig::Stdio` launches
+  a child through `TokioChildProcess`; `McpManager::initialize_from_config`
+  discovers tools and `execute_fallback_tool` calls them. Its URL-only
+  `McpClient::new` cannot address a Unix socket. AURA's lock pins
+  `rmcp 0.12.0`, checksum
+  `528d42f8176e6e5e71ea69182b17d1d0a19a6b3b894b564678b74cd7cab13cfa`.
+- NHM's optional MCP feature pins `rmcp 3.5.0`, checksum
+  `fae7019994ae0fe4ada40b732f798f3ff26f0f04facb1477f1bf37eb4f18a2d3`.
+  `tos-observability` serves Streamable HTTP/JSON over an already-private
+  Unix socket, one durable grant per connection. It requires service
+  Authorization plus run ID and 256-bit token on admission, then uses the
+  existing six HTTP query handlers and one durable ledger. No TCP listener
+  or second evidence path is proposed.
+- Adapter dependencies: existing NHM `tokio`, `hyper`/`hyper-util`,
+  `http-body-util`, `serde_json` and Unix sockets. Prefer a bounded
+  line-delimited MCP stdio ⇄ HTTP/1-over-Unix process over adding a third MCP
+  SDK/version to the NHM workspace. Protocol compatibility is an *actual
+  test gate*, not inferred from matching method names.
+
+## Minimal transport and authorization
+
+1. One feature-gated `tos-nhm-aura-stdio` process is spawned by AURA's
+   `McpServerConfig::Stdio`. It accepts only bounded UTF-8 JSON-RPC lines on
+   stdin and emits only JSON-RPC lines on stdout. It forwards them to
+   `/mcp` over **one** persistent Unix HTTP/1 connection. The actual NHM
+   server sets `legacy_session_mode=false`: its tested 2025-03-26/06-18
+   POST path is stateless and does not issue an `mcp-session-id`. The adapter
+   validates and forwards such a header if a negotiated server supplies one,
+   but does not require or fabricate it. Grant ownership is the Unix
+   connection, not an MCP session ID. No shell, arbitrary URL, filesystem tool,
+   alternate MCP server, or TCP fallback is allowed. The existing NHM
+   listener remains the only service endpoint and owns all query budgets.
+2. Broker creates a per-run private credential handoff (authorized development
+   profile: a 0600 regular file in a 0700 temporary directory). The isolated
+   adapter verifies the private directory/file identity and unlinks this
+   one-use file before reading it; the isolated harness removes its directory
+   afterward. A production broker has not yet proved cleanup for failures
+   before adapter launch. Only the pathname is present in AURA stdio config;
+   never put the raw run token or service credential in `cmd`, `args`,
+   AURA-config `env`, JSON-RPC/tool schema/result, or logs. The adapter checks
+   file ownership/type/mode and link count, consumes it once, opens the fixed Unix path and
+   presents the three authorization headers. The model is not given file,
+   shell, network, or other MCP tools. A production handoff must additionally
+   prove process-user/sandbox separation or replace this file with a one-use
+   broker channel; the dev profile does not claim that gate.
+3. `tools/list` must expose exactly the six existing NHM names/schemas.
+   Every `tools/call` uses the frozen grant and QueryService; the adapter may
+   not manufacture a response, retry a failed call, refresh source data, or
+   forward a caller-supplied token. Bound each stdio line to 16 KiB input,
+   each HTTP/MCP output to 32 KiB, whole run to the existing 16-call/
+   128-KiB/180-second/200-second grant limits and five-second tool deadline.
+   Adapter buffering and response framing are bounded. rmcp 3.5 requires
+   `Accept: application/json, text/event-stream`; actual simple replies in
+   the pinned 0.12 ⇄ 3.5 run are JSON. The adapter checks `Content-Type` and
+   refuses an SSE response rather than parsing one as a JSON body.
+4. On cancellation, timeout, malformed frame, authentication failure or
+   unexpected EOF, fail closed: stop forwarding, terminate/reap the AURA
+   child and adapter, revoke the grant, and wait for termination before a
+   replacement run. The adapter already refuses malformed/oversized input,
+   transport failure and replay without emitting a tool result. Pinned AURA
+   uses `rmcp 0.12.0`'s newline-delimited JSON-RPC stdio transport;
+   `McpManager` owns a `RunningService` holding `TokioChildProcess`, whose
+   drop schedules asynchronous kill/wait. The isolated Linux test observes
+   that adapter PID disappear after normal manager drop. Neither this source
+   behavior nor that test proves broker cancellation, grant revocation or
+   replacement-run sequencing; `confirm_stopped` is only a state primitive.
+
+## Ordered local verification
+
+1. Compile the adapter with the optional MCP feature. Wire-level tests use
+   the actual private Unix server: initialization, tool discovery, six calls,
+   typed envelope/schema checks, immutable W, grant charge, and no duplicate
+   result representation. Exercise malformed, oversize, replay, second
+   connection, denied scope and socket disconnect; verify no token appears
+   in schema, stdout or retained logs.
+2. Build pinned AURA from its exact lock in a separate target directory;
+   use **its** `McpManager::initialize_from_config` with the adapter as a
+   `Stdio` child, then call all six tools through AURA APIs. Record source,
+   binary, config and raw log hashes. AURA 0.12 ⇄ NHM 3.5 protocol mismatch,
+   if any, is a red to fix rather than an assumption. Run cancellation and
+   child-reap controls on this path.
+3. In an isolated local NHM fixture, feed a reproducible abnormal node
+   snapshot and an explicit unknown/partial control. Have the AURA-side
+   consumer read the delivered six-tool evidence and validate a structured
+   English diagnosis against delivered IDs, unknowns and no severity/
+   remediation authority. A deterministic local provider stub can verify
+   orchestration/validation only and must be labelled **not a real model
+   judgment**. A genuine local model run requires a separately selected,
+   installed local model and measured context/cost; external API remains off.
+4. Only with owner-approved C09 node access may the same path read live local
+   node evidence. No business node is started, restarted or reconfigured by
+   this work. Capture the actual source/epoch/grant provenance; do not
+   substitute synthetic rows for production observations.
+
+## Authorized scope and inputs still missing
+
+- The owner has authorized C06–C09 implementation, isolated 0600/0700
+  credential-file tests and read-only access to local-node evidence. Those
+  activities require no new approval. Supervisor owns C09 lifecycle; this
+  worker will not start, restart or reconfigure business nodes.
+- A specific local model/private provider endpoint and its measurable
+  resource profile remain unspecified; no external model API or production
+  deployment is enabled by that absence. The deterministic local fixture
+  control proceeds without claiming a model response.
+- Production credential handoff, process-user/sandbox profile, broker-owned
+  cancellation/reaping and real provider/egress evidence remain open gates.

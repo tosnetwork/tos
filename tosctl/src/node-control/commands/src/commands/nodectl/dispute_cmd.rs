@@ -65,9 +65,13 @@ impl DisputeCmd {
 pub struct DisputeDeployCmd {
     #[arg(long, help = "Local dispute record name; defaults to dispute-<address prefix>")]
     name: Option<String>,
-    #[arg(long, help = "Claimant address; must match the funding wallet")]
+    #[arg(
+        allow_hyphen_values = true, value_parser = super::utils::address_arg,
+        long,
+        help = "Claimant address; must match the funding wallet"
+    )]
     claimant: String,
-    #[arg(long, help = "Respondent address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Respondent address")]
     respondent: String,
     #[arg(long, help = "Reviewer (arbitrator) address")]
     reviewer: String,
@@ -93,7 +97,7 @@ pub struct DisputeDeployCmd {
     from: String,
     #[arg(long, default_value_t = 0.05, help = "Message value funding the deploy, in TOS")]
     amount: f64,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(long)]
     yes: bool,
@@ -111,7 +115,7 @@ pub struct DisputeLsCmd {
 #[derive(clap::Args, Clone)]
 #[command(about = "Show Dispute state by address or local record name")]
 pub struct DisputeShowCmd {
-    #[arg(long, conflicts_with = "name", help = "Dispute address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, conflicts_with = "name", help = "Dispute address")]
     address: Option<String>,
     #[arg(long, help = "Local dispute record name from `agent dispute ls`")]
     name: Option<String>,
@@ -139,7 +143,7 @@ enum DisputeRuling {
 pub struct DisputeSendCmd {
     #[arg(long, value_enum)]
     operation: DisputeOperation,
-    #[arg(long, conflicts_with = "name", help = "Dispute address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, conflicts_with = "name", help = "Dispute address")]
     address: Option<String>,
     #[arg(long, help = "Local dispute record name from `agent dispute ls`")]
     name: Option<String>,
@@ -377,6 +381,12 @@ impl DisputeShowCmd {
         let config = common::app_config::AppConfig::load(Path::new(config_path))?;
         let address = resolve_dispute_address(&config, &self.address, &self.name)?;
         let rpc_client = try_create_rpc_client(&config).await?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &address,
+            contracts::VersionedContract::Dispute,
+        )
+        .await?;
         let provider = contracts::contract_provider!(rpc_client);
         let stack = provider.get_method(address.to_string(), "get_dispute_data", vec![]).await?;
         let data = DisputeContract::decode_data(&stack)?;
@@ -455,6 +465,12 @@ impl DisputeSendCmd {
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination = resolve_dispute_address(&config, &self.address, &self.name)?;
+        super::utils::require_supported_contract(
+            &rpc_client,
+            &destination,
+            contracts::VersionedContract::Dispute,
+        )
+        .await?;
         let wallet_config =
             get_wallet_config(&self.from, &config.wallets, config.master_wallet.as_ref())?;
         let (owner_address, owner_info, owner_secret) =
@@ -494,8 +510,13 @@ impl DisputeSendCmd {
                     Some(signature) => Some(signature),
                     None => match &self.signer_vault_key {
                         Some(name) => {
-                            let domain_hash =
-                                contracts::domain_bound_hash(&destination, &ruling_hash)?;
+                            let domain_hash = contracts::ruling_domain_hash(
+                                super::utils::network_global_id(&rpc_client).await?,
+                                &destination,
+                                ruling,
+                                self.split_bps,
+                                &ruling_hash,
+                            )?;
                             Some(sign_hash_with_vault_key(name, &domain_hash, vault.clone()).await?)
                         }
                         None => None,

@@ -1,0 +1,21 @@
+=== published register digest ===
+976a11c9e2e9b234c3e71f98e17620443010917467c335e938abd8daf4bd40d8  /root/verify/roster-published.json
+recorded in attestation: 976a11c9e2e9b234c3e71f98e17620443010917467c335e938abd8daf4bd40d8
+
+=== in-progress check (what a contributor runs) ===
+  1  signed by tosman -- NOT independent of the operator
+  2  signed by tosdev2 -- NOT independent of the operator
+
+2 contribution(s), 2 verified against the roster
+
+NOT YET SATISFIED: no verified contribution comes from a participant declared independent of the operator. The security argument is that one participant destroyed a scalar without the others being able to compel or observe them; with every contribution inside one party's control that reduces to 'trust us', which is what the ceremony existed to avoid.
+Reported rather than refused because --in-progress was passed. This is expected while the ceremony is still open, and it must be satisfied before the ceremony closes -- the final check is run without that flag.
+
+=== final gate (no --in-progress): expected to refuse ===
+
+REFUSED: no verified contribution comes from a participant declared independent of the operator. The security argument is that one participant destroyed a scalar without the others being able to compel or observe them; with every contribution inside one party's control that reduces to 'trust us', which is what the ceremony existed to avoid
+  1  signed by tosman -- NOT independent of the operator
+  2  signed by tosdev2 -- NOT independent of the operator
+
+2 contribution(s), 2 verified against the roster
+exit status: 1

@@ -1,0 +1,26 @@
+[
+  {
+    "kind": 1,
+    "value": "5000000000",
+    "intent_hash": "e1d2c40975d7b824f33062d1a166e453de7a84f541a97c228e000ec18cc9c075",
+    "external_hash": "05a8cd77f02a4b55ab53882b162eab8270d4a98005be40a18405bce8bcf71d27"
+  },
+  {
+    "kind": 2,
+    "value": "5000000000",
+    "intent_hash": "8f0e0a5b54bf5f997a3a24cfbfeb390c0589fce720a16710530cbcbdf8b4ec22",
+    "external_hash": "1726c16e2c56e2f2c8ba20d82396cff26bca6a4c8d2707a8de6602a106ee81b0"
+  },
+  {
+    "kind": 3,
+    "value": "50000000000",
+    "intent_hash": "251b8014846d093933d0ae64aee6ee21b372980eb5244602a99f45fde98e103b",
+    "external_hash": "7df780a59d41753d319f2169991cfe07ac54423ae9cfd01e2dcd9ecbf7e637a2"
+  },
+  {
+    "kind": 1,
+    "value": "1329227995784915872903807060280344575",
+    "intent_hash": "f6b8569c230c5cee555017eb6cfa4e43b172610f47922e961678f5736f4e9548",
+    "external_hash": "97d97ab60ff1249bea87570bf6bf524a53649c772aa9f5e9e7f40aafc4c8aa20"
+  }
+]

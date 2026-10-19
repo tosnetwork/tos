@@ -7,7 +7,22 @@ This repository has two build surfaces:
 
 The current build focuses on the native TVM execution surface for actor-based applications.
 
+## Supported Platforms
+
+The node and its tools are built, tested in CI and released for Linux only, on
+x86-64 and arm64. There are no macOS, Windows, Android or WebAssembly builds,
+build scripts or release artifacts.
+
+One exception is not a node platform: `.github/workflows/quantum-mobile-native.yml`
+also runs on macOS. It compiles and runs the post-quantum native C API in
+`sdk/native/quantum` and the fee-state library behind its C state API, which
+the iOS wallet vendors, with Apple's toolchain.
+
 ## Linux Prerequisites
+
+Ubuntu 24.04 is the build and release baseline. CI, the builder image, the
+node container image and the release binaries are all built on 24.04, so the
+released binaries need glibc 2.39 or newer and do not run on Ubuntu 22.04.
 
 ```bash
 sudo apt update
@@ -38,14 +53,12 @@ sudo apt install -y \
   gnupg
 ```
 
-Install `clang-21` if it is not already available:
+Install `clang-21` if it is not already available. The installer checks the
+apt.llvm.org signing key committed in this repository instead of running a
+downloaded script:
 
 ```bash
-cd /tmp
-rm -f llvm.sh
-wget -q https://apt.llvm.org/llvm.sh
-chmod +x llvm.sh
-sudo ./llvm.sh 21
+sudo scripts/install-llvm-toolchain.sh 21
 ```
 
 ## C++ Configure

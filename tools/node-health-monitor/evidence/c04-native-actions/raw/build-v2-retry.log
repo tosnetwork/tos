@@ -1,0 +1,76 @@
+[1/128] Linking CXX static library lite-client/liblite-client-common.a
+[2/128] Checking the git repository for changes...
+[3/76] Building CXX object CMakeFiles/test-health-native-snapshot.dir/test/test-health-native-snapshot.cpp.o
+[4/76] Building CXX object CMakeFiles/test-health-core-registry.dir/test/test-health-core-registry.cpp.o
+[5/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[6/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[7/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[8/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[9/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[10/76] Building CXX object metrics/CMakeFiles/metrics.dir/prometheus-exporter.cpp.o
+[11/76] Building CXX object metrics/CMakeFiles/metrics.dir/metrics-collectors.cpp.o
+[12/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[13/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[14/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/GenericAccount.cpp.o
+[15/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/HighloadWalletV2.cpp.o
+[16/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/HighloadWallet.cpp.o
+[17/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/MultisigWallet.cpp.o
+[18/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContractCode.cpp.o
+[19/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/PaymentChannel.cpp.o
+[20/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/ManualDns.cpp.o
+[21/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/KeyStorage.cpp.o
+[22/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/KeyValue.cpp.o
+[23/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/SmartContract.cpp.o
+[24/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletInterface.cpp.o
+[25/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletV3.cpp.o
+[26/76] Building CXX object crypto/CMakeFiles/smc-envelope.dir/smc-envelope/WalletV4.cpp.o
+[27/76] Linking CXX static library crypto/libsmc-envelope.a
+[28/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ExtClientOutbound.cpp.o
+[29/76] Building CXX object emulator/CMakeFiles/emulator_static.dir/transaction-emulator.cpp.o
+[30/76] Linking CXX static library emulator/libemulator_static.a
+[31/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/EngineConsoleClient.cpp.o
+[32/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Client.cpp.o
+[33/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastBlockStorage.cpp.o
+[34/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/bip39.cpp.o
+[35/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastBlock.cpp.o
+[36/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/LastConfig.cpp.o
+[37/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/DecryptedKey.cpp.o
+[38/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Logging.cpp.o
+[39/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/SimpleEncryption.cpp.o
+[40/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/EncryptedKey.cpp.o
+[41/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/keys/Mnemonic.cpp.o
+[42/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/Config.cpp.o
+[43/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/utils.cpp.o
+[44/76] Building CXX object http/CMakeFiles/toshttp.dir/http.cpp.o
+[45/76] Building CXX object http/CMakeFiles/toshttp.dir/http-connection.cpp.o
+[46/76] Building CXX object http/CMakeFiles/toshttp.dir/http-outbound-connection.cpp.o
+[47/76] Building CXX object http/CMakeFiles/toshttp.dir/http-inbound-connection.cpp.o
+[48/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ToslibClientWrapper.cpp.o
+[49/76] Building CXX object http/CMakeFiles/toshttp.dir/http-server.cpp.o
+[50/76] Building CXX object http/CMakeFiles/toshttp.dir/http-client.cpp.o
+[51/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[52/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[53/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[54/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+[55/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[56/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-validator.cpp.o
+[57/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+[58/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/bus.cpp.o
+[59/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/misbehavior-reporter.cpp.o
+[60/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/trace-collector.cpp.o
+[61/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/types.cpp.o
+[62/76] Building CXX object test/validator/consensus/CMakeFiles/test-health-ledger.dir/test-health-ledger.cpp.o
+[63/76] Linking CXX executable test/validator/consensus/test-health-ledger
+[64/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/bridge.cpp.o
+[65/76] Building CXX object validator/CMakeFiles/validator.dir/consensus/private-overlay.cpp.o
+[66/76] Linking CXX static library validator/libvalidator.a
+[67/76] Building CXX object test/validator/consensus/CMakeFiles/test-health-actions.dir/test-health-actions.cpp.o
+[68/76] Building CXX object toslib/CMakeFiles/toslib.dir/toslib/ToslibClient.cpp.o
+[69/76] Linking CXX static library toslib/libtoslib.a
+[70/76] Linking CXX executable test/validator/consensus/test-health-actions
+[71/76] Linking CXX static library http/libtoshttp.a
+[72/76] Linking CXX static library metrics/libmetrics.a
+[73/76] Linking CXX executable test-health-core-registry
+[74/76] Linking CXX executable test-health-native-snapshot
+[75/76] Building CXX object test/validator/consensus/CMakeFiles/test-consensus.dir/test-consensus.cpp.o
+[76/76] Linking CXX executable test/validator/consensus/test-consensus

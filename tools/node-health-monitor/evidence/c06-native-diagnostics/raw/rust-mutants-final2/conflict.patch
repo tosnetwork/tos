@@ -1,0 +1,11 @@
+--- crates/health-services/src/diagnostic_ingest.rs
++++ crates/health-services/src/diagnostic_ingest.rs
+@@ -151,7 +151,7 @@
+         let prior:Option<String>=tx.query_row("SELECT content_hash FROM observations WHERE node=?1 AND scope='node' AND process_epoch=?2 AND source_epoch=?2 AND source=?3 AND source_record=?4",
+             params![batch.node_id,batch.process_epoch,batch.source_id,value.record.source_record_id],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+         if let Some(hash) = prior {
+-            if hash != *digest {
++            if false && hash!=*digest {
+                 tx.execute(
+                     "INSERT OR IGNORE INTO quarantined VALUES(?1,'node',?2,?2,?3)",
+                     params![batch.node_id, batch.process_epoch, batch.source_id],

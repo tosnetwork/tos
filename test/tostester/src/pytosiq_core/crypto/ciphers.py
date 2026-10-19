@@ -1,32 +1,32 @@
-import typing
-
 import hashlib
-import x25519
 
-from nacl.signing import SigningKey as ed25519Private, VerifyKey as ed25519Public
-from nacl.public import PublicKey as x25519Public, PrivateKey as x25519Private
-
-from Cryptodome.Random import get_random_bytes
-from Cryptodome.Cipher import AES
+from Crypto.Cipher import AES
+from Crypto.Random import get_random_bytes
+from nacl.bindings import crypto_scalarmult
+from nacl.signing import SigningKey as ed25519Private
+from nacl.signing import VerifyKey as ed25519Public
 
 
 class Crypto:
-    magic = b'\xc6\xb4\x13\x48'
-    magic_aes = b'\xd4\xad\xbc-'
+    magic = b"\xc6\xb4\x13\x48"
+    magic_aes = b"\xd4\xad\xbc-"
 
-    def __init__(self):
-        raise NotImplementedError
+    def __init__(self, public: ed25519Public, private: ed25519Private | None = None):
+        self.ed25519_public = public
+        self.ed25519_private = private
 
     def get_key_id(self):
         return hashlib.sha256(self.magic + self.ed25519_public.encode()).digest()
 
     def get_aes_key_id(self):
+        if self.ed25519_private is None:
+            raise ValueError("AES key identity requires a private key")
         return hashlib.sha256(self.magic_aes + self.ed25519_private.encode()).digest()
 
 
 class Server(Crypto):
-
     def __init__(self, host: str, port: int, pub_key: bytes):
+        super().__init__(ed25519Public(pub_key))
         self.host = host
         self.port = port
         self.ed25519_public = ed25519Public(pub_key)
@@ -35,9 +35,9 @@ class Server(Crypto):
 
 class Client(Crypto):
     def __init__(self, ed25519_private_key: bytes) -> None:
-        self.ed25519_private = ed25519Private(ed25519_private_key)
-        self.ed25519_public = self.ed25519_private.verify_key
-        self.x25519_private = self.ed25519_private.to_curve25519_private_key()
+        private = ed25519Private(ed25519_private_key)
+        super().__init__(private.verify_key, private)
+        self.x25519_private = private.to_curve25519_private_key()
         self.x25519_public = self.x25519_private.public_key
 
     @staticmethod
@@ -45,6 +45,8 @@ class Client(Crypto):
         return bytes(ed25519Private.generate())
 
     def sign(self, message: bytes) -> bytes:
+        if self.ed25519_private is None:
+            raise ValueError("signing requires a private key")
         return get_signature(self.ed25519_private, message)
 
 
@@ -56,7 +58,9 @@ class AdnlChannel:
     def __init__(self, client: Client, server: Server, local_id: bytes, peer_id: bytes):
         self.client_channel = client
         self.server_channel = server
-        self.channel_shared = get_shared_key(self.client_channel.x25519_private.encode(), self.server_channel.x25519_public.encode())
+        self.channel_shared = get_shared_key(
+            self.client_channel.x25519_private.encode(), self.server_channel.x25519_public.encode()
+        )
         if local_id > peer_id:
             self.enc_key = self.channel_shared
             self.dec_key = self.channel_shared[::-1]
@@ -90,16 +94,16 @@ def create_aes_ctr_sipher_from_key_n_data(key: bytes, data: bytes):
 
 def create_aes_ctr_cipher(key: bytes, iv: bytes):
     if len(key) != 32:
-        raise Exception('key should be 32 bytes exactly!')
+        raise Exception("key should be 32 bytes exactly!")
 
-    cipher = AES.new(key, AES.MODE_CTR, initial_value=iv, nonce=b'')
+    cipher = AES.new(key, AES.MODE_CTR, initial_value=iv, nonce=b"")
     # cipher = Cipher(algorithms.AES(key), modes.CTR(iv)).encryptor()
 
     return cipher
 
 
 def get_key_aes_id(key: bytes):
-    return hashlib.sha256(b'\xd4\xad\xbc-' + key).digest()
+    return hashlib.sha256(b"\xd4\xad\xbc-" + key).digest()
 
 
 def aes_ctr_encrypt(cipher, data: bytes) -> bytes:
@@ -118,7 +122,7 @@ def get_shared_key(private_key: bytes, public_key: bytes) -> bytes:
     :param private_key: client private x25519 key
     :return: ECDH x25519 shared key
     """
-    return x25519.scalar_mult(private_key, public_key)
+    return crypto_scalarmult(private_key, public_key)
 
 
 def get_signature(private_key: ed25519Private, message: bytes) -> bytes:

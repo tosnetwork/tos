@@ -7,14 +7,23 @@
 #include "consensus/simplex/state.h"
 #include "consensus/stats.h"
 #include "consensus/utils.h"
+#include "metrics/node-state-snapshot.h"
 #include "td/actor/coro_utils.h"
 
 #include "bus.h"
+#include "candidate-retention.h"
 #include "misbehavior.h"
 
 namespace tos::validator::consensus::simplex {
 
 namespace {
+
+// A candidate remains the slot's pending block while its exact parent state is
+// temporarily unavailable. Re-delivery is not guaranteed, so retry here rather
+// than clearing pending_block (which is also V-019's double-proposal evidence).
+constexpr unsigned MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS = 16;
+constexpr double NOTARIZE_STATE_RESOLVE_RETRY_DELAY = 0.1;
+constexpr double MAX_NOTARIZE_STATE_RESOLVE_RETRY_DELAY = 1.0;
 
 struct SlotState {
   SlotState(td::Unit) {
@@ -47,7 +56,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     first_block_timeout_ = params_.first_block_timeout;
     state_.emplace(State({}));
 
-    for (const auto& vote : bus.bootstrap_votes) {
+    for (const auto& stored : bus.bootstrap_votes) {
+      const auto& vote = stored.vote;
       auto slot = state_->slot_at(vote.referenced_slot());
       if (!slot.has_value()) {
         continue;
@@ -87,12 +97,18 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
       auto end_slot = window * slots_per_leader_window_;
       for (td::uint32 i = start_slot; i < end_slot; ++i) {
         auto slot = state_->slot_at(i);
-        if (slot.has_value() && !slot->state->voted_final) {
+        if (slot.has_value() && !slot->state->voted_final && !finality_behind_) {
           slot->state->voted_skip = true;
           owning_bus().publish<BroadcastVote>(SkipVote{i}).start().detach();
         }
       }
     }
+  }
+
+  template <>
+  void handle(BusHandle, std::shared_ptr<const FinalizationBacklog> event) {
+    // Finality can catch up, and when it does this group produces again.
+    finality_behind_ = event->over_limit;
   }
 
   template <>
@@ -118,6 +134,9 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   template <>
   void handle(BusHandle, std::shared_ptr<const LeaderWindowObserved> event) {
     auto& bus = *owning_bus();
+    if (tos::health::enabled.load(std::memory_order_relaxed) &&
+        tos::health::consensus_enabled.load(std::memory_order_relaxed))
+      tos::health::consensus_stats.add(tos::health::consensus_stats.leader_windows_observed);
     td::uint32 new_window = event->start_slot / slots_per_leader_window_;
     current_window_ = new_window;
 
@@ -133,6 +152,10 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
       previous_window_had_skip_ = false;
 
       if (bus.collator_schedule->is_expected_collator(bus.local_id->idx, event->start_slot)) {
+        // The protocol assigned this window to us: the only honest duty denominator.
+        if (tos::health::enabled.load(std::memory_order_relaxed) &&
+            tos::health::consensus_enabled.load(std::memory_order_relaxed))
+          tos::health::node_state.leader_windows_assigned.fetch_add(1, std::memory_order_relaxed);
         start_generation(event->base, event->start_slot).start().detach();
       }
     }
@@ -150,7 +173,7 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     td::uint32 window_end = window_start + slots_per_leader_window_;
     for (td::uint32 i = range_start; i < window_end; ++i) {
       auto slot = state_->slot_at(i);
-      if (slot && !slot->state->voted_final) {
+      if (slot && !slot->state->voted_final && !finality_behind_) {
         owning_bus().publish<BroadcastVote>(SkipVote{i}).start().detach();
         slot->state->voted_skip = true;
         previous_window_had_skip_ = true;
@@ -170,6 +193,15 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     }
     auto slot = state_->slot_at(slot_idx);
     if (!slot.has_value()) {
+      // The slot is already finalized, so there is nothing to vote on. The candidate may
+      // still be the one the finalized chain needs and that the state resolver is trying
+      // to fetch, so while the candidate resolver retains the slot it is stored there and
+      // nothing else is done with it.
+      if (slot_idx >= late_window_begin(state_->tracked_slots_interval().begin, retained_slots_)) {
+        store_late_candidate(event->candidate).start().detach();
+      } else {
+        LOG(DEBUG) << "Dropping a candidate for slot " << slot_idx << ", finalized and outside the retained window";
+      }
       return;
     }
     if (slot->state->voted_notar) {
@@ -208,6 +240,15 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   }
 
  private:
+  td::actor::Task<> store_late_candidate(CandidateRef candidate) {
+    auto id = candidate->id;
+    auto stored = co_await owning_bus().publish<StoreCandidate>(std::move(candidate)).wrap();
+    if (stored.is_error()) {
+      LOG(WARNING) << "Failed to store the late candidate " << id << " for a finalized slot: " << stored.error();
+    }
+    co_return td::Unit{};
+  }
+
   td::actor::Task<> start_generation(ParentId base, td::uint32 start_slot) {
     auto parent = co_await owning_bus().publish<ResolveState>(base);
     td::Timestamp start_time = td::Timestamp::now();
@@ -216,12 +257,24 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
       start_time = std::min(start_time, td::Timestamp::in(params_.target_rate));
     }
 
-    if (current_window_ != start_slot / slots_per_leader_window_) {
+    if (current_window_ != start_slot / slots_per_leader_window_ || finality_behind_) {
+      // An assigned window that never started: superseded by a newer window
+      // while the parent resolved, or suppressed because finality is behind.
+      if (tos::health::enabled.load(std::memory_order_relaxed) &&
+          tos::health::consensus_enabled.load(std::memory_order_relaxed)) {
+        if (finality_behind_)
+          tos::health::node_state.leader_windows_suppressed_behind.fetch_add(1, std::memory_order_relaxed);
+        else
+          tos::health::node_state.leader_windows_superseded.fetch_add(1, std::memory_order_relaxed);
+      }
       co_return td::Unit{};
     }
 
     owning_bus().publish<OurLeaderWindowStarted>(base, parent.state, start_slot, start_slot + slots_per_leader_window_,
                                                  start_time);
+    if (tos::health::enabled.load(std::memory_order_relaxed) &&
+        tos::health::consensus_enabled.load(std::memory_order_relaxed))
+      tos::health::consensus_stats.add(tos::health::consensus_stats.leader_windows_started);
     co_return td::Unit{};
   }
 
@@ -235,16 +288,49 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
       co_return td::Unit{};
     }
 
-    auto parent = co_await owning_bus().publish<ResolveState>(candidate->parent_id);
+    auto may_vote = [&] {
+      auto current = state_->slot_at(slot.i);
+      return current && current->state == slot.state && slot.state->pending_block.has_value() &&
+             slot.state->pending_block.value()->id == candidate->id && !slot.state->voted_notar &&
+             !slot.state->voted_skip && !slot.state->voted_final && !finality_behind_ &&
+             (!slot.state->notar_cert || slot.state->notar_cert == candidate->id);
+    };
 
-    if (!candidate->is_empty() && parent.gen_utime_exact.has_value()) {
-      auto earliest = td::Timestamp::at_unix(*parent.gen_utime_exact) + params_.min_block_interval;
+    std::optional<ResolveState::Result> parent;
+    for (unsigned attempt = 0; attempt < MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS; ++attempt) {
+      if (!may_vote()) {
+        co_return td::Unit{};
+      }
+      auto resolved = co_await owning_bus().publish<ResolveState>(candidate->parent_id, candidate->id).wrap();
+      if (resolved.is_ok()) {
+        parent = resolved.move_as_ok();
+        break;
+      }
+      auto error = resolved.move_as_error();
+      if (error.code() != ErrorCode::notready && error.code() != ErrorCode::timeout &&
+          error.code() != ErrorCode::failure) {
+        co_return error;
+      }
+      if (attempt + 1 == MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS) {
+        co_return td::Status::Error(ErrorCode::notready, PSTRING() << "Simplex consensus: parent state of "
+                                                                   << candidate->id << " unavailable after "
+                                                                   << MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS
+                                                                   << " attempts: " << error);
+      }
+      auto delay = std::min(NOTARIZE_STATE_RESOLVE_RETRY_DELAY * static_cast<double>(attempt + 1),
+                            MAX_NOTARIZE_STATE_RESOLVE_RETRY_DELAY);
+      co_await td::actor::coro_sleep(td::Timestamp::in(delay));
+    }
+    CHECK(parent.has_value());
+
+    if (!candidate->is_empty() && parent->gen_utime_exact.has_value()) {
+      auto earliest = td::Timestamp::at_unix(*parent->gen_utime_exact) + params_.min_block_interval;
       if (!earliest.is_in_past()) {
         co_await td::actor::coro_sleep(earliest);
       }
     }
 
-    auto validation_result = co_await owning_bus().publish<ValidationRequest>(parent.state, candidate);
+    auto validation_result = co_await owning_bus().publish<ValidationRequest>(parent->state, candidate);
 
     if (validation_result.has<CandidateReject>()) {
       const auto& reject = validation_result.get<CandidateReject>();
@@ -258,6 +344,9 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     }
     co_await std::move(store_candidate);
 
+    if (!may_vote()) {
+      co_return td::Unit{};
+    }
     slot.state->voted_notar = candidate->id;
 
     owning_bus().publish<BroadcastVote>(NotarizeVote{candidate->id}).start().detach();
@@ -297,7 +386,8 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   void try_vote_final(State::SlotRef slot) {
     CHECK(slot.state->voted_notar || slot.state->notar_cert);
 
-    if (!slot.state->voted_skip && !slot.state->voted_final && slot.state->voted_notar == slot.state->notar_cert) {
+    if (!slot.state->voted_skip && !slot.state->voted_final && slot.state->voted_notar == slot.state->notar_cert &&
+        !finality_behind_) {
       owning_bus().publish<BroadcastVote>(FinalizeVote{*slot.state->voted_notar}).start().detach();
       slot.state->voted_final = true;
     }
@@ -310,8 +400,13 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   td::uint32 timeout_slot_ = 0;  // By alarm_timestamp(), slots < timeout_slot_ should be notarized.
   std::chrono::duration<double> first_block_timeout_;
   bool previous_window_had_skip_ = false;
+  // Set while more agreed certificates are waiting to be finalized than the resolver will
+  // hold. Producing more would add to a pile nothing is draining.
+  bool finality_behind_ = false;
   std::optional<State> state_;
   td::uint32 current_window_ = 0;
+  // Finalized slots for which a late candidate is still handed to the candidate resolver.
+  td::uint32 retained_slots_ = candidate_retention_slots_from_env();
 };
 
 }  // namespace

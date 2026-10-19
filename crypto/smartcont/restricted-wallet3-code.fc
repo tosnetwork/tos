@@ -1,3 +1,4 @@
+#include "strong-ed25519-key.fc";
 ;; Restricted wallet initialized by a third party (a variant of restricted-wallet2-code.fc)
 ;; restricts access to parts of balance until certain dates
 
@@ -26,9 +27,11 @@ int get_global_id() asm "GLOBALID";
   var (stored_seqno, stored_subwallet, public_key) = (ds~load_uint(32), ds~load_uint(32), ds~load_uint(256));
   throw_unless(33, msg_seqno == stored_seqno);
   throw_unless(34, subwallet_id == stored_subwallet);
+  throw_if(36, weak_ed25519_key?(public_key));
   throw_unless(36, check_signature(slice_hash(in_msg), signature, public_key));
   ifnot (msg_seqno) {
-    public_key = ds~load_uint(256);  ;; load "final" public key
+    public_key = ds~load_uint(256);
+    throw_if(36, weak_ed25519_key?(public_key));  ;; load "final" public key
     ds.end_parse();
     cs~touch();
     var (start_at, rdict) = (cs~load_uint(32), cs~load_dict());

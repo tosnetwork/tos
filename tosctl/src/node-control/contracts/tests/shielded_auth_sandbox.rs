@@ -33,7 +33,7 @@ use tos_vm::stack::StackItem;
 use tos_vm::stack::integer::IntegerData;
 
 const TOS: u64 = 1_000_000_000;
-const ACTIVE_VERSION: u32 = 18;
+const ACTIVE_VERSION: u32 = 16;
 
 /// 9.4: the context is exactly these 28 ASCII bytes.
 const CONTEXT: &[u8] = b"TOS-SHIELDED-POOL-MLDSA44-v1";
@@ -378,14 +378,17 @@ struct Probe {
 impl Probe {
     fn deploy() -> Self {
         let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)
-            .expect("blockchain at version 17");
+            .expect("blockchain at version 16");
         let payer = bc.treasury("deployer", 1_000 * TOS).expect("treasury");
         // The library under test is this worktree's, found from the manifest
         // rather than from TOS_ROOT: TOS_ROOT points at the built toolchain,
         // which may be another checkout, and compiling that checkout's FunC
         // here would make every mutation appear to survive.
         let library = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../../crypto/smartcont/shielded");
-        let probe_path = std::env::temp_dir().join("tos_shielded_auth_probe.fc");
+        // A directory of this call's own. These probes are written from several tests at
+        // once, and a shared path is truncated under a concurrent `func` reading it.
+        let probe_dir = tempfile::tempdir().expect("a directory for the probe");
+        let probe_path = probe_dir.path().join("tos_shielded_auth_probe.fc");
         std::fs::write(&probe_path, PROBE).expect("write probe");
         let code = compile_func_with_stdlib(&[
             format!("{library}/domains.fc").into(),

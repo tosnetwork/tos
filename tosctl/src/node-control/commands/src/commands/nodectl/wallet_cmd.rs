@@ -64,6 +64,28 @@ pub struct WalletCmd {
 
 #[derive(clap::Subcommand, Clone)]
 pub enum WalletAction {
+    /// Restore one enrolled PQ key into an encrypted local Vault
+    #[cfg(feature = "pq-wallet")]
+    PqRestoreKey(super::wallet_pq_cmd::PqRestoreKeyCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqRestoreInitial(super::wallet_pq_cmd::PqRestoreInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqRestoreFeeInitial(super::wallet_pq_cmd::PqRestoreFeeInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqPrepareInitial(super::wallet_pq_cmd::PqPrepareInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqInspectInitial(super::wallet_pq_cmd::PqInspectInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqSignPrimaryInitial(super::wallet_pq_cmd::PqSignPrimaryInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqLockPrimaryInitial(super::wallet_pq_cmd::PqLockPrimaryInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqFeeSessionInitial(super::wallet_pq_cmd::PqFeeSessionInitialCmd),
+    #[cfg(feature = "pq-wallet")]
+    PqVerifyPopInitial(super::wallet_pq_cmd::PqVerifyPopInitialCmd),
+    /// Create one PQ key with a new recoverable 24-word backup
+    #[cfg(feature = "pq-wallet")]
+    PqCreateKey(super::wallet_pq_cmd::PqCreateKeyCmd),
     /// Create a new wallet
     Create(WalletCreateCmd),
     /// Activate wallet
@@ -103,7 +125,13 @@ pub struct WalletCreateCmd {
     name: String,
     #[arg(short = 'v', long = "version", default_value = "V3R2", help = "Wallet version")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "-1", help = "Workchain ID")]
+    #[arg(
+        short = 'w',
+        long = "workchain",
+        allow_negative_numbers = true,
+        default_value = "-1",
+        help = "Workchain ID"
+    )]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42", help = "Subwallet ID")]
     subwallet_id: u32,
@@ -140,11 +168,11 @@ pub struct WalletLsCmd {
 pub struct WalletImportCmd {
     #[arg(short = 'n', long = "name", help = "Wallet name")]
     name: String,
-    #[arg(short = 'k', long = "private-key", help = "Base64-encoded private key")]
-    private_key: String,
+    #[command(flatten)]
+    private_key: super::key_cmd::PrivateKeyInput,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -157,7 +185,7 @@ pub struct WalletMnemonicGenerateCmd {
     words: usize,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -168,23 +196,25 @@ pub struct WalletMnemonicGenerateCmd {
 pub struct WalletMnemonicImportCmd {
     #[arg(short = 'n', long = "name")]
     name: String,
-    #[arg(
-        long,
-        conflicts_with = "mnemonic_file",
-        required_unless_present = "mnemonic_file",
-        help = "12- or 24-word TOS mnemonic phrase (prefer --mnemonic-file to avoid shell history)"
-    )]
+    /// No longer accepted; kept only to explain the replacement.
+    #[arg(long, hide = true, allow_hyphen_values = true)]
     mnemonic: Option<String>,
     #[arg(
         long,
-        conflicts_with = "mnemonic",
-        required_unless_present = "mnemonic",
-        help = "Read the mnemonic from a mode-0600 file"
+        conflicts_with = "mnemonic_fd",
+        help = "Read the mnemonic from a file you own with mode 0600"
     )]
     mnemonic_file: Option<PathBuf>,
+    #[arg(
+        long,
+        conflicts_with = "mnemonic_file",
+        help = "Read the mnemonic from an inherited file descriptor (0 for standard input, or 3 \
+                and above). Neither option: prompt without echo"
+    )]
+    mnemonic_fd: Option<i32>,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -235,7 +265,7 @@ pub struct WalletTestFixtureCmd {
     words: usize,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", default_value = "0")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "0")]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "0")]
     subwallet_id: u32,
@@ -296,7 +326,7 @@ pub struct WalletSendCmd {
     #[arg(long, help = "Source wallet name from config")]
     from: String,
 
-    #[arg(long, help = "Destination address")]
+    #[arg(allow_hyphen_values = true, value_parser = super::utils::address_arg, long, help = "Destination address")]
     to: String,
 
     #[arg(
@@ -323,6 +353,12 @@ pub struct WalletSendCmd {
 
     #[arg(long, help = "Optional StateInit cell BOC as standard base64")]
     state_init_boc: Option<String>,
+
+    #[arg(
+        long,
+        help = "Send a bounceable message, so a refused request returns its value to this wallet"
+    )]
+    bounce: bool,
 
     #[arg(long, help = "Confirm the transfer non-interactively")]
     yes: bool,
@@ -368,8 +404,28 @@ pub struct WalletBroadcastPreparedCmd {
 }
 
 impl WalletCmd {
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub async fn run(&self, _cancellation_ctx: CancellationCtx) -> anyhow::Result<()> {
         match &self.action {
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqRestoreKey(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqRestoreInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqRestoreFeeInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqPrepareInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqInspectInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqSignPrimaryInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqLockPrimaryInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqFeeSessionInitial(cmd) => cmd.run(_cancellation_ctx).await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqVerifyPopInitial(cmd) => cmd.run().await,
+            #[cfg(feature = "pq-wallet")]
+            WalletAction::PqCreateKey(cmd) => cmd.run().await,
             WalletAction::Create(cmd) => cmd.run(&self.config).await,
             WalletAction::Activate(cmd) => cmd.run(&self.config).await,
             WalletAction::Ls(cmd) => cmd.run(&self.config).await,
@@ -816,17 +872,15 @@ async fn print_wallets_table(
 
 impl WalletImportCmd {
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
+        // Read the key before opening the configuration or vault, so a
+        // refused or unreadable input changes nothing.
+        let private_key_bytes = self.private_key.read()?;
         let path = Path::new(config_path);
         let (mut config, vault) = super::utils::load_config_vault(path).await?;
 
         if config.wallets.contains_key(&self.name) {
             anyhow::bail!("Wallet '{}' already exists in config", self.name);
         }
-
-        // Decode and import private key into vault
-        let private_key_bytes =
-            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &self.private_key)
-                .context("Invalid base64 private key")?;
 
         let secret_name = format!("wallet-{}", self.name);
         let secret_id = secret_name.as_str().into();
@@ -926,16 +980,38 @@ impl WalletMnemonicGenerateCmd {
     }
 }
 
+/// Message for the retired `--mnemonic` option. It never repeats the value.
+pub const LEGACY_MNEMONIC_MESSAGE: &str = "--mnemonic is no longer accepted: a phrase in process \
+arguments is visible to other local processes and is kept by shell history. Pass \
+--mnemonic-file <PATH> (a file you own with mode 0600), --mnemonic-fd <N> (an inherited \
+descriptor, 0 for standard input), or neither to be prompted without echo. Treat the phrase \
+you passed as exposed.";
+
 impl WalletMnemonicImportCmd {
+    /// Reads the mnemonic from the selected protected channel. Errors never
+    /// contain any word of it.
+    fn read_mnemonic(&self) -> anyhow::Result<zeroize::Zeroizing<String>> {
+        if self.mnemonic.is_some() {
+            anyhow::bail!(LEGACY_MNEMONIC_MESSAGE);
+        }
+        let source = secrets_vault::secret_input::select_source(
+            self.mnemonic_file.as_deref(),
+            self.mnemonic_fd,
+            "--mnemonic-file",
+            "--mnemonic-fd",
+            "Mnemonic (hidden): ",
+        )?;
+        let text = secrets_vault::secret_input::read_secret(&source)?;
+        let trimmed = secrets_vault::secret_input::trim_ascii(&text);
+        let phrase = std::str::from_utf8(trimmed)
+            .map_err(|_| anyhow::anyhow!("mnemonic is not valid UTF-8"))?;
+        Ok(zeroize::Zeroizing::new(phrase.to_owned()))
+    }
+
     pub async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        let mut phrase = match (&self.mnemonic, &self.mnemonic_file) {
-            (Some(phrase), None) => phrase.clone(),
-            (None, Some(path)) => std::fs::read_to_string(path)
-                .with_context(|| format!("read mnemonic file {}", path.display()))?,
-            _ => anyhow::bail!("Provide exactly one of --mnemonic or --mnemonic-file"),
-        };
-        let mut seed = super::tos_mnemonic::private_seed(phrase.trim(), "")?;
-        phrase.zeroize();
+        let phrase = self.read_mnemonic()?;
+        let mut seed = super::tos_mnemonic::private_seed(&phrase, "")?;
+        drop(phrase);
         let mut wallet = parse_wallet_identity(&self.version, self.workchain, self.subwallet_id)?;
         let address = store_wallet_seed(config_path, &self.name, &mut wallet, &mut seed).await?;
         println!("{} Wallet '{}' recovered at {}", "OK".green().bold(), self.name, address);
@@ -1524,7 +1600,7 @@ impl WalletSendCmd {
         }
 
         let msg = wallet
-            .build_message(dest_addr, amount_nanotos, body, false, None, None, state_init)
+            .build_message(dest_addr, amount_nanotos, body, self.bounce, None, None, state_init)
             .await?;
 
         let msg_boc = write_boc(&msg)?;
@@ -1576,7 +1652,7 @@ mod wallet_send_cli_tests {
                 "--from",
                 "anchor",
                 "--to",
-                "0:abc",
+                "0:abababababababababababababababababababababababababababababababab",
                 "--amount-nanotos",
                 "7",
                 "--yes",
@@ -1598,7 +1674,7 @@ mod wallet_send_cli_tests {
                 "--from",
                 "anchor",
                 "--to",
-                "0:abc",
+                "0:abababababababababababababababababababababababababababababababab",
                 "--amount-nanotos",
                 "7",
                 "--body-boc",
@@ -1689,7 +1765,7 @@ mod wallet_send_cli_tests {
                     "--from",
                     "anchor",
                     "--to",
-                    "0:abc",
+                    "0:abababababababababababababababababababababababababababababababab",
                     "--amount",
                     "1",
                     "--amount-nanotos",
@@ -1708,7 +1784,7 @@ mod wallet_send_cli_tests {
                 "--from",
                 "anchor",
                 "--to",
-                "0:abc",
+                "0:abababababababababababababababababababababababababababababababab",
                 "--amount-nanotos",
                 "1",
                 "--config-fd",
@@ -1776,5 +1852,88 @@ mod wallet_send_cli_tests {
             command.try_get_matches_from(["ls", "--format", "json", "--offline"]).unwrap();
         let parsed = WalletLsCmd::from_arg_matches(&matches).unwrap();
         assert!(parsed.offline);
+    }
+}
+
+#[cfg(test)]
+mod wallet_secret_input_tests {
+    use super::{WalletImportCmd, WalletMnemonicImportCmd};
+    use clap::{Args, Command, FromArgMatches};
+    use std::os::unix::fs::PermissionsExt;
+
+    fn mnemonic_import(args: &[&str]) -> WalletMnemonicImportCmd {
+        let mut argv = vec!["mnemonic-import", "-n", "w"];
+        argv.extend_from_slice(args);
+        let matches = WalletMnemonicImportCmd::augment_args(Command::new("mnemonic-import"))
+            .try_get_matches_from(argv)
+            .expect("parse");
+        WalletMnemonicImportCmd::from_arg_matches(&matches).expect("args")
+    }
+
+    fn protected_file(dir: &std::path::Path, contents: &str, mode: u32) -> String {
+        let path = dir.join("secret");
+        std::fs::write(&path, contents).expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("chmod");
+        path.to_str().expect("utf8").to_owned()
+    }
+
+    #[test]
+    fn legacy_mnemonic_argument_is_a_hard_error_that_does_not_echo_it() {
+        // The refusal must not depend on the phrase at all: two different phrases
+        // give the same text. Matching individual words would be unsound, because
+        // the message's own English words ("process", "file", "own") are mnemonic
+        // words too.
+        let refusal = |phrase: &str| {
+            let cmd = mnemonic_import(&["--mnemonic", phrase]);
+            format!("{:#}", cmd.read_mnemonic().expect_err("must refuse"))
+        };
+        let first = super::super::tos_mnemonic::generate(12).expect("generate").join(" ");
+        let second = loop {
+            let candidate = super::super::tos_mnemonic::generate(12).expect("generate").join(" ");
+            if candidate != first {
+                break candidate;
+            }
+        };
+        let text = refusal(&first);
+        assert!(text.contains("--mnemonic-file"), "{text}");
+        assert_eq!(text, refusal(&second));
+        assert!(!text.contains(&first) && !text.contains(&second), "{text}");
+    }
+
+    #[test]
+    fn mnemonic_is_read_from_a_protected_file_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let phrase = super::super::tos_mnemonic::generate(12).expect("generate").join(" ");
+        let path = protected_file(dir.path(), &format!("{phrase}\n"), 0o600);
+        let cmd = mnemonic_import(&["--mnemonic-file", &path]);
+        assert_eq!(cmd.read_mnemonic().expect("read").as_str(), phrase);
+
+        let path = protected_file(dir.path(), &phrase, 0o640);
+        let cmd = mnemonic_import(&["--mnemonic-file", &path]);
+        let text = format!("{:#}", cmd.read_mnemonic().expect_err("group-readable"));
+        assert!(text.contains("mode 0640"), "{text}");
+    }
+
+    #[test]
+    fn unknown_mnemonic_word_is_reported_by_position_only() {
+        let mut words = super::super::tos_mnemonic::generate(12).expect("generate");
+        words[4] = "zzzsecretword".into();
+        let text = format!(
+            "{:#}",
+            super::super::tos_mnemonic::validate(&words.join(" "), "").expect_err("unknown word")
+        );
+        assert_eq!(text, "Unknown mnemonic word at position 5");
+    }
+
+    #[test]
+    fn wallet_import_refuses_the_legacy_private_key_argument() {
+        let key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+        let matches = WalletImportCmd::augment_args(Command::new("import"))
+            .try_get_matches_from(["import", "-n", "w", "-k", key])
+            .expect("parse");
+        let cmd = WalletImportCmd::from_arg_matches(&matches).expect("args");
+        let text = format!("{:#}", cmd.private_key.read().expect_err("must refuse"));
+        assert!(text.contains("--private-key-file"), "{text}");
+        assert!(!text.contains(key), "{text}");
     }
 }

@@ -93,6 +93,7 @@ td::Result<ProofLink::BasicHeaderInfo> ProofLinkQ::get_basic_header_info() const
                                "cannot unpack block header in the Merkle proof for masterchain block "s + id_.to_str());
     }
     res.cc_seqno = info.gen_catchain_seqno;
+    res.vertical_seqno = info.vert_seq_no;
     res.utime = info.gen_utime;
     res.end_lt = info.end_lt;
     res.validator_set_hash = info.gen_validator_list_hash_short;

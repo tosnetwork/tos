@@ -77,7 +77,7 @@ secrets-vault-cli --url='file://vault.json?master_key=<KEY_HEX>' import \
   --algorithm ed25519 \
   --secret-id secret_03 \
   --extractable \
-  --data <DATA_HEX>
+  --data-file secret_03.hex     # mode 0600; or --data-fd 0, or omit to be prompted
 ```
 
 ### Get Secret Details
@@ -162,9 +162,13 @@ Import an existing secret.
 | Option               | Required | Description                              |
 |----------------------|----------|------------------------------------------|
 | `--secret-id <ID>`   | Yes      | Unique identifier for the secret         |
-| `--data <HEX>`       | Yes      | Secret data (hexadecimal)                |
+| `--data-file <PATH>` | No       | Read the hex secret from a file you own with mode `0600` |
+| `--data-fd <N>`      | No       | Read the hex secret from an inherited descriptor (`0` for standard input, or `3` and above): a pipe, a socket, or a regular file you own with mode `0600` |
 | `--algorithm <ALG>`  | No       | Algorithm type (default: `None`)         |
 | `--extractable`      | No       | Allow secret to be exported              |
+| `--overwrite`        | No       | Replace an existing secret with the same ID |
+
+With neither `--data-file` nor `--data-fd`, `import` prompts for the secret without echo. The secret is never a command-line value: process arguments are readable by other local processes and are kept by shell history. The former `--data <HEX>` form of `import` is refused with an error, and a secret passed that way should be treated as exposed. A symlink, a non-regular file, or a file readable or writable by group or others is refused, and error messages never repeat any part of the secret. Environment variables are not accepted as a secret source. (`--data` on `sign` and `verify` is the message, not a secret, and is unchanged.)
 
 ### `delete`
 

@@ -15,7 +15,7 @@ impl CommandManager {
     pub async fn execute(
         cmd: &Commands,
         cancellation_ctx: CancellationCtx,
-    ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
+    ) -> anyhow::Result<Option<tokio::task::JoinHandle<anyhow::Result<()>>>> {
         let _log_guard = if !matches!(cmd, Commands::Service(_) | Commands::Explorer(_)) {
             setup_log(None)?
         } else {
@@ -61,10 +61,14 @@ impl CommandManager {
                 Ok(None)
             }
             Commands::Wallet(cmd) => {
-                cmd.run().await?;
+                cmd.run(cancellation_ctx).await?;
                 Ok(None)
             }
             Commands::Pool(cmd) => {
+                cmd.run().await?;
+                Ok(None)
+            }
+            Commands::Controller(cmd) => {
                 cmd.run().await?;
                 Ok(None)
             }

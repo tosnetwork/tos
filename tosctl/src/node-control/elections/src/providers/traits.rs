@@ -6,8 +6,10 @@
  *
  * This software is provided "AS IS", WITHOUT WARRANTY OF ANY KIND.
  */
-use chain_block::{ValidatorSet, config_params::ConfigParam15};
+use chain_block::{MsgAddressInt, ValidatorSet, config_params::ConfigParam15};
+use contracts::validator_controller::ControllerOperations;
 use control_client::client_api::Account as ControlClientAccount;
+use control_client::client_api::PqStakeAuthorization;
 use std::collections::HashMap;
 
 fn serialize_hex<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
@@ -69,6 +71,14 @@ impl Account {
     pub fn new(account: ControlClientAccount) -> Self {
         Self { account }
     }
+    pub fn from_balance(balance: u64) -> Self {
+        Self::new(ControlClientAccount::ShardAccountState(
+            control_client::client_api::ShardAccountState {
+                balance: balance.into(),
+                ..Default::default()
+            },
+        ))
+    }
     pub fn balance(&self) -> u64 {
         match &self.account {
             ControlClientAccount::ShardAccountState(state) => state.balance as u64,
@@ -82,6 +92,10 @@ impl Account {
 // standard ADNL control protocol.
 #[async_trait::async_trait]
 pub trait ElectionsProvider: Send + Sync {
+    async fn elector_snapshot(
+        &mut self,
+        wallets: &[[u8; 32]],
+    ) -> anyhow::Result<contracts::control_reads::ElectorSnapshot>;
     async fn setup(&self) -> anyhow::Result<()>;
     async fn shutdown(&mut self) -> anyhow::Result<()>;
     async fn new_validator_key(
@@ -92,8 +106,17 @@ pub trait ElectionsProvider: Send + Sync {
     async fn new_adnl_addr(&mut self, perm_key_id: Vec<u8>, until: u64) -> anyhow::Result<Vec<u8>>;
     async fn validator_config(&mut self) -> anyhow::Result<ValidatorConfig>;
     async fn election_parameters(&mut self) -> anyhow::Result<ConfigParam15>;
+    /// Raw live ConfigParam 47 cell; JSON summaries are not admission evidence.
+    async fn live_controller_policy(&mut self) -> anyhow::Result<chain_block::Cell>;
     async fn send_boc(&mut self, msg_boc: &[u8]) -> anyhow::Result<()>;
     async fn sign(&mut self, key_hash: Vec<u8>, data: Vec<u8>) -> anyhow::Result<Vec<u8>>;
+    async fn create_pq_stake_authorization(
+        &mut self,
+        election_date: u32,
+        max_factor: u32,
+        adnl_addr: &[u8],
+        stake_owner: &[u8],
+    ) -> anyhow::Result<PqStakeAuthorization>;
     async fn account(&mut self, address: &str) -> anyhow::Result<Account>;
     async fn export_public_key(&mut self, key_id: &[u8]) -> anyhow::Result<Vec<u8>>;
     async fn get_current_vset(&mut self) -> anyhow::Result<ValidatorSet>;
@@ -106,6 +129,15 @@ pub trait ElectionsProvider: Send + Sync {
     /// moved has to speak in the same terms. Providers that cannot supply it
     /// return `None`, which simply means no such nudge is attempted.
     async fn get_current_vset_hash(&mut self) -> anyhow::Result<Option<[u8; 32]>> {
+        Ok(None)
+    }
+
+    /// The pool controller's operating authorization (kind 4) and the live relay grant,
+    /// read through the chain. `None` when this provider has no chain access.
+    async fn controller_operations(
+        &mut self,
+        _controller: &MsgAddressInt,
+    ) -> anyhow::Result<Option<ControllerOperations>> {
         Ok(None)
     }
 }

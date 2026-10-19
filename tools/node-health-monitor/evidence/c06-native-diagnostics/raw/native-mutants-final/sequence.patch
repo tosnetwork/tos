@@ -1,0 +1,11 @@
+--- diagnostic-producer.h
++++ diagnostic-producer.h
+@@ -84,7 +84,7 @@
+   friend struct DiagnosticProducerTest;
+   static bool take(std::atomic<std::uint64_t> &counter, std::uint64_t &value) noexcept {
+     auto old = counter.load(std::memory_order_relaxed);
+-    for (unsigned i=0; i<8 && old != UINT64_MAX; ++i) {
++    for (unsigned i=0; i<8; ++i) {
+       if (counter.compare_exchange_weak(old,old+1,std::memory_order_relaxed)) { value=old; return true; }
+     }
+     return false;

@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.12s
+     Running unittests src/bin/tos-observability.rs (target/debug/deps/tos_observability-c72dc679981d3990)
+
+running 1 test
+test tests::eight_idle_control_connections_are_bounded_and_expire ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 5.01s
+

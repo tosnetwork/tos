@@ -1,0 +1,123 @@
+name: Node health monitor
+on:
+  push:
+    branches: [node-health-monitor]
+  pull_request:
+    paths:
+      - 'tools/node-health-monitor/**'
+      - 'metrics/**'
+      - 'quic/**'
+      - 'crypto/pq/consensus-pq-signer.cpp'
+      - 'validator/consensus/types.cpp'
+      - 'validator-engine/validator-engine.cpp'
+      - 'test/test-health-*.cpp'
+      - 'test/test-sync-stall-alerts.cpp'
+      - 'validator/sync-stall-alerts.h'
+      - 'validator/candidate-data-cache.h'
+      - 'validator/full-node.hpp'
+      - 'validator/full-node-shard-admission.h'
+      - 'test/test-full-node-shard-admission.cpp'
+      - 'validator/downloaders/wait-block-data.cpp'
+      - 'validator/downloaders/wait-block-data.hpp'
+      - 'validator/manager.cpp'
+      - 'validator/manager.hpp'
+      - 'metrics/chain-progress-metrics.h'
+      - 'metrics/node-state-snapshot.h'
+      - 'metrics/prometheus-exporter.cpp'
+      - 'scripts/check-sync-stall-wiring.py'
+      - 'test/test-health-native-snapshot.cpp'
+      - 'validator-engine/validator-engine.hpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/node-health-monitor.yml'
+      - '.github/actions/native-cache/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rust-contracts:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_PIPELINING: "false"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - run: scripts/install-rust-toolchain.sh
+      - run: python3 -m pip install --require-hashes -r tools/node-health-monitor/requirements-ci.txt
+      - name: Restore Rust dependency cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        continue-on-error: true
+        with:
+          prefix-key: tos-rust-ci-v1
+          key: node-health-monitor
+          cache-bin: false
+          workspaces: tools/node-health-monitor -> target
+      - name: Check the generated input contracts
+        run: |
+          python3 tools/node-health-monitor/tests/generate_schemas.py
+          python3 tools/node-health-monitor/scripts/generate-contracts.py
+          python3 tools/node-health-monitor/scripts/check-contracts.py
+          python3 tools/node-health-monitor/tests/test_snapshot_components.py
+          git diff --exit-code -- tools/node-health-monitor/contracts
+      - name: Compile and exercise HTTP and state contracts
+        run: |
+          cargo fmt --manifest-path tools/node-health-monitor/Cargo.toml --all -- --check
+          cargo clippy --manifest-path tools/node-health-monitor/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path tools/node-health-monitor/Cargo.toml --locked
+          cargo build --manifest-path tools/node-health-monitor/Cargo.toml --locked
+          python3 tools/node-health-monitor/tests/process-smoke.py
+          python3 tools/node-health-monitor/tests/mutations.py
+          python3 tools/node-health-monitor/tests/r4-mutations.py
+          python3 tools/node-health-monitor/tests/runtime-mutations.py
+          python3 tools/node-health-monitor/tests/native-contract-mutations.py
+          python3 tools/node-health-monitor/tests/native-typed-mutations.py
+      - name: Compile and remove native protections
+        run: python3 tools/node-health-monitor/tests/native-mutations.py
+  # No job time limit: the result must come from the tests, never from whether a build
+  # finished before a deadline. The build uses every core and a compiler cache instead;
+  # GitHub's default limit remains only as protection against a hung runner.
+  native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build autoconf automake libtool pkg-config libgflags-dev libreadline-dev libgsl-dev libjemalloc-dev ccache
+          sudo scripts/install-llvm-toolchain.sh 21
+      - run: python3 -m pip install --require-hashes -r tools/node-health-monitor/requirements-ci.txt
+      - name: Restore native compiler cache
+        id: native-cache
+        uses: ./.github/actions/native-cache
+        with:
+          profile: node-health-native-debug
+      - name: Build affected native boundaries
+        run: |
+          ccache -M 2G
+          cmake -S . -B build-health -G Ninja -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_SKIP_INSTALL_RULES=ON
+          cmake --build build-health --target test-http-server-limits test-http-listen-address test-health-native-snapshot test-health-collector-completion test-health-collector-timestamps test-health-collector-budget test-health-core-registry test-health-source-policy test-health-publisher-bench test-metrics-label-bound test-sync-stall-alerts test-pq-consensus test-pq-mldsa44-wrapper test-health-pq-signer validator-engine -j"$(nproc)"
+          ccache -s
+      - name: Run native behavior tests
+        run: |
+          python3 tools/node-health-monitor/tests/native-snapshot-http.py build-health/test-health-native-snapshot
+          python3 tools/node-health-monitor/tests/native-snapshot-mutations.py build-health
+          python3 tools/node-health-monitor/tests/c01-publisher-mutations.py build-health tools/node-health-monitor/evidence/ci-c01-mutations
+          build-health/test-health-pq-signer
+          build-health/test-health-collector-completion
+          build-health/test-health-collector-timestamps
+          build-health/test-health-collector-budget
+          build-health/test-http-server-limits
+          build-health/test-http-listen-address
+          build-health/test-health-core-registry
+          build-health/test-health-source-policy
+          build-health/test-health-publisher-bench
+          build-health/test-metrics-label-bound
+          build-health/test-sync-stall-alerts
+          build-health/crypto/pq/test-pq-consensus
+          python3 test/pq-mldsa44/prepare_vectors.py --out pq-results
+          build-health/crypto/pq/test-pq-mldsa44-wrapper pq-results/vectors.tsv pq-results/wrapper.tsv
+      - name: Compile cache statistics
+        if: always()
+        run: if command -v ccache >/dev/null 2>&1; then ccache --show-stats; else echo "ccache is not installed, so an earlier step failed before the compile cache was set up"; fi

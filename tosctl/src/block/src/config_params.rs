@@ -30,6 +30,10 @@ use std::collections::BTreeMap;
 #[path = "tests/test_config_params.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "tests/test_storage_fees.rs"]
+mod storage_fee_tests;
+
 /*
 1.6.3. Quick access through the header of masterchain blocks
 _ config_addr:uint256
@@ -437,7 +441,7 @@ pub enum GlobalCapabilities {
     CapResolveMerkleCell      = 0x0000_0200_0000,
 }
 
-pub const SUPPORTED_VERSION: u32 = 13;
+pub const SUPPORTED_VERSION: u32 = 16;
 pub const LT_ALIGN: u64 = 1_000_000;
 
 impl ConfigParams {
@@ -1400,6 +1404,84 @@ impl StoragePrices {
             + 0xffff)
             >> 16u8
     }
+}
+
+/// Storage fee, in nanotomi, that an account using `cells` and `bits` accrues
+/// from `last_paid` to `now` under the price history `prices` (ConfigParam 18,
+/// ordered by `utime_since`).
+///
+/// This is the node's `StoragePrices::compute_storage_fees`: start in the
+/// period in force at `last_paid`, end every period at the next one's start or
+/// at `now`, whichever comes first, add up the cost of every period in units of
+/// 2^-16 nanotomi, and round up once at the end. Rounding each period on its
+/// own, or letting a period run past `now`, charges a different amount.
+///
+/// Prices whose `utime_since` does not strictly increase are refused before
+/// anything else is looked at: the node does not load such a table, so there
+/// is no fee to compute from it.
+pub fn accrued_storage_fee(
+    prices: &[StoragePrices],
+    cells: u64,
+    bits: u64,
+    last_paid: u32,
+    now: u32,
+    is_special: bool,
+    is_masterchain: bool,
+) -> Result<BigInt> {
+    for pair in prices.windows(2) {
+        if let [earlier, later] = pair {
+            if earlier.utime_since >= later.utime_since {
+                fail!(BlockError::InvalidData(format!(
+                    "storage prices must start at strictly increasing times, \
+                     got {} then {}",
+                    earlier.utime_since, later.utime_since
+                )))
+            }
+        }
+    }
+    let first = match prices.first() {
+        Some(first) => first,
+        None => return Ok(BigInt::default()),
+    };
+    if now <= last_paid || last_paid == 0 || is_special || now <= first.utime_since {
+        return Ok(BigInt::default());
+    }
+    // The period in force at last_paid; the first one if last_paid precedes them all.
+    let start = prices.iter().rposition(|period| period.utime_since <= last_paid).unwrap_or(0);
+    let mut upto = last_paid.max(first.utime_since);
+    let mut total = BigInt::default();
+    for (index, period) in prices.iter().enumerate().skip(start) {
+        if upto >= now {
+            break;
+        }
+        let next = index.checked_add(1).and_then(|next| prices.get(next));
+        let valid_until = match next {
+            Some(next) => now.min(next.utime_since),
+            None => now,
+        };
+        if upto < valid_until {
+            if upto < period.utime_since {
+                fail!(BlockError::InvalidData(format!(
+                    "storage fee interval starting at {upto} precedes its period at {}",
+                    period.utime_since
+                )))
+            }
+            let seconds = valid_until.checked_sub(upto).ok_or_else(|| {
+                error!(BlockError::InvalidData("storage fee interval is negative".to_string()))
+            })?;
+            let (bit_price, cell_price) = if is_masterchain {
+                (period.mc_bit_price_ps, period.mc_cell_price_ps)
+            } else {
+                (period.bit_price_ps, period.cell_price_ps)
+            };
+            let per_second = BigInt::from(cells) * BigInt::from(cell_price)
+                + BigInt::from(bits) * BigInt::from(bit_price);
+            total += per_second * BigInt::from(seconds);
+        }
+        upto = valid_until;
+    }
+    // Divide by 2^16, rounding up, once.
+    Ok((total + BigInt::from(0xffffu32)) >> 16u8)
 }
 
 const STORAGE_PRICES_TAG: u8 = 0xCC;
@@ -3400,6 +3482,10 @@ pub struct SizeLimitsConfig {
     pub max_msg_extra_currencies: u32,
     pub max_acc_fixed_prefix_length: u8,
     pub acc_state_cells_for_storage_dict: u32,
+    /// Absent means unlimited, which is what a configuration without version 3 says.
+    pub max_transaction_library_loads: Option<u32>,
+    pub max_total_msg_bits: u32,
+    pub max_total_msg_cells: u32,
 }
 
 impl Default for SizeLimitsConfig {
@@ -3418,13 +3504,30 @@ impl Default for SizeLimitsConfig {
             max_msg_extra_currencies: 2,
             max_acc_fixed_prefix_length: 8,
             acc_state_cells_for_storage_dict: DICT_HASH_MIN_CELLS,
+            max_transaction_library_loads: None,
+            max_total_msg_bits: MAX_MSG_BITS * 5 / 2,
+            max_total_msg_cells: MAX_MSG_CELLS * 5 / 2,
         }
+    }
+}
+
+impl SizeLimitsConfig {
+    /// Whether anything only version 3 can carry differs from what a version 2
+    /// configuration means. Writing version 2 in that case would drop the difference
+    /// silently, and writing version 3 always would change the bytes of every
+    /// configuration that has no use for it.
+    fn needs_v3(&self) -> bool {
+        let default = Self::default();
+        self.max_transaction_library_loads != default.max_transaction_library_loads
+            || self.max_total_msg_bits != default.max_total_msg_bits
+            || self.max_total_msg_cells != default.max_total_msg_cells
     }
 }
 
 impl Serializable for SizeLimitsConfig {
     fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
-        2u8.write_to(cell)?;
+        let tag: u8 = if self.needs_v3() { 3 } else { 2 };
+        tag.write_to(cell)?;
         self.max_msg_bits.write_to(cell)?;
         self.max_msg_cells.write_to(cell)?;
         self.max_library_cells.write_to(cell)?;
@@ -3438,6 +3541,17 @@ impl Serializable for SizeLimitsConfig {
         self.max_msg_extra_currencies.write_to(cell)?;
         self.max_acc_fixed_prefix_length.write_to(cell)?;
         self.acc_state_cells_for_storage_dict.write_to(cell)?;
+        if tag == 3 {
+            match self.max_transaction_library_loads {
+                Some(loads) => {
+                    true.write_to(cell)?;
+                    loads.write_to(cell)?;
+                }
+                None => false.write_to(cell)?,
+            }
+            self.max_total_msg_bits.write_to(cell)?;
+            self.max_total_msg_cells.write_to(cell)?;
+        }
         Ok(())
     }
 }
@@ -3445,7 +3559,7 @@ impl Serializable for SizeLimitsConfig {
 impl Deserializable for SizeLimitsConfig {
     fn read_from(&mut self, slice: &mut SliceData) -> Result<()> {
         let tag = slice.get_next_byte()?;
-        if tag != 1 && tag != 2 {
+        if tag != 1 && tag != 2 && tag != 3 {
             fail!(Self::invalid_tag(tag as u32))
         }
         self.max_msg_bits.read_from(slice)?;
@@ -3454,7 +3568,7 @@ impl Deserializable for SizeLimitsConfig {
         self.max_vm_data_depth.read_from(slice)?;
         self.max_ext_msg_size.read_from(slice)?;
         self.max_ext_msg_depth.read_from(slice)?;
-        if tag == 2 {
+        if tag >= 2 {
             self.max_acc_state_cells.read_from(slice)?;
             self.max_mc_acc_state_cells.read_from(slice)?;
             self.max_acc_public_libraries.read_from(slice)?;
@@ -3462,6 +3576,17 @@ impl Deserializable for SizeLimitsConfig {
             self.max_msg_extra_currencies.read_from(slice)?;
             self.max_acc_fixed_prefix_length.read_from(slice)?;
             self.acc_state_cells_for_storage_dict.read_from(slice)?;
+        }
+        if tag == 3 {
+            self.max_transaction_library_loads = if slice.get_next_bit()? {
+                let mut loads = 0u32;
+                loads.read_from(slice)?;
+                Some(loads)
+            } else {
+                None
+            };
+            self.max_total_msg_bits.read_from(slice)?;
+            self.max_total_msg_cells.read_from(slice)?;
         }
         Ok(())
     }

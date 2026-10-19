@@ -39,13 +39,14 @@ void HttpConnection::loop() {
       if (is_eof || buffered_fd_.left_unread() <= fd_low_watermark()) {
         allow_read_ = true;
       }
-      if (allow_read_ && buffered_fd_.left_unread() < fd_high_watermark()) {
-        TRY_RESULT(r, buffered_fd_.flush_read(fd_high_watermark() - buffered_fd_.left_unread()));
+      auto window = std::min(input_window(), fd_high_watermark());
+      if (allow_read_ && buffered_fd_.left_unread() < window) {
+        TRY_RESULT(r, buffered_fd_.flush_read(window - buffered_fd_.left_unread()));
         if (r == 0 && is_eof) {
           read_eof = true;
         }
       }
-      if (buffered_fd_.left_unread() >= fd_high_watermark()) {
+      if (buffered_fd_.left_unread() >= window) {
         allow_read_ = false;
       }
       {
@@ -57,11 +58,21 @@ void HttpConnection::loop() {
       if (buffered_fd_.left_unread() == 0 && read_eof) {
         TRY_STATUS(receive_eof());
       }
+      if (!is_client_ && found_eof_ && buffered_fd_.ready_for_flush_write() != 0) {
+        // A read-side EOF suppresses the poll layer's Write flag, including
+        // on later writable notifications. Retry the nonblocking write on
+        // each turn: EAGAIN clears the flag, and the next notification wakes
+        // the connection again without changing its response deadline.
+        buffered_fd_.get_poll_info().add_flags(td::PollFlags::Write());
+      }
       TRY_STATUS(buffered_fd_.flush_write());
       if (writing_payload_ && buffered_fd_.left_unwritten() < fd_high_watermark()) {
         written = continue_payload_write();
       }
-      if (close_after_write_ && !writing_payload_ && !buffered_fd_.left_unwritten()) {
+      // ready_for_flush_write() syncs the output reader with what was just
+      // appended; left_unwritten() would still report the size before the
+      // final part of the payload was stored, and closing then drops it.
+      if (close_after_write_ && !writing_payload_ && buffered_fd_.ready_for_flush_write() == 0) {
         LOG(INFO) << "close after write";
         stop();
         break;
@@ -102,6 +113,10 @@ void HttpConnection::send_request(std::unique_ptr<HttpRequest> request, std::sha
 
 void HttpConnection::send_response(std::unique_ptr<HttpResponse> response, std::shared_ptr<HttpPayload> payload) {
   CHECK(!writing_payload_);
+  if (!response->keep_alive()) {
+    close_after_write_ = true;
+  }
+  response->set_keep_alive(!close_after_write_);
   response->store_http(buffered_fd_.output_buffer());
 
   write_payload(std::move(payload));
@@ -157,13 +172,15 @@ bool HttpConnection::continue_payload_write() {
   }
 
   auto t = writing_payload_->payload_type();
-  if (t == HttpPayload::PayloadType::pt_eof) {
+  if (t == HttpPayload::PayloadType::pt_eof && !close_after_write_) {
     t = HttpPayload::PayloadType::pt_chunked;
   }
 
   bool wrote = false;
   while (!writing_payload_->written()) {
-    if (buffered_fd_.left_unwritten() > fd_high_watermark()) {
+    // Appending to the writer does not refresh its reader's size. Sync it
+    // before testing the window, including the initial fully buffered reply.
+    if (buffered_fd_.ready_for_flush_write() >= fd_high_watermark()) {
       return wrote;
     }
     bool is_tunnel = writing_payload_->payload_type() == HttpPayload::PayloadType::pt_tunnel;
@@ -255,7 +272,7 @@ td::Status HttpConnection::continue_payload_read(td::ChainBufferReader &input) {
     auto s = input.size();
     auto R = reading_payload_->parse(input);
     if (R.is_error()) {
-      reading_payload_->set_error();
+      reading_payload_->fail();
       return R.move_as_error();
     }
     if (input.size() == s) {

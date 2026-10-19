@@ -33,6 +33,11 @@ namespace tos {
 namespace validator {
 using td::Ref;
 
+td::Result<td::Ref<vm::Cell>> prepare_accepted_block_signatures(td::Ref<block::ValidatorSet> validator_set,
+                                                                td::Ref<block::BlockSignatureSet> signatures,
+                                                                BlockIdExt block_id,
+                                                                ValidatorSessionId expected_session_id);
+
 /*
  *
  * block data (if not given) can be obtained from:
@@ -52,8 +57,9 @@ class AcceptBlockQuery : public td::actor::Actor {
   struct ForceFork {};
   AcceptBlockQuery(BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                    td::Ref<block::ValidatorSet> validator_set, td::Ref<block::BlockSignatureSet> signatures,
-                   int block_broadcast_mode, int finality_broadcast_mode, bool send_shard_block_desc, bool apply,
-                   td::actor::ActorId<ValidatorManager> manager, td::Promise<td::Unit> promise);
+                   ValidatorSessionId expected_session_id, int block_broadcast_mode, int finality_broadcast_mode,
+                   bool send_shard_block_desc, bool apply, td::actor::ActorId<ValidatorManager> manager,
+                   td::Promise<td::Unit> promise);
   AcceptBlockQuery(IsFake fake, BlockIdExt id, td::Ref<BlockData> data, std::vector<BlockIdExt> prev,
                    td::Ref<block::ValidatorSet> validator_set, td::actor::ActorId<ValidatorManager> manager,
                    td::Promise<td::Unit> promise);
@@ -99,6 +105,7 @@ class AcceptBlockQuery : public td::actor::Actor {
   std::vector<BlockIdExt> prev_;
   Ref<block::ValidatorSet> validator_set_;
   Ref<block::BlockSignatureSet> signatures_;
+  ValidatorSessionId expected_session_id_;
   bool is_fake_;
   bool is_fork_;
   int block_broadcast_mode_{0};

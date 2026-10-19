@@ -1,0 +1,52 @@
+"Asm.fif" include
+"Test.fif" include
+
+// A contract cannot leave a pruned branch behind, in an outbound message or in its own
+// storage. `try_commit` requires the action list and the data cell to have level zero,
+// and a pruned branch has level one.
+//
+// This decides whether an account can prove its own birth code by forwarding a pruned
+// proof of its state init. It cannot, and the refusal is not the send instruction's: the
+// send succeeds and the commit at the end of the run fails, which is why it reports as a
+// cell overflow with nothing sent.
+//
+// The same rule is enforced by the other executor, where the message reads
+// "Actions cell level is not 0". Keeping both is the point: a rule only one of them
+// applied would be a split the moment a contract relied on it.
+
+."a committed action list must have level zero" cr
+test-reset
+
+// A pruned branch, in the shape a state-init proof carries: type, level mask, one stored
+// hash, one depth.
+<b 1 8 u, 1 8 u,
+   x{1111111111111111111111111111111111111111111111111111111111111111} s,
+   0 16 u,
+b>spec constant pruned
+
+// An ordinary child holding the same bits, so the two cases below differ in exactly one
+// thing. Without this the refusal could be about size or depth.
+<b x{1111111111111111111111111111111111111111111111111111111111111111} s, 0 16 u, b>
+constant ordinary
+
+<b x{18} s, ordinary ref, b> constant carries-ordinary
+<b x{18} s, pruned ref, b> constant carries-pruned
+
+// ( message mode code flags -- ... exit-code actions )
+carries-ordinary 3 <{ SENDRAWMSG }>s 32 runvmx
+drop 0 "an ordinary message is sent and committed" test-eq
+
+carries-pruned 3 <{ SENDRAWMSG }>s 32 runvmx
+drop 8 "a message carrying a pruned branch is refused" test-eq
+drop  // the exception argument the refused run left behind
+
+// The same rule covers the data cell, so a contract cannot keep a pruned proof either:
+// storing one for later is not a way around being unable to send it.
+carries-ordinary <{ POPROOT }>s 32 runvmx
+drop 0 "an ordinary cell can be stored" test-eq
+
+carries-pruned <{ POPROOT }>s 32 runvmx
+drop 8 "a pruned branch cannot be stored" test-eq
+drop
+
+test-summary

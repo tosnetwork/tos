@@ -1,0 +1,32 @@
+{
+  "events": [
+    {
+      "kind": "start",
+      "monotonic": 282503.37253715,
+      "utc": 1790673385.7988005,
+      "process": "health-state",
+      "pid": 776145
+    },
+    {
+      "kind": "start",
+      "monotonic": 282504.379742122,
+      "utc": 1790673386.8060062,
+      "process": "health-watchdog",
+      "pid": 776150
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282504.384934962,
+      "utc": 1790673386.811198,
+      "process": "health-state",
+      "returncode": -15
+    },
+    {
+      "kind": "stop",
+      "monotonic": 282504.384993002,
+      "utc": 1790673386.8112557,
+      "process": "health-watchdog",
+      "returncode": 1
+    }
+  ]
+}

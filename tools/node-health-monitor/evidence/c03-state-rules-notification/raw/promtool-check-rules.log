@@ -1,0 +1,3 @@
+Checking tools/node-health-monitor/deploy/prometheus/rules.yml
+  SUCCESS: 3 rules found
+

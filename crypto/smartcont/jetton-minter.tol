@@ -51,6 +51,8 @@
 
 import "@stdlib/common"
 import "@stdlib/jetton"
+import "@stdlib/jetton-fees"
+import "jetton-wallet-fee-profile"
 
 const OP_MINT = JETTON_OP_MINT
 const OP_CHANGE_ADMIN = JETTON_OP_CHANGE_ADMIN
@@ -74,6 +76,11 @@ struct JettonMinterStorage {
     adminAddress: any_address;
     content: cell;
     jettonWalletCode: cell;
+}
+
+/// Adds coins to the minter's balance; carries no jettons.
+struct (0xd372158c) TopUp {
+    queryId: uint64;
 }
 
 struct (0x00000015) MintRequest {
@@ -172,13 +179,34 @@ fun sendExcesses(responseAddress: any_address, queryId: uint64): void {
     );
 }
 
+/// A mint whose internal transfer bounced never credited anyone, so the jettons
+/// it counted are taken back out of the total supply. Kept in its own code cell,
+/// so that messages which are not bounces do not pay to load it.
+@inline_ref
+fun takeBackBouncedMint(bouncedBody: slice) {
+    var body = bouncedBody;
+    body.skipBouncedPrefix();
+    if (body.loadUint(32) != JETTON_OP_INTERNAL_TRANSFER) {
+        return;
+    }
+    body.skipBits(64);
+    val amount = body.loadCoins();
+    var storage = JettonMinterStorage.fromCell(contract.getData());
+    storage.totalSupply -= amount;
+    contract.setData(storage.toCell());
+}
+
 fun onBouncedMessage(in: InMessageBounced) {
-    return;
+    takeBackBouncedMint(in.bouncedBody);
 }
 
 contract JettonMinter {
     storage: JettonMinterStorage
     @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: TopUp) {
+    }
 
     @disclaim_query_id
     receive(msg: MintRequest) {
@@ -194,6 +222,18 @@ contract JettonMinter {
         } catch (_) {
             require(false, ErrorClass.Permanent, FUNC_THROW_INVALID_AMOUNT);
         }
+        // The new wallet must be able to process the mint like any transfer: price
+        // it with the wallet's own profile, against the value the mint carries.
+        jettonForceBasechain(msg.toAddress);
+        masterMsgBody.loadAddressAny();
+        masterMsgBody.loadAddressAny();
+        val forwardTosAmount = masterMsgBody.loadCoins();
+        walletFeeProfile().requireTransferValue(msg.amount, forwardTosAmount, in.originalForwardFee);
+        // Only the value this message brought may be spent: keep the balance the
+        // minter held before it. The reserve itself always fits, since the gas
+        // was bought with this message's value; the mint's send then bounces
+        // the request if the rest does not cover it.
+        reserveToscoinsOnBalance(contract.getOriginalBalance() - in.valueCoins, RESERVE_MODE_EXACT_AMOUNT);
         mintTokens(msg.toAddress, storage.jettonWalletCode, msg.amount, msg.masterMsg);
         save(JettonMinterStorage {
             totalSupply: newTotalSupply,

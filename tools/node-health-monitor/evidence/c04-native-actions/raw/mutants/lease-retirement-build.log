@@ -1,0 +1,23 @@
+[1/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/collator-schedule.cpp.o
+[2/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/bus.cpp.o
+[3/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/metric-collector.cpp.o
+[4/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/certificate.cpp.o
+[5/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/db.cpp.o
+[6/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/candidate-resolver.cpp.o
+[7/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/consensus.cpp.o
+[8/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/pool.cpp.o
+[9/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/votes.cpp.o
+[10/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-accepter.cpp.o
+[11/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-producer.cpp.o
+[12/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-sync-overlay.cpp.o
+[13/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/simplex/state-resolver.cpp.o
+[14/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/block-validator.cpp.o
+[15/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/bus.cpp.o
+[16/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/misbehavior-reporter.cpp.o
+[17/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/bridge.cpp.o
+[18/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/trace-collector.cpp.o
+[19/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/types.cpp.o
+[20/23] Building CXX object validator/CMakeFiles/validator.dir/consensus/private-overlay.cpp.o
+[21/23] Linking CXX static library validator/libvalidator.a
+[22/23] Building CXX object test/validator/consensus/CMakeFiles/test-health-actions.dir/test-health-actions.cpp.o
+[23/23] Linking CXX executable test/validator/consensus/test-health-actions

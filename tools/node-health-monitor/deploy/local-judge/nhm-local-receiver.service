@@ -1,0 +1,12 @@
+[Unit]
+Description=Independent notification receiver for M's outbox (development)
+
+[Service]
+CPUQuota=20%
+MemoryMax=134217728
+TasksMax=16
+NoNewPrivileges=yes
+UMask=0077
+Restart=on-failure
+RestartSec=5
+ExecStart=/usr/bin/python3 %h/tos/.claude/worktrees/cc-nhm/tools/node-health-monitor/scripts/local-notification-receiver.py --listen 127.0.0.1:19700 --cert-file %h/nhm-supervision/c09-local/runtime/pki/server.pem --key-file %h/nhm-supervision/c09-local/runtime/pki/server.key --token-file %h/nhm-supervision/c09-local/runtime/config/receiver.token --journal %h/.local/state/nhm-cc-judge/notifications.jsonl

@@ -1,0 +1,42 @@
+Internal ctest changing into directory: $HOME/nhm-c04-build
+Test project $HOME/nhm-c04-build
+      Start 213: c04-health-action-post-terminal
+      Start 212: c04-health-action-finality-suppressed
+ 1/18 Test #212: c04-health-action-finality-suppressed ...   Passed    0.20 sec
+      Start 206: c04-health-action-duplicate
+ 2/18 Test #213: c04-health-action-post-terminal .........   Passed    0.27 sec
+      Start 209: c04-health-action-skip
+ 3/18 Test #206: c04-health-action-duplicate .............   Passed    0.15 sec
+      Start 200: c04-health-action-success
+ 4/18 Test #209: c04-health-action-skip ..................   Passed    0.14 sec
+      Start 205: c04-health-action-apply-false
+ 5/18 Test #200: c04-health-action-success ...............   Passed    0.14 sec
+      Start 210: c04-health-action-finalize
+ 6/18 Test #205: c04-health-action-apply-false ...........   Passed    0.14 sec
+      Start 204: c04-health-action-signed-failure
+ 7/18 Test #210: c04-health-action-finalize ..............   Passed    0.14 sec
+      Start 207: c04-health-action-replay-signed
+ 8/18 Test #204: c04-health-action-signed-failure ........   Passed    0.14 sec
+      Start 203: c04-health-action-sign-failure
+ 9/18 Test #207: c04-health-action-replay-signed .........   Passed    0.14 sec
+      Start 202: c04-health-action-no-signer
+10/18 Test #203: c04-health-action-sign-failure ..........   Passed    0.14 sec
+      Start 201: c04-health-action-intent-failure
+11/18 Test #202: c04-health-action-no-signer .............   Passed    0.14 sec
+      Start 208: c04-health-action-replay-intent
+12/18 Test #201: c04-health-action-intent-failure ........   Passed    0.14 sec
+      Start 211: c04-health-action-journal-suppressed
+13/18 Test #208: c04-health-action-replay-intent .........   Passed    0.14 sec
+      Start 133: test-health-core-registry
+14/18 Test #211: c04-health-action-journal-suppressed ....   Passed    0.14 sec
+      Start 214: c04-health-action-lease
+15/18 Test #133: test-health-core-registry ...............   Passed    0.12 sec
+      Start 132: test-health-native-snapshot
+16/18 Test #132: test-health-native-snapshot .............   Passed    0.01 sec
+      Start 199: c04-health-ledger
+17/18 Test #199: c04-health-ledger .......................   Passed    0.01 sec
+18/18 Test #214: c04-health-action-lease .................   Passed    0.09 sec
+
+100% tests passed, 0 tests failed out of 18
+
+Total Test time (real) =   1.21 sec

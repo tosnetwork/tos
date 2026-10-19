@@ -1,0 +1,624 @@
+// Copyright 2026 TOS Blockchain Teams. SPDX-License-Identifier: GPL-3.0-only
+//! A process-held fee journal. No broadcast or fee affordability assertion.
+use super::{
+    Path, PathBuf, SecretId, bounded_public_file,
+    inspect::{InitialContext, InitialProofArgs, now},
+    open_vault_file,
+};
+use contracts::{
+    lms_fee_journal::{FeeJournal, SignedFeeMessage},
+    wallet_quantum::{AuthAction, AuthRole},
+    wallet_quantum_fee::{FeeBinding, FeeClass, FeeIntent, FeePayload},
+    wallet_quantum_pop::{PopRequest, RescuePolicy},
+    wallet_quantum_prepare::PreparationAmounts,
+    wallet_quantum_vault::VaultKey,
+};
+use std::io::{BufRead, Read, Write};
+
+#[path = "wallet_pq_migration_session.rs"]
+mod migration;
+use migration::{HeldSuccessor, MigrationInput, SuccessorCustody};
+
+fn require_rotation_capacity(retired_count: usize) -> anyhow::Result<()> {
+    anyhow::ensure!(retired_count < 32, "session rotation limit; preserve journals and restart");
+    Ok(())
+}
+
+#[derive(clap::Args, Clone)]
+#[command(
+    about = "Hold a rescue-fee journal session; JSON-line status/execute/lock/pop/prepare/attach_successor/successor/migrate/promote/retry/quit, no broadcast"
+)]
+pub struct PqFeeSessionInitialCmd {
+    #[command(flatten)]
+    proof: InitialProofArgs,
+    /// Select a separately enrolled successor fee route for POP/status/retry only.
+    #[arg(long, requires = "expected_template_wallet")]
+    successor_manifest: Option<PathBuf>,
+    #[arg(long, requires = "successor_manifest")]
+    expected_template_wallet: Option<String>,
+    /// Existing owner-only mode-0700 journal directory.
+    #[arg(long)]
+    journal_dir: PathBuf,
+    #[arg(long)]
+    fee_tree_cache: PathBuf,
+    #[arg(long)]
+    fee_vault_file: PathBuf,
+    #[arg(long)]
+    fee_record_id: String,
+    /// Protected file containing the fee Vault encryption key as hex.
+    #[arg(long)]
+    fee_vault_key_file: PathBuf,
+    #[arg(long)]
+    rescue_vault_file: PathBuf,
+    #[arg(long)]
+    rescue_record_id: String,
+    #[arg(long)]
+    rescue_vault_key_file: PathBuf,
+    /// Primary custody is needed only for a PRIMARY possession proof.
+    #[arg(long, requires_all = ["primary_record_id", "primary_vault_key_file"])]
+    primary_vault_file: Option<PathBuf>,
+    #[arg(long, requires_all = ["primary_vault_file", "primary_vault_key_file"])]
+    primary_record_id: Option<String>,
+    #[arg(long, requires_all = ["primary_vault_file", "primary_record_id"])]
+    primary_vault_key_file: Option<PathBuf>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
+enum Request {
+    Status,
+    AttachSuccessor {
+        successor_manifest: PathBuf,
+        expected_template_wallet: String,
+        custody: SuccessorCustody,
+    },
+    Successor {
+        request: Box<Request>,
+    },
+    Migrate {
+        evidence: MigrationInput,
+    },
+    /// Select the attached route only after proving it is installed in the wallet.
+    Promote {
+        output_dir: PathBuf,
+    },
+    Execute {
+        actions: PathBuf,
+        valid_for_seconds: u32,
+        value_nanotos: String,
+        output_dir: PathBuf,
+    },
+    Lock {
+        valid_for_seconds: u32,
+        value_nanotos: String,
+        output_dir: PathBuf,
+    },
+    Pop {
+        role: PopRole,
+        valid_for_seconds: u32,
+        value_nanotos: String,
+        output_dir: PathBuf,
+    },
+    Prepare {
+        successor_manifest: PathBuf,
+        expected_template_wallet: String,
+        module_nanotos: String,
+        vault_nanotos: String,
+        valid_for_seconds: u32,
+        value_nanotos: String,
+        output_dir: PathBuf,
+    },
+    Retry {
+        intent: PathBuf,
+        output_dir: PathBuf,
+    },
+    Quit,
+}
+
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PopRole {
+    Primary,
+    Rescue,
+}
+
+fn decimal_amount(value: &str) -> anyhow::Result<u128> {
+    anyhow::ensure!(
+        !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()),
+        "value must be exact decimal nanoTOS"
+    );
+    let amount = value.parse::<u128>()?;
+    anyhow::ensure!(amount > 0, "fee value must be positive");
+    Ok(amount)
+}
+
+fn fee_clock() -> u32 {
+    match now() {
+        Ok(time) => time,
+        // Every fee path requires valid_until > now, impossible at this value.
+        Err(_) => u32::MAX,
+    }
+}
+
+fn put(directory: &Path, name: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    let path = directory.join(name);
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    anyhow::ensure!(
+        bounded_public_file(&path, bytes.len())? == bytes,
+        "fee output readback mismatch"
+    );
+    std::fs::File::open(directory)?.sync_all()?;
+    let parent = directory.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn export(directory: &Path, signed: &SignedFeeMessage) -> anyhow::Result<serde_json::Value> {
+    use chain_block::{
+        ExternalInboundMessageHeader, Message, MsgAddressExt, Serializable, SliceData,
+    };
+    let destination = format!("0:{}", hex::encode(signed.vault()));
+    let message = Message::with_ext_in_header_and_body(
+        ExternalInboundMessageHeader::new(MsgAddressExt::AddrNone, destination.parse()?),
+        SliceData::load_cell(signed.body().clone())?,
+    );
+    let root = message.serialize()?;
+    let report = serde_json::json!({
+        "status": "fee_message_cached", "vault": destination,
+        "leaf": signed.intent().leaf(), "intent_hash": hex::encode(signed.intent().digest()),
+        "body_hash": signed.body().repr_hash().to_hex_string(),
+        "message_hash": root.repr_hash().to_hex_string(),
+        "scope": "cached signature and exact external message only; admission, affordability, broadcast and delivery are unconfirmed"
+    });
+    put(directory, "message.boc", &chain_block::write_boc(&root)?)?;
+    put(directory, "binding.json", &serde_json::to_vec_pretty(&report)?)?;
+    Ok(report)
+}
+
+impl PqFeeSessionInitialCmd {
+    pub async fn run(
+        &self,
+        cancellation: common::task_cancellation::CancellationCtx,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.fee_record_id.trim().is_empty() && !self.rescue_record_id.trim().is_empty(),
+            "record IDs must not be empty"
+        );
+        let mut command = self.clone();
+        let context = self.proof.context()?;
+        let context = match (&self.successor_manifest, &self.expected_template_wallet) {
+            (Some(manifest), Some(pin)) => {
+                context.with_successor(self.proof.successor(manifest, pin)?)
+            }
+            (None, None) => context,
+            _ => anyhow::bail!("successor route requires manifest and independent template pin"),
+        };
+        let mut context = context;
+        command.proof.retain_fee_history(&context)?;
+        let (mut tree, mut journal) = self.open_fee_route(&context).await?;
+        let mut successor = None;
+        // Previous journals stay exclusively owned for the whole session. Their
+        // trees may be dropped, but another local process cannot reacquire their
+        // reservations while the successor is servicing this wallet.
+        let mut retired_journals = Vec::new();
+        println!(
+            "{}",
+            serde_json::json!({"status":"fee_session_open", "scope":"new signatures remain subject to next-slot recovery and fresh proofs"})
+        );
+        std::io::stdout().flush()?;
+        // A dedicated standard thread owns only stdin, never custody or journal.
+        // Unlike a Tokio blocking task, an idle stdin read cannot delay runtime
+        // shutdown after cancellation. The bounded channel permits one queued line.
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+        std::thread::Builder::new().name("fee-session-input".into()).spawn(move || {
+            let stdin = std::io::stdin();
+            let mut input = stdin.lock();
+            loop {
+                let mut line = Vec::new();
+                match (&mut input).take(8193).read_until(b'\n', &mut line) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if sender.blocking_send(Ok(line)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = sender.blocking_send(Err(error));
+                        break;
+                    }
+                }
+            }
+        })?;
+        let mut cancelled = cancellation.subscribe();
+        while !cancellation.is_cancelled() {
+            let line = tokio::select! {
+                biased;
+                _ = cancelled.changed() => break,
+                next = receiver.recv() => match next { Some(line) => line?, None => break },
+            };
+            anyhow::ensure!(
+                line.len() <= 8192 && line.last() == Some(&b'\n'),
+                "fee session requires bounded complete JSON lines"
+            );
+            let request: Request = serde_json::from_slice(&line)?;
+            if matches!(request, Request::Quit) {
+                break;
+            }
+            let result = tokio::select! {
+                biased;
+                _ = cancelled.changed() => break,
+                result = command.dispatch(
+                    request, &mut context, &mut journal, &mut tree,
+                    &mut successor, &mut retired_journals,
+                ) => result,
+            };
+            let report = match result {
+                Ok(value) => value,
+                Err(error) => {
+                    serde_json::json!({"status":"request_refused", "reason":error.to_string(), "scope":"preserve journal and any partial output; refusal is not proof of failed delivery"})
+                }
+            };
+            println!("{report}");
+            std::io::stdout().flush()?;
+        }
+        Ok(())
+    }
+
+    async fn open_fee_route(
+        &self,
+        context: &InitialContext,
+    ) -> anyhow::Result<(wallet_pq_signer::fee::FeeTree, FeeJournal)> {
+        let view = context.fee().await?;
+        let key = *view.fee_public_key();
+        let tree_file = self.fee_tree_cache.clone();
+        let tree = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let file = std::fs::File::open(tree_file)?;
+            anyhow::ensure!(
+                file.metadata()?.is_file() && file.metadata()?.len() == 64 * 1024 * 1024 + 68,
+                "fee tree cache size/type mismatch"
+            );
+            Ok(wallet_pq_signer::fee::FeeTree::read_cache(file, &key)?)
+        })
+        .await??;
+        let view = context.fee().await?;
+        let directory = std::path::absolute(&self.journal_dir)?;
+        let journal = FeeJournal::open_proven(&directory, &view, now()?)?;
+        Ok((tree, journal))
+    }
+
+    async fn dispatch(
+        &mut self,
+        request: Request,
+        context: &mut InitialContext,
+        journal: &mut FeeJournal,
+        tree: &mut wallet_pq_signer::fee::FeeTree,
+        successor: &mut Option<HeldSuccessor>,
+        retired_journals: &mut Vec<FeeJournal>,
+    ) -> anyhow::Result<serde_json::Value> {
+        match request {
+            Request::AttachSuccessor { successor_manifest, expected_template_wallet, custody } => {
+                anyhow::ensure!(
+                    self.successor_manifest.is_none(),
+                    "attach requires the current fee route"
+                );
+                anyhow::ensure!(successor.is_none(), "successor session already attached");
+                require_rotation_capacity(retired_journals.len())?;
+                *successor = Some(
+                    HeldSuccessor::open(
+                        self,
+                        successor_manifest,
+                        expected_template_wallet,
+                        custody,
+                    )
+                    .await?,
+                );
+                Ok(
+                    serde_json::json!({"status":"successor_session_attached", "scope":"journal held; restore barrier and fresh proofs still apply"}),
+                )
+            }
+            Request::Successor { request } => {
+                let held = successor
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("successor session not attached"))?;
+                held.command.process(*request, &held.context, &mut held.journal, &held.tree).await
+            }
+            Request::Migrate { evidence } => {
+                anyhow::ensure!(
+                    self.successor_manifest.is_none(),
+                    "migration requires the current fee route"
+                );
+                let held = successor
+                    .as_mut()
+                    .ok_or_else(|| anyhow::anyhow!("successor session not attached"))?;
+                self.migrate(context, journal, tree, held, evidence).await
+            }
+            Request::Promote { output_dir } => {
+                self.promote(context, journal, tree, successor, retired_journals, output_dir).await
+            }
+            request => self.process(request, context, journal, tree).await,
+        }
+    }
+
+    async fn process(
+        &self,
+        request: Request,
+        context: &InitialContext,
+        journal: &mut FeeJournal,
+        tree: &wallet_pq_signer::fee::FeeTree,
+    ) -> anyhow::Result<serde_json::Value> {
+        anyhow::ensure!(
+            context.successor().is_none()
+                || matches!(
+                    &request,
+                    Request::Status | Request::Pop { .. } | Request::Retry { .. } | Request::Quit
+                ),
+            "successor fee session permits possession proofs only"
+        );
+        // A fee vault remains deployed after rotation. Its state alone cannot
+        // establish that the wallet still accepts the corresponding module.
+        // Check the installed tuple even for status and cached retries.
+        context.read(&[]).await?;
+        let view = context.fee().await?;
+        let mut preparation = None;
+        let mut execute_actions = None;
+        let (pop_role, valid_for_seconds, value_nanotos, output_dir) = match request {
+            Request::Status => {
+                let plan = journal.preview_proven(&view, now()?)?;
+                return Ok(
+                    serde_json::json!({"status":"leaf_available", "leaf":plan.leaf, "proven_time":view.proven_time(), "scope":"reservation capacity only; not signing or payment readiness"}),
+                );
+            }
+            Request::Retry { intent, output_dir } => {
+                let intent = FeeIntent::from_cached_cell(
+                    chain_block::read_single_root_boc(bounded_public_file(
+                        &intent,
+                        4 * 1024 * 1024,
+                    )?)?,
+                    view.route().epoch0,
+                )?;
+                let signed = journal.retry_proven_fee(&view, now()?, &intent)?;
+                std::fs::create_dir(&output_dir)?;
+                put(&output_dir, "pending-intent.boc", &chain_block::write_boc(intent.cell())?)?;
+                return export(&output_dir, &signed);
+            }
+            Request::Lock { valid_for_seconds, value_nanotos, output_dir } => {
+                (None, valid_for_seconds, value_nanotos, output_dir)
+            }
+            Request::Execute { actions, valid_for_seconds, value_nanotos, output_dir } => {
+                let actions = chain_block::read_single_root_boc(bounded_public_file(
+                    &actions,
+                    4 * 1024 * 1024,
+                )?)?;
+                contracts::wallet_quantum::validate_actions(&actions)?;
+                execute_actions = Some(actions);
+                (None, valid_for_seconds, value_nanotos, output_dir)
+            }
+            Request::Pop { role, valid_for_seconds, value_nanotos, output_dir } => {
+                (Some(role), valid_for_seconds, value_nanotos, output_dir)
+            }
+            Request::Prepare {
+                successor_manifest,
+                expected_template_wallet,
+                module_nanotos,
+                vault_nanotos,
+                valid_for_seconds,
+                value_nanotos,
+                output_dir,
+            } => {
+                let successor =
+                    self.proof.successor(&successor_manifest, &expected_template_wallet)?;
+                let amounts = PreparationAmounts {
+                    module: decimal_amount(&module_nanotos)?,
+                    vault: decimal_amount(&vault_nanotos)?,
+                };
+                preparation = Some((successor, amounts));
+                (None, valid_for_seconds, value_nanotos, output_dir)
+            }
+            Request::AttachSuccessor { .. }
+            | Request::Successor { .. }
+            | Request::Migrate { .. }
+            | Request::Promote { .. } => {
+                anyhow::bail!("nested session control is not permitted")
+            }
+            Request::Quit => anyhow::bail!("session already closing"),
+        };
+        anyhow::ensure!((1..=3600).contains(&valid_for_seconds), "fee TTL out of range");
+        let value = decimal_amount(&value_nanotos)?;
+        journal.preview_proven(&view, now()?)?;
+        let needs_primary_policy = preparation
+            .as_ref()
+            .is_some_and(|(successor, _)| successor.policy() == RescuePolicy::Ready);
+        let proof = context.read(if needs_primary_policy { &[48] } else { &[] }).await?;
+        let deadline = now()?
+            .checked_add(valid_for_seconds)
+            .ok_or_else(|| anyhow::anyhow!("deadline overflow"))?;
+        let (class, submission) = if let Some((successor, amounts)) = &preparation {
+            let request = proof.view.preparation_request(
+                now()?,
+                deadline,
+                successor,
+                *amounts,
+                Some(&proof.wallet),
+            )?;
+            anyhow::ensure!(
+                value > request.deployment_value(),
+                "preparation needs execution funding above deployment amounts"
+            );
+            std::fs::create_dir(&output_dir)?;
+            put(&output_dir, "preparation-request.boc", &chain_block::write_boc(request.cell())?)?;
+            put(
+                &output_dir,
+                "successor-module-init.boc",
+                &chain_block::write_boc(successor.module_init())?,
+            )?;
+            put(
+                &output_dir,
+                "successor-vault-init.boc",
+                &chain_block::write_boc(successor.vault_init())?,
+            )?;
+            let rescue =
+                open_vault_file(&self.rescue_vault_file, Some(&self.rescue_vault_key_file), None)
+                    .await?;
+            let id = SecretId::new(&self.rescue_record_id);
+            let submission = VaultKey { vault: &rescue, id: &id }
+                .sign_preparation(
+                    &proof.view,
+                    now,
+                    deadline,
+                    successor,
+                    *amounts,
+                    Some(&proof.wallet),
+                )
+                .await?;
+            drop(rescue);
+            (FeeClass::Prepare, submission)
+        } else if let Some(role) = pop_role {
+            let (role, file, key, id) = match role {
+                PopRole::Primary => (
+                    AuthRole::Primary,
+                    self.primary_vault_file
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("PRIMARY POP custody is required"))?,
+                    self.primary_vault_key_file
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("PRIMARY POP key file is required"))?,
+                    self.primary_record_id
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("PRIMARY POP record is required"))?,
+                ),
+                PopRole::Rescue => (
+                    AuthRole::Rescue,
+                    &self.rescue_vault_file,
+                    &self.rescue_vault_key_file,
+                    &self.rescue_record_id,
+                ),
+            };
+            anyhow::ensure!(!id.trim().is_empty(), "POP record ID must not be empty");
+            let module = context.pop_module_at(proof.wallet.evidence().checkpoint.clone()).await?;
+            let request = match context.pop_enrollment() {
+                Some(successor) => PopRequest::fresh_successor(
+                    successor,
+                    role,
+                    deadline,
+                    module.evidence().block_gen_utime,
+                )?,
+                None => PopRequest::fresh_initial(
+                    context.enrollment(),
+                    role,
+                    deadline,
+                    module.evidence().block_gen_utime,
+                )?,
+            };
+            std::fs::create_dir(&output_dir)?;
+            // Retain this exact fresh challenge before opening signing custody.
+            put(&output_dir, "pop-request.boc", &chain_block::write_boc(request.cell())?)?;
+            let vault = open_vault_file(file, Some(key), None).await?;
+            let id = SecretId::new(id);
+            let signer = VaultKey { vault: &vault, id: &id };
+            let submission = match context.pop_enrollment() {
+                Some(successor) => signer.sign_pop_successor(&request, successor, now).await?,
+                None => signer.sign_pop_initial(&request, context.enrollment(), now).await?,
+            };
+            drop(vault);
+            // Possession does not authorize spending, even for a PRIMARY key.
+            // Revalidate the initial enrollment after asynchronous secret loading.
+            let observed = context.read(&[]).await?;
+            let module =
+                context.pop_module_at(observed.wallet.evidence().checkpoint.clone()).await?;
+            put(
+                &output_dir,
+                "module-observed-account.boc",
+                &chain_block::write_boc(module.root())?,
+            )?;
+            (FeeClass::Pop, submission)
+        } else {
+            let action = execute_actions.as_ref().map_or(AuthAction::LockPrimary, |actions| {
+                AuthAction::Execute { actions: actions.clone() }
+            });
+            proof.view.rescue_request(now()?, deadline, action.clone())?;
+            std::fs::create_dir(&output_dir)?;
+            let rescue =
+                open_vault_file(&self.rescue_vault_file, Some(&self.rescue_vault_key_file), None)
+                    .await?;
+            let id = SecretId::new(&self.rescue_record_id);
+            let submission = VaultKey { vault: &rescue, id: &id }
+                .sign_rescue(&proof.view, now, deadline, action)
+                .await?;
+            drop(rescue);
+            (FeeClass::RescueAuth, submission)
+        };
+        let (observed_fee, view) = context.fee_snapshot().await?;
+        if pop_role.is_some() {
+            put(
+                &output_dir,
+                "fee-observed-account.boc",
+                &chain_block::write_boc(observed_fee.root())?,
+            )?;
+        }
+        let plan = journal.preview_proven(&view, now()?)?;
+        if let Some((successor, amounts)) = &preparation {
+            proof.view.preparation_request(
+                now()?,
+                deadline,
+                successor,
+                *amounts,
+                Some(&proof.wallet),
+            )?;
+        } else if pop_role.is_none() {
+            let action = execute_actions.as_ref().map_or(AuthAction::LockPrimary, |actions| {
+                AuthAction::Execute { actions: actions.clone() }
+            });
+            proof.view.rescue_request(now()?, deadline, action)?;
+        }
+        let intent = FeeIntent::new(
+            FeeBinding {
+                vault: view.route().vault,
+                config_hash: *view.config_hash(),
+                epoch0: view.route().epoch0,
+                leaf: plan.leaf,
+                valid_until: deadline,
+                value,
+            },
+            FeePayload::from_submission(class, submission.clone())?,
+            view.proven_time(),
+        )?;
+        // Persist the complete intent before any stateful fee signature.
+        put(&output_dir, "pending-intent.boc", &chain_block::write_boc(intent.cell())?)?;
+        let fee =
+            open_vault_file(&self.fee_vault_file, Some(&self.fee_vault_key_file), None).await?;
+        let id = SecretId::new(&self.fee_record_id);
+        let signed = journal
+            .sign_proven_fee_from_vault_tree(
+                &fee,
+                &id,
+                &view,
+                fee_clock,
+                deadline,
+                value,
+                FeePayload::from_submission(class, submission)?,
+                tree,
+            )
+            .await?;
+        drop(fee);
+        anyhow::ensure!(
+            signed.intent().digest() == intent.digest(),
+            "fee signing changed the persisted intent"
+        );
+        let signed = journal.retry_proven_fee(&view, now()?, &intent)?;
+        export(&output_dir, &signed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_rotation_capacity;
+
+    #[test]
+    fn journal_rotation_capacity_boundary() {
+        require_rotation_capacity(31).expect("one remaining journal slot");
+        assert!(require_rotation_capacity(32).is_err(), "session accepted a 33rd retired journal");
+        assert!(require_rotation_capacity(usize::MAX).is_err(), "oversized journal count accepted");
+    }
+}

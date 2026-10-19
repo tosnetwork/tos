@@ -1,0 +1,24 @@
+Follow-up validation — 2026-10-10
+Source revision: 499334ae1b66ac03944f8a63d39435763fbea2b5
+
+The committed ceremony is now finished. The binding fixture audits it directly
+for finished inputs and creates a separate one-participant open ceremony for
+unfinished inputs. No production guard was changed in the committed fix.
+
+Commands (from repository root):
+export TOS_ROOT="$PWD" FUNC_PATH="$PWD/build/crypto/func" FIFT_PATH="$PWD/build/crypto/fift" RAYON_NUM_THREADS=8
+cargo test --release --locked --no-fail-fast --manifest-path tools/shielded-pool-circuit/Cargo.toml
+cargo test --release --locked --no-fail-fast --manifest-path tools/shielded-pool-wallet/Cargo.toml
+cargo test --release --locked --no-fail-fast --manifest-path tools/shielded-pool-genesis/Cargo.toml
+All three commands exited 0. The ceremony_binding suite passed all 10 tests.
+
+Sensitivity control:
+Temporarily replace the finished/beacon match in CeremonyKey::from_audit with
+an unconditional beacon digest (use the audited digest or 64 zeroes), thereby
+removing the unfinished-ceremony refusal. Run:
+cargo test --release --locked --manifest-path tools/shielded-pool-genesis/Cargo.toml --test ceremony_binding an_unfinished_ceremony_is_refused -- --exact
+Target result with guard bypassed: FAILED, 0 passed, 1 failed.
+Assertion reason: the request was accepted.
+Restore the original production source and rerun the same command:
+Target result: ok, 1 passed, 0 failed, 9 filtered out.
+The mutation was restored and was never staged or committed.

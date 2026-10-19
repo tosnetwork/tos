@@ -33,6 +33,10 @@ namespace overlay {
 
 class Overlay : public td::actor::Actor {
  public:
+  virtual void collect_metrics(td::Promise<td::Unit> done) {
+    done.set_value(td::Unit());
+  }
+
   using BroadcastHash = td::Bits256;
   using BroadcastDataHash = td::Bits256;
   using BroadcastPartHash = td::Bits256;
@@ -58,8 +62,11 @@ class Overlay : public td::actor::Actor {
 
   virtual void receive_message(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
                                td::BufferSlice data) = 0;
+  // Answers carry delivery metadata for the transport, so the overlay
+  // forwards a callback's answer whole. This internal interface took plain
+  // data before; its one caller, the overlay manager, was migrated with it.
   virtual void receive_query(adnl::AdnlNodeIdShort src, tl_object_ptr<tos_api::overlay_messageExtra> extra,
-                             td::BufferSlice data, td::Promise<td::BufferSlice> promise) = 0;
+                             td::BufferSlice data, td::Promise<adnl::AdnlQueryAnswer> promise) = 0;
   virtual void send_message_to_neighbours(td::BufferSlice data) = 0;
   virtual void send_broadcast(PublicKeyHash send_as, td::uint32 flags, td::BufferSlice data) = 0;
   virtual void send_broadcast_fec(PublicKeyHash send_as, td::uint32 flags, td::BufferSlice data,
@@ -75,7 +82,6 @@ class Overlay : public td::actor::Actor {
   virtual void add_certificate(PublicKeyHash key, std::shared_ptr<Certificate>) = 0;
   virtual void set_privacy_rules(OverlayPrivacyRules rules) = 0;
   virtual void receive_nodes_from_db(tl_object_ptr<tos_api::overlay_nodes> nodes) = 0;
-  virtual void receive_nodes_from_db_v2(tl_object_ptr<tos_api::overlay_nodesV2> nodes) = 0;
   virtual void get_stats(td::Promise<tl_object_ptr<tos_api::engine_validator_overlayStats>> promise) = 0;
   virtual void update_throughput_out_ctr(adnl::AdnlNodeIdShort peer_id, td::uint64 msg_size, bool is_query,
                                          bool is_response) = 0;

@@ -1,0 +1,230 @@
+{
+  "base": "8bf39647d6cde0b00fc8c49e8ecb354be85d4897",
+  "scope": "Workflow and Python CI controls only; no production C++, Rust, FunC or cryptographic fixture changes.",
+  "pending": [
+    "Hosted execution of all 19 automatic dual-architecture workers and both parity gates",
+    "Measure signer shards and overall workflow wall time"
+  ],
+  "artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-split-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "actionlint.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "file": "baseline-equivalence.log",
+        "bytes": 137,
+        "sha256": "5fd1457f3388ea0c42a4f03752c93201c1fb67bc4f75a52b0e0b91738407327b"
+      },
+      {
+        "file": "baseline-equivalence.py",
+        "bytes": 1347,
+        "sha256": "53d4727a51a7d96d78f8cd8e90c4771e5e37966fd8d9fa82a31d746e027168d3"
+      },
+      {
+        "file": "coverage.log",
+        "bytes": 87,
+        "sha256": "8b84b522cfc7faebe3784324ec6bdd0778ad28a01236a968da4560be23dbad79"
+      },
+      {
+        "file": "guard-sensitivity.log",
+        "bytes": 43111,
+        "sha256": "8e8401779c41507f51deb356ecf87cefc005c122724e41d3af70e6547143357b"
+      },
+      {
+        "file": "guard-sensitivity.py",
+        "bytes": 1300,
+        "sha256": "067258b6f3c75e67c7f95c46a6763cc3d807139e45ae034ba7b059175913aa9c"
+      },
+      {
+        "file": "negative-tests.log",
+        "bytes": 103,
+        "sha256": "986d795753a01f3edab4eac3346f8f466ab5813adf566a890ca62b76a5e66e5a"
+      },
+      {
+        "file": "receipt-cli.log",
+        "bytes": 1104,
+        "sha256": "59e3be1d17b992a12d0cab392680f7caafc2a5096edfc20b41bda3f0d60695da"
+      }
+    ]
+  },
+  "commands": [
+    "python3 scripts/check-rescue-context-ci.py",
+    "python3 scripts/test_rescue_context_ci.py",
+    "actionlint -shellcheck= -pyflakes= .github/workflows/rescue-context.yml .github/workflows/source-guards.yml",
+    "ruff check scripts/check-rescue-context-ci.py scripts/test_rescue_context_ci.py",
+    "ruff format --check scripts/check-rescue-context-ci.py scripts/test_rescue_context_ci.py",
+    "git diff --check"
+  ],
+  "initial_split_validation": {
+    "baseline_equivalence": "52 unchanged shell bodies and original architecture policies",
+    "scheduled_workers": 9,
+    "max_parallel": 4,
+    "guard_unit_methods_passed": 5,
+    "step_deletion_change_skip_mutants": 156,
+    "guard_removal_controls": {
+      "command_integrity": "52 assertion failures after removing the guard",
+      "matrix_failure_propagation": "1 assertion failure after removing the guard",
+      "receipt_completeness": "1 assertion failure after removing the guard"
+    },
+    "receipt_cli": "nine worker receipts and partial-rerun reuse pass",
+    "actionlint": "v1.7.12; workflow validation passed (external shellcheck/pyflakes disabled)",
+    "bash_syntax": "all run blocks pass bash -n",
+    "ruff": "check and format pass",
+    "diff_whitespace": "pass"
+  },
+  "initial_hosted_result": {
+    "run_id": 38839495687,
+    "conclusion": "success",
+    "wall_seconds": 6809
+  },
+  "local_results": {
+    "baseline_equivalence": "51 original literal scripts unchanged; three concatenated signer parts reconstruct the remaining original script byte for byte",
+    "scheduled_workers": 19,
+    "max_parallel": 20,
+    "guard_unit_methods_passed": 8,
+    "step_deletion_change_skip_mutants": 162,
+    "additional_controls": "every consumer prerequisite, CLI in all three fee suites, parallel capacity, matrix failures and complete receipts",
+    "guard_removal_controls": {
+      "command_integrity": "51 assertion failures after removing per-step hash guard; split reconstruction remains active",
+      "matrix_failure_propagation": "1 intended assertion failure",
+      "receipt_completeness": "1 intended assertion failure",
+      "split_reconstruction": "changed command accepted when original-block reconstruction guard is removed; test fails with ValueError not raised"
+    },
+    "actionlint": "v1.7.12; passes with external shellcheck/pyflakes disabled",
+    "bash_syntax": "every run block passes bash -n",
+    "ruff": "check and format pass",
+    "diff_whitespace": "pass",
+    "event_policy": "PR and manual dispatch: all 19 dual-architecture workers",
+    "receipt_cli": "actual generation and complete/missing/wrong-event rejection for both events; complete x86-only receipt sets rejected for both events",
+    "split_command_integrity": "changed command rejected even if the part hash is updated; reordering parts rejected",
+    "automatic_arm_sensitivity": "Restoring manual-only PR filtering fails at intended worker-count assertion (10 != 19), with no setup errors"
+  },
+  "refined_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-subhour-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "baseline-equivalence.log",
+        "bytes": 137,
+        "sha256": "5fd1457f3388ea0c42a4f03752c93201c1fb67bc4f75a52b0e0b91738407327b"
+      },
+      {
+        "file": "coverage.log",
+        "bytes": 88,
+        "sha256": "974f940d9e647203368ba2811b4ee7e1ce98d2dcb57cb67f8be7bedf38046a2a"
+      },
+      {
+        "file": "guard-sensitivity.log",
+        "bytes": 43111,
+        "sha256": "14c816e4f3f689cffe2433fad931ee6d9612366f285e2ded36f771daa524b654"
+      },
+      {
+        "file": "negative-tests.log",
+        "bytes": 104,
+        "sha256": "34a1d2caea11c396ad445c470c16da76f0a475fd8ffac12ee0ad5335d6f255e2"
+      },
+      {
+        "file": "project_schedule.py",
+        "bytes": 2111,
+        "sha256": "54b13c4ecd601261f2092e17a29360365e0ba1aac14488e69096487dab0e2cac"
+      },
+      {
+        "file": "projection.json",
+        "bytes": 2040,
+        "sha256": "3c7b482190358691ba82e6760486fea375c47c7207d542414bb074398c51b232"
+      },
+      {
+        "file": "source-jobs.json",
+        "bytes": 183805,
+        "sha256": "db7b478c8b93c67029dcc43532cd11b19328e501ff32cb9c1eecffece7fb25ad"
+      }
+    ]
+  },
+  "manual_arm_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-manual-arm-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "coverage.log",
+        "bytes": 88,
+        "sha256": "974f940d9e647203368ba2811b4ee7e1ce98d2dcb57cb67f8be7bedf38046a2a"
+      },
+      {
+        "file": "event-sensitivity.log",
+        "bytes": 756,
+        "sha256": "222426371b213d41460b731a59fb8e577a67fe5db0aa6f3ed7cd2a8a0deac145"
+      },
+      {
+        "file": "event-sensitivity.py",
+        "bytes": 650,
+        "sha256": "0971624a96ff10e9348060f1bc80596d727d5705efe97c8f048457f902bf3cec"
+      },
+      {
+        "file": "guard-sensitivity.log",
+        "bytes": 43163,
+        "sha256": "fa56f921c2d942c4443cc85be8d19b32ebb8fbed7d1755a93972a8d0ec5126ad"
+      },
+      {
+        "file": "tests.log",
+        "bytes": 105,
+        "sha256": "782c57c0e31414414e90184d8b7655c9b64135898b9219b40cf3963856c9b929"
+      }
+    ]
+  },
+  "signer_shard_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-signer-shards-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "coverage.log",
+        "bytes": 88,
+        "sha256": "dc2c6aa56baa7845ddbf9afd433f1d8c9a280be9b1e69fc6fe4533821790cf13"
+      },
+      {
+        "file": "guard-sensitivity.log",
+        "bytes": 42368,
+        "sha256": "86efc7404fd9c8044faa1e32caf5b8fa378998be055bf8c87f401eb22e35ea9f"
+      },
+      {
+        "file": "split-sensitivity.log",
+        "bytes": 929,
+        "sha256": "8f5396d05296c4f39ccb47966dac457aa624c068e4b1609cdd5f9e73b507d0a0"
+      },
+      {
+        "file": "split-sensitivity.py",
+        "bytes": 825,
+        "sha256": "c59e4493d007d795088a263efd77601670abf96279cf8466d06f1d44b7f9052c"
+      },
+      {
+        "file": "tests.log",
+        "bytes": 106,
+        "sha256": "c404e7d8ddffa74e581b05c5824cdb7093037f3d0a9620a13e460e85427e415d"
+      }
+    ]
+  },
+  "restored_arm_artifacts": {
+    "directory": "/Users/tomisetsu/.codex/artifacts/tos-rescue-ci-restore-arm-20261016",
+    "retain_through": "2026-11-15",
+    "files": [
+      {
+        "file": "event-sensitivity.log",
+        "bytes": 776,
+        "sha256": "e7933be7d7a94a83e12a8279a5aa1356d1a9eaaae1fb31feb252d3492a651080"
+      },
+      {
+        "file": "event-sensitivity.py",
+        "bytes": 787,
+        "sha256": "0fdc33644b6d9924790d08c2b8535aa8a8a9e8b04f9ba7fab2c19df5ff97ee2c"
+      },
+      {
+        "file": "tests.log",
+        "bytes": 106,
+        "sha256": "c4a8b8380ddf0724c2788ad84dd796431e93c2d4aea64046dc39435d7758a4b9"
+      }
+    ]
+  }
+}

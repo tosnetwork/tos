@@ -1,0 +1,9 @@
+# C09 retention dry-run control — no live call
+
+Base source commit: `e4466ee91f78616bfadb6b1ebf7ef8fcef04a87b`. Dry-run script SHA-256: `446740160045f78fcdffc1695257d55daceb3b3788aa075e6108778743ee42bf`; test SHA-256: `148b17a98d919620a18df06258d81bede3a9e8f94158dc55626565fbe8cde460`.
+
+`python3 -B tools/node-health-monitor/scripts/test-plan-c09-retention-dry-run.py`: 7 disposable SQLite tests, exit 0. They check exact Q cursor/M inode binding, non-process global anchor, Q retained-origin and control source-reference page overlap, unknown source classification, zero deletion candidates, missing or old anchor rejection, over-bound Q pins, private file permissions, and unchanged SHA-256 of M/Q/control fixture files. A filename containing both `#` and `?` is percent-encoded with `Path.as_uri()`; `PRAGMA database_list` verifies the opened file's path/inode. A 100-KiB malformed source TEXT reaches the fixed 128-byte source guard without exporting the full value. The page reports body bytes separately from bounded source metadata. The snapshot is explicitly provisional: `pin_integrity=not_verified` and `age_eligibility=not_evaluated_unknown_class_or_clock`.
+
+Sensitivity control copied source and tests to a temporary directory and changed only `anchor_seq != q_watermark` to `anchor_seq > q_watermark`. With bytecode disabled, baseline exit 0 → mutant exit 1 on `test_old_anchor_below_global_watermark_refuses` → restored exit 0. This dry-run imposes a stricter equality precondition than the current Q `validate_manager_cursor`, which permits `anchor_seq<=W`; the page producer itself emits equality. The mismatch remains an open Q validator review, not a claim that production already enforces it.
+
+The script has never been invoked on live M/Q/control. It does not persist a prune cursor, classify age eligibility, return deleteable row IDs, or authorize retention. No M/Q/control/collector/service source or runtime was modified.

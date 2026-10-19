@@ -1,0 +1,41 @@
+{
+  "scope": "Android actual blocked proof callback cancellation in main app; public fixture-only state, no transaction signing",
+  "android_revision": "8e3c71b",
+  "validation": [
+    "Cancellation interrupts sleeping transport within five-second bound",
+    "No checkpoint is committed on cancellation",
+    "Subsequent explicit acquisition reaches transport, proving native checkpoint lock released",
+    "Interruptible worker replacement with ordinary IO compiles and fails named cancellation-time assertion",
+    "Restored registration/custody/observation/cancellation test passes"
+  ],
+  "excluded": [
+    "Initial control terminated through a child exception before the intended assertion; excluded and repeated after collecting the child outcome"
+  ],
+  "artifacts": [
+    {
+      "file": "20261007-android-proof-cancel-fixed-baseline.log",
+      "bytes": 77925,
+      "sha256": "251569f5fd4755c4908d2317a280b5ebcabba3c5d388bac65e0223cf338a9f17"
+    },
+    {
+      "file": "20261007-android-proof-cancel-runtime-control.log",
+      "bytes": 79076,
+      "sha256": "e55055042ac1f122f57d415ca85328297d33ffa44cfc85377c3f25a690906fd0"
+    },
+    {
+      "file": "20261007-android-proof-cancel-runtime-control.xml",
+      "bytes": 1653,
+      "sha256": "fac06621f1a10484eb1e581509d277ffd82ddb628a35446dff1ee0ba1393a53c"
+    },
+    {
+      "file": "20261007-android-proof-cancel-restored.log",
+      "bytes": 77968,
+      "sha256": "bac63b920f5be4d0cad9ff13c9a5657ee58eda677e93301b32cc438bac78aace"
+    }
+  ],
+  "pending": [
+    "Physical device and real HTTP slow-stream/socket cancellation",
+    "Positive deployed multi-account proof/signing lifecycle",
+    "iOS equivalent async cancellation/lock release"
+  ]
+}

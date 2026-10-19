@@ -22,6 +22,25 @@ library Key  // Key loading and public key codecs
   256 B>u@
 } : parse-pubkey
 { bl word parse-pubkey 1 'nop } ::_ PK'
+// ( x -- ? )  true for the prohibited weak and non-canonical Ed25519 public
+// keys, as the 256-bit integer the 32 encoded bytes give: the eight torsion
+// encodings, the identity and order-2 point with the sign bit set, and every
+// y >= 2^255 - 19. The same set crypto/smartcont/strong-ed25519-key.fc refuses;
+// signatures forged with no secret are shown for some of them, not all.
+{ dup 248 >> 0xec >=
+  { dup 8 >> 1 240 << 1- and 1 240 << 1- = swap 127 and 127 = and }
+  { 0x80 or
+    dup 0x80 =
+    over 0x0100000000000000000000000000000000000000000000000000000000000080 = or
+    over 0x26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85 = or
+    swap 0xc7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa = or
+  } cond
+} : weak-ed25519-pubkey?
+// ( x -- x )  aborts on a key a contract's owner must not have
+{ dup weak-ed25519-pubkey? abort"public key is a weak or non-canonical Ed25519 encoding"
+} : check-owner-pubkey
+// ( S -- x )  parse a public key that is to own a contract
+{ parse-pubkey check-owner-pubkey } : parse-owner-pubkey
 // ( x -- S )  serialize public key
 { 256 u>B B{3ee6} swap B+ dup crc16 16 u>B B+ B>base64 } : pubkey>$
 { pubkey>$ type } : .pubkey

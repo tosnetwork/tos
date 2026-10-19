@@ -393,16 +393,19 @@ Set the chain RPC URL and optional API key.
 | Flag | Short form | Description |
 |------|------------|-------------|
 | `--url <URL>` | `-u` | Chain RPC endpoint URL |
-| `--api-key <KEY>` | `-k` | API key (optional) |
+| `--api-key-file <PATH>` | | Read the API key from an owner-only (0600) file |
+| `--api-key-fd <FD>` | | Read the API key from an open file descriptor or pipe |
+| `--api-key-prompt` | | Prompt for the API key without echo |
 
 ```bash
 # Set chain RPC URL
 tosctl config chain-rpc set --url "http://127.0.0.1:3301/"
 
-# Set with API key
+# Set with an API key read from a protected file (never pass it on the
+# command line, where other local users can read it)
 tosctl config chain-rpc set \
   --url "http://127.0.0.1:3301/" \
-  --api-key "your-api-key"
+  --api-key-file ./chain-rpc-api-key
 ```
 
 ---
@@ -621,14 +624,23 @@ Import an existing private key into the vault.
 | Flag | Short form | Description |
 |------|------------|-------------|
 | `--name <NAME>` | `-n` | Key name (unique identifier in the vault) |
-| `--private-key <KEY>` | `-k` | Private key (base64) |
+| `--private-key-file <PATH>` | | Read the base64 private key from a file you own with mode `0600` |
+| `--private-key-fd <N>` | | Read the base64 private key from an inherited descriptor (`0` for standard input, or `3` and above): a pipe, a socket, or a regular file you own with mode `0600` |
 | `--algorithm <ALG>` | `-a` | Algorithm (default: `ed25519`) |
 | `--extractable` | `-e` | Mark key as extractable |
 
+With neither `--private-key-file` nor `--private-key-fd`, the command prompts for the key without echo. The key is never a command-line value: process arguments are readable by other local processes and are kept by shell history. The former `--private-key`/`-k` option is refused with an error, and a key that was passed that way should be treated as exposed. A symlink, a non-regular file, or a file readable or writable by group or others is refused. Environment variables are not accepted as a key source.
+
 ```bash
-tosctl key import \
-  --name "wallet0-key" \
-  --private-key "base64-encoded-private-key"
+# From a protected file
+install -m 600 /dev/null wallet0.key && $EDITOR wallet0.key
+tosctl key import --name "wallet0-key" --private-key-file wallet0.key
+
+# From a pipe on standard input (for example, from a secret manager)
+secret-manager read wallet0-key | tosctl key import --name "wallet0-key" --private-key-fd 0
+
+# Interactively, without echo
+tosctl key import --name "wallet0-key"
 ```
 
 ---
@@ -775,6 +787,7 @@ Deploy a Single Nominator Pool contract.
 | `--config <FILE>` | `-c` | Path to the configuration file. Can also be set as an environment variable CONFIG_PATH |
 | `--node <NAME>` | | Node ID (the wallet of this node is used to deploy the pool) |
 | `--owner <ADDRESS>` | | Address of the pool owner |
+| `--controller <ADDRESS>` | | Validator controller the pool relays its stake through |
 | `--amount <TOS>` | | Amount of TOS to transfer to the pool contract for deployment |
 | `--verbose` | | Print deployment progress |
 
@@ -783,10 +796,11 @@ tosctl deploy pool \
   --config config.json \
   --node node0 \
   --owner "-1:owner_address_here" \
+  --controller "-1:validator_controller_address_here" \
   --amount 1.5
 ```
 
-The command calculates the pool address from the owner and validator wallet, sends a deploy message with the specified amount, and waits for the contract to become active. The result is printed as JSON with the pool address and deployment status.
+The command calculates the pool address from the owner wallet, the validator wallet and the validator controller, sends a deploy message with the specified amount, and waits for the contract to become active. All three are part of the contract's storage, so naming a different controller produces a different address. The result is printed as JSON with the pool address and deployment status.
 
 > **Note**: The validator wallet must be in the `Active` state and have enough balance to cover the transfer amount. If the pool is already deployed, the command exits without sending a transaction.
 
@@ -1320,7 +1334,9 @@ Configuration is specified in JSON format.
     "level": "INFO",
     "output": "console"
   },
-  "tick_interval": 40
+  "tick_interval": 40,
+  // optional, default true
+  "indexer_enabled": true
 }
 ```
 
@@ -1433,6 +1449,15 @@ Logging configuration:
 - `level` — log level: `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE` (default: `INFO`)
 - `output` — log output target: `console`, `file`, or `all` (default: `console`)
 
+#### `indexer_enabled` (optional)
+
+Whether `tosctl service` runs the chain-wide explorer indexer (default: `true`).
+
+- `true` — the indexer task runs and keeps `tosctl-indexer.db` (next to the config file) up to date; the explorer and agent-query HTTP routes read from it.
+- `false` — for hosts that only need elections and voting, such as validator hosts. The indexer task is not started and `tosctl-indexer.db` is neither created nor opened. Elections, voting and the control API run as before. Every HTTP route that reads the index (`/explorer/*`, `/disputes`, `/services`, `/registry` and their per-address forms) answers `503` with error kind `indexer_disabled`; `/tasks` lists only the locally configured tasks.
+
+The key is read when the service starts; restart the service after changing it. `tosctl explorer` refuses to start with `indexer_enabled: false`, since the index is all it serves.
+
 ### Default Config Example
 
 ```json
@@ -1466,6 +1491,7 @@ Logging configuration:
     "workchain": 0
   },
   "tick_interval": 40,
+  "indexer_enabled": true,
   "log": {
     "max_size_mb": 50,
     "max_files": 10,
@@ -1670,10 +1696,10 @@ tosctl auth rm viewer
 # List all vault keys
 tosctl key ls
 
-# Import an existing key
+# Import an existing key (from a mode-0600 file; see `key import`)
 tosctl key import \
   --name "imported-key" \
-  --private-key "base64-private-key" \
+  --private-key-file imported-key.b64 \
   --extractable
 
 # Remove a key

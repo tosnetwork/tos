@@ -20,11 +20,11 @@
 #pragma once
 
 #include "adnl/adnl-ext-client.h"
+#include "net/download-state.hpp"
 #include "validator/interfaces/block-handle.h"
 
+#include "full-node-shard-admission.h"
 #include "full-node.h"
-#include "net/download-state.hpp"
-#include "rate-limiter.h"
 
 namespace tos {
 
@@ -81,6 +81,8 @@ class FullNodeShard : public td::actor::Actor {
                                    td::Promise<std::vector<BlockIdExt>> promise) = 0;
   virtual void download_archive(BlockSeqno masterchain_seqno, ShardIdFull shard_prefix, std::string tmp_dir,
                                 td::Timestamp timeout, td::Promise<std::string> promise) = 0;
+  virtual void probe_next_masterchain_block(BlockIdExt prev, td::Timestamp deadline, td::uint32 probe_budget,
+                                            td::Promise<startup_catchup::RoundResult> promise) = 0;
   virtual void download_out_msg_queue_proof(ShardIdFull dst_shard, std::vector<BlockIdExt> blocks,
                                             block::ImportedMsgQueueLimits limits, td::Timestamp timeout,
                                             td::Promise<std::vector<td::Ref<OutMsgQueueProof>>> promise) = 0;
@@ -91,7 +93,8 @@ class FullNodeShard : public td::actor::Actor {
 
   static td::actor::ActorOwn<FullNodeShard> create(
       ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-      FullNodeOptions opts, std::shared_ptr<RateLimiter<>> limiter, td::actor::ActorId<keyring::Keyring> keyring,
+      FullNodeOptions opts, std::shared_ptr<FullNodeRateLimiter> limiter,
+      std::shared_ptr<RefusalAnswerBudget> refusal_answers, td::actor::ActorId<keyring::Keyring> keyring,
       td::actor::ActorId<adnl::Adnl> adnl, td::actor::ActorId<rldp2::Rldp> rldp2,
       td::actor::ActorId<quic::QuicSender> quic, td::actor::ActorId<overlay::Overlays> overlays,
       td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client,

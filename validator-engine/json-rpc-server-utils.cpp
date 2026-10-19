@@ -34,7 +34,7 @@ void JsonRpcServer::handle_packAddress(td::JsonObject &params, std::string req_i
                                        td::Promise<HttpReturn> promise) {
   auto addr_str_r = params.get_required_string_field("address");
   if (addr_str_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'address'", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'address'", req_id));
     return;
   }
   auto addr_str = addr_str_r.move_as_ok();
@@ -42,7 +42,7 @@ void JsonRpcServer::handle_packAddress(td::JsonObject &params, std::string req_i
   // Parse raw address (workchain:hex)
   block::StdAddress addr;
   if (!addr.parse_addr(td::Slice(addr_str))) {
-    promise.set_value(make_json_error(-32602, "Invalid raw address", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Invalid raw address", req_id));
     return;
   }
 
@@ -51,7 +51,7 @@ void JsonRpcServer::handle_packAddress(td::JsonObject &params, std::string req_i
   addr.testnet = false;
   auto packed = addr.rserialize(true);  // base64url
   if (packed.empty()) {
-    promise.set_value(make_json_error(-32603, "Failed to serialize address", req_id));
+    promise.set_value(make_json_rpc_error(-32603, "Failed to serialize address", req_id));
     return;
   }
 
@@ -65,7 +65,7 @@ void JsonRpcServer::handle_unpackAddress(td::JsonObject &params, std::string req
                                          td::Promise<HttpReturn> promise) {
   auto addr_str_r = params.get_required_string_field("address");
   if (addr_str_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'address'", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'address'", req_id));
     return;
   }
   auto addr_str = addr_str_r.move_as_ok();
@@ -73,7 +73,7 @@ void JsonRpcServer::handle_unpackAddress(td::JsonObject &params, std::string req
   // Parse user-friendly address
   block::StdAddress addr;
   if (!addr.parse_addr(td::Slice(addr_str))) {
-    promise.set_value(make_json_error(-32602, "Invalid address", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Invalid address", req_id));
     return;
   }
 
@@ -89,14 +89,14 @@ void JsonRpcServer::handle_detectAddress(td::JsonObject &params, std::string req
                                          td::Promise<HttpReturn> promise) {
   auto addr_str_r = params.get_required_string_field("address");
   if (addr_str_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'address'", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'address'", req_id));
     return;
   }
   auto addr_str = addr_str_r.move_as_ok();
 
   block::StdAddress addr;
   if (!addr.parse_addr(td::Slice(addr_str))) {
-    promise.set_value(make_json_error(-32602, "Invalid address", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Invalid address", req_id));
     return;
   }
 
@@ -162,14 +162,14 @@ void JsonRpcServer::handle_detectHash(td::JsonObject &params, std::string req_id
                                       td::Promise<HttpReturn> promise) {
   auto hash_str_r = params.get_required_string_field("hash");
   if (hash_str_r.is_error()) {
-    promise.set_value(make_json_error(-32602, "Missing 'hash'", req_id));
+    promise.set_value(make_json_rpc_error(-32602, "Missing 'hash'", req_id));
     return;
   }
   auto hash_str = hash_str_r.move_as_ok();
 
   auto decoded_r = decode_hash_input(hash_str);
   if (decoded_r.is_error()) {
-    promise.set_value(make_json_error(-32602, decoded_r.error().message().str(), req_id));
+    promise.set_value(make_json_rpc_error(-32602, decoded_r.error().message().str(), req_id));
     return;
   }
   auto raw_bytes = decoded_r.move_as_ok();
@@ -189,8 +189,7 @@ void JsonRpcServer::handle_detectHash(td::JsonObject &params, std::string req_id
 
 JsonRpcServer::HttpReturn JsonRpcServer::build_readyz_response(int status_code, std::string status_text,
                                                                std::string body, const std::string &cors_origin) {
-  auto response =
-      http::HttpResponse::create("HTTP/1.1", status_code, std::move(status_text), false, false).move_as_ok();
+  auto response = http::HttpResponse::create("HTTP/1.1", status_code, std::move(status_text), false, true).move_as_ok();
   response->add_header({"Content-Type", "application/json"});
   if (!cors_origin.empty()) {
     response->add_header({"Access-Control-Allow-Origin", cors_origin});

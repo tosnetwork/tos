@@ -32,6 +32,7 @@
 #include "tos/tos-types.h"
 #include "validator/validator.h"
 
+#include "full-node-shard-admission.h"
 #include "types.h"
 
 namespace tos {
@@ -41,7 +42,9 @@ namespace validator {
 namespace fullnode {
 
 constexpr int VERBOSITY_NAME(FULL_NODE_WARNING) = verbosity_WARNING;
-constexpr int VERBOSITY_NAME(FULL_NODE_BENCHMARK) = verbosity_WARNING;
+// Per-message serialization timings: DEBUG. At WARNING they were a fifth of a
+// validator's default log.
+constexpr int VERBOSITY_NAME(FULL_NODE_BENCHMARK) = verbosity_DEBUG;
 constexpr int VERBOSITY_NAME(FULL_NODE_NOTICE) = verbosity_INFO;
 constexpr int VERBOSITY_NAME(FULL_NODE_INFO) = verbosity_DEBUG;
 constexpr int VERBOSITY_NAME(FULL_NODE_DEBUG) = verbosity_DEBUG;
@@ -62,8 +65,9 @@ struct FullNodeOptions {
   double private_broadcast_speed_multiplier_ = 1.0;
   double fast_sync_broadcast_speed_multiplier_ = 1.0;
   double initial_sync_delay_ = 60.0;
-  double ratelimit_window_size_ = 1.0;
-  size_t ratelimit_global_ = 96, ratelimit_heavy_ = 64, ratelimit_medium_ = 72;
+  double ratelimit_window_size_ = k_default_ratelimit_window_size;
+  size_t ratelimit_global_ = k_default_ratelimit_global, ratelimit_heavy_ = k_default_ratelimit_heavy,
+         ratelimit_medium_ = k_default_ratelimit_medium;
 };
 
 struct CustomOverlayParams {
@@ -85,8 +89,8 @@ class FullNode : public td::actor::Actor {
 
   virtual void update_dht_node(td::actor::ActorId<dht::Dht> dht) = 0;
 
-  virtual void add_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
-  virtual void del_permanent_key(PublicKeyHash key, td::Promise<td::Unit> promise) = 0;
+  virtual void add_validator_adnl_id(adnl::AdnlNodeIdShort id) = 0;
+  virtual void del_validator_adnl_id(adnl::AdnlNodeIdShort id) = 0;
   virtual void add_collator_adnl_id(adnl::AdnlNodeIdShort id) = 0;
   virtual void del_collator_adnl_id(adnl::AdnlNodeIdShort id) = 0;
 
@@ -104,8 +108,8 @@ class FullNode : public td::actor::Actor {
 
   virtual void process_block_broadcast(BlockBroadcast broadcast, bool signatures_checked, BroadcastSource source,
                                        bool send_to_custom) = 0;
-  virtual void process_block_finality_broadcast(BlockFinalityBroadcast finality, BroadcastSource source,
-                                                bool send_to_custom) = 0;
+  virtual void process_block_finality_broadcast(BlockFinalityBroadcast finality, PublicKeyHash source_peer,
+                                                BroadcastSource source, bool send_to_custom) = 0;
   virtual void process_block_candidate_broadcast(BlockIdExt block_id, CatchainSeqno cc_seqno,
                                                  td::uint32 validator_set_hash, td::BufferSlice data,
                                                  BroadcastSource source, bool send_to_custom) = 0;
@@ -127,6 +131,10 @@ class FullNode : public td::actor::Actor {
   static constexpr td::uint64 max_zerostate_size() {
     return 16 << 20;
   }
+  // Overlay admission limits derived from the options, and a check that they
+  // can admit one of every mandatory request from a single source.
+  static FullNodeRateLimits rate_limits(const FullNodeOptions& opts);
+  static td::Status check_rate_limits(const FullNodeOptions& opts);
   enum { broadcast_mode_public = 1, broadcast_mode_fast_sync = 2, broadcast_mode_custom = 4 };
 
   static constexpr td::int32 MAX_FAST_SYNC_OVERLAY_CLIENTS = 5;

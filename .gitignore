@@ -10,6 +10,7 @@ crypto/block/block-auto.cpp
 crypto/block/block-auto.h
 crypto/smartcont/auto/
 test/regression-tests.cache/
+test/regression-tests.ans.lock
 *.swp
 **/*build*/
 # Convenience symlink to a build dir so tos_sandbox::compile can find func/fift
@@ -44,11 +45,7 @@ test/integration/.nominator-pool-lifecycle/
 
 test/tostester/tests/tl/generated
 test/tostester/src/tosapi
-build-mingw64/
-build-ucrt64/
 build/
-3pp_emscripten/
-/android-ndk-r27d-linux.zip
 
 # Claude Code agent workspaces (transient per-session state)
 .claude/

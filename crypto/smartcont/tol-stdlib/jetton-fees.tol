@@ -1,0 +1,140 @@
+// Jetton fee sufficiency checks priced from the live fee configuration.
+//
+// A wallet that compares the attached value against hard-coded nanocoin
+// constants stops being correct the moment ConfigParams 18/21/25 change: it
+// either rejects transfers it could afford or accepts transfers whose
+// receiving side then runs out of gas. These helpers keep only the
+// configuration-independent quantities (gas units, bits and cells, measured
+// once per contract build) as constants, and price them at execution time
+// with GETGASFEE, GETFORWARDFEE(SIMPLE) and GETSTORAGEFEE.
+tol 1.3
+
+import "@stdlib/gas-payments"
+import "@stdlib/jetton"
+
+const JETTON_FEES_THROW_INVALID_PROFILE = 0x1601
+
+/// Five years, the storage horizon a freshly deployed wallet must be able to
+/// pay for out of the value that deploys it.
+const JETTON_FEES_DEFAULT_MIN_STORAGE_SECONDS = 157680000
+
+/// Measured, configuration-independent cost inputs of one jetton wallet build.
+/// Gas figures are gas units of the named compute phase; bits/cells are the
+/// sizes the fee formulas are charged on. Re-measure them whenever the wallet
+/// code changes — a stale profile under-reserves silently.
+struct JettonFeeProfile {
+    walletStorageBits: uint32
+    walletStorageCells: uint32
+    walletInitStateBits: uint32
+    walletInitStateCells: uint32
+    burnNotificationBits: uint32
+    burnNotificationCells: uint32
+    sendTransferGas: uint32
+    receiveTransferGas: uint32
+    sendBurnGas: uint32
+    receiveBurnGas: uint32
+    minStorageSeconds: uint32
+}
+
+/// Rejects a profile in which any priced quantity is zero. A zero there does
+/// not mean "free": it means the measurement was never filled in.
+fun JettonFeeProfile.requireValid(self): void {
+    if (
+        self.walletStorageBits == 0 ||
+        self.walletStorageCells == 0 ||
+        self.walletInitStateBits == 0 ||
+        self.walletInitStateCells == 0 ||
+        self.burnNotificationBits == 0 ||
+        self.burnNotificationCells == 0 ||
+        self.sendTransferGas == 0 ||
+        self.receiveTransferGas == 0 ||
+        self.sendBurnGas == 0 ||
+        self.receiveBurnGas == 0 ||
+        self.minStorageSeconds == 0
+    ) {
+        throw JETTON_FEES_THROW_INVALID_PROFILE;
+    }
+}
+
+/// Gas units the current account is configured to be charged as a
+/// precompiled contract, or null when it is an ordinary contract.
+fun jettonFeesPrecompiledGas(): int?
+    asm "GETPRECOMPILEDGAS"
+
+/// Storage fee for keeping one wallet alive for `minStorageSeconds`.
+fun JettonFeeProfile.walletMinStorageFee(self): coins {
+    return calculateStorageFee(
+        BASECHAIN,
+        self.minStorageSeconds,
+        self.walletStorageBits,
+        self.walletStorageCells
+    );
+}
+
+/// Extra forwarding cost of carrying the receiving wallet's StateInit inside
+/// the internal transfer. The lump price is already in the message's own
+/// forward fee, so only the per-bit/per-cell part is added here.
+fun JettonFeeProfile.initStateForwardOverhead(self): coins {
+    return calculateForwardFeeWithoutLumpPrice(
+        BASECHAIN,
+        self.walletInitStateBits,
+        self.walletInitStateCells
+    );
+}
+
+/// Smallest attached value that is NOT enough for a transfer: the transfer
+/// is affordable only when `msgValue` is strictly greater than this.
+///
+/// Covers the forwarded amount, one forward fee per outgoing hop (two when a
+/// notification is forwarded), the StateInit overhead, the compute fee of the
+/// sending and the receiving wallet, and the receiving wallet's storage
+/// reserve. `fwdFee` is the forward fee of the incoming transfer message.
+fun JettonFeeProfile.requiredTransferValue(self, forwardTosAmount: coins, fwdFee: coins): coins {
+    self.requireValid();
+    var sendGas: int = self.sendTransferGas;
+    var receiveGas: int = self.receiveTransferGas;
+    val precompiled = jettonFeesPrecompiledGas();
+    if (precompiled != null) {
+        sendGas = precompiled;
+        receiveGas = precompiled;
+    }
+    val hops = (forwardTosAmount != 0) ? 2 : 1;
+    return forwardTosAmount
+        + hops * fwdFee
+        + self.initStateForwardOverhead()
+        + calculateGasFee(BASECHAIN, sendGas)
+        + calculateGasFee(BASECHAIN, receiveGas)
+        + self.walletMinStorageFee();
+}
+
+/// Throws the jetton wallet's insufficient-value code unless `msgValue`
+/// strictly exceeds [JettonFeeProfile.requiredTransferValue].
+fun JettonFeeProfile.requireTransferValue(self, msgValue: coins, forwardTosAmount: coins, fwdFee: coins): void {
+    if (msgValue <= self.requiredTransferValue(forwardTosAmount, fwdFee)) {
+        throw JETTON_WALLET_FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE;
+    }
+}
+
+/// Smallest attached value that is NOT enough for a burn: the forward fee of
+/// the burn notification plus the compute fee of the burning wallet and of
+/// the minter that processes the notification. The minter is never a
+/// precompiled wallet, so its side always uses the measured gas.
+fun JettonFeeProfile.requiredBurnValue(self): coins {
+    self.requireValid();
+    var sendGas: int = self.sendBurnGas;
+    val precompiled = jettonFeesPrecompiledGas();
+    if (precompiled != null) {
+        sendGas = precompiled;
+    }
+    return calculateForwardFee(BASECHAIN, self.burnNotificationBits, self.burnNotificationCells)
+        + calculateGasFee(BASECHAIN, sendGas)
+        + calculateGasFee(BASECHAIN, self.receiveBurnGas);
+}
+
+/// Throws the jetton wallet's burn-value code unless `msgValue` strictly
+/// exceeds [JettonFeeProfile.requiredBurnValue].
+fun JettonFeeProfile.requireBurnValue(self, msgValue: coins): void {
+    if (msgValue <= self.requiredBurnValue()) {
+        throw JETTON_WALLET_FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE;
+    }
+}

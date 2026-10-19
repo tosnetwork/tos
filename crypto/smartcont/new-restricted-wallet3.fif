@@ -36,7 +36,7 @@ $# dup 3 < swap 4 > or ' usage if
 4 :$1..n
 
 $1 =: filename-base
-$2 parse-pubkey =: PubKey
+$2 parse-owner-pubkey =: PubKey
 $3 $>TM =: amount
 $4 "rwallet" replace-if-null =: savefile-base
 subwallet-id subwallet-base wc + replace-if-null =: subwallet-id

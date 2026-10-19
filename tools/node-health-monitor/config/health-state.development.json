@@ -1,0 +1,50 @@
+{
+  "inventory": {
+    "schema_version": 1,
+    "revision": "development-reachability-1",
+    "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
+    "targets": [
+      {
+        "node": "validator1",
+        "scope": "node",
+        "sources": [
+          {
+            "id": "edge_probe",
+            "ttl_ms": "45000",
+            "facts": [
+              "reachable"
+            ]
+          }
+        ],
+        "rules": [
+          {
+            "id": "target_unreachable",
+            "source": "edge_probe",
+            "threshold": "0",
+            "pending_ms": "30000",
+            "recovery_ms": "60000",
+            "minimum_bad_samples": 2,
+            "severity": "critical"
+          },
+          {
+            "id": "telemetry_unavailable",
+            "source": "inventory",
+            "threshold": "0",
+            "pending_ms": "45000",
+            "recovery_ms": "60000",
+            "minimum_bad_samples": 1,
+            "severity": "warning"
+          }
+        ]
+      }
+    ]
+  },
+  "control_db": "/var/lib/tos-health/control/control.db",
+  "evidence_db": "/var/lib/tos-health/evidence/evidence.db",
+  "control_quota_bytes": "67108864",
+  "evidence_quota_bytes": "268435456",
+  "listen": "127.0.0.1:9481",
+  "ingest_token_file": "/etc/tos-health/manager-ingest.token",
+  "read_token_file": "/etc/tos-health/manager-read.token",
+  "receiver": null
+}
