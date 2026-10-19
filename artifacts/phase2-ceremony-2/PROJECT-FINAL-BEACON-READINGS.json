@@ -1,0 +1,18 @@
+[
+  {
+    "source": "https://blockstream.info/api",
+    "started_utc": "2026-10-19T07:34:52.077980+00:00",
+    "finished_utc": "2026-10-19T07:34:52.487955+00:00",
+    "beacon_height": 972112,
+    "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+    "response_date": "Mon, 19 Oct 2026 07:34:52 GMT"
+  },
+  {
+    "source": "https://mempool.space/api",
+    "started_utc": "2026-10-19T07:34:52.488071+00:00",
+    "finished_utc": "2026-10-19T07:34:52.520143+00:00",
+    "beacon_height": 972112,
+    "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+    "response_date": "Mon, 19 Oct 2026 07:34:52 GMT"
+  }
+]

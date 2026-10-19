@@ -1,0 +1,1 @@
+Good "file" signature for ffreeofmoney-bit with ED25519 key SHA256:QZ7LsYoT/WrUGoOJykTNO5nJSzqhbFfMakEvuOlYGxg

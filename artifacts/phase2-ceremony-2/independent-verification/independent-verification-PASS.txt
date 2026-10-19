@@ -1,0 +1,67 @@
+TOS shielded pool phase-2 ceremony 2 — independent verification
+
+Result: PASS
+
+Verifier: ffreeofmoney-bit
+Role: independent contributor and independent verifier (roster).
+Execution environment: participant-controlled local Mac (Darwin), with Codex assistance.
+The participant confirmed: "这台机器是独立机器，和项目方无关"
+("This machine is independent and unrelated to the project operator.")
+This verification used that Mac and its network path; it did not use the operator's machine.
+Codex assisted execution and report preparation; it does not claim a separate participant identity.
+Independence is the participant's declaration, not a fact established by mathematical verification.
+
+Source commit verified: 66fb007e7d3d6b509c32ad1b3ce4af470d96a53c
+Source working tree: clean. git fetch origin succeeded; cargo build --locked --release --bins exited 0.
+Transcript commit used: adfbd0fd6b95cab92e21c747ac10d970368f9742
+Announcement commit: 0fd773063b91833f287d435e82a60d4d2235f988
+Announcement URL: https://github.com/tosnetwork/tos/blob/0fd773063b91833f287d435e82a60d4d2235f988/artifacts/phase2-ceremony-2/ANNOUNCEMENT.md
+Roster SHA-256: 7e08f623ab1dcac8ce1be9712e2af0e3a71ddc6ca7d7b87995b71610295add8a
+Announced anchor / contribution close / beacon heights: 972107 / 972111 / 972112
+Original announcement and roster bytes equal the downloaded final copy.
+
+Beacon height: 972112
+Observed hash: 00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345
+Observation interval UTC: 2026-10-19T07:14:46.767608+00:00 to 2026-10-19T07:14:51.018984+00:00
+Sources:
+  https://mempool.space/api/block-height/972112
+  https://blockchain.info/rawblock/972112
+  https://mempool.space/api/block/00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345
+
+Responses were fetched directly over the connected Mac's network path.
+The beacon file equals exactly the 64 lowercase ASCII hash characters, without newline.
+
+phase2-verify: exit 0; This ceremony is finished: 2 step(s), ending in its beacon.
+verifying-key length: 1248 bytes
+verifying-key SHA-256: 49696f52f361817869f68c3ba68d0d5a854737a4133ae4616255ac4a3846778c
+verify-attestations.py: exit 0; no --in-progress or --unattested-ok.
+Contribution 1: signed by ffreeofmoney-bit; declared independent in the pinned roster.
+Contribution digest: 022598b65969aa9c76e89a9cdb39c9d9690c6915b864302ba3360cde956727f0
+Transcript after contribution: 8c649286fc04e8c9eb1ebaed5b3fb74de9ab1d852d429b1dee4c1d9b3df41726
+Final transcript digest: 03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579
+The original contribution bytes are the exact 672-byte prefix of the final transcript.
+Original attestation/signature match participant public commit a66555a0fb201c6736175de943df72019fdd7a2c
+and the participant's retained local copies. The local signing public key matches the roster.
+
+SHA-256 values:
+b49b4ee7cc4feadcc72b3e10d8b4f0485ffc7ed223e693e27db17864e481dc8c  ceremony/key.bin
+5cabc7950128a8be682ed35a42799ad04478ecd3c2b76621c6fbe4f258c023d8  ceremony/contributions.bin
+57f1fdc9d7cfb14587742bd837151f1d258b0e53f0742b32078cd689f4284e34  ceremony/ceremony.json
+e563d07a6866d189b7504573f89dc7fc8bed5d0e3fb0abd7bbbd667caafa3e8b  ceremony/beacon.bin
+49696f52f361817869f68c3ba68d0d5a854737a4133ae4616255ac4a3846778c  public-checks/vk.bin
+7e08f623ab1dcac8ce1be9712e2af0e3a71ddc6ca7d7b87995b71610295add8a  meta/roster.json
+57ea397c58df2f0162e2aa2fd7fcd05f523e7b8bc9f0e6fae0a67694506c9e75  meta/ANNOUNCEMENT.md
+
+Limits of this audit:
+This session began after finalization. It confirms the preserved announced bytes,
+mathematical chain, beacon and signatures. It does not independently reconstruct the
+network tip or GitHub publication times at earlier events. PUBLICATION.json and
+RECEIPT.json retain attributed historical observations; these are not new observations
+by this audit. Independence and secret destruction cannot be proved by these tools.
+This report is not deployment acceptance and does not certify secret erasure.
+
+Report finalized UTC: 2026-10-19T07:17:54.230979+00:00
+The detached SSH signature uses namespace file and the same roster-pinned key.
+Evidence paths above are relative to the original audit directory; the supplied
+verification-evidence.zip preserves these paths, including public-checks/vk.bin.
+Publication is performed separately by the participant using the GitHub website.

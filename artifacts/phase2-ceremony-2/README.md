@@ -1,9 +1,10 @@
-# Phase-2 ceremony 2 — beacon-finalized transcript for independent audit
+# Phase-2 ceremony 2 — final parameters published; not deployed
 
-**Status: contributions closed at height 972111. One independent contribution
-has been verified and the announced beacon at 972112 has been applied after
-one block on top. These are audit inputs; the independent signed PASS and
-step F are still pending. No final parameter release is approved or deployed.**
+**Status: ceremony 2 is complete. The independent participant's signed PASS
+has been verified and the project's own verification reproduces the same key
+and transcript digest. Final ceremony parameters are published here.
+The pool has not been deployed; the separate deployment acceptance gate remains
+required.**
 
 Read the immutable [announcement](https://github.com/tosnetwork/tos/blob/0fd773063b91833f287d435e82a60d4d2235f988/artifacts/phase2-ceremony-2/ANNOUNCEMENT.md)
 and [publication observations](PUBLICATION.json). Contributions close at Bitcoin
@@ -31,7 +32,7 @@ the ones before it are already public.
 | 5 | publish the announcement, archive it, record where and when | operator | announcement commit 0fd773063; push completed 05:21:59 UTC |
 | 6 | run `phase2-begin`, publish the starting digests | operator | public opening follows the announcement in a separate commit |
 | 7 | contributions, in any order, each signed | participant | contribution 1 accepted; see participant-contribution-1/RECEIPT.json |
-| 8 | close contributions at the close height; apply the later beacon; independent signed PASS before final publication | project and independent verifier | beacon applied at depth 1; independent signed PASS pending |
+| 8 | close contributions at the close height; apply the later beacon; independent signed PASS before final publication | project and independent verifier | independent signed PASS and project verification passed; final parameters published |
 
 ## If you are going to contribute
 
@@ -75,9 +76,10 @@ Each of those is a test that has been watched to fail.
 
 This section keeps project commands beside the existing opening checklist;
 there is no second runbook. The commands below are instructions for the test
-lead. Steps A/B/C/D/E have now been executed; see `PUBLICATION.json`,
-`participant-contribution-1/RECEIPT.json`, `BEACON-OBSERVATIONS.json` and their
-separate commits. Step F has not been executed.
+lead. Steps A/B/C/D/E/F have now been executed; see `PUBLICATION.json`,
+`participant-contribution-1/RECEIPT.json`, `BEACON-OBSERVATIONS.json`,
+`FINAL-PUBLICATION.json` and their commits. This is the recorded run sequence;
+do not repeat contribution or finalisation.
 Do not rerun opening or alter the announced heights. No contribution secret
 was generated on the coordinator. Today's target is
 07:00 UTC / 16:00 JST. Bitcoin timing cannot guarantee it. If the beacon is
@@ -415,11 +417,50 @@ See [BEACON-OBSERVATIONS.json](BEACON-OBSERVATIONS.json) for all reading times,
 confirmation depths, native execution times and artifact hashes, and
 [BEACON-FINALISATION.txt](BEACON-FINALISATION.txt) for the native audit output.
 
-The participant must now independently verify the complete `ceremony/` directory
+The participant independently verified the complete `ceremony/` directory
 (including `beacon.bin`), the original pinned roster and contribution attestation,
-using the announced source commit and their own Bitcoin observations. Follow
+using the announced source commit and their own Bitcoin observations. The
 [guide sections 12–13](PARTICIPANT-GUIDE.md#12-independently-verify-after-the-beacon)
-and publish the signed result in their own repository. The original participant
-files remain unchanged in `participant-contribution-1/`. The project has not run
-step F or exported/published an approved final verifying key. Its own verification
-cannot substitute for that independent signed PASS.
+remain the command reference. Their signed result is public in their own
+repository and preserved below. The original participant files remain unchanged
+in `participant-contribution-1/`. The project then completed step F; its own
+verification did not substitute for the independent signed PASS.
+
+## Final publication — 2026-10-19
+
+The independent participant published their [signed complete verification PASS](https://github.com/ffreeofmoney-bit/tos-phase2-ceremony-2/commit/c8542cfd89dd22b7ca952851eda4c77a5839a6ec).
+The exact report, detached signature, original manifest, evidence archive and
+participant-derived verifying key are preserved in
+[independent-verification/](independent-verification/). The pinned roster's SSH
+key verifies the report under namespace `file`; a one-byte report alteration
+fails verification. The owner supplied the
+[verbatim independence confirmation](OWNER-INDEPENDENCE-CONFIRMATION.md).
+
+Only after checking that PASS did the project independently verify the finalized
+transcript at commit `adfbd0fd6b95cab92e21c747ac10d970368f9742` and derive the
+public verifying key. Both derivations are byte-identical and match the required
+digests:
+
+| Item | Value |
+| --- | --- |
+| Verifying key | [vk.bin](vk.bin), 1,248 bytes |
+| Verifying-key SHA-256 | `49696f52f361817869f68c3ba68d0d5a854737a4133ae4616255ac4a3846778c` |
+| Final transcript digest | `03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579` |
+| Complete transcript and proving parameters | [ceremony/](ceremony/) |
+| Pinned roster | [roster.json](roster.json) |
+| Contribution attestation and signature | [attestation-1.txt](attestation-1.txt), [signature](attestation-1.txt.sig) |
+| Independent signed report | [PASS](independent-verification/independent-verification-PASS.txt), [signature](independent-verification/independent-verification-PASS.txt.sig) |
+| Project mathematical verification | [PROJECT-TRANSCRIPT-VERIFICATION.txt](PROJECT-TRANSCRIPT-VERIFICATION.txt) |
+| Project strict signature verification | [PROJECT-ATTESTATION-VERIFICATION.txt](PROJECT-ATTESTATION-VERIFICATION.txt) |
+| Publication record | [FINAL-PUBLICATION.json](FINAL-PUBLICATION.json) |
+| Complete directory SHA-256 inventory | [FINAL-SHA256SUMS](FINAL-SHA256SUMS) |
+
+`ceremony/key.bin` is the public proving key; no contribution randomness or
+private signing key is published. The original standalone announcement, roster,
+opening observations, participant handoff and beacon observations are retained.
+Run the final checksum manifest from this directory. Historical opening and
+pre-beacon manifests describe their respective immutable snapshots.
+
+**No deployment or merge to main is part of this publication.** Ceremony
+verification is complete, but the [deployment acceptance gate](../../doc/shielded-pool-ceremony.md#the-acceptance-gate)
+is separate and remains required before deployment.
