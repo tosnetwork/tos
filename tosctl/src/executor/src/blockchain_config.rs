@@ -101,8 +101,7 @@ impl AccStoragePrices {
 impl DefaultConfig for GasLimitsPrices {
     fn default_mc() -> Self {
         GasLimitsPrices {
-            // ConfigParam 20 from the same zero state, which keeps the
-            // masterchain aligned with production.
+            // ConfigParam 20 mirrors the masterchain deployment zero state.
             gas_price: 32768000,
             flat_gas_limit: 100,
             flat_gas_price: 50000,
