@@ -14,6 +14,7 @@ import copy
 import importlib.util
 import io
 import json
+import struct
 import sys
 import tempfile
 import unittest
@@ -93,6 +94,7 @@ class FakeChain:
         # Overrides consumed one per getBlockHeader call, before header_override.
         self.header_sequence: dict[int, list[dict[str, Any]]] = {}
         self.init_seqno = 0
+        self.zero_time = 13700 * 131072
 
     def timestamp(self, seqno: int) -> int:
         keys = sorted(self.key_blocks)
@@ -154,6 +156,17 @@ class RefreshTest(unittest.TestCase):
         clock = mock.patch("time.time", return_value=NOW)
         self.clock = clock.start()
         self.addCleanup(clock.stop)
+        self.zero_reader = refresh.zero_state_time
+        zero_clock = mock.patch.object(
+            refresh,
+            "zero_state_time",
+            side_effect=lambda rpc, *_args: (
+                rpc.zero_time if isinstance(rpc, FakeChain) else 13700 * 131072
+            ),
+            create=True,
+        )
+        zero_clock.start()
+        self.addCleanup(zero_clock.stop)
 
     def tearDown(self) -> None:
         for path in sorted(self.tmp.rglob("*"), reverse=True):
@@ -190,6 +203,103 @@ class RefreshTest(unittest.TestCase):
         self.assertFalse(self.output.exists(), "a refusal must not write the output")
 
     # ---- success
+
+    def test_first_key_block_in_genesis_period_is_refused(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.zero_time = 1792315800
+        chain.header_override[100] = {"gen_utime": 1792335600}
+        self.clock.return_value = 1792414530
+        self.assert_refused(chain, "not the first key block of its persistent-state period")
+
+    def test_first_key_block_of_next_genesis_period_is_accepted(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        chain.zero_time = 1792315800
+        created = (
+            chain.zero_time // refresh.PERSISTENT_STATE_PERIOD + 1
+        ) * refresh.PERSISTENT_STATE_PERIOD
+        chain.header_override[100] = {"gen_utime": created}
+        self.clock.return_value = created + refresh.SYNC_BLOCKS_BEFORE
+        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(100))
+
+    def test_no_eligible_block_yet_refuses_with_retry_time(self) -> None:
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.zero_time = 1792315800
+        created = (
+            chain.zero_time // refresh.PERSISTENT_STATE_PERIOD + 1
+        ) * refresh.PERSISTENT_STATE_PERIOD
+        chain.header_override[40] = {"gen_utime": 1792335600}
+        chain.header_override[100] = {"gen_utime": created}
+        self.clock.return_value = created + refresh.SYNC_BLOCKS_BEFORE - 1
+        self.assert_refused(
+            chain, f"retry at or after unix time {created + refresh.SYNC_BLOCKS_BEFORE}"
+        )
+
+    def test_missing_zerostate_timestamp_evidence_writes_nothing(self) -> None:
+        chain = FakeChain(last=120, key_blocks={100})
+        with mock.patch.object(
+            refresh,
+            "zero_state_time",
+            side_effect=RefreshError(
+                "missing zerostate timestamp evidence; retry when the source serves its forward proof"
+            ),
+        ):
+            self.assert_refused(chain, "missing zerostate timestamp evidence")
+
+    def test_only_the_configured_init_block_has_no_predecessor(self) -> None:
+        chain = FakeChain(last=120, key_blocks={40, 100})
+        chain.header_override[40] = {"gen_utime": chain.timestamp(100)}
+        chain.header_override[100] = {"gen_utime": chain.timestamp(100) + 60}
+        self.config["validator"]["init_block"] = config_id(100)
+        self.assertEqual(self.refreshed(chain)["validator"]["init_block"], config_id(100))
+
+    def test_zerostate_proof_timestamp_and_identity(self) -> None:
+        # Public state header with all children pruned; includes nonzero depths.
+        proof_boc = base64.b64decode(
+            "te6ccgEBBgEA8gAJRgPWk2KIc1xm5AS/ZwjJpAcf5mXyDlBXsgP3+j7wlX2TPgAdASRbkCOv4gAAAAIA/////wAAAAAAAAAAAAAAAAAAAABq1JGYAAAAAAAAAAD/////YAIDBAUoSAEBiydPNXGn/LCRGRM1riAL0ouHzYVroF6JYJXOCglXj5QAAChIAQFbZiZaaQ/ELJMAqSqenpyuMZhgYYuXoS5DdeP4y6Go0AAcKEgBAed4XnrLmro0XlhhM4fZhCvVKsrG+nQrbZHdj26dk7nNAAAoSAEBVlKxkDrOyng16KJ2l4+gNjpOI914IlEtDABoNEtPdwYAFA=="
+        )
+        zero = {**ZERO, "root_hash": "1pNiiHNcZuQEv2cIyaQHH+Zl8g5QV7ID9/o+8JV9kz4="}
+
+        def wire(block):
+            return (
+                struct.pack("<iqI", block["workchain"], block["shard"], block["seqno"])
+                + base64.b64decode(block["root_hash"])
+                + base64.b64decode(block["file_hash"])
+            )
+
+        def blob(data):
+            prefix = (
+                bytes([len(data)]) if len(data) < 254 else b"\xfe" + len(data).to_bytes(3, "little")
+            )
+            result = prefix + data
+            return result + b"\0" * (-len(result) % 4)
+
+        def rpc(method: str, **params: Any) -> Any:
+            self.assertEqual(method, "getProofQuery")
+            query = base64.b64decode(params["query"])
+            self.assertEqual(query[:8], struct.pack("<iI", -814335952, 1))
+            source = query[8:88]
+            target = query[88:168]
+            # The timestamp reader consumes the first link, not its signatures.
+            data = (
+                struct.pack("<iI", -571124385, 0x997275B5)
+                + source
+                + target
+                + struct.pack("<IiI", 1, -149642926, 0x997275B5)
+                + source
+                + target
+                + blob(b"")
+                + blob(proof_boc)
+            )
+            return {"reply": base64.b64encode(data).decode()}
+
+        reader = self.zero_reader
+        self.assertEqual(reader(rpc, zero, config_id(100), 2), 1792315800)
+        with self.assertRaisesRegex(RefreshError, "root differs"):
+            reader(rpc, ZERO, config_id(100), 2)
+        with self.assertRaisesRegex(RefreshError, "another global id"):
+            reader(rpc, zero, config_id(100), 1)
+        with self.assertRaisesRegex(RefreshError, "truncated"):
+            reader(lambda *_args, **_kwargs: {"reply": "AA=="}, zero, config_id(100), 2)
 
     def test_init_block_becomes_the_previous_key_block(self) -> None:
         result = self.refreshed(FakeChain(last=120, key_blocks={40, 100}))
@@ -490,7 +600,7 @@ class RefreshTest(unittest.TestCase):
     def test_unusable_newer_existing_anchor_is_not_rolled_back(self) -> None:
         self.config["validator"]["init_block"] = config_id(100)
         chain = FakeChain(last=120, key_blocks={40, 80, 100})
-        chain.header_override[100] = {"gen_utime": chain.timestamp(80) + 60}
+        chain.header_override[100] = {"gen_utime": NOW - 3599}
         self.assert_refused(chain, "existing init block is not rolled back")
 
     def test_backward_walk_cannot_loop_or_move_forward(self) -> None:

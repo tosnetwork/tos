@@ -15,6 +15,7 @@ copy:
   getMasterchainInfo   the node's zero state and its last masterchain block
   getBlockHeader       walk key blocks backwards and read their timestamps
   lookupBlock          independently check each key block's full id
+  getProofQuery        read the zerostate timestamp from its anchored proof when needed
 
 It refuses unless:
 
@@ -30,7 +31,8 @@ It refuses unless:
     if it is at the same height it is the same block (full id, not height).
 
 The newest eligible key block starts a new 2^17-second period relative to its
-predecessor (the initial key block has no predecessor), is at least one hour
+predecessor (including the zerostate; only the configured init block has no
+predecessor), is at least one hour
 old, and has more than eight hours of persistent-state life remaining. Expiry
 is gen_utime + 2^(18 + trailing_zero_bits(gen_utime / 2^17)), as in the node.
 Selection uses timestamps only: it does not probe snapshot availability.
@@ -50,8 +52,11 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import hashlib
 import json
 import os
+import runpy
+import struct
 import sys
 import tempfile
 import time
@@ -210,13 +215,130 @@ def eligible_persistent_state(created: int, previous: int | None, *, now: int) -
             f"block was created {created - now}s after this host's clock; check time synchronization",
         )
     if created + SYNC_BLOCKS_BEFORE > now:
-        return False, "key block is less than one hour old"
+        return (
+            False,
+            f"key block is less than one hour old; retry at or after unix time {created + SYNC_BLOCKS_BEFORE}",
+        )
     if persistent_state_expiry(created) <= now + MIN_BOOTSTRAP_SECONDS:
         return (
             False,
             f"persistent state expires within the requested {MIN_BOOTSTRAP_SECONDS}s download window",
         )
     return True, "persistent state meets the startup selection policy"
+
+
+def zero_state_time(
+    rpc: Rpc, zero: dict[str, Any], successor: dict[str, Any], global_id: int
+) -> int:
+    """Read a zerostate header from the existing read-only forward-proof route.
+
+    The header is bound to the configured root, not block one's timestamp.
+    This does not verify the successor's signatures or snapshot availability.
+    """
+
+    def wire(block: dict[str, Any]) -> bytes:
+        return (
+            struct.pack("<iqI", block["workchain"], block["shard"], block["seqno"])
+            + base64.b64decode(block["root_hash"])
+            + base64.b64decode(block["file_hash"])
+        )
+
+    # Constructors from lite_api.tl; blockIdExt fields here are bare, not boxed.
+    query = struct.pack("<iI", -814335952, 1) + wire(zero) + wire(successor)
+    try:
+        answer = require_object(
+            rpc("getProofQuery", query=base64.b64encode(query).decode()), "zerostate proof"
+        )
+        encoded = answer.get("reply")
+        if not isinstance(encoded, str) or len(encoded) > 90_000_000:
+            raise RefreshError("zerostate proof reply is absent or oversized")
+        raw = base64.b64decode(encoded, validate=True)
+        offset = 0
+
+        def take(size: int) -> bytes:
+            nonlocal offset
+            if size < 0 or offset + size > len(raw):
+                raise RefreshError("truncated zerostate proof")
+            value = raw[offset : offset + size]
+            offset += size
+            return value
+
+        def integer() -> int:
+            return int.from_bytes(take(4), "little", signed=True)
+
+        def boolean() -> None:
+            if integer() not in (-1720552011, -1132882121):
+                raise RefreshError("invalid proof boolean")
+
+        def blob() -> bytes:
+            start = offset
+            first = take(1)[0]
+            if first == 255:
+                raise RefreshError("invalid proof byte length")
+            size = int.from_bytes(take(3), "little") if first == 254 else first
+            value = take(size)
+            if any(take(-(offset - start) % 4)):
+                raise RefreshError("invalid proof byte padding")
+            return value
+
+        if integer() != -571124385:
+            raise RefreshError("invalid zerostate forward proof")
+        boolean()
+        if take(80) != wire(zero):
+            raise RefreshError("zerostate proof does not start at the config's zero state")
+        take(80)  # response endpoint; only the initial link supplies the header
+        if not 1 <= integer() <= MAX_KEY_BLOCKS or integer() != -149642926:
+            raise RefreshError("zerostate proof has no initial forward link")
+        boolean()
+        if take(80) != wire(zero):
+            raise RefreshError("initial proof link names another zero state")
+        take(80)
+        blob()  # destination proof, not used to select a timestamp
+        # Reuse the repository's bounded standard BOC reader; no second framing parser.
+        codec = runpy.run_path(str(Path(__file__).with_name("check-no-legacy-escrow.py")))
+        cells, roots = codec["read_boc"](blob())
+        hashes: list[bytes | None] = [None] * len(cells)
+        depths = [0] * len(cells)
+        for index in range(len(cells) - 1, -1, -1):
+            d1, d2, payload, refs = cells[index]
+            if any(ref <= index or ref >= len(cells) for ref in refs):
+                raise RefreshError("invalid zerostate proof reference")
+            if d1 & 8 and payload[:1] == b"\x01":
+                count = (d1 >> 5).bit_count()
+                if refs or count == 0 or len(payload) != 2 + 34 * count or payload[1] != d1 >> 5:
+                    raise RefreshError("invalid pruned zerostate proof branch")
+                hashes[index] = payload[2:34]
+                depths[index] = int.from_bytes(payload[2 + 32 * count : 4 + 32 * count], "big")
+            elif not d1 & 8 or payload[:1] == b"\x02":
+                if any(hashes[ref] is None for ref in refs):
+                    raise RefreshError("unsupported zerostate proof cell")
+                representation = bytes([d1 & 15, d2]) + payload
+                representation += b"".join(depths[ref].to_bytes(2, "big") for ref in refs)
+                representation += b"".join(hashes[ref] for ref in refs)
+                hashes[index] = hashlib.sha256(representation).digest()
+                depths[index] = 1 + max((depths[ref] for ref in refs), default=-1)
+        if len(roots) != 1:
+            raise RefreshError("zerostate proof must have one root")
+        d1, d2, payload, refs = cells[roots[0]]
+        if d1 != 9 or d2 != 70 or len(refs) != 1 or len(payload) != 35 or payload[0] != 3:
+            raise RefreshError("zerostate proof is not one Merkle proof")
+        child = refs[0]
+        if hashes[child] != base64.b64decode(zero["root_hash"]) or payload[1:33] != hashes[child]:
+            raise RefreshError("zerostate proof root differs from the config's zero state")
+        if int.from_bytes(payload[33:35], "big") != depths[child]:
+            raise RefreshError("zerostate proof depth mismatch")
+        state = cells[child][2]
+        if len(state) < 33 or state[:4] != bytes.fromhex("9023afe2"):
+            raise RefreshError("invalid zerostate header")
+        if int.from_bytes(state[4:8], "big", signed=True) != global_id:
+            raise RefreshError("zerostate proof carries another global id")
+        if state[8:21] != b"\0" + b"\xff" * 4 + b"\0" * 8 or state[21:25] != b"\0" * 4:
+            raise RefreshError("zerostate proof is not masterchain sequence zero")
+        return block_time({"gen_utime": int.from_bytes(state[29:33], "big")}, 0)
+    except (RefreshError, ValueError, KeyError, TypeError, IndexError, OverflowError) as error:
+        raise RefreshError(
+            f"cannot establish the zerostate timestamp: {error}; retry when the source serves its forward proof"
+        ) from error
 
 
 def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, Any]:
@@ -315,8 +437,19 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
         checked += 1
         key_header, looked_up = checked_key(key_seqno) if pending is None else pending
         previous = require_int(key_header["prev_key_block_seqno"], "prev_key_block_seqno")
-        pending = checked_key(previous) if previous > 0 else None
-        previous_time = block_time(pending[0], previous) if pending is not None else None
+        if current is not None and key_seqno == current_seqno:
+            pending = None
+            previous_time = None
+        elif previous > 0:
+            pending = checked_key(previous)
+            previous_time = block_time(pending[0], previous)
+        else:
+            pending = None
+            try:
+                previous_time = zero_state_time(rpc, zero_state, looked_up, global_id)
+            except RefreshError as error:
+                details = "; ".join(skipped)
+                raise RefreshError(f"{details + '; ' if details else ''}{error}") from error
         available, reason = eligible_persistent_state(
             block_time(key_header, key_seqno),
             previous_time,
@@ -339,7 +472,8 @@ def refreshed(config: dict[str, Any], rpc: Rpc, *, global_id: int) -> dict[str, 
     )
     raise RefreshError(
         f"no eligible persistent key block at or after init block {current_seqno}: {details}. "
-        "Wait for a qualifying persistent-state key block before refreshing." + recovery
+        "Wait for the first key block of a new persistent-state period to age one hour, "
+        "then retry; timestamp eligibility does not establish that its state is served." + recovery
     )
 
 

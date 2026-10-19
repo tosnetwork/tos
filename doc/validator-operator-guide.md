@@ -392,16 +392,27 @@ python3 scripts/refresh-global-config-init-block.py \
 ```
 
 It reads the trusted node's `getMasterchainInfo`, `getBlockHeader` and
-`lookupBlock` and writes a new file (it never overwrites one) whose init block
-is the latest key block. The one exception is a chain that has no key block
-after the zero state yet: then the init block is the zero state itself, checked
-against the config's. It refuses, writing nothing, when the node's zero
-state differs from the config's, when the key block's identities disagree, when
-a header is not a key block or carries another global id, or when the new init
-block is older than, or at the same height as but different from, the existing
-one. The node is trusted, not proven: compare its last block, on the full block
-id, with a second node you trust, and authenticate the published file through
-the release that carries it.
+`lookupBlock`, and writes a new file (never overwriting one). Selection walks
+backwards to the newest persistent-state key block that is at least one hour
+old and has more than eight hours of persistent-state life remaining. The
+first key block after genesis is compared with the zerostate's timestamp:
+a key block in the genesis period is not a persistent-state boundary. Only
+the input config's own init block has no predecessor for this comparison.
+
+When the predecessor is the zerostate, the script reads its timestamp through
+`getProofQuery`'s forward proof, checking the state root against the configured
+zerostate. If the source cannot serve that proof, or no eligible key block
+exists yet, the script refuses and writes nothing. A too-young candidate's
+refusal gives its earliest retry time. Wait for a new-period key block to age
+one hour and retry; timestamp selection does **not** prove that its persistent
+state has finished serializing or is being served.
+
+It also refuses mismatched zero-state or block identities, headers from another
+network, and rollback or replacement of an existing init block at the same
+height. The node is trusted, not fully proven: compare its full block id with
+a second trusted node, and authenticate the published file through the release
+that carries it. A chain with no eligible key block is not refreshed to the
+zerostate as a fallback.
 
 ## 12. Upgrade a validator
 
