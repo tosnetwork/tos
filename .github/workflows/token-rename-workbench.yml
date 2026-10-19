@@ -5,44 +5,118 @@ on:
     branches: [refactor/token-naming]
     paths:
       - scripts/token-rename-workbench.py
-      - scripts/migrate-token-naming.py
-      - scripts/test-token-naming.py
       - .github/workflows/token-rename-workbench.yml
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: token-migration-workbench
   cancel-in-progress: false
 
 jobs:
-  materialize:
+  native-and-sdk:
     if: github.repository == 'tosnetwork/tos' && github.ref == 'refs/heads/refactor/token-naming'
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 90
     permissions:
       contents: write
+      actions: read
     env:
       PYTHONDONTWRITEBYTECODE: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 3G
+      TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
+      RUN_LIVE_TESTS: '0'
     steps:
       - name: Check out the exact migration commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Apply the tested source migration
+          fetch-depth: 0
+      - name: Check source migration and its negative controls
+        run: |
+          python3 scripts/test-token-naming.py
+          python3 scripts/migrate-token-naming.py --check
+      - name: Install compiler prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache
+          sudo scripts/install-llvm-toolchain.sh 21 all
+      - name: Restore native compilation cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .ccache
+          key: token-migration-ccache-${{ github.sha }}
+          restore-keys: |
+            strict-build-ccache-x86-64-v2-
+      - name: Configure the repository toolchain
+        run: |
+          scripts/install-rust-toolchain.sh
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+            -DCMAKE_BUILD_TYPE=Release -DTOS_USE_JEMALLOC=ON \
+            -DTOS_USE_LLD=On -DTOS_WERROR_BUILD=On \
+            -DTOS_ARCH=x86-64-v2 -DPORTABLE=x86-64-v2 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build native contract compilers
+        run: cmake --build build --target func fift --parallel 4
+      - name: Verify baseline and getter-only bytecode changes, then regenerate
         run: python3 scripts/token-rename-workbench.py
-      - name: Publish only to the dedicated migration branch
+      - name: Publish rebuilt artifacts only to the migration branch
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
           set -euo pipefail
-          if [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]; then
-            echo "No additional source migration was needed."
-            exit 0
+          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
+            auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+              push origin HEAD:refs/heads/refactor/token-naming
           fi
-          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-            push origin HEAD:refs/heads/refactor/token-naming
+      - name: Install pinned SDK package manager
+        run: npm install --global pnpm@9.15.4
+      - name: Build and typecheck the SDK
+        working-directory: sdk/js
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm typecheck
+      - name: Execute offline SDK unit tests
+        working-directory: sdk/js
+        run: |
+          pnpm exec vitest run --config vitest.config.ts \
+            --reporter=json --outputFile=/tmp/token-sdk-tests.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/token-sdk-tests.json') as stream:
+              result = json.load(stream)
+          fields = ('numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'success')
+          print('SDK_TEST_RESULT', json.dumps({key: result.get(key) for key in fields}))
+          assert result.get('numTotalTests', 0) > 0
+          assert result.get('numPassedTests', 0) > 0
+          assert result.get('numFailedTests', 1) == 0 and result.get('success') is True
+          PY
+      - name: Build native contract and index regressions
+        run: cmake --build build --target test-emulator test-wallet-index --parallel 4
+      - name: Execute native contract and index regressions
+        run: |
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-emulator$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-wallet-index$'
+      - name: Verify generated code remains reproducible
+        run: python3 scripts/update-token-code.py --check
+      - name: Record cache statistics
+        if: always()
+        run: |
+          if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
+      - name: Retain the SDK test result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: token-sdk-tests-${{ github.sha }}
+          path: /tmp/token-sdk-tests.json
+          if-no-files-found: ignore
