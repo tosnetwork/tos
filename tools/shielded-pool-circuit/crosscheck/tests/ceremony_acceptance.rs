@@ -144,6 +144,7 @@ fn a_different_verifying_key_is_a_different_deployment_address() {
 }
 
 #[test]
+#[allow(clippy::expect_used)]
 fn the_gate_refuses_compute_success_without_committed_nullifiers() {
     use shielded_pool_circuit_crosscheck::pool::{pool_sources, Pool, DENOMINATION};
     use tos_sandbox::{compile_func, Blockchain};

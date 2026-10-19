@@ -81,10 +81,21 @@ fn forward(config: &ConfigParams, bits: u64, cells: u64) -> Result<u128> {
     let variable = rounded_scaled(b.checked_add(c).ok_or("forwarding price overflow")?)?;
     u128::from(p.lump_price).checked_add(variable).ok_or_else(|| "forwarding fee overflow".into())
 }
+// Basechain prices before the recorded fee reduction, from source commit
+// 54206889a2767bdf3172ec45be55daffd7b5dc9d, gen-zerostate.fif.
+fn historical_forward(config: &ConfigParams, bits: u64, cells: u64) -> Result<u128> {
+    let mut config = config.clone();
+    let mut prices = config.fwd_prices(false)?.clone();
+    prices.lump_price = 400_000;
+    prices.bit_price = 26_214_400;
+    prices.cell_price = 2_621_440_000;
+    config.set_config(ConfigParamEnum::ConfigParam25(prices))?;
+    forward(&config, bits, cells)
+}
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() != 9 {
-        return Err("usage: freeze-public-pool ROOT CEREMONY OUT PROFILE_COMMIT PROFILE_BLOB GLOBAL_ID FEES_JSON EXPECTED_VK EXPECTED_TRANSCRIPT".into());
+        return Err("usage: prepare_public_pool ROOT CEREMONY OUT PROFILE_COMMIT PROFILE_BLOB GLOBAL_ID FEES_JSON EXPECTED_VK EXPECTED_TRANSCRIPT".into());
     }
     let root = PathBuf::from(&args[0]);
     let directory = Directory::at(PathBuf::from(&args[1]));
@@ -195,9 +206,12 @@ fn main() -> Result<()> {
         .ok_or("payout cell count overflow")?;
     let payout_fee = forward(&config, payout_bits, payout_cells)?;
     let reference_payout_fee = forward(&reference_config, payout_bits, payout_cells)?;
-    if planned.parameters().withdrawal_fee < payout_fee.max(reference_payout_fee) {
+    let historical_payout_fee = historical_forward(&config, payout_bits, payout_cells)?;
+    if planned.parameters().withdrawal_fee
+        < payout_fee.max(reference_payout_fee).max(historical_payout_fee)
+    {
         return Err(
-            "immutable withdrawal fee does not cover live and reference forwarding prices".into()
+            "immutable withdrawal fee does not cover live, reference and historical forwarding prices".into()
         );
     }
     let end = now.checked_add(86400).ok_or("storage horizon overflow")?;
@@ -256,7 +270,7 @@ fn main() -> Result<()> {
         checksums.push_str(&format!("{}  {name}\n", hex(&shielded_pool_genesis::sha256(&bytes))));
         std::fs::write(out.join(name), bytes)?;
     }
-    let publication = json!({"status":"OFFLINE CANDIDATE; NO LIVE GO","global_id":global_id,"global_version":16,"address":address,"code_hash":code.repr_hash().to_hex_string(),"data_hash":genesis.state.repr_hash().to_hex_string(),"state_init_hash":init.repr_hash().to_hex_string(),"vk_sha256":expected_vk,"transcript":expected_transcript,"execution_domain":hex(&shielded_pool_circuit::field::fr_to_be(&client.execution_domain())),"profile_commit":commit,"profile_blob":blob,"fee_snapshot_block":fees["block"],"fee_snapshot_sha256":hex(&shielded_pool_genesis::sha256(&std::fs::read(&args[6])?)),"quotes":quotes,"payout_body":{"bits":payout_bits,"cells":payout_cells,"current_forward_fee_nanotos":payout_fee.to_string(),"sandbox_default_forward_fee_nanotos":reference_payout_fee.to_string()},"initial_state_init":{"bits":bits,"cells":cells,"24h_rent_at_snapshot_prices_nanotos":storage.to_string()},"funding_policy":{"bootstrap_cap_nanotos":"150000000000","sender_a_nanotos":"130000000000","sender_b_nanotos":"15000000000","recipient_nanotos":"5000000000","initial_pool_endowment_nanotos":"100000000000","immutable_reserve_floor_nanotos":planned.parameters().reserve_floor.to_string(),"admin_withdrawal":false,"note":"100 TOS is endowed to the pool; compute/rent consume operational surplus above the 50 TOS immutable floor. Sender wallet/forwarding fees are separate from the quoted inbound compute credits. Revalidate the same configuration on two nodes before any live action."},"sandbox_acceptance":{"scope":"local sandbox only; exact candidate, network and live fee cells, synthetic unfunded note witnesses","exit":result.exit,"gas":result.gas,"public_prover":"OS-seeded 256-bit proof randomness; audited final proving key; no fixture prover"}});
+    let publication = json!({"status":"OFFLINE CANDIDATE; NO LIVE GO","global_id":global_id,"global_version":16,"address":address,"code_hash":code.repr_hash().to_hex_string(),"data_hash":genesis.state.repr_hash().to_hex_string(),"state_init_hash":init.repr_hash().to_hex_string(),"vk_sha256":expected_vk,"transcript":expected_transcript,"execution_domain":hex(&shielded_pool_circuit::field::fr_to_be(&client.execution_domain())),"profile_commit":commit,"profile_blob":blob,"fee_snapshot_block":fees["block"],"fee_snapshot_sha256":hex(&shielded_pool_genesis::sha256(&std::fs::read(&args[6])?)),"quotes":quotes,"payout_body":{"bits":payout_bits,"cells":payout_cells,"current_forward_fee_nanotos":payout_fee.to_string(),"sandbox_default_forward_fee_nanotos":reference_payout_fee.to_string(),"historical_forward_fee_nanotos":historical_payout_fee.to_string(),"historical_price_source_commit":"54206889a2767bdf3172ec45be55daffd7b5dc9d"},"initial_state_init":{"bits":bits,"cells":cells,"24h_rent_at_snapshot_prices_nanotos":storage.to_string()},"funding_policy":{"bootstrap_cap_nanotos":"150000000000","sender_a_nanotos":"130000000000","sender_b_nanotos":"15000000000","recipient_nanotos":"5000000000","initial_pool_endowment_nanotos":"100000000000","immutable_reserve_floor_nanotos":planned.parameters().reserve_floor.to_string(),"admin_withdrawal":false,"note":"100 TOS is endowed to the pool; compute/rent consume operational surplus above the 50 TOS immutable floor. Sender wallet/forwarding fees are separate from the quoted inbound compute credits. Revalidate the same configuration on two nodes before any live action."},"sandbox_acceptance":{"scope":"local sandbox only; exact candidate, network and live fee cells, synthetic unfunded note witnesses","exit":result.exit,"gas":result.gas,"public_prover":"OS-seeded 256-bit proof randomness; audited final proving key; no fixture prover"}});
     let bytes = serde_json::to_vec_pretty(&publication)?;
     checksums
         .push_str(&format!("{}  publication.json\n", hex(&shielded_pool_genesis::sha256(&bytes))));
@@ -311,6 +325,15 @@ mod tests {
             }))
             .expect("large prices");
         assert!(forward(&config, u64::MAX, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn the_immutable_fee_also_covers_the_historical_higher_prices() {
+        let mut config = ConfigParams::default();
+        config
+            .set_config(ConfigParamEnum::ConfigParam25(MsgForwardPrices::default()))
+            .expect("prices");
+        assert_eq!(historical_forward(&config, 10_984, 13).expect("historical quote"), 5_313_600);
     }
 
     #[test]

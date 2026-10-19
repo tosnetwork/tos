@@ -12,3 +12,8 @@ production deployment. `CEREMONY.md` describes the ceremony procedure. The
 finished second ceremony and its independent verification are in
 [`../phase2-ceremony-2/`](../phase2-ceremony-2/README.md); a deployment must use
 that audited final key and pass every acceptance gate before activation.
+
+The [offline V16 candidate](deployments/README.md) freezes the final ceremony-2
+VK, revised profile, code/data/StateInit identities and captured fee cells.
+Its section-19 ledger records local evidence and the separate live GO that
+has not been granted by that preparation.

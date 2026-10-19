@@ -1,0 +1,381 @@
+{
+  "schema": "tos.shielded-pool.offline-receipts.v1",
+  "status": "OFFLINE EVIDENCE; INDEPENDENT ACCEPTANCE AND LIVE GO PENDING",
+  "date_utc": "2026-10-19",
+  "source_base": "8430f633a",
+  "profile_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+  "client_core_commit": "c9decf646",
+  "retained_location": "privacy-testnet/offline-v16/ under the test lead deployment-evidence root",
+  "retention": "Retain through test-lead acceptance and for at least 90 days afterwards. Raw logs are coordinator-local, not publicly hosted; hashes alone are not independent evidence. Commands below reproduce the relevant checks.",
+  "results": {
+    "circuit_passed": 48,
+    "wallet_passed": 11,
+    "genesis_passed": 23,
+    "crosscheck_nonignored_passed": 79,
+    "crosscheck_default_ignored": 3,
+    "ignored_explicitly_passed": 3,
+    "additional_historical_quote_unit_passed": 1,
+    "source_guards_passed": 58,
+    "native_mldsa_vectors": 216,
+    "changed_line_clippy_diagnostics": 0,
+    "preexisting_strict_diagnostics_all_targets": 1117,
+    "selected_existing_source_mutations_killed": 24,
+    "new_guard_mutations_killed": 6,
+    "exact_candidate_compute_exit": 0,
+    "exact_candidate_gas": 1145564,
+    "public_writes": 0,
+    "python_changes": "none; pinned Ruff is not applicable to this PR",
+    "cpp_func_changes": "none; static-analysis diff gate is not applicable"
+  },
+  "existing_mutations": [
+    {
+      "command": "python3 test/shielded-pool/mutations-pool.py --only funding-principal funding-compute gas-ceiling-live bounced-flag-kept",
+      "source_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+      "killed": 4,
+      "restored_green": true,
+      "log": "mutations-pool.log"
+    },
+    {
+      "command": "python3 test/shielded-pool/mutations-auth.py --only slot-0-signature slot-1-signature context-string",
+      "source_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+      "killed": 3,
+      "restored_green": true,
+      "log": "mutations-auth.log"
+    },
+    {
+      "command": "python3 test/shielded-pool/mutations-payout.py --only liability-no-fee fee-not-config fee-no-forward",
+      "source_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+      "killed": 3,
+      "restored_green": true,
+      "log": "mutations-payout.log"
+    },
+    {
+      "command": "python3 test/shielded-pool/mutations-recovery.py --only handler-mints-what-left handler-unauthenticated",
+      "source_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+      "killed": 2,
+      "restored_green": true,
+      "log": "mutations-recovery.log"
+    },
+    {
+      "command": "python3 test/shielded-pool/mutations-groth16.py --only pairing-ignored vk-x-offset",
+      "source_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+      "killed": 2,
+      "restored_green": true,
+      "log": "mutations-groth16.log"
+    },
+    {
+      "command": "python3 test/shielded-pool/mutations-imt.py --only append-empty sibling-order next-index",
+      "source_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+      "killed": 3,
+      "restored_green": true,
+      "log": "mutations-imt.log"
+    },
+    {
+      "command": "python3 test/shielded-pool/mutations-ceiling.py --only transact-ceiling-sampled transact-ceiling-padded spans-not-added",
+      "source_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+      "killed": 3,
+      "restored_green": true,
+      "log": "mutations-ceiling.log"
+    },
+    {
+      "command": "python3 test/shielded-pool/mutations-anchors.py --only exec-global-id exec-account preserve-version recent-root",
+      "source_commit": "1757cef815f1bd9ae96bb4ae2394e2e70f9080c7",
+      "killed": 4,
+      "restored_green": true,
+      "log": "mutations-anchors.log"
+    }
+  ],
+  "new_guard_reproductions": [
+    {
+      "name": "profile",
+      "source_commit": "c9decf646",
+      "file": "artifacts/shielded-pool/PROFILE.md",
+      "line": 100,
+      "replace": "minimum global version: 16",
+      "with": "minimum global version: 17",
+      "command": "cargo test --release --locked --manifest-path tools/shielded-pool-genesis/Cargo.toml --test runtime_profile -- --nocapture",
+      "expected_assertion": "profile omits shipped rule",
+      "red_exit": 101,
+      "restored_exit": 0,
+      "red_log": "new-guard-profile-red.log",
+      "green_log": "new-guard-profile-green.log"
+    },
+    {
+      "name": "entropy",
+      "source_commit": "c9decf646",
+      "file": "tools/shielded-pool-circuit/crosscheck/src/public_client.rs",
+      "line": 40,
+      "replace": "let seed = draw_seed(fill)?;",
+      "with": "let mut seed = draw_seed(fill)?; seed[..31].fill(0);",
+      "command": "cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --lib proof_randomness_depends_on_prefix_as_well_as_final_byte -- --nocapture",
+      "expected_assertion": "proof randomness collapsed",
+      "red_exit": 101,
+      "restored_exit": 0,
+      "red_log": "new-guard-entropy-red.log",
+      "green_log": "new-guard-entropy-green.log"
+    },
+    {
+      "name": "committed-state",
+      "source_commit": "c9decf646",
+      "file": "tools/shielded-pool-circuit/crosscheck/src/acceptance.rs",
+      "line": 331,
+      "replace": "            || pool.get(\"nullifier_root\")? != dec(tree.root())\n",
+      "with": "",
+      "command": "cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --test ceremony_acceptance the_gate_refuses_compute_success_without_committed_nullifiers -- --nocapture",
+      "expected_assertion": "a successful compute phase did not consume the inputs",
+      "red_exit": 101,
+      "restored_exit": 0,
+      "red_log": "new-guard-committed-state-red.log",
+      "green_log": "new-guard-committed-state-green.log"
+    },
+    {
+      "name": "vk-pin",
+      "source_commit": "c9decf646",
+      "file": "tools/shielded-pool-circuit/crosscheck/src/public_client.rs",
+      "line": 82,
+      "replace": "if expected_vk != audited.vk_sha256() {",
+      "with": "if false {",
+      "command": "cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --test public_client only_a_finished_unchanged_key_matching_the_reviewed_vk_is_loaded -- --nocapture",
+      "expected_assertion": "request did not refuse",
+      "red_exit": 101,
+      "restored_exit": 0,
+      "red_log": "new-guard-vk-pin-red.log",
+      "green_log": "new-guard-vk-pin-green.log"
+    },
+    {
+      "name": "domain",
+      "source_commit": "c9decf646",
+      "file": "tools/shielded-pool-circuit/crosscheck/src/public_client.rs",
+      "line": 132,
+      "replace": "if public.execution_domain != domain {",
+      "with": "if false {",
+      "command": "cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --test public_client wrong_pool_network_zero_secrets_and_bad_expiry_refuse_before_proving -- --nocapture",
+      "expected_assertion": "wrong refusal: [\"fixture: constructed proof does not verify\"]",
+      "red_exit": 101,
+      "restored_exit": 0,
+      "red_log": "new-guard-domain-red.log",
+      "green_log": "new-guard-domain-green.log"
+    },
+    {
+      "name": "os-fallback",
+      "source_commit": "c9decf646",
+      "file": "tools/shielded-pool-circuit/crosscheck/src/public_client.rs",
+      "line": 46,
+      "replace": "OsRng.try_fill_bytes(bytes).map_err(|_| \"OS entropy unavailable\".into())",
+      "with": "bytes.fill(0); Ok(())",
+      "command": "cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --test public_client repeated_proofs_of_the_same_witness_have_fresh_full_width_randomness -- --nocapture",
+      "expected_assertion": "public proofs reused fixture randomness",
+      "red_exit": 101,
+      "restored_exit": 0,
+      "red_log": "new-guard-os-fallback-red.log",
+      "green_log": "new-guard-os-fallback-green.log"
+    }
+  ],
+  "raw_files": [
+    {
+      "name": "ceremony-verify.log",
+      "bytes": 1732,
+      "sha256": "edf2008b9224ba4dfa1ca381045541155350933b01b87a938aa8220ee40c7ab7"
+    },
+    {
+      "name": "attestations.log",
+      "bytes": 156,
+      "sha256": "8de3f4745427f63afe3d54fd1d8bcab2d8ace08071cc4cbee1695f2a15591844"
+    },
+    {
+      "name": "circuit-tests.log",
+      "bytes": 4569,
+      "sha256": "884c73263eac0ca896a7c1e3b4eb48b5910bc7353198fdec7340fd6123c29d78"
+    },
+    {
+      "name": "wallet-tests.log",
+      "bytes": 2970,
+      "sha256": "2865dd3015dd73b187d19355ed50a951d0cb487914aa617bc4ae337d61f1ec70"
+    },
+    {
+      "name": "genesis-tests.log",
+      "bytes": 3496,
+      "sha256": "d3e66091a879b1110bc6443cf9a20c71c39f4ee3a547db515524af7d1b4a5090"
+    },
+    {
+      "name": "final-crosscheck-tests.log",
+      "bytes": 29974,
+      "sha256": "344f9eceedf2a76e523b3f5f68122d087c57199f445d901b529d7463edf895af"
+    },
+    {
+      "name": "final-ignored-tests.log",
+      "bytes": 24459,
+      "sha256": "83afa71c1896c17d4e278836d1220d982527b48f5fc6f7712039dc503981fcbb"
+    },
+    {
+      "name": "final-crosscheck-docs.log",
+      "bytes": 4789,
+      "sha256": "15618aa538f00f06c365d5f8cb65f48567892221d9e9784837a19c819d7b85ea"
+    },
+    {
+      "name": "final-price-tests.log",
+      "bytes": 5300,
+      "sha256": "2705b81a256bbde935fc54c83d96e0fa548aa049a7a4e24d8ca45582ee02538d"
+    },
+    {
+      "name": "native-poseidon2.log",
+      "bytes": 181,
+      "sha256": "ca9156218aa07ba607bf0b60a532db16bcb1face2f4315656a7a4ec3aeaecc33"
+    },
+    {
+      "name": "native-mldsa.log",
+      "bytes": 42,
+      "sha256": "a3e6b15c3011750f5c8a6b6415c905fa496b8f0319f43ac1cb590c9a3bffda75"
+    },
+    {
+      "name": "native-mldsa.tsv",
+      "bytes": 33599,
+      "sha256": "dce81aab509a5a06d1385c251edc9d19fec0f40c2ac8341c52631a95ecdd733d"
+    },
+    {
+      "name": "runtime-profile-green.log",
+      "bytes": 955,
+      "sha256": "bcfa63ddc74cf070a5f08c16e197382ecd7059455a58cca5338197f89c2e7835"
+    },
+    {
+      "name": "final-source-guards.log",
+      "bytes": 7973,
+      "sha256": "f83135f79a3ee1ef2ac7be4805494fd779b528198b9b4a78ddc9137c4a64757c"
+    },
+    {
+      "name": "final-workflow-checks.log",
+      "bytes": 151,
+      "sha256": "5614f92fac82868b052f2fb1920f765b01cba5885911163a11a7f0e0093e75f9"
+    },
+    {
+      "name": "final-clippy-filter.log",
+      "bytes": 47,
+      "sha256": "5798f66b894b1dfe697c5d375650f4caeecffbc932cd1de5cf860a1883135e9d"
+    },
+    {
+      "name": "final-clang-format.log",
+      "bytes": 28,
+      "sha256": "7bdae2c4bd033c61e7238221a295d34f69cf3cca768bdc922d23a2d0f4357d75"
+    },
+    {
+      "name": "consistency.log",
+      "bytes": 39648,
+      "sha256": "8e9b6cd395dc537ded199bb6d66883ebf1b5f9d8521967b2b01577b62bf3c0fa"
+    },
+    {
+      "name": "live-config.json",
+      "bytes": 54363,
+      "sha256": "98f40005e11fd09e14c913f6af7ab168f9b94921f5346cd81dcd31f5f803a2ce"
+    },
+    {
+      "name": "live-config-requests.json",
+      "bytes": 67707,
+      "sha256": "11275d6551aafbe60331793eefbd679408f12e5298f407d3e328b99d9d8937f0"
+    },
+    {
+      "name": "historical-candidate.log",
+      "bytes": 7967,
+      "sha256": "788d6d354b376e2e8b492cd0a46f652bb7f80156ed94747066e5d15f914e9f6a"
+    },
+    {
+      "name": "mutations-pool.log",
+      "bytes": 431,
+      "sha256": "f9a8ebcd8c9356fe99e88165ec08d59ec232ca1801e624678531cf7db46e6f8a"
+    },
+    {
+      "name": "mutations-auth.log",
+      "bytes": 344,
+      "sha256": "9057c13b10f835fe96280f843302973bbd68b96795fa7187edf983eaa8a7efdd"
+    },
+    {
+      "name": "mutations-payout.log",
+      "bytes": 344,
+      "sha256": "f799bcffd6bcf229923f52af2966414d5b8d07e33a52244a9a84c936d3672908"
+    },
+    {
+      "name": "mutations-recovery.log",
+      "bytes": 263,
+      "sha256": "a88958ffdc84802ba877a6187dbbba60e1f02247fb567b9a8a63ff0d98b01ba1"
+    },
+    {
+      "name": "mutations-groth16.log",
+      "bytes": 257,
+      "sha256": "b76cc7f57889b0aa45fe673b96d3dba3c9c56488b2c8915142fd811c0b211f51"
+    },
+    {
+      "name": "mutations-imt.log",
+      "bytes": 362,
+      "sha256": "d981c2b770fdf8748f09209b438ea7df27ceae6d4afee6080f61645d0f595c48"
+    },
+    {
+      "name": "mutations-ceiling.log",
+      "bytes": 386,
+      "sha256": "f14532106707b76583bf44076b61d17ee0a56be55b691d7023174e0f20aa34cd"
+    },
+    {
+      "name": "mutations-anchors.log",
+      "bytes": 431,
+      "sha256": "a067d7fcda179a6997e00c6f3fcfbb6f1e4a2d86984f42f1a62fc8ac8e8a0bc4"
+    },
+    {
+      "name": "new-guard-profile-red.log",
+      "bytes": 6281,
+      "sha256": "742bdcc968b17fc1704b47c931385c100ef1a02e3a581dac1e5bb4717f186547"
+    },
+    {
+      "name": "new-guard-profile-green.log",
+      "bytes": 841,
+      "sha256": "770cfd1320dbfe76567b77ef7eb66305abcfda4a3df93a4406b13fd06e28e93e"
+    },
+    {
+      "name": "new-guard-entropy-red.log",
+      "bytes": 10100,
+      "sha256": "b117efaf2a878b14e695d9191600f1e8d541478b0aa1e1897eb0b22fd42d5d52"
+    },
+    {
+      "name": "new-guard-entropy-green.log",
+      "bytes": 5160,
+      "sha256": "8996bf65eb3e417492476991607fa731eb5233434cd504281dd6d70939eb1cf3"
+    },
+    {
+      "name": "new-guard-committed-state-red.log",
+      "bytes": 5779,
+      "sha256": "b6396a95a977bb156e4e4e9b1dabf4158e70845efa7e66f31acaef149906f053"
+    },
+    {
+      "name": "new-guard-committed-state-green.log",
+      "bytes": 5125,
+      "sha256": "db5276a7b9ae0acf19b554d5e2e6cd4461164c0937440dc39f65c9e741ffdbc1"
+    },
+    {
+      "name": "new-guard-vk-pin-red.log",
+      "bytes": 13288,
+      "sha256": "be4f0b2cd73b322626841ec23f6f3ef0c7ea6db9a424256b9fa48819721e97a3"
+    },
+    {
+      "name": "new-guard-vk-pin-green.log",
+      "bytes": 5240,
+      "sha256": "eed9166d89fe751ee7112fc850579f1ee885895a13c7969322adef48a25e89de"
+    },
+    {
+      "name": "new-guard-domain-red.log",
+      "bytes": 5952,
+      "sha256": "7d8ec9aeeeab661c2e8b101afcac26ac6c6d075e11f01bf5ff5aa04ebf6bbe2b"
+    },
+    {
+      "name": "new-guard-domain-green.log",
+      "bytes": 5248,
+      "sha256": "d3e079100414a7b65457df33d5cb5c503ffd8e75c87320a83a8e1b837ee762f4"
+    },
+    {
+      "name": "new-guard-os-fallback-red.log",
+      "bytes": 7609,
+      "sha256": "257beb68988a9016a9325f51394c9b81e0ab3069afcdb3fc0de90cd771204661"
+    },
+    {
+      "name": "new-guard-os-fallback-green.log",
+      "bytes": 5232,
+      "sha256": "b73184ea0e8ddc85839c7e86371de8b14330812ea0e927de76b710b8338a8bc9"
+    }
+  ]
+}
