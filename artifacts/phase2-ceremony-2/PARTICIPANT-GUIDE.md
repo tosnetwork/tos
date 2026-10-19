@@ -98,6 +98,7 @@ Check you are where you think you are:
 
 ```sh
 git rev-parse HEAD
+export TOS_ROOT="$PWD"
 ```
 
 **The output must equal the announced commit, character for character.** If it
@@ -185,6 +186,26 @@ use `--sign-with gpg:<your-key-id>` in section 7. Give the operator your
 
 ---
 
+### 5d. Pin the announced roster
+
+Before contributing, obtain the public roster and the independently archived
+announcement. Set `ROSTER` to your absolute path to that public roster file and
+`ROSTER_SHA256` to the digest pinned by the announcement, not a digest supplied
+with a newly substituted file. Run:
+
+```sh
+set -eu
+printf '%s  %s\n' "$ROSTER_SHA256" "$ROSTER" | sha256sum -c -
+```
+
+Require success, then check your exact public key, signing principal/fingerprint
+and independence declaration in that roster. Check its ceremony identifier and
+protocol against the announcement too. Keep both files for the final audit;
+`roster.template.json` with `TO FIX` entries is not a usable roster. A hash check
+binds bytes, not the truth of the roster's independence claims.
+
+---
+
 ## 6. Read the two files you are being asked to trust
 
 This is not ceremony: it is the only step that makes your contribution mean
@@ -210,6 +231,32 @@ remove.
 
 ---
 
+### 6a. Prepare the machine before any contribution
+
+Use a machine and operating environment you control, independently of the
+project. Do not let the project administer it, observe its memory or supply a
+prebuilt contributor. Before running section 7, in the same shell:
+
+```sh
+ulimit -c 0
+ulimit -c
+swapon --show
+```
+
+The core limit must print `0`; the swap listing must be empty. If not, stop
+and use a suitable machine or arrange its configuration yourself before drawing
+any randomness. Do not rely on turning swap off afterwards. Ensure there is no
+hibernation, debugger, crash collector, memory capture, VM checkpoint or backup
+that can preserve this process's memory. A zero core limit alone does not prove
+that a privileged crash collector or hypervisor cannot copy memory.
+
+Use an ephemeral VM only if its host and snapshot policy meet that requirement.
+If you cannot establish it, disclose the limitation and do not claim destruction.
+Section 11 covers disposal after the process exits. Keep the signing identity
+available on your own signing machine for the later verification statement.
+
+---
+
 ## 7. Get the ceremony directory, and contribute
 
 The operator sends you a directory of about **6 MB**. It contains no secret.
@@ -223,13 +270,66 @@ ls ~/ceremony
 
 You should see `key.bin`, `contributions.bin` and `ceremony.json`.
 
+### 7a. Build the verifier and check the incoming transcript
+
+Set `CEREMONY` to the absolute path of the public directory you just received.
+Keep `TOS_ROOT` from section 3. Use the announced commit, with no local source
+changes, and a shell without a `CARGO_TARGET_DIR` override. Build the binaries
+explicitly: the contribution wrapper builds only `phase2-contribute`, not the
+verifier used in section 8.
+
+```sh
+cd "$TOS_ROOT"
+cargo build --release --locked --manifest-path tools/shielded-pool-ceremony/Cargo.toml --bins
+export PHASE2_BIN="$TOS_ROOT/tools/shielded-pool-ceremony/target/release"
+```
+
+Read the public `ceremony.json`. Its phase-1 slice and starting-key digests must
+match the announcement. If it already has participant entries, run:
+
+```sh
+"$PHASE2_BIN/phase2-verify" "$CEREMONY"
+python3 "$TOS_ROOT/test/shielded-pool/verify-attestations.py" "$CEREMONY" \
+    --roster "$ROSTER" \
+    --attestations "$(dirname "$CEREMONY")" --in-progress
+```
+
+Both must exit 0. Expect **NOT FINISHED** from the first: no beacon may yet
+have closed it. Check each existing attestation's `built from` field against
+the announced commit yourself: the attestation verifier checks its format,
+not equality with the announcement. It also does not establish publication
+time, real independence or destruction of randomness.
+
+For an empty starting transcript, `phase2-verify` deliberately refuses "no
+contributions". Instead rebuild a separate, public starting directory locally:
+
+```sh
+CHECK_DIR=$(mktemp -d)
+"$PHASE2_BIN/phase2-begin" "$CHECK_DIR/initial"
+cmp "$CHECK_DIR/initial/key.bin" "$CEREMONY/key.bin"
+cmp "$CHECK_DIR/initial/contributions.bin" "$CEREMONY/contributions.bin"
+cmp "$CHECK_DIR/initial/ceremony.json" "$CEREMONY/ceremony.json"
+```
+
+Require all comparisons to succeed and the printed starting-key/transcript
+hashes to equal the announcement. This scratch directory is a deterministic
+opening-key check, not a participant contribution; do not submit it as a second
+ceremony. Request the original tool-produced files if someone reformatted the
+opening record. No signature check is possible before any contribution exists.
+
+Before either route, independently compare the roster's SHA-256 with the
+announcement, as in section 5d. Do not replace a failed check with a waiver or
+contribute to see whether that fixes it. Complete section 6a first.
+
+### 7b. Make your one contribution
+
 Now contribute. **Note `$HOME` — do not write `~` here**, because the `~`
 inside `ssh:~/...` is not expanded by the shell and the script will tell you
 it cannot read your key:
 
 ```sh
 cd ~/tos
-./scripts/shielded-pool-phase2-contribute.sh ~/ceremony \
+./scripts/shielded-pool-phase2-contribute.sh "$CEREMONY" \
     --sign-with ssh:$HOME/.ssh/tos_signing_key
 ```
 
@@ -237,7 +337,7 @@ or, for PGP:
 
 ```sh
 cd ~/tos
-./scripts/shielded-pool-phase2-contribute.sh ~/ceremony \
+./scripts/shielded-pool-phase2-contribute.sh "$CEREMONY" \
     --sign-with gpg:<your-key-id>
 ```
 
@@ -265,7 +365,7 @@ If you do not want to rely solely on the kernel's generator, you can stir in
 bytes of your own — dice rolls, a hardware source, anything:
 
 ```sh
-./scripts/shielded-pool-phase2-contribute.sh ~/ceremony \
+./scripts/shielded-pool-phase2-contribute.sh "$CEREMONY" \
     --sign-with ssh:$HOME/.ssh/tos_signing_key \
     --entropy-file ~/my-dice-rolls.txt
 ```
@@ -279,7 +379,7 @@ poor choice here cannot make the result worse than not using it.
 
 ```sh
 cd ~/tos/tools/shielded-pool-ceremony
-./target/release/phase2-verify ~/ceremony
+"$PHASE2_BIN/phase2-verify" "$CEREMONY"
 ```
 
 About three minutes. It rebuilds the starting key, audits every contribution
@@ -292,9 +392,9 @@ verifies against the roster:
 
 ```sh
 cd ~/tos
-python3 test/shielded-pool/verify-attestations.py ~/ceremony \
-    --roster artifacts/phase2-ceremony-2/roster.json \
-    --attestations ~ \
+python3 test/shielded-pool/verify-attestations.py "$CEREMONY" \
+    --roster "$ROSTER" \
+    --attestations "$(dirname "$CEREMONY")" \
     --in-progress
 ```
 
@@ -322,82 +422,219 @@ Two refusals that are not your fault:
 
 ---
 
-## 9. Publish your attestation
+## 9. Publish in your own public repository
 
-Your attestation is at `~/attestation-<N>.txt`, with its signature beside it
-as `~/attestation-<N>.txt.sig` (or `.asc` for PGP). Both are public. Look at
-them:
+Publish in **your own public GitHub repository**, outside the project's control,
+before the contribution-close height. First complete section 11's destruction
+procedure. The wrapper signs automatically; its signature does not prove erasure.
+Publish only the public files: the updated `key.bin`, `contributions.bin`,
+`ceremony.json`, your `attestation-N.txt` and its `.sig` or `.asc`.
+The complete updated directory is required, not just one contribution record.
+
+Set `PUBLIC_REPO` to a clean clone of your own public repository and `N` to your
+actual contribution index. Select `SIGNATURE` as the exact `.sig` or `.asc` path
+beside your attestation. Do not copy optional entropy files, keys or machine images.
 
 ```sh
-cat ~/attestation-*.txt
+set -eu
+mkdir -p "$PUBLIC_REPO/contribution/ceremony"
+cp "$CEREMONY/key.bin" "$CEREMONY/contributions.bin" "$CEREMONY/ceremony.json" \
+    "$PUBLIC_REPO/contribution/ceremony/"
+cp "$(dirname "$CEREMONY")/attestation-$N.txt" "$SIGNATURE" "$PUBLIC_REPO/contribution/"
+cd "$PUBLIC_REPO/contribution"
+sha256sum ceremony/key.bin ceremony/contributions.bin ceremony/ceremony.json \
+    "attestation-$N.txt" "$(basename "$SIGNATURE")" > SHA256SUMS
+cat SHA256SUMS
+cd "$PUBLIC_REPO"
+git add contribution
+git commit -F contribution/SHA256SUMS
+git push
 ```
 
-**Publish the text and the signature somewhere that is visibly yours** — a
-GitHub gist under your account, a comment on the ceremony's issue, your own
-website, a post from an account people know is you. This is the step that
-turns your contribution from an anonymous entry in a file into something a
-stranger can trace to a person who can be asked.
+Check the public commit URL and archive the publication time and observed
+Bitcoin height. The commit message publishes the **whole-file** SHA-256 values;
+the per-entry contribution digest inside the attestation is different. Commit
+dates alone are author-controlled, so keep independently observable publication
+evidence. Do not rewrite or delete this public record.
 
-Then send both files to the operator.
+Ordinary Git files larger than **100 MiB** are blocked. Instead attach the public
+files and `SHA256SUMS` as release assets in your own repository, and paste the
+manifest into the release text. Each release asset must be **under 2 GiB**.
+Check these [file limits](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)
+and [release limits](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases)
+before publication. Never substitute a pointer for the actual contribution bytes.
+If these limits prevent publication, stop and agree a public archival plan before
+contributing. The normal directory is about 6 MB.
+
+## 10. Project fetch and handoff
+
+Send the project your public repository's exact commit URL or release URL and
+manifest. The project fetches those public files, independently reads the hashes
+from your commit/release text, and checks them before importing. From the fetched
+`contribution` directory:
+
+```sh
+sha256sum -c SHA256SUMS
+```
+
+Also compare the manifest itself with the values in the published commit/release
+text; a downloaded manifest alone authenticates nothing. Any mismatch stops the
+handoff. The project preserves your original bytes and signed attestation.
+A private upload to the project does not replace your own public publication.
+
+## 11. Destroy the randomness and dispose of the environment
+
+Wait for the contributor to exit successfully. The source wipes its secret
+scalar, its inverse and temporary entropy buffers; there is no scalar file to
+publish or shred. Process exit and a successful audit do not independently prove
+that every memory copy was destroyed.
+
+Section 6a's no-swap/no-dump/no-snapshot precautions must have held **before and
+throughout** the contribution. If an unexpected dump, swap write, checkpoint or
+memory copy may exist, do not sign an unconditional destruction statement.
+Disclose what happened and let the ceremony be refused or re-announced rather
+than claiming secrecy you cannot establish.
+
+If you used `--entropy-file`, discard that private input and its backups too;
+never include it in the public archive. Keep only the public ceremony,
+attestation and signature needed for sections 9–10. After exporting them, shut
+down and discard the ephemeral VM and its snapshots/volumes on a host you
+control, or sanitize the dedicated machine using its supported erase procedure.
+Deleting files or a VM does not prove that SSD wear-levelled copies, provider
+snapshots or backups disappeared. If you do not control those copies, state that
+limit; do not promise their destruction. Nobody can verify this claim from the
+transcript.
+
+Keep your roster signing key available on your independently controlled signing
+machine until you have signed the final verification statement in section 13.
+Remove only a disposable working copy when appropriate, not the last copy of an
+identity you still need. Never send a private key, scalar, entropy input, dump
+or machine image to the project.
 
 ---
 
-## 10. Send the ceremony directory onward
+## 12. Independently verify after the beacon
+
+On a machine you control, obtain the source independently again and follow
+sections 2–4 and 7a's build commands at the announcement's exact commit. Do not
+use the project's verifier binary or substitute a newer checkout silently.
+Download the complete public ceremony and all attestations/signatures. Set:
+
+- `CEREMONY`: absolute path of the final public ceremony directory;
+- `ROSTER`: the roster archived with the original announcement;
+- `ROSTER_SHA256`: its 64-character SHA-256 pinned in that announcement;
+- `ATTESTATIONS`: directory containing every `attestation-N.txt` and signature;
+- `PUBLIC_CHECKS`: a fresh output directory outside the source checkout;
+- `CANDIDATE_VK` (optional): a provisional verifying key offered for comparison;
+  final parameters must not be published until your signed independent PASS;
+- `BEACON_HASH`: the block hash you read yourself at the announced beacon height.
+
+Read the Bitcoin chain through your own network path, using your full node or
+independent sources, not a response supplied by the project. Record the height,
+hash, source and observation time. Resolve any disagreement or reorganisation
+before claiming a result; do not switch heights or choose a convenient hash.
+The beacon encoding is exactly 64 lowercase ASCII hexadecimal characters,
+without a newline, not 32 decoded bytes. Repeat section 5d's roster check using
+your archived announcement and roster before continuing. Check the beacon
+independently:
 
 ```sh
-cd ~
-tar czf ceremony-after-me.tar.gz ceremony attestation-*.txt attestation-*.txt.sig
-ls -lh ceremony-after-me.tar.gz
+set -eu
+mkdir -p "$PUBLIC_CHECKS"
+printf '%s' "$BEACON_HASH" | grep -Ex '[0-9a-f]{64}'
+printf '%s' "$BEACON_HASH" > "$PUBLIC_CHECKS/expected-beacon.bin"
+test "$(wc -c < "$PUBLIC_CHECKS/expected-beacon.bin")" -eq 64
+cmp "$PUBLIC_CHECKS/expected-beacon.bin" "$CEREMONY/beacon.bin"
+sha256sum "$PUBLIC_CHECKS/expected-beacon.bin" "$CEREMONY/beacon.bin"
 ```
 
-(drop the `.sig` from that line if you signed with PGP; use `.asc`)
-
-Send it back however you like — it is about 6 MB, it carries no secret, and
-any transport will do. From **your own computer**:
+Then run both verifiers, from the source root with `PHASE2_BIN` set by section 7a:
 
 ```sh
-scp user@your-vps:/home/user/ceremony-after-me.tar.gz .
+cd "$TOS_ROOT"
+"$PHASE2_BIN/phase2-verify" "$CEREMONY" --vk-out "$PUBLIC_CHECKS/vk.bin" \
+    > "$PUBLIC_CHECKS/transcript-verification.txt" 2>&1
+cat "$PUBLIC_CHECKS/transcript-verification.txt"
+grep -F 'This ceremony is finished:' "$PUBLIC_CHECKS/transcript-verification.txt"
+test "$(wc -c < "$PUBLIC_CHECKS/vk.bin")" -eq 1248
+python3 test/shielded-pool/verify-attestations.py "$CEREMONY" \
+    --roster "$ROSTER" --attestations "$ATTESTATIONS" \
+    > "$PUBLIC_CHECKS/attestation-verification.txt" 2>&1
+cat "$PUBLIC_CHECKS/attestation-verification.txt"
+if [ -n "${CANDIDATE_VK:-}" ]; then cmp "$PUBLIC_CHECKS/vk.bin" "$CANDIDATE_VK"; fi
+sha256sum "$CEREMONY/key.bin" "$CEREMONY/contributions.bin" \
+    "$CEREMONY/ceremony.json" "$CEREMONY/beacon.bin" "$PUBLIC_CHECKS/vk.bin"
 ```
 
-If you would rather open a pull request, fork the repository, copy the
-directory into `artifacts/phase2-ceremony-2/`, and push. Neither route is more
-trustworthy than the other: what makes the result checkable is the published
-attestation, not how the bytes travelled.
+Require exit 0 from every command and the explicit **finished** message.
+`phase2-verify` also exits 0 for an unfinished but valid chain, so exit 0 alone
+is insufficient. It rebuilds the starting key, audits all contributions,
+checks every transcript link and recomputes the final beacon step. The
+attestation verifier must name your pinned identity as independent and verify
+all participant signatures; do not use `--in-progress` or `--unattested-ok` here.
 
----
+Compare the announced opening digests, source commit in each attestation,
+participant roster and published order yourself. Check that your exact
+contribution/position was retained and that the final entry is the announced
+beacon with no later participant. A valid signature or transcript does not prove
+the announcement preceded contributions, that nobody contributed after close,
+that a roster declaration is true, or that randomness was destroyed.
 
-## 11. What is left on this machine
+The final `vk.bin` is 1,248 public bytes for this circuit. Publish its full
+SHA-256 and your independently derived transcript digest, not just "verified".
+A successful transcript audit is not a deployment acceptance test; the project's
+remaining gate is described in the [ceremony runbook](../../doc/shielded-pool-phase2-runbook.md#verification-by-people-who-did-not-run-it).
 
-Nothing holds your random number. It existed only in the contributor's memory
-and was wiped; there is no file to shred.
+## 13. Sign and publish your independent verification statement
 
-Two honest caveats, because "nothing is left" is easy to say and harder to
-guarantee:
+Write a separate public `verification.txt` in `PUBLIC_CHECKS`. State PASS or
+REFUSED, the ceremony and announcement/archive identifiers, roster SHA-256,
+announced source commit, observed close/beacon heights and beacon block hash,
+the artifact/key SHA-256 values above, your contribution index/digests, command
+exit statuses and the finished/not-finished result. Include observation sources
+and times and disclose unresolved assumptions or failures. A PASS states that
+you independently reproduced those bytes; it does not certify secret erasure.
 
-- **Swap.** If this VPS has swap enabled, memory pages *can* in principle
-  reach disk. Check with `swapon --show`. If it prints nothing, there is no
-  swap and nothing to worry about.
-- **The provider's snapshots.** You do not control your hypervisor's memory.
-  This is a limit of using a VPS at all, not of this software.
-
-If you want to be thorough, destroy the VPS when you are done. It has served
-its purpose and nothing on it is needed again.
-
-Your signing key is the one thing worth keeping or deliberately removing:
+Sign the final text with the **same roster-pinned identity**, on your own
+signing machine. Set `SIGNING_KEY` to your existing private SSH key path, or
+`SIGNING_KEY_ID` to your roster's actual GPG signing-key identifier:
 
 ```sh
-shred -u ~/.ssh/tos_signing_key        # only if you generated it for this
+REPORT="$PUBLIC_CHECKS/verification.txt"
+ssh-keygen -Y sign -f "$SIGNING_KEY" -n file "$REPORT"
 ```
 
-Do **not** do that if you copied in a key you use for anything else.
+Or use GPG instead:
+
+```sh
+REPORT="$PUBLIC_CHECKS/verification.txt"
+gpg --local-user "$SIGNING_KEY_ID" --clearsign --output "$REPORT.asc" "$REPORT"
+```
+
+Publish the text, `.sig` or `.asc`, and public verification outputs through the
+announced reporting channel and **your own public GitHub repository**. Commit
+the report, signature and outputs there (or attach release assets), publishing
+their SHA-256 values in the commit/release text as in section 9. The project
+must wait for your signed PASS before publishing final parameters. Its own
+verification does not replace yours. Readers must check
+this statement's signature using your key from the pinned roster. It is not a
+contribution attestation and `verify-attestations.py` does not validate it;
+that tool checks only `attestation-N.txt` files. Do not rename this report into
+that format. Keep your contribution attestation unchanged.
+
+If anything fails, publish a signed REFUSED statement with the exact failing
+check, public hashes and observed discrepancy. Do not endorse parameters,
+change the roster/beacon, waive signatures, create another contribution or
+sign a success claim to help the project finish. Preserve public evidence and
+report it using `<REPORTING_CHANNEL>`. Never include secret material.
 
 ---
 
 ## What happens next, and why nothing is finished yet
 
 Contributions close when the Bitcoin chain reaches the height named in the
-announcement. The block **after** that — also named in advance, and not yet
-mined by anyone — supplies the closing value. Only then is the ceremony
+announcement. A strictly later beacon block — also named in advance, and not
+yet mined — supplies the closing value. Only then is the ceremony
 finalised, verified by people who did not run it, and the parameters frozen.
 
 Until that point the parameters do not exist, and anybody who tells you

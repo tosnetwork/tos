@@ -17,7 +17,7 @@ the ones before it are already public.
 | 1 | attestation verification exists and can fail | done | `test/shielded-pool/verify-attestations.py`, 19 cases, each watched to fail |
 | 2 | recruit participants, at least one independent of the operator | **operator** | **blocked — needs people** |
 | 3 | collect each participant's already-public signing key into `roster.json` | operator | blocked on 2 |
-| 4 | fix the beacon height and the closing height | operator | **confirmed 2026-09-22**: close 970,141, beacon 970,285 |
+| 4 | fix fresh beacon and closing heights | **operator** | **pending: the 2026-09-22 heights have expired** |
 | 5 | publish the announcement, archive it, record where and when | operator | blocked on 2–3 |
 | 6 | run `phase2-begin`, publish the starting digests | operator | blocked on 5 |
 | 7 | contributions, in any order, each signed | participants | blocked on 6 |
@@ -29,11 +29,17 @@ the ones before it are already public.
 empty VPS to a published attestation. It assumes you have never seen this
 repository. Roughly 25 minutes, most of it waiting.
 
+The external party who contributes once and then independently audits the
+finished ceremony should start with
+[`INDEPENDENT-PARTICIPANT.md`](INDEPENDENT-PARTICIPANT.md). It links to the guide's
+commands and separates the contribution attestation from the final signed audit.
+
 ## What is in here
 
 ```
 ANNOUNCEMENT.draft.md    the announcement, with every undecided field marked TO FIX
-PARTICIPANT-GUIDE.md     how to contribute, from a bare VPS, one command at a time
+PARTICIPANT-GUIDE.md     contribution and final-verification commands, in one place
+INDEPENDENT-PARTICIPANT.md  the external contributor/verifier's role and refusal rules
 roster.template.json     the participant roster to fill in and pin
 ```
 
