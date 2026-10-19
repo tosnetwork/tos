@@ -51,7 +51,7 @@
     },
     "global_id": 1,
     "network": "4242424242424242424242424242424242424242424242424242424242424242",
-    "sha256": "59c6318f5136ba95ac62be988618b8e8ba4058e79c7b8ebd553783444af0930e",
+    "sha256": "a571584d834140851c6c88ea743f86c1d36a20cd7601a4f635bebd80a05f79c4",
     "version": 16
   },
   "files": {
@@ -73,7 +73,7 @@
     },
     "config.boc": {
       "bytes": 7475,
-      "sha256": "59c6318f5136ba95ac62be988618b8e8ba4058e79c7b8ebd553783444af0930e"
+      "sha256": "a571584d834140851c6c88ea743f86c1d36a20cd7601a4f635bebd80a05f79c4"
     },
     "repository/LICENSE": {
       "bytes": 35149,

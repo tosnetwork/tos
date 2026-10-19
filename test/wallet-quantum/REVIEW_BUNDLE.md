@@ -10,7 +10,7 @@ or an approved production release.
 The frozen configuration uses the public test namespace `0x42` repeated 32
 times, global ID 1, version 16, basechain credit 20,000 and masterchain credit
 10,000. Its ConfigParams SHA-256 is
-`59c6318f5136ba95ac62be988618b8e8ba4058e79c7b8ebd553783444af0930e`.
+`a571584d834140851c6c88ea743f86c1d36a20cd7601a4f635bebd80a05f79c4`.
 The wallet code embeds this namespace; a deployment under another namespace
 needs its own reviewed code/configuration identities.
 
@@ -96,3 +96,9 @@ The prior version-18 receipts retain their original configuration and manifest
 identities. They are historical measurements, not acceptance of this new baseline.
 The new bundle reproduction and corruption controls are indexed in
 [`auth-v16-validation.json`](../../doc/evidence/auth-v16-validation.json).
+
+The masterchain price refresh reduces only ConfigParams 20 and 24 to one
+twentieth of their previous prices. It preserves every gas limit, credit,
+basechain parameter and contract/code identity. Earlier receipt files retain
+their original configuration hash; the manifest above pins the regenerated
+configuration.
