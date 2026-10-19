@@ -376,6 +376,146 @@
       "name": "new-guard-os-fallback-green.log",
       "bytes": 5232,
       "sha256": "b73184ea0e8ddc85839c7e86371de8b14330812ea0e927de76b710b8338a8bc9"
+    },
+    {
+      "name": "frozen-reproduction-review/fresh-preparation.log",
+      "bytes": 7846,
+      "sha256": "f26ceb65d915b75f25c0de115dc9b8e2f659e70c12ae45f037fda5257e5f8802"
+    },
+    {
+      "name": "frozen-reproduction-review/fresh-verify-green.log",
+      "bytes": 88,
+      "sha256": "0aae7e2d4c4a69dcd6e29d68b9b7d21027dff72037a9c513d29d962a89c51dae"
+    },
+    {
+      "name": "frozen-reproduction-review/self-check-drift-green.log",
+      "bytes": 84,
+      "sha256": "0a8e63f7a2e3a7e88fe211506c1410a4a5a41c1c7e5a4026a2798226539aad6b"
+    },
+    {
+      "name": "frozen-reproduction-review/frozen-check-drift-red.log",
+      "bytes": 45,
+      "sha256": "0d636b5a19912fdf641ed63244c0b6f9bb0cbb1c449b21a9e24452cf25ffe84e"
+    },
+    {
+      "name": "frozen-reproduction-review/fresh-verify-restored-green.log",
+      "bytes": 88,
+      "sha256": "0aae7e2d4c4a69dcd6e29d68b9b7d21027dff72037a9c513d29d962a89c51dae"
+    },
+    {
+      "name": "frozen-reproduction-review/checksum-authority-red.log",
+      "bytes": 5733,
+      "sha256": "b5d4f6d57556d585ff5c4fe1b20b52b2b39da69559b9895c3a93ade972913ef8"
+    },
+    {
+      "name": "frozen-reproduction-review/tests-restored-green.log",
+      "bytes": 5853,
+      "sha256": "498b424378bf9238efb4cdcb923613613160659d6f4c895fdf7ddbb741769978"
+    },
+    {
+      "name": "frozen-reproduction-review/crosscheck.log",
+      "bytes": 31399,
+      "sha256": "bcb5b4900174ec17362ac2860266e5f1e525450fa13ef4e9290b48ebbe53dab1"
+    },
+    {
+      "name": "frozen-reproduction-review/source-guards.log",
+      "bytes": 7973,
+      "sha256": "5948d80395001a5143267bf79ae0b80fad3efc7ce56129ede2900167b3d5cf9d"
+    },
+    {
+      "name": "frozen-reproduction-review/docs.log",
+      "bytes": 421,
+      "sha256": "5a37e0687a22dc550ab9f1c371df3c692f6bcd9d4b3e2fe9c3d9bf91ac20e9e1"
+    },
+    {
+      "name": "frozen-reproduction-review/attestations.log",
+      "bytes": 1331,
+      "sha256": "f8d8b5418d6e45a07556904aba436b18c2d36d8dde0cc7edf1379a5aae24c4fb"
+    },
+    {
+      "name": "frozen-reproduction-review/fmt-all.log",
+      "bytes": 24902,
+      "sha256": "53742dd6dcec863345e869c74dc2bbdfe8950fca0208d04ca82977fdf0c0eb99"
+    },
+    {
+      "name": "frozen-reproduction-review/fmt-touched.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "frozen-reproduction-review/clippy-filter.json",
+      "bytes": 252,
+      "sha256": "957a58ec75ea336eb6a460bf2b315dbcbad5f576819bb279f0a23572b1da086c"
+    },
+    {
+      "name": "frozen-reproduction-review/clang-format.log",
+      "bytes": 28,
+      "sha256": "7bdae2c4bd033c61e7238221a295d34f69cf3cca768bdc922d23a2d0f4357d75"
     }
-  ]
+  ],
+  "frozen_reproduction_followup": {
+    "source_base": "f8dbbf7795e8e60df32b0b77c0ac09257f7cebf1",
+    "authority": "Committed HEAD:artifacts/shielded-pool/deployments/epoch4-v16/SHA256SUMS and publication.json in an independently held reviewed checkout; generated SHA256SUMS is ignored.",
+    "exception": "Only the positive integer publication sandbox_acceptance.gas measurement may differ; every other publication field is compared.",
+    "fresh_preparation_exit": 0,
+    "fresh_gas": 1145722,
+    "frozen_gas": 1145564,
+    "command": "cargo run --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --bin prepare_public_pool -- --verify-frozen . candidate-output",
+    "fresh_verify_exit": 0,
+    "byte_drift_control": {
+      "mutation": "XOR byte 0 of generated code.boc with 1; regenerate only its output SHA256SUMS row.",
+      "self_generated_checksum_exit": 0,
+      "committed_anchor_exit": 1,
+      "refusal": "frozen candidate mismatch: code.boc",
+      "restored_exit": 0
+    },
+    "authority_mutation": {
+      "file": "tools/shielded-pool-circuit/crosscheck/src/bin/prepare_public_pool.rs",
+      "replace": "let checksums = String::from_utf8(git(root, &[\"show\", &format!(\"{frozen}/SHA256SUMS\")])?)?;",
+      "with": "let checksums = String::from_utf8(std::fs::read(out.join(\"SHA256SUMS\"))?)?;",
+      "command": "cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --test public_preparation reproduction_refuses_each_drifted_file_even_with_matching_generated_checksums -- --exact",
+      "red_exit": 101,
+      "assertion": "drifted code.boc accepted its own checksums",
+      "restored_exit": 0
+    },
+    "crosscheck_command": "cargo test --release --locked --no-fail-fast --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml",
+    "crosscheck": {
+      "exit": 0,
+      "passed": 83,
+      "failed": 0,
+      "ignored": 3
+    },
+    "focused_tests": {
+      "command": "cargo test --release --locked --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml --test public_preparation --bin prepare_public_pool",
+      "passed": 8,
+      "failed": 0
+    },
+    "source_guards": {
+      "exit": 0,
+      "passed": 58
+    },
+    "docs_exit": 0,
+    "attestations_exit": 0,
+    "format": {
+      "touched_rust_exit": 0,
+      "native_changed_line_exit": 0,
+      "whitespace_exit": 0,
+      "all_rust_exit": 1,
+      "baseline_only_unformatted_files": 14,
+      "baseline_proof": "Every file named by the formatter is byte-identical to committed HEAD; unrelated formatting is not changed."
+    },
+    "clippy": {
+      "raw_strict_exit": 101,
+      "complete_capped_exit": 0,
+      "baseline_emitted_diagnostics": 1117,
+      "emitted_diagnostics": 1117,
+      "touched_file_diagnostics": [],
+      "touched_targets_analyzed": [
+        "prepare_public_pool",
+        "public_preparation"
+      ]
+    },
+    "python_changes": "none; Ruff is not applicable",
+    "public_writes": 0
+  }
 }

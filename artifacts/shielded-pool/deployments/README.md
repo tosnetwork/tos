@@ -57,7 +57,9 @@ cargo run --release --locked \
   artifacts/shielded-pool/deployments/epoch4-v16-fees.json \
   49696f52f361817869f68c3ba68d0d5a854737a4133ae4616255ac4a3846778c \
   03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579
-(cd candidate-output && sha256sum -c SHA256SUMS)
+cargo run --release --locked \
+  --manifest-path tools/shielded-pool-circuit/crosscheck/Cargo.toml \
+  --bin prepare_public_pool -- --verify-frozen . candidate-output
 ```
 
 The tool audits the finished transcript against the committed phase-1 slice,
@@ -68,6 +70,17 @@ not merely a successful compute exit. Synthetic witnesses are unfunded test
 material and must never be used for public notes. Public BOCs and the strict
 manifest reproduce byte-for-byte; randomized proof processing may change the
 reported gas receipt without changing those identities.
+
+The verification command reads the frozen `epoch4-v16/SHA256SUMS` and
+`publication.json` from **committed HEAD** in the independently held reviewed
+checkout, not from the output directory or modified working-tree files. It
+checks all four deterministic files against those committed hashes and every
+publication field against the committed publication, except the positive
+integer `sandbox_acceptance.gas` measurement. That randomized measurement is
+not a frozen identity. Generated `SHA256SUMS` is only an output inventory;
+checking it against files generated in the same run does not establish
+reproduction. A mismatch names the file and fails. Stop on any mismatch;
+do not regenerate the frozen anchors to make a drifted build pass.
 
 ## Fee evidence and funding limits
 

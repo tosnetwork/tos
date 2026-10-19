@@ -92,10 +92,46 @@ fn historical_forward(config: &ConfigParams, bits: u64, cells: u64) -> Result<u1
     config.set_config(ConfigParamEnum::ConfigParam25(prices))?;
     forward(&config, bits, cells)
 }
+
+fn verify_frozen_candidate(root: &Path, out: &Path) -> Result<()> {
+    let frozen = "HEAD:artifacts/shielded-pool/deployments/epoch4-v16";
+    let checksums = String::from_utf8(git(root, &["show", &format!("{frozen}/SHA256SUMS")])?)?;
+    for name in ["code.boc", "data.boc", "state-init.boc", "manifest.json"] {
+        let bytes = std::fs::read(out.join(name))?;
+        let expected_line = format!("{}  {name}", hex(&shielded_pool_genesis::sha256(&bytes)));
+        if !checksums.lines().any(|line| line == expected_line) {
+            return Err(format!("frozen candidate mismatch: {name}").into());
+        }
+    }
+    let bytes = git(root, &["show", &format!("{frozen}/publication.json")])?;
+    let expected_line =
+        format!("{}  publication.json", hex(&shielded_pool_genesis::sha256(&bytes)));
+    if !checksums.lines().any(|line| line == expected_line) {
+        return Err("committed publication checksum mismatch".into());
+    }
+    let expected: Value = serde_json::from_slice(&bytes)?;
+    let mut actual: Value = serde_json::from_slice(&std::fs::read(out.join("publication.json"))?)?;
+    // Proof randomness can change execution gas, but no candidate identity or quote.
+    if !matches!(actual["sandbox_acceptance"]["gas"].as_u64(), Some(1..)) {
+        return Err("publication sandbox gas is missing or invalid".into());
+    }
+    actual["sandbox_acceptance"]["gas"] = expected["sandbox_acceptance"]["gas"].clone();
+    if actual != expected {
+        return Err("frozen candidate mismatch: publication.json".into());
+    }
+    println!(
+        "FROZEN_CANDIDATE_OK: four exact file hashes and publication fields match committed HEAD"
+    );
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.len() == 3 && args[0] == "--verify-frozen" {
+        return verify_frozen_candidate(Path::new(&args[1]), Path::new(&args[2]));
+    }
     if args.len() != 9 {
-        return Err("usage: prepare_public_pool ROOT CEREMONY OUT PROFILE_COMMIT PROFILE_BLOB GLOBAL_ID FEES_JSON EXPECTED_VK EXPECTED_TRANSCRIPT".into());
+        return Err("usage: prepare_public_pool ROOT CEREMONY OUT PROFILE_COMMIT PROFILE_BLOB GLOBAL_ID FEES_JSON EXPECTED_VK EXPECTED_TRANSCRIPT; or prepare_public_pool --verify-frozen ROOT OUT".into());
     }
     let root = PathBuf::from(&args[0]);
     let directory = Directory::at(PathBuf::from(&args[1]));
@@ -234,7 +270,7 @@ fn main() -> Result<()> {
         100_000_000_000,
     )?;
     if pool.account()? != account {
-        return Err("sandbox candidate address differs from frozen manifest".into());
+        return Err("sandbox candidate address differs from generated manifest".into());
     }
     let credit = |name: &str| -> Result<u64> {
         Ok(quotes.get(name).ok_or("missing funding quote")?
