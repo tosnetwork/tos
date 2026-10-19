@@ -1,0 +1,19 @@
+{
+  "protocol": "tos-shielded-pool-v1-phase2",
+  "ceremony": "ceremony-2",
+  "participants": [
+    {
+      "name": "ffreeofmoney-bit",
+      "affiliation": "independent",
+      "independent_of_operator": true,
+      "key": {
+        "type": "ssh",
+        "principal": "ffreeofmoney-bit",
+        "public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICP1m+HPuKXnJxxUby47zOZHQcDFj+ugG7N1x5gnwr6q"
+      },
+      "published_at": [
+        "https://github.com/ffreeofmoney-bit.keys"
+      ]
+    }
+  ]
+}
