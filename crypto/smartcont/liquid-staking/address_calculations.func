@@ -53,15 +53,15 @@ slice calc_address(int workchain, cell state_init) inline {
 
 global slice consigliere;
 
-cell calculate_payout_state_init(slice pool_address, int round_id, int distributing_jettons?) {
+cell calculate_payout_state_init(slice pool_address, int round_id, int distributing_tokens?) {
   cell content_dict = new_dict();
   ;; TODO optimize
-  slice name = concat(distributing_jettons? ? "Deposit " : "Withdrawal ", concat("Payout#", encode_number_to_text(round_id, 10)));
+  slice name = concat(distributing_tokens? ? "Deposit " : "Withdrawal ", concat("Payout#", encode_number_to_text(round_id, 10)));
   content_dict~udict_set_ref(256, "name"H, pack_metadata_value(name));
-  if (distributing_jettons?) {
-    content_dict~udict_set_ref(256, "description"H, pack_metadata_value("Converts deposited TOS to Pool Jettons"));
+  if (distributing_tokens?) {
+    content_dict~udict_set_ref(256, "description"H, pack_metadata_value("Converts deposited TOS to Pool Tokens"));
   } else {
-    content_dict~udict_set_ref(256, "description"H, pack_metadata_value("Converts burned Pool Jettons to TOS"));
+    content_dict~udict_set_ref(256, "description"H, pack_metadata_value("Converts burned Pool Tokens to TOS"));
   }
   content_dict~udict_set_ref(256, "symbol"H, pack_metadata_value("⏲️"));
   content_dict~udict_set_ref(256, "uri"H, pack_metadata_value("my-custom-stake-address.tos"));

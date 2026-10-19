@@ -1545,7 +1545,7 @@ struct Vertex<ast_get_fun_block> final : ASTOtherVararg {
 // `default_protocol_throw` is the synthesized fallback when no annotation and no UnknownOpcode
 //   receiver are present; the lowering throws OP_ERROR (0x00010001) — see common.tol.
 // `silent_drop` is the explicit `@unknown_silent_drop;` mode (matches wallet-v5 semantics).
-// `throw_code` is the explicit `@unknown_throw(N);` mode (matches jetton-minter 0xffff).
+// `throw_code` is the explicit `@unknown_throw(N);` mode (matches token-minter 0xffff).
 // `catch_all_receiver` is the `receive(msg: UnknownOpcode)` reserved-receiver mode.
 enum class ContractUnknownMode {
   default_protocol_throw,

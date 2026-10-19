@@ -2,15 +2,15 @@
 
 > **Status: experimental, testnet-only.** The contracts are disabled for production until an independent audit, an oracle-key ceremony, rate limits/caps, monitoring, and TOS governance activation are complete.
 
-The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as bridge-controlled wrapped Jettons. Assets are locked in an EVM `Bridge` contract and represented on TOS by deterministic Jetton minter/wallet contracts; an oracle quorum authorizes minting and unlocking. The state machine derives from a market-proven upstream architecture (see `NOTICE.md` for provenance and licensing) and is maintained here as first-class TOS source code.
+The TOS token bridge carries ERC-20 tokens from external EVM chains onto TOS as bridge-controlled wrapped Tokens. Assets are locked in an EVM `Bridge` contract and represented on TOS by deterministic Token minter/wallet contracts; an oracle quorum authorizes minting and unlocking. The state machine derives from a market-proven upstream architecture (see `NOTICE.md` for provenance and licensing) and is maintained here as first-class TOS source code.
 
 ## Components
 
 ### TOS/TVM side (`tvm/contracts/`, per-network parameters in `tvm/params/`)
 
-- `jetton-bridge.fc`: serves one pinned EVM bridge and source generation; accepts exact mint-fee payments for locks within its swap window, validates oracle multisig execution, deploys deterministic wrapped-token minters, decides each burn once and emits `LOG_BURN` with the decision.
-- `jetton-minter.fc`: reserves supply and a credit number before a swap is consumed, opens holders' wallets, counts supply once per confirmed credit, admits burns, and strands a deleted wallet's obligations under the owner-approved scope.
-- `jetton-wallet.fc`: TEP-74-style transfers; credits once per credit number; holds burned tokens until the burn is admitted and decided.
+- `token-bridge.fc`: serves one pinned EVM bridge and source generation; accepts exact mint-fee payments for locks within its swap window, validates oracle multisig execution, deploys deterministic wrapped-token minters, decides each burn once and emits `LOG_BURN` with the decision.
+- `token-minter.fc`: reserves supply and a credit number before a swap is consumed, opens holders' wallets, counts supply once per confirmed credit, admits burns, and strands a deleted wallet's obligations under the owner-approved scope.
+- `token-wallet.fc`: TOS Token V1-style transfers; credits once per credit number; holds burned tokens until the burn is admitted and decided.
 - `settlement.fc`: the settlement protocol's shared parts: channels, windows, descriptors, funding and logs (`SETTLEMENT-PROTOCOL.md`).
 - `multisig.fc`: threshold oracle voting for TOS-side mint/governance messages; each signed query carries the deployment's `wallet_id` and the network's global id (ConfigParam 19), so queries cannot cross deployments or networks.
 - `votes-collector.fc`: collects EVM-compatible oracle signatures for burn/unlock.
@@ -27,20 +27,20 @@ No production oracle daemon ships with this directory: it completes the smart-co
 
 ## Flow
 
-### ERC-20 → TOS Jetton
+### ERC-20 → TOS Token
 
 1. The user calls EVM `Bridge.lock(token, amount, tosAddressHash)`.
 2. The bridge measures the actual token balance increase, numbers the lock `n` within the current source generation, and emits `Lock`.
-3. The user pays the exact TOS mint fee to `jetton-bridge` for `(generation, n)`.
+3. The user pays the exact TOS mint fee to `token-bridge` for `(generation, n)`.
 4. Oracles verify both events and vote through the TOS multisig.
-5. Once quorum is reached, `jetton-bridge` asks the wrapped-token minter to reserve the mint; once reserved, it consumes the swap and the minter credits the user's Jetton wallet, which reports back. A lost message is recovered by a funded `advance` from the stored record.
+5. Once quorum is reached, `token-bridge` asks the wrapped-token minter to reserve the mint; once reserved, it consumes the swap and the minter credits the user's Token wallet, which reports back. A lost message is recovered by a funded `advance` from the stored record.
 6. A lock that is never paid or voted can be cancelled by an oracle vote (`cancel_lock`); after `LOG_SWAP_CANCELLED`, oracles may sign `Bridge.refundLock(n)` on the EVM side.
 
-### TOS Jetton → ERC-20
+### TOS Token → ERC-20
 
-1. The user burns wrapped Jettons and supplies a 160-bit EVM destination address; the wallet holds them.
+1. The user burns wrapped Tokens and supplies a 160-bit EVM destination address; the wallet holds them.
 2. The minter admits the burn (or durably refuses it, releasing the hold) and notifies the bridge; every message validates ownership, deterministic sender addresses and the participants' lives.
-3. `jetton-bridge` decides the burn once and emits `LOG_BURN` with a RECORDED decision; a cancelled burn is refunded to the wallet instead.
+3. `token-bridge` decides the burn once and emits `LOG_BURN` with a RECORDED decision; a cancelled burn is refunded to the wallet instead.
 4. Oracles sign the burn; `votes-collector` assembles signatures.
 5. Anyone submits the signed burn to EVM `Bridge.unlock`; replay protection marks the digest finished before transfer.
 
@@ -57,7 +57,7 @@ payment counts produce no rejection, only a quorum that never forms.
 
 A burn names where to release on the counterparty chain, and the zero address
 is not a destination: the ERC-20 transfer that would release the tokens there
-reverts, and by then the jettons are already destroyed. `jetton-wallet.fc`
+reverts, and by then the tokens are already destroyed. `token-wallet.fc`
 refuses it (`error::zero_destination`, 397) at the burn entry, which is the
 last point at which the user still has their tokens.
 

@@ -19,9 +19,9 @@
 // Slice 3 Stage 1 deterministic replay harness.
 //
 // The fixture data lives in
-// emulator/test/slice-3-replay-fixtures/jetton-minter-stage1.json. This C++ file
+// emulator/test/slice-3-replay-fixtures/token-minter-stage1.json. This C++ file
 // is the emulator side of the approved hybrid substrate: it executes the checked-in
-// replay cases against the compiled Slice 2 jetton-minter Tol BoC that the
+// replay cases against the compiled Slice 2 token-minter Tol BoC that the
 // existing slice1_gas_parity_contracts target already materializes.
 //
 // Stage 1 intentionally starts with one reference contract and one deterministic
@@ -40,8 +40,8 @@
 
 namespace {
 
-#ifndef SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC
-#error "SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC must be defined by CMake"
+#ifndef SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC
+#error "SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC must be defined by CMake"
 #endif
 
 constexpr td::uint64 kReplayAmount = 1'000'000'000;
@@ -49,7 +49,7 @@ constexpr td::uint64 kReplayBalance = 1'000'000'000;
 constexpr td::uint64 kUnknownOpcodeSeed = 0x0123456789abcdefULL;
 constexpr int kUnknownOpcodeCount = 8;
 
-constexpr std::array<td::uint32, 4> kJettonMinterKnownOpcodes = {
+constexpr std::array<td::uint32, 4> kTokenMasterKnownOpcodes = {
     0x00000015,  // OP_MINT
     0x7bdd97de,  // OP_BURN_NOTIFICATION
     0x00000003,  // OP_CHANGE_ADMIN
@@ -65,7 +65,7 @@ td::uint64 splitmix64(td::uint64& state) {
 }
 
 bool is_known_minter_opcode(td::uint32 opcode) {
-  for (auto known : kJettonMinterKnownOpcodes) {
+  for (auto known : kTokenMasterKnownOpcodes) {
     if (known == opcode) {
       return true;
     }
@@ -106,7 +106,7 @@ td::Ref<vm::Cell> build_unknown_opcode_body(td::uint32 opcode, td::uint64 query_
 
 // Mirrors the Stage 0 baseline builder used by the Slice 1 gas-parity fixture:
 // total_supply=0, third-party admin address, tiny content/code refs. These bytes
-// are valid for JettonMinterStorage and are intentionally not mutated by Stage 1
+// are valid for TokenMasterStorage and are intentionally not mutated by Stage 1
 // replay cases.
 td::Ref<vm::Cell> build_minter_storage_third_admin() {
   vm::CellBuilder content_cb;
@@ -170,15 +170,15 @@ void check_replay(const tos::SmartContract::Answer& answer, td::Ref<vm::Cell> or
 
 }  // namespace
 
-TEST(Slice3Replay, JettonMinterEmptyBodyUnknownThrow) {
-  auto code = load_code_boc(SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC);
+TEST(Slice3Replay, TokenMasterEmptyBodyUnknownThrow) {
+  auto code = load_code_boc(SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC);
   auto data = build_minter_storage_third_admin();
   auto answer = run_replay(code, data, build_empty_body());
   check_replay(answer, data, ReplayExpectation{"empty-body-unknown-throw", 65535, 0, 1000, true});
 }
 
-TEST(Slice3Replay, JettonMinterDeterministicUnknownOpcodeGenerator) {
-  auto code = load_code_boc(SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC);
+TEST(Slice3Replay, TokenMasterDeterministicUnknownOpcodeGenerator) {
+  auto code = load_code_boc(SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC);
   auto data = build_minter_storage_third_admin();
   td::uint64 state = kUnknownOpcodeSeed;
 

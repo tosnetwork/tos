@@ -1,4 +1,4 @@
-;; Jettons
+;; Tokens
 
 const int op::transfer = 0xf8a7ea5;
 const int op::transfer_notification = 0x7362d09c;

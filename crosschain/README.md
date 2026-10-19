@@ -4,7 +4,7 @@ This directory contains the complete smart-contract planes of the TOS cross-chai
 
 | Directory | Bridge | Direction |
 |---|---|---|
-| `token-bridge/` | ERC-20 ↔ wrapped Jetton token bridge | external ERC-20 locked, Jetton minted on TOS |
+| `token-bridge/` | ERC-20 ↔ wrapped Token token bridge | external ERC-20 locked, Token minted on TOS |
 | `coin-bridge/` | Native coin ↔ wrapped ERC-20 bridge | native TOS locked, wrapped ERC-20 minted externally |
 
 `tvm-test-harness/` holds the shared Fift driver that both bridges' `tvm/tests/` suites use to execute compiled contracts in the TOS TVM.

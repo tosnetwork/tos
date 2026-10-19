@@ -1591,14 +1591,14 @@ class ConfigParam73(OracleBridgeParams):
         return super().deserialize(cell_slice)
 
 
-class JettonBridgePrices(TlbScheme):
+class TokenBridgePrices(TlbScheme):
     """
-    // Note that chains in which bridge, minter and jetton-wallet operate are fixated
-    jetton_bridge_prices#_ bridge_burn_fee:Coins bridge_mint_fee:Coins
+    // Note that chains in which bridge, minter and token-wallet operate are fixated
+    token_bridge_prices#_ bridge_burn_fee:Coins bridge_mint_fee:Coins
                            wallet_min_tos_for_storage:Coins
                            wallet_gas_consumption:Coins
                            minter_min_tos_for_storage:Coins
-                           discover_gas_consumption:Coins = JettonBridgePrices;
+                           discover_gas_consumption:Coins = TokenBridgePrices;
     """
 
     def __init__(
@@ -1632,21 +1632,21 @@ class JettonBridgePrices(TlbScheme):
         )
 
 
-class JettonBridgeParams(TlbScheme):
+class TokenBridgeParams(TlbScheme):
     """
-    jetton_bridge_params_v0#00 bridge_address:bits256 oracles_address:bits256 oracles:(HashmapE 256 uint256) state_flags:uint8 burn_bridge_fee:Coins = JettonBridgeParams;
-    jetton_bridge_params_v1#01 bridge_address:bits256 oracles_address:bits256 oracles:(HashmapE 256 uint256) state_flags:uint8 prices:^JettonBridgePrices external_chain_address:bits256 = JettonBridgeParams;
+    token_bridge_params_v0#00 bridge_address:bits256 oracles_address:bits256 oracles:(HashmapE 256 uint256) state_flags:uint8 burn_bridge_fee:Coins = TokenBridgeParams;
+    token_bridge_params_v1#01 bridge_address:bits256 oracles_address:bits256 oracles:(HashmapE 256 uint256) state_flags:uint8 prices:^TokenBridgePrices external_chain_address:bits256 = TokenBridgeParams;
     """
 
     def __init__(
         self,
-        type_: typing.Literal["jetton_bridge_params_v0", "jetton_bridge_params_v1"],
+        type_: typing.Literal["token_bridge_params_v0", "token_bridge_params_v1"],
         bridge_address: bytes,
         oracles_address: bytes,
         oracles: typing.Optional[dict[Any, Any]],
         state_flags: int,
         burn_bridge_fee: typing.Optional[int] = None,
-        prices: typing.Optional[JettonBridgePrices] = None,
+        prices: typing.Optional[TokenBridgePrices] = None,
         external_chain_address: typing.Optional[bytes] = None,
     ):
         self.bridge_address = bridge_address
@@ -1669,7 +1669,7 @@ class JettonBridgeParams(TlbScheme):
         tag = cell_slice.load_bytes(1)[:1]
         if tag not in (b"\x00", b"\x01"):
             raise ConfigError(
-                f"JettonBridgeParams deserialization error: unexpected prefix tag {tag}"
+                f"TokenBridgeParams deserialization error: unexpected prefix tag {tag}"
             )
         bridge_address = cell_slice.load_bytes(32)
         oracles_address = cell_slice.load_bytes(32)
@@ -1678,11 +1678,11 @@ class JettonBridgeParams(TlbScheme):
         burn_bridge_fee = None
         prices = None
         if tag == b"\x00":
-            type_ = "jetton_bridge_params_v0"
+            type_ = "token_bridge_params_v0"
             burn_bridge_fee = cell_slice.load_coins()
         else:
-            type_ = "jetton_bridge_params_v1"
-            prices = JettonBridgePrices.deserialize(cell_slice.load_ref().begin_parse())
+            type_ = "token_bridge_params_v1"
+            prices = TokenBridgePrices.deserialize(cell_slice.load_ref().begin_parse())
         return cls(
             type_=type_,
             bridge_address=bridge_address,
@@ -1694,25 +1694,9 @@ class JettonBridgeParams(TlbScheme):
         )
 
 
-class ConfigParam79(JettonBridgeParams):
+class ConfigParam79(TokenBridgeParams):
     """
-    _ JettonBridgeParams = ConfigParam 79; // ETH->TOS token bridge
-    """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    @classmethod
-    def serialize(cls, *args): ...
-
-    @classmethod
-    def deserialize(cls, cell_slice: Slice):
-        return super().deserialize(cell_slice)
-
-
-class ConfigParam81(JettonBridgeParams):
-    """
-    _ JettonBridgeParams = ConfigParam 81; // BNB->TOS token bridge
+    _ TokenBridgeParams = ConfigParam 79; // ETH->TOS token bridge
     """
 
     def __init__(self, **kwargs):
@@ -1726,9 +1710,25 @@ class ConfigParam81(JettonBridgeParams):
         return super().deserialize(cell_slice)
 
 
-class ConfigParam82(JettonBridgeParams):
+class ConfigParam81(TokenBridgeParams):
     """
-    _ JettonBridgeParams = ConfigParam 82; // Polygon->TOS token bridge
+    _ TokenBridgeParams = ConfigParam 81; // BNB->TOS token bridge
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    @classmethod
+    def serialize(cls, *args): ...
+
+    @classmethod
+    def deserialize(cls, cell_slice: Slice):
+        return super().deserialize(cell_slice)
+
+
+class ConfigParam82(TokenBridgeParams):
+    """
+    _ TokenBridgeParams = ConfigParam 82; // Polygon->TOS token bridge
     """
 
     def __init__(self, **kwargs):

@@ -268,28 +268,28 @@ export interface NftCollectionData {
   owner_address: string;
 }
 
-export interface JettonMasterData {
-  "@type": "jetton.masterData";
+export interface TokenMasterData {
+  "@type": "token.masterData";
   total_supply: string;
   mintable: boolean;
   admin_address: string;
   content: string;
-  jetton_wallet_code: string;
+  token_wallet_code: string;
 }
 
-export interface JettonWalletData {
-  "@type": "jetton.walletData";
+export interface TokenWalletData {
+  "@type": "token.walletData";
   balance: string;
   owner: string;
-  jetton_master_address: string;
-  jetton_wallet_code: string;
+  token_master_address: string;
+  token_wallet_code: string;
 }
 
 export type TokenData =
   | NftItemData
   | NftCollectionData
-  | JettonMasterData
-  | JettonWalletData;
+  | TokenMasterData
+  | TokenWalletData;
 
 // ---------------------------------------------------------------------------
 // Config

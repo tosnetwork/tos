@@ -47,14 +47,14 @@ dictnew 11
    wallet-gas-consumption Tomi,
    minter-min-tos-for-storage Tomi,
    discover-gas-consumption Tomi,
-b> =: JettonBridgePrices
+b> =: TokenBridgePrices
 
 <b 0x01 8 u,
    bridge-addr 256 u, 
    oracles-addr 256 u,
    oracles dict,
    state-flags 8 u,
-   JettonBridgePrices ref,
+   TokenBridgePrices ref,
    external-chain-address 256 u,
 b> constant config79
 

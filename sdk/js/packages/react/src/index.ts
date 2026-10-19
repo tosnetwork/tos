@@ -120,11 +120,11 @@ export type {
 // Hooks — Tokens
 // ---------------------------------------------------------------------------
 
-export { useJettonBalance } from "./hooks/useJettonBalance.js";
+export { useTokenBalance } from "./hooks/useTokenBalance.js";
 export type {
-  UseJettonBalanceArgs,
-  UseJettonBalanceOptions,
-} from "./hooks/useJettonBalance.js";
+  UseTokenBalanceArgs,
+  UseTokenBalanceOptions,
+} from "./hooks/useTokenBalance.js";
 
 export { useTokenData } from "./hooks/useTokenData.js";
 export type { UseTokenDataOptions } from "./hooks/useTokenData.js";

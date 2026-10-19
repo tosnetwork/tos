@@ -35,7 +35,7 @@
 const size_t KEY_LEN = 3 + 8 + 256;
 
 void print_help() {
-  std::cerr << "mintless-proof-generator - generates proofs for mintless jettons. Usage:\n\n";
+  std::cerr << "mintless-proof-generator - generates proofs for mintless tokens. Usage:\n\n";
   std::cerr << "mintless-proof-generator generate <input-list> <output-file>\n";
   std::cerr << "  Generate a full tree for <input-list>, save boc to <output-file>.\n";
   std::cerr << "  Input format: each line is <address> <amount> <start_from> <expired_at>.\n\n";

@@ -1159,8 +1159,8 @@ fn serialize_oracle_bridge_params(pl: &OracleBridgeParams) -> Result<Value> {
     Ok(map.into())
 }
 
-fn serialize_jetton_bridge_params(
-    pl: &JettonBridgeParams,
+fn serialize_token_bridge_params(
+    pl: &TokenBridgeParams,
     mode: SerializationMode,
 ) -> Result<Value> {
     let mut oracles = Map::new();
@@ -1401,13 +1401,13 @@ pub fn serialize_known_config_param(
             return Ok(Some(serialize_oracle_bridge_params(c)?));
         }
         ConfigParamEnum::ConfigParam79(ref c) => {
-            return Ok(Some(serialize_jetton_bridge_params(c, mode)?));
+            return Ok(Some(serialize_token_bridge_params(c, mode)?));
         }
         ConfigParamEnum::ConfigParam81(ref c) => {
-            return Ok(Some(serialize_jetton_bridge_params(c, mode)?));
+            return Ok(Some(serialize_token_bridge_params(c, mode)?));
         }
         ConfigParamEnum::ConfigParam82(ref c) => {
-            return Ok(Some(serialize_jetton_bridge_params(c, mode)?));
+            return Ok(Some(serialize_token_bridge_params(c, mode)?));
         }
         _ => return Ok(None),
     }

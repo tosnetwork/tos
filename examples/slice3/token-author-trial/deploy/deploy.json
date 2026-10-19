@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "pattern": "token",
+  "contract": "TokenAuthorTrial",
+  "source": "src/main.tol",
+  "network": "local",
+  "state_init": {
+    "code": "build/TokenAuthorTrial.code.boc",
+    "data": "build/TokenAuthorTrial.data.boc"
+  }
+}

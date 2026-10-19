@@ -1,6 +1,6 @@
 # Stablecoin escrow: supported versions and deployment restrictions
 
-The TOS Service Protocol stablecoin escrow holds a buyer's jettons for an
+The TOS Service Protocol stablecoin escrow holds a buyer's tokens for an
 Accepted Quote and pays them to the provider on a valid Receipt, or back to the
 buyer on refund. This file records which versions the repository's tooling
 deploys and under what restriction.
@@ -19,8 +19,8 @@ the policy and that the deploy script applies it first.
 
 ## Escrow v1: removed
 
-Escrow v1 derived the address of its own jetton wallet from one fixed wallet
-StateInit layout. Funding through a jetton whose wallet lays out its data
+Escrow v1 derived the address of its own token wallet from one fixed wallet
+StateInit layout. Funding through a token whose wallet lays out its data
 differently was credited to a wallet v1 never addresses; v1 then refused the
 transfer notification, and the funding was orphaned.
 
@@ -55,17 +55,17 @@ Escrow v2 returns funding sent through the wrong wallet instead of orphaning
 it, but has a different limitation that is **accepted for this version, not
 fixed**:
 
-A release or refund sends a jetton transfer from the escrow's own wallet to the
+A release or refund sends a token transfer from the escrow's own wallet to the
 recipient's wallet. If the recipient's wallet refuses the transfer (for
 example, a wallet the stablecoin administrator has locked for incoming
-transfers), the jettons bounce back into the escrow's own wallet and are
+transfers), the tokens bounce back into the escrow's own wallet and are
 re-credited there **without telling the escrow**. The escrow stays in
 `release_pending` or `refund_pending`, the funds stay in its wallet, and no
 operation moves them. **Funds can be stranded indefinitely.**
 
-This is deliberate. With the issuer's unchanged jetton wallet, the escrow
+This is deliberate. With the issuer's unchanged token wallet, the escrow
 cannot distinguish a refused payout from one that was delivered but whose
-acknowledgment was lost, followed by unrelated jettons arriving. An escrow-only
+acknowledgment was lost, followed by unrelated tokens arriving. An escrow-only
 retry, a timeout refund, or a recipient-selected redirection could therefore
 pay twice, or pay one party with another party's funds; an `excesses` message
 from the recipient's wallet can be produced by any transfer naming the escrow
@@ -89,12 +89,12 @@ Production support for this escrow and token combination may be reopened only
 with a new integration in which the token's wallet tells the escrow the
 outcome of each payout, and that outcome is:
 
-- **authenticated**: provably produced by the escrow's own jetton wallet (or
+- **authenticated**: provably produced by the escrow's own token wallet (or
   the token's issuer contract) about a transfer the escrow sent, not by any
   account that can name the escrow;
 - **request-specific**: bound to the exact payout (escrow, query id, amount and
   recipient), so it cannot be confused with another transfer or with unrelated
-  jettons arriving;
+  tokens arriving;
 - **replay-safe**: usable once, so the same outcome cannot settle or reopen a
   payout twice.
 

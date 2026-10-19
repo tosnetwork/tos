@@ -13,9 +13,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PROJECT = REPO_ROOT / "crosschain/token-bridge"
 
 REQUIRED_SOURCES = [
-    "tvm/contracts/jetton-bridge.fc",
-    "tvm/contracts/jetton-minter.fc",
-    "tvm/contracts/jetton-wallet.fc",
+    "tvm/contracts/token-bridge.fc",
+    "tvm/contracts/token-minter.fc",
+    "tvm/contracts/token-wallet.fc",
     "tvm/contracts/multisig.fc",
     "tvm/contracts/votes-collector.fc",
     "tvm/contracts/config.fc",
@@ -113,7 +113,7 @@ def verify_tvm_sources() -> None:
         ],
     )
     require_text(
-        c / "jetton-bridge.fc",
+        c / "token-bridge.fc",
         [
             "op::execute_voting::swap",
             "throw_unless(error::mint_fee_not_matched, msg_value == bridge_mint_fee)",
@@ -131,9 +131,9 @@ def verify_tvm_sources() -> None:
         ],
     )
     require_text(
-        c / "jetton-wallet.fc",
+        c / "token-wallet.fc",
         [
-            "throw_unless(error::not_enough_funds, jetton_amount > 0)",
+            "throw_unless(error::not_enough_funds, token_amount > 0)",
             "throw_unless(error::burn_fee_not_matched, msg_value == bridge_burn_fee)",
             "state_flags & STATE_BURN_SUSPENDED",
             "throw_if(error::zero_destination, destination_address == 0);",
@@ -142,9 +142,9 @@ def verify_tvm_sources() -> None:
         ],
     )
     require_text(
-        c / "jetton-minter.fc",
+        c / "token-minter.fc",
         [
-            "calculate_user_jetton_wallet_address",
+            "calculate_user_token_wallet_address",
             "https://bridge.tos.network/token/",
             "(used + amount <= MAX_SUPPLY) & (MINTER_WORST_CELLS <= cell_limit(false))",
             "(m_holders_count >= HOLDER_LIMIT) | (MINTER_WORST_CELLS > cell_limit(false))",
@@ -176,7 +176,7 @@ def verify_tvm_sources() -> None:
     require_helper_copy(c)
     require_text(
         c / "votes-collector.fc",
-        ["udict_add?", "get_jetton_bridge_config", "STATE_COLLECTOR_SIGNATURE_REMOVAL_SUSPENDED"],
+        ["udict_add?", "get_token_bridge_config", "STATE_COLLECTOR_SIGNATURE_REMOVAL_SUSPENDED"],
     )
     require_text(c / "stdlib.fc", ['"STTOMIS"', '"LDTOMIS"'])
 
@@ -221,7 +221,7 @@ def function_bodies(text: str) -> dict[str, str]:
     return bodies
 
 
-CONFIG_READERS = {"get_jetton_bridge_config", "get_external_bridge_address"}
+CONFIG_READERS = {"get_token_bridge_config", "get_external_bridge_address"}
 
 
 def verify_settlement_handlers_skip_config(contracts: Path) -> None:
@@ -238,7 +238,7 @@ def verify_settlement_handlers_skip_config(contracts: Path) -> None:
         if path.is_file():
             shared += path.read_text(encoding="utf-8") + "\n"
     call = re.compile(r"[~.]?([A-Za-z_][\w?']*)\s*\(")
-    for name in ("jetton-bridge.fc", "jetton-minter.fc", "jetton-wallet.fc"):
+    for name in ("token-bridge.fc", "token-minter.fc", "token-wallet.fc"):
         bodies = function_bodies(shared + (contracts / name).read_text(encoding="utf-8"))
         entries = [f for f in bodies if f.startswith("on_")]
         if len(entries) < 4:

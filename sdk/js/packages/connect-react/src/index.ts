@@ -128,8 +128,8 @@ export { useContractWrite } from "@tos/react";
 export type { ContractWriteArgs, UseContractWriteResult } from "@tos/react";
 
 // Tokens
-export { useJettonBalance } from "@tos/react";
-export type { UseJettonBalanceArgs, UseJettonBalanceOptions } from "@tos/react";
+export { useTokenBalance } from "@tos/react";
+export type { UseTokenBalanceArgs, UseTokenBalanceOptions } from "@tos/react";
 
 export { useTokenData } from "@tos/react";
 export type { UseTokenDataOptions } from "@tos/react";

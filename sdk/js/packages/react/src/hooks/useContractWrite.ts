@@ -60,7 +60,7 @@ export interface UseContractWriteResult {
  *   return (
  *     <button
  *       disabled={isPending}
- *       onClick={() => write({ address: jettonMinter, value: toNano("0.1"), body: mintBody })}
+ *       onClick={() => write({ address: tokenMinter, value: toNano("0.1"), body: mintBody })}
  *     >
  *       Mint
  *     </button>

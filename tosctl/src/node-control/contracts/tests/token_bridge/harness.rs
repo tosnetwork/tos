@@ -194,9 +194,9 @@ pub fn codes() -> &'static Codes {
                 .unwrap_or_else(|e| panic!("{name} compiles: {e}"))
         };
         Codes {
-            bridge: compile("jetton-bridge.fc"),
-            minter: compile("jetton-minter.fc"),
-            wallet: compile("jetton-wallet.fc"),
+            bridge: compile("token-bridge.fc"),
+            minter: compile("token-minter.fc"),
+            wallet: compile("token-wallet.fc"),
         }
     })
 }
@@ -249,7 +249,7 @@ pub fn new_bridge_script_message() -> Message {
         );
     };
     let func = tool("FUNC_PATH", "func");
-    for contract in ["jetton-bridge", "jetton-minter", "jetton-wallet", "votes-collector"] {
+    for contract in ["token-bridge", "token-minter", "token-wallet", "votes-collector"] {
         run(
             std::process::Command::new(&func)
                 .arg("-PS")
@@ -557,7 +557,7 @@ impl Net {
         assert_eq!(
             code.repr_hash(),
             codes().bridge.repr_hash(),
-            "the bridge runs jetton-bridge.fc"
+            "the bridge runs token-bridge.fc"
         );
         net
     }
@@ -1549,8 +1549,8 @@ pub fn trace_dir() -> Option<PathBuf> {
     std::env::var_os("TOKEN_BRIDGE_TRACE_DIR").map(PathBuf::from)
 }
 
-/// The initial state of `owner`'s wallet under `minter`: jetton-wallet.fc's
-/// layout with an empty settlement half (utils.fc, pack_jetton_wallet_data).
+/// The initial state of `owner`'s wallet under `minter`: token-wallet.fc's
+/// layout with an empty settlement half (utils.fc, pack_token_wallet_data).
 pub fn wallet_state_init(minter: &MsgAddressInt, owner: &MsgAddressInt) -> StateInit {
     let data = cell(|b| {
         coins(b, 0);

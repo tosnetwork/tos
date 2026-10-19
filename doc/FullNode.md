@@ -87,9 +87,9 @@ Use dedicated storage paths and monitor disk growth continuously.
 
 A node started with `--json-rpc-address` keeps a basechain wallet index under
 `<db root>/wc0-index` for the account-index JSON-RPC methods
-(`getAccountJettons`, `getAccountNfts`, `getAccountEvents`,
+(`getAccountTokens`, `getAccountNfts`, `getAccountEvents`,
 `getAccountEvent`). The index is built in the background, so the token lists
-from `getAccountJettons` and `getAccountNfts` carry an `index_state`; read
+from `getAccountTokens` and `getAccountNfts` carry an `index_state`; read
 `"complete": false` as "this list may be missing entries", not as the whole
 truth.
 
@@ -102,7 +102,7 @@ truth.
   unfinished this way; past that the worker finishes them before indexing
   more. A candidate whose verification stays indeterminate through every
   attempt, or needs the state of another shard the node does not have yet
-  (a jetton master or NFT collection elsewhere), is `parked`: it is kept,
+  (a token master or NFT collection elsewhere), is `parked`: it is kept,
   retried by the worker in bounded rounds against each shard's newest state,
   and released only on a definite result. Any of these keeps
   `"complete": false`.

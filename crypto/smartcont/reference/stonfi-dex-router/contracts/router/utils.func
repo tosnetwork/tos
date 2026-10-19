@@ -6,7 +6,7 @@
     ).end_cell().begin_parse();
 }
 
-cell pack_pool_data(slice token0_address, slice token1_address, cell jetton_lp_wallet_code, cell lp_account_code) inline_ref {
+cell pack_pool_data(slice token0_address, slice token1_address, cell token_lp_wallet_code, cell lp_account_code) inline_ref {
     return begin_cell()
         .store_slice(my_address())      ;; storage::router_address
         .store_uint(20, 8)              ;; storage::lp_fee        (0.2% * FEE_DIVIDER)
@@ -22,7 +22,7 @@ cell pack_pool_data(slice token0_address, slice token1_address, cell jetton_lp_w
             .store_coins(0)             ;; storage::reserve0
             .store_coins(0)             ;; storage::reserve1
         .end_cell())
-        .store_ref(jetton_lp_wallet_code)   ;; storage::jetton_lp_wallet_code
+        .store_ref(token_lp_wallet_code)   ;; storage::token_lp_wallet_code
         .store_ref(lp_account_code)         ;; storage::lp_account_code
     .end_cell();
 }
@@ -33,9 +33,9 @@ cell pack_pool_data(slice token0_address, slice token1_address, cell jetton_lp_w
         .store_dict(storage::pool_code);
 
     if (slice_hash(token0_address) > slice_hash(token1_address)) {
-        state_init_builder = state_init_builder.store_dict(pack_pool_data(token0_address, token1_address, storage::jetton_lp_wallet_code, storage::lp_account_code));
+        state_init_builder = state_init_builder.store_dict(pack_pool_data(token0_address, token1_address, storage::token_lp_wallet_code, storage::lp_account_code));
     } else {
-        state_init_builder = state_init_builder.store_dict(pack_pool_data(token1_address, token0_address, storage::jetton_lp_wallet_code, storage::lp_account_code));
+        state_init_builder = state_init_builder.store_dict(pack_pool_data(token1_address, token0_address, storage::token_lp_wallet_code, storage::lp_account_code));
     }
 
     cell state_init = state_init_builder

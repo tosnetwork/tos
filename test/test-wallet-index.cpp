@@ -626,7 +626,7 @@ td::Bits256 token_address(uint32_t n, uint8_t top = 0) {
 std::vector<TokenCandidate> token_candidates(uint32_t first, uint32_t count, uint8_t top = 0) {
   std::vector<TokenCandidate> out;
   for (uint32_t i = first; i < first + count; ++i) {
-    auto kind = i % 2 == 0 ? TokenKind::Jetton : TokenKind::Nft;
+    auto kind = i % 2 == 0 ? TokenKind::Fungible : TokenKind::Nft;
     out.push_back(TokenCandidate{kind, token_address(i, top)});
   }
   return out;
@@ -772,8 +772,8 @@ TEST(WalletIndex, SiblingShardsSharingAQueueTakeOnlyTheirOwn) {
     auto low_address = token_address(i, 0x00);
     auto high_address = token_address(i, 0x00);
     high_address.data()[1] = 0x80;
-    low_block.push_back(TokenCandidate{TokenKind::Jetton, low_address});
-    high_block.push_back(TokenCandidate{TokenKind::Jetton, high_address});
+    low_block.push_back(TokenCandidate{TokenKind::Fungible, low_address});
+    high_block.push_back(TokenCandidate{TokenKind::Fungible, high_address});
   }
   ASSERT_TRUE(schedule_block(*db, low_block, kWholeBasechain, 0).empty());
   ASSERT_TRUE(schedule_block(*db, high_block, kWholeBasechain, 0).empty());
@@ -1056,13 +1056,13 @@ TEST(WalletIndex, AReadSnapshotIgnoresLaterCommits) {
   cb.store_bits(wallet.bits(), 256);
   cb.store_long(500, 64);
   db->begin_batch().ensure();
-  db->apply_jetton_verdict(wallet, {true, owner, master, cb.finalize()}, 500).ensure();
+  db->apply_token_verdict(wallet, {true, owner, master, cb.finalize()}, 500).ensure();
   db->commit_batch().ensure();
   ASSERT_EQ(backlog_stats(*db).entries, static_cast<uint64_t>(5));
   // The view still answers as of when it was taken, for the state and the list alike.
   ASSERT_EQ(view.token_backlog_stats().move_as_ok().entries, static_cast<uint64_t>(0));
   size_t listed = 0;
-  view.for_each_current_jetton(owner, 16,
+  view.for_each_current_token(owner, 16,
                                [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
                                  ++listed;
                                  return td::Status::OK();
@@ -1070,7 +1070,7 @@ TEST(WalletIndex, AReadSnapshotIgnoresLaterCommits) {
       .ensure();
   ASSERT_EQ(listed, static_cast<size_t>(0));
   size_t live = 0;
-  db->for_each_current_jetton(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+  db->for_each_current_token(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
       ++live;
       return td::Status::OK();
     }).ensure();
@@ -1218,7 +1218,7 @@ void write_broken_entry_beside_a_sibling(const std::string &path, const TokenCan
 TokenCandidate deep_candidate(uint32_t n, bool high) {
   auto address = token_address(n, 0x00);
   address.data()[1] = high ? 0x80 : 0x00;
-  return TokenCandidate{TokenKind::Jetton, address};
+  return TokenCandidate{TokenKind::Fungible, address};
 }
 
 }  // namespace
@@ -1737,36 +1737,36 @@ TEST(WalletIndex, AFirstAbsentVerdictStillOutranksAnOlderOwnedOne) {
 
 namespace {
 
-td::Ref<vm::Cell> jetton_value(const td::Bits256 &wallet, uint64_t lt) {
+td::Ref<vm::Cell> token_value(const td::Bits256 &wallet, uint64_t lt) {
   vm::CellBuilder cb;
   cb.store_bits(wallet.bits(), 256);
   cb.store_long(static_cast<long long>(lt), 64);
   return cb.finalize();
 }
 
-using JettonVerdict = tos_wallet_index::WalletIndexDb::JettonVerdict;
+using TokenVerdict = tos_wallet_index::WalletIndexDb::TokenVerdict;
 
-JettonVerdict jetton_present(const td::Bits256 &wallet, const td::Bits256 &owner, const td::Bits256 &master,
+TokenVerdict token_present(const td::Bits256 &wallet, const td::Bits256 &owner, const td::Bits256 &master,
                              uint64_t lt) {
-  return JettonVerdict{true, owner, master, jetton_value(wallet, lt)};
+  return TokenVerdict{true, owner, master, token_value(wallet, lt)};
 }
 
-JettonVerdict jetton_absent() {
-  return JettonVerdict{false, td::Bits256::zero(), td::Bits256::zero(), {}};
+TokenVerdict token_absent() {
+  return TokenVerdict{false, td::Bits256::zero(), td::Bits256::zero(), {}};
 }
 
-void apply_jetton(tos_wallet_index::WalletIndexDb &db, const td::Bits256 &wallet, const JettonVerdict &verdict,
+void apply_token(tos_wallet_index::WalletIndexDb &db, const td::Bits256 &wallet, const TokenVerdict &verdict,
                   uint64_t lt) {
   db.begin_batch().ensure();
-  db.apply_jetton_verdict(wallet, verdict, lt).ensure();
+  db.apply_token_verdict(wallet, verdict, lt).ensure();
   db.commit_batch().ensure();
 }
 
 // Masters listed for `owner`, each with the wallet its entry names.
-std::vector<std::pair<td::Bits256, td::Bits256>> jettons_of(tos_wallet_index::WalletIndexDb &db,
+std::vector<std::pair<td::Bits256, td::Bits256>> tokens_of(tos_wallet_index::WalletIndexDb &db,
                                                             const td::Bits256 &owner) {
   std::vector<std::pair<td::Bits256, td::Bits256>> out;
-  db.for_each_jetton(owner, 16, [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
+  db.for_each_token(owner, 16, [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
       td::Bits256 wallet;
       vm::CellSlice cs = vm::load_cell_slice(value);
       CHECK(cs.prefetch_bits_to(wallet.bits(), 256));
@@ -1778,8 +1778,8 @@ std::vector<std::pair<td::Bits256, td::Bits256>> jettons_of(tos_wallet_index::Wa
 
 }  // namespace
 
-TEST(WalletIndex, AJettonWalletsChangedOwnerOrMasterLeavesNoStaleEntry) {
-  auto path = std::string("test-wallet-index-db-jetton-move");
+TEST(WalletIndex, ATokenWalletsChangedOwnerOrMasterLeavesNoStaleEntry) {
+  auto path = std::string("test-wallet-index-db-token-move");
   auto db = open_fresh_db(path);
   auto wallet = token_address(1, 0x50);
   auto owner_a = token_address(2, 0x50);
@@ -1787,46 +1787,46 @@ TEST(WalletIndex, AJettonWalletsChangedOwnerOrMasterLeavesNoStaleEntry) {
   auto master_x = token_address(4, 0x50);
   auto master_y = token_address(5, 0x50);
 
-  apply_jetton(*db, wallet, jetton_present(wallet, owner_a, master_x, 100), 100);
-  ASSERT_EQ(jettons_of(*db, owner_a).size(), static_cast<size_t>(1));
+  apply_token(*db, wallet, token_present(wallet, owner_a, master_x, 100), 100);
+  ASSERT_EQ(tokens_of(*db, owner_a).size(), static_cast<size_t>(1));
 
   // The owner changes: the old owner's entry goes.
-  apply_jetton(*db, wallet, jetton_present(wallet, owner_b, master_x, 200), 200);
-  ASSERT_EQ(jettons_of(*db, owner_a).size(), static_cast<size_t>(0));
-  auto listed = jettons_of(*db, owner_b);
+  apply_token(*db, wallet, token_present(wallet, owner_b, master_x, 200), 200);
+  ASSERT_EQ(tokens_of(*db, owner_a).size(), static_cast<size_t>(0));
+  auto listed = tokens_of(*db, owner_b);
   ASSERT_EQ(listed.size(), static_cast<size_t>(1));
   ASSERT_TRUE(listed[0].first == master_x && listed[0].second == wallet);
 
   // The master changes: the old pair's entry goes.
-  apply_jetton(*db, wallet, jetton_present(wallet, owner_b, master_y, 300), 300);
-  listed = jettons_of(*db, owner_b);
+  apply_token(*db, wallet, token_present(wallet, owner_b, master_y, 300), 300);
+  listed = tokens_of(*db, owner_b);
   ASSERT_EQ(listed.size(), static_cast<size_t>(1));
   ASSERT_TRUE(listed[0].first == master_y);
 
   td::Bits256 owner, master;
-  ASSERT_TRUE(db->get_jetton_wallet(wallet, owner, master).move_as_ok());
+  ASSERT_TRUE(db->get_token_wallet(wallet, owner, master).move_as_ok());
   ASSERT_TRUE(owner == owner_b && master == master_y);
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, AJettonWalletThatStopsVerifyingIsRemoved) {
-  auto path = std::string("test-wallet-index-db-jetton-gone");
+TEST(WalletIndex, ATokenWalletThatStopsVerifyingIsRemoved) {
+  auto path = std::string("test-wallet-index-db-token-gone");
   auto db = open_fresh_db(path);
   auto wallet = token_address(1, 0x51);
   auto owner = token_address(2, 0x51);
   auto master = token_address(3, 0x51);
 
-  apply_jetton(*db, wallet, jetton_present(wallet, owner, master, 100), 100);
-  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(1));
-  apply_jetton(*db, wallet, jetton_absent(), 200);
-  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(0));
+  apply_token(*db, wallet, token_present(wallet, owner, master, 100), 100);
+  ASSERT_EQ(tokens_of(*db, owner).size(), static_cast<size_t>(1));
+  apply_token(*db, wallet, token_absent(), 200);
+  ASSERT_EQ(tokens_of(*db, owner).size(), static_cast<size_t>(0));
   td::Bits256 found_owner, found_master;
-  ASSERT_TRUE(!db->get_jetton_wallet(wallet, found_owner, found_master).move_as_ok());
+  ASSERT_TRUE(!db->get_token_wallet(wallet, found_owner, found_master).move_as_ok());
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, AnOlderBlocksJettonVerdictNeverUndoesANewerOne) {
-  auto path = std::string("test-wallet-index-db-jetton-order");
+TEST(WalletIndex, AnOlderBlocksTokenVerdictNeverUndoesANewerOne) {
+  auto path = std::string("test-wallet-index-db-token-order");
   auto db = open_fresh_db(path);
   auto wallet = token_address(1, 0x52);
   auto old_owner = token_address(2, 0x52);
@@ -1834,27 +1834,27 @@ TEST(WalletIndex, AnOlderBlocksJettonVerdictNeverUndoesANewerOne) {
   auto master = token_address(4, 0x52);
 
   // The newer block (lt 200) is indexed first; recovery then indexes lt 100.
-  apply_jetton(*db, wallet, jetton_present(wallet, new_owner, master, 200), 200);
-  apply_jetton(*db, wallet, jetton_present(wallet, old_owner, master, 100), 100);
-  ASSERT_EQ(jettons_of(*db, new_owner).size(), static_cast<size_t>(1));
-  ASSERT_EQ(jettons_of(*db, old_owner).size(), static_cast<size_t>(0));
+  apply_token(*db, wallet, token_present(wallet, new_owner, master, 200), 200);
+  apply_token(*db, wallet, token_present(wallet, old_owner, master, 100), 100);
+  ASSERT_EQ(tokens_of(*db, new_owner).size(), static_cast<size_t>(1));
+  ASSERT_EQ(tokens_of(*db, old_owner).size(), static_cast<size_t>(0));
 
   // Gone at lt 300; an older "present" verdict cannot bring it back.
-  apply_jetton(*db, wallet, jetton_absent(), 300);
-  apply_jetton(*db, wallet, jetton_present(wallet, old_owner, master, 250), 250);
-  ASSERT_EQ(jettons_of(*db, old_owner).size(), static_cast<size_t>(0));
-  ASSERT_EQ(jettons_of(*db, new_owner).size(), static_cast<size_t>(0));
+  apply_token(*db, wallet, token_absent(), 300);
+  apply_token(*db, wallet, token_present(wallet, old_owner, master, 250), 250);
+  ASSERT_EQ(tokens_of(*db, old_owner).size(), static_cast<size_t>(0));
+  ASSERT_EQ(tokens_of(*db, new_owner).size(), static_cast<size_t>(0));
 
   // A first verdict that finds the wallet absent still outranks an older one.
   auto other = token_address(5, 0x52);
-  apply_jetton(*db, other, jetton_absent(), 500);
-  apply_jetton(*db, other, jetton_present(other, old_owner, master, 400), 400);
-  ASSERT_EQ(jettons_of(*db, old_owner).size(), static_cast<size_t>(0));
+  apply_token(*db, other, token_absent(), 500);
+  apply_token(*db, other, token_present(other, old_owner, master, 400), 400);
+  ASSERT_EQ(tokens_of(*db, old_owner).size(), static_cast<size_t>(0));
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, RemovingAStaleJettonEntryKeepsAnotherWalletsEntry) {
-  auto path = std::string("test-wallet-index-db-jetton-other");
+TEST(WalletIndex, RemovingAStaleTokenEntryKeepsAnotherWalletsEntry) {
+  auto path = std::string("test-wallet-index-db-token-other");
   auto db = open_fresh_db(path);
   auto first = token_address(1, 0x53);
   auto second = token_address(2, 0x53);
@@ -1862,142 +1862,142 @@ TEST(WalletIndex, RemovingAStaleJettonEntryKeepsAnotherWalletsEntry) {
   auto master = token_address(4, 0x53);
 
   // The master resolved the owner to `first`, then to `second`.
-  apply_jetton(*db, first, jetton_present(first, owner, master, 100), 100);
-  apply_jetton(*db, second, jetton_present(second, owner, master, 200), 200);
+  apply_token(*db, first, token_present(first, owner, master, 100), 100);
+  apply_token(*db, second, token_present(second, owner, master, 200), 200);
   // `first` stops verifying: the entry now names `second` and stays.
-  apply_jetton(*db, first, jetton_absent(), 300);
-  auto listed = jettons_of(*db, owner);
+  apply_token(*db, first, token_absent(), 300);
+  auto listed = tokens_of(*db, owner);
   ASSERT_EQ(listed.size(), static_cast<size_t>(1));
   ASSERT_TRUE(listed[0].second == second);
 
   // The same within one block, the new wallet's entry written first.
   auto third = token_address(5, 0x53);
   db->begin_batch().ensure();
-  db->apply_jetton_verdict(third, jetton_present(third, owner, master, 400), 400).ensure();
-  db->apply_jetton_verdict(second, jetton_absent(), 400).ensure();
+  db->apply_token_verdict(third, token_present(third, owner, master, 400), 400).ensure();
+  db->apply_token_verdict(second, token_absent(), 400).ensure();
   db->commit_batch().ensure();
-  listed = jettons_of(*db, owner);
+  listed = tokens_of(*db, owner);
   ASSERT_EQ(listed.size(), static_cast<size_t>(1));
   ASSERT_TRUE(listed[0].second == third);
   td::rmrf(path).ignore();
 }
 
-TEST(WalletIndex, AnInconclusiveJettonCheckIsNotADisappearance) {
-  auto path = std::string("test-wallet-index-db-jetton-inconclusive");
+TEST(WalletIndex, AnInconclusiveTokenCheckIsNotADisappearance) {
+  auto path = std::string("test-wallet-index-db-token-inconclusive");
   auto db = open_fresh_db(path);
   auto wallet = token_address(1, 0x54);
   auto owner = token_address(2, 0x54);
   auto master = token_address(3, 0x54);
-  using tos_wallet_index::JettonWalletCheck;
+  using tos_wallet_index::TokenWalletCheck;
   using tos_wallet_index::TokenVerifyOutcome;
-  auto check = [&](JettonWalletCheck result, uint64_t lt) {
+  auto check = [&](TokenWalletCheck result, uint64_t lt) {
     db->begin_batch().ensure();
-    auto outcome = tos_wallet_index::record_jetton_wallet_check(
+    auto outcome = tos_wallet_index::record_token_wallet_check(
         *db, wallet, result, owner, master,
-        result == JettonWalletCheck::Verified ? jetton_value(wallet, lt) : td::Ref<vm::Cell>{}, lt);
+        result == TokenWalletCheck::Verified ? token_value(wallet, lt) : td::Ref<vm::Cell>{}, lt);
     db->commit_batch().ensure();
     return outcome;
   };
 
-  ASSERT_TRUE(check(JettonWalletCheck::Verified, 100) == TokenVerifyOutcome::Done);
-  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(1));
-  ASSERT_TRUE(check(JettonWalletCheck::Indeterminate, 200) == TokenVerifyOutcome::Retry);
-  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(1));
-  ASSERT_TRUE(check(JettonWalletCheck::OtherShard, 300) == TokenVerifyOutcome::Unverifiable);
-  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(1));
+  ASSERT_TRUE(check(TokenWalletCheck::Verified, 100) == TokenVerifyOutcome::Done);
+  ASSERT_EQ(tokens_of(*db, owner).size(), static_cast<size_t>(1));
+  ASSERT_TRUE(check(TokenWalletCheck::Indeterminate, 200) == TokenVerifyOutcome::Retry);
+  ASSERT_EQ(tokens_of(*db, owner).size(), static_cast<size_t>(1));
+  ASSERT_TRUE(check(TokenWalletCheck::OtherShard, 300) == TokenVerifyOutcome::Unverifiable);
+  ASSERT_EQ(tokens_of(*db, owner).size(), static_cast<size_t>(1));
   td::Bits256 found_owner, found_master;
-  ASSERT_TRUE(db->get_jetton_wallet(wallet, found_owner, found_master).move_as_ok());
+  ASSERT_TRUE(db->get_token_wallet(wallet, found_owner, found_master).move_as_ok());
 
   // An inconclusive check left no record that would outrank an older verdict.
-  ASSERT_TRUE(check(JettonWalletCheck::Rejected, 150) == TokenVerifyOutcome::Done);
-  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(0));
+  ASSERT_TRUE(check(TokenWalletCheck::Rejected, 150) == TokenVerifyOutcome::Done);
+  ASSERT_EQ(tokens_of(*db, owner).size(), static_cast<size_t>(0));
   td::rmrf(path).ignore();
 }
 
 TEST(WalletIndex, AnOlderWalletVerdictNeverReplacesANewerPairDecision) {
-  auto path = std::string("test-wallet-index-db-jetton-pair-order");
+  auto path = std::string("test-wallet-index-db-token-pair-order");
   auto db = open_fresh_db(path);
   auto wallet_a = token_address(1, 0x55);
   auto wallet_b = token_address(2, 0x55);
   auto owner = token_address(3, 0x55);
   auto master = token_address(4, 0x55);
   auto named = [&]() {
-    auto listed = jettons_of(*db, owner);
+    auto listed = tokens_of(*db, owner);
     CHECK(listed.size() <= 1);
     return listed.empty() ? td::Bits256::zero() : listed[0].second;
   };
 
   // Across batches: A holds the pair at lt 100, B takes it at lt 200, then a
   // recovered block observes A at lt 150.
-  apply_jetton(*db, wallet_a, jetton_present(wallet_a, owner, master, 100), 100);
-  apply_jetton(*db, wallet_b, jetton_present(wallet_b, owner, master, 200), 200);
-  apply_jetton(*db, wallet_a, jetton_present(wallet_a, owner, master, 150), 150);
+  apply_token(*db, wallet_a, token_present(wallet_a, owner, master, 100), 100);
+  apply_token(*db, wallet_b, token_present(wallet_b, owner, master, 200), 200);
+  apply_token(*db, wallet_a, token_present(wallet_a, owner, master, 150), 150);
   ASSERT_TRUE(named() == wallet_b);
 
   // Across a restart the decision still holds, for a claim and for a removal.
   db.reset();
   db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
-  apply_jetton(*db, wallet_a, jetton_present(wallet_a, owner, master, 180), 180);
+  apply_token(*db, wallet_a, token_present(wallet_a, owner, master, 180), 180);
   ASSERT_TRUE(named() == wallet_b);
-  apply_jetton(*db, wallet_a, jetton_absent(), 300);
+  apply_token(*db, wallet_a, token_absent(), 300);
   ASSERT_TRUE(named() == wallet_b);
 
   // B is removed at lt 400; an older observation of another wallet cannot
   // restore the pair, before or after a restart.
-  apply_jetton(*db, wallet_b, jetton_absent(), 400);
+  apply_token(*db, wallet_b, token_absent(), 400);
   ASSERT_TRUE(named() == td::Bits256::zero());
   db.reset();
   db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
   auto wallet_c = token_address(5, 0x55);
-  apply_jetton(*db, wallet_c, jetton_present(wallet_c, owner, master, 350), 350);
+  apply_token(*db, wallet_c, token_present(wallet_c, owner, master, 350), 350);
   ASSERT_TRUE(named() == td::Bits256::zero());
 
   // A newer observation decides the pair again.
-  apply_jetton(*db, wallet_c, jetton_present(wallet_c, owner, master, 500), 500);
+  apply_token(*db, wallet_c, token_present(wallet_c, owner, master, 500), 500);
   ASSERT_TRUE(named() == wallet_c);
   td::rmrf(path).ignore();
 }
 
 TEST(WalletIndex, AnOlderWalletVerdictInTheSameBatchNeverReplacesANewerPairDecision) {
-  auto path = std::string("test-wallet-index-db-jetton-pair-batch");
+  auto path = std::string("test-wallet-index-db-token-pair-batch");
   auto db = open_fresh_db(path);
   auto wallet_a = token_address(1, 0x56);
   auto wallet_b = token_address(2, 0x56);
   auto owner = token_address(3, 0x56);
   auto master = token_address(4, 0x56);
-  apply_jetton(*db, wallet_a, jetton_present(wallet_a, owner, master, 100), 100);
+  apply_token(*db, wallet_a, token_present(wallet_a, owner, master, 100), 100);
 
   // In one batch, B's newer claim is written first and A's older one second;
   // the older one must see the newer decision before it is committed.
   db->begin_batch().ensure();
-  db->apply_jetton_verdict(wallet_b, jetton_present(wallet_b, owner, master, 200), 200).ensure();
-  db->apply_jetton_verdict(wallet_a, jetton_present(wallet_a, owner, master, 150), 150).ensure();
+  db->apply_token_verdict(wallet_b, token_present(wallet_b, owner, master, 200), 200).ensure();
+  db->apply_token_verdict(wallet_a, token_present(wallet_a, owner, master, 150), 150).ensure();
   db->commit_batch().ensure();
-  auto listed = jettons_of(*db, owner);
+  auto listed = tokens_of(*db, owner);
   ASSERT_EQ(listed.size(), static_cast<size_t>(1));
   ASSERT_TRUE(listed[0].second == wallet_b);
 
   // An older removal in the same batch as a newer claim leaves the claim.
   auto wallet_c = token_address(5, 0x56);
   db->begin_batch().ensure();
-  db->apply_jetton_verdict(wallet_c, jetton_present(wallet_c, owner, master, 300), 300).ensure();
-  db->apply_jetton_verdict(wallet_b, jetton_absent(), 250).ensure();
+  db->apply_token_verdict(wallet_c, token_present(wallet_c, owner, master, 300), 300).ensure();
+  db->apply_token_verdict(wallet_b, token_absent(), 250).ensure();
   db->commit_batch().ensure();
-  listed = jettons_of(*db, owner);
+  listed = tokens_of(*db, owner);
   ASSERT_EQ(listed.size(), static_cast<size_t>(1));
   ASSERT_TRUE(listed[0].second == wallet_c);
 
   // A removal in the same batch before an older claim keeps the pair removed.
   db->begin_batch().ensure();
-  db->apply_jetton_verdict(wallet_c, jetton_absent(), 600).ensure();
-  db->apply_jetton_verdict(wallet_a, jetton_present(wallet_a, owner, master, 550), 550).ensure();
+  db->apply_token_verdict(wallet_c, token_absent(), 600).ensure();
+  db->apply_token_verdict(wallet_a, token_present(wallet_a, owner, master, 550), 550).ensure();
   db->commit_batch().ensure();
-  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(0));
+  ASSERT_EQ(tokens_of(*db, owner).size(), static_cast<size_t>(0));
   td::rmrf(path).ignore();
 }
 
 TEST(WalletIndex, AnOlderReleaseNeverRewindsANewerPairRemoval) {
-  auto path = std::string("test-wallet-index-db-jetton-pair-release");
+  auto path = std::string("test-wallet-index-db-token-pair-release");
   auto db = open_fresh_db(path);
   auto wallet_x = token_address(1, 0x57);
   auto wallet_w = token_address(2, 0x57);
@@ -2006,15 +2006,15 @@ TEST(WalletIndex, AnOlderReleaseNeverRewindsANewerPairRemoval) {
   auto master = token_address(5, 0x57);
 
   // X holds the pair and is removed at lt 300.
-  apply_jetton(*db, wallet_x, jetton_present(wallet_x, owner, master, 100), 100);
-  apply_jetton(*db, wallet_x, jetton_absent(), 300);
+  apply_token(*db, wallet_x, token_present(wallet_x, owner, master, 100), 100);
+  apply_token(*db, wallet_x, token_absent(), 300);
   // A recovered block observes W under the pair at lt 150 (too old to claim
   // it), then W gone at lt 200: W's release is older than the removal.
-  apply_jetton(*db, wallet_w, jetton_present(wallet_w, owner, master, 150), 150);
-  apply_jetton(*db, wallet_w, jetton_absent(), 200);
+  apply_token(*db, wallet_w, token_present(wallet_w, owner, master, 150), 150);
+  apply_token(*db, wallet_w, token_absent(), 200);
   // An observation of Y at lt 250 is still older than the removal at lt 300.
-  apply_jetton(*db, wallet_y, jetton_present(wallet_y, owner, master, 250), 250);
-  ASSERT_EQ(jettons_of(*db, owner).size(), static_cast<size_t>(0));
+  apply_token(*db, wallet_y, token_present(wallet_y, owner, master, 250), 250);
+  ASSERT_EQ(tokens_of(*db, owner).size(), static_cast<size_t>(0));
   td::rmrf(path).ignore();
 }
 
@@ -2438,10 +2438,10 @@ TEST(WalletIndexWorker, NoBlockIsAcceptedBeforeTheRunIsRecorded) {
 
 namespace {
 
-constexpr uint32_t kJettonTransferOp = 0x0f8a7ea5;
+constexpr uint32_t kTokenTransferOp = 0x0f8a7ea5;
 
-// A real block in which `count` distinct accounts each receive a jetton
-// transfer, so each is nominated as a jetton-wallet candidate. None of them
+// A real block in which `count` distinct accounts each receive a token
+// transfer, so each is nominated as a token-wallet candidate. None of them
 // is a contract in `state`, so each verification is definite (the wallet is
 // absent) and leaves a wallet record behind.
 struct OverflowingBlock {
@@ -2458,7 +2458,7 @@ OverflowingBlock overflowing_block(tos::BlockSeqno seqno, size_t count, uint32_t
   std::set<td::Bits256> wallets;
   for (size_t i = 0; i < count; ++i) {
     auto account = token_address(static_cast<uint32_t>(first + i), static_cast<uint8_t>(0x10 + i % 64));
-    txs.push_back(wallet_index_fixture::Tx{account, 10 + i, kJettonTransferOp});
+    txs.push_back(wallet_index_fixture::Tx{account, 10 + i, kTokenTransferOp});
     wallets.insert(account);
   }
   block.root = wallet_index_fixture::block(seqno, end_lt, 1000, txs);
@@ -2480,14 +2480,14 @@ IndexView view_of(tos_wallet_index::WalletIndexDb &db, const OverflowingBlock &b
   IndexView view;
   view.stats = snapshot.token_backlog_stats().move_as_ok();
   view.complete = tos_wallet_index::format_token_index_state(view.stats).find("\"complete\":true") != std::string::npos;
-  view.final_processed = snapshot.has_jetton_wallet_record(block.wallets.back()).move_as_ok();
+  view.final_processed = snapshot.has_token_wallet_record(block.wallets.back()).move_as_ok();
   return view;
 }
 
 size_t processed_count(tos_wallet_index::WalletIndexDb &db, const OverflowingBlock &block) {
   size_t n = 0;
   for (const auto &wallet : block.wallets) {
-    n += db.has_jetton_wallet_record(wallet).move_as_ok() ? 1 : 0;
+    n += db.has_token_wallet_record(wallet).move_as_ok() ? 1 : 0;
   }
   return n;
 }
@@ -2947,7 +2947,7 @@ TEST(WalletIndex, ArchivePruningHonoursTheIndexFloor) {
   tos::validator::reset_archive_retention_for_testing();
 }
 
-// A jetton wallet whose master, and an NFT item whose collection, live in the
+// A token wallet whose master, and an NFT item whose collection, live in the
 // other half of the basechain. The block's own shard state cannot verify
 // them, and the other half's state is not available at first: both are kept,
 // parked with their identity. Once that state is available, the worker
@@ -2961,12 +2961,12 @@ TEST(WalletIndexWorker, CrossShardCandidatesAreKeptThenVerified) {
   auto master = token_address(3, 0x91);      // right
   auto item = token_address(4, 0x12);        // left
   auto collection = token_address(5, 0x92);  // right
-  auto left_state = wallet_index_fixture::shard_state({wallet_index_fixture::jetton_wallet(wallet, owner, master),
+  auto left_state = wallet_index_fixture::shard_state({wallet_index_fixture::token_wallet(wallet, owner, master),
                                                        wallet_index_fixture::nft_item(item, collection, owner)});
   auto right_state = wallet_index_fixture::shard_state(
-      {wallet_index_fixture::jetton_master(master, wallet), wallet_index_fixture::nft_collection(collection, item)});
+      {wallet_index_fixture::token_master(master, wallet), wallet_index_fixture::nft_collection(collection, item)});
   auto root =
-      wallet_index_fixture::block(20, 5000, 1000, {{wallet, 10, kJettonTransferOp}, {item, 11, kNftTransferOp}});
+      wallet_index_fixture::block(20, 5000, 1000, {{wallet, 10, kTokenTransferOp}, {item, 11, kNftTransferOp}});
   HalvesState newest;
   newest.set(false, left_state, 6000);
   tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds(0));
@@ -2977,13 +2977,13 @@ TEST(WalletIndexWorker, CrossShardCandidatesAreKeptThenVerified) {
     tos_wallet_index::enqueue_wc0_index_block(root, left_state, shard_block_id(kLeftShard, 20), 1000);
     ASSERT_TRUE(eventually([&] { return backlog_stats(db).parked == 2; }));
     ASSERT_TRUE(!is_complete(db));
-    ASSERT_TRUE(jettons_of(db, owner).empty());
+    ASSERT_TRUE(tokens_of(db, owner).empty());
     td::Bits256 recorded_owner;
     ASSERT_TRUE(!db.get_nft_owner(item, recorded_owner).move_as_ok());
     // The other half's state becomes available.
     newest.set(true, right_state, 6000);
     ASSERT_TRUE(eventually([&] { return backlog_stats(db).parked == 0; }, std::chrono::seconds(30)));
-    ASSERT_EQ(jettons_of(db, owner), (std::vector<std::pair<td::Bits256, td::Bits256>>{{master, wallet}}));
+    ASSERT_EQ(tokens_of(db, owner), (std::vector<std::pair<td::Bits256, td::Bits256>>{{master, wallet}}));
     ASSERT_TRUE(db.get_nft_owner(item, recorded_owner).move_as_ok());
     ASSERT_TRUE(recorded_owner == owner);
     ASSERT_TRUE(eventually([&] { return is_complete(db); }));
@@ -3016,19 +3016,19 @@ TEST(WalletIndexWorker, AShardThatCannotProgressDoesNotHoldUpAnother) {
     db.begin_batch().ensure();
     db.begin_token_pass().ensure();
     for (auto &address : left_parked) {
-      ASSERT_TRUE(db.park_token_candidate({{TokenKind::Jetton, address}, 0, 100}).move_as_ok());
+      ASSERT_TRUE(db.park_token_candidate({{TokenKind::Fungible, address}, 0, 100}).move_as_ok());
     }
     for (auto &address : right_parked) {
-      ASSERT_TRUE(db.park_token_candidate({{TokenKind::Jetton, address}, 0, 100}).move_as_ok());
+      ASSERT_TRUE(db.park_token_candidate({{TokenKind::Fungible, address}, 0, 100}).move_as_ok());
     }
     tos_wallet_index::WalletIndexDb::PendingBlock left_pending_block, right_pending_block;
     left_pending_block.end_lt = 9000;
     for (auto &address : left_pending) {
-      left_pending_block.remaining.push_back({{TokenKind::Jetton, address}, 0, 9000});
+      left_pending_block.remaining.push_back({{TokenKind::Fungible, address}, 0, 9000});
     }
     right_pending_block.end_lt = 5000;
     for (auto &address : right_pending) {
-      right_pending_block.remaining.push_back({{TokenKind::Jetton, address}, 0, 5000});
+      right_pending_block.remaining.push_back({{TokenKind::Fungible, address}, 0, 5000});
     }
     db.put_pending_block(left_block, left_pending_block).ensure();
     db.put_pending_block(right_block, right_pending_block).ensure();
@@ -3050,12 +3050,12 @@ TEST(WalletIndexWorker, AShardThatCannotProgressDoesNotHoldUpAnother) {
   tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds(0));
   auto right_done = [&](tos_wallet_index::WalletIndexDb &db) {
     for (auto &address : right_parked) {
-      if (!db.has_jetton_wallet_record(address).move_as_ok()) {
+      if (!db.has_token_wallet_record(address).move_as_ok()) {
         return false;
       }
     }
     for (auto &address : right_pending) {
-      if (!db.has_jetton_wallet_record(address).move_as_ok()) {
+      if (!db.has_token_wallet_record(address).move_as_ok()) {
         return false;
       }
     }
@@ -3153,12 +3153,12 @@ TEST(WalletIndexWorker, FullQueueAndParkingAreNeverOverfilled) {
           elsewhere = elsewhere || entry.candidate.address == wallet;
         }
       }
-      if (!elsewhere && !db.has_jetton_wallet_record(wallet).move_as_ok()) {
+      if (!elsewhere && !db.has_token_wallet_record(wallet).move_as_ok()) {
         parked_wallet = wallet;
       }
     }
     ASSERT_TRUE(static_cast<bool>(parked_wallet));
-    auto again = wallet_index_fixture::block(41, 5200, 1002, {{parked_wallet.value(), 20, kJettonTransferOp}});
+    auto again = wallet_index_fixture::block(41, 5200, 1002, {{parked_wallet.value(), 20, kTokenTransferOp}});
     // Block 41 is indexed once its event is committed, which happens in the
     // same batch that clears its recovery mark. A missing mark alone proves
     // nothing: the block has none before the recorder marks it either. If
@@ -3524,10 +3524,10 @@ TEST(WalletIndexWorker, AnUnavailablePrefixDoesNotStarveTheRestOfABlock) {
     tos_wallet_index::WalletIndexDb::PendingBlock pending;
     pending.end_lt = 5000;
     for (auto &a : stuck) {
-      pending.remaining.push_back({{TokenKind::Jetton, a}, 0, 5000});
+      pending.remaining.push_back({{TokenKind::Fungible, a}, 0, 5000});
     }
     for (auto &a : reachable) {
-      pending.remaining.push_back({{TokenKind::Jetton, a}, 0, 5000});
+      pending.remaining.push_back({{TokenKind::Fungible, a}, 0, 5000});
     }
     db.begin_batch().ensure();
     db.put_pending_block(id, pending).ensure();
@@ -3538,7 +3538,7 @@ TEST(WalletIndexWorker, AnUnavailablePrefixDoesNotStarveTheRestOfABlock) {
   HalvesState newest;  // the left half's state never comes
   auto reachable_done = [&](tos_wallet_index::WalletIndexDb &db) {
     for (auto &a : reachable) {
-      if (!db.has_jetton_wallet_record(a).move_as_ok()) {
+      if (!db.has_token_wallet_record(a).move_as_ok()) {
         return false;
       }
     }
@@ -3641,16 +3641,16 @@ TEST(WalletIndex, AnOldSchemaIsResetToAFreshIndex) {
         const char v[4] = {0, 0, 0, static_cast<char>(version)};
         raw.set(td::Slice{version_key, 2}, td::Slice{v, 4}).ensure();
       }
-      // A jetton row, with the pair record a current binary would write, an
+      // A token row, with the pair record a current binary would write, an
       // NFT row, events, a marker, a backlog entry and a needs-rebuild mark.
-      std::string jetton(65, '\x02');
-      jetton[0] = 0x10;
-      std::memcpy(&jetton[1], owner.data(), 32);
+      std::string token(65, '\x02');
+      token[0] = 0x10;
+      std::memcpy(&token[1], owner.data(), 32);
       vm::CellBuilder cb;
       cb.store_bits(token_address(3, 0x40).bits(), 256);
       cb.store_long(5, 64);
-      raw.set(jetton, vm::std_boc_serialize(cb.finalize()).move_as_ok().as_slice()).ensure();
-      std::string pair = jetton;
+      raw.set(token, vm::std_boc_serialize(cb.finalize()).move_as_ok().as_slice()).ensure();
+      std::string pair = token;
       pair[0] = 0x18;
       raw.set(pair, std::string(1 + 32 + 8, '\x01')).ensure();
       for (int tag : {0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x1E}) {
@@ -3661,7 +3661,7 @@ TEST(WalletIndex, AnOldSchemaIsResetToAFreshIndex) {
     {
       auto db = tos_wallet_index::WalletIndexDb::open(path).move_as_ok();
       size_t served = 0;
-      db->for_each_current_jetton(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+      db->for_each_current_token(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
           ++served;
           return td::Status::OK();
         }).ensure();
@@ -3707,9 +3707,9 @@ TEST(WalletIndex, ACurrentSchemaRestartKeepsUnfinishedWork) {
   td::rmrf(path).ignore();
 }
 
-// A jetton row with no pair record beside it is not a verified fact: it is
+// A token row with no pair record beside it is not a verified fact: it is
 // never served.
-TEST(WalletIndex, AJettonRowWithoutItsPairRecordIsNeverServed) {
+TEST(WalletIndex, ATokenRowWithoutItsPairRecordIsNeverServed) {
   auto path = std::string("test-wallet-index-db-unverified-row");
   auto db = open_fresh_db(path);
   auto owner = token_address(1, 0x40);
@@ -3717,10 +3717,10 @@ TEST(WalletIndex, AJettonRowWithoutItsPairRecordIsNeverServed) {
   cb.store_bits(token_address(3, 0x40).bits(), 256);
   cb.store_long(5, 64);
   db->begin_batch().ensure();
-  db->put_jetton(owner, token_address(2, 0x40), cb.finalize()).ensure();
+  db->put_token(owner, token_address(2, 0x40), cb.finalize()).ensure();
   db->commit_batch().ensure();
   size_t served = 0;
-  db->for_each_current_jetton(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+  db->for_each_current_token(owner, 16, [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
       ++served;
       return td::Status::OK();
     }).ensure();

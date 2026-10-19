@@ -603,11 +603,11 @@ fn prepare_config_params() -> ConfigParams {
     cp.set_config(ConfigParamEnum::ConfigParam72(oracle_bridge_params.clone())).unwrap();
     cp.set_config(ConfigParamEnum::ConfigParam73(oracle_bridge_params)).unwrap();
 
-    let jetton_bridge_params = JettonBridgeParams::default();
+    let token_bridge_params = TokenBridgeParams::default();
 
-    cp.set_config(ConfigParamEnum::ConfigParam79(jetton_bridge_params.clone())).unwrap();
-    cp.set_config(ConfigParamEnum::ConfigParam81(jetton_bridge_params.clone())).unwrap();
-    cp.set_config(ConfigParamEnum::ConfigParam82(jetton_bridge_params)).unwrap();
+    cp.set_config(ConfigParamEnum::ConfigParam79(token_bridge_params.clone())).unwrap();
+    cp.set_config(ConfigParamEnum::ConfigParam81(token_bridge_params.clone())).unwrap();
+    cp.set_config(ConfigParamEnum::ConfigParam82(token_bridge_params)).unwrap();
 
     cp
 }

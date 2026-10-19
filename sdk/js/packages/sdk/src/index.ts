@@ -123,19 +123,19 @@ export * from "@tos/wallets";
 
 // Layer 4: Contracts (exclude NftCollectionData/NftItemData if they conflict with client types)
 export {
-  JettonMinter,
-  JettonWallet,
+  TokenMaster,
+  TokenWallet,
   NftCollection,
   NftItem,
-  JETTON_MINTER_CODE_HEX,
-  JETTON_WALLET_CODE_HEX,
+  TOKEN_MASTER_CODE_HEX,
+  TOKEN_WALLET_CODE_HEX,
   NFT_COLLECTION_CODE_HEX,
   NFT_ITEM_CODE_HEX,
 } from "@tos/contracts";
 
 export type {
-  JettonData,
-  JettonContent,
+  FungibleTokenData,
+  TokenContent,
   NftCollectionData,
   NftItemData,
 } from "@tos/contracts";

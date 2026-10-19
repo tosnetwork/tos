@@ -17,7 +17,7 @@
         storage::admin_address,
         storage::temp_upgrade,
         storage::pool_code,
-        storage::jetton_lp_wallet_code,
+        storage::token_lp_wallet_code,
         storage::lp_account_code
     );
 }

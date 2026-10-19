@@ -23,15 +23,15 @@ namespace tos_wallet_index {
 namespace {
 
 // Key tags reserved for the wc=0 wallet index.
-constexpr uint8_t kJettonTag = 0x10;        // 0x10 + owner(32) + master(32)
+constexpr uint8_t kTokenTag = 0x10;        // 0x10 + owner(32) + master(32)
 constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
 constexpr uint8_t kEventAgeTag = 0x14;      // 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel(1)
 constexpr uint8_t kTokenQueueTag = 0x15;    // 0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1)
 constexpr uint8_t kTokenIndexTag = 0x16;    // 0x16 + kind(1) + address(32) -> bucket(1) + seq_be(8)
-constexpr uint8_t kJettonWalletTag = 0x17;  // 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8)
-constexpr uint8_t kJettonPairTag = 0x18;    // 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8)
+constexpr uint8_t kTokenWalletTag = 0x17;  // 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8)
+constexpr uint8_t kTokenPairTag = 0x18;    // 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8)
 constexpr uint8_t kPendingBlockTag = 0x19;  // 0x19 + block id (as 0x1E) -> remaining candidates
 constexpr uint8_t kTokenParkedTag = 0x1A;   // 0x1A + kind(1) + address(32) -> lt_be(8)
 // Meta namespace, sorts before every data tag. 0x00 0x01 -> schema version
@@ -297,26 +297,26 @@ td::Status WalletIndexDb::for_each_with_prefix(
   return status;
 }
 
-// --- jettons ---
+// --- tokens ---
 
-td::Status WalletIndexDb::put_jetton(const HashKey& owner, const HashKey& master,
+td::Status WalletIndexDb::put_token(const HashKey& owner, const HashKey& master,
                                      td::Ref<vm::Cell> value) {
   char key[kOwnerPairKeyLen];
-  make_owner_pair_key(kJettonTag, owner, master, key);
+  make_owner_pair_key(kTokenTag, owner, master, key);
   return put_cell(td::Slice{key, kOwnerPairKeyLen}, std::move(value));
 }
 
-td::Status WalletIndexDb::erase_jetton(const HashKey& owner, const HashKey& master) {
+td::Status WalletIndexDb::erase_token(const HashKey& owner, const HashKey& master) {
   char key[kOwnerPairKeyLen];
-  make_owner_pair_key(kJettonTag, owner, master, key);
+  make_owner_pair_key(kTokenTag, owner, master, key);
   return db_->erase(td::Slice{key, kOwnerPairKeyLen});
 }
 
-td::Status WalletIndexDb::for_each_jetton(
+td::Status WalletIndexDb::for_each_token(
     const HashKey& owner, size_t limit,
     std::function<td::Status(const HashKey&, td::Ref<vm::Cell>)> cb) {
   char prefix[1 + 32];
-  make_owner_prefix(kJettonTag, owner, prefix);
+  make_owner_prefix(kTokenTag, owner, prefix);
   return for_each_with_prefix(td::Slice{prefix, 1 + 32}, limit,
                               [&](td::Slice key, td::Ref<vm::Cell> cell) -> td::Status {
     if (key.size() != kOwnerPairKeyLen) return td::Status::OK();
@@ -326,33 +326,33 @@ td::Status WalletIndexDb::for_each_jetton(
   });
 }
 
-// --- jetton wallet records ---
+// --- token wallet records ---
 
 namespace {
 
-constexpr size_t kJettonWalletRecordLen = 1 + 32 + 32 + 8;
+constexpr size_t kTokenWalletRecordLen = 1 + 32 + 32 + 8;
 
-struct JettonWalletRecord {
+struct TokenWalletRecord {
   bool present = false;
   HashKey owner;
   HashKey master;
   uint64_t lt = 0;
 };
 
-std::string encode_jetton_wallet_record(const JettonWalletRecord& record) {
-  char value[kJettonWalletRecordLen];
+std::string encode_token_wallet_record(const TokenWalletRecord& record) {
+  char value[kTokenWalletRecordLen];
   value[0] = record.present ? 1 : 0;
   std::memcpy(value + 1, record.owner.data(), 32);
   std::memcpy(value + 1 + 32, record.master.data(), 32);
   put_u64_be(value + 1 + 32 + 32, record.lt);
-  return std::string(value, kJettonWalletRecordLen);
+  return std::string(value, kTokenWalletRecordLen);
 }
 
-td::Result<JettonWalletRecord> decode_jetton_wallet_record(const std::string& value) {
-  if (value.size() != kJettonWalletRecordLen) {
-    return td::Status::Error("wc0-index: malformed jetton wallet record");
+td::Result<TokenWalletRecord> decode_token_wallet_record(const std::string& value) {
+  if (value.size() != kTokenWalletRecordLen) {
+    return td::Status::Error("wc0-index: malformed token wallet record");
   }
-  JettonWalletRecord record;
+  TokenWalletRecord record;
   record.present = value[0] != 0;
   record.owner.as_slice().copy_from(td::Slice{value.data() + 1, 32});
   record.master.as_slice().copy_from(td::Slice{value.data() + 1 + 32, 32});
@@ -360,9 +360,9 @@ td::Result<JettonWalletRecord> decode_jetton_wallet_record(const std::string& va
   return record;
 }
 
-constexpr size_t kJettonPairRecordLen = 1 + 32 + 8;
+constexpr size_t kTokenPairRecordLen = 1 + 32 + 8;
 
-struct JettonPairRecord {
+struct TokenPairRecord {
   bool present = false;
   HashKey wallet;
   uint64_t lt = 0;
@@ -370,19 +370,19 @@ struct JettonPairRecord {
 
 constexpr uint8_t kPairPresentFlag = 1;
 
-std::string encode_jetton_pair_record(const JettonPairRecord& record) {
-  char value[kJettonPairRecordLen];
+std::string encode_token_pair_record(const TokenPairRecord& record) {
+  char value[kTokenPairRecordLen];
   value[0] = static_cast<char>(record.present ? kPairPresentFlag : 0);
   std::memcpy(value + 1, record.wallet.data(), 32);
   put_u64_be(value + 1 + 32, record.lt);
-  return std::string(value, kJettonPairRecordLen);
+  return std::string(value, kTokenPairRecordLen);
 }
 
-td::Result<JettonPairRecord> decode_jetton_pair_record(const std::string& value) {
-  if (value.size() != kJettonPairRecordLen) {
-    return td::Status::Error("wc0-index: malformed jetton pair record");
+td::Result<TokenPairRecord> decode_token_pair_record(const std::string& value) {
+  if (value.size() != kTokenPairRecordLen) {
+    return td::Status::Error("wc0-index: malformed token pair record");
   }
-  JettonPairRecord record;
+  TokenPairRecord record;
   auto flags = static_cast<uint8_t>(value[0]);
   record.present = (flags & kPairPresentFlag) != 0;
   record.wallet.as_slice().copy_from(td::Slice{value.data() + 1, 32});
@@ -390,13 +390,13 @@ td::Result<JettonPairRecord> decode_jetton_pair_record(const std::string& value)
   return record;
 }
 
-std::string jetton_wallet_key(const HashKey& wallet) {
+std::string token_wallet_key(const HashKey& wallet) {
   char key[kSingleHashKeyLen];
-  make_owner_prefix(kJettonWalletTag, wallet, key);
+  make_owner_prefix(kTokenWalletTag, wallet, key);
   return std::string(key, kSingleHashKeyLen);
 }
 
-std::string jetton_pair_key(uint8_t tag, const HashKey& owner, const HashKey& master) {
+std::string token_pair_key(uint8_t tag, const HashKey& owner, const HashKey& master) {
   char key[kOwnerPairKeyLen];
   make_owner_pair_key(tag, owner, master, key);
   return std::string(key, kOwnerPairKeyLen);
@@ -404,9 +404,9 @@ std::string jetton_pair_key(uint8_t tag, const HashKey& owner, const HashKey& ma
 
 }  // namespace
 
-td::Result<bool> WalletIndexDb::get_jetton_record(td::Slice key, std::string& value) {
-  auto it = token_batch_.jetton_records.find(key.str());
-  if (batch_open_ && it != token_batch_.jetton_records.end()) {
+td::Result<bool> WalletIndexDb::get_token_record(td::Slice key, std::string& value) {
+  auto it = token_batch_.token_records.find(key.str());
+  if (batch_open_ && it != token_batch_.token_records.end()) {
     value = it->second;
     return true;
   }
@@ -414,21 +414,21 @@ td::Result<bool> WalletIndexDb::get_jetton_record(td::Slice key, std::string& va
   return status != td::KeyValue::GetStatus::NotFound;
 }
 
-td::Status WalletIndexDb::put_jetton_record(td::Slice key, td::Slice value) {
+td::Status WalletIndexDb::put_token_record(td::Slice key, td::Slice value) {
   TRY_STATUS(db_->set(key, value));
   if (batch_open_) {
-    token_batch_.jetton_records[key.str()] = value.str();
+    token_batch_.token_records[key.str()] = value.str();
   }
   return td::Status::OK();
 }
 
-td::Result<WalletIndexDb::JettonPairDecision> WalletIndexDb::jetton_pair_decision(const HashKey& owner,
+td::Result<WalletIndexDb::TokenPairDecision> WalletIndexDb::token_pair_decision(const HashKey& owner,
                                                                                   const HashKey& master) {
-  JettonPairDecision decision;
+  TokenPairDecision decision;
   std::string record;
-  TRY_RESULT(has_record, get_jetton_record(jetton_pair_key(kJettonPairTag, owner, master), record));
+  TRY_RESULT(has_record, get_token_record(token_pair_key(kTokenPairTag, owner, master), record));
   if (has_record) {
-    TRY_RESULT(decoded, decode_jetton_pair_record(record));
+    TRY_RESULT(decoded, decode_token_pair_record(record));
     decision.known = true;
     decision.has_record = true;
     decision.present = decoded.present;
@@ -437,7 +437,7 @@ td::Result<WalletIndexDb::JettonPairDecision> WalletIndexDb::jetton_pair_decisio
     return decision;
   }
   std::string entry;
-  auto entry_key = jetton_pair_key(kJettonTag, owner, master);
+  auto entry_key = token_pair_key(kTokenTag, owner, master);
   TRY_RESULT(entry_status, db_->get(entry_key, entry));
   if (entry_status == td::KeyValue::GetStatus::NotFound) {
     return decision;
@@ -458,21 +458,21 @@ td::Result<WalletIndexDb::JettonPairDecision> WalletIndexDb::jetton_pair_decisio
   return decision;
 }
 
-td::Status WalletIndexDb::claim_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
+td::Status WalletIndexDb::claim_token_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
                                             td::Ref<vm::Cell> value, uint64_t end_lt) {
-  TRY_RESULT(decision, jetton_pair_decision(owner, master));
+  TRY_RESULT(decision, token_pair_decision(owner, master));
   if (decision.known && decision.lt > end_lt) {
     // A later block already decided this pair.
     return td::Status::OK();
   }
-  TRY_STATUS(put_jetton(owner, master, std::move(value)));
-  return put_jetton_record(jetton_pair_key(kJettonPairTag, owner, master),
-                           encode_jetton_pair_record(JettonPairRecord{true, wallet, end_lt}));
+  TRY_STATUS(put_token(owner, master, std::move(value)));
+  return put_token_record(token_pair_key(kTokenPairTag, owner, master),
+                           encode_token_pair_record(TokenPairRecord{true, wallet, end_lt}));
 }
 
-td::Status WalletIndexDb::release_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
+td::Status WalletIndexDb::release_token_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
                                               uint64_t end_lt) {
-  TRY_RESULT(decision, jetton_pair_decision(owner, master));
+  TRY_RESULT(decision, token_pair_decision(owner, master));
   if (decision.known && decision.lt > end_lt) {
     // A later block already decided this pair.
     return td::Status::OK();
@@ -481,19 +481,19 @@ td::Status WalletIndexDb::release_jetton_pair(const HashKey& owner, const HashKe
     // The pair names another wallet; this wallet's release does not concern it.
     return td::Status::OK();
   }
-  TRY_STATUS(erase_jetton(owner, master));
+  TRY_STATUS(erase_token(owner, master));
   // The removal is itself a decision: an older verdict must not restore it.
-  return put_jetton_record(jetton_pair_key(kJettonPairTag, owner, master),
-                           encode_jetton_pair_record(JettonPairRecord{false, wallet, end_lt}));
+  return put_token_record(token_pair_key(kTokenPairTag, owner, master),
+                           encode_token_pair_record(TokenPairRecord{false, wallet, end_lt}));
 }
 
-td::Status WalletIndexDb::apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt) {
-  auto wallet_key = jetton_wallet_key(wallet);
+td::Status WalletIndexDb::apply_token_verdict(const HashKey& wallet, const TokenVerdict& verdict, uint64_t end_lt) {
+  auto wallet_key = token_wallet_key(wallet);
   std::string stored;
-  TRY_RESULT(found, get_jetton_record(wallet_key, stored));
-  td::optional<JettonWalletRecord> record;
+  TRY_RESULT(found, get_token_record(wallet_key, stored));
+  td::optional<TokenWalletRecord> record;
   if (found) {
-    TRY_RESULT(decoded, decode_jetton_wallet_record(stored));
+    TRY_RESULT(decoded, decode_token_wallet_record(stored));
     record = decoded;
   }
   if (record && record.value().lt > end_lt) {
@@ -502,31 +502,31 @@ td::Status WalletIndexDb::apply_jetton_verdict(const HashKey& wallet, const Jett
   }
   if (record && record.value().present &&
       (!verdict.present || record.value().owner != verdict.owner || record.value().master != verdict.master)) {
-    TRY_STATUS(release_jetton_pair(record.value().owner, record.value().master, wallet, end_lt));
+    TRY_STATUS(release_token_pair(record.value().owner, record.value().master, wallet, end_lt));
   }
-  JettonWalletRecord next;
+  TokenWalletRecord next;
   next.present = verdict.present;
   next.lt = end_lt;
   if (verdict.present) {
     next.owner = verdict.owner;
     next.master = verdict.master;
-    TRY_STATUS(claim_jetton_pair(verdict.owner, verdict.master, wallet, verdict.value, end_lt));
+    TRY_STATUS(claim_token_pair(verdict.owner, verdict.master, wallet, verdict.value, end_lt));
   } else {
     // Kept even when nothing was recorded before: an older block indexed later
     // (recovered at a later start, or fetched late) must find this.
     next.owner = HashKey::zero();
     next.master = HashKey::zero();
   }
-  return put_jetton_record(wallet_key, encode_jetton_wallet_record(next));
+  return put_token_record(wallet_key, encode_token_wallet_record(next));
 }
 
-td::Result<bool> WalletIndexDb::get_jetton_wallet(const HashKey& wallet, HashKey& owner, HashKey& master) {
+td::Result<bool> WalletIndexDb::get_token_wallet(const HashKey& wallet, HashKey& owner, HashKey& master) {
   std::string stored;
-  TRY_RESULT(found, get_jetton_record(jetton_wallet_key(wallet), stored));
+  TRY_RESULT(found, get_token_record(token_wallet_key(wallet), stored));
   if (!found) {
     return false;
   }
-  TRY_RESULT(record, decode_jetton_wallet_record(stored));
+  TRY_RESULT(record, decode_token_wallet_record(stored));
   if (!record.present) {
     return false;
   }
@@ -535,27 +535,27 @@ td::Result<bool> WalletIndexDb::get_jetton_wallet(const HashKey& wallet, HashKey
   return true;
 }
 
-td::Result<td::optional<WalletIndexDb::JettonWalletState>> WalletIndexDb::jetton_wallet_state(const HashKey& wallet) {
+td::Result<td::optional<WalletIndexDb::TokenWalletState>> WalletIndexDb::token_wallet_state(const HashKey& wallet) {
   std::string stored;
-  TRY_RESULT(found, get_jetton_record(jetton_wallet_key(wallet), stored));
+  TRY_RESULT(found, get_token_record(token_wallet_key(wallet), stored));
   if (!found) {
-    return td::optional<JettonWalletState>{};
+    return td::optional<TokenWalletState>{};
   }
-  TRY_RESULT(record, decode_jetton_wallet_record(stored));
-  return td::optional<JettonWalletState>(JettonWalletState{record.present, record.owner, record.master, record.lt});
+  TRY_RESULT(record, decode_token_wallet_record(stored));
+  return td::optional<TokenWalletState>(TokenWalletState{record.present, record.owner, record.master, record.lt});
 }
 
-td::Status WalletIndexDb::for_each_current_jetton(const HashKey& owner, size_t limit,
+td::Status WalletIndexDb::for_each_current_token(const HashKey& owner, size_t limit,
                                                   std::function<td::Status(const HashKey&, td::Ref<vm::Cell>)> cb) {
-  return for_each_jetton(owner, limit, [&](const HashKey& master, td::Ref<vm::Cell> value) -> td::Status {
+  return for_each_token(owner, limit, [&](const HashKey& master, td::Ref<vm::Cell> value) -> td::Status {
     std::string stored;
-    TRY_RESULT(status, db_->get(td::Slice{jetton_pair_key(kJettonPairTag, owner, master)}, stored));
+    TRY_RESULT(status, db_->get(td::Slice{token_pair_key(kTokenPairTag, owner, master)}, stored));
     if (status != td::KeyValue::GetStatus::Ok) {
       // A row without the pair record that decided it is not a verified
       // fact: never served as current.
       return td::Status::OK();
     }
-    auto record = decode_jetton_pair_record(stored);
+    auto record = decode_token_pair_record(stored);
     if (record.is_error() || !record.ok().present) {
       return td::Status::OK();
     }
@@ -563,26 +563,26 @@ td::Status WalletIndexDb::for_each_current_jetton(const HashKey& owner, size_t l
   });
 }
 
-TokenVerifyOutcome record_jetton_wallet_check(WalletIndexDb& db, const HashKey& wallet, JettonWalletCheck check,
+TokenVerifyOutcome record_token_wallet_check(WalletIndexDb& db, const HashKey& wallet, TokenWalletCheck check,
                                               const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value,
                                               uint64_t end_lt) {
-  WalletIndexDb::JettonVerdict verdict{false, HashKey::zero(), HashKey::zero(), {}};
+  WalletIndexDb::TokenVerdict verdict{false, HashKey::zero(), HashKey::zero(), {}};
   switch (check) {
-    case JettonWalletCheck::Indeterminate:
+    case TokenWalletCheck::Indeterminate:
       // Not a verdict: a check that could not complete says nothing about
       // whether the wallet is still there.
       return TokenVerifyOutcome::Retry;
-    case JettonWalletCheck::OtherShard:
+    case TokenWalletCheck::OtherShard:
       return TokenVerifyOutcome::Unverifiable;
-    case JettonWalletCheck::Rejected:
+    case TokenWalletCheck::Rejected:
       break;
-    case JettonWalletCheck::Verified:
+    case TokenWalletCheck::Verified:
       verdict = {true, owner, master, std::move(value)};
       break;
   }
-  auto status = db.apply_jetton_verdict(wallet, verdict, end_lt);
+  auto status = db.apply_token_verdict(wallet, verdict, end_lt);
   if (status.is_error()) {
-    LOG(WARNING) << "wc0-index: recording jetton wallet failed: " << status.message();
+    LOG(WARNING) << "wc0-index: recording token wallet failed: " << status.message();
     return TokenVerifyOutcome::WriteFailed;
   }
   return TokenVerifyOutcome::Done;
@@ -635,7 +635,7 @@ td::Status WalletIndexDb::put_event(const HashKey& account, uint64_t lt,
 
 td::Status WalletIndexDb::trim_events(const HashKey& account, size_t added_this_block) {
   // Every workchain-zero transaction adds a row holding the whole
-  // transaction, and until now nothing removed one: jetton and NFT rows have
+  // transaction, and until now nothing removed one: token and NFT rows have
   // erase paths, events did not, so this index grew for the life of the node
   // and outlived the archive retention that bounds everything else.
   //
@@ -1122,7 +1122,7 @@ td::Status WalletIndexDb::for_each_incomplete_block(std::function<td::Status(con
           // shard, no hash) to safely resolve to one specific block, so it
           // can't be auto-recovered. Surface it loudly rather than silently
           // dropping it — an operator needs to check whether this seqno's
-          // block actually has incomplete jetton/NFT data.
+          // block actually has incomplete token/NFT data.
           LOG(ERROR) << "wc0-index: found a legacy seqno-only incomplete-block marker (seqno="
                      << get_u64_be(key.data() + 1) << ") predating full-BlockIdExt markers; cannot"
                      << " auto-recover it — verify this block's index data manually, then delete the"
@@ -1181,7 +1181,7 @@ td::Result<TokenCandidate> token_queue_identity(td::Slice key, td::Slice value) 
     return td::Status::Error("wc0-index: malformed token backlog entry");
   }
   auto kind = static_cast<uint8_t>(value[0]);
-  if (kind != static_cast<uint8_t>(TokenKind::Jetton) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
+  if (kind != static_cast<uint8_t>(TokenKind::Fungible) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
     return td::Status::Error("wc0-index: unknown token kind in backlog entry");
   }
   TokenCandidate candidate{static_cast<TokenKind>(kind), HashKey{}};
@@ -1909,7 +1909,7 @@ td::Result<std::vector<ScheduledTokenCandidate>> WalletIndexDb::next_parked_toke
       return td::Status::OK();
     }
     auto kind = static_cast<uint8_t>(key[1]);
-    if (kind != static_cast<uint8_t>(TokenKind::Jetton) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
+    if (kind != static_cast<uint8_t>(TokenKind::Fungible) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
       return td::Status::OK();
     }
     TokenCandidate candidate{static_cast<TokenKind>(kind), HashKey{}};
@@ -1958,7 +1958,7 @@ td::Result<WalletIndexDb::PendingBlock> decode_pending_block(td::Slice value) {
   pending.end_lt = get_u64_be(value.data() + 1);
   for (size_t at = 1 + 8; at < value.size(); at += kPendingEntryLen) {
     auto kind = static_cast<uint8_t>(value[at]);
-    if (kind != static_cast<uint8_t>(TokenKind::Jetton) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
+    if (kind != static_cast<uint8_t>(TokenKind::Fungible) && kind != static_cast<uint8_t>(TokenKind::Nft)) {
       return td::Status::Error("wc0-index: unknown token kind in pending-block record");
     }
     TokenCandidate candidate{static_cast<TokenKind>(kind), HashKey{}};
@@ -2098,9 +2098,9 @@ td::Result<uint64_t> WalletIndexDb::pending_block_count() {
   return get_meta_u64(kMetaPendingBlocksSub);
 }
 
-td::Result<bool> WalletIndexDb::has_jetton_wallet_record(const HashKey& wallet) {
+td::Result<bool> WalletIndexDb::has_token_wallet_record(const HashKey& wallet) {
   std::string value;
-  TRY_RESULT(status, db_->get(td::Slice{jetton_wallet_key(wallet)}, value));
+  TRY_RESULT(status, db_->get(td::Slice{token_wallet_key(wallet)}, value));
   return status == td::KeyValue::GetStatus::Ok;
 }
 

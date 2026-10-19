@@ -8,9 +8,9 @@ deployed; any other code, including every earlier escrow version, is refused
 as unknown.
 
 Escrow v2 is deployable for non-production use only. A payout the
-recipient's jetton wallet refuses is returned to the escrow's own wallet
+recipient's token wallet refuses is returned to the escrow's own wallet
 without telling the escrow, which then stays release_pending or
-refund_pending with the funds stranded; with the issuer's unchanged jetton
+refund_pending with the funds stranded; with the issuer's unchanged token
 wallet the escrow cannot tell a refused payout from a delivered one whose
 acknowledgment was lost. This is an accepted risk for this version, not a
 fixed one. Production support needs a new integration in which the token's
@@ -32,7 +32,7 @@ SUPPORTED_ESCROW_RELEASES = {
     "crypto/smartcont/tos-service-stablecoin-escrow-v2.release.json": {
         "production": False,
         "reason": (
-            "escrow v2 with the issuer's unchanged jetton wallet is an accepted risk for this "
+            "escrow v2 with the issuer's unchanged token wallet is an accepted risk for this "
             "version: a payout the recipient's wallet refuses leaves the funds stranded in "
             "the escrow's own wallet with the escrow pending, and no operation recovers them. "
             "Production use needs a wallet integration that reports authenticated, "

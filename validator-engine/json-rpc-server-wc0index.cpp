@@ -68,7 +68,7 @@ constexpr size_t kMaxIndexPageRows = 100;
 // cursor lets the caller continue from there.
 constexpr size_t kMaxIndexPageBytes = 4u << 20;
 
-// Jetton and NFT lists have no continuation cursor, so a caller cannot
+// Token and NFT lists have no continuation cursor, so a caller cannot
 // page past a truncated result -- capping them at the event-feed page
 // size silently hid assets an account really holds. They get their own,
 // far larger ceiling: high enough that a real account is returned whole,
@@ -86,7 +86,7 @@ size_t parse_limit_param(td::JsonObject &params) {
   return limit;
 }
 
-// For the cursorless jetton/NFT lists: same shape, larger ceiling.
+// For the cursorless token/NFT lists: same shape, larger ceiling.
 size_t parse_cursorless_list_limit(td::JsonObject &params) {
   size_t limit = kMaxCursorlessListRows;
   auto limit_r = params.get_optional_int_field("limit");
@@ -261,7 +261,7 @@ static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIn
   return tos_wallet_index::format_token_index_state(stats);
 }
 
-void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string req_id,
+void JsonRpcServer::handle_getAccountTokens(td::JsonObject &params, std::string req_id,
                                              td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
@@ -294,20 +294,20 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
     return;
   }
   td::StringBuilder sb;
-  sb << "{\"@type\":\"wallet.accountJettons\",\"index_state\":" << index_state_r.ok() << ",\"jettons\":[";
+  sb << "{\"@type\":\"wallet.accountTokens\",\"index_state\":" << index_state_r.ok() << ",\"tokens\":[";
   bool first = true;
   if (is_indexed_workchain(addr)) {
     // Entries are state-verified by the writer (master-acknowledged wallets only);
     // the client resolves the live balance via get_wallet_data (runGetMethod).
     // A row without the pair record that decided it is never listed as current.
-    auto status = view.for_each_current_jetton(
+    auto status = view.for_each_current_token(
         addr.addr, limit, [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
-          td::Bits256 jetton_wallet = td::Bits256::zero();
+          td::Bits256 token_wallet = td::Bits256::zero();
           unsigned long long last_lt = 0;
           if (value.not_null()) {
             auto cs = vm::load_cell_slice(value);
             if (cs.size() >= 256 + 64) {
-              cs.fetch_bits_to(jetton_wallet.bits(), 256);
+              cs.fetch_bits_to(token_wallet.bits(), 256);
               last_lt = cs.fetch_ulong(64);
             }
           }
@@ -315,7 +315,7 @@ void JsonRpcServer::handle_getAccountJettons(td::JsonObject &params, std::string
             sb << ",";
           }
           first = false;
-          sb << "{\"jetton_master\":\"0:" << master.to_hex() << "\",\"jetton_wallet\":\"0:" << jetton_wallet.to_hex()
+          sb << "{\"token_master\":\"0:" << master.to_hex() << "\",\"token_wallet\":\"0:" << token_wallet.to_hex()
              << "\",\"last_lt\":\"" << last_lt << "\"}";
           return td::Status::OK();
         });

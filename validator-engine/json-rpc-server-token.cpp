@@ -60,7 +60,7 @@ std::string tep64_decode_snake(td::Ref<vm::Cell> cell) {
 }
 
 // Append parsed TEP-64 metadata to `sb`. `prefix` keeps the response fields
-// unambiguous for Jetton masters, NFT items, and NFT collections. Both on-chain
+// unambiguous for Token masters, NFT items, and NFT collections. Both on-chain
 // dictionaries (0x00) and off-chain URI content (0x01) are supported.
 void tep64_append_metadata(td::StringBuilder &sb, td::Ref<vm::Cell> content, td::Slice prefix) {
   if (content.is_null()) {
@@ -166,7 +166,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
         auto saved_root = blk_root;
         auto saved_file = blk_file;
 
-        td::int64 jetton_method_id = (td::crc16(td::Slice("get_jetton_data")) & 0xffff) | 0x10000;
+        td::int64 token_method_id = (td::crc16(td::Slice("get_token_data")) & 0xffff) | 0x10000;
         auto blk = tos::create_tl_object<tos::lite_api::tosNode_blockIdExt>(
             blk_wc, blk_shard, blk_seqno, blk_root, blk_file);
         auto inner = tos::serialize_tl_object(
@@ -174,7 +174,7 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                 0x04, std::move(blk),
                 tos::create_tl_object<tos::lite_api::liteServer_accountId>(
                     addr.workchain, addr.addr),
-                jetton_method_id, params_boc->clone()),
+                token_method_id, params_boc->clone()),
             true);
         auto query = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);
@@ -243,14 +243,14 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                       auto wallet_code_b64 = cell_to_b64(wallet_code_e);
 
                       td::StringBuilder sb;
-                      sb << "{\"@type\":\"ext.tokens.jettonMasterData\""
+                      sb << "{\"@type\":\"ext.tokens.tokenMasterData\""
                          << ",\"total_supply\":" << td::JsonString(td::Slice(total_supply_str))
                          << ",\"mintable\":" << (mintable ? "true" : "false")
                          << ",\"admin_address\":" << td::JsonString(td::Slice(admin_addr_str))
-                         << ",\"jetton_content\":" << td::JsonString(td::Slice(content_b64))
-                         << ",\"jetton_wallet_code\":" << td::JsonString(td::Slice(wallet_code_b64));
+                         << ",\"token_content\":" << td::JsonString(td::Slice(content_b64))
+                         << ",\"token_wallet_code\":" << td::JsonString(td::Slice(wallet_code_b64));
                       // TEP-64: append parsed on-chain metadata (name/symbol/decimals/...).
-                      tep64_append_metadata(sb, content_e.as_cell(), "jetton_");
+                      tep64_append_metadata(sb, content_e.as_cell(), "token_");
                       sb << "}";
                       promise.set_value(make_json_ok(sb.as_cslice().str(), req_id, cors));
                       return;
@@ -308,26 +308,26 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
                           td::Result<td::BufferSlice> R3) mutable {
                 if (R3.is_error()) {
                   promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
-                                                        "Smart contract is not a Jetton or NFT", req_id, cors));
+                                                        "Smart contract is not a Token or NFT", req_id, cors));
                   return;
                 }
                 auto F3 = tos::fetch_tl_object<tos::lite_api::liteServer_runMethodResult>(
                     R3.move_as_ok(), true);
                 if (F3.is_error()) {
                   promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
-                                                        "Smart contract is not a Jetton or NFT", req_id, cors));
+                                                        "Smart contract is not a Token or NFT", req_id, cors));
                   return;
                 }
                 auto f3 = F3.move_as_ok();
                 if (f3->exit_code_ != 0 || f3->result_.empty()) {
                   promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
-                                                        "Smart contract is not a Jetton or NFT", req_id, cors));
+                                                        "Smart contract is not a Token or NFT", req_id, cors));
                   return;
                 }
                 auto stk_r = parse_get_method_result_stack(f3->result_.as_slice());
                 if (stk_r.is_error() || stk_r.ok()->depth() < 3) {
                   promise.set_value(make_json_rpc_error(json_rpc::kContractKindUnsupported,
-                                                        "Smart contract is not a Jetton or NFT", req_id, cors));
+                                                        "Smart contract is not a Token or NFT", req_id, cors));
                   return;
                 }
                 auto stk = stk_r.move_as_ok();

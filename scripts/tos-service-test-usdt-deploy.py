@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy a deterministic test-only USDT-style Jetton to the running TOS testnet."""
+"""Deploy a deterministic test-only USDT-style Token to the running TOS testnet."""
 
 import argparse
 import base64
@@ -32,7 +32,7 @@ from pytosiq_core import (  # noqa: E402
 )
 from tos_service_test_identities import load_test_identity  # noqa: E402
 
-CONTRACT_DIR = REPO / "crypto/smartcont/reference/usdt-jetton-master/contracts"
+CONTRACT_DIR = REPO / "crypto/smartcont/reference/usdt-token-master/contracts"
 FUNC = REPO / "build/crypto/func"
 FIFT = REPO / "build/crypto/fift"
 FIFT_LIB = REPO / "crypto/fift/lib"
@@ -98,8 +98,8 @@ def reproducible_contracts(directory: Path) -> tuple[bytes, bytes]:
         build_dir.mkdir()
         wallet = build_dir / "test-usdt-wallet.boc"
         minter = build_dir / "test-usdt-minter.boc"
-        compile_contract("jetton-wallet.fc", wallet, build_dir / "wallet.fif")
-        compile_contract("jetton-minter.fc", minter, build_dir / "minter.fif")
+        compile_contract("token-wallet.fc", wallet, build_dir / "wallet.fif")
+        compile_contract("token-minter.fc", minter, build_dir / "minter.fif")
         outputs.append((minter.read_bytes(), wallet.read_bytes()))
     if outputs[0] != outputs[1]:
         raise RuntimeError("test USDT contract rebuilds are not byte-identical")
@@ -272,7 +272,7 @@ def main() -> int:
     parser.add_argument(
         "--buyer-address",
         help=(
-            "active current-network buyer account that will own the initial test Jetton "
+            "active current-network buyer account that will own the initial test Token "
             "supply; when omitted, deploy the deterministic test-usdt-buyer WalletV1"
         ),
     )
@@ -490,10 +490,10 @@ def main() -> int:
             "test_buyer_wallet_source": buyer_source,
             "test_buyer_wallet_code_hash": "tvm-cell-sha256:" + buyer_code.hash.hex(),
             "test_buyer_wallet_key_file": buyer_key_file,
-            "test_buyer_jetton_wallet_contract": wallet.to_str(),
+            "test_buyer_token_wallet_contract": wallet.to_str(),
         },
         "release": {
-            "source": "crypto/smartcont/reference/usdt-jetton-master",
+            "source": "crypto/smartcont/reference/usdt-token-master",
             "source_commit": subprocess.run(
                 ["git", "-C", str(REPO), "rev-parse", "HEAD"],
                 check=True,

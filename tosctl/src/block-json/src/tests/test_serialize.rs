@@ -998,9 +998,9 @@ fn test_crafted_key_block_into_json() {
     oracles
         .set_raw([0xCD; 32].write_to_bitstring().unwrap(), &[0xF0; 32].write_to_new_cell().unwrap())
         .unwrap();
-    let jetton_bridge_params = JettonBridgeParams {
+    let token_bridge_params = TokenBridgeParams {
         oracles,
-        prices: JettonBridgePrices {
+        prices: TokenBridgePrices {
             bridge_burn_fee: 1000.into(),
             bridge_mint_fee: 2000.into(),
             wallet_min_tos_for_storage: 3000.into(),
@@ -1056,7 +1056,7 @@ fn test_crafted_key_block_into_json() {
     config_params.set_config(cp44).unwrap();
     config_params.set_config(cp45).unwrap();
     config_params.set_config(ConfigParamEnum::ConfigParam71(oracle_bridge_params)).unwrap();
-    config_params.set_config(ConfigParamEnum::ConfigParam79(jetton_bridge_params)).unwrap();
+    config_params.set_config(ConfigParamEnum::ConfigParam79(token_bridge_params)).unwrap();
 
     extra.write_custom(&custom).unwrap();
     block.write_extra(&extra).unwrap();

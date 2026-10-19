@@ -1,7 +1,7 @@
 """
 Contract deployer for TOS JSON-RPC test suite.
 
-Deploys wallet, Jetton, NFT, and DNS contracts on a live TOS testnet using
+Deploys wallet, Token, NFT, and DNS contracts on a live TOS testnet using
 the pre-funded main wallet at -1:000...000.  All deployment happens via Fift
 scripts + the JSON-RPC ``sendBoc`` endpoint — no lite-client needed.
 """
@@ -611,8 +611,8 @@ def deploy_generic_contract(
 
     # Copy compiled BOC files for code references
     for boc in [
-        "/tmp/jetton-minter-code.boc",
-        "/tmp/jetton-wallet-code.boc",
+        "/tmp/token-minter-code.boc",
+        "/tmp/token-wallet-code.boc",
         "/tmp/nft-collection-code.boc",
         "/tmp/nft-item-code.boc",
         "/tmp/pool-code.boc",
@@ -730,8 +730,8 @@ dup hashu mw_pk ed25519_sign_uint constant signature
         raise RuntimeError(f"sendBoc failed: {result}")
 
 
-def mint_test_jettons(endpoint: str, master: str, owner: str, amount: int = 1_000_000_000) -> None:
-    """Mint the deterministic TEP-74 fixture and wait for its wallet index entry."""
+def mint_test_tokens(endpoint: str, master: str, owner: str, amount: int = 1_000_000_000) -> None:
+    """Mint the deterministic TOS Token V1 fixture and wait for its wallet index entry."""
     owner_wc, owner_hash = owner.split(":", 1)
     body = f"""\
 <b
@@ -752,16 +752,16 @@ b>
             json={
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "getAccountJettons",
+                "method": "getAccountTokens",
                 "params": {"address": owner},
             },
             timeout=8,
         ).json()
-        rows = response.get("result", {}).get("jettons", [])
-        if any(str(row.get("jetton_master", "")).lower() == master.lower() for row in rows):
+        rows = response.get("result", {}).get("tokens", [])
+        if any(str(row.get("token_master", "")).lower() == master.lower() for row in rows):
             return
         time.sleep(0.5)
-    raise RuntimeError("Minted Jetton did not appear in getAccountJettons")
+    raise RuntimeError("Minted Token did not appear in getAccountTokens")
 
 
 def mint_test_nft(endpoint: str, collection: str, owner: str) -> str:
@@ -1172,10 +1172,10 @@ dictnew
     return info
 
 
-# ── Token deployment (Jetton + NFT) ─────────────────────────────────────
+# ── Token deployment (Token + NFT) ─────────────────────────────────────
 
-JETTON_MINTER_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/jetton-minter"
-JETTON_WALLET_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/jetton-wallet"
+TOKEN_MINTER_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/token-minter"
+TOKEN_WALLET_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/token-wallet"
 NFT_COLLECTION_SRC = TOS_ROOT / "crypto/func/auto-tests/legacy_tests/nft-collection"
 NFT_ITEM_SRC = TOS_ROOT / "test/json-rpc/contracts"
 
@@ -1197,8 +1197,8 @@ def _compile_func(src_dir: Path, main_file: str) -> Path:
 def _ensure_compiled():
     """Compile all token contracts and materialize their code-cell BOCs."""
     contracts = [
-        (JETTON_MINTER_SRC, "jetton-minter.fc", "jetton-minter-code.boc"),
-        (JETTON_WALLET_SRC, "jetton-wallet.fc", "jetton-wallet-code.boc"),
+        (TOKEN_MINTER_SRC, "token-minter.fc", "token-minter-code.boc"),
+        (TOKEN_WALLET_SRC, "token-wallet.fc", "token-wallet-code.boc"),
         (NFT_COLLECTION_SRC, "nft-collection-editable.fc", "nft-collection-code.boc"),
         (NFT_ITEM_SRC, "nft-item.fc", "nft-item-code.boc"),
     ]
@@ -1227,8 +1227,8 @@ def _tep64_content_fift(metadata: dict[str, str], constant: str) -> str:
     return "\n".join(lines)
 
 
-def deploy_jetton_master(endpoint: str, admin_addr: str) -> dict:
-    """Deploy a Jetton Master contract. admin_addr is raw format like '0:abc...'."""
+def deploy_token_master(endpoint: str, admin_addr: str) -> dict:
+    """Deploy a Token Master contract. admin_addr is raw format like '0:abc...'."""
     _ensure_compiled()
     parts = admin_addr.split(":")
     admin_wc = int(parts[0])
@@ -1237,24 +1237,24 @@ def deploy_jetton_master(endpoint: str, admin_addr: str) -> dict:
     # Data: total_supply(coins=0) + admin_address + content(cell) + wallet_code(cell)
     metadata_fift = _tep64_content_fift(
         {
-            "name": "TOS Test Jetton",
+            "name": "TOS Test Token",
             "symbol": "TTJ",
             "decimals": "9",
-            "description": "Deterministic local TOS Jetton fixture",
+            "description": "Deterministic local TOS Token fixture",
             "image": "https://example.invalid/tos-test-jetton.png",
         },
-        "jetton_content",
+        "token_content",
     )
     data_fift = f"""\
 {metadata_fift}
 <b
   0 Tomi,                                          // total_supply = 0
   b{{10}} s, b{{0}} s, {admin_wc} 8 i, 0x{admin_hash} 256 u, // admin_address
-  jetton_content ref,                               // TEP-64 on-chain content
-  "jetton-wallet-code.boc" file>B B>boc ref,        // jetton_wallet_code
+  token_content ref,                               // TEP-64 on-chain content
+  "token-wallet-code.boc" file>B B>boc ref,        // token_wallet_code
 b>"""
 
-    code_fift = '"jetton-minter-code.boc" file>B B>boc'
+    code_fift = '"token-minter-code.boc" file>B B>boc'
     return deploy_generic_contract(endpoint, code_fift, data_fift, amount_nano=1_000_000_000)
 
 
@@ -1293,7 +1293,7 @@ b>"""
 
 
 def deploy_all_tokens(endpoint: str, fixture_owner: str | None = None) -> dict:
-    """Deploy Jetton master and NFT collection."""
+    """Deploy Token master and NFT collection."""
     results = {}
 
     # The deterministic faucet owns token fixtures so subsequent integration
@@ -1303,17 +1303,17 @@ def deploy_all_tokens(endpoint: str, fixture_owner: str | None = None) -> dict:
 
     print(f"Using admin address: {admin_addr}")
 
-    print("Deploying jetton_master...")
+    print("Deploying token_master...")
     try:
-        results["jetton_master"] = deploy_jetton_master(endpoint, admin_addr)
-        print(f"  -> {results['jetton_master']['address']}")
+        results["token_master"] = deploy_token_master(endpoint, admin_addr)
+        print(f"  -> {results['token_master']['address']}")
         if fixture_owner:
-            mint_test_jettons(endpoint, results["jetton_master"]["address"], fixture_owner)
-            results["jetton_master"]["fixture_owner"] = fixture_owner
+            mint_test_tokens(endpoint, results["token_master"]["address"], fixture_owner)
+            results["token_master"]["fixture_owner"] = fixture_owner
             print(f"  -> minted 1 TTJ to {fixture_owner}")
     except Exception as e:
         print(f"  FAILED: {e}")
-        results["jetton_master"] = {"address": None, "error": str(e)}
+        results["token_master"] = {"address": None, "error": str(e)}
 
     print("Deploying nft_collection...")
     try:
@@ -1348,7 +1348,7 @@ def deploy_all(endpoint: str, force: bool = False) -> dict:
     wallets_result = deploy_all_wallets(endpoint)
     all_contracts["wallets"] = _merge_category_results(previous.get("wallets", {}), wallets_result)
 
-    # 2. Tokens (Jetton + NFT)
+    # 2. Tokens (Token + NFT)
     fixture_owner = wallets_result.get("wallet_v4r2", {}).get("address")
     tokens_result = deploy_all_tokens(endpoint, fixture_owner=fixture_owner)
     all_contracts["tokens"] = _merge_category_results(previous.get("tokens", {}), tokens_result)

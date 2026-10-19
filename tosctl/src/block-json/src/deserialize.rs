@@ -633,9 +633,9 @@ impl StateParser {
         })
     }
 
-    pub fn parse_jetton_bridge_params(p: &PathMap) -> Result<JettonBridgeParams> {
+    pub fn parse_token_bridge_params(p: &PathMap) -> Result<TokenBridgeParams> {
         let oracles = Self::parse_oracles(p)?;
-        let prices = JettonBridgePrices {
+        let prices = TokenBridgePrices {
             bridge_burn_fee: p.get_coins("bridge_burn_fee")?,
             bridge_mint_fee: p.get_coins("bridge_mint_fee")?,
             wallet_min_tos_for_storage: p.get_coins("wallet_min_tos_for_storage")?,
@@ -643,7 +643,7 @@ impl StateParser {
             minter_min_tos_for_storage: p.get_coins("minter_min_tos_for_storage")?,
             discover_gas_consumption: p.get_coins("discover_gas_consumption")?,
         };
-        Ok(JettonBridgeParams {
+        Ok(TokenBridgeParams {
             prices,
             oracles,
             state_flags: p.get_num8("state_flags")?,
@@ -1003,15 +1003,15 @@ impl StateParser {
             Ok(ConfigParamEnum::ConfigParam73(p))
         })?;
         self.parse_parameter(config, 79, |p| {
-            let p = Self::parse_jetton_bridge_params(p)?;
+            let p = Self::parse_token_bridge_params(p)?;
             Ok(ConfigParamEnum::ConfigParam79(p))
         })?;
         self.parse_parameter(config, 81, |p| {
-            let p = Self::parse_jetton_bridge_params(p)?;
+            let p = Self::parse_token_bridge_params(p)?;
             Ok(ConfigParamEnum::ConfigParam81(p))
         })?;
         self.parse_parameter(config, 82, |p| {
-            let p = Self::parse_jetton_bridge_params(p)?;
+            let p = Self::parse_token_bridge_params(p)?;
             Ok(ConfigParamEnum::ConfigParam82(p))
         })?;
         Ok(())

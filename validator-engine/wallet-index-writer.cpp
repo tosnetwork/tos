@@ -7,7 +7,7 @@
     message claims (any contract can fake a notification op): messages only
     *nominate candidates*, and every candidate is verified against the
     post-apply shard state by executing the standard get-methods —
-      jetton: get_wallet_data on the wallet, then get_wallet_address on the
+      token: get_wallet_data on the wallet, then get_wallet_address on the
               master must resolve back to the wallet (the master is the only
               authority on which contract is the owner's wallet);
       NFT:    get_nft_data on the item, then get_nft_address_by_index on the
@@ -41,12 +41,12 @@ namespace tos_wallet_index {
 
 namespace {
 
-// TEP-74 jetton ops handled by the jetton-wallet contract itself.
-constexpr unsigned long long kJettonTransfer = 0x0f8a7ea5ULL;
-constexpr unsigned long long kJettonInternalTransfer = 0x178d4519ULL;
-constexpr unsigned long long kJettonBurn = 0x595f07bcULL;
+// TOS Token V1 token ops handled by the token-wallet contract itself.
+constexpr unsigned long long kTokenTransfer = 0x0f8a7ea5ULL;
+constexpr unsigned long long kTokenInternalTransfer = 0x178d4519ULL;
+constexpr unsigned long long kTokenBurn = 0x595f07bcULL;
 // Notification ops received by the owner; the message *source* is the token contract.
-constexpr unsigned long long kJettonTransferNotification = 0x7362d09cULL;  // TEP-74
+constexpr unsigned long long kTokenTransferNotification = 0x7362d09cULL;  // TOS Token V1
 constexpr unsigned long long kNftOwnershipAssigned = 0x05138d91ULL;        // TEP-62
 // TEP-62 op handled by the NFT item itself.
 constexpr unsigned long long kNftTransfer = 0x5fcc3d14ULL;
@@ -95,7 +95,7 @@ class StateAccounts {
       return LoadResult::Indeterminate;
     }
     if (!wallet_index_state_contains(shard_, addr)) {
-      // Another shard's account (a jetton master or NFT collection beside
+      // Another shard's account (a token master or NFT collection beside
       // the wallet or item): its own shard's state answers, when one is at
       // hand.
       if (other_shard_) {
@@ -208,45 +208,45 @@ bool is_addr_none(const td::Ref<vm::CellSlice>& csr) {
   return csr.not_null() && csr->size() >= 2 && csr->prefetch_ulong(2) == 0;
 }
 
-// Verify that `wallet` is a jetton wallet acknowledged by its master, against the
+// Verify that `wallet` is a token wallet acknowledged by its master, against the
 // post-apply state. The master's own get_wallet_address resolver is the only
 // authority on which contract is (owner, master)'s wallet — a hostile contract
 // can claim any owner/master in get_wallet_data, but cannot make a master it
 // does not control resolve back to it.
-enum class JettonVerification { Verified, Rejected, Indeterminate, OtherShard };
+enum class TokenVerification { Verified, Rejected, Indeterminate, OtherShard };
 
-JettonVerification jetton_load_failure(StateAccounts::LoadResult load) {
+TokenVerification token_load_failure(StateAccounts::LoadResult load) {
   switch (load) {
     case StateAccounts::LoadResult::Indeterminate:
-      return JettonVerification::Indeterminate;
+      return TokenVerification::Indeterminate;
     case StateAccounts::LoadResult::OtherShard:
-      return JettonVerification::OtherShard;
+      return TokenVerification::OtherShard;
     case StateAccounts::LoadResult::Active:
     case StateAccounts::LoadResult::Inactive:
       break;
   }
-  return JettonVerification::Rejected;
+  return TokenVerification::Rejected;
 }
 
-JettonVerification jetton_get_failure(WalletIndexGetMethodStatus status) {
-  return status == WalletIndexGetMethodStatus::Indeterminate ? JettonVerification::Indeterminate
-                                                             : JettonVerification::Rejected;
+TokenVerification token_get_failure(WalletIndexGetMethodStatus status) {
+  return status == WalletIndexGetMethodStatus::Indeterminate ? TokenVerification::Indeterminate
+                                                             : TokenVerification::Rejected;
 }
 
-JettonVerification verify_jetton_wallet(StateAccounts& state, const td::Bits256& wallet, td::Bits256& owner_out,
+TokenVerification verify_token_wallet(StateAccounts& state, const td::Bits256& wallet, td::Bits256& owner_out,
                                         td::Bits256& master_out, WalletIndexVerificationBudget& budget) {
   tos::SmartContract::State wstate;
   auto wallet_load = state.load(wallet, wstate);
   if (wallet_load != StateAccounts::LoadResult::Active) {
-    return jetton_load_failure(wallet_load);
+    return token_load_failure(wallet_load);
   }
   auto result = run_get(wstate, wallet, "get_wallet_data", {}, budget);
   auto stack = std::move(result.stack);
   if (result.status != WalletIndexGetMethodStatus::Success) {
-    return jetton_get_failure(result.status);
+    return token_get_failure(result.status);
   }
   if (stack->depth() < 4) {
-    return JettonVerification::Rejected;
+    return TokenVerification::Rejected;
   }
   // get_wallet_data -> (int balance, slice owner, slice master, cell wallet_code)
   auto& s = stack.write();
@@ -255,28 +255,28 @@ JettonVerification verify_jetton_wallet(StateAccounts& state, const td::Bits256&
   auto owner_csr = s.pop_cellslice();
   td::Bits256 owner, master;
   if (!extract_wc0_address(std::move(owner_csr), owner) || !extract_wc0_address(std::move(master_csr), master)) {
-    return JettonVerification::Rejected;
+    return TokenVerification::Rejected;
   }
   tos::SmartContract::State mstate;
   auto master_load = state.load(master, mstate);
   if (master_load != StateAccounts::LoadResult::Active) {
-    return jetton_load_failure(master_load);  // fail-closed: unverifiable claim is not indexed
+    return token_load_failure(master_load);  // fail-closed: unverifiable claim is not indexed
   }
   auto resolved_result = run_get(mstate, master, "get_wallet_address", {make_addr_slice(owner)}, budget);
   auto resolved_stack = std::move(resolved_result.stack);
   if (resolved_result.status != WalletIndexGetMethodStatus::Success) {
-    return jetton_get_failure(resolved_result.status);
+    return token_get_failure(resolved_result.status);
   }
   if (resolved_stack->depth() < 1) {
-    return JettonVerification::Rejected;
+    return TokenVerification::Rejected;
   }
   td::Bits256 resolved;
   if (!extract_wc0_address(resolved_stack.write().pop_cellslice(), resolved) || resolved != wallet) {
-    return JettonVerification::Rejected;
+    return TokenVerification::Rejected;
   }
   owner_out = owner;
   master_out = master;
-  return JettonVerification::Verified;
+  return TokenVerification::Verified;
 }
 
 // Verify `item` via get_nft_data against the post-apply state. For collection
@@ -372,7 +372,7 @@ NftVerification verify_nft_item(StateAccounts& state, const td::Bits256& item, t
   }
 }
 
-td::Ref<vm::Cell> make_jetton_value(const td::Bits256& wallet, unsigned long long lt) {
+td::Ref<vm::Cell> make_token_value(const td::Bits256& wallet, unsigned long long lt) {
   vm::CellBuilder cb;
   cb.store_bits(wallet.bits(), 256);
   cb.store_long(static_cast<long long>(lt), 64);
@@ -393,7 +393,7 @@ td::Ref<vm::Cell> make_nft_value(bool has_collection, const td::Bits256& collect
 // contract as a verification candidate. Messages never write to the index
 // directly — they only say where to look.
 void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_msg,
-                              std::set<td::Bits256>& jettons, std::set<td::Bits256>& nfts) {
+                              std::set<td::Bits256>& tokens, std::set<td::Bits256>& nfts) {
   if (in_msg.is_null()) {
     return;
   }
@@ -403,16 +403,16 @@ void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_m
   }
   unsigned long long op = read_op(body_cs);
   switch (op) {
-    case kJettonTransfer:
-    case kJettonInternalTransfer:
-    case kJettonBurn:
-      // Ops handled by the jetton wallet itself: the receiving account is the wallet.
-      jettons.insert(account);
+    case kTokenTransfer:
+    case kTokenInternalTransfer:
+    case kTokenBurn:
+      // Ops handled by the token wallet itself: the receiving account is the wallet.
+      tokens.insert(account);
       return;
     case kNftTransfer:
       nfts.insert(account);
       return;
-    case kJettonTransferNotification:
+    case kTokenTransferNotification:
     case kNftOwnershipAssigned: {
       // Notification received by the owner: the source is the token contract.
       block::gen::CommonMsgInfo::Record_int_msg_info imsg;
@@ -424,8 +424,8 @@ void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_m
       if (!block::tlb::t_MsgAddressInt.extract_std_address(imsg.src, src_wc, src) || src_wc != 0) {
         return;
       }
-      if (op == kJettonTransferNotification) {
-        jettons.insert(src);
+      if (op == kTokenTransferNotification) {
+        tokens.insert(src);
       } else {
         nfts.insert(src);
       }
@@ -436,32 +436,32 @@ void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_m
   }
 }
 
-// Verify and index one jetton-wallet candidate (into the open batch). A check
+// Verify and index one token-wallet candidate (into the open batch). A check
 // that reached no verdict is retried and leaves the index as it was.
-TokenVerifyOutcome index_jetton_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& wallet,
+TokenVerifyOutcome index_token_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& wallet,
                                           unsigned long long end_lt, WalletIndexVerificationBudget& budget) {
   td::Bits256 owner = td::Bits256::zero();
   td::Bits256 master = td::Bits256::zero();
-  JettonWalletCheck check = JettonWalletCheck::Rejected;
-  switch (verify_jetton_wallet(state, wallet, owner, master, budget)) {
-    case JettonVerification::Indeterminate:
-      check = JettonWalletCheck::Indeterminate;
+  TokenWalletCheck check = TokenWalletCheck::Rejected;
+  switch (verify_token_wallet(state, wallet, owner, master, budget)) {
+    case TokenVerification::Indeterminate:
+      check = TokenWalletCheck::Indeterminate;
       break;
-    case JettonVerification::OtherShard:
-      check = JettonWalletCheck::OtherShard;
+    case TokenVerification::OtherShard:
+      check = TokenWalletCheck::OtherShard;
       break;
-    case JettonVerification::Rejected:
-      check = JettonWalletCheck::Rejected;
+    case TokenVerification::Rejected:
+      check = TokenWalletCheck::Rejected;
       break;
-    case JettonVerification::Verified:
-      check = JettonWalletCheck::Verified;
+    case TokenVerification::Verified:
+      check = TokenWalletCheck::Verified;
       break;
   }
   td::Ref<vm::Cell> value;
-  if (check == JettonWalletCheck::Verified) {
-    value = make_jetton_value(wallet, end_lt);
+  if (check == TokenWalletCheck::Verified) {
+    value = make_token_value(wallet, end_lt);
   }
-  return record_jetton_wallet_check(*db, wallet, check, owner, master, std::move(value), end_lt);
+  return record_token_wallet_check(*db, wallet, check, owner, master, std::move(value), end_lt);
 }
 
 // Verify and index one NFT-item candidate; erases the previous owner's entry
@@ -504,7 +504,7 @@ TokenVerifyOutcome index_nft_candidate(WalletIndexDb* db, StateAccounts& state, 
 // Walk the block's account_blocks: write event entries (into the open batch) and
 // collect token-verification candidates. Returns false if the block envelope
 // does not parse; fills `end_lt` from the block info.
-bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<td::Bits256>& jettons,
+bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<td::Bits256>& tokens,
                       std::set<td::Bits256>& nfts, unsigned long long& end_lt, uint32_t& gen_utime,
                       size_t& age_rows_added, bool& write_error) {
   block::gen::Block::Record blk;
@@ -517,7 +517,7 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
   gen_utime = info.gen_utime;
   vm::AugmentedDictionary acc_dict{vm::load_cell_slice_ref(extra.account_blocks), 256,
                                    block::tlb::aug_ShardAccountBlocks};
-  acc_dict.check_for_each_extra([db, &jettons, &nfts, gen_utime, &age_rows_added, &write_error](
+  acc_dict.check_for_each_extra([db, &tokens, &nfts, gen_utime, &age_rows_added, &write_error](
                                     td::Ref<vm::CellSlice> value, td::Ref<vm::CellSlice> /*extra*/,
                                     td::ConstBitPtr /*key*/, int /*n*/) -> bool {
     block::gen::AccountBlock::Record acc_blk;
@@ -535,7 +535,7 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       nfts.insert(account);
     }
     size_t events_added = 0;
-    trans_dict.check_for_each_extra([db, &account, &jettons, &nfts, &events_added, gen_utime, &age_rows_added,
+    trans_dict.check_for_each_extra([db, &account, &tokens, &nfts, &events_added, gen_utime, &age_rows_added,
                                      &write_error](td::Ref<vm::CellSlice> tvalue, td::Ref<vm::CellSlice> /*textra*/,
                                                    td::ConstBitPtr /*tkey*/, int /*tn*/) -> bool {
       auto tx_cell = tvalue->prefetch_ref();
@@ -567,16 +567,16 @@ bool index_block_walk(WalletIndexDb* db, td::Ref<vm::Cell> block_root, std::set<
       // inbound message: StateInit plus an application-specific mint body
       // activates it. Nominate every newly activated account for both probes;
       // the post-state getters below are authoritative and reject ordinary
-      // contracts. This closes initial NFT/jetton mint indexing without
+      // contracts. This closes initial NFT/token mint indexing without
       // trusting message shape or contract code hashes.
       if (trans.orig_status != block::gen::AccountStatus::acc_state_active &&
           trans.end_status == block::gen::AccountStatus::acc_state_active) {
-        jettons.insert(account);
+        tokens.insert(account);
         nfts.insert(account);
       }
       // Collected without a bound: schedule_token_candidates bounds the
       // verification work and defers the excess instead of dropping it.
-      collect_token_candidates(account, trans.r1.in_msg->prefetch_ref(), jettons, nfts);
+      collect_token_candidates(account, trans.r1.in_msg->prefetch_ref(), tokens, nfts);
       return true;
     });
     // Trim this account once, after all its events for the block are in -- not
@@ -968,8 +968,8 @@ td::Status verify_scheduled(WalletIndexDb* db, StateAccounts& state,
       scheduled, [&](const ScheduledTokenCandidate& scheduled_candidate, size_t remaining) {
         verification_budget.begin_candidate(remaining);
         const auto& candidate = scheduled_candidate.candidate;
-        if (candidate.kind == TokenKind::Jetton) {
-          return index_jetton_candidate(db, state, candidate.address, end_lt, verification_budget);
+        if (candidate.kind == TokenKind::Fungible) {
+          return index_token_candidate(db, state, candidate.address, end_lt, verification_budget);
         }
         return index_nft_candidate(db, state, candidate.address, end_lt, verification_budget);
       });
@@ -979,8 +979,8 @@ td::Status verify_scheduled(WalletIndexDb* db, StateAccounts& state,
 TokenVerifyOutcome verify_one(WalletIndexDb* db, StateAccounts& state, const TokenCandidate& candidate, uint64_t end_lt,
                               WalletIndexVerificationBudget& budget) {
   try {
-    if (candidate.kind == TokenKind::Jetton) {
-      return index_jetton_candidate(db, state, candidate.address, end_lt, budget);
+    if (candidate.kind == TokenKind::Fungible) {
+      return index_token_candidate(db, state, candidate.address, end_lt, budget);
     }
     return index_nft_candidate(db, state, candidate.address, end_lt, budget);
   } catch (...) {
@@ -1224,7 +1224,7 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
     return Wc0IndexResult::NotDone;
   }
   bool ok = false;
-  std::set<td::Bits256> jetton_candidates, nft_candidates;
+  std::set<td::Bits256> token_candidates, nft_candidates;
   unsigned long long end_lt = 0;
   uint32_t gen_utime = 0;
   size_t age_rows_added = 0;
@@ -1235,7 +1235,7 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
   auto state_for_context = state_root;
   bool state_usable = false;
   try {
-    ok = index_block_walk(db, block_root, jetton_candidates, nft_candidates, end_lt, gen_utime, age_rows_added,
+    ok = index_block_walk(db, block_root, token_candidates, nft_candidates, end_lt, gen_utime, age_rows_added,
                           write_error);
     // Runs even when this block nominated nothing: deferred candidates from
     // earlier blocks drain here.
@@ -1244,9 +1244,9 @@ Wc0IndexResult wc0_index_block(td::Ref<vm::Cell> block_root, td::Ref<vm::Cell> s
     state_usable = state.ok();
     if (ok) {
       std::vector<TokenCandidate> block_candidates;
-      block_candidates.reserve(jetton_candidates.size() + nft_candidates.size());
-      for (const auto& wallet : jetton_candidates) {
-        block_candidates.push_back(TokenCandidate{TokenKind::Jetton, wallet});
+      block_candidates.reserve(token_candidates.size() + nft_candidates.size());
+      for (const auto& wallet : token_candidates) {
+        block_candidates.push_back(TokenCandidate{TokenKind::Fungible, wallet});
       }
       for (const auto& item : nft_candidates) {
         block_candidates.push_back(TokenCandidate{TokenKind::Nft, item});

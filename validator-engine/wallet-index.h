@@ -1,7 +1,7 @@
 /*
     TOS wc=0 in-process wallet index — side-channel RocksDB.
 
-    Serves wallet "aggregate" queries (jetton list, NFT list, account events)
+    Serves wallet "aggregate" queries (token list, NFT list, account events)
     directly from the node, with no external indexer: a standalone, per-validator
     RocksDB at `${db_root}/wc0-index`, parallel to celldb/statedb and completely
     outside the consensus state cell tree. It never contributes to any
@@ -122,7 +122,7 @@ struct MarkedBlock {
   uint64_t handover_seq = 0;
 };
 
-enum class TokenKind : uint8_t { Jetton = 0, Nft = 1 };
+enum class TokenKind : uint8_t { Fungible = 0, Nft = 1 };
 
 struct TokenCandidate {
   TokenKind kind;
@@ -208,24 +208,24 @@ class WalletIndexDb {
   WalletIndexDb& operator=(const WalletIndexDb&) = delete;
   ~WalletIndexDb();
 
-  // --- Jetton ownership: 0x10 + owner(32) + master(32) -> value cell ---
-  td::Status put_jetton(const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value);
-  td::Status erase_jetton(const HashKey& owner, const HashKey& master);
-  // Walk at most `limit` jetton rows of `owner`, as stored. Answers use
-  // for_each_current_jetton instead.
+  // --- Token ownership: 0x10 + owner(32) + master(32) -> value cell ---
+  td::Status put_token(const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value);
+  td::Status erase_token(const HashKey& owner, const HashKey& master);
+  // Walk at most `limit` token rows of `owner`, as stored. Answers use
+  // for_each_current_token instead.
   // Callback receives (master, value cell).
-  td::Status for_each_jetton(
+  td::Status for_each_token(
       const HashKey& owner, size_t limit,
       std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
 
-  // --- Jetton wallet record: 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8) ---
-  // The last verdict on a jetton wallet and the logical time of the block it
+  // --- Token wallet record: 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8) ---
+  // The last verdict on a token wallet and the logical time of the block it
   // came from; present = 0 records that the wallet was found not to be a
-  // jetton wallet acknowledged by its master at that time. It is the reverse
+  // token wallet acknowledged by its master at that time. It is the reverse
   // of the 0x10 entry, so a wallet whose owner or master changes, or which
   // stops verifying, can have its old 0x10 entry removed. Whether the 0x10
   // entry itself changes is decided by the pair record below.
-  struct JettonVerdict {
+  struct TokenVerdict {
     bool present;
     HashKey owner;
     HashKey master;
@@ -238,27 +238,27 @@ class WalletIndexDb {
   // pair's record is not from a later block, and a release only while the
   // pair still names this wallet. Call it only with a definite verdict; a
   // verification that could not complete must leave the record as it is.
-  td::Status apply_jetton_verdict(const HashKey& wallet, const JettonVerdict& verdict, uint64_t end_lt);
+  td::Status apply_token_verdict(const HashKey& wallet, const TokenVerdict& verdict, uint64_t end_lt);
   // Returns true and fills `owner` and `master` if the wallet's last verdict
   // found it present.
-  td::Result<bool> get_jetton_wallet(const HashKey& wallet, HashKey& owner, HashKey& master);
+  td::Result<bool> get_token_wallet(const HashKey& wallet, HashKey& owner, HashKey& master);
 
   // The wallet's last recorded verdict, as the open batch leaves it.
-  struct JettonWalletState {
+  struct TokenWalletState {
     bool present = false;
     HashKey owner = HashKey::zero();
     HashKey master = HashKey::zero();
     uint64_t lt = 0;
   };
-  td::Result<td::optional<JettonWalletState>> jetton_wallet_state(const HashKey& wallet);
+  td::Result<td::optional<TokenWalletState>> token_wallet_state(const HashKey& wallet);
 
-  // Walk at most `limit` jetton masters held by `owner` that are current: a
+  // Walk at most `limit` token masters held by `owner` that are current: a
   // row is served only beside a pair record naming it present, the record
   // every verdict writes. Callback receives (master, value).
-  td::Status for_each_current_jetton(const HashKey& owner, size_t limit,
+  td::Status for_each_current_token(const HashKey& owner, size_t limit,
                                      std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
 
-  // --- Jetton pair record: 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8) ---
+  // --- Token pair record: 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8) ---
   // The last decision on the (owner, master) 0x10 entry, shared by every
   // wallet that has claimed the pair: which wallet it names, or that it was
   // removed, and the logical time of the block that decided it. An older
@@ -437,7 +437,7 @@ class WalletIndexDb {
   // How many blocks are pending (committed).
   td::Result<uint64_t> pending_block_count();
   // Whether a verdict on `wallet` has been recorded (committed state).
-  td::Result<bool> has_jetton_wallet_record(const HashKey& wallet);
+  td::Result<bool> has_token_wallet_record(const HashKey& wallet);
   // Backlog size and lost/unverifiable/parked counts, as committed.
   td::Result<TokenBacklogStats> token_backlog_stats();
   // Lower the backlog bound (never above kMaxTokenBacklogEntries) so tests can
@@ -539,29 +539,29 @@ class WalletIndexDb {
   // in open() before the DB is used; atomic and WAL-synced; refuses a
   // database written by a newer, unknown version.
   td::Status migrate_schema();
-  // The decision currently recorded for a jetton pair: its pair record, or for
+  // The decision currently recorded for a token pair: its pair record, or for
   // a pair written before pair records existed, the 0x10 entry's own wallet
   // and lt. `known` is false when the pair has neither.
-  struct JettonPairDecision {
+  struct TokenPairDecision {
     bool known = false;
     bool has_record = false;
     bool present = false;
     HashKey wallet = HashKey::zero();
     uint64_t lt = 0;
   };
-  td::Result<JettonPairDecision> jetton_pair_decision(const HashKey& owner, const HashKey& master);
-  // Reads a jetton record as the open batch leaves it.
-  td::Result<bool> get_jetton_record(td::Slice key, std::string& value);
-  // Writes a jetton record into the open batch, visible to later reads in it.
-  td::Status put_jetton_record(td::Slice key, td::Slice value);
+  td::Result<TokenPairDecision> token_pair_decision(const HashKey& owner, const HashKey& master);
+  // Reads a token record as the open batch leaves it.
+  td::Result<bool> get_token_record(td::Slice key, std::string& value);
+  // Writes a token record into the open batch, visible to later reads in it.
+  td::Status put_token_record(td::Slice key, td::Slice value);
   // Decide the (owner, master) pair for `wallet` as of the block ending at
   // `end_lt`: claim it (point the 0x10 entry at the wallet) or release it
   // (remove the entry if it names the wallet). Ignored when the pair's own
   // record is from a later block; a release is also ignored while the pair
   // names another wallet.
-  td::Status claim_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
+  td::Status claim_token_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
                                td::Ref<vm::Cell> value, uint64_t end_lt);
-  td::Status release_jetton_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet, uint64_t end_lt);
+  td::Status release_token_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet, uint64_t end_lt);
 
   std::unique_ptr<td::RocksDb> db_;
   // Same database, own (never batched) write path, for mark_blocks_incomplete.
@@ -591,9 +591,9 @@ class WalletIndexDb {
     std::map<std::string, std::string> queue_written;
     // Parked rows written (value) or erased (empty) in the batch.
     std::map<std::string, std::string> parked_overlay;
-    // Jetton wallet and pair records written in the batch, which committed
+    // Token wallet and pair records written in the batch, which committed
     // reads do not see yet: key -> value.
-    std::map<std::string, std::string> jetton_records;
+    std::map<std::string, std::string> token_records;
   };
   TokenBatchState token_batch_;
   uint64_t token_backlog_limit_ = kMaxTokenBacklogEntries;
@@ -630,12 +630,12 @@ class WalletIndexSnapshot {
                           std::function<td::Status(const HashKey& nft, td::Ref<vm::Cell>)> cb) {
     return view_->for_each_nft(owner, limit, std::move(cb));
   }
-  td::Status for_each_current_jetton(const HashKey& owner, size_t limit,
+  td::Status for_each_current_token(const HashKey& owner, size_t limit,
                                      std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb) {
-    return view_->for_each_current_jetton(owner, limit, std::move(cb));
+    return view_->for_each_current_token(owner, limit, std::move(cb));
   }
-  td::Result<bool> has_jetton_wallet_record(const HashKey& wallet) {
-    return view_->has_jetton_wallet_record(wallet);
+  td::Result<bool> has_token_wallet_record(const HashKey& wallet) {
+    return view_->has_token_wallet_record(wallet);
   }
 
  private:
@@ -644,20 +644,20 @@ class WalletIndexSnapshot {
   std::unique_ptr<WalletIndexDb> view_;
 };
 
-// The result of checking one jetton-wallet candidate against a block's
+// The result of checking one token-wallet candidate against a block's
 // post-state.
-enum class JettonWalletCheck {
+enum class TokenWalletCheck {
   Verified,       // its master resolves (owner) back to it
-  Rejected,       // the post-state definitely does not show it as a jetton wallet
+  Rejected,       // the post-state definitely does not show it as a token wallet
   Indeterminate,  // the node could not reach a verdict (budget, virtualization)
   OtherShard,     // the verdict needs another shard's state
 };
 
-// Record a jetton-wallet check in the index (into the open batch). Only a
+// Record a token-wallet check in the index (into the open batch). Only a
 // definite verdict changes the index: Verified records the wallet under
 // (owner, master) with `value`, Rejected removes what it had. Indeterminate
 // and OtherShard leave the wallet's record and entry as they are.
-TokenVerifyOutcome record_jetton_wallet_check(WalletIndexDb& db, const HashKey& wallet, JettonWalletCheck check,
+TokenVerifyOutcome record_token_wallet_check(WalletIndexDb& db, const HashKey& wallet, TokenWalletCheck check,
                                               const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value,
                                               uint64_t end_lt);
 

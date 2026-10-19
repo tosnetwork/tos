@@ -20,7 +20,7 @@
 // `recv_internal` granularity.
 //
 // What this fixture asserts.
-//   For each migrated reference contract (jetton-minter, jetton-wallet,
+//   For each migrated reference contract (token-minter, token-wallet,
 //   wallet-v5) the fixture compiles BOTH the FunC reference (.fc) and the
 //   Tol port (.tol) into TVM code cells, then drives each pair through
 //   `tos::SmartContract::send_internal_message` with bit-identical inbound
@@ -41,7 +41,7 @@
 //   - https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md §10.1 — ≤ 15% bytecode budget the ratio
 //     gate enforces in the gas dimension.
 //   - https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-envelope-migration.md — bytecode-cell ratios per
-//     contract (FunC 11/Tol 9 for jetton-minter, etc.).
+//     contract (FunC 11/Tol 9 for token-minter, etc.).
 //   - emulator/test/slice-1-stage-2-roundtrip-fixture.cpp — the pattern
 //     this fixture extends (compile_tvm + make_state + SmartContract::
 //     send_internal_message + Answer.gas_used).
@@ -60,7 +60,7 @@
 //
 //     1. empty-body                 — both early-return on body-empty check.
 //     2. unknown-opcode             — both walk the if-chain and throw
-//                                     (jetton-minter / jetton-wallet) or
+//                                     (token-minter / token-wallet) or
 //                                     return (wallet-v5).
 //     3. auth-fail / protocol-fail  — admin/owner stored as a third
 //                                     address that matches NEITHER the
@@ -117,17 +117,17 @@ namespace {
 // `slice1_gas_parity_contracts` dependency) td::read_file will return an
 // error and the per-contract test will fail with a clear message.
 // ---------------------------------------------------------------------------
-#ifndef SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC
-#error "SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC must be defined by CMake"
+#ifndef SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC
+#error "SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC must be defined by CMake"
 #endif
-#ifndef SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC
-#error "SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC must be defined by CMake"
+#ifndef SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC
+#error "SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC must be defined by CMake"
 #endif
-#ifndef SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC
-#error "SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC must be defined by CMake"
+#ifndef SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC
+#error "SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC must be defined by CMake"
 #endif
-#ifndef SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC
-#error "SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC must be defined by CMake"
+#ifndef SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC
+#error "SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC must be defined by CMake"
 #endif
 #ifndef SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC
 #error "SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC must be defined by CMake"
@@ -182,9 +182,9 @@ td::Ref<vm::Cell> build_empty_body() {
 }
 
 // `opcode:uint32 query_id:uint64` — the standard Slice 1 envelope prefix.
-// Suitable as an "unknown opcode" body for jetton-minter, jetton-wallet,
+// Suitable as an "unknown opcode" body for token-minter, token-wallet,
 // and wallet-v5: each contract reads the opcode at offset 0..31 and
-// rejects (throw 0xffff for jetton-* / silent return for wallet-v5)
+// rejects (throw 0xffff for token-* / silent return for wallet-v5)
 // because no recognised opcode begins with the chosen 32-bit value.
 td::Ref<vm::Cell> build_envelope_prefix(td::uint32 opcode, td::uint64 query_id) {
   vm::CellBuilder cb;
@@ -193,16 +193,16 @@ td::Ref<vm::Cell> build_envelope_prefix(td::uint32 opcode, td::uint64 query_id) 
   return cb.finalize();
 }
 
-// jetton-minter OP_MINT body = `opcode:uint32 query_id:uint64
+// token-minter OP_MINT body = `opcode:uint32 query_id:uint64
 // to_address:MsgAddress amount:Coins master_msg:^Cell`. Used as the
 // auth-fail scenario: when storage admin is set to a third address that
 // matches NEITHER FunC's `in_msg_full` src (-1:00..00) NOR Tol's c7
 // `INMSG_SRC` (addr_none), both contracts throw 73 (admin required)
-// before doing any minting work. Master msg is a minimal valid TEP-74
+// before doing any minting work. Master msg is a minimal valid TOS Token V1
 // internal-transfer body so the parse step does not throw early on
 // either side.
 td::Ref<vm::Cell> build_minter_mint_body(td::uint64 query_id, td::uint64 mint_amount) {
-  // Inner master-msg: `OP_INTERNAL_TRANSFER, query_id, jetton_amount`.
+  // Inner master-msg: `OP_INTERNAL_TRANSFER, query_id, token_amount`.
   vm::CellBuilder master_cb;
   master_cb.store_long(0x178d4519, 32);   // OP_INTERNAL_TRANSFER
   master_cb.store_long(query_id, 64);
@@ -223,12 +223,12 @@ td::Ref<vm::Cell> build_minter_mint_body(td::uint64 query_id, td::uint64 mint_am
   return cb.finalize();
 }
 
-// jetton-wallet OP_TRANSFER body = `opcode query_id amount destination
+// token-wallet OP_TRANSFER body = `opcode query_id amount destination
 // response_destination custom_payload:Maybe(^cell) forward_tos_amount
-// forward_payload:Either`. Auth-fail scenario for jetton-wallet: storage
+// forward_payload:Either`. Auth-fail scenario for token-wallet: storage
 // owner is set to a third address; both contracts hit `throw 705`
 // (owner-required) on the auth check inside send_tokens. The body
-// itself is valid TEP-74 transfer wire-shape so the parse path is
+// itself is valid TOS Token V1 transfer wire-shape so the parse path is
 // exercised before the throw.
 td::Ref<vm::Cell> build_wallet_transfer_body(td::uint64 query_id, td::uint64 amount) {
   vm::CellBuilder cb;
@@ -265,9 +265,9 @@ td::Ref<vm::Cell> build_wallet_v5_short_body() {
 // fromCell(), so a single c4 cell is reused across both runs.
 // ---------------------------------------------------------------------------
 
-// jetton-minter storage = `total_supply:Coins admin_address:MsgAddress
-// content:^Cell jetton_wallet_code:^Cell` (FunC line 4, also Tol struct
-// JettonMinterStorage). admin_address is set to a third addr_std$10
+// token-minter storage = `total_supply:Coins admin_address:MsgAddress
+// content:^Cell token_wallet_code:^Cell` (FunC line 4, also Tol struct
+// TokenMasterStorage). admin_address is set to a third addr_std$10
 // (wc=0, hash=0x33...) so it matches NEITHER FunC's hardcoded src
 // (-1:00..00) NOR Tol's INMSG_SRC (addr_none).
 td::Ref<vm::Cell> build_minter_storage_third_admin() {
@@ -292,9 +292,9 @@ td::Ref<vm::Cell> build_minter_storage_third_admin() {
   return cb.finalize();
 }
 
-// jetton-wallet storage = `balance:Coins owner_address:MsgAddress
-// jetton_master_address:MsgAddress jetton_wallet_code:^Cell` (FunC line
-// 28, also Tol struct JettonWalletStorage). Same third-address pattern
+// token-wallet storage = `balance:Coins owner_address:MsgAddress
+// token_master_address:MsgAddress token_wallet_code:^Cell` (FunC line
+// 28, also Tol struct TokenWalletStorage). Same third-address pattern
 // for the auth-fail scenario.
 td::Ref<vm::Cell> build_wallet_storage_third_owner() {
   vm::CellBuilder code_cb;
@@ -397,7 +397,7 @@ ScenarioResult run_scenario(const char* name, td::Ref<vm::Cell> func_code,
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// jetton-minter — three scenarios:
+// token-minter — three scenarios:
 //
 //   1. empty-body          — both early-return on body-empty check.
 //   2. unknown-opcode      — opcode 0xdeadbeef walks the if-chain on both
@@ -407,36 +407,36 @@ ScenarioResult run_scenario(const char* name, td::Ref<vm::Cell> func_code,
 //                            before any state mutation.
 //
 // Per `https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-envelope-migration.md` the bytecode-cell ratio
-// for jetton-minter is FunC 11 / Tol 9 = 0.82. We expect Tol_gas / FunC_gas
+// for token-minter is FunC 11 / Tol 9 = 0.82. We expect Tol_gas / FunC_gas
 // to be ≤ 1.0 in the steady state and clearly under the 1.15 budget.
 // ---------------------------------------------------------------------------
 
-TEST(Slice1Stage4GasParity, JettonMinter) {
-  auto func_code = load_code_boc(SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC);
-  auto tol_code  = load_code_boc(SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC);
+TEST(Slice1Stage4GasParity, TokenMaster) {
+  auto func_code = load_code_boc(SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC);
+  auto tol_code  = load_code_boc(SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC);
   auto data      = build_minter_storage_third_admin();
 
   auto empty = run_scenario("empty-body",
                             func_code, tol_code, data, build_empty_body());
-  check_and_log_scenario("jetton-minter", empty,
+  check_and_log_scenario("token-minter", empty,
                          kFuncVsTolRatioThresholdDefault);
 
   auto unknown = run_scenario("unknown-opcode",
                               func_code, tol_code, data,
                               build_envelope_prefix(0xdeadbeef, 7));
-  check_and_log_scenario("jetton-minter", unknown,
+  check_and_log_scenario("token-minter", unknown,
                          kFuncVsTolRatioThresholdDefault);
 
   auto authfail = run_scenario("mint-auth-fail",
                                func_code, tol_code, data,
                                build_minter_mint_body(/*query_id=*/123,
                                                       /*mint_amount=*/9000));
-  check_and_log_scenario("jetton-minter", authfail,
+  check_and_log_scenario("token-minter", authfail,
                          kFuncVsTolRatioThresholdDefault);
 }
 
 // ---------------------------------------------------------------------------
-// jetton-wallet — three scenarios:
+// token-wallet — three scenarios:
 //
 //   1. empty-body          — both early-return.
 //   2. unknown-opcode      — opcode 0xcafebabe walks the if-chain and
@@ -448,27 +448,27 @@ TEST(Slice1Stage4GasParity, JettonMinter) {
 // the gas ratio to be well below 1.0.
 // ---------------------------------------------------------------------------
 
-TEST(Slice1Stage4GasParity, JettonWallet) {
-  auto func_code = load_code_boc(SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC);
-  auto tol_code  = load_code_boc(SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC);
+TEST(Slice1Stage4GasParity, TokenWallet) {
+  auto func_code = load_code_boc(SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC);
+  auto tol_code  = load_code_boc(SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC);
   auto data      = build_wallet_storage_third_owner();
 
   auto empty = run_scenario("empty-body",
                             func_code, tol_code, data, build_empty_body());
-  check_and_log_scenario("jetton-wallet", empty,
+  check_and_log_scenario("token-wallet", empty,
                          kFuncVsTolRatioThresholdDefault);
 
   auto unknown = run_scenario("unknown-opcode",
                               func_code, tol_code, data,
                               build_envelope_prefix(0xcafebabe, 11));
-  check_and_log_scenario("jetton-wallet", unknown,
+  check_and_log_scenario("token-wallet", unknown,
                          kFuncVsTolRatioThresholdDefault);
 
   auto authfail = run_scenario("transfer-auth-fail",
                                func_code, tol_code, data,
                                build_wallet_transfer_body(/*query_id=*/22,
                                                           /*amount=*/7000));
-  check_and_log_scenario("jetton-wallet", authfail,
+  check_and_log_scenario("token-wallet", authfail,
                          kFuncVsTolRatioThresholdDefault);
 }
 
@@ -492,7 +492,7 @@ TEST(Slice1Stage4GasParity, JettonWallet) {
 // migration was the only one to GROW the bytecode (because of explicit
 // §5.3 error-class classification of 16 distinct FunC throw sites). We
 // therefore expect Tol_gas / FunC_gas to land closer to 1.10 than to
-// jetton-minter's 0.82, but still under the 1.15 budget.
+// token-minter's 0.82, but still under the 1.15 budget.
 // ---------------------------------------------------------------------------
 
 TEST(Slice1Stage4GasParity, WalletV5) {

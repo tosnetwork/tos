@@ -433,8 +433,8 @@ class TestGetAddressState:
 
 class TestGetTokenData:
     """
-    getTokenData probes a contract to determine if it is a Jetton master,
-    Jetton wallet, NFT collection, or NFT item and returns its parsed data.
+    getTokenData probes a contract to determine if it is a Token master,
+    Token wallet, NFT collection, or NFT item and returns its parsed data.
 
     On a minimal local testnet there may not be token contracts deployed, so
     we primarily test error paths.  If real token addresses are available,
@@ -456,8 +456,8 @@ class TestGetTokenData:
         response = api_method_call(self.METHOD, address=ELECTOR_ADDRESS)
         expect_error(response, -32006, "CONTRACT_KIND_UNSUPPORTED", retryable=False)
 
-    def test_jetton_master_data(self, api_method_call):
-        """Deployed Jetton master should return jettonMasterData."""
+    def test_token_master_data(self, api_method_call):
+        """Deployed Token master should return tokenMasterData."""
         import json
         from pathlib import Path
 
@@ -465,20 +465,20 @@ class TestGetTokenData:
         if not deployed.exists():
             pytest.skip("No deployed contracts")
         addrs = json.loads(deployed.read_text())
-        addr = addrs.get("tokens", {}).get("jetton_master", {}).get("address")
+        addr = addrs.get("tokens", {}).get("token_master", {}).get("address")
         if not addr:
-            pytest.skip("jetton_master not deployed")
+            pytest.skip("token_master not deployed")
         response = api_method_call(self.METHOD, address=addr)
         assert response.status_code == 200
         data = response.json()
         assert_success(data)
         result = data["result"]
-        assert result["@type"] == "ext.tokens.jettonMasterData"
-        assert result["jetton_name"] == "TOS Test Jetton"
-        assert result["jetton_symbol"] == "TTJ"
-        assert result["jetton_decimals"] == "9"
-        assert result["jetton_description"] == "Deterministic local TOS Jetton fixture"
-        assert result["jetton_image"] == "https://example.invalid/tos-test-jetton.png"
+        assert result["@type"] == "ext.tokens.tokenMasterData"
+        assert result["token_name"] == "TOS Test Token"
+        assert result["token_symbol"] == "TTJ"
+        assert result["token_decimals"] == "9"
+        assert result["token_description"] == "Deterministic local TOS Token fixture"
+        assert result["token_image"] == "https://example.invalid/tos-test-jetton.png"
 
     def test_nft_collection_data(self, api_method_call):
         """Deployed NFT collection should return nftCollectionData."""
