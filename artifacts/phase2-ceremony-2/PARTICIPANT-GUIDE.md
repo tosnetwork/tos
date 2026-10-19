@@ -79,11 +79,11 @@ git, Python for the verifier, and the two signing tools.
 ```sh
 cd ~
 git clone https://github.com/tosnetwork/tos.git
-cd ~/tos
+cd tos
 ```
 
-Now move to **the exact commit the announcement names**. Replace
-`<ANNOUNCED_COMMIT>` with the value from `ANNOUNCEMENT.md` in this directory.
+Now move to **the exact commit the announcement names**. Set and export
+`ANNOUNCED_COMMIT` to the full commit value from the published `ANNOUNCEMENT.md`.
 
 > Until the ceremony is announced that file is
 > [`ANNOUNCEMENT.draft.md`](ANNOUNCEMENT.draft.md) and its commit field still
@@ -91,7 +91,7 @@ Now move to **the exact commit the announcement names**. Replace
 > there is nothing to contribute to yet.
 
 ```sh
-git checkout <ANNOUNCED_COMMIT>
+git checkout "$ANNOUNCED_COMMIT"
 ```
 
 Check you are where you think you are:
@@ -110,7 +110,7 @@ not automatically an attack and is automatically worth stopping for.
 ## 4. Install Rust, at the version this repository pins
 
 ```sh
-cd ~/tos
+cd "$TOS_ROOT"
 ./scripts/install-rust-toolchain.sh
 ```
 
@@ -181,7 +181,7 @@ to have been added to suit the contributions already made.
 ### 5c. PGP instead
 
 If you would rather use a PGP key that is already yours, skip the above and
-use `--sign-with gpg:<your-key-id>` in section 7. Give the operator your
+use `--sign-with "gpg:$SIGNING_KEY_ID"` in section 7. Give the operator your
 40-character fingerprint and your exported public key.
 
 ---
@@ -328,17 +328,17 @@ inside `ssh:~/...` is not expanded by the shell and the script will tell you
 it cannot read your key:
 
 ```sh
-cd ~/tos
+cd "$TOS_ROOT"
 ./scripts/shielded-pool-phase2-contribute.sh "$CEREMONY" \
     --sign-with ssh:$HOME/.ssh/tos_signing_key
 ```
 
-or, for PGP:
+or, for PGP, set `SIGNING_KEY_ID` to the actual signing-key identifier:
 
 ```sh
-cd ~/tos
+cd "$TOS_ROOT"
 ./scripts/shielded-pool-phase2-contribute.sh "$CEREMONY" \
-    --sign-with gpg:<your-key-id>
+    --sign-with "gpg:$SIGNING_KEY_ID"
 ```
 
 It builds first (under a minute), then runs for **about three minutes**,
@@ -378,7 +378,7 @@ poor choice here cannot make the result worse than not using it.
 ## 8. Check your own work before you hand it on
 
 ```sh
-cd ~/tos/tools/shielded-pool-ceremony
+cd "$TOS_ROOT/tools/shielded-pool-ceremony"
 "$PHASE2_BIN/phase2-verify" "$CEREMONY"
 ```
 
@@ -391,7 +391,7 @@ Then check that your attestation matches the record and that your signature
 verifies against the roster:
 
 ```sh
-cd ~/tos
+cd "$TOS_ROOT"
 python3 test/shielded-pool/verify-attestations.py "$CEREMONY" \
     --roster "$ROSTER" \
     --attestations "$(dirname "$CEREMONY")" \
