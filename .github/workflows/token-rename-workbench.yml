@@ -32,12 +32,13 @@ jobs:
       TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
       RUN_LIVE_TESTS: '0'
     steps:
-      - name: Check out the exact migration commit
+      - name: Check out the exact migration commit and native dependencies
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
+          submodules: recursive
       - name: Check source migration and its negative controls
         run: |
           python3 scripts/test-token-naming.py
