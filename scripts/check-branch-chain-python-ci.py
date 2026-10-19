@@ -51,7 +51,8 @@ REQUIRED_NATIVE_TARGETS = {
 }
 
 # The deterministic production-actor cases for a skip timeout that expires while finality
-# is behind. A registration that drops one still matches the '^a142-backlog-' selector.
+# is behind, and for a skip or final vote Pool refuses before its intent. A registration
+# that drops one still matches the '^a142-backlog-' selector.
 BACKLOG_SKIP_MODES = (
     "stall-recovers",
     "short-hold",
@@ -60,6 +61,13 @@ BACKLOG_SKIP_MODES = (
     "notar-rearm",
     "repeated-toggle",
     "shutdown-pending",
+    "race-refused-then-clear",
+    "race-clear-before-refusal",
+    "race-final-after-clear",
+    "race-new-window",
+    "race-notar-rearm",
+    "bootstrap-suppressed",
+    "shutdown-suppressed",
 )
 
 # Each runs as its own anchored CTest that must exist (--no-tests=error).

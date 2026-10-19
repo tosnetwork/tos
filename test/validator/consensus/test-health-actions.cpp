@@ -230,16 +230,27 @@ class Driver : public td::actor::Actor {
         co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
       }
       if (!replay) {
-        co_await handle.publish<simplex::BroadcastVote>(vote);
+        // Only a refusal before the intent may be reported as one; everything from the
+        // intent on, including a failure, is Submitted.
+        using simplex::VoteCastOutcome;
+        const auto expected = mode == "finality-suppressed" || mode == "post-terminal"
+                                  ? VoteCastOutcome::SuppressedBeforeIntentFinalityBehind
+                              : mode == "journal-suppressed" ? VoteCastOutcome::SuppressedBeforeIntentJournalUnusable
+                                                             : VoteCastOutcome::Submitted;
+        auto outcome = co_await handle.publish<simplex::BroadcastVote>(vote);
+        require(outcome == expected, "BroadcastVote reports exactly whether the vote was refused before its intent");
         if (mode == "duplicate")
-          co_await handle.publish<simplex::BroadcastVote>(vote);
+          require(co_await handle.publish<simplex::BroadcastVote>(vote) == VoteCastOutcome::Submitted,
+                  "a duplicate request reaches the journal and is Submitted");
         if (mode == "post-terminal") {
           handle.publish<FinalizationBacklog>(false);
           co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
-          co_await handle.publish<simplex::BroadcastVote>(vote);
+          require(co_await handle.publish<simplex::BroadcastVote>(vote) == VoteCastOutcome::Submitted,
+                  "the same vote requested again after the backlog cleared is Submitted");
         }
         if (mode == "skip")
-          co_await handle.publish<simplex::BroadcastVote>(simplex::SkipVote{1});
+          require(co_await handle.publish<simplex::BroadcastVote>(simplex::SkipVote{1}) == VoteCastOutcome::Submitted,
+                  "a skip is Submitted");
       }
       co_await td::actor::coro_sleep(td::Timestamp::in(0.02));
       const auto signatures = bus->pq_signer ? bus->pq_signer->consensus_signatures_produced() - before : 0;

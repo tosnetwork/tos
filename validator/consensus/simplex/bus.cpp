@@ -24,8 +24,24 @@ std::string certificate_to_string(const CertificateRef<Vote> &cert) {
 
 }  // namespace
 
+td::StringBuilder &operator<<(td::StringBuilder &sb, VoteCastOutcome outcome) {
+  switch (outcome) {
+    case VoteCastOutcome::Submitted:
+      return sb << "submitted";
+    case VoteCastOutcome::SuppressedBeforeIntentFinalityBehind:
+      return sb << "suppressed before intent: finality behind";
+    case VoteCastOutcome::SuppressedBeforeIntentJournalUnusable:
+      return sb << "suppressed before intent: vote journal unusable";
+  }
+  return sb << "unknown(" << static_cast<int>(outcome) << ")";
+}
+
 std::string BroadcastVote::contents_to_string() const {
   return PSTRING() << "{vote=" << vote << "}";
+}
+
+std::string BroadcastVote::response_to_string(const ReturnType &outcome) {
+  return PSTRING() << outcome;
 }
 
 std::string PersistOwnVoteIntent::contents_to_string() const {

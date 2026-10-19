@@ -22,17 +22,46 @@ struct BootstrapVote {
   td::BufferSlice signature;
 };
 
+// What Pool did with a request to cast one of this node's own votes.
+enum class VoteCastOutcome : td::uint8 {
+  // Pool took the vote past its gates. An intent may have been committed, a signature
+  // produced, or the vote applied and sent; or one of those steps failed. None of it can be
+  // undone, so the caller must neither cast the vote again nor treat it as not cast.
+  Submitted,
+  // Refused before any intent was committed, because finality was behind when the request
+  // reached Pool. The vote was not journalled, signed, applied or sent: nothing about it
+  // exists outside the caller, who may keep it and request it again once finality catches
+  // up. This is the only outcome after which that is allowed.
+  SuppressedBeforeIntentFinalityBehind,
+  // Refused before any intent was committed, because the vote journal is unusable. Asking
+  // again cannot succeed while this group lives.
+  SuppressedBeforeIntentJournalUnusable,
+};
+
+td::StringBuilder& operator<<(td::StringBuilder& sb, VoteCastOutcome outcome);
+
 struct BroadcastVote {
   // Routine and frequent: traced at DEBUG, so the default log keeps hours of the
   // events an incident analysis needs (candidates, certificates, finalization).
   using LogToDebug = std::true_type;
 
-  using ReturnType = td::Unit;
+  using ReturnType = VoteCastOutcome;
 
   Vote vote;
 
   std::string contents_to_string() const;
+  static std::string response_to_string(const ReturnType&);
 };
+
+// Test-only ordering control for Pool's finality gate on this node's own votes. A test that
+// must deliver a backlog transition between a vote's arrival at the gate and its refusal, or
+// between the refusal and its delivery to the requester, cannot rely on actor scheduling.
+// Unset in production.
+enum class VoteGatePoint : td::uint8 {
+  BeforeFinalityGate,
+  AfterFinalitySuppression,
+};
+using VoteGateHookForTest = std::function<td::actor::StartedTask<>(const Vote&, VoteGatePoint)>;
 
 // The two halves of this node's own vote journal. They are awaited requests rather than
 // notifications on purpose: the order below is the correctness property, and incidental
@@ -273,6 +302,9 @@ class Bus : public consensus::Bus {
   std::string vote_journal_failure;
 
   td::uint32 first_nonannounced_window = 0;
+
+  // See VoteGateHookForTest. Empty outside tests.
+  VoteGateHookForTest vote_gate_hook_for_test;
 };
 
 using BusHandle = td::actor::BusHandle<Bus>;

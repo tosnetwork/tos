@@ -36,6 +36,22 @@
 //                        re-armed timeout does not duplicate them.
 //   repeated-toggle      repeated over/clear events create no duplicate requests.
 //   shutdown-pending     the group stops while deferred work is pending; nothing is cast.
+//
+// The modes below hold Pool's finality gate through the bus's test hook, so a backlog
+// transition lands exactly between a vote's request and Pool's refusal of it before its
+// intent, or between that refusal and its delivery:
+//   race-refused-then-clear    four window-0 skips are refused while Consensus is behind;
+//                              the clear requests each exact vote once more.
+//   race-clear-before-refusal  the backlog clears before the refusals arrive; the refusals
+//                              themselves bring the skips back, each once.
+//   race-final-after-clear     the same for a final vote.
+//   race-new-window            peers skip the window while refusals are on their way; the
+//                              refused skips are obsolete and the next window's adaptive
+//                              timeout is untouched.
+//   race-notar-rearm           a notarization re-arm while refusals are on their way does not
+//                              produce a second request.
+//   bootstrap-suppressed       the skips the startup path casts are refused and recovered.
+//   shutdown-suppressed        the group stops while refused votes are kept; nothing is cast.
 
 #include <algorithm>
 #include <atomic>
@@ -120,7 +136,80 @@ enum class Mode {
   NotarRearm,
   RepeatedToggle,
   ShutdownPending,
+  RaceRefusedThenClear,
+  RaceClearBeforeRefusal,
+  RaceFinalAfterClear,
+  RaceNewWindow,
+  RaceNotarRearm,
+  BootstrapSuppressed,
+  ShutdownSuppressed,
 };
+
+bool uses_gate(Mode mode) {
+  return mode >= Mode::RaceRefusedThenClear;
+}
+
+// ===== Pool's finality gate, held in place =====
+//
+// Through the bus's test hook, the first request of each vote can be held at the gate before
+// Pool reads its backlog flag, and again after Pool refused it but before the refusal is
+// delivered. The driver releases them once the backlog transition it wants in between has
+// been processed, so the order is decided by the test rather than by the scheduler.
+
+std::string identity(const simplex::Vote& vote);
+
+using GatePromise = decltype(td::actor::StartedTask<>::make_bridge().second);
+
+struct GateControl {
+  std::mutex mutex;
+  bool hold_before = false;
+  bool hold_after = false;
+  std::set<std::pair<int, std::string>> held_once;
+  std::vector<GatePromise> before;
+  std::vector<GatePromise> after;
+};
+
+GateControl gate;
+
+td::actor::StartedTask<> gate_hook(const simplex::Vote& vote, simplex::VoteGatePoint point) {
+  auto [task, promise] = td::actor::StartedTask<>::make_bridge();
+  const bool at_gate = point == simplex::VoteGatePoint::BeforeFinalityGate;
+  bool hold = false;
+  {
+    std::scoped_lock lock(gate.mutex);
+    hold = (at_gate ? gate.hold_before : gate.hold_after) &&
+           gate.held_once.emplace(static_cast<int>(point), identity(vote)).second;
+    if (hold) {
+      (at_gate ? gate.before : gate.after).push_back(std::move(promise));
+    }
+  }
+  if (hold) {
+    emit(PSTRING() << "A142_GATE_HELD " << (at_gate ? "before-gate " : "after-refusal ") << identity(vote));
+  } else {
+    promise.set_value(td::Unit{});
+  }
+  return std::move(task);
+}
+
+size_t gate_held(bool at_gate) {
+  std::scoped_lock lock(gate.mutex);
+  return at_gate ? gate.before.size() : gate.after.size();
+}
+
+// Releases what is held at one point and stops holding there: later votes pass freely.
+void gate_release(bool at_gate) {
+  std::vector<GatePromise> promises;
+  {
+    std::scoped_lock lock(gate.mutex);
+    (at_gate ? gate.hold_before : gate.hold_after) = false;
+    promises = std::move(at_gate ? gate.before : gate.after);
+    (at_gate ? gate.before : gate.after).clear();
+  }
+  emit(PSTRING() << "A142_GATE_RELEASE " << (at_gate ? "before-gate" : "after-refusal") << " n=" << promises.size());
+  for (auto& promise : promises) {
+    promise.set_value(td::Unit{});
+  }
+}
 
 // ===== What the test observes =====
 
@@ -175,7 +264,12 @@ struct Observations {
 Observations observations;
 
 void record_vote(Stage stage, const simplex::Vote& vote) {
-  Record record{.stage = stage, .id = identity(vote), .slot = vote.referenced_slot(), .time = td::Time::now()};
+  Record record{.stage = stage,
+                .id = identity(vote),
+                .slot = vote.referenced_slot(),
+                .kind = 2,
+                .candidate = {},
+                .time = td::Time::now()};
   if (auto notar = std::get_if<simplex::NotarizeVote>(&vote.vote)) {
     record.kind = 0;
     record.candidate = notar->id.hash.to_hex();
@@ -628,6 +722,13 @@ class Driver : public td::actor::Actor {
     auto [stopped, stop_promise] = td::actor::StartedTask<>::make_bridge();
     bus->stop_promise = std::move(stop_promise);
     stopped_.emplace(std::move(stopped));
+    if (uses_gate(mode_)) {
+      bus->vote_gate_hook_for_test = gate_hook;
+    }
+    if (mode_ == Mode::BootstrapSuppressed) {
+      // As after a restart inside window 0: the startup path skips its not-final slots.
+      bus->first_nonannounced_window = 1;
+    }
     bus_ptr_ = bus;
 
     bus->pq_signer = signers_.at(target_);
@@ -719,7 +820,13 @@ class Driver : public td::actor::Actor {
         first_block_timeout_ = 1.5;
         break;
       case Mode::SupersededDeferral:
+      case Mode::RaceNewWindow:
         multiplier_ = 3.0;
+        break;
+      case Mode::RaceFinalAfterClear:
+      case Mode::BootstrapSuppressed:
+        // No timeout of the node's own may cast a skip while these run.
+        first_block_timeout_ = 600.0;
         break;
       default:
         break;
@@ -750,8 +857,214 @@ class Driver : public td::actor::Actor {
         co_return co_await run_repeated_toggle();
       case Mode::ShutdownPending:
         co_return co_await run_shutdown_pending();
+      case Mode::RaceRefusedThenClear:
+        co_return co_await run_race_skips(/*clear_before_refusal=*/false);
+      case Mode::RaceClearBeforeRefusal:
+        co_return co_await run_race_skips(/*clear_before_refusal=*/true);
+      case Mode::RaceFinalAfterClear:
+        co_return co_await run_race_final_after_clear();
+      case Mode::RaceNewWindow:
+        co_return co_await run_race_new_window();
+      case Mode::RaceNotarRearm:
+        co_return co_await run_race_notar_rearm();
+      case Mode::BootstrapSuppressed:
+        co_return co_await run_bootstrap_suppressed();
+      case Mode::ShutdownSuppressed:
+        co_return co_await run_shutdown_suppressed();
     }
     co_return td::Unit{};
+  }
+
+  // Pool handles bus messages in order, so once it has answered this, it has processed every
+  // backlog event published before it.
+  td::actor::Task<> pool_barrier() {
+    co_await bus_.publish<simplex::QueryValidatorGroupInfo>();
+    co_return td::Unit{};
+  }
+
+  std::uint64_t finality_suppressed(tos::health::Action action) {
+    return tos::health::consensus_stats.phase(action, tos::health::Origin::Live, tos::health::Phase::FinalitySuppressed)
+        .load();
+  }
+
+  td::actor::Task<> await_held(bool at_gate, size_t n, double timeout, const char* what) {
+    if (!co_await wait_until([&] { return gate_held(at_gate) == n; }, timeout)) {
+      finish(1, PSTRING() << "A142_PRECONDITION_FAILED: " << what << " (held " << gate_held(at_gate) << " of " << n
+                          << ")");
+    }
+    co_return td::Unit{};
+  }
+
+  // The window-0 skips are requested while finality is still fine and held at Pool's gate.
+  // The backlog then goes over and Pool, having processed that, refuses them before their
+  // intent. Consensus has decided the skips, and nothing about them exists anywhere else.
+  td::actor::Task<double> refuse_window0_skips_at_gate(bool hold_refusals) {
+    {
+      std::scoped_lock lock(gate.mutex);
+      gate.hold_before = true;
+      gate.hold_after = hold_refusals;
+    }
+    auto w0 = co_await await_window(0);
+    const double deadline = first_deadline(w0, first_block_timeout_);
+    co_await await_held(true, SLOTS_PER_LEADER_WINDOW, deadline - td::Time::now() + 3.0,
+                        "the window-0 skips did not reach Pool's gate");
+    require(total_records() == 0, "a held vote passed the gate");
+    backlog(true);
+    co_await pool_barrier();
+    gate_release(true);
+    if (hold_refusals) {
+      co_await await_held(false, SLOTS_PER_LEADER_WINDOW, 3.0, "Pool did not refuse the held skips");
+    } else if (!co_await wait_until(
+                   [&] { return finality_suppressed(tos::health::Action::Skip) == SLOTS_PER_LEADER_WINDOW; })) {
+      finish(1, "A142_PRECONDITION_FAILED: Pool did not refuse the held skips");
+    }
+    require(finality_suppressed(tos::health::Action::Skip) == SLOTS_PER_LEADER_WINDOW,
+            "every held skip was refused before its intent");
+    co_return w0;
+  }
+
+  td::actor::Task<> finish_window0_recovery(const char* mode, const char* what) {
+    auto window0 = skips(0, SLOTS_PER_LEADER_WINDOW);
+    co_await await_recovery(window0, 3.0, what);
+    co_await settle(0.5);
+    for (const auto& id : window0) {
+      require_cast_once(id);
+    }
+    require(applied(tos::health::Action::Skip) == SLOTS_PER_LEADER_WINDOW, "every skip was applied locally");
+    require_no_conflicts();
+    finish(0, PSTRING() << "A142_OK " << mode);
+  }
+
+  td::actor::Task<> run_race_skips(bool clear_before_refusal) {
+    co_await refuse_window0_skips_at_gate(clear_before_refusal);
+    if (clear_before_refusal) {
+      // The backlog clears before the refusals reach Consensus. The clear's recovery has
+      // nothing to see yet, so the refusals themselves must bring the skips back.
+      backlog(false);
+      co_await pool_barrier();
+      gate_release(false);
+      co_return co_await finish_window0_recovery("race-clear-before-refusal",
+                                                 "refusals delivered after the clear were dropped");
+    }
+    co_await settle(0.2);
+    require(total_records() == 0, "a refused skip was journalled, signed or sent");
+    backlog(false);
+    co_return co_await finish_window0_recovery("race-refused-then-clear",
+                                               "skips refused before their intent were dropped");
+  }
+
+  td::actor::Task<> run_race_final_after_clear() {
+    auto x = make_candidate(1, FIRST_PARENT, std::nullopt, 0);
+    bus_.publish<CandidateReceived>(x);
+    if (!co_await wait_until([&] { return count_at(Stage::Outgoing, notar_id(x->id)) == 1; })) {
+      finish(1, "A142_PRECONDITION_FAILED: X was not notarized");
+    }
+    {
+      std::scoped_lock lock(gate.mutex);
+      gate.hold_before = true;
+      gate.hold_after = true;
+    }
+    deliver_cert(simplex::NotarizeVote{x->id});
+    co_await await_held(true, 1, 3.0, "the final vote did not reach Pool's gate");
+    backlog(true);
+    co_await pool_barrier();
+    gate_release(true);
+    co_await await_held(false, 1, 3.0, "Pool did not refuse the final vote");
+    backlog(false);
+    co_await pool_barrier();
+    gate_release(false);
+    co_await await_recovery({final_id(x->id)}, 3.0, "a final vote refused after the clear was dropped");
+    co_await settle(0.5);
+    require_cast_once(notar_id(x->id));
+    require_cast_once(final_id(x->id));
+    require(count_kind(Stage::Request, 2) == 0, "no skip was requested");
+    require(applied(tos::health::Action::Finalize) == 1, "the final vote was applied locally");
+    require_no_conflicts();
+    finish(0, "A142_OK race-final-after-clear");
+  }
+
+  td::actor::Task<> run_race_new_window() {
+    co_await refuse_window0_skips_at_gate(/*hold_refusals=*/true);
+    // Peers skip window 0 while the refusals are still on their way to Consensus.
+    for (td::uint32 i = 0; i < SLOTS_PER_LEADER_WINDOW; ++i) {
+      deliver_cert(simplex::SkipVote{i});
+    }
+    auto w1 = co_await await_window(SLOTS_PER_LEADER_WINDOW);
+    co_await settle(0.05);
+    gate_release(false);
+    co_await settle(0.1);
+    backlog(false);
+    const double deadline = first_deadline(w1, first_block_timeout_ * multiplier_);
+    auto window1 = skips(SLOTS_PER_LEADER_WINDOW, 2 * SLOTS_PER_LEADER_WINDOW);
+    co_await await_recovery(window1, 5.0, "the window after the late refusals did not time out");
+    auto at = first_time(Stage::Request, window1.front());
+    require(at.has_value() && *at >= deadline - 0.05,
+            PSTRING() << "the late refusals left window 1's adaptive timeout alone (skip at " << (*at - w1)
+                      << "s, deadline at " << (deadline - w1) << "s)");
+    co_await settle(0.5);
+    for (const auto& id : skips(0, SLOTS_PER_LEADER_WINDOW)) {
+      require_never(id);
+    }
+    for (const auto& id : window1) {
+      require_cast_once(id);
+    }
+    require_no_conflicts();
+    finish(0, "A142_OK race-new-window");
+  }
+
+  td::actor::Task<> run_race_notar_rearm() {
+    auto w0 = co_await refuse_window0_skips_at_gate(/*hold_refusals=*/true);
+    // A certificate for the window's last slot re-arms the timeout while the refusals are
+    // still on their way; the re-armed timeout must not cast a second request.
+    deliver_cert(simplex::NotarizeVote{CandidateId{3, fill(0x33)}});
+    if (!co_await wait_until([&] { return is_notarized(CandidateId{3, fill(0x33)}); })) {
+      finish(1, "A142_PRECONDITION_FAILED: the certificate for slot 3 was not installed");
+    }
+    const double rearmed = w0 + first_block_timeout_ + SLOTS_PER_LEADER_WINDOW * target_rate_;
+    backlog(false);
+    co_await pool_barrier();
+    gate_release(false);
+    auto window0 = skips(0, SLOTS_PER_LEADER_WINDOW);
+    co_await await_recovery(window0, 3.0, "refusals delivered after the clear were dropped");
+    co_await sleep_until(rearmed + 0.5);
+    for (const auto& id : window0) {
+      require_cast_once(id);
+    }
+    require_no_conflicts();
+    finish(0, "A142_OK race-notar-rearm");
+  }
+
+  td::actor::Task<> run_bootstrap_suppressed() {
+    {
+      std::scoped_lock lock(gate.mutex);
+      gate.hold_before = true;
+    }
+    co_await await_held(true, SLOTS_PER_LEADER_WINDOW, 5.0, "the startup skips did not reach Pool's gate");
+    backlog(true);
+    co_await pool_barrier();
+    gate_release(true);
+    if (!co_await wait_until(
+            [&] { return finality_suppressed(tos::health::Action::Skip) == SLOTS_PER_LEADER_WINDOW; })) {
+      finish(1, "A142_PRECONDITION_FAILED: Pool did not refuse the startup skips");
+    }
+    co_await settle(0.2);
+    require(total_records() == 0, "a refused startup skip was journalled, signed or sent");
+    backlog(false);
+    co_return co_await finish_window0_recovery("bootstrap-suppressed",
+                                               "startup skips refused before their intent were dropped");
+  }
+
+  td::actor::Task<> run_shutdown_suppressed() {
+    co_await refuse_window0_skips_at_gate(/*hold_refusals=*/false);
+    co_await settle(0.2);
+    emit("A142_STOP with refused skips kept for recovery");
+    bus_.publish<StopRequested>();
+    bus_ = {};
+    bus_ptr_.reset();
+    co_await std::move(*stopped_);
+    co_await settle(0.3);
+    require(total_records() == 0, "nothing was cast by a stopped group");
+    finish(0, "A142_OK shutdown-suppressed");
   }
 
   // Goes over the limit before the window-0 deadline and returns that deadline.
@@ -938,10 +1251,20 @@ class Driver : public td::actor::Actor {
 int main(int argc, char** argv) {
   SET_VERBOSITY_LEVEL(verbosity_WARNING);
   const std::vector<std::pair<std::string, Mode>> modes = {
-      {"stall-recovers", Mode::StallRecovers},     {"short-hold", Mode::ShortHold},
-      {"final-redrive", Mode::FinalRedrive},       {"superseded-deferral", Mode::SupersededDeferral},
-      {"notar-rearm", Mode::NotarRearm},           {"repeated-toggle", Mode::RepeatedToggle},
+      {"stall-recovers", Mode::StallRecovers},
+      {"short-hold", Mode::ShortHold},
+      {"final-redrive", Mode::FinalRedrive},
+      {"superseded-deferral", Mode::SupersededDeferral},
+      {"notar-rearm", Mode::NotarRearm},
+      {"repeated-toggle", Mode::RepeatedToggle},
       {"shutdown-pending", Mode::ShutdownPending},
+      {"race-refused-then-clear", Mode::RaceRefusedThenClear},
+      {"race-clear-before-refusal", Mode::RaceClearBeforeRefusal},
+      {"race-final-after-clear", Mode::RaceFinalAfterClear},
+      {"race-new-window", Mode::RaceNewWindow},
+      {"race-notar-rearm", Mode::RaceNotarRearm},
+      {"bootstrap-suppressed", Mode::BootstrapSuppressed},
+      {"shutdown-suppressed", Mode::ShutdownSuppressed},
   };
   std::optional<Mode> mode;
   for (const auto& [name, value] : modes) {

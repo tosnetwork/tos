@@ -148,7 +148,8 @@ target_link_libraries(test-skip-after-finality-backlog PRIVATE
     tdutils
 )
 foreach(mode stall-recovers short-hold final-redrive superseded-deferral notar-rearm repeated-toggle
-             shutdown-pending)
+             shutdown-pending race-refused-then-clear race-clear-before-refusal race-final-after-clear
+             race-new-window race-notar-rearm bootstrap-suppressed shutdown-suppressed)
     add_test(NAME a142-backlog-${mode} COMMAND test-skip-after-finality-backlog ${mode})
     set_tests_properties(a142-backlog-${mode} PROPERTIES TIMEOUT 60)
 endforeach()
