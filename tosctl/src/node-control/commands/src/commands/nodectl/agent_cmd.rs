@@ -2412,6 +2412,23 @@ impl AgentTaskShowCmd {
     }
 }
 
+fn validate_agent_account_generation_workchain(
+    persisted: Option<&str>,
+    workchain: i32,
+) -> anyhow::Result<()> {
+    if let Some(value) = persisted {
+        let address =
+            value.parse::<MsgAddressInt>().context("Invalid persisted Agent Account address")?;
+        anyhow::ensure!(
+            address.workchain_id() == workchain,
+            "Recorded Agent Account generation is in workchain {}; use --workchain {} to keep its identity",
+            address.workchain_id(),
+            address.workchain_id()
+        );
+    }
+    Ok(())
+}
+
 fn task_deployment_workchain(
     requested: Option<i32>,
     agent_account: Option<&MsgAddressInt>,
@@ -3741,6 +3758,11 @@ impl AgentAccountBuildStateCmd {
             .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?
             .clone();
 
+        validate_agent_account_generation_workchain(
+            agent_wallet.agent_account_address.as_deref(),
+            self.workchain,
+        )?;
+
         let (init, owner_address) =
             build_agent_account_init(&self.wallet, &agent_wallet, vault).await?;
         if agent_wallet.agent_account_deployment_id.is_none() {
@@ -3813,6 +3835,13 @@ impl AgentAccountDeployCmd {
             .get(&self.wallet)
             .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?
             .clone();
+
+        if !self.new_generation {
+            validate_agent_account_generation_workchain(
+                agent_wallet.agent_account_address.as_deref(),
+                self.workchain,
+            )?;
+        }
 
         let mut retired_generation = None;
         if self.new_generation {
@@ -12395,6 +12424,19 @@ mod tests {
             task_deploy_valid_until(Some(existing.claim.valid_until + 1), Some(&existing), 300,)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn account_generation_workchain_preserves_existing_identity() {
+        let masterchain = masterchain_address(2).to_string();
+        assert!(super::validate_agent_account_generation_workchain(Some(&masterchain), 0).is_err());
+        assert!(super::validate_agent_account_generation_workchain(Some(&masterchain), -1).is_ok());
+        let basechain = address(1).to_string();
+        assert!(super::validate_agent_account_generation_workchain(Some(&basechain), 0).is_ok());
+        assert!(super::validate_agent_account_generation_workchain(Some(&basechain), -1).is_err());
+        assert!(super::validate_agent_account_generation_workchain(None, 0).is_ok());
+        assert!(super::validate_agent_account_generation_workchain(None, -1).is_ok());
+        assert!(super::validate_agent_account_generation_workchain(Some("invalid"), 0).is_err());
     }
 
     #[test]

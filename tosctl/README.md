@@ -552,7 +552,9 @@ interfaces share that default:
 
 An explicit `--workchain -1` remains supported. Existing addresses, signed
 messages, stored wallet configurations and frozen compatibility vectors are
-not migrated. Agent Account deployment messages must stay in their source
+not migrated. Building or deploying an existing Agent Account generation requires
+its recorded workchain explicitly when it differs from the new default; the CLI
+refuses to derive a different-workchain address for that generation. Agent Account deployment messages must stay in their source
 account's workchain. Prediction relays likewise bind the source account,
 market and network workchain together; select `0` consistently for new ones.
 The other user contracts do not require a masterchain deployment.
