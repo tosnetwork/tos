@@ -877,7 +877,7 @@ fn review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_cal
             Some(forged.into_cell().expect("body")),
         );
         let (tx, out) = step(&mut f.chain, fake);
-        successful(&tx, "untrusted terminal receipt cannot settle a fee flight");
+        successful(&tx, "only the pinned elector may settle retry fees");
         assert!(out.is_empty(), "only the pinned elector may settle retry fees");
         assert_eq!(retry_flight(&f), flight, "terminal receipt sender binding");
         let protected = balance_of(&f.chain, &f.validator.address);
