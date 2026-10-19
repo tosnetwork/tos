@@ -15,14 +15,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  inventory:
+  materialize:
     if: github.repository == 'tosnetwork/tos' && github.ref == 'refs/heads/refactor/token-naming'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
-      - name: Check out the migration branch
+      - name: Check out the exact migration commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Inspect the migration surface
+      - name: Apply the tested source migration
         run: python3 scripts/token-rename-workbench.py
+      - name: Publish only to the dedicated migration branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ]; then
+            echo "No additional source migration was needed."
+            exit 0
+          fi
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push origin HEAD:refs/heads/refactor/token-naming

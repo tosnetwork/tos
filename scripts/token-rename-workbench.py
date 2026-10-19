@@ -1,46 +1,25 @@
 #!/usr/bin/env python3
-"""Temporary branch-local inventory for the token naming migration."""
-import collections
-import json
-import pathlib
-import re
-import subprocess
+"""Temporary branch-local source migration entry point."""
+from __future__ import annotations
 
-root = pathlib.Path(__file__).resolve().parents[1]
-files = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
-pattern = re.compile(r"jetton", re.IGNORECASE)
-matched = []
-for name in files:
-    if not name:
-        continue
-    path = root / name
-    if path.is_symlink() or not path.is_file():
-        continue
-    if path.name == "AGENTS.md" and name != "AGENTS.md":
-        print("NESTED_INSTRUCTIONS", name, path.read_text())
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        if pattern.search(name):
-            print("BINARY", name, path.stat().st_size)
-        continue
-    hits = len(pattern.findall(text))
-    if hits or pattern.search(name):
-        matched.append((name, hits, path.stat().st_size))
-print("INVENTORY", json.dumps(matched))
-print("SUMMARY", json.dumps(dict(collections.Counter(p.split('/')[0] for p, _, _ in matched))))
-for name in files:
-    if not name:
-        continue
-    path = root / name
-    if not path.is_file() or path.is_symlink():
-        continue
-    if name.startswith(("scripts/", "sdk/js/", "crypto/CMakeLists", "tol/CMakeLists", "CMakeLists")):
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-        except UnicodeDecodeError:
-            continue
-        for number, line in enumerate(lines, 1):
-            if (re.search(r"jetton.*(?:boc|CODE_HEX|code_hash)|(?:boc|CODE_HEX|code_hash).*jetton", line, re.I)
-                or (name.startswith("scripts/") and re.search(r"(?:/tol|/fift|update.*code)", line))):
-                print("BUILD_REFERENCE", name, number, line[:400])
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+root = Path(__file__).resolve().parents[1]
+env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+
+def run(*args: str) -> None:
+    subprocess.run(args, cwd=root, env=env, check=True)
+
+run(sys.executable, "scripts/test-token-naming.py")
+run(sys.executable, "scripts/migrate-token-naming.py", "--apply", "--manifest", "/tmp/token-source-migration.json")
+run(sys.executable, "scripts/migrate-token-naming.py", "--check")
+manifest = json.loads(Path("/tmp/token-source-migration.json").read_text())
+print("MIGRATION_SUMMARY", json.dumps({"source_commit": manifest["source_commit"], "changed_files": len(manifest["files"]), "renamed_paths": sum(item["old_path"] != item["new_path"] for item in manifest["files"])}), flush=True)
+run("git", "diff", "--cached", "--stat")
+if subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=root).returncode == 1:
+    run("git", "-c", "user.name=github-actions[bot]", "-c", "user.email=41898282+github-actions[bot]@users.noreply.github.com", "commit", "-m", "refactor!: replace legacy fungible-token naming with Token")
+print("MATERIALIZED_COMMIT", subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(), flush=True)
