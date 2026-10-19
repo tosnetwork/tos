@@ -99,8 +99,10 @@ conservative. Wallet sends still pay actual execution/forwarding fees; the
 remaining wallet balance remains accounted. Onboarding/renewal helpers use
 live prices with explicit upper bounds/margins; those fixed conservative
 budgets are not reduced. No contract code was changed. Relay and pool accounting is price-derived.
-The test run exposed a separate Task Escrow storage-funding dependency below;
-this candidate is not ready for rollout.
+The initial run exposed a Task Escrow masterchain-fixture funding dependency
+below. User-level contracts now use basechain fixtures; validator-staking
+contracts remain in the masterchain. The owner accepted these prices for
+mainnet and new-network genesis. Live-network activation is a separate gate.
 
 ## Validation status
 
@@ -109,13 +111,14 @@ comparison failures on the clean base, and the real local-cycle measurement.
 Pending entries are not passes. No public-network rollout is part of this PR.
 
 
-## New funding regression: Task Escrow
+## Task Escrow workchain policy and regression control
 
 Four unchanged `task_escrow_sandbox` cases pass with the base prices and fail
 with the candidate prices. A task funded with its 2 TOS budget plus the CLI's
 0.2 TOS default reserve, taken through accept/result/dispute and the seven-day
 dispute window, reaches fallback with less than its promised principal. The
-contract correctly refuses with exit 126; the tests remain red.
+contract correctly refuses with exit 126. Those historical masterchain
+results are retained as a control, rather than weakened or removed.
 
 For the odd-budget case (2,000,000,001 nanotos), the observed pre-fallback
 balance is 1,905,316,400 at the candidate prices, versus 2,507,806,400 on the
@@ -123,9 +126,23 @@ base. Default action attachments fell from 220,000,000 to 11,000,000 nanotos.
 The larger earlier payments had subsidized unchanged storage rent; lowering
 execution/forwarding prices removes that accidental subsidy. The contract's
 principal check at `crypto/smartcont/task-escrow-code.fc` remains unchanged,
-as do the funding defaults in the CLI. A storage-funding policy decision is
-required separately. This PR does not hide the regression by increasing test
-funding or weakening the principal/rejection assertions.
+as do the funding defaults in the CLI. The owner decided that user-level contracts, including Task Escrow, belong
+in the basechain, while validator-staking contracts stay in the masterchain.
+The fixture now enables workchain 0 and deploys every escrow there, including
+the standalone malformed-init cases. All 40 cases pass with unchanged budgets,
+funding amounts, fee-boundary and principal assertions. No contract code changes.
+
+The exact-default-fee boundary uses masterchain payees with a basechain escrow:
+the CLI quote deliberately covers masterchain forwarding. For basechain-only
+payees, one nanotos below that conservative quote need not be underpayment.
+The test keeps its refusal at the exact required boundary, not a loosened
+amount. The separate cross-workchain payout case remains unchanged.
+
+Control: change only `ESCROW_WORKCHAIN` from 0 to -1, then run each of the
+four previously failing fallback tests with `--exact`. Each fails with exit
+126 and Cargo status 101. Restore 0: the whole file passes 40/40. Local CI
+replay receipts are reported separately; no public funding or broadcast is
+part of this update.
 
 ## Local-chain measurement
 
@@ -258,7 +275,7 @@ Private node databases and runtime keys are excluded.
 | Scripts | 571 pass, 861 subtests pass, exit 0 |
 | Rust workspace compile | `cargo test --workspace --no-run --locked`: exit 0 |
 | Rust workspace execution | 4952 pass, 31 fail, 48 ignored, exit 101; UDP target also timed out on both head and base |
-| Contract examples within workspace | Elector/security/relay 153 pass, 1 ignored; pool 6 pass; prediction market 43 pass, 1 ignored; shielded sandbox targets 18 pass; Task Escrow 36 pass, 4 new failures |
+| Contract examples within workspace | Elector/security/relay 153 pass, 1 ignored; pool 6 pass; prediction market 43 pass, 1 ignored; shielded sandbox targets 18 pass; initial masterchain Task Escrow fixture 36 pass / 4 fail; current basechain fixture 40 pass / 0 fail |
 | Standalone shielded suites | 274 pass, including the five normally ignored long cases run explicitly |
 | Workflow replay in builder container | Python/chain job 50/50 steps exit 0; Rust compilation job 7/7 steps exit 0. Remote checkout/cache/upload actions have explicitly labelled local equivalents. |
 | Prepared operations fee fixture | 19/19 pass; patch retained separately and not pushed |
@@ -269,8 +286,9 @@ Of the 31 Rust failures, 26 reproduce on the clean base: 18 legacy-network
 ADNL failures, one assembler and seven VM fixture failures. A TCP socket
 collision under parallel execution passes on both sides when its three tests
 are run serially with `--features client,server`. UDP shutdown hangs on both
-sides and was bounded at 300 seconds. The remaining four are the new Task
-Escrow regressions above. The baseline Elector comparison uses its own source
+sides and was bounded at 300 seconds. The initial remaining four were the masterchain Task Escrow fixture failures
+above. They now pass in workchain 0; forcing the escrow back to -1 reproduces
+them with exit 126. The baseline Elector comparison uses its own source
 root and generated tools, not the candidate's price configuration.
 
 Sensitivity controls: run the new Python exact-price assertion with the old
@@ -292,6 +310,7 @@ graph and `report-local.py` verifies load messages against canonical native
 transaction BOCs. The local runner is experimental test infrastructure, not
 a new production operator interface.
 
-**Do not roll out this candidate until the four Task Escrow storage-funding
-failures have an accepted resolution.** No contract or funding-policy fix is
-included here, and no public testnet was modified.
+**The owner accepted the 1/20 values for mainnet and every new network from
+genesis.** User-level contracts use the basechain; validator-staking paths
+stay in the masterchain. Independent review and live-network activation remain
+separate gates. No contract code or public testnet was modified.
