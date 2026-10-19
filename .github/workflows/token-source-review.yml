@@ -7,30 +7,50 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  source-snapshot:
+  failure-diagnostics:
     if: github.repository == 'tosnetwork/tos' && github.ref == 'refs/heads/refactor/token-naming'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Retain tracked sources, never the checkout credentials or runtime state
+      - name: Read failed steps from the exact candidate runs
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/token-source-review"
-          mkdir -p "$out"
-          git rev-parse HEAD > "$out/commit.txt"
-          git archive --format=tar.gz HEAD > "$out/source.tar.gz"
-          git diff --binary 8430f633a5b694b3ee0b31934d92941898474d83 HEAD > "$out/base.diff"
-          sha256sum "$out/source.tar.gz" "$out/base.diff"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
+          out = pathlib.Path(os.environ['RUNNER_TEMP']) / 'token-failures'
+          out.mkdir()
+          runs = (39277278268, 39277278260, 39277278212, 39277278315, 39270729412)
+          for run in runs:
+              result = subprocess.run(
+                  ['gh', 'run', 'view', str(run), '--repo', 'tosnetwork/tos', '--log-failed'],
+                  text=True, capture_output=True, check=False,
+              )
+              text = re.sub(r'\x1b\[[0-9;]*m', '', result.stdout)
+              (out / f'{run}.log').write_text(text, encoding='utf-8')
+              print(f'\nRUN {run} LOG_READ_EXIT {result.returncode}')
+              if result.returncode:
+                  print(result.stderr[-1200:])
+                  continue
+              lines = text.splitlines()
+              selected = set()
+              for i, line in enumerate(lines):
+                  if re.search(r'FAILED:|error(?:\[|:)|AssertionError|Traceback|panicked at|\*\*\*Failed|^FAIL:|Process completed with exit code', line):
+                      selected.update(range(max(0, i - 6), min(len(lines), i + 16)))
+              selected.update(range(max(0, len(lines) - 65), len(lines)))
+              excerpt = '\n'.join(lines[i] for i in sorted(selected))
+              print(excerpt[-18000:])
+          PY
+      - name: Retain the original failed-step logs for source diagnosis
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: token-source-review-${{ github.sha }}
-          path: ${{ runner.temp }}/token-source-review
+          name: token-failure-diagnostics-${{ github.sha }}
+          path: ${{ runner.temp }}/token-failures
           if-no-files-found: error
           retention-days: 3
