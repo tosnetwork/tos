@@ -429,8 +429,8 @@ verification did not substitute for the independent signed PASS.
 ## Final publication — 2026-10-19
 
 The independent participant published their [signed complete verification PASS](https://github.com/ffreeofmoney-bit/tos-phase2-ceremony-2/commit/c8542cfd89dd22b7ca952851eda4c77a5839a6ec).
-The exact report, detached signature, original manifest, evidence archive and
-participant-derived verifying key are preserved in
+The exact report, detached signature, original manifest and participant-derived
+verifying key are preserved in
 [independent-verification/](independent-verification/). The pinned roster's SSH
 key verifies the report under namespace `file`; a one-byte report alteration
 fails verification. The owner supplied the
@@ -458,8 +458,35 @@ digests:
 `ceremony/key.bin` is the public proving key; no contribution randomness or
 private signing key is published. The original standalone announcement, roster,
 opening observations, participant handoff and beacon observations are retained.
-Run the final checksum manifest from this directory. Historical opening and
-pre-beacon manifests describe their respective immutable snapshots.
+Run `sha256sum -c FINAL-SHA256SUMS` from this directory to verify every local
+publication file. Historical opening and pre-beacon manifests describe their
+respective immutable snapshots.
+
+### External raw verification archive
+
+The canonical [verification-evidence.zip](https://raw.githubusercontent.com/ffreeofmoney-bit/tos-phase2-ceremony-2/c8542cfd89dd22b7ca952851eda4c77a5839a6ec/verification-evidence.zip)
+is in the participant's repository at commit
+`c8542cfd89dd22b7ca952851eda4c77a5839a6ec`:
+
+- SHA-256: `f256555805a19eacf0a53140d17ad5de04e68e7ba5ba8e1e3819ef47c88f7442`.
+- Size: **7,431,838 bytes**.
+- Retention: no scheduled expiry; retain that archive and exact commit for the
+  lifetime of these parameters. Availability is controlled by the participant.
+
+The archive is referenced rather than present in the current project tree. Its
+previous copy remains in project commit
+`de94be8750d3d12a126b83cf40657e8fdf567899` deliberately: the commit history is
+public timing evidence for announcement, contribution and beacon precedence,
+so rewriting it is not acceptable.
+
+`independent-verification/VERIFICATION-SHA256SUMS` is the participant's original,
+unchanged manifest and includes the external archive. To check that complete
+source publication, download the archive into a temporary directory alongside
+copies of the retained report, signature, verifying key and original manifest,
+then run `sha256sum -c VERIFICATION-SHA256SUMS` there. The local
+`FINAL-SHA256SUMS` excludes the absent archive and instead pins the metadata
+containing its canonical URL, digest, size and retention note. Downloaded raw
+archives should remain outside the project checkout.
 
 **No deployment or merge to main is part of this publication.** Ceremony
 verification is complete, but the [deployment acceptance gate](../../doc/shielded-pool-ceremony.md#the-acceptance-gate)

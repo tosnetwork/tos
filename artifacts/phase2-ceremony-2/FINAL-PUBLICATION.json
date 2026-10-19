@@ -30,12 +30,23 @@
     "independent_report_hashes": "PASS",
     "independent_report_signature": "PASS under pinned roster key, namespace file",
     "one_byte_report_mutation": "REFUSED",
-    "evidence_archive_transcript_and_metadata": "exact match",
+    "evidence_archive_transcript_and_metadata": "Verified before externalization: exact match; canonical archive is hash-pinned externally.",
     "project_native_verification": "exit 0; explicitly finished, 2 steps ending in beacon",
     "project_strict_attestation_verification": "exit 0; no waivers",
     "project_vk_vs_independent_vk": "byte-identical; required SHA-256 matched",
     "project_final_digest": "required digest matched",
     "beacon_recheck": "both sources match original beacon"
   },
-  "deployment": "NOT DEPLOYED. The separate deployment acceptance gate has not been run by this publication and remains required."
+  "deployment": "NOT DEPLOYED. The separate deployment acceptance gate has not been run by this publication and remains required.",
+  "external_verification_evidence": {
+    "filename": "verification-evidence.zip",
+    "repository": "https://github.com/ffreeofmoney-bit/tos-phase2-ceremony-2",
+    "commit": "c8542cfd89dd22b7ca952851eda4c77a5839a6ec",
+    "url": "https://raw.githubusercontent.com/ffreeofmoney-bit/tos-phase2-ceremony-2/c8542cfd89dd22b7ca952851eda4c77a5839a6ec/verification-evidence.zip",
+    "sha256": "f256555805a19eacf0a53140d17ad5de04e68e7ba5ba8e1e3819ef47c88f7442",
+    "bytes": 7431838,
+    "retention": "No scheduled expiry: retain the canonical archive and exact commit for the lifetime of these parameters. External availability is participant-controlled. The earlier project copy remains in commit de94be8750d3d12a126b83cf40657e8fdf567899 to preserve the public timing history; that history must not be rewritten.",
+    "historical_project_copy_commit": "de94be8750d3d12a126b83cf40657e8fdf567899",
+    "historical_project_copy_path": "artifacts/phase2-ceremony-2/independent-verification/verification-evidence.zip"
+  }
 }

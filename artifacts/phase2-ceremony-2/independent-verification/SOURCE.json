@@ -3,7 +3,7 @@
   "commit": "c8542cfd89dd22b7ca952851eda4c77a5839a6ec",
   "url": "https://github.com/ffreeofmoney-bit/tos-phase2-ceremony-2/commit/c8542cfd89dd22b7ca952851eda4c77a5839a6ec",
   "publication_time_utc_supplied_by_test_lead": "2026-10-19T07:28:08Z",
-  "preservation": "All five published files are preserved byte for byte.",
+  "preservation": "The signed report, signature, original checksum manifest and verifying key remain byte for byte in this tree. The raw evidence archive is retained at the canonical participant commit, hash-pinned in FINAL-PUBLICATION.json.",
   "signature_namespace": "file",
   "pinned_principal": "ffreeofmoney-bit",
   "key_fingerprint": "SHA256:QZ7LsYoT/WrUGoOJykTNO5nJSzqhbFfMakEvuOlYGxg",
