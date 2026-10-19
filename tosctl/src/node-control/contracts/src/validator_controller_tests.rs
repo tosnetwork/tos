@@ -1,11 +1,10 @@
 use super::*;
-use chain_block::{write_boc, SliceData};
+use chain_block::{SliceData, write_boc};
 use tl_api::tos::tvm::{
-    cell as tl_cell, list,
+    List, Number, cell as tl_cell, list,
     numberdecimal::NumberDecimal,
     slice as tl_slice,
     stackentry::{StackEntryCell, StackEntryList, StackEntryNumber, StackEntrySlice},
-    List, Number,
 };
 
 const NANO: u128 = 1_000_000_000;
@@ -111,7 +110,7 @@ fn fees_outside_the_coins_range_are_refused() {
 #[test]
 fn live_config_must_be_the_matching_parameters() {
     let ok = RelayFees::from_config(
-        ConfigParamEnum::ConfigParam20(gas(true, 10_000 * 65_536)),
+        ConfigParamEnum::ConfigParam20(gas(true, 500 * 65_536)),
         ConfigParamEnum::ConfigParam24(forward()),
     )
     .unwrap();
@@ -264,7 +263,9 @@ fn renewal_refusals() {
     let unset = OperatingState { payer: controller(), expires: 0, ..state(0, 0) };
     let mut first = request(100 * NANO);
     first.payer = MsgAddressInt::standard(-1, [0xBB; 32]);
-    assert!(plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first, &NO_COSTS).is_ok());
+    assert!(
+        plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first, &NO_COSTS).is_ok()
+    );
     first.payer = controller();
     assert!(
         plan_renewal(&controller(), &unset, RICH, &fees, false, NOW, &first, &NO_COSTS).is_err()
@@ -276,8 +277,10 @@ fn renewal_refusals() {
         plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit, &NO_COSTS);
     assert!(refused.unwrap_err().to_string().contains("per-request limit"));
     low_limit.limit = fees.grant;
-    assert!(plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit, &NO_COSTS)
-        .is_ok());
+    assert!(
+        plan_renewal(&controller(), &current, RICH, &fees, false, NOW, &low_limit, &NO_COSTS)
+            .is_ok()
+    );
 
     let mut low_allowance = request(100 * NANO);
     low_allowance.allowance = fees.grant - 1;
@@ -304,8 +307,10 @@ fn renewal_refusals() {
 
     let mut huge = request(COINS_LIMIT - 1);
     huge.margin = COINS_LIMIT - 1;
-    assert!(plan_renewal(&controller(), &state(0, 0), RICH, &fees, false, NOW, &huge, &NO_COSTS)
-        .is_err());
+    assert!(
+        plan_renewal(&controller(), &state(0, 0), RICH, &fees, false, NOW, &huge, &NO_COSTS)
+            .is_err()
+    );
 }
 
 fn inputs<'a>(
@@ -404,12 +409,16 @@ fn blocking_conditions_mirror_the_relay_checks() {
     unset.floor = 0;
     let report = assess(&inputs(&unset, &fees, &ctl), &thresholds()).unwrap();
     assert_eq!(report.warnings[0], OperatingWarning::Missing);
-    assert!(report
-        .warnings
-        .contains(&OperatingWarning::LimitBelowGrant { limit: 0, grant: fees.grant }));
-    assert!(report
-        .warnings
-        .contains(&OperatingWarning::CannotCoverNextStake { available: 0, grant: fees.grant }));
+    assert!(
+        report
+            .warnings
+            .contains(&OperatingWarning::LimitBelowGrant { limit: 0, grant: fees.grant })
+    );
+    assert!(
+        report
+            .warnings
+            .contains(&OperatingWarning::CannotCoverNextStake { available: 0, grant: fees.grant })
+    );
     assert!(report.blocks_next_stake());
 
     let mut limited = state(1_000 * fees.grant, 1_000 * fees.grant);
@@ -814,7 +823,7 @@ impl ChainProvider for PinnedOnlyChain {
     ) -> anyhow::Result<ConfigParamEnum> {
         self.record("config", checkpoint.seqno);
         Ok(match param_id {
-            20 => ConfigParamEnum::ConfigParam20(gas(true, 10_000 * 65_536)),
+            20 => ConfigParamEnum::ConfigParam20(gas(true, 500 * 65_536)),
             24 => ConfigParamEnum::ConfigParam24(forward()),
             18 => {
                 let mut prices = chain_block::ConfigParam18::default();
@@ -898,7 +907,7 @@ async fn every_planning_input_is_read_at_one_block() {
     assert_eq!(operations.authority.nonce, 4);
     assert_eq!(operations.balance, 2_000_000_000_000);
     assert_eq!(operations.fees, fees());
-    assert_eq!(operations.gas_prices, gas(true, 10_000 * 65_536));
+    assert_eq!(operations.gas_prices, gas(true, 500 * 65_536));
     assert_eq!(operations.storage_prices, vec![storage_prices()]);
     assert_eq!(
         operations.storage,

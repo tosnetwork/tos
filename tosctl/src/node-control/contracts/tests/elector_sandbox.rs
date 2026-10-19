@@ -3316,19 +3316,19 @@ fn the_minimum_value_a_configuration_vote_must_carry() {
         exit_code_of(&result) == 0 && proposal_voters(chain, &proposal) == vec![voter_index]
     };
 
-    let minimum = smallest_value_that_works(&mut chain, TOS / 1000, TOS, &mut attempt);
+    let minimum = smallest_value_that_works(&mut chain, TOS / 20_000, TOS / 20, &mut attempt);
 
     // Two-sided, because a one-sided bound passes when the cost collapses as readily as
     // when it is right, and a verification that stopped happening would do exactly that.
-    // At the configured masterchain gas price a verification costs about half a tomi, so
-    // a vote counted for a tenth of that had none performed.
+    // At the configured masterchain gas price a verification costs about 0.025 TOS, so
+    // a vote counted far below that had none performed.
     assert!(
-        minimum > TOS / 10,
+        minimum > TOS / 200,
         "a configuration vote is counted for {minimum} nanotomis, too little to have paid \
          for an ML-DSA-44 verification"
     );
     assert!(
-        minimum <= 2 * TOS,
+        minimum <= TOS / 10,
         "a configuration vote now costs {minimum} nanotomis, far more than the \
          verification it asks for"
     );
@@ -3384,15 +3384,15 @@ fn the_minimum_value_a_complaint_vote_must_carry() {
         exit_code_of(&result) == 0 && replies(&result).contains(&COMPLAINT_VOTE_COUNTED)
     };
 
-    let minimum = smallest_value_that_works(&mut chain, TOS / 1000, TOS, &mut attempt);
+    let minimum = smallest_value_that_works(&mut chain, TOS / 20_000, TOS / 20, &mut attempt);
 
     assert!(
-        minimum > TOS / 10,
+        minimum > TOS / 200,
         "a complaint vote is counted for {minimum} nanotomis, too little to have paid for \
          an ML-DSA-44 verification"
     );
     assert!(
-        minimum <= 2 * TOS,
+        minimum <= TOS / 10,
         "a complaint vote now costs {minimum} nanotomis, far more than the verification it \
          asks for"
     );

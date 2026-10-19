@@ -637,12 +637,11 @@ fn deploy_send_reserves_the_real_forward_fee_instead_of_skipping_silently() {
     };
     let target = TaskEscrowContract::calculate_address(-1, &init).expect("task address");
     let state_init = TaskEscrowContract::build_state_init(&init).expect("task StateInit");
-    // Leave 0.5 TOS above the transfer: above what this transaction pays
+    // Leave 0.025 TOS above the transfer: above what this transaction pays
     // before the compute phase reads the balance, so the pre-accept floor
     // passes, and below the masterchain forward fee of the Task Escrow
-    // StateInit plus the bounded compute reserve. At 1/8 TOS the floor
-    // refuses it; at 1 TOS the reserve is met and the deploy goes out.
-    let value = fixture.balance() - TOS / 2;
+    // StateInit plus the bounded compute reserve.
+    let value = fixture.balance() - TOS / 40;
     let action = fixture.signed_deploy(
         &fixture.controller_secret,
         0,
@@ -816,14 +815,14 @@ fn underfunded_cancel_is_rejected_before_acceptance_and_remains_resubmittable() 
     let mut fixture = Fixture::new();
     let cancel =
         fixture.signed_cancel(&fixture.controller_secret, GLOBAL_ID, 0, fixture.bc.now() + 300);
-    // The masterchain import fee is below 0.1 TOS, while the contract's
-    // conservative 30k-gas reserve is about 0.3 TOS under the sandbox fee
+    // The masterchain import fee is below 0.005 TOS, while the contract's
+    // conservative 30k-gas reserve is about 0.015 TOS under the sandbox fee
     // schedule. This reaches the contract and fails its own pre-accept gate.
-    fixture.force_balance(TOS / 10);
+    fixture.force_balance(TOS / 200);
 
     fixture.expect_external_exit(cancel.clone(), 1711);
     assert_eq!(fixture.seqno(), 0);
-    assert_eq!(fixture.balance(), TOS / 10, "a pre-accept rejection must not charge the account");
+    assert_eq!(fixture.balance(), TOS / 200, "a pre-accept rejection must not charge the account");
 
     fixture.force_balance(TOS);
     fixture.send_external(cancel).expect("funded retry").expect_success().expect_out_msgs(0);
