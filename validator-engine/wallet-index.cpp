@@ -23,15 +23,15 @@ namespace tos_wallet_index {
 namespace {
 
 // Key tags reserved for the wc=0 wallet index.
-constexpr uint8_t kTokenTag = 0x10;        // 0x10 + owner(32) + master(32)
+constexpr uint8_t kTokenTag = 0x10;         // 0x10 + owner(32) + master(32)
 constexpr uint8_t kNftTag = 0x11;           // 0x11 + owner(32) + nft(32)
 constexpr uint8_t kEventTag = 0x12;         // 0x12 + account(32) + ~lt_be(8)
 constexpr uint8_t kNftOwnerTag = 0x13;      // 0x13 + nft(32) -> owner(32)
 constexpr uint8_t kEventAgeTag = 0x14;      // 0x14 + gen_utime_be(4) + account(32) + lt_be(8) -> sentinel(1)
 constexpr uint8_t kTokenQueueTag = 0x15;    // 0x15 + bucket(1) + seq_be(8) -> kind(1) + address(32) + attempts(1)
 constexpr uint8_t kTokenIndexTag = 0x16;    // 0x16 + kind(1) + address(32) -> bucket(1) + seq_be(8)
-constexpr uint8_t kTokenWalletTag = 0x17;  // 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8)
-constexpr uint8_t kTokenPairTag = 0x18;    // 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8)
+constexpr uint8_t kTokenWalletTag = 0x17;   // 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8)
+constexpr uint8_t kTokenPairTag = 0x18;     // 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8)
 constexpr uint8_t kPendingBlockTag = 0x19;  // 0x19 + block id (as 0x1E) -> remaining candidates
 constexpr uint8_t kTokenParkedTag = 0x1A;   // 0x1A + kind(1) + address(32) -> lt_be(8)
 // Meta namespace, sorts before every data tag. 0x00 0x01 -> schema version
@@ -299,8 +299,7 @@ td::Status WalletIndexDb::for_each_with_prefix(
 
 // --- tokens ---
 
-td::Status WalletIndexDb::put_token(const HashKey& owner, const HashKey& master,
-                                     td::Ref<vm::Cell> value) {
+td::Status WalletIndexDb::put_token(const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value) {
   char key[kOwnerPairKeyLen];
   make_owner_pair_key(kTokenTag, owner, master, key);
   return put_cell(td::Slice{key, kOwnerPairKeyLen}, std::move(value));
@@ -312,9 +311,8 @@ td::Status WalletIndexDb::erase_token(const HashKey& owner, const HashKey& maste
   return db_->erase(td::Slice{key, kOwnerPairKeyLen});
 }
 
-td::Status WalletIndexDb::for_each_token(
-    const HashKey& owner, size_t limit,
-    std::function<td::Status(const HashKey&, td::Ref<vm::Cell>)> cb) {
+td::Status WalletIndexDb::for_each_token(const HashKey& owner, size_t limit,
+                                         std::function<td::Status(const HashKey&, td::Ref<vm::Cell>)> cb) {
   char prefix[1 + 32];
   make_owner_prefix(kTokenTag, owner, prefix);
   return for_each_with_prefix(td::Slice{prefix, 1 + 32}, limit,
@@ -423,7 +421,7 @@ td::Status WalletIndexDb::put_token_record(td::Slice key, td::Slice value) {
 }
 
 td::Result<WalletIndexDb::TokenPairDecision> WalletIndexDb::token_pair_decision(const HashKey& owner,
-                                                                                  const HashKey& master) {
+                                                                                const HashKey& master) {
   TokenPairDecision decision;
   std::string record;
   TRY_RESULT(has_record, get_token_record(token_pair_key(kTokenPairTag, owner, master), record));
@@ -459,7 +457,7 @@ td::Result<WalletIndexDb::TokenPairDecision> WalletIndexDb::token_pair_decision(
 }
 
 td::Status WalletIndexDb::claim_token_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
-                                            td::Ref<vm::Cell> value, uint64_t end_lt) {
+                                           td::Ref<vm::Cell> value, uint64_t end_lt) {
   TRY_RESULT(decision, token_pair_decision(owner, master));
   if (decision.known && decision.lt > end_lt) {
     // A later block already decided this pair.
@@ -467,11 +465,11 @@ td::Status WalletIndexDb::claim_token_pair(const HashKey& owner, const HashKey& 
   }
   TRY_STATUS(put_token(owner, master, std::move(value)));
   return put_token_record(token_pair_key(kTokenPairTag, owner, master),
-                           encode_token_pair_record(TokenPairRecord{true, wallet, end_lt}));
+                          encode_token_pair_record(TokenPairRecord{true, wallet, end_lt}));
 }
 
 td::Status WalletIndexDb::release_token_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
-                                              uint64_t end_lt) {
+                                             uint64_t end_lt) {
   TRY_RESULT(decision, token_pair_decision(owner, master));
   if (decision.known && decision.lt > end_lt) {
     // A later block already decided this pair.
@@ -484,7 +482,7 @@ td::Status WalletIndexDb::release_token_pair(const HashKey& owner, const HashKey
   TRY_STATUS(erase_token(owner, master));
   // The removal is itself a decision: an older verdict must not restore it.
   return put_token_record(token_pair_key(kTokenPairTag, owner, master),
-                           encode_token_pair_record(TokenPairRecord{false, wallet, end_lt}));
+                          encode_token_pair_record(TokenPairRecord{false, wallet, end_lt}));
 }
 
 td::Status WalletIndexDb::apply_token_verdict(const HashKey& wallet, const TokenVerdict& verdict, uint64_t end_lt) {
@@ -546,7 +544,7 @@ td::Result<td::optional<WalletIndexDb::TokenWalletState>> WalletIndexDb::token_w
 }
 
 td::Status WalletIndexDb::for_each_current_token(const HashKey& owner, size_t limit,
-                                                  std::function<td::Status(const HashKey&, td::Ref<vm::Cell>)> cb) {
+                                                 std::function<td::Status(const HashKey&, td::Ref<vm::Cell>)> cb) {
   return for_each_token(owner, limit, [&](const HashKey& master, td::Ref<vm::Cell> value) -> td::Status {
     std::string stored;
     TRY_RESULT(status, db_->get(td::Slice{token_pair_key(kTokenPairTag, owner, master)}, stored));
@@ -564,8 +562,8 @@ td::Status WalletIndexDb::for_each_current_token(const HashKey& owner, size_t li
 }
 
 TokenVerifyOutcome record_token_wallet_check(WalletIndexDb& db, const HashKey& wallet, TokenWalletCheck check,
-                                              const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value,
-                                              uint64_t end_lt) {
+                                             const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value,
+                                             uint64_t end_lt) {
   WalletIndexDb::TokenVerdict verdict{false, HashKey::zero(), HashKey::zero(), {}};
   switch (check) {
     case TokenWalletCheck::Indeterminate:

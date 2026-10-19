@@ -13,10 +13,10 @@ import dataclasses
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 from urllib.parse import urlsplit
 
 LEGACY = re.compile(r"jetton", re.IGNORECASE)
@@ -160,7 +160,9 @@ def tracked(root: Path) -> dict[str, str]:
 
 def plan(root: Path) -> list[Edit]:
     entries = tracked(root)
-    retained = tuple(name for name in entries if rename(name) == name and immutable(name) and LEGACY.search(name))
+    retained = tuple(
+        name for name in entries if rename(name) == name and immutable(name) and LEGACY.search(name)
+    )
     targets: dict[str, str] = {}
     edits: list[Edit] = []
     for name, mode in sorted(entries.items()):
@@ -187,7 +189,16 @@ def plan(root: Path) -> list[Edit]:
         if target != name or after != before:
             if target != name and (root / target).exists():
                 raise RuntimeError(f"refusing to overwrite existing path: {target}")
-            edits.append(Edit(name, target, mode, hashlib.sha256(before).hexdigest(), hashlib.sha256(after).hexdigest(), after))
+            edits.append(
+                Edit(
+                    name,
+                    target,
+                    mode,
+                    hashlib.sha256(before).hexdigest(),
+                    hashlib.sha256(after).hexdigest(),
+                    after,
+                )
+            )
     return edits
 
 
@@ -208,7 +219,9 @@ def apply(root: Path, edits: list[Edit]) -> None:
     # Stage exactly the planned paths, not temporary build output or credentials.
     paths = sorted({name for edit in edits for name in (edit.old, edit.new)})
     for offset in range(0, len(paths), 100):
-        subprocess.run(["git", "add", "--all", "--", *paths[offset : offset + 100]], cwd=root, check=True)
+        subprocess.run(
+            ["git", "add", "--all", "--", *paths[offset : offset + 100]], cwd=root, check=True
+        )
 
 
 def main() -> int:
@@ -221,10 +234,23 @@ def main() -> int:
     if args.apply and args.check:
         parser.error("--apply and --check are mutually exclusive")
     root = args.root.resolve()
-    if args.apply and subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=root).strip():
+    if (
+        args.apply
+        and subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=normal"], cwd=root
+        ).strip()
+    ):
         raise RuntimeError("migration requires a clean working tree and index")
     edits = plan(root)
-    print(json.dumps({"planned_files": len(edits), "renamed_paths": sum(edit.old != edit.new for edit in edits), "getter_id": NEW_GETTER_ID}))
+    print(
+        json.dumps(
+            {
+                "planned_files": len(edits),
+                "renamed_paths": sum(edit.old != edit.new for edit in edits),
+                "getter_id": NEW_GETTER_ID,
+            }
+        )
+    )
     if args.check:
         for edit in edits[:50]:
             print(f"remaining migration: {edit.old} -> {edit.new}", file=sys.stderr)
@@ -233,7 +259,19 @@ def main() -> int:
         apply(root, edits)
     if args.manifest:
         args.manifest.parent.mkdir(parents=True, exist_ok=True)
-        args.manifest.write_text(json.dumps({"source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(), "files": [edit.receipt() for edit in edits]}, indent=2) + "\n", encoding="utf-8")
+        args.manifest.write_text(
+            json.dumps(
+                {
+                    "source_commit": subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"], cwd=root, text=True
+                    ).strip(),
+                    "files": [edit.receipt() for edit in edits],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     return 0
 
 

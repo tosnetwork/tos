@@ -554,11 +554,7 @@ impl Net {
             succeeded(&net.send(poke));
         }
         let code = net.bc.get_account(&bridge).and_then(|a| a.get_code()).expect("deployed");
-        assert_eq!(
-            code.repr_hash(),
-            codes().bridge.repr_hash(),
-            "the bridge runs token-bridge.fc"
-        );
+        assert_eq!(code.repr_hash(), codes().bridge.repr_hash(), "the bridge runs token-bridge.fc");
         net
     }
 

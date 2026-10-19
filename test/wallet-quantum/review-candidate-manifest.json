@@ -84,8 +84,8 @@
       "sha256": "4e30874f0e49807d6d8d6d967649332c9370bda0449c8727a7e6bdebf3453d75"
     },
     "repository/crypto/block/block.tlb": {
-      "bytes": 45253,
-      "sha256": "afd2756faf499a32d83c4e1defe3ccb4cb79e63d12ec58e399c5d75ebc45ad74"
+      "bytes": 45241,
+      "sha256": "2361e53935efa79a26b56086dfc807ccac40837e724e9bbdc3542da5564fc780"
     },
     "repository/crypto/fift/lib/Asm.fif": {
       "bytes": 49768,

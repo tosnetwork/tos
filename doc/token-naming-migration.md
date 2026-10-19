@@ -54,9 +54,11 @@ changing their bytes. These historical/provenance occurrences are not runtime
 compatibility aliases. The migration script and its tests necessarily contain
 the old spelling as input and as a rejection control.
 
-The temporary migration workbench is restricted to the dedicated migration
-branch. It must be removed before this PR is ready for merge; it is not part of
-the production CI permission model.
+The Token naming validation workflow is read-only. It independently compiles
+both the pinned baseline and the candidate, reverts the getter ID and interface
+identifiers in a disposable copy, and requires the original hashes to return.
+The checked-in SDK BOCs and compiler goldens must reproduce without rewriting
+files or pushing commits from CI.
 
 ## Generated artifacts are a separate acceptance boundary
 

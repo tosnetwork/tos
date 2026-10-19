@@ -262,7 +262,7 @@ static td::Result<std::string> token_index_state_json(tos_wallet_index::WalletIn
 }
 
 void JsonRpcServer::handle_getAccountTokens(td::JsonObject &params, std::string req_id,
-                                             td::Promise<HttpReturn> promise) {
+                                            td::Promise<HttpReturn> promise) {
   auto addr_r = parse_address_param(params);
   if (addr_r.is_error()) {
     promise.set_value(make_json_rpc_error(-32602, addr_r.error().message().str(), req_id));

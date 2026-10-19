@@ -46,7 +46,7 @@ constexpr unsigned long long kTokenTransfer = 0x0f8a7ea5ULL;
 constexpr unsigned long long kTokenInternalTransfer = 0x178d4519ULL;
 constexpr unsigned long long kTokenBurn = 0x595f07bcULL;
 // Notification ops received by the owner; the message *source* is the token contract.
-constexpr unsigned long long kTokenTransferNotification = 0x7362d09cULL;  // TOS Token V1
+constexpr unsigned long long kTokenTransferNotification = 0x7362d09cULL;   // TOS Token V1
 constexpr unsigned long long kNftOwnershipAssigned = 0x05138d91ULL;        // TEP-62
 // TEP-62 op handled by the NFT item itself.
 constexpr unsigned long long kNftTransfer = 0x5fcc3d14ULL;
@@ -234,7 +234,7 @@ TokenVerification token_get_failure(WalletIndexGetMethodStatus status) {
 }
 
 TokenVerification verify_token_wallet(StateAccounts& state, const td::Bits256& wallet, td::Bits256& owner_out,
-                                        td::Bits256& master_out, WalletIndexVerificationBudget& budget) {
+                                      td::Bits256& master_out, WalletIndexVerificationBudget& budget) {
   tos::SmartContract::State wstate;
   auto wallet_load = state.load(wallet, wstate);
   if (wallet_load != StateAccounts::LoadResult::Active) {
@@ -392,8 +392,8 @@ td::Ref<vm::Cell> make_nft_value(bool has_collection, const td::Bits256& collect
 // If the incoming message carries a token op, nominate the implicated token
 // contract as a verification candidate. Messages never write to the index
 // directly — they only say where to look.
-void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_msg,
-                              std::set<td::Bits256>& tokens, std::set<td::Bits256>& nfts) {
+void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_msg, std::set<td::Bits256>& tokens,
+                              std::set<td::Bits256>& nfts) {
   if (in_msg.is_null()) {
     return;
   }
@@ -439,7 +439,7 @@ void collect_token_candidates(const td::Bits256& account, td::Ref<vm::Cell> in_m
 // Verify and index one token-wallet candidate (into the open batch). A check
 // that reached no verdict is retried and leaves the index as it was.
 TokenVerifyOutcome index_token_candidate(WalletIndexDb* db, StateAccounts& state, const td::Bits256& wallet,
-                                          unsigned long long end_lt, WalletIndexVerificationBudget& budget) {
+                                         unsigned long long end_lt, WalletIndexVerificationBudget& budget) {
   td::Bits256 owner = td::Bits256::zero();
   td::Bits256 master = td::Bits256::zero();
   TokenWalletCheck check = TokenWalletCheck::Rejected;

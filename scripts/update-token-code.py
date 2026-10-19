@@ -12,11 +12,11 @@ import argparse
 import ast
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = (
@@ -79,7 +79,7 @@ def root_hash(boc: bytes, work: Path, build: Path) -> str:
 
 
 def render_sdk(master: bytes, wallet: bytes) -> str:
-    header = '''/**
+    header = """/**
  * Generated Token contract BOCs. Do not edit the hex manually.
  * Reproduce with: python3 scripts/update-token-code.py --check
  *
@@ -91,17 +91,21 @@ def render_sdk(master: bytes, wallet: bytes) -> str:
  * constants do not silently switch existing SDK users to another code family.
  */
 
-'''
+"""
     for name, data in (("TOKEN_MASTER_CODE_HEX", master), ("TOKEN_WALLET_CODE_HEX", wallet)):
         encoded = data.hex().upper()
-        chunks = [encoded[i:i + 64] for i in range(0, len(encoded), 64)]
-        header += f"export const {name} =\n" + " +\n".join(f'  "{chunk}"' for chunk in chunks) + ";\n\n"
+        chunks = [encoded[i : i + 64] for i in range(0, len(encoded), 64)]
+        header += (
+            f"export const {name} =\n" + " +\n".join(f'  "{chunk}"' for chunk in chunks) + ";\n\n"
+        )
     return header.rstrip() + "\n"
 
 
 def python_goldens(text: str) -> dict[str, str]:
     for node in ast.parse(text).body:
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "tests" for target in node.targets):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "tests" for target in node.targets
+        ):
             rows = ast.literal_eval(node.value)
             return {name: str(value) for name, value in rows}
     raise RuntimeError("compiler fixture list is missing from the Python runner")
@@ -144,11 +148,22 @@ def main() -> int:
     stale = [name for name in FIXTURES if actual[name] != expected[name]]
     sdk = render_sdk(compiled[FIXTURES[0]], compiled[FIXTURES[1]])
     sdk_changed = (ROOT / SDK).read_text(encoding="utf-8") != sdk
-    print(json.dumps({"fixture_cell_hashes": actual, "stale_goldens": stale, "sdk_embedding_stale": sdk_changed}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "fixture_cell_hashes": actual,
+                "stale_goldens": stale,
+                "sdk_embedding_stale": sdk_changed,
+            },
+            sort_keys=True,
+        )
+    )
     if args.check:
         return 1 if stale or sdk_changed else 0
     if stale and not args.update_goldens:
-        raise RuntimeError("compiler goldens differ; review the source diff before explicitly updating them")
+        raise RuntimeError(
+            "compiler goldens differ; review the source diff before explicitly updating them"
+        )
     if args.update_goldens:
         json_text = (ROOT / GOLDEN_JSON).read_text(encoding="utf-8")
         py_text = (ROOT / GOLDEN_PY).read_text(encoding="utf-8")

@@ -1,28 +1,32 @@
-name: Token migration workbench
+name: Token naming validation
 
 on:
-  push:
-    branches: [refactor/token-naming]
+  pull_request:
+    branches: [main]
     paths:
-      - scripts/token-rename-workbench.py
+      - scripts/*token*.py
       - .github/workflows/token-rename-workbench.yml
+      - crypto/func/**
+      - crypto/smartcont/**
+      - sdk/js/**
+      - emulator/**
+      - validator/token-manager.*
+      - validator-engine/json-rpc-server-token.cpp
+      - test/test-wallet-index.cpp
+  workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: token-migration-workbench
-  cancel-in-progress: false
+  group: token-naming-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   native-and-sdk:
-    if: github.repository == 'tosnetwork/tos' && github.ref == 'refs/heads/refactor/token-naming'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
-    permissions:
-      contents: write
-      actions: read
     env:
       PYTHONDONTWRITEBYTECODE: '1'
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -35,7 +39,6 @@ jobs:
       - name: Check out the exact migration commit and native dependencies
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 0
           submodules: recursive
@@ -67,18 +70,8 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
       - name: Build native contract compilers
         run: cmake --build build --target func fift --parallel 4
-      - name: Verify baseline and getter-only bytecode changes, then regenerate
+      - name: Verify baseline, ABI-only bytecode changes and frozen code
         run: python3 scripts/token-rename-workbench.py
-      - name: Publish rebuilt artifacts only to the migration branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]; then
-            auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-              push origin HEAD:refs/heads/refactor/token-naming
-          fi
       - name: Install pinned SDK package manager
         run: npm install --global pnpm@9.15.4
       - name: Build and typecheck the SDK

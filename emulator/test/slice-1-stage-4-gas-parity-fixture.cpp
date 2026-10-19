@@ -413,26 +413,23 @@ ScenarioResult run_scenario(const char* name, td::Ref<vm::Cell> func_code,
 
 TEST(Slice1Stage4GasParity, TokenMaster) {
   auto func_code = load_code_boc(SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC);
-  auto tol_code  = load_code_boc(SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC);
+  auto tol_code = load_code_boc(SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC);
   auto data      = build_minter_storage_third_admin();
 
   auto empty = run_scenario("empty-body",
                             func_code, tol_code, data, build_empty_body());
-  check_and_log_scenario("token-minter", empty,
-                         kFuncVsTolRatioThresholdDefault);
+  check_and_log_scenario("token-minter", empty, kFuncVsTolRatioThresholdDefault);
 
   auto unknown = run_scenario("unknown-opcode",
                               func_code, tol_code, data,
                               build_envelope_prefix(0xdeadbeef, 7));
-  check_and_log_scenario("token-minter", unknown,
-                         kFuncVsTolRatioThresholdDefault);
+  check_and_log_scenario("token-minter", unknown, kFuncVsTolRatioThresholdDefault);
 
   auto authfail = run_scenario("mint-auth-fail",
                                func_code, tol_code, data,
                                build_minter_mint_body(/*query_id=*/123,
                                                       /*mint_amount=*/9000));
-  check_and_log_scenario("token-minter", authfail,
-                         kFuncVsTolRatioThresholdDefault);
+  check_and_log_scenario("token-minter", authfail, kFuncVsTolRatioThresholdDefault);
 }
 
 // ---------------------------------------------------------------------------
@@ -450,26 +447,23 @@ TEST(Slice1Stage4GasParity, TokenMaster) {
 
 TEST(Slice1Stage4GasParity, TokenWallet) {
   auto func_code = load_code_boc(SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC);
-  auto tol_code  = load_code_boc(SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC);
+  auto tol_code = load_code_boc(SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC);
   auto data      = build_wallet_storage_third_owner();
 
   auto empty = run_scenario("empty-body",
                             func_code, tol_code, data, build_empty_body());
-  check_and_log_scenario("token-wallet", empty,
-                         kFuncVsTolRatioThresholdDefault);
+  check_and_log_scenario("token-wallet", empty, kFuncVsTolRatioThresholdDefault);
 
   auto unknown = run_scenario("unknown-opcode",
                               func_code, tol_code, data,
                               build_envelope_prefix(0xcafebabe, 11));
-  check_and_log_scenario("token-wallet", unknown,
-                         kFuncVsTolRatioThresholdDefault);
+  check_and_log_scenario("token-wallet", unknown, kFuncVsTolRatioThresholdDefault);
 
   auto authfail = run_scenario("transfer-auth-fail",
                                func_code, tol_code, data,
                                build_wallet_transfer_body(/*query_id=*/22,
                                                           /*amount=*/7000));
-  check_and_log_scenario("token-wallet", authfail,
-                         kFuncVsTolRatioThresholdDefault);
+  check_and_log_scenario("token-wallet", authfail, kFuncVsTolRatioThresholdDefault);
 }
 
 // ---------------------------------------------------------------------------

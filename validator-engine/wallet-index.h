@@ -214,9 +214,8 @@ class WalletIndexDb {
   // Walk at most `limit` token rows of `owner`, as stored. Answers use
   // for_each_current_token instead.
   // Callback receives (master, value cell).
-  td::Status for_each_token(
-      const HashKey& owner, size_t limit,
-      std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
+  td::Status for_each_token(const HashKey& owner, size_t limit,
+                            std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
 
   // --- Token wallet record: 0x17 + wallet(32) -> present(1) + owner(32) + master(32) + lt_be(8) ---
   // The last verdict on a token wallet and the logical time of the block it
@@ -256,7 +255,7 @@ class WalletIndexDb {
   // row is served only beside a pair record naming it present, the record
   // every verdict writes. Callback receives (master, value).
   td::Status for_each_current_token(const HashKey& owner, size_t limit,
-                                     std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
+                                    std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb);
 
   // --- Token pair record: 0x18 + owner(32) + master(32) -> present(1) + wallet(32) + lt_be(8) ---
   // The last decision on the (owner, master) 0x10 entry, shared by every
@@ -560,7 +559,7 @@ class WalletIndexDb {
   // record is from a later block; a release is also ignored while the pair
   // names another wallet.
   td::Status claim_token_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet,
-                               td::Ref<vm::Cell> value, uint64_t end_lt);
+                              td::Ref<vm::Cell> value, uint64_t end_lt);
   td::Status release_token_pair(const HashKey& owner, const HashKey& master, const HashKey& wallet, uint64_t end_lt);
 
   std::unique_ptr<td::RocksDb> db_;
@@ -631,7 +630,7 @@ class WalletIndexSnapshot {
     return view_->for_each_nft(owner, limit, std::move(cb));
   }
   td::Status for_each_current_token(const HashKey& owner, size_t limit,
-                                     std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb) {
+                                    std::function<td::Status(const HashKey& master, td::Ref<vm::Cell>)> cb) {
     return view_->for_each_current_token(owner, limit, std::move(cb));
   }
   td::Result<bool> has_token_wallet_record(const HashKey& wallet) {
@@ -658,8 +657,8 @@ enum class TokenWalletCheck {
 // (owner, master) with `value`, Rejected removes what it had. Indeterminate
 // and OtherShard leave the wallet's record and entry as they are.
 TokenVerifyOutcome record_token_wallet_check(WalletIndexDb& db, const HashKey& wallet, TokenWalletCheck check,
-                                              const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value,
-                                              uint64_t end_lt);
+                                             const HashKey& owner, const HashKey& master, td::Ref<vm::Cell> value,
+                                             uint64_t end_lt);
 
 // Module-scope singleton. Returns nullptr until the
 // validator opens the index at startup.

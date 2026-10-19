@@ -1,6 +1,6 @@
 global int storage::is_locked;
 global slice storage::admin_address; 
-global cell storage::token_lp_wallet_code; 
+global cell storage::token_lp_wallet_code;
 global cell storage::pool_code;
 global cell storage::lp_account_code; 
 global cell storage::temp_upgrade;

@@ -640,9 +640,9 @@ pub enum ConfigParamEnum {
     ConfigParam71(OracleBridgeParams), // Oracle bridge
     ConfigParam72(OracleBridgeParams), // Binance Smart Chain bridge
     ConfigParam73(OracleBridgeParams), // Polygon bridge
-    ConfigParam79(TokenBridgeParams), // ETH->TOS token bridge
-    ConfigParam81(TokenBridgeParams), // BNB->TOS token bridge
-    ConfigParam82(TokenBridgeParams), // Polygon->TOS token bridge
+    ConfigParam79(TokenBridgeParams),  // ETH->TOS token bridge
+    ConfigParam81(TokenBridgeParams),  // BNB->TOS token bridge
+    ConfigParam82(TokenBridgeParams),  // Polygon->TOS token bridge
     ConfigParamAny(u32, Cell),
 }
 

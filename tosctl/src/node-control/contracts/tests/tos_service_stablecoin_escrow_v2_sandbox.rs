@@ -867,7 +867,8 @@ fn notification_from_a_foreign_token_wallet_returns_the_funds_and_changes_nothin
 
     // An address that is provably not the derived own wallet.
     let mut seed = BuilderData::new();
-    seed.append_raw(b"foreign-layout-token-wallet", 28 * 8).unwrap();
+    let foreign_layout = b"foreign-layout-token-wallet";
+    seed.append_raw(foreign_layout, foreign_layout.len() * 8).unwrap();
     let foreign_wallet = MsgAddressInt::with_params(0, seed.into_cell().unwrap().hash(0)).unwrap();
     assert_ne!(foreign_wallet, f.own_wallet);
 

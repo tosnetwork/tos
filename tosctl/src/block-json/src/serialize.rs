@@ -1159,10 +1159,7 @@ fn serialize_oracle_bridge_params(pl: &OracleBridgeParams) -> Result<Value> {
     Ok(map.into())
 }
 
-fn serialize_token_bridge_params(
-    pl: &TokenBridgeParams,
-    mode: SerializationMode,
-) -> Result<Value> {
+fn serialize_token_bridge_params(pl: &TokenBridgeParams, mode: SerializationMode) -> Result<Value> {
     let mut oracles = Map::new();
     pl.oracles.iterate_slices_with_keys(|key, value| {
         oracles.insert(key.as_hex_string(), value.as_hex_string().into());

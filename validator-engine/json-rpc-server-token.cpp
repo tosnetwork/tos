@@ -172,9 +172,8 @@ void JsonRpcServer::handle_getTokenData(td::JsonObject &params, std::string req_
         auto inner = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_runSmcMethod>(
                 0x04, std::move(blk),
-                tos::create_tl_object<tos::lite_api::liteServer_accountId>(
-                    addr.workchain, addr.addr),
-                token_method_id, params_boc->clone()),
+                tos::create_tl_object<tos::lite_api::liteServer_accountId>(addr.workchain, addr.addr), token_method_id,
+                params_boc->clone()),
             true);
         auto query = tos::serialize_tl_object(
             tos::create_tl_object<tos::lite_api::liteServer_query>(std::move(inner)), true);

@@ -1063,10 +1063,10 @@ TEST(WalletIndex, AReadSnapshotIgnoresLaterCommits) {
   ASSERT_EQ(view.token_backlog_stats().move_as_ok().entries, static_cast<uint64_t>(0));
   size_t listed = 0;
   view.for_each_current_token(owner, 16,
-                               [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
-                                 ++listed;
-                                 return td::Status::OK();
-                               })
+                              [&](const td::Bits256 &, td::Ref<vm::Cell>) -> td::Status {
+                                ++listed;
+                                return td::Status::OK();
+                              })
       .ensure();
   ASSERT_EQ(listed, static_cast<size_t>(0));
   size_t live = 0;
@@ -1747,7 +1747,7 @@ td::Ref<vm::Cell> token_value(const td::Bits256 &wallet, uint64_t lt) {
 using TokenVerdict = tos_wallet_index::WalletIndexDb::TokenVerdict;
 
 TokenVerdict token_present(const td::Bits256 &wallet, const td::Bits256 &owner, const td::Bits256 &master,
-                             uint64_t lt) {
+                           uint64_t lt) {
   return TokenVerdict{true, owner, master, token_value(wallet, lt)};
 }
 
@@ -1756,7 +1756,7 @@ TokenVerdict token_absent() {
 }
 
 void apply_token(tos_wallet_index::WalletIndexDb &db, const td::Bits256 &wallet, const TokenVerdict &verdict,
-                  uint64_t lt) {
+                 uint64_t lt) {
   db.begin_batch().ensure();
   db.apply_token_verdict(wallet, verdict, lt).ensure();
   db.commit_batch().ensure();
@@ -1764,7 +1764,7 @@ void apply_token(tos_wallet_index::WalletIndexDb &db, const td::Bits256 &wallet,
 
 // Masters listed for `owner`, each with the wallet its entry names.
 std::vector<std::pair<td::Bits256, td::Bits256>> tokens_of(tos_wallet_index::WalletIndexDb &db,
-                                                            const td::Bits256 &owner) {
+                                                           const td::Bits256 &owner) {
   std::vector<std::pair<td::Bits256, td::Bits256>> out;
   db.for_each_token(owner, 16, [&](const td::Bits256 &master, td::Ref<vm::Cell> value) -> td::Status {
       td::Bits256 wallet;
@@ -1888,8 +1888,8 @@ TEST(WalletIndex, AnInconclusiveTokenCheckIsNotADisappearance) {
   auto wallet = token_address(1, 0x54);
   auto owner = token_address(2, 0x54);
   auto master = token_address(3, 0x54);
-  using tos_wallet_index::TokenWalletCheck;
   using tos_wallet_index::TokenVerifyOutcome;
+  using tos_wallet_index::TokenWalletCheck;
   auto check = [&](TokenWalletCheck result, uint64_t lt) {
     db->begin_batch().ensure();
     auto outcome = tos_wallet_index::record_token_wallet_check(
@@ -2965,8 +2965,7 @@ TEST(WalletIndexWorker, CrossShardCandidatesAreKeptThenVerified) {
                                                        wallet_index_fixture::nft_item(item, collection, owner)});
   auto right_state = wallet_index_fixture::shard_state(
       {wallet_index_fixture::token_master(master, wallet), wallet_index_fixture::nft_collection(collection, item)});
-  auto root =
-      wallet_index_fixture::block(20, 5000, 1000, {{wallet, 10, kTokenTransferOp}, {item, 11, kNftTransferOp}});
+  auto root = wallet_index_fixture::block(20, 5000, 1000, {{wallet, 10, kTokenTransferOp}, {item, 11, kNftTransferOp}});
   HalvesState newest;
   newest.set(false, left_state, 6000);
   tos_wallet_index::set_wc0_index_parked_retry_pause_for_testing(std::chrono::milliseconds(0));

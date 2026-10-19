@@ -1398,7 +1398,7 @@ fn test_serialize_wc_state_s() {
     check_shard_state(
         "state_4723_0_c800000000000000_81832210A895E93967B7D2A0638159FC5FD88C1DB402545AAAABA509BE93017F",
         0,
-        SerializationMode::Standart
+        SerializationMode::Standart,
     );
 }
 
@@ -1407,7 +1407,7 @@ fn test_serialize_wc_state_q() {
     check_shard_state(
         "state_4723_0_c800000000000000_81832210A895E93967B7D2A0638159FC5FD88C1DB402545AAAABA509BE93017F",
         0,
-        SerializationMode::QServer
+        SerializationMode::QServer,
     );
 }
 
