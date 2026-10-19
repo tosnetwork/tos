@@ -10,9 +10,11 @@
     "tosctl/src/node-control/contracts/src/validator_controller_tests.rs": "0228545b86822243ee769ebccaf96bc1af8a1f4647f96fea90a3e884a4845844",
     "tosctl/src/node-control/contracts/tests/agent_account_sandbox.rs": "56ad5ef3e1c144eaed3151a774e84fab4d5df64b341f0386a044eba7b7128f05",
     "tosctl/src/node-control/contracts/tests/elector_sandbox.rs": "c1d8c1e360d609280de82a6441319972d176598dcd33eb82ffa3a5bd1b686f2e",
-    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_accounting.rs": "86539c342822eebdc739febc291f7e83f69c149f55e16cc4ad6361859ff05203"
+    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_accounting.rs": "86539c342822eebdc739febc291f7e83f69c149f55e16cc4ad6361859ff05203",
+    "tosctl/src/node-control/contracts/tests/task_escrow_sandbox.rs": "ad5585557d48717ad948a33444cc7a55f61d5076dc84d5c3ea6ec4b5ac521346",
+    "test/regression-tests.ans": "2651d3c712f0b16176e79caea438a67dd8c0ed4e01eb7e401feafd7c4ea0f748"
   },
-  "status": "DRAFT: four new Task Escrow storage-funding regressions remain unresolved; not rollout-ready",
+  "status": "Owner accepted the price schedule; Task Escrow fixtures use the basechain, with four masterchain exit-126 controls retained. No public-network deployment.",
   "projection_nanotos": 249572345,
   "local_cycle_nanotos": 212931058,
   "local_cycle_components": {
@@ -1854,5 +1856,55 @@
     "retain_until": "2027-01-17",
     "files": 7957,
     "exclusions": "Private runtime keys, node databases, wallet key directories and vault startup credentials are excluded."
+  },
+  "basechain_escrow_followup": {
+    "fixture_commit": "2f19912c51ceda1b07fd0f102db8eeeab8967e1f",
+    "genesis_pin_commit": "48546ab52",
+    "whole_file": {
+      "passed": 40,
+      "failed": 0,
+      "exit": 0
+    },
+    "controls": [
+      {
+        "test": "an_unresolved_dispute_falls_back_to_the_accepted_split_at_its_deadline",
+        "exit": 101,
+        "exit_126_seen": true,
+        "green_in_restored_file": true,
+        "assertion_failure_exit_126": true
+      },
+      {
+        "test": "the_fallback_needs_no_attestor_signature",
+        "exit": 101,
+        "exit_126_seen": true,
+        "green_in_restored_file": true,
+        "assertion_failure_exit_126": true
+      },
+      {
+        "test": "the_fallback_caller_pays_its_fees_and_the_principal_is_untouched",
+        "exit": 101,
+        "exit_126_seen": true,
+        "green_in_restored_file": true,
+        "assertion_failure_exit_126": true
+      },
+      {
+        "test": "the_fallback_split_at_zero_and_at_the_whole_budget",
+        "exit": 101,
+        "exit_126_seen": true,
+        "green_in_restored_file": true,
+        "assertion_failure_exit_126": true
+      }
+    ],
+    "reproduction": "Change only ESCROW_WORKCHAIN from 0 to -1 in task_escrow_sandbox.rs; run each named test with cargo test -p contracts --locked --test task_escrow_sandbox NAME -- --exact. Each fails with exit 126 (Cargo 101); restore 0 and run the whole file: 40 pass.",
+    "genesis_control": {
+      "old_prices_old_pin": 0,
+      "new_prices_old_pin": 1,
+      "new_prices_new_pin": 0,
+      "filter": "+GenZerostateFiftRegression",
+      "old_hash": "662621905fc65ff975a827f51ea925838f1efd24c8811d03464eb6018981aaad",
+      "new_hash": "c6234be91d7d2fdfe556965e5348b59770513f01a33265f37f6da973978e2819"
+    },
+    "scope": "No contract code or assertion amounts changed. The exact-default-fee test keeps masterchain recipients and a basechain escrow; its quote includes masterchain forwarding.",
+    "ci_replay": "Final builder-container step receipts are reported in the PR. The original receipts below describe the earlier full-price experiment; historical failures are not rewritten."
   }
 }

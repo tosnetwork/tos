@@ -35,6 +35,7 @@ coin denominations, gas-unit limits and debt thresholds are not price pins.
 | File / group | Disposition |
 | --- | --- |
 | `crypto/smartcont/gen-zerostate.fif` | Change deployment CP20/24 only; this is the native genesis generator. |
+| `test/regression-tests.ans` | Update only the deployment genesis output hash. The old prices reproduce the old hash; the new prices change the state identity. |
 | `test/tostester/src/tostester/zerostate.py` | Change the deployment schedule and descriptive deployment-price comments. Keep every cheap-test and basechain value. |
 | `tosctl/src/executor/src/blockchain_config.rs` | Change default masterchain price tables and their derived threshold cache; keep real-BOC/config-driven paths and every basechain/debt/resource setting. |
 | `scripts/check-quantum-candidate-network.py` | Change CP20/flat-price acceptance pins to the new deployment profile. |
