@@ -672,10 +672,9 @@ pub struct AgentAccountBuildStateCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        default_value_t = super::utils::USER_CONTRACT_WORKCHAIN,
-        help = "Agent Account workchain"
+        help = "Agent Account workchain; defaults to the recorded generation, or 0 for a new generation"
     )]
-    workchain: i32,
+    workchain: Option<i32>,
 
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -694,10 +693,9 @@ pub struct AgentAccountDeployCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        default_value_t = super::utils::USER_CONTRACT_WORKCHAIN,
-        help = "Agent Account workchain"
+        help = "Agent Account workchain; defaults to the recorded generation, or 0 for a new generation"
     )]
-    workchain: i32,
+    workchain: Option<i32>,
 
     #[arg(long = "amount", default_value_t = 0.2, help = "Initial Agent Account balance, in TOS")]
     amount: f64,
@@ -738,10 +736,9 @@ pub struct AgentAccountStatusCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        default_value_t = super::utils::USER_CONTRACT_WORKCHAIN,
-        help = "Agent Account workchain"
+        help = "Agent Account workchain; defaults to the recorded generation, or 0 for a new generation"
     )]
-    workchain: i32,
+    workchain: Option<i32>,
 
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -2412,21 +2409,52 @@ impl AgentTaskShowCmd {
     }
 }
 
-fn validate_agent_account_generation_workchain(
-    persisted: Option<&str>,
-    workchain: i32,
-) -> anyhow::Result<()> {
-    if let Some(value) = persisted {
-        let address =
-            value.parse::<MsgAddressInt>().context("Invalid persisted Agent Account address")?;
+fn agent_account_generation_workchain(
+    requested: Option<i32>,
+    persisted_address: Option<&str>,
+    persisted_workchain: Option<i32>,
+    has_deployment_id: bool,
+) -> anyhow::Result<i32> {
+    let address_workchain = persisted_address
+        .map(|value| {
+            value
+                .parse::<MsgAddressInt>()
+                .map(|address| address.workchain_id())
+                .context("Invalid persisted Agent Account address")
+        })
+        .transpose()?;
+    if let (Some(address_workchain), Some(workchain)) = (address_workchain, persisted_workchain) {
         anyhow::ensure!(
-            address.workchain_id() == workchain,
-            "Recorded Agent Account generation is in workchain {}; use --workchain {} to keep its identity",
-            address.workchain_id(),
-            address.workchain_id()
+            address_workchain == workchain,
+            "Recorded Agent Account address and generation workchain disagree"
         );
     }
-    Ok(())
+    let recorded = persisted_workchain.or(address_workchain);
+    let workchain = match requested.or(recorded) {
+        Some(workchain) => workchain,
+        None if has_deployment_id => anyhow::bail!(
+            "Agent Account deployment ID has no recorded workchain; use --workchain to explicitly confirm the existing generation's workchain"
+        ),
+        None => super::utils::USER_CONTRACT_WORKCHAIN,
+    };
+    if let Some(recorded) = recorded {
+        anyhow::ensure!(
+            recorded == workchain,
+            "Recorded Agent Account generation is in workchain {}; use --workchain {} to keep its identity",
+            recorded,
+            recorded
+        );
+    }
+    Ok(workchain)
+}
+
+fn pin_agent_account_generation(
+    profile: &mut AgentWalletConfig,
+    deployment_id: &[u8; 32],
+    workchain: i32,
+) {
+    profile.agent_account_deployment_id = Some(hex::encode(deployment_id));
+    profile.agent_account_workchain = Some(workchain);
 }
 
 fn task_deployment_workchain(
@@ -3758,33 +3786,34 @@ impl AgentAccountBuildStateCmd {
             .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?
             .clone();
 
-        validate_agent_account_generation_workchain(
-            agent_wallet.agent_account_address.as_deref(),
+        let workchain = agent_account_generation_workchain(
             self.workchain,
+            agent_wallet.agent_account_address.as_deref(),
+            agent_wallet.agent_account_workchain,
+            agent_wallet.agent_account_deployment_id.is_some(),
         )?;
 
         let (init, owner_address) =
             build_agent_account_init(&self.wallet, &agent_wallet, vault).await?;
-        if agent_wallet.agent_account_deployment_id.is_none() {
-            config
-                .agent_wallets
-                .get_mut(&self.wallet)
-                .context("Agent wallet disappeared while persisting deployment ID")?
-                .agent_account_deployment_id = Some(hex::encode(init.deployment_id));
-            save_config(&config, path)?;
-        }
         let state_init = AgentAccountContract::build_state_init(&init)?;
-        let address = AgentAccountContract::calculate_address(self.workchain, &init)?;
+        let address = AgentAccountContract::calculate_address(workchain, &init)?;
         let state_cell = state_init.write_to_new_cell()?.into_cell()?;
         let data_cell = AgentAccountContract::build_data(&init)?;
         let code_cell = AgentAccountContract::code()?;
         let state_init_boc =
             base64::engine::general_purpose::STANDARD.encode(write_boc(&state_cell)?);
 
+        let profile = config
+            .agent_wallets
+            .get_mut(&self.wallet)
+            .context("Agent wallet disappeared while persisting its generation")?;
+        pin_agent_account_generation(profile, &init.deployment_id, workchain);
+        save_config(&config, path)?;
+
         let view = AgentAccountStateView {
             wallet: self.wallet.clone(),
             address: address.to_string(),
-            workchain: self.workchain,
+            workchain,
             owner: owner_address,
             controller_key: describe_key(&agent_wallet.controller_key),
             controller_pubkey: hex::encode(init.controller_pubkey),
@@ -3836,12 +3865,16 @@ impl AgentAccountDeployCmd {
             .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?
             .clone();
 
-        if !self.new_generation {
-            validate_agent_account_generation_workchain(
-                agent_wallet.agent_account_address.as_deref(),
+        let workchain = if self.new_generation {
+            self.workchain.unwrap_or(super::utils::USER_CONTRACT_WORKCHAIN)
+        } else {
+            agent_account_generation_workchain(
                 self.workchain,
-            )?;
-        }
+                agent_wallet.agent_account_address.as_deref(),
+                agent_wallet.agent_account_workchain,
+                agent_wallet.agent_account_deployment_id.is_some(),
+            )?
+        };
 
         let mut retired_generation = None;
         if self.new_generation {
@@ -3873,13 +3906,14 @@ impl AgentAccountDeployCmd {
             retired_generation = Some((old_address.to_string(), old_deployment_id));
             agent_wallet.agent_account_deployment_id = Some(hex::encode(deployment_id));
             agent_wallet.agent_account_address = None;
+            agent_wallet.agent_account_workchain = None;
         }
 
         let (init, _owner_address) =
             build_agent_account_init(&self.wallet, &agent_wallet, vault.clone()).await?;
         let owner = init.owner.clone();
         let state_init = AgentAccountContract::build_state_init(&init)?;
-        let address = AgentAccountContract::calculate_address(self.workchain, &init)?;
+        let address = AgentAccountContract::calculate_address(workchain, &init)?;
         let address_info = rpc_client.get_address_information(&address).await?;
         if address_info.state == AccountState::Active {
             if self.new_generation {
@@ -3909,6 +3943,11 @@ impl AgentAccountDeployCmd {
                 .get_mut(&self.wallet)
                 .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?
                 .agent_account_address = Some(address.to_string());
+            let profile = config
+                .agent_wallets
+                .get_mut(&self.wallet)
+                .context("Agent wallet disappeared while persisting its generation")?;
+            pin_agent_account_generation(profile, &init.deployment_id, workchain);
             save_config(&config, path)?;
             if self.format == OutputFormat::Json {
                 println!(
@@ -4011,14 +4050,16 @@ impl AgentAccountDeployCmd {
                 &old_deployment_id,
                 time_format::now(),
             )?;
-            let profile = config
-                .agent_wallets
-                .get_mut(&self.wallet)
-                .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
-            profile.agent_account_deployment_id = Some(hex::encode(init.deployment_id));
-            profile.agent_account_address = None;
-            save_config(&config, path)?;
         }
+        let profile = config
+            .agent_wallets
+            .get_mut(&self.wallet)
+            .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        pin_agent_account_generation(profile, &init.deployment_id, workchain);
+        if self.new_generation {
+            profile.agent_account_address = None;
+        }
+        save_config(&config, path)?;
         rpc_client.send_boc(&write_boc(&msg)?).await?;
         wait_for_deploy(
             rpc_client,
@@ -4048,7 +4089,7 @@ impl AgentAccountDeployCmd {
             .get_mut(&self.wallet)
             .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
         deployed_profile.agent_account_address = Some(address.to_string());
-        deployed_profile.agent_account_deployment_id = Some(hex::encode(init.deployment_id));
+        pin_agent_account_generation(deployed_profile, &init.deployment_id, workchain);
         save_config(&config, path)?;
         if self.format == OutputFormat::Json {
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -4089,11 +4130,17 @@ impl AgentAccountStatusCmd {
             .agent_wallets
             .get(&self.wallet)
             .ok_or_else(|| anyhow::anyhow!("Agent wallet '{}' not found", self.wallet))?;
+        let workchain = agent_account_generation_workchain(
+            self.workchain,
+            agent_wallet.agent_account_address.as_deref(),
+            agent_wallet.agent_account_workchain,
+            agent_wallet.agent_account_deployment_id.is_some(),
+        )?;
         let (init, _) = build_agent_account_init(&self.wallet, agent_wallet, vault).await?;
         let address = if let Some(address) = &agent_wallet.agent_account_address {
             address.parse::<MsgAddressInt>().context("Invalid persisted Agent Account address")?
         } else {
-            AgentAccountContract::calculate_address(self.workchain, &init)?
+            AgentAccountContract::calculate_address(workchain, &init)?
         };
         let view = load_agent_account_chain_view(
             rpc_client,
@@ -10720,6 +10767,7 @@ impl AgentWalletCreateCmd {
             wallet: wallet.clone(),
             agent_account_address: None,
             agent_account_deployment_id: None,
+            agent_account_workchain: None,
             controller_key: KeyConfig::VaultKey { name: controller_secret_name.clone() },
             policy,
             metadata_hash: self.metadata_hash.clone(),
@@ -12429,14 +12477,189 @@ mod tests {
     #[test]
     fn account_generation_workchain_preserves_existing_identity() {
         let masterchain = masterchain_address(2).to_string();
-        assert!(super::validate_agent_account_generation_workchain(Some(&masterchain), 0).is_err());
-        assert!(super::validate_agent_account_generation_workchain(Some(&masterchain), -1).is_ok());
         let basechain = address(1).to_string();
-        assert!(super::validate_agent_account_generation_workchain(Some(&basechain), 0).is_ok());
-        assert!(super::validate_agent_account_generation_workchain(Some(&basechain), -1).is_err());
-        assert!(super::validate_agent_account_generation_workchain(None, 0).is_ok());
-        assert!(super::validate_agent_account_generation_workchain(None, -1).is_ok());
-        assert!(super::validate_agent_account_generation_workchain(Some("invalid"), 0).is_err());
+        let select = super::agent_account_generation_workchain;
+        assert_eq!(select(None, None, None, false).unwrap(), 0);
+        assert_eq!(select(Some(-1), None, None, false).unwrap(), -1);
+        assert_eq!(select(None, Some(&masterchain), None, true).unwrap(), -1);
+        assert_eq!(select(Some(-1), Some(&masterchain), Some(-1), true).unwrap(), -1);
+        assert!(select(Some(0), Some(&masterchain), None, true).is_err());
+        assert_eq!(select(None, Some(&basechain), Some(0), true).unwrap(), 0);
+        assert!(select(Some(-1), Some(&basechain), None, true).is_err());
+        assert!(select(None, Some(&masterchain), Some(0), true).is_err());
+        assert!(select(None, Some("invalid"), None, true).is_err());
+    }
+
+    #[test]
+    fn id_only_generation_requires_an_explicit_workchain_choice() {
+        let select = super::agent_account_generation_workchain;
+        let error = select(None, None, None, true).unwrap_err().to_string();
+        assert!(error.contains("use --workchain to explicitly confirm"), "{error}");
+        assert_eq!(select(Some(-1), None, None, true).unwrap(), -1);
+        assert_eq!(select(Some(0), None, None, true).unwrap(), 0);
+    }
+
+    #[test]
+    fn prepared_generation_pins_its_workchain_before_deployment() {
+        let mut profile: super::AgentWalletConfig = serde_json::from_value(serde_json::json!({
+            "wallet": {"key": {"name": "owner"}, "version": "V3R2", "subwallet_id": 42},
+            "controller_key": {"name": "controller"},
+            "policy": {"max_per_tx": 1, "daily_limit": 2}
+        }))
+        .unwrap();
+        assert!(profile.agent_account_workchain.is_none());
+        for workchain in [0, -1] {
+            super::pin_agent_account_generation(&mut profile, &[7; 32], workchain);
+            let restored: super::AgentWalletConfig =
+                serde_json::from_value(serde_json::to_value(&profile).unwrap()).unwrap();
+            assert_eq!(restored.agent_account_workchain, Some(workchain));
+            assert_eq!(
+                restored.agent_account_deployment_id.as_deref(),
+                Some("07".repeat(32).as_str())
+            );
+            assert!(restored.agent_account_address.is_none(), "prepared is not deployed");
+            assert_eq!(
+                super::agent_account_generation_workchain(
+                    None,
+                    restored.agent_account_address.as_deref(),
+                    restored.agent_account_workchain,
+                    restored.agent_account_deployment_id.is_some(),
+                )
+                .unwrap(),
+                workchain
+            );
+            assert!(
+                super::agent_account_generation_workchain(
+                    Some(if workchain == 0 { -1 } else { 0 }),
+                    None,
+                    restored.agent_account_workchain,
+                    true,
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_generation_commands_require_explicit_choice() {
+        use clap::Parser;
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        if let Some(path) = std::env::var_os("TOS_TEST_GENERATION_CONFIG") {
+            let path = PathBuf::from(path);
+            let original = fs::read(&path).unwrap();
+            runtime.block_on(async {
+                for args in [
+                    vec!["account", "build-state", "--wallet", "legacy"],
+                    vec!["account", "deploy", "--wallet", "legacy", "--from", "payer"],
+                    vec!["account", "status", "--wallet", "legacy"],
+                ] {
+                    let action = AccountActionParser::try_parse_from(args).unwrap().action;
+                    let result = match action {
+                        AgentAccountAction::BuildState(command) => {
+                            command.run(path.to_str().unwrap()).await
+                        }
+                        AgentAccountAction::Deploy(command) => {
+                            command.run(path.to_str().unwrap()).await
+                        }
+                        AgentAccountAction::Status(command) => {
+                            command.run(path.to_str().unwrap()).await
+                        }
+                        _ => panic!("unexpected account command"),
+                    };
+                    let error = result.unwrap_err().to_string();
+                    assert!(error.contains("use --workchain to explicitly confirm"), "{error}");
+                    assert_eq!(fs::read(&path).unwrap(), original, "refusal changed the profile");
+                }
+                let command = AccountActionParser::try_parse_from([
+                    "account",
+                    "build-state",
+                    "--wallet",
+                    "legacy",
+                    "--workchain",
+                    "-1",
+                ])
+                .unwrap();
+                if let AgentAccountAction::BuildState(command) = command.action {
+                    command.run(path.to_str().unwrap()).await.unwrap();
+                } else {
+                    panic!("expected build-state");
+                }
+                let config = AppConfig::load(&path).unwrap();
+                let profile = &config.agent_wallets["legacy"];
+                assert_eq!(profile.agent_account_workchain, Some(-1));
+                assert_eq!(
+                    profile.agent_account_deployment_id.as_deref(),
+                    Some("07".repeat(32).as_str())
+                );
+                assert!(
+                    profile.agent_account_address.is_none(),
+                    "preparation must not mark the account deployed"
+                );
+                // A second preparation must inherit the pinned choice without a flag.
+                if let AgentAccountAction::BuildState(command) =
+                    AccountActionParser::try_parse_from([
+                        "account",
+                        "build-state",
+                        "--wallet",
+                        "legacy",
+                    ])
+                    .unwrap()
+                    .action
+                {
+                    command.run(path.to_str().unwrap()).await.unwrap();
+                }
+                let command = AccountActionParser::try_parse_from([
+                    "account",
+                    "build-state",
+                    "--wallet",
+                    "fresh",
+                ])
+                .unwrap();
+                if let AgentAccountAction::BuildState(command) = command.action {
+                    command.run(path.to_str().unwrap()).await.unwrap();
+                }
+                let config = AppConfig::load(&path).unwrap();
+                assert_eq!(config.agent_wallets["fresh"].agent_account_workchain, Some(0));
+                assert!(config.agent_wallets["fresh"].agent_account_deployment_id.is_some());
+            });
+            println!("GENERATION_COMMANDS_OK");
+            return;
+        }
+        let directory = TemporaryDirectory::create("generation-commands");
+        let vault = runtime.block_on(super::super::utils::test_vault::with_ed25519_keys(&[
+            ("owner", true),
+            ("controller", true),
+        ]));
+        let profile = serde_json::json!({
+            "wallet": {"key": {"name": "owner"}, "version": "V3R2", "subwallet_id": 42},
+            "controller_key": {"name": "controller"},
+            "policy": {"max_per_tx": 1, "daily_limit": 2}
+        });
+        let mut legacy = profile.clone();
+        legacy["agent_account_deployment_id"] = serde_json::json!("07".repeat(32));
+        let config = serde_json::json!({
+            "nodes": {}, "chain_rpc": {"urls": ["http://127.0.0.1:1/jsonRPC"]}, "http": {},
+            "agent_wallets": {"legacy": legacy, "fresh": profile}
+        });
+        let path = directory.0.join("config.json");
+        write_private_snapshot_file(&path, &serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "commands::nodectl::agent_cmd::tests::legacy_generation_commands_require_explicit_choice", "--nocapture"])
+            .env("TOS_TEST_GENERATION_CONFIG", &path)
+            .env("VAULT_URL", &vault.url)
+            .output().unwrap();
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("GENERATION_COMMANDS_OK"),
+            "generation command child did not complete: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            output.status.success(),
+            "command-level generation guard failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

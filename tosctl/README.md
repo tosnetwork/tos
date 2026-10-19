@@ -543,7 +543,7 @@ interfaces share that default:
 |---|---|
 | `wallet create`, `wallet import`, mnemonic generate/import, test fixtures | `0` |
 | `agent wallet create` | `0` |
-| `agent account build-state`, `deploy`, `status` | `0`; status keeps an already persisted account address |
+| `agent account build-state`, `deploy`, `status` | Recorded generation workchain; `0` for a new generation |
 | `agent task build-state`, ordinary-wallet `agent task create` | `0` |
 | Agent Account-funded `agent task create` | The funding account's workchain; an explicit mismatch is refused |
 | Service Actor and Capability Registry deploy/build-state | `0` |
@@ -552,10 +552,12 @@ interfaces share that default:
 
 An explicit `--workchain -1` remains supported. Existing addresses, signed
 messages, stored wallet configurations and frozen compatibility vectors are
-not migrated. Building or deploying an existing Agent Account generation requires
-its recorded workchain explicitly when it differs from the new default; the CLI
-refuses to derive a different-workchain address for that generation. Agent Account deployment messages must stay in their source
-account's workchain. Prediction relays likewise bind the source account,
+not migrated. Agent Account generations pin their workchain with the deployment ID, before
+deployment, and reject conflicting explicit choices. Older profiles with a
+deployment ID but neither an address nor a recorded workchain require an explicit
+`--workchain` choice; their previous workchain cannot be inferred safely. A
+persisted address also binds the workchain. Agent Account deployment messages
+must stay in their source account's workchain. Prediction relays likewise bind the source account,
 market and network workchain together; select `0` consistently for new ones.
 The other user contracts do not require a masterchain deployment.
 

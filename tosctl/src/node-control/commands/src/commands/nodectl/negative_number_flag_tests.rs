@@ -145,9 +145,20 @@ fn collator_shard_accepts_a_masterchain_shard_and_refuses_another_option() {
 fn user_contract_workchain_defaults_are_basechain_and_operator_defaults_stay_masterchain() {
     use clap::Subcommand;
 
-    fn visit(command: &Command, path: &str, checked: &mut usize) {
+    fn visit(command: &Command, path: &str, checked: &mut usize, inherited: &mut usize) {
         if let Some(arg) = command.get_arguments().find(|arg| arg.get_long() == Some("workchain")) {
-            if !arg.get_default_values().is_empty() {
+            if matches!(
+                path,
+                "tosctl agent account build-state"
+                    | "tosctl agent account deploy"
+                    | "tosctl agent account status"
+            ) {
+                assert!(
+                    arg.get_default_values().is_empty(),
+                    "{path}: preserve explicit choice for legacy generations"
+                );
+                *inherited += 1;
+            } else if !arg.get_default_values().is_empty() {
                 let expected = if path == "tosctl config wallet add" { "-1" } else { "0" };
                 let matches = command
                     .clone()
@@ -164,7 +175,7 @@ fn user_contract_workchain_defaults_are_basechain_and_operator_defaults_stay_mas
             }
         }
         for child in command.get_subcommands() {
-            visit(child, &format!("{path} {}", child.get_name()), checked);
+            visit(child, &format!("{path} {}", child.get_name()), checked, inherited);
         }
     }
 
@@ -172,8 +183,10 @@ fn user_contract_workchain_defaults_are_basechain_and_operator_defaults_stay_mas
         crate::commands::cli_cmd::Commands::augment_subcommands(Command::new("tosctl"));
     command.build();
     let mut checked = 0;
-    visit(&command, "tosctl", &mut checked);
-    assert!(checked >= 17, "the default inventory did not run: {checked} commands");
+    let mut inherited = 0;
+    visit(&command, "tosctl", &mut checked, &mut inherited);
+    assert_eq!(inherited, 3, "all Agent Account generation selectors were checked");
+    assert!(checked >= 14, "the default inventory did not run: {checked} commands");
 }
 
 #[test]

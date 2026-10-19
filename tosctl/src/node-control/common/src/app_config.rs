@@ -436,6 +436,9 @@ pub struct AgentWalletConfig {
     /// Immutable random ID committed to this Agent Account deployment's StateInit.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_account_deployment_id: Option<String>,
+    /// Workchain pinned with the deployment ID, before an account is deployed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_account_workchain: Option<i32>,
     /// Controller key used by the agent runtime for bounded automated actions.
     pub controller_key: KeyConfig,
     /// Machine-readable spending and service-call policy.
