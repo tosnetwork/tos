@@ -1,0 +1,61 @@
+{
+  "ceremony": "ceremony-2",
+  "source_commit": "66fb007e7d3d6b509c32ad1b3ce4af470d96a53c",
+  "roster_sha256": "7e08f623ab1dcac8ce1be9712e2af0e3a71ddc6ca7d7b87995b71610295add8a",
+  "announcement_commit": "0fd773063b91833f287d435e82a60d4d2235f988",
+  "announcement_url": "https://github.com/tosnetwork/tos/blob/0fd773063b91833f287d435e82a60d4d2235f988/artifacts/phase2-ceremony-2/ANNOUNCEMENT.md",
+  "announcement_push_started_utc": "2026-10-19T05:21:56Z",
+  "announcement_push_finished_utc": "2026-10-19T05:21:59Z",
+  "publication_evidence": "Successful public branch push followed by GitHub commit API returning the exact announcement SHA before phase2-begin was started. Times are coordinator-observed UTC, not an external timestamp attestation.",
+  "announcement_tip_observations": [
+    {
+      "source": "https://blockstream.info/api",
+      "started_utc": "2026-10-19T05:20:07.905715+00:00",
+      "finished_utc": "2026-10-19T05:20:10.090278+00:00",
+      "height": 972107,
+      "hash": "000000000000000000005b07b4c1217913dacb5e88562c2025a38487b3f60a39"
+    },
+    {
+      "source": "https://mempool.space/api",
+      "started_utc": "2026-10-19T05:20:10.090409+00:00",
+      "finished_utc": "2026-10-19T05:20:10.143951+00:00",
+      "height": 972107,
+      "hash": "000000000000000000005b07b4c1217913dacb5e88562c2025a38487b3f60a39"
+    }
+  ],
+  "immediately_before_push": [
+    {
+      "source": "https://blockstream.info/api",
+      "started_utc": "2026-10-19T05:21:56.096207+00:00",
+      "finished_utc": "2026-10-19T05:21:56.799600+00:00",
+      "height": 972107,
+      "hash": "000000000000000000005b07b4c1217913dacb5e88562c2025a38487b3f60a39"
+    },
+    {
+      "source": "https://mempool.space/api",
+      "started_utc": "2026-10-19T05:21:56.799752+00:00",
+      "finished_utc": "2026-10-19T05:21:56.843618+00:00",
+      "height": 972107,
+      "hash": "000000000000000000005b07b4c1217913dacb5e88562c2025a38487b3f60a39"
+    }
+  ],
+  "contribution_close_height": 972111,
+  "beacon_height": 972112,
+  "participant_repository": "https://github.com/ffreeofmoney-bit/tos-phase2-ceremony-2",
+  "scope": "A/B/C only. No contribution, beacon application or final parameter release by the coordinator.",
+  "opening_checked_utc": "2026-10-19T05:24:16.713887+00:00",
+  "opening_files": {
+    "ceremony.json": {
+      "bytes": 503,
+      "sha256": "feda19fca485db961ae38a8621d48931c88a49a46a74f2c01ac0864c120e850f"
+    },
+    "contributions.bin": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "key.bin": {
+      "bytes": 5949456,
+      "sha256": "018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04"
+    }
+  }
+}

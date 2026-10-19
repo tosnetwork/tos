@@ -49,8 +49,6 @@ LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 # entry that is still here once the ceremony is running is a bug. They are
 # printed on every run for that reason.
 CREATED_WHEN_THE_CEREMONY_OPENS = {
-    "artifacts/phase2-ceremony-2/roster.json",
-    "artifacts/phase2-ceremony-2/ceremony",
     "artifacts/phase2-ceremony-2/beacon.bin",
 }
 
