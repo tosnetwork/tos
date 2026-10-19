@@ -1,0 +1,25 @@
+{
+  "protocol": "tos-shielded-pool-v1-phase2",
+  "phase1_transcript": "zcash",
+  "phase1_slice_sha256": "1bfd7acdb3ecbfaaa695ab159a7a643a2eb58203a4d93361040c6bd4c2aa3d6e",
+  "constraints": 18107,
+  "instance_variables": 19,
+  "starting_key_sha256": "018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04",
+  "entries": [
+    {
+      "index": 1,
+      "kind": "participant",
+      "sha256": "022598b65969aa9c76e89a9cdb39c9d9690c6915b864302ba3360cde956727f0",
+      "transcript_after": "8c649286fc04e8c9eb1ebaed5b3fb74de9ab1d852d429b1dee4c1d9b3df41726"
+    },
+    {
+      "index": 2,
+      "kind": "beacon",
+      "beacon_sha256": "e563d07a6866d189b7504573f89dc7fc8bed5d0e3fb0abd7bbbd667caafa3e8b",
+      "sha256": "222d592c4f3fcedacdd1d82869334ca3a429cc0a3fccb3b0ddcfe3269b5c63d0",
+      "transcript_after": "03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579"
+    }
+  ],
+  "key_sha256": "b49b4ee7cc4feadcc72b3e10d8b4f0485ffc7ed223e693e27db17864e481dc8c",
+  "transcript": "03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579"
+}

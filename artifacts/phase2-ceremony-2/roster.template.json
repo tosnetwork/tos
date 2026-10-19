@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "TEMPLATE. Copy to roster.json, fill in, and pin its sha256 in the",
+    "announcement BEFORE the ceremony opens. A participant added afterwards",
+    "cannot be shown not to have been added because of what the earlier",
+    "contributions were.",
+    "",
+    "Every key must be one that was already publicly that person's before this",
+    "ceremony. A key minted for the occasion produces a signature anyone could",
+    "have made -- worth exactly what no signature is worth, while looking like",
+    "more. 'published_at' is where a stranger can see that the key was theirs;",
+    "it is not fetched by the verifier, it is for the human reading the roster.",
+    "",
+    "The key material is carried inline rather than as a fingerprint, so",
+    "verification never depends on fetching anything: a verifier that has to go",
+    "and get a key has made that fetch the weakest thing in the chain.",
+    "",
+    "'independent_of_operator' is the field the whole roster exists for. It is",
+    "a claim this tooling cannot check -- only that someone made it and signed.",
+    "Set it false for anyone who shares a failure mode with the party deploying",
+    "the pool: same company, same machine, same person. An automated agent on",
+    "the operator's machine IS the operator.",
+    "",
+    "Delete this _comment before publishing."
+  ],
+
+  "protocol": "tos-shielded-pool-v1-phase2",
+  "ceremony": "ceremony-2",
+
+  "participants": [
+    {
+      "name": "TO FIX -- the name this person is publicly known by",
+      "affiliation": "TO FIX -- organisation, or 'independent'",
+      "independent_of_operator": false,
+      "key": {
+        "type": "ssh",
+        "principal": "TO FIX -- an identifier they are known by, e.g. an email or handle",
+        "public_key": "TO FIX -- ssh-ed25519 AAAA... the full public key line"
+      },
+      "published_at": [
+        "TO FIX -- e.g. https://github.com/<user>.keys"
+      ]
+    },
+    {
+      "name": "TO FIX -- at least one participant must be independent",
+      "affiliation": "TO FIX",
+      "independent_of_operator": true,
+      "key": {
+        "type": "gpg",
+        "fingerprint": "TO FIX -- 40 hex characters, no spaces",
+        "public_key": "TO FIX -- -----BEGIN PGP PUBLIC KEY BLOCK-----\n...\n-----END PGP PUBLIC KEY BLOCK-----\n"
+      },
+      "published_at": [
+        "TO FIX -- e.g. https://keys.openpgp.org/search?q=<fingerprint>"
+      ]
+    }
+  ]
+}

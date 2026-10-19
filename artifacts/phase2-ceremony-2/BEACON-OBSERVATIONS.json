@@ -1,0 +1,141 @@
+{
+  "beacon_height": 972112,
+  "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+  "encoding": "64 lowercase ASCII hex characters; no newline",
+  "required_confirmation_depth_blocks_on_top": 1,
+  "required_minimum_tip": 972113,
+  "policy": "Owner correction: wait for one block on top of the unchanged announced beacon; step F waits for the independent signed PASS.",
+  "first_seen": {
+    "source": "https://mempool.space/api",
+    "started_utc": "2026-10-19T06:34:39.219139+00:00",
+    "tip_height": 972112,
+    "tip_response_date": "Mon, 19 Oct 2026 06:34:39 GMT",
+    "beacon_height": 972112,
+    "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+    "beacon_response_date": "Mon, 19 Oct 2026 06:34:39 GMT",
+    "finished_utc": "2026-10-19T06:34:39.275421+00:00"
+  },
+  "first_two_source_agreement": [
+    {
+      "source": "https://blockstream.info/api",
+      "started_utc": "2026-10-19T06:35:19.275909+00:00",
+      "tip_height": 972112,
+      "tip_response_date": "Mon, 19 Oct 2026 06:35:19 GMT",
+      "beacon_height": 972112,
+      "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+      "beacon_response_date": "Mon, 19 Oct 2026 06:35:19 GMT",
+      "finished_utc": "2026-10-19T06:35:19.996159+00:00"
+    },
+    {
+      "source": "https://mempool.space/api",
+      "started_utc": "2026-10-19T06:35:19.996195+00:00",
+      "tip_height": 972112,
+      "tip_response_date": "Mon, 19 Oct 2026 06:35:20 GMT",
+      "beacon_height": 972112,
+      "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+      "beacon_response_date": "Mon, 19 Oct 2026 06:35:20 GMT",
+      "finished_utc": "2026-10-19T06:35:20.051376+00:00"
+    }
+  ],
+  "confirmation_gate_observations": [
+    {
+      "source": "https://blockstream.info/api",
+      "started_utc": "2026-10-19T06:46:28.907122+00:00",
+      "tip_height": 972113,
+      "tip_response_date": "Mon, 19 Oct 2026 06:46:29 GMT",
+      "beacon_height": 972112,
+      "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+      "beacon_response_date": "Mon, 19 Oct 2026 06:46:29 GMT",
+      "blocks_on_top": 1,
+      "finished_utc": "2026-10-19T06:46:29.655986+00:00"
+    },
+    {
+      "source": "https://mempool.space/api",
+      "started_utc": "2026-10-19T06:46:29.656010+00:00",
+      "tip_height": 972113,
+      "tip_response_date": "Mon, 19 Oct 2026 06:46:29 GMT",
+      "beacon_height": 972112,
+      "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+      "beacon_response_date": "Mon, 19 Oct 2026 06:46:29 GMT",
+      "blocks_on_top": 1,
+      "finished_utc": "2026-10-19T06:46:29.860243+00:00"
+    }
+  ],
+  "immediately_before_finalisation": [
+    {
+      "source": "https://blockstream.info/api",
+      "started_utc": "2026-10-19T06:46:59.393654+00:00",
+      "finished_utc": "2026-10-19T06:47:00.825954+00:00",
+      "tip_height": 972113,
+      "tip_response_date": "Mon, 19 Oct 2026 06:46:59 GMT",
+      "beacon_height": 972112,
+      "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+      "beacon_response_date": "Mon, 19 Oct 2026 06:47:00 GMT",
+      "blocks_on_top": 1,
+      "block_972113_hash": "00000000000000000001724ac40da14fff55466e37fa4a44491e9d9c059a97f4",
+      "block_972113_previous_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345"
+    },
+    {
+      "source": "https://mempool.space/api",
+      "started_utc": "2026-10-19T06:47:00.826102+00:00",
+      "finished_utc": "2026-10-19T06:47:00.911503+00:00",
+      "tip_height": 972113,
+      "tip_response_date": "Mon, 19 Oct 2026 06:47:00 GMT",
+      "beacon_height": 972112,
+      "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+      "beacon_response_date": "Mon, 19 Oct 2026 06:47:00 GMT",
+      "blocks_on_top": 1,
+      "block_972113_hash": "00000000000000000001724ac40da14fff55466e37fa4a44491e9d9c059a97f4",
+      "block_972113_previous_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345"
+    }
+  ],
+  "finalisation_started_utc": "2026-10-19T06:47:00Z",
+  "finalisation_finished_utc": "2026-10-19T06:49:12Z",
+  "after_finalisation": [
+    {
+      "source": "https://blockstream.info/api",
+      "started_utc": "2026-10-19T06:49:36.263015+00:00",
+      "finished_utc": "2026-10-19T06:49:37.015493+00:00",
+      "tip_height": 972113,
+      "tip_response_date": "Mon, 19 Oct 2026 06:49:36 GMT",
+      "beacon_height": 972112,
+      "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+      "beacon_response_date": "Mon, 19 Oct 2026 06:49:36 GMT",
+      "blocks_on_top": 1
+    },
+    {
+      "source": "https://mempool.space/api",
+      "started_utc": "2026-10-19T06:49:37.015654+00:00",
+      "finished_utc": "2026-10-19T06:49:37.061567+00:00",
+      "tip_height": 972113,
+      "tip_response_date": "Mon, 19 Oct 2026 06:49:37 GMT",
+      "beacon_height": 972112,
+      "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+      "beacon_response_date": "Mon, 19 Oct 2026 06:49:37 GMT",
+      "blocks_on_top": 1
+    }
+  ],
+  "reorganisation_check": "Every observed hash matched the first-seen hash, including the two post-finalisation readings. No hash change observed.",
+  "native_command": "phase2-finalise artifacts/phase2-ceremony-2/ceremony beacon-input.bin",
+  "native_exit_status": 0,
+  "transcript_after": "03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579",
+  "scope": "Beacon-finalized transcript for independent audit only. No step F, no exported verifying key, no approved final parameter release.",
+  "files": {
+    "beacon.bin": {
+      "bytes": 64,
+      "sha256": "e563d07a6866d189b7504573f89dc7fc8bed5d0e3fb0abd7bbbd667caafa3e8b"
+    },
+    "ceremony.json": {
+      "bytes": 1065,
+      "sha256": "57f1fdc9d7cfb14587742bd837151f1d258b0e53f0742b32078cd689f4284e34"
+    },
+    "contributions.bin": {
+      "bytes": 1344,
+      "sha256": "5cabc7950128a8be682ed35a42799ad04478ecd3c2b76621c6fbe4f258c023d8"
+    },
+    "key.bin": {
+      "bytes": 5949456,
+      "sha256": "b49b4ee7cc4feadcc72b3e10d8b4f0485ffc7ed223e693e27db17864e481dc8c"
+    }
+  }
+}

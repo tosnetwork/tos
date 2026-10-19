@@ -25,8 +25,8 @@ works, but a flag that does not exist is certainly broken, and that much is
 cheap to know.
 """
 
-import importlib.util
 import hashlib
+import importlib.util
 import re
 import subprocess
 import sys
@@ -38,6 +38,12 @@ DOCS = [
     "artifacts/phase2/PARTICIPANT-GUIDE.md",
     "artifacts/phase2/ANNOUNCEMENT.md",
     "artifacts/phase2/OPERATOR-RUNBOOK.md",
+    "artifacts/phase2/SUPERSEDED.md",
+    "artifacts/phase2-ceremony-2/README.md",
+    "artifacts/phase2-ceremony-2/PARTICIPANT-GUIDE.md",
+    "artifacts/phase2-ceremony-2/INDEPENDENT-PARTICIPANT.md",
+    "artifacts/phase2-ceremony-2/ANNOUNCEMENT.md",
+    "artifacts/phase2-ceremony-2/ANNOUNCEMENT.draft.md",
 ]
 
 LINK = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
@@ -93,7 +99,9 @@ def quoted_paths_exist() -> list[str]:
     # participant copies. The second kind matters more: prose is read, but a
     # wrong path inside a `less ~/tos/...` line is pasted straight into a
     # terminal by someone with no way to tell whether the file should exist.
-    pattern = re.compile(r"[`\s(]((?:~/tos/)?(?:tools|test|scripts|doc|artifacts|crypto)/[A-Za-z0-9_./-]+)")
+    pattern = re.compile(
+        r"[`\s(]((?:~/tos/)?(?:tools|test|scripts|doc|artifacts|crypto)/[A-Za-z0-9_./-]+)"
+    )
     problems = []
     for name in DOCS:
         path = ROOT / name

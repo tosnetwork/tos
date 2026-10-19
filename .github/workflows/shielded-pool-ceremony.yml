@@ -25,6 +25,7 @@ on:
       - "test/shielded-pool/ceremony-docs-tests.py"
       - "scripts/shielded-pool-phase2-contribute.sh"
       - "artifacts/phase2/**"
+      - "artifacts/phase2-ceremony-2/**"
       - ".github/workflows/shielded-pool-ceremony.yml"
     types: [opened, reopened, synchronize, ready_for_review]
   push:
@@ -37,6 +38,7 @@ on:
       - "test/shielded-pool/ceremony-docs-tests.py"
       - "scripts/shielded-pool-phase2-contribute.sh"
       - "artifacts/phase2/**"
+      - "artifacts/phase2-ceremony-2/**"
       - ".github/workflows/shielded-pool-ceremony.yml"
   workflow_dispatch:
 

@@ -1,0 +1,52 @@
+{
+  "ceremony": "ceremony-2",
+  "status": "final ceremony parameters published after independent signed PASS and matching project verification",
+  "publication_checked_utc": "2026-10-19T07:37:35.882735+00:00",
+  "announced_source_commit": "66fb007e7d3d6b509c32ad1b3ce4af470d96a53c",
+  "announcement_commit": "0fd773063b91833f287d435e82a60d4d2235f988",
+  "opening_commit": "af64d98e629e3146f382da2aff9d74a9ec63d876",
+  "contribution_receipt_commit": "52880c00c48814ce5ef85d1a9a0493d5e6e261d9",
+  "verified_finalized_transcript_commit": "adfbd0fd6b95cab92e21c747ac10d970368f9742",
+  "independent_verification_commit": "c8542cfd89dd22b7ca952851eda4c77a5839a6ec",
+  "independent_verification_url": "https://github.com/ffreeofmoney-bit/tos-phase2-ceremony-2/commit/c8542cfd89dd22b7ca952851eda4c77a5839a6ec",
+  "signed_documents": {
+    "contribution_attestation": [
+      "attestation-1.txt",
+      "attestation-1.txt.sig"
+    ],
+    "independent_complete_verification": [
+      "independent-verification/independent-verification-PASS.txt",
+      "independent-verification/independent-verification-PASS.txt.sig"
+    ]
+  },
+  "owner_confirmation": "OWNER-INDEPENDENCE-CONFIRMATION.md",
+  "roster_sha256": "7e08f623ab1dcac8ce1be9712e2af0e3a71ddc6ca7d7b87995b71610295add8a",
+  "verifying_key_sha256": "49696f52f361817869f68c3ba68d0d5a854737a4133ae4616255ac4a3846778c",
+  "verifying_key_bytes": 1248,
+  "final_transcript_digest": "03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579",
+  "beacon_height": 972112,
+  "beacon_hash": "00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345",
+  "verification": {
+    "independent_report_hashes": "PASS",
+    "independent_report_signature": "PASS under pinned roster key, namespace file",
+    "one_byte_report_mutation": "REFUSED",
+    "evidence_archive_transcript_and_metadata": "Verified before externalization: exact match; canonical archive is hash-pinned externally.",
+    "project_native_verification": "exit 0; explicitly finished, 2 steps ending in beacon",
+    "project_strict_attestation_verification": "exit 0; no waivers",
+    "project_vk_vs_independent_vk": "byte-identical; required SHA-256 matched",
+    "project_final_digest": "required digest matched",
+    "beacon_recheck": "both sources match original beacon"
+  },
+  "deployment": "NOT DEPLOYED. The separate deployment acceptance gate has not been run by this publication and remains required.",
+  "external_verification_evidence": {
+    "filename": "verification-evidence.zip",
+    "repository": "https://github.com/ffreeofmoney-bit/tos-phase2-ceremony-2",
+    "commit": "c8542cfd89dd22b7ca952851eda4c77a5839a6ec",
+    "url": "https://raw.githubusercontent.com/ffreeofmoney-bit/tos-phase2-ceremony-2/c8542cfd89dd22b7ca952851eda4c77a5839a6ec/verification-evidence.zip",
+    "sha256": "f256555805a19eacf0a53140d17ad5de04e68e7ba5ba8e1e3819ef47c88f7442",
+    "bytes": 7431838,
+    "retention": "No scheduled expiry: retain the canonical archive and exact commit for the lifetime of these parameters. External availability is participant-controlled. The earlier project copy remains in commit de94be8750d3d12a126b83cf40657e8fdf567899 to preserve the public timing history; that history must not be rewritten.",
+    "historical_project_copy_commit": "de94be8750d3d12a126b83cf40657e8fdf567899",
+    "historical_project_copy_path": "artifacts/phase2-ceremony-2/independent-verification/verification-evidence.zip"
+  }
+}

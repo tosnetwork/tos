@@ -1,0 +1,18 @@
+{
+  "protocol": "tos-shielded-pool-v1-phase2",
+  "phase1_transcript": "zcash",
+  "phase1_slice_sha256": "1bfd7acdb3ecbfaaa695ab159a7a643a2eb58203a4d93361040c6bd4c2aa3d6e",
+  "constraints": 18107,
+  "instance_variables": 19,
+  "starting_key_sha256": "018853105392e4e0ef82ae59514f137b1f1a19892023b70b72ef58941b017c04",
+  "entries": [
+    {
+      "index": 1,
+      "kind": "participant",
+      "sha256": "022598b65969aa9c76e89a9cdb39c9d9690c6915b864302ba3360cde956727f0",
+      "transcript_after": "8c649286fc04e8c9eb1ebaed5b3fb74de9ab1d852d429b1dee4c1d9b3df41726"
+    }
+  ],
+  "key_sha256": "4424f460e897d85ad33bb434c3a000b4af3ecae066edc067acfcc7964fa60009",
+  "transcript": "8c649286fc04e8c9eb1ebaed5b3fb74de9ab1d852d429b1dee4c1d9b3df41726"
+}

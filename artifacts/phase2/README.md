@@ -1,3 +1,16 @@
+# Historical ceremony record
+
+The completed 2026-10-19 ceremony is published separately in
+[phase2-ceremony-2](../phase2-ceremony-2/). Its verifying-key SHA-256 is
+`49696f52f361817869f68c3ba68d0d5a854737a4133ae4616255ac4a3846778c`.
+This directory retains the later legacy transcript previously published on main;
+its original announcement, signed attestations and parameter bytes are unchanged.
+The separately withdrawn 2026-09-22 branch record remains in immutable history,
+as explained in [SUPERSEDED.md](SUPERSEDED.md). These histories are not mixed
+into the new transcript. The earlier status and participation record follows.
+
+---
+
 # Phase-2 ceremony — open participation
 
 **Status: contributions are closed. The announced beacon was applied on 2026-10-10; the resulting six-step chain passed local audit and real private-transfer acceptance. Production acceptance remains pending, including review of the missing deadline-time close publication and outside final verification. See [FINALISATION.md](FINALISATION.md).**

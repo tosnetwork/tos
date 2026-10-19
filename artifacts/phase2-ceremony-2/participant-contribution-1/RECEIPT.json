@@ -1,0 +1,70 @@
+{
+  "observations": [
+    {
+      "source": "https://blockstream.info/api",
+      "started_utc": "2026-10-19T05:49:41.327760+00:00",
+      "tip_height": 972109,
+      "tip_hash": "000000000000000000019c7e3f0c55d065d2265b06c99ba8f69de352aa772b81",
+      "historical_blocks": [
+        {
+          "height": 972109,
+          "hash": "000000000000000000019c7e3f0c55d065d2265b06c99ba8f69de352aa772b81",
+          "header_timestamp": 1792388678,
+          "header_time_utc": "2026-10-19T05:44:38+00:00"
+        },
+        {
+          "height": 972110,
+          "unavailable": "HTTP Error 404: Not Found"
+        }
+      ],
+      "finished_utc": "2026-10-19T05:49:43.129243+00:00"
+    },
+    {
+      "source": "https://mempool.space/api",
+      "started_utc": "2026-10-19T05:49:43.129741+00:00",
+      "tip_height": 972109,
+      "tip_hash": "000000000000000000019c7e3f0c55d065d2265b06c99ba8f69de352aa772b81",
+      "historical_blocks": [
+        {
+          "height": 972109,
+          "hash": "000000000000000000019c7e3f0c55d065d2265b06c99ba8f69de352aa772b81",
+          "header_timestamp": 1792388678,
+          "header_time_utc": "2026-10-19T05:44:38+00:00"
+        },
+        {
+          "height": 972110,
+          "unavailable": "HTTP Error 404: Not Found"
+        }
+      ],
+      "finished_utc": "2026-10-19T05:49:43.250638+00:00"
+    }
+  ],
+  "publication_events": [
+    {
+      "commit": "68e1cf60da5f67f13cd3d3bbf0b1f5e92738c352",
+      "push_time_utc": "2026-10-19T05:43:09Z",
+      "reported_tip": 972109
+    },
+    {
+      "commit": "a66555a0fb201c6736175de943df72019fdd7a2c",
+      "push_time_utc": "2026-10-19T05:46:50Z",
+      "reported_tip": 972109
+    }
+  ],
+  "historical_tip_evidence": "Publication times and tip-at-push 972109 are test-lead observations supplied with authorization. Both sources queried retrospectively for the historical blocks and current tip. Block header timestamps do not independently prove the observed network tip at a past wall-clock time; no retrospective tip API or contemporaneous source captures are claimed.",
+  "availability_before_close": "The exact immutable commit and all five files were fetched and hashed before both independent source observations at tip 972109. Thus availability was independently observed before close 972111; exact historical push-time tips remain attributed to the test lead.",
+  "manifest_commit": "68e1cf60da5f67f13cd3d3bbf0b1f5e92738c352",
+  "files_commit": "a66555a0fb201c6736175de943df72019fdd7a2c",
+  "repository": "https://github.com/ffreeofmoney-bit/tos-phase2-ceremony-2",
+  "checked_utc": "2026-10-19T05:51:48.973335+00:00",
+  "opening_commit": "af64d98e629e3146f382da2aff9d74a9ec63d876",
+  "verification": {
+    "all_five_original_hashes": "PASS",
+    "exact_original_attestation_and_signature_bytes": "PASS",
+    "pinned_roster_signature": "PASS; ffreeofmoney-bit, independent",
+    "announced_source_commit": "66fb007e7d3d6b509c32ad1b3ce4af470d96a53c",
+    "opening_identity_and_exactly_one_participant_entry": "PASS",
+    "native_mathematical_transcript_audit": "PASS, exit 0; NOT FINISHED, no beacon",
+    "transcript_after": "8c649286fc04e8c9eb1ebaed5b3fb74de9ab1d852d429b1dee4c1d9b3df41726"
+  }
+}

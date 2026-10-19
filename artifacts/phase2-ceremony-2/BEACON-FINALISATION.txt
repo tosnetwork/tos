@@ -1,0 +1,12 @@
+rebuilding the starting key from the committed slice (a couple of minutes)
+auditing 1 contribution(s)
+the chain audits
+
+ceremony finalised after 2 step(s).
+  beacon         e563d07a6866d189b7504573f89dc7fc8bed5d0e3fb0abd7bbbd667caafa3e8b
+  transcript     03e67eb4b1cff48c9bc5952992a46d37ae0c32d6ba2f76910f785daca8704579
+
+Compare that beacon digest against what the source actually published. A
+ceremony is only worth its beacon if the beacon was named before it opened.
+
+Next: phase2-verify artifacts/phase2-ceremony-2/ceremony
