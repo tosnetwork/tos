@@ -599,6 +599,11 @@ fn source_compiles_to_frozen_prediction_market_code() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../../crypto/smartcont/prediction-market-code.fc");
     let compiled = compile_func_with_stdlib(&[source]).expect("compile PredictionMarket source");
+    eprintln!(
+        "tested PredictionMarket code hash: {}; VM global version: {}",
+        compiled.repr_hash().to_hex_string(),
+        current_network::global_version()
+    );
     assert_eq!(
         compiled.repr_hash(),
         PredictionMarketContractV1::code().expect("frozen code").repr_hash(),
@@ -1127,8 +1132,21 @@ fn cancellation_tombstone_is_nonce_bound_and_prunes_cleanup_once() {
         OPERATION_BUDGET,
         PredictionMarketContractV1::prune_order(6, &owner, 0, 41, false).expect("prune body"),
     )
+    .expect_exit_code(2419);
+    assert_eq!(f.data_hash(), after_cancel_data, "early pruning erased the nonce binding");
+    f.send(
+        &owner,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::raise_nonce_floor(7, 42).expect("invalidate nonce"),
+    )
     .expect_success();
-    assert_eq!(f.accounting()[1], 0, "pruning must remove the cancelled tombstone");
+    f.send(
+        &keeper,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::prune_order(8, &owner, 0, 41, false).expect("safe prune"),
+    )
+    .expect_success();
+    assert_eq!(f.accounting()[1], 0, "pruning must remove the invalidated tombstone");
     assert_eq!(
         f.accounting()[10],
         i128::from(f.init.account_cleanup_bounty),
@@ -3063,4 +3081,517 @@ fn registration_refuses_every_weak_trading_key() {
     }
     // The same registration with a real key goes through.
     f.register(&owner, &SigningKey::from_bytes(&[0x64; 32]), 3);
+}
+
+fn audit_h01_sign_exact(order: &PredictionOrderV1, key: &SigningKey) -> Cell {
+    let digest = PredictionMarketContractV1::order_digest(order).expect("order digest");
+    PredictionMarketContractV1::build_signed_order(
+        order,
+        key.verifying_key().to_bytes(),
+        key.sign(&digest).to_bytes(),
+    )
+    .expect("valid signed order")
+}
+
+#[test]
+fn audit_h01_cancelled_authorization_survives_permissionless_cleanup() {
+    let mut f = Fixture::new();
+    f.activate();
+    let victim = f.owner.address().clone();
+    let attacker = f.trader_b.address().clone();
+    let victim_key = SigningKey::from_bytes(&[0xa1; 32]);
+    let attacker_key = SigningKey::from_bytes(&[0xa2; 32]);
+    f.register(&victim, &victim_key, 3001);
+    f.register(&attacker, &attacker_key, 3002);
+
+    let original = f.order(
+        &victim,
+        41,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_000,
+        2,
+    );
+    let original_signed = audit_h01_sign_exact(&original, &victim_key);
+    let counterpart = f.signed_order(
+        &attacker,
+        &attacker_key,
+        42,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::No,
+        PredictionLiquidityRoleV1::Taker,
+        4_000,
+        2,
+    );
+    let cancel_value = OPERATION_BUDGET + f.init.order_entry_fee + f.init.order_cleanup_bounty;
+    f.send(
+        &victim,
+        cancel_value,
+        PredictionMarketContractV1::cancel_exact(3003, &original).expect("cancel"),
+    )
+    .expect_success();
+
+    // Positive specificity control: the valid signed payload is rejected at
+    // the cancellation/replay boundary, not due to deployment or wire errors.
+    f.send(
+        &attacker,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(
+            3004,
+            2,
+            original_signed.clone(),
+            counterpart.clone(),
+        )
+        .expect("match before cleanup"),
+    )
+    .expect_exit_code(2421);
+
+    // A different owner invokes cleanup. A safe implementation may reject
+    // deletion or compact the record without forgetting revocation.
+    let cleanup = f.send(
+        &attacker,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::prune_order(3005, &victim, 0, 41, false)
+            .expect("permissionless cleanup"),
+    );
+    eprintln!("H-01 cancelled cleanup aborted={}", cleanup.read_primary_description().aborted);
+    let before = f.data_hash();
+    let before_accounting = f.accounting();
+    let before_victim = f.account(&victim);
+    f.send(
+        &attacker,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(3006, 2, original_signed, counterpart)
+            .expect("same signed authorization after cleanup"),
+    )
+    .expect_exit_code(2421);
+    assert_eq!(f.data_hash(), before, "cancelled authorization committed a trade");
+    assert_eq!(f.accounting(), before_accounting, "cancelled replay changed liabilities");
+    assert_eq!(f.account(&victim), before_victim, "cancelled replay changed victim balances");
+
+    // Fresh authorization must remain usable; the intended fix is not a
+    // blanket trading halt. Distinct nonces avoid relying on removed records.
+    let fresh_yes = f.signed_order(
+        &victim,
+        &victim_key,
+        43,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_000,
+        2,
+    );
+    let fresh_no = f.signed_order(
+        &attacker,
+        &attacker_key,
+        44,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::No,
+        PredictionLiquidityRoleV1::Taker,
+        4_000,
+        2,
+    );
+    f.send(
+        &attacker,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(3007, 2, fresh_yes, fresh_no).expect("fresh match"),
+    )
+    .expect_success();
+}
+
+#[test]
+fn audit_h01_full_fill_limit_survives_permissionless_cleanup() {
+    let mut f = Fixture::new();
+    f.activate();
+    let victim = f.owner.address().clone();
+    let attacker = f.trader_b.address().clone();
+    let victim_key = SigningKey::from_bytes(&[0xb1; 32]);
+    let attacker_key = SigningKey::from_bytes(&[0xb2; 32]);
+    f.register(&victim, &victim_key, 3101);
+    f.register(&attacker, &attacker_key, 3102);
+    let original = f.signed_order(
+        &victim,
+        &victim_key,
+        51,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::Yes,
+        PredictionLiquidityRoleV1::Maker,
+        6_000,
+        2,
+    );
+    let counterparty = f.signed_order(
+        &attacker,
+        &attacker_key,
+        52,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::No,
+        PredictionLiquidityRoleV1::Taker,
+        4_000,
+        2,
+    );
+    f.send(
+        &attacker,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(3103, 2, original.clone(), counterparty.clone())
+            .expect("first full fill"),
+    )
+    .expect_success();
+    assert_eq!(f.account(&victim)[1], 2, "initial order must actually fill");
+    f.send(
+        &attacker,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(3104, 2, original.clone(), counterparty)
+            .expect("full fill retry before cleanup"),
+    )
+    .expect_exit_code(2424);
+
+    let cleanup = f.send(
+        &attacker,
+        OPERATION_BUDGET,
+        PredictionMarketContractV1::prune_order(3105, &victim, 0, 51, false)
+            .expect("permissionless full-fill cleanup"),
+    );
+    eprintln!("H-01 filled cleanup aborted={}", cleanup.read_primary_description().aborted);
+    let fresh_counterparty = f.signed_order(
+        &attacker,
+        &attacker_key,
+        53,
+        PredictionOrderActionV1::Buy,
+        PredictionOrderOutcomeV1::No,
+        PredictionLiquidityRoleV1::Taker,
+        4_000,
+        2,
+    );
+    let before = f.data_hash();
+    let before_accounting = f.accounting();
+    let before_victim = f.account(&victim);
+    f.send(
+        &attacker,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(3106, 2, original, fresh_counterparty)
+            .expect("same victim signature after cleanup"),
+    )
+    .expect_exit_code(2424);
+    assert_eq!(f.data_hash(), before, "full-fill replay committed state");
+    assert_eq!(f.accounting(), before_accounting, "full-fill replay changed liabilities");
+    assert_eq!(f.account(&victim), before_victim, "full-fill replay changed victim balances");
+    assert_eq!(f.account(&victim)[1], 2, "lifetime fills exceeded signed quantity");
+}
+
+// The same nonce-history checks precede creation, transfer and merging, on
+// either signed side. Give sellers inventory independently of these orders.
+fn audit_order_pair(f: &Fixture, class: usize, nonce: u64) -> [PredictionOrderV1; 2] {
+    use PredictionOrderActionV1::{Buy, Sell};
+    use PredictionOrderOutcomeV1::{No, Yes};
+    let (actions, outcomes, prices) = match class {
+        0 => ([Buy, Buy], [Yes, No], [6_000, 4_000]),
+        1 => ([Sell, Buy], [Yes, Yes], [6_000, 6_000]),
+        2 => ([Sell, Sell], [Yes, No], [6_000, 4_000]),
+        _ => panic!("unknown matching class"),
+    };
+    [
+        f.order(
+            f.owner.address(),
+            nonce,
+            actions[0],
+            outcomes[0],
+            PredictionLiquidityRoleV1::Maker,
+            prices[0],
+            2,
+        ),
+        f.order(
+            f.trader_b.address(),
+            nonce,
+            actions[1],
+            outcomes[1],
+            PredictionLiquidityRoleV1::Taker,
+            prices[1],
+            2,
+        ),
+    ]
+}
+
+fn audit_fixture() -> (Fixture, [MsgAddressInt; 2], [SigningKey; 2]) {
+    let mut f = Fixture::new();
+    f.activate();
+    let owners = [f.owner.address().clone(), f.trader_b.address().clone()];
+    let keys = [SigningKey::from_bytes(&[0xc1; 32]), SigningKey::from_bytes(&[0xc2; 32])];
+    for i in 0..2 {
+        f.register(&owners[i], &keys[i], 10 + i as u64);
+        f.send(
+            &owners[i],
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::split(20 + i as u64, 4).expect("seller inventory"),
+        )
+        .expect_success();
+    }
+    (f, owners, keys)
+}
+
+fn audit_match(
+    f: &mut Fixture,
+    orders: &[PredictionOrderV1; 2],
+    keys: &[SigningKey; 2],
+    quantity: u64,
+) -> SendResult {
+    let signed =
+        [audit_h01_sign_exact(&orders[0], &keys[0]), audit_h01_sign_exact(&orders[1], &keys[1])];
+    let keeper = f.reserve.address().clone();
+    f.send(
+        &keeper,
+        2 * TOS,
+        PredictionMarketContractV1::match_pair(30, quantity, signed[0].clone(), signed[1].clone())
+            .expect("match"),
+    )
+}
+
+fn audit_rejected(f: &mut Fixture, sender: &MsgAddressInt, body: Cell, code: i32) {
+    let before = f.data_hash();
+    let accounting = f.accounting();
+    f.send(sender, 2 * TOS, body).expect_exit_code(code);
+    assert_eq!(f.data_hash(), before, "rejection {code} changed persistent state");
+    assert_eq!(f.accounting(), accounting, "rejection {code} changed liabilities");
+}
+
+fn audit_nonce_history(class: usize, side: usize, history: usize) {
+    eprintln!("class={class} side={side} history={history}");
+    let (mut f, owners, keys) = audit_fixture();
+    let keeper = f.reserve.address().clone();
+    let mut orders = audit_order_pair(&f, class, 41);
+    let expected = if history == 1 { 2424 } else { 2421 };
+    if history != 0 {
+        audit_match(&mut f, &orders, &keys, if history == 1 { 2 } else { 1 }).expect_success();
+    }
+    if history != 1 {
+        let value = if history == 0 {
+            OPERATION_BUDGET + f.init.order_entry_fee + f.init.order_cleanup_bounty
+        } else {
+            OPERATION_BUDGET
+        };
+        f.send(
+            &owners[side],
+            value,
+            PredictionMarketContractV1::cancel_exact(31, &orders[side]).expect("cancel"),
+        )
+        .expect_success();
+    }
+    // Refresh only the opposite nonce so the target is the reason
+    // for rejection even when it is the right-hand signature.
+    orders[1 - side].nonce = 42;
+    let before = f.data_hash();
+    audit_match(&mut f, &orders, &keys, 1).expect_exit_code(expected);
+    assert_eq!(f.data_hash(), before);
+    for _ in 0..2 {
+        let cleanup = f.send(
+            &keeper,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::prune_order(32, &owners[side], 0, 41, true).expect("prune"),
+        );
+        // Check replay first: the vulnerable BOC actually accepts
+        // it, rather than failing merely on a cleanup expectation.
+        let after_cleanup = f.data_hash();
+        let accounting = f.accounting();
+        audit_match(&mut f, &orders, &keys, 1).expect_exit_code(expected);
+        assert_eq!(f.data_hash(), after_cleanup);
+        assert_eq!(f.accounting(), accounting);
+        cleanup.expect_exit_code(2419);
+        assert_eq!(after_cleanup, before, "cleanup erased nonce history");
+    }
+    // A distinct authorization in the same class still works.
+    let fresh = audit_order_pair(&f, class, 43);
+    audit_match(&mut f, &fresh, &keys, 1).expect_success();
+}
+
+macro_rules! audit_history_cases {
+    ($($name:ident: ($class:expr, $side:expr, $history:expr)),+ $(,)?) => {
+        $(#[test]
+        fn $name() {
+            audit_nonce_history($class, $side, $history);
+        })+
+    };
+}
+
+audit_history_cases! {
+    audit_h01_creation_left_cancelled: (0, 0, 0),
+    audit_h01_creation_left_filled: (0, 0, 1),
+    audit_h01_creation_left_partial_cancelled: (0, 0, 2),
+    audit_h01_creation_right_cancelled: (0, 1, 0),
+    audit_h01_creation_right_filled: (0, 1, 1),
+    audit_h01_creation_right_partial_cancelled: (0, 1, 2),
+    audit_h01_transfer_left_cancelled: (1, 0, 0),
+    audit_h01_transfer_left_filled: (1, 0, 1),
+    audit_h01_transfer_left_partial_cancelled: (1, 0, 2),
+    audit_h01_transfer_right_cancelled: (1, 1, 0),
+    audit_h01_transfer_right_filled: (1, 1, 1),
+    audit_h01_transfer_right_partial_cancelled: (1, 1, 2),
+    audit_h01_merge_left_cancelled: (2, 0, 0),
+    audit_h01_merge_left_filled: (2, 0, 1),
+    audit_h01_merge_left_partial_cancelled: (2, 0, 2),
+    audit_h01_merge_right_cancelled: (2, 1, 0),
+    audit_h01_merge_right_filled: (2, 1, 1),
+    audit_h01_merge_right_partial_cancelled: (2, 1, 2),
+}
+
+#[test]
+fn audit_h01_expiry_does_not_erase_nonce_binding_for_a_longer_lived_alias() {
+    for side in 0..2 {
+        let (mut f, owners, keys) = audit_fixture();
+        let keeper = f.reserve.address().clone();
+        let long = audit_order_pair(&f, 0, 41);
+        let mut short = long[side].clone();
+        short.valid_until = u64::from(f.bc.now()) + 10;
+        let value = OPERATION_BUDGET + f.init.order_entry_fee + f.init.order_cleanup_bounty;
+        f.send(
+            &owners[side],
+            value,
+            PredictionMarketContractV1::cancel_exact(40, &short).expect("cancel"),
+        )
+        .expect_success();
+        f.bc.set_now(short.valid_until as u32);
+        let mut expired = long.clone();
+        expired[side] = short;
+        let before = f.data_hash();
+        audit_match(&mut f, &expired, &keys, 1).expect_exit_code(2419);
+        assert_eq!(f.data_hash(), before);
+        audit_match(&mut f, &long, &keys, 1).expect_exit_code(2421);
+        assert_eq!(f.data_hash(), before, "the longer-lived alias was not bound before cleanup");
+        let cleanup = f.send(
+            &keeper,
+            OPERATION_BUDGET,
+            PredictionMarketContractV1::prune_order(41, &owners[side], 0, 41, true)
+                .expect("prune expired payload"),
+        );
+        let after_cleanup = f.data_hash();
+        audit_match(&mut f, &long, &keys, 1).expect_exit_code(2421);
+        assert_eq!(f.data_hash(), after_cleanup);
+        cleanup.expect_exit_code(2419);
+        assert_eq!(f.data_hash(), before);
+    }
+}
+
+#[test]
+fn audit_h01_independent_invalidation_allows_cleanup_and_pays_credit_once() {
+    for invalidation in 0..3 {
+        for reward in [false, true] {
+            let (mut f, owners, keys) = audit_fixture();
+            let keeper = f.reserve.address().clone();
+            let orders = audit_order_pair(&f, 0, 41);
+            let value = OPERATION_BUDGET + f.init.order_entry_fee + f.init.order_cleanup_bounty;
+            f.send(
+                &owners[0],
+                value,
+                PredictionMarketContractV1::cancel_exact(50, &orders[0]).expect("cancel"),
+            )
+            .expect_success();
+            // A keeper cannot name another account in a floor-raising message.
+            audit_rejected(
+                &mut f,
+                &keeper,
+                PredictionMarketContractV1::raise_nonce_floor(51, 42).expect("floor"),
+                2408,
+            );
+            match invalidation {
+                0 => {
+                    f.send(
+                        &owners[0],
+                        OPERATION_BUDGET,
+                        PredictionMarketContractV1::raise_nonce_floor(52, 41)
+                            .expect("floor boundary"),
+                    )
+                    .expect_success();
+                }
+                1 => {}
+                2 => f.bc.set_now((f.init.trade_close - 1) as u32),
+                _ => unreachable!(),
+            }
+            audit_rejected(
+                &mut f,
+                &keeper,
+                PredictionMarketContractV1::prune_order(53, &owners[0], 0, 41, reward)
+                    .expect("still authorized"),
+                2419,
+            );
+            match invalidation {
+                0 => {
+                    f.send(
+                        &owners[0],
+                        OPERATION_BUDGET,
+                        PredictionMarketContractV1::raise_nonce_floor(54, 42)
+                            .expect("invalidate nonce"),
+                    )
+                    .expect_success();
+                }
+                1 => {
+                    f.send(
+                        &owners[0],
+                        OPERATION_BUDGET,
+                        PredictionMarketContractV1::set_trading_key(
+                            54,
+                            keys[0].verifying_key().to_bytes(),
+                        )
+                        .expect("advance epoch"),
+                    )
+                    .expect_success();
+                }
+                2 => f.bc.set_now(f.init.trade_close as u32),
+                _ => unreachable!(),
+            }
+            let before = f.accounting();
+            let before_account = f.account(&owners[0]);
+            let result = f.send(
+                &keeper,
+                OPERATION_BUDGET,
+                PredictionMarketContractV1::prune_order(55, &owners[0], 0, 41, reward)
+                    .expect("safe prune"),
+            );
+            result.expect_success().expect_out_msgs(usize::from(reward));
+            let credit = i128::from(f.init.order_cleanup_bounty);
+            let after = f.accounting();
+            assert_eq!(after[1], before[1] - 1);
+            assert_eq!(after[10], before[10] - credit);
+            for i in [0, 2, 3, 4, 5, 6, 7, 8, 9] {
+                assert_eq!(after[i], before[i]);
+            }
+            let account = f.account(&owners[0]);
+            assert_eq!(&account[..3], &before_account[..3]);
+            assert_eq!(account[3], before_account[3] - 1);
+            assert_eq!(account[4], before_account[4]);
+            assert_eq!(account[5], before_account[5] - credit);
+            if reward {
+                result
+                    .first_transaction()
+                    .expect("cleanup transaction")
+                    .iterate_out_msgs(|message| {
+                        assert_eq!(message.dst(), Some(keeper.clone()));
+                        assert_eq!(
+                            message
+                                .int_header()
+                                .expect("internal reward")
+                                .value
+                                .coins
+                                .as_u64()
+                                .expect("reward fits"),
+                            f.init.order_cleanup_bounty
+                        );
+                        Ok(true)
+                    })
+                    .expect("read reward");
+            }
+            audit_rejected(
+                &mut f,
+                &keeper,
+                PredictionMarketContractV1::prune_order(56, &owners[0], 0, 41, reward)
+                    .expect("repeated prune"),
+                2419,
+            );
+            let before = f.data_hash();
+            audit_match(&mut f, &orders, &keys, 1).expect_exit_code(if invalidation == 2 {
+                2406
+            } else {
+                2418
+            });
+            assert_eq!(f.data_hash(), before, "erasing a record revived an invalidated order");
+        }
+    }
 }

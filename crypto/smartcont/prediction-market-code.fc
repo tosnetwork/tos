@@ -2170,9 +2170,11 @@ int outbound_priced_as_masterchain(slice target, int my_wc) inline {
     (int digest, int quantity, int filled, int valid_until, int cancelled,
       int cleanup_credit) = load_order_state(order_state);
     digest~impure_touch();
-    int permanently_dead = cancelled | (filled == quantity) |
-      (epoch < key_epoch) | ((epoch == key_epoch) & (nonce < nonce_floor)) |
-      (now() >= valid_until) | (now() >= trade_close);
+    ;; Absence means unused to the matcher. Keep the nonce-wide binding until
+    ;; state outside this record invalidates every authorization it covers;
+    ;; one payload's cancellation, fills or expiry cannot establish that.
+    int permanently_dead = (epoch < key_epoch) |
+      ((epoch == key_epoch) & (nonce < nonce_floor)) | (now() >= trade_close);
     throw_unless(err::bad_order, permanently_dead);
     throw_unless(err::liability,
       (cleanup_credit > 0) & (account_live_orders > 0) &
