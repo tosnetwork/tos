@@ -4,7 +4,7 @@
 **Bytes:** normative changes since that freeze move this document's bytes, and its bytes are the
 `profile_hash` of §13.1 -- which is in the config store, which is in the genesis state, which is half the
 deployment address. That coupling is deliberate: the document cannot drift away from the deployment
-quietly. What the bytes currently hash to is in `doc/shielded-pool/genesis-manifest.json`, which is
+quietly. What the bytes currently hash to is in `artifacts/shielded-pool/genesis-manifest.json`, which is
 generated. The date above is when the profile was frozen, not when it was last changed.  
 **Status:** **FROZEN FOR CODING**. This profile is the normative implementation target for Claude Code.  
 **Activation status:** **NOT APPROVED FOR MAINNET/TESTNET ACTIVATION** until **all acceptance gates in §19 pass**.
@@ -96,7 +96,8 @@ V1 reserves codepage-0 24-bit opcodes:
 ```text
 0xF93200  POSEIDON2_PERM8
 0xF93201  POSEIDON2_HASH7
-minimum global version: 17
+0xF93202  POSEIDON2_PATH7
+minimum global version: 16
 ```
 
 `POSEIDON2_PERM8`:
@@ -122,7 +123,28 @@ h = state[0]
 Both instructions reject any non-integer, negative integer, or value `>= r` before permutation.
 No silent modular reduction.
 
-The implementation MUST re-check at build time that `0xF93200/01` do not collide with another
+`POSEIDON2_PATH7` folds a canonical 7-ary sibling path as in §7.2:
+
+```text
+(leaf domain path index depth -- root)
+```
+
+Depth is 1..64 and `0 <= index < 7^depth`. Each level contains six canonical
+`Fr` siblings in two 768-bit cells, with the carry inserted at that level's
+base-seven index digit. The domain is restored before every `HASH7`; malformed
+path cells, trailing cells, non-canonical fields and out-of-range indices are
+refused. The instruction costs 500 base gas plus 3,000 per level; `PERM8` and
+`HASH7` each cost 2,800 gas. Both implementations use these tariffs.
+
+All three instruction gates are 16. Below V16 they reject; at V16 they execute.
+The binary advertises `SUPPORTED_VERSION=16`. The former V17 activation matrix
+is superseded: the shipped implementation and every network use unified V16,
+including ML-DSA and all three Poseidon2 instructions. This is the common
+implementation profile, not a testnet exception. This revision changes no
+circuit relation, public-input order, field constant or wire encoding; it does
+change the document hash and every deployment identity derived from it.
+
+The implementation MUST re-check at build time that `0xF93200/01/02` do not collide with another
 registered opcode. A collision is a hard failure; Claude Code MUST NOT silently choose another opcode.
 
 ### 1.4 Domain constants and H7
@@ -1459,13 +1481,13 @@ Exact key/value comparison is required; slot collision alone never authenticates
 
 #### profile_hash — exact document anchor
 
-Before building zerostate, copy this normative profile into the TOS repository as:
+The normative profile is stored in the repository at:
 
 ```text
-doc/shielded-pool-v1-profile.md
+artifacts/shielded-pool/PROFILE.md
 ```
 
-The copy MUST be byte-for-byte the reviewed profile except for line-ending normalization to **LF**.
+Deployment tooling MUST use the reviewed bytes except for line-ending normalization to **LF**.
 Encoding is UTF-8, no BOM, no trailing-space rewriting and no generated header/footer.
 
 ```text
@@ -1993,8 +2015,8 @@ Then:
 4. `ACCEPT`;
 5. immediately `set_gas_limit(BOUNCE_GAS_CEILING)`, then consume one recovery-leaf reservation (§5),
    refusing if none is left;
-6. compute `recovered_amount = msg_value`;
-7. if zero, save the consumed reservation and return without minting;
+6. read the live §15.4 recovery charge and compute `recovered_amount = msg_value - recovery_charge`;
+7. if `msg_value <= recovery_charge`, save the consumed reservation and return without minting;
 8. compute semantic recovery note body from **actual recovered amount**;
 9. checkpoint pre-mutation commitment root;
 10. append one final recovery note at fresh leaf index;
@@ -2045,16 +2067,16 @@ crypto/vm/poseidon2ops.{h,cpp}        new
 crypto/vm/cp0.cpp                     register ops
 crypto/vm/vm.h                        gas constants
 crypto/fift/lib/Asm.fif               mnemonics
-common/global-version.h               advertise SUPPORTED_VERSION=17
-doc/GlobalVersions.md                 V17 ISA record
+common/global-version.h               advertise SUPPORTED_VERSION=16
+doc/GlobalVersions.md                 unified V16 ISA record
 test/pq-readiness/test_release_profile.py
 
 tosctl/src/vm/src/executor/...         Rust VM parity
 tosctl/src/assembler/src/simple.rs     assembler parity
 ```
 
-Use global version 17; ML-DSA remains min-version 16. The executed V15/V16/V17 matrix from the opcode work order
-is part of WP-A, not an activation-time afterthought.
+Use global version 16 for ML-DSA and PERM8/HASH7/PATH7. The executed V15/V16
+refusal/admission matrix is part of WP-A, not an activation-time afterthought.
 
 ### WP-B — Pool contract
 
@@ -2107,7 +2129,7 @@ Claude Code may start WP-A..D immediately from this profile.
 Mainnet/testnet activation is blocked until all are true:
 
 1. **Poseidon2 pin parity:** C++/Rust/reference t=8 RF=8 RP=57 vectors match; mutate any constant -> tests fail.
-2. **Opcode collision/version:** 0xF93200/01 unique; binary advertises `SUPPORTED_VERSION=17`; executed matrix proves V15 rejects ML-DSA/Poseidon2, V16 accepts ML-DSA but rejects Poseidon2, V17 accepts both.
+2. **Opcode collision/version:** 0xF93200/01/02 unique; binary advertises `SUPPORTED_VERSION=16`; executed matrix proves V15 rejects ML-DSA and PERM8/HASH7/PATH7, while V16 accepts all four.
 3. **Circuit negative tests:** remove every relation one at a time; the targeted exploit vector becomes accepted
    before removal is reverted.
 4. **Deposit inflation:** deposit amount 1 can never create a note body for amount 100, even when the pool has a
@@ -2142,7 +2164,7 @@ Mainnet/testnet activation is blocked until all are true:
     every slot of both rings at every occupancy, every base-seven digit at every tree level, both nullifier orders.
     A sampled maximum does not close this gate; neither does a bound whose per-level composition is not itself held
     against real multi-digit appends. Moving a ceiling in either direction must be killed.
-21. **Groth16 exactness:** proof/VK canonical encodings, 18-element input ordering and IC[19] are cross-checked
+21. **Groth16 exactness:** proof/VK canonical encodings, 18-element input ordering and 19 IC points (indices 0..18) are cross-checked
     against the selected prover library; one-field/public-input mutations fail.
 22. **State manifest:** zerostate initial roots, four state refs, dual anchor dictionaries, fee/denomination config,
     profile hash, parameter hash and VK hash match a frozen generated manifest.

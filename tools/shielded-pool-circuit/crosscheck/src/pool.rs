@@ -23,6 +23,32 @@ pub const OP_DEPOSIT: u32 = 0x5348_5001;
 pub const OP_TRANSACT: u32 = 0x5348_5002;
 pub const OP_RESERVE_TOPUP: u32 = 0x5348_5003;
 
+pub(crate) fn checked_description(
+    result: &SendResult,
+) -> Result<chain_block::TransactionDescrOrdinary> {
+    let tx = result
+        .first_transaction()
+        .ok_or_else(|| CrossCheckError::Vm("no sandbox transaction".into()))?;
+    match tx
+        .read_description()
+        .map_err(|error| CrossCheckError::Vm(format!("transaction description: {error}")))?
+    {
+        chain_block::TransactionDescr::Ordinary(description) => Ok(description),
+        _ => Err(CrossCheckError::Vm("sandbox transaction is not ordinary".into())),
+    }
+}
+
+pub(crate) fn require_committed(result: &SendResult, label: &str) -> Result<()> {
+    let description = checked_description(result)?;
+    if description.aborted {
+        return Err(CrossCheckError::Vm(format!(
+            "{label} aborted: compute={:?}, action={:?}",
+            description.compute_ph, description.action
+        )));
+    }
+    Ok(())
+}
+
 /// Section 13.2.
 const MAGIC: u32 = 0x5350_5631;
 const VERSION: u16 = 1;
@@ -247,9 +273,7 @@ impl Pool {
         verifying_key: Option<&[u8]>,
         deploy_value: u64,
     ) -> Result<Self> {
-        let mut bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)?;
-        bc.set_workchain(0);
-        let payer = bc.treasury("relay", 1_000_000 * TOS)?;
+        let bc = Blockchain::with_global_version_and_base_workchain(ACTIVE_VERSION)?;
         let code = compile_func(&pool_sources())?;
         let state = match verifying_key {
             None => genesis_state(denominations)?,
@@ -265,6 +289,33 @@ impl Pool {
                     .state
             }
         };
+        Self::deploy_candidate(bc, code, state, 42, deploy_value)
+    }
+
+    /// Run the exact reviewed deployment on a local sandbox chain, with its
+    /// real network identity and fee snapshot. No network transport is used.
+    pub fn deploy_candidate(
+        mut bc: Blockchain,
+        code: Cell,
+        state: Cell,
+        global_id: i32,
+        deploy_value: u64,
+    ) -> Result<Self> {
+        bc.set_workchain(0);
+        match bc
+            .config_params()
+            .config(19)
+            .map_err(|error| CrossCheckError::Fixture(format!("network identity: {error}")))?
+        {
+            Some(chain_block::ConfigParamEnum::ConfigParam19(id))
+                if i32::from_be_bytes(id.to_be_bytes()) == global_id => {}
+            _ => {
+                return Err(CrossCheckError::Fixture(
+                    "sandbox configuration has a different network identity".into(),
+                ))
+            }
+        }
+        let payer = bc.treasury("relay", 1_000_000 * TOS)?;
         let si = StateInit::with_code_and_data(code, state);
         let addr_hash = si
             .write_to_new_cell()
@@ -273,14 +324,14 @@ impl Pool {
             .hash(0);
         let addr = MsgAddressInt::with_params(0, addr_hash)
             .map_err(|error| CrossCheckError::Sandbox(format!("address: {error}")))?;
-        bc.send_message(
+        let result = bc.send_message(
             MessageBuilder::internal(payer.address(), &addr, deploy_value)
                 .bounce(false)
                 .state_init(si)
                 .body(Cell::default())
                 .build(),
-        )?
-        .expect_success();
+        )?;
+        require_committed(&result, "candidate deployment")?;
         Ok(Self { bc, addr, payer })
     }
 
@@ -338,7 +389,7 @@ impl Pool {
             .out_msgs
             .len()
             .map_err(|error| CrossCheckError::Vm(format!("counting outbound messages: {error}")))?;
-        match result.read_primary_description().compute_ph {
+        match checked_description(&result)?.compute_ph {
             chain_block::TrComputePhase::Vm(vm) => Ok((
                 vm.exit_code,
                 vm.gas_used
@@ -356,7 +407,7 @@ impl Pool {
     /// The exit code and the gas it took to get there.
     pub fn run(&mut self, value: u64, body: Cell) -> Result<(i32, i64)> {
         let result = self.send(value, body)?;
-        match result.read_primary_description().compute_ph {
+        match checked_description(&result)?.compute_ph {
             chain_block::TrComputePhase::Vm(vm) => Ok((
                 vm.exit_code,
                 vm.gas_used
@@ -669,7 +720,7 @@ impl Pool {
                 .map_err(|error| CrossCheckError::Sandbox(format!("bounce body: {error}")))?,
         );
         let result = self.bc.send_message(message)?;
-        match result.read_primary_description().compute_ph {
+        match checked_description(&result)?.compute_ph {
             chain_block::TrComputePhase::Vm(vm) => Ok((
                 vm.exit_code,
                 vm.gas_used
@@ -744,7 +795,7 @@ impl Pool {
     /// it got.
     pub fn run_phases(&mut self, value: u64, body: Cell) -> Result<Phases> {
         let result = self.send(value, body)?;
-        let description = result.read_primary_description();
+        let description = checked_description(&result)?;
         let compute = match description.compute_ph {
             chain_block::TrComputePhase::Vm(vm) => vm.exit_code,
             chain_block::TrComputePhase::Skipped(s) => {

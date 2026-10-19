@@ -30,9 +30,12 @@
 
 use ark_ff::AdditiveGroup;
 
-use shielded_pool_circuit::circuit::{HeldNote, ShieldedTransactionCircuit, TransactionBuilder};
+use shielded_pool_circuit::circuit::{
+    HeldNote, ShieldedTransactionCircuit, TransactionBuilder, TransactionWitness,
+};
 use shielded_pool_circuit::field::Fr;
 use shielded_pool_circuit::groth16::{self, DevelopmentKeys};
+use shielded_pool_circuit::public_inputs::PublicInputs;
 use shielded_pool_circuit::tree::Frontier;
 use shielded_pool_circuit::{imt, notes, wire};
 
@@ -76,6 +79,12 @@ pub struct AcceptanceOutcome {
     pub gas: i64,
 }
 
+/// Credited inbound compute funding; principal is added separately.
+pub struct Funding {
+    pub deposit_compute: u64,
+    pub transact_compute: u64,
+}
+
 /// Runs the gate.
 ///
 /// `keys` is the pair a ceremony produced. `deploy_vk` is what the pool is
@@ -107,9 +116,52 @@ pub fn run(keys: &DevelopmentKeys, deploy_vk: &[u8]) -> Result<AcceptanceOutcome
         )));
     }
 
+    let pool = Pool::deploy_with(&[DENOMINATION], Some(deploy_vk))?;
+    let global_id = crate::wire::WireProbe::deploy()?.domain_inputs()?.0;
+    run_in_pool(
+        &encoded,
+        pool,
+        global_id,
+        Funding {
+            deposit_compute: COMPUTE_FEE,
+            transact_compute: COMPUTE_FEE
+                .checked_mul(4)
+                .ok_or_else(|| CrossCheckError::Fixture("funding overflow".into()))?,
+        },
+        |public, witness, _| {
+            let proof = groth16::prove(keys, ShieldedTransactionCircuit::new(public, witness), 1)
+                .map_err(|error| CrossCheckError::Fixture(format!("proving: {error}")))?;
+            if !groth16::verify(&keys.verifying, &public, &proof)
+                .map_err(|error| CrossCheckError::Fixture(format!("verifying: {error}")))?
+            {
+                return Err(CrossCheckError::Fixture(
+                "the proof does not verify out of circuit, so the key pair does not match itself"
+                    .into(),
+            ));
+            }
+            groth16::CanonicalProof::from_proof(&proof)
+                .map_err(|error| CrossCheckError::Fixture(format!("canonical proof: {error}")))
+        },
+    )
+}
+
+/// The same real-message acceptance path, using the exact candidate state,
+/// network identity, fee snapshot and public prover chosen by the caller.
+/// Note witnesses here are synthetic test inputs, never funded public notes.
+pub fn run_in_pool(
+    encoded: &groth16::CanonicalVerifyingKey,
+    mut pool: Pool,
+    global_id: i32,
+    funding: Funding,
+    mut prove: impl FnMut(PublicInputs, TransactionWitness, u32) -> Result<groth16::CanonicalProof>,
+) -> Result<AcceptanceOutcome> {
+    if encoded.ic_count != PUBLIC_INPUTS + 1 || encoded.bytes.len() != CANONICAL_VK_BYTES {
+        return Err(CrossCheckError::Fixture(
+            "candidate VK shape is not the frozen circuit".into(),
+        ));
+    }
     let mut frontier = Frontier::new();
     let nullifiers = imt::State::genesis();
-    let mut pool = Pool::deploy_with(&[DENOMINATION], Some(deploy_vk))?;
     let address = pool.addr.to_string();
 
     if pool.get("commitment_root")? != dec(frontier.empty_root()) {
@@ -118,7 +170,6 @@ pub fn run(keys: &DevelopmentKeys, deploy_vk: &[u8]) -> Result<AcceptanceOutcome
         ));
     }
 
-    let global_id = crate::wire::WireProbe::deploy()?.domain_inputs()?.0;
     let domain = wire::execution_domain(global_id, &pool.account()?);
 
     // --- one note to spend ------------------------------------------------
@@ -135,11 +186,13 @@ pub fn run(keys: &DevelopmentKeys, deploy_vk: &[u8]) -> Result<AcceptanceOutcome
         note_secret,
     );
 
-    pool.send(
-        DENOMINATION + COMPUTE_FEE,
+    let deposit = pool.send(
+        DENOMINATION
+            .checked_add(funding.deposit_compute)
+            .ok_or_else(|| CrossCheckError::Fixture("deposit funding overflow".into()))?,
         Pool::deposit_body(DENOMINATION, owner_commitment, byte_chain(&deposit_payload)?)?,
-    )?
-    .expect_success();
+    )?;
+    crate::pool::require_committed(&deposit, "candidate deposit")?;
 
     let note_body = notes::note_body_commitment(
         owner_commitment,
@@ -217,19 +270,7 @@ pub fn run(keys: &DevelopmentKeys, deploy_vk: &[u8]) -> Result<AcceptanceOutcome
     .build(&frontier, root, held)
     .map_err(|error| CrossCheckError::Fixture(format!("building the transaction: {error}")))?;
 
-    // --- the proof, under the key being judged ----------------------------
-    let proof = groth16::prove(keys, ShieldedTransactionCircuit::new(public, witness), 1)
-        .map_err(|error| CrossCheckError::Fixture(format!("proving: {error}")))?;
-    if !groth16::verify(&keys.verifying, &public, &proof)
-        .map_err(|error| CrossCheckError::Fixture(format!("verifying: {error}")))?
-    {
-        return Err(CrossCheckError::Fixture(
-            "the proof does not verify out of circuit, so the key pair does not match itself"
-                .into(),
-        ));
-    }
-    let canonical = groth16::CanonicalProof::from_proof(&proof)
-        .map_err(|error| CrossCheckError::Fixture(format!("canonical proof: {error}")))?;
+    let canonical = prove(public, witness, pool.bc.now())?;
 
     // --- and on chain -----------------------------------------------------
     let digest = public.transaction_intent_digest;
@@ -239,9 +280,11 @@ pub fn run(keys: &DevelopmentKeys, deploy_vk: &[u8]) -> Result<AcceptanceOutcome
         .witness_for(&public.nullifier_0)
         .map_err(|error| CrossCheckError::Fixture(format!("first witness: {error}")))?;
     tree.apply(after_first);
-    let (witness_1, _) = tree
+    let (witness_1, after_second) = tree
         .witness_for(&public.nullifier_1)
         .map_err(|error| CrossCheckError::Fixture(format!("second witness: {error}")))?;
+
+    tree.apply(after_second);
 
     let body = Transact {
         public: &public,
@@ -262,11 +305,41 @@ pub fn run(keys: &DevelopmentKeys, deploy_vk: &[u8]) -> Result<AcceptanceOutcome
     .body()
     .map_err(|error| CrossCheckError::Fixture(format!("a transact body: {error}")))?;
 
-    let (exit, gas) = pool.run(COMPUTE_FEE * 4, body)?;
+    let transaction = pool.send(funding.transact_compute, body)?;
+    let description = crate::pool::checked_description(&transaction)?;
+    let (exit, gas) = match &description.compute_ph {
+        chain_block::TrComputePhase::Vm(vm) => (
+            vm.exit_code,
+            vm.gas_used
+                .to_string()
+                .parse::<i64>()
+                .map_err(|_| CrossCheckError::Vm("gas usage does not fit int64".into()))?,
+        ),
+        chain_block::TrComputePhase::Skipped(_) => {
+            return Err(CrossCheckError::Vm("candidate transact compute skipped".into()))
+        }
+    };
+    if exit == 0 {
+        crate::pool::require_committed(&transaction, "candidate transact")?;
+        for body in [public.note_body_0, public.note_body_1, public.note_body_2] {
+            let leaf = notes::note_commitment(body, Fr::from(frontier.next_index()));
+            frontier.append(leaf).map_err(|error| {
+                CrossCheckError::Fixture(format!("expected output tree: {error}"))
+            })?;
+        }
+        if pool.get("commitment_root")? != dec(frontier.recomputed_root())
+            || pool.get("nullifier_root")? != dec(tree.root())
+            || pool.get("native_liability")? != DENOMINATION.to_string()
+        {
+            return Err(CrossCheckError::Vm(
+                "candidate transfer returned success without the expected committed state".into(),
+            ));
+        }
+    }
 
     Ok(AcceptanceOutcome {
         vk_bytes: encoded.bytes.len(),
-        vk_sha256: encoded.sha256,
+        vk_sha256: encoded.sha256.clone(),
         ic_count: encoded.ic_count,
         address,
         exit,
