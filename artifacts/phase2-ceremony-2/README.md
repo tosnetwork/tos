@@ -1,14 +1,15 @@
-# Phase-2 ceremony 2 — announced; public opening
+# Phase-2 ceremony 2 — beacon-finalized transcript for independent audit
 
-**Status: announced on 2026-10-19; the public deterministic opening is published
-separately after the announcement. One independent contribution has been verified and accepted; no beacon has
-been applied, and no final parameters exist or may be deployed.**
+**Status: contributions closed at height 972111. One independent contribution
+has been verified and the announced beacon at 972112 has been applied after
+one block on top. These are audit inputs; the independent signed PASS and
+step F are still pending. No final parameter release is approved or deployed.**
 
 Read the immutable [announcement](https://github.com/tosnetwork/tos/blob/0fd773063b91833f287d435e82a60d4d2235f988/artifacts/phase2-ceremony-2/ANNOUNCEMENT.md)
 and [publication observations](PUBLICATION.json). Contributions close at Bitcoin
 height **972111**; beacon height is **972112**. The pinned source commit is
 `66fb007e7d3d6b509c32ad1b3ce4af470d96a53c`. The [roster](roster.json) and
-[opening directory](ceremony/) are public inputs for the independent participant.
+[beacon-finalized audit directory](ceremony/) are public inputs for the independent participant.
 The participant publishes their handoff in their own public repository, as
 required by [INDEPENDENT-PARTICIPANT.md](INDEPENDENT-PARTICIPANT.md).
 
@@ -30,7 +31,7 @@ the ones before it are already public.
 | 5 | publish the announcement, archive it, record where and when | operator | announcement commit 0fd773063; push completed 05:21:59 UTC |
 | 6 | run `phase2-begin`, publish the starting digests | operator | public opening follows the announcement in a separate commit |
 | 7 | contributions, in any order, each signed | participant | contribution 1 accepted; see participant-contribution-1/RECEIPT.json |
-| 8 | close contributions at the close height; apply the later beacon; independent signed PASS before final publication | project and independent verifier | not started |
+| 8 | close contributions at the close height; apply the later beacon; independent signed PASS before final publication | project and independent verifier | beacon applied at depth 1; independent signed PASS pending |
 
 ## If you are going to contribute
 
@@ -74,9 +75,9 @@ Each of those is a test that has been watched to fail.
 
 This section keeps project commands beside the existing opening checklist;
 there is no second runbook. The commands below are instructions for the test
-lead. Steps A/B/C/D have now been executed; see `PUBLICATION.json`,
-`participant-contribution-1/RECEIPT.json` and their separate commits.
-Steps E/F have not been executed.
+lead. Steps A/B/C/D/E have now been executed; see `PUBLICATION.json`,
+`participant-contribution-1/RECEIPT.json`, `BEACON-OBSERVATIONS.json` and their
+separate commits. Step F has not been executed.
 Do not rerun opening or alter the announced heights. No contribution secret
 was generated on the coordinator. Today's target is
 07:00 UTC / 16:00 JST. Bitcoin timing cannot guarantee it. If the beacon is
@@ -389,3 +390,36 @@ independent source observations are distinguished in
 `af64d98e629e3146f382da2aff9d74a9ec63d876`, not the subsequently extended active
 `ceremony/` directory. The participant snapshot's SHA256SUMS describes the
 pre-beacon contribution and remains unchanged after beacon application.
+
+## Beacon application and confirmation readings
+
+The beacon remains Bitcoin block **972112**, exactly as announced. The owner
+required a later reading time: **confirmation depth 1**, meaning one block on top
+and tip at least **972113 on both sources**. This changes neither the beacon
+height nor the close height. It is two confirmations if the beacon block itself
+is included in the count.
+
+Beacon hash: `00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345`.
+First seen from mempool.space at **2026-10-19 06:34:39 UTC**; the subsequent
+two-source readings and every observed hash remained identical.
+
+| Source | UTC reading interval immediately before finalisation | Tip | Blocks on top | Beacon hash |
+| --- | --- | --- | --- | --- |
+| https://blockstream.info/api | 2026-10-19T06:46:59.393654+00:00 to 2026-10-19T06:47:00.825954+00:00 | 972113 | 1 | `00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345` |
+| https://mempool.space/api | 2026-10-19T06:47:00.826102+00:00 to 2026-10-19T06:47:00.911503+00:00 | 972113 | 1 | `00000000000000000000bf99b64907555658528c8adf804c0adb61495df53345` |
+
+Both sources also reported block 972113 with the beacon hash as its previous
+block, establishing the required block on top. The post-finalisation readings
+again agreed with the first-seen hash. No reorganisation was observed.
+See [BEACON-OBSERVATIONS.json](BEACON-OBSERVATIONS.json) for all reading times,
+confirmation depths, native execution times and artifact hashes, and
+[BEACON-FINALISATION.txt](BEACON-FINALISATION.txt) for the native audit output.
+
+The participant must now independently verify the complete `ceremony/` directory
+(including `beacon.bin`), the original pinned roster and contribution attestation,
+using the announced source commit and their own Bitcoin observations. Follow
+[guide sections 12–13](PARTICIPANT-GUIDE.md#12-independently-verify-after-the-beacon)
+and publish the signed result in their own repository. The original participant
+files remain unchanged in `participant-contribution-1/`. The project has not run
+step F or exported/published an approved final verifying key. Its own verification
+cannot substitute for that independent signed PASS.
