@@ -142,3 +142,53 @@ fn a_different_verifying_key_is_a_different_deployment_address() {
     );
     eprintln!("{}\n{}", first.address, second.address);
 }
+
+#[test]
+fn the_gate_refuses_compute_success_without_committed_nullifiers() {
+    use shielded_pool_circuit_crosscheck::pool::{pool_sources, Pool, DENOMINATION};
+    use tos_sandbox::{compile_func, Blockchain};
+    let keys = development();
+    let encoded = groth16::canonical_verifying_key(&keys.verifying).expect("VK");
+    let mut sources = pool_sources();
+    let source = sources.pop().expect("pool source");
+    let text = std::fs::read_to_string(source).expect("contract");
+    let needle = "                       temp_nullifier_root, temp_nullifier_next,";
+    assert_eq!(text.matches(needle).count(), 1, "mutant anchor changed");
+    let temp = tempfile::tempdir().expect("private fixture directory");
+    let path = temp.path().join("omitted-nullifiers.fc");
+    std::fs::write(
+        &path,
+        text.replace(needle, "                       nullifier_root, nullifier_next_index,"),
+    )
+    .expect("mutant contract");
+    sources.push(path);
+    let code = compile_func(&sources).expect("compile running mutant");
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let mut parameters =
+        shielded_pool_genesis::parameters_with_verifying_key(&root, encoded.bytes.clone())
+            .expect("fixture parameters");
+    parameters.denominations = vec![u128::from(DENOMINATION)];
+    let state = shielded_pool_genesis::build(parameters).expect("state").state;
+    let bc = Blockchain::with_global_version_and_base_workchain(16).expect("chain");
+    let pool = Pool::deploy_candidate(bc, code, state, 42, 100_000_000_000).expect("deploy mutant");
+    let result = acceptance::run_in_pool(
+        &encoded,
+        pool,
+        42,
+        acceptance::Funding { deposit_compute: 3_000_000_000, transact_compute: 12_000_000_000 },
+        |public, witness, _| {
+            let proof = groth16::prove(&keys, ShieldedTransactionCircuit::new(public, witness), 1)
+                .map_err(|error| {
+                    shielded_pool_circuit_crosscheck::CrossCheckError::Fixture(error.to_string())
+                })?;
+            groth16::CanonicalProof::from_proof(&proof).map_err(|error| {
+                shielded_pool_circuit_crosscheck::CrossCheckError::Fixture(error.to_string())
+            })
+        },
+    );
+    let error = result.expect_err("a successful compute phase did not consume the inputs");
+    assert!(
+        error.to_string().contains("without the expected committed state"),
+        "wrong refusal: {error}"
+    );
+}

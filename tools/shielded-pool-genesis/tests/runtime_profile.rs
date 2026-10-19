@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 //! A frozen deployment profile must describe the activation gates its VMs ship.
 
 use std::path::{Path, PathBuf};
