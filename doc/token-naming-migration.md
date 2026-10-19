@@ -103,3 +103,34 @@ it implements the new getter. Do not run live deployment scripts as unit tests.
 A pending, skipped, unavailable, or failed check is not a passing result. The PR
 must remain unmerged until all relevant acceptance boundaries and protected
 branch checks have adequate evidence.
+
+## Repair validation (2026-10-20)
+
+The repaired SDK master uses mint opcode 21 and change-admin opcode 3, matching
+its compiled FunC source. Its previous write helpers used unrelated operation
+tags. `test/fixtures/token-sdk.json` contains public messages produced by the
+SDK and initial storage; it contains no signing material. Reproduce it after
+building the SDK with `node sdk/js/scripts/token-sandbox-fixture.mjs`.
+
+`TokenNaming.test.ts` requires SDK message bytes to match that fixture.
+`token_sdk_sandbox.rs` then deploys the actual SDK-embedded code, calls the new
+getter, rejects the old getter with exit 11, mints 17 tokens into the embedded
+wallet, changes the administrator, and refuses the former administrator with
+exit 73. Restoring the previous SDK BOC makes this test fail at the new getter;
+restoring the previous SDK mint opcode makes the shared-message assertion fail.
+Both restored candidate checks pass. No compiler substitute is used by this
+SDK execution test.
+
+Local macOS validation also covers all 75 bridge sandbox cases, all 25 escrow
+sandbox cases, 46 Hardhat cases including the shared source-event vectors, the
+20 migration controls, and the Quantum bundle reproduction/tamper controls.
+The updated bundle pin changes only the renamed `block.tlb` file identity;
+Quantum code and configuration identities reproduce unchanged. The stale RPC
+master fixture and SDK test minter environment value are explicitly invalidated
+until an operator redeploys them; no live deployment is claimed.
+
+The native Token workflow now reproduces frozen artifacts and SDK messages
+read-only, then runs offline SDK tests and freshly built native emulator/index
+tests. Linux CI must finish on the final PR head. Local static analysis refused
+to run because `/usr/lib/llvm-21/bin/clang` is unavailable (exit 2); this is not a
+passing differential analysis result.

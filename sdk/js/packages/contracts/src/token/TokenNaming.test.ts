@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { Address, beginCell, Cell, hexToBytes } from "@tos/core";
 import type { ContractProvider } from "@tos/client";
 import { TokenMaster, TokenWallet, TOKEN_MASTER_CODE_HEX, TOKEN_WALLET_CODE_HEX } from "../index";
@@ -26,6 +27,23 @@ function provider() {
 }
 
 describe("Token public API", () => {
+  it("produces the messages executed by the native SDK sandbox", async () => {
+    const fixture = JSON.parse(readFileSync(new URL(
+      "../../../../../../test/fixtures/token-sdk.json", import.meta.url,
+    ), "utf8"));
+    const bodies: string[] = [];
+    const contract = { internal: async (_via: unknown, args: { body: Cell }) => {
+      bodies.push(args.body.toHex());
+    } } as unknown as ContractProvider;
+    const master = TokenMaster.create(Address.parse(fixture.admin));
+    const signer = {} as Parameters<TokenMaster["sendMint"]>[1];
+    await master.sendMint(contract, signer, {
+      to: Address.parse(fixture.owner), amount: 17n, value: 200000000n, queryId: 7n,
+    });
+    await master.sendChangeAdmin(contract, signer, Address.parse(fixture.newAdmin), { queryId: 8n });
+    expect(bodies).toEqual([fixture.mint, fixture.changeAdmin]);
+  });
+
   it("exports deployable master and wallet BOCs under their new names", () => {
     for (const hex of [TOKEN_MASTER_CODE_HEX, TOKEN_WALLET_CODE_HEX]) {
       const cells = Cell.fromBoc(hexToBytes(hex));

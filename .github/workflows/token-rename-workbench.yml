@@ -13,6 +13,8 @@ on:
       - validator/token-manager.*
       - validator-engine/json-rpc-server-token.cpp
       - test/test-wallet-index.cpp
+      - test/fixtures/token-sdk.json
+      - tosctl/src/node-control/contracts/tests/token_sdk_sandbox.rs
   workflow_dispatch:
 
 permissions:
@@ -80,6 +82,10 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
           pnpm typecheck
+      - name: Reproduce SDK messages used by the native sandbox
+        run: |
+          node sdk/js/scripts/token-sandbox-fixture.mjs
+          git diff --exit-code -- test/fixtures/token-sdk.json
       - name: Execute offline SDK unit tests
         working-directory: sdk/js
         run: |

@@ -27,6 +27,7 @@ SELF_FILES = {
     "scripts/test-token-naming.py",
     "scripts/check-token-naming.py",
     "scripts/token-rename-workbench.py",
+    "tosctl/src/node-control/contracts/tests/token_sdk_sandbox.rs",
     "doc/token-naming-migration.md",
     "doc/token-naming-manifest.json",
     "scripts/x02_four_node_inputs.json",

@@ -6,8 +6,8 @@ import type { FungibleTokenData, TokenContent } from './types';
  * Opcodes used by the Token Minter (TOS Token V1 master contract).
  */
 const Opcodes = {
-    mint: 0x642b7d07,
-    changeAdmin: 0x6501f354,
+    mint: 0x00000015,
+    changeAdmin: 0x00000003,
     internalTransfer: 0x178d4519,
 } as const;
 
