@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
     let controller = SigningKey::from_bytes(&[0x42; 32]);
     let controller_pubkey = controller.verifying_key().to_bytes();
 
-    let owner = MsgAddressInt::with_standart(None, -1, [0x11; 32].into())?;
+    let owner = MsgAddressInt::with_standart(None, 0, [0x11; 32].into())?;
 
     // --- Agent Account: deploy state ---
     let agent_init = AgentAccountInit {
@@ -37,7 +37,7 @@ fn main() -> anyhow::Result<()> {
         metadata_hash: None,
         service_endpoint_hash: None,
     };
-    let agent_address = AgentAccountContract::calculate_address(-1, &agent_init)?;
+    let agent_address = AgentAccountContract::calculate_address(0, &agent_init)?;
     println!("agent account address: {agent_address}");
     print_cell(
         "agent account state init",
@@ -45,7 +45,7 @@ fn main() -> anyhow::Result<()> {
     )?;
 
     // --- Agent Account: a controller-signed task-send message ---
-    let task_escrow_placeholder = MsgAddressInt::with_standart(None, -1, [0x22; 32].into())?;
+    let task_escrow_placeholder = MsgAddressInt::with_standart(None, 0, [0x22; 32].into())?;
     let payload = AgentAccountContract::build_task_send_payload(
         /* network_global_id */ 1,
         /* controller_epoch */ 0,
@@ -77,7 +77,7 @@ fn main() -> anyhow::Result<()> {
         attestor_pubkey: Some(attestor_pubkey),
         dispute_fallback_agent_bps: TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS,
     };
-    let task_address = TaskEscrowContract::calculate_address(-1, &task_init)?;
+    let task_address = TaskEscrowContract::calculate_address(0, &task_init)?;
     println!("task escrow address: {task_address}");
     print_cell(
         "task escrow state init",

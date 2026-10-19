@@ -207,7 +207,7 @@ tosctl config node rm --name node0
 
 #### `config wallet`
 
-Manage wallets in the configuration file. Wallets are used for validator election submissions and TOS transfers.
+Manage wallets in the configuration file. Wallets are used for validator election submissions and TOS transfers. Operator configuration keeps the masterchain default. Generic user wallet creation and user-contract deployment default to basechain `0`; see the [workchain inventory](../../README.md#deployment-workchains).
 
 ##### `config wallet add`
 

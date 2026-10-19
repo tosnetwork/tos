@@ -534,6 +534,36 @@ tosctl config elections enable node0
 tosctl service -c tosctl-config.json
 ```
 
+### Deployment workchains
+
+User-contract deployment defaults to basechain workchain `0`. The following
+interfaces share that default:
+
+| Interface | Workchain selection |
+|---|---|
+| `wallet create`, `wallet import`, mnemonic generate/import, test fixtures | `0` |
+| `agent wallet create` | `0` |
+| `agent account build-state`, `deploy`, `status` | `0`; status keeps an already persisted account address |
+| `agent task build-state`, ordinary-wallet `agent task create` | `0` |
+| Agent Account-funded `agent task create` | The funding account's workchain; an explicit mismatch is refused |
+| Service Actor and Capability Registry deploy/build-state | `0` |
+| Dispute and Proof Attestation deploy | `0` |
+| PredictionMarket | Explicit `workchain_id` in its definition; use `0` for user deployments |
+
+An explicit `--workchain -1` remains supported. Existing addresses, signed
+messages, stored wallet configurations and frozen compatibility vectors are
+not migrated. Agent Account deployment messages must stay in their source
+account's workchain. Prediction relays likewise bind the source account,
+market and network workchain together; select `0` consistently for new ones.
+The other user contracts do not require a masterchain deployment.
+
+Validator-staking paths keep workchain `-1`: operator setup, `config wallet
+add`, omitted-workchain legacy wallet configurations, the master wallet,
+pools, controllers and Elector/config voting. When creating a validator wallet
+through the generic `wallet create` or import/mnemonic commands, pass
+`--workchain -1` explicitly. The operator setup guide's configuration-wallet
+default remains unchanged.
+
 ### Managing wallets
 
 ```bash

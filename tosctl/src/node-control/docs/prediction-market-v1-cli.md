@@ -18,16 +18,16 @@ use their owner-pinned custody journal and multi-RPC resolver instead.
 
 All quantities are integers and all monetary values are nanoTOS. Hash input is
 64 lowercase hexadecimal characters; `rules_hash` and `metadata_hash` may use
-the `sha256:` prefix. Unknown JSON fields are rejected.
+the `sha256:` prefix. Unknown JSON fields are rejected. The workchain is explicit in this definition; use `0` for a new user market and the same workchain for its funding Agent Account.
 
 ```json
 {
   "global_id": 42,
-  "workchain_id": -1,
+  "workchain_id": 0,
   "deployment_salt": "1111111111111111111111111111111111111111111111111111111111111111",
   "rules_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
   "metadata_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-  "reserve_recipient": "-1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "reserve_recipient": "0:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "trade_close": 1800000000,
   "resolve_not_before": 1800000100,
   "oracle_vote_deadline": 1800000300,
@@ -56,11 +56,11 @@ the `sha256:` prefix. Unknown JSON fields are rejected.
   "challenge_processing_fee": 10000000,
   "normal_oracle_policy": {
     "threshold": 1,
-    "reporters": ["-1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+    "reporters": ["0:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
   },
   "appellate_oracle_policy": {
     "threshold": 1,
-    "reporters": ["-1:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"]
+    "reporters": ["0:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"]
   }
 }
 ```

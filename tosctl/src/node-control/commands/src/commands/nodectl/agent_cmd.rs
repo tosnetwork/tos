@@ -393,7 +393,7 @@ pub struct AgentTaskCreateCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        help = "Deployment workchain; defaults to the Agent Account workchain, or -1 with --from"
+        help = "Deployment workchain; defaults to the Agent Account workchain, or 0 with --from"
     )]
     workchain: Option<i32>,
     #[arg(long)]
@@ -568,7 +568,7 @@ pub struct AgentTaskBuildStateCmd {
         help = "Optional 32-byte ed25519 public key; when set, settle also requires a signature over result_hash"
     )]
     attestor_pubkey: Option<String>,
-    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,
@@ -672,7 +672,7 @@ pub struct AgentAccountBuildStateCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        default_value = "-1",
+        default_value_t = super::utils::USER_CONTRACT_WORKCHAIN,
         help = "Agent Account workchain"
     )]
     workchain: i32,
@@ -694,7 +694,7 @@ pub struct AgentAccountDeployCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        default_value = "-1",
+        default_value_t = super::utils::USER_CONTRACT_WORKCHAIN,
         help = "Agent Account workchain"
     )]
     workchain: i32,
@@ -738,7 +738,7 @@ pub struct AgentAccountStatusCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        default_value = "-1",
+        default_value_t = super::utils::USER_CONTRACT_WORKCHAIN,
         help = "Agent Account workchain"
     )]
     workchain: i32,
@@ -1210,7 +1210,7 @@ pub struct AgentWalletCreateCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        default_value = "-1",
+        default_value_t = super::utils::USER_CONTRACT_WORKCHAIN,
         help = "Workchain ID"
     )]
     workchain: i32,
@@ -2416,8 +2416,9 @@ fn task_deployment_workchain(
     requested: Option<i32>,
     agent_account: Option<&MsgAddressInt>,
 ) -> anyhow::Result<i32> {
-    let workchain =
-        requested.or_else(|| agent_account.map(MsgAddressInt::workchain_id)).unwrap_or(-1);
+    let workchain = requested
+        .or_else(|| agent_account.map(MsgAddressInt::workchain_id))
+        .unwrap_or(super::utils::USER_CONTRACT_WORKCHAIN);
     if agent_account.is_some_and(|account| account.workchain_id() != workchain) {
         anyhow::bail!("Task deployment workchain must match the funding Agent Account workchain");
     }
@@ -12400,7 +12401,12 @@ mod tests {
     fn task_deploy_defaults_to_the_funding_account_workchain_and_rejects_mismatch() {
         let account = address(1);
         assert_eq!(task_deployment_workchain(None, Some(&account)).unwrap(), 0);
-        assert_eq!(task_deployment_workchain(None, None).unwrap(), -1);
+        assert_eq!(task_deployment_workchain(None, None).unwrap(), 0);
+        assert_eq!(task_deployment_workchain(Some(-1), None).unwrap(), -1);
+        let masterchain = masterchain_address(2);
+        assert_eq!(task_deployment_workchain(None, Some(&masterchain)).unwrap(), -1);
+        assert_eq!(task_deployment_workchain(Some(-1), Some(&masterchain)).unwrap(), -1);
+        assert!(task_deployment_workchain(Some(0), Some(&masterchain)).is_err());
         assert_eq!(task_deployment_workchain(Some(0), Some(&account)).unwrap(), 0);
         assert!(task_deployment_workchain(Some(-1), Some(&account)).is_err());
     }

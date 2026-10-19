@@ -129,7 +129,7 @@ pub struct WalletCreateCmd {
         short = 'w',
         long = "workchain",
         allow_negative_numbers = true,
-        default_value = "-1",
+        default_value_t = super::utils::USER_CONTRACT_WORKCHAIN,
         help = "Workchain ID"
     )]
     workchain: i32,
@@ -172,7 +172,7 @@ pub struct WalletImportCmd {
     private_key: super::key_cmd::PrivateKeyInput,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -185,7 +185,7 @@ pub struct WalletMnemonicGenerateCmd {
     words: usize,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -214,7 +214,7 @@ pub struct WalletMnemonicImportCmd {
     mnemonic_fd: Option<i32>,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "42")]
     subwallet_id: u32,
@@ -265,7 +265,7 @@ pub struct WalletTestFixtureCmd {
     words: usize,
     #[arg(short = 'v', long = "version", default_value = "V3R2")]
     version: String,
-    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "0")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
     #[arg(short = 'i', long = "subwallet-id", default_value = "0")]
     subwallet_id: u32,
