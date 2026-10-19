@@ -87,7 +87,7 @@ jobs:
             tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport test-json-rpc-explorer \
             test-n5-manager-db-fixture test-consensus test-get-method-context test-control-getter test-control-getter-budget test-control-getter-query test-control-getter-transport \
             test-notarize-after-transient-resolve test-state-resolver-teardown test-late-candidate-window \
-            test-skip-after-finality-backlog \
+            test-skip-after-finality-backlog test-counted-finalizations test-unfinalized-count-resolver \
             test-custom-overlay-relay-dedup test-pq-consensus-key-rotation test-fsync-dir-failure-shim \
             test-wallet-index test-wallet-index-apply test-candidate-data-cache test-shard-block-confirmations \
             test-adnl-ext-input-budget test-adnl-ext-output-backpressure test-adnl-ext-refusal-close \
@@ -253,12 +253,16 @@ jobs:
 
       # A skip timeout that expires while finality is behind must still be honoured once
       # the backlog clears: in the production actors, by vote identity at every journal
-      # stage, and across four nodes held over the limit past their deadline.
+      # stage, and across four nodes held over the limit past their deadline. The state
+      # resolver's running count of unfinalized entries is checked against a full walk on
+      # every deterministic transition, a durable-marker overwrite, and its backlog events.
       - name: Check Simplex skip timeouts across a finalization backlog
         run: |
           set -e
           ctest --test-dir build --output-on-failure --no-tests=error -R '^a142-backlog-'
           ctest --test-dir build --output-on-failure --no-tests=error -R '^test-consensus-simplex2-pq-finality-backlog-stall$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^a142-counted-finalizations$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^a142-unfinalized-count-'
 
       # A candidate that arrives after its slot is finalized is still stored while the
       # candidate resolver retains the slot, and nothing outside that window is; a resolve

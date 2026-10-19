@@ -32,6 +32,8 @@ REQUIRED_NATIVE_TARGETS = {
     "test-consensus",
     "test-notarize-after-transient-resolve",
     "test-skip-after-finality-backlog",
+    "test-counted-finalizations",
+    "test-unfinalized-count-resolver",
     "test-state-resolver-teardown",
     "test-custom-overlay-relay-dedup",
     "test-pq-consensus-key-rotation",
@@ -458,6 +460,8 @@ def main() -> int:
         "ctest --test-dir build --output-on-failure --no-tests=error -R '^a142-backlog-'",
         "ctest --test-dir build --output-on-failure --no-tests=error "
         "-R '^test-consensus-simplex2-pq-finality-backlog-stall$'",
+        "ctest --test-dir build --output-on-failure --no-tests=error -R '^a142-counted-finalizations$'",
+        "ctest --test-dir build --output-on-failure --no-tests=error -R '^a142-unfinalized-count-'",
     ):
         require(
             re.search(rf"(?m)^\s*{re.escape(command)}\s*$", text) is not None,

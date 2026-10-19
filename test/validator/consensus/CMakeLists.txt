@@ -151,8 +151,49 @@ foreach(mode stall-recovers short-hold final-redrive superseded-deferral notar-r
              shutdown-pending many-windows-behind race-refused-then-clear race-clear-before-refusal race-final-after-clear
              race-new-window race-notar-rearm bootstrap-suppressed shutdown-suppressed)
     add_test(NAME a142-backlog-${mode} COMMAND test-skip-after-finality-backlog ${mode})
-    set_tests_properties(a142-backlog-${mode} PROPERTIES TIMEOUT 60)
+    # The resolver's running count of unfinalized entries is checked against a full walk on
+    # every change; these single-node modes produce few resolver transitions, so here it is a
+    # general regression rather than coverage of the count.
+    set_tests_properties(a142-backlog-${mode} PROPERTIES TIMEOUT 60
+                         ENVIRONMENT "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1")
 endforeach()
+
+# Every transition of the running count of unfinalized finalization entries, deterministically
+# and without an actor.
+add_executable(test-counted-finalizations test-counted-finalizations.cpp)
+target_include_directories(test-counted-finalizations PRIVATE ${CMAKE_SOURCE_DIR}/validator)
+target_link_libraries(test-counted-finalizations PRIVATE tdutils)
+add_test(NAME a142-counted-finalizations COMMAND test-counted-finalizations)
+
+# The same count inside the production state resolver: a durable finalized marker read that
+# returns while another attempt holds the entry in flight, and the ordered backlog events.
+add_executable(test-unfinalized-count-resolver test-unfinalized-count-resolver.cpp)
+target_link_libraries(test-unfinalized-count-resolver PRIVATE
+    validator
+    tos_validator
+    smc-envelope
+    tos_block
+    adnl
+    overlay
+    dht
+    tl_api
+    tl-utils
+    tos_crypto
+    tos_pq_consensus_signer
+    tos_pq_consensus
+    tos_mldsa44
+    tdactor
+    tdutils
+)
+add_test(NAME a142-unfinalized-count-db-hit-overwrite COMMAND test-unfinalized-count-resolver db-hit-overwrite)
+set_tests_properties(a142-unfinalized-count-db-hit-overwrite PROPERTIES TIMEOUT 60
+                     ENVIRONMENT "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1")
+# The ordered backlog events of this scenario, identical on the build before the running count
+# (five runs each side): the count changed what is counted unfinalized, not the backlog.
+add_test(NAME a142-unfinalized-count-backlog-sequence COMMAND test-unfinalized-count-resolver backlog-sequence)
+set_tests_properties(a142-unfinalized-count-backlog-sequence PROPERTIES TIMEOUT 60
+    ENVIRONMENT "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1;TOS_SIMPLEX_INJECT_TRANSIENT_FINALIZATION_FAILURES=4;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
+    PASS_REGULAR_EXPRESSION "A142_BACKLOG_SEQUENCE \\(true,2\\)\\(false,1\\) pending_peak=3 pending_now=0\nA142_OK backlog-sequence")
 
 # A candidate that arrives after its slot is finalized, inside and outside the window in
 # which the candidate resolver still retains the slot; and the resolver's lifetime pin for a
@@ -303,11 +344,14 @@ add_test(
     COMMAND test-consensus --duration 8 --n-nodes 5 --target-rate-ms 50
             --net-ping 0.002:0.01 --catch-up-downtime 2.5
             --min-finalized-blocks 40 --pq-finality-e2e-test
+            --require-unfinalized-transitions insert,to-finalized,evict
 )
+# The finalized cache is held to 8 entries, so finalized entries are evicted: the resolver's
+# running count of unfinalized entries is cross-checked across evictions here.
 set_tests_properties(
     test-consensus-simplex2-pq-state-resolver-catch-up
     PROPERTIES ENVIRONMENT
-        "TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_FINALIZED_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS=8"
+        "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1;TOS_SIMPLEX_STATE_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_FINALIZED_CACHE_MAX_ENTRIES=8;TOS_SIMPLEX_CANDIDATE_RETENTION_SLOTS=8"
 )
 # The post-quantum round end to end. It observes a verified FinalCert becoming the #13
 # carrier and at least three consecutive accepted blocks, independently verifies every
@@ -385,11 +429,12 @@ add_test(
     COMMAND test-consensus --duration 80 --n-nodes 4 --target-rate-ms 100
             --net-ping 0.005:0.02 --pq-finality-e2e-test
             --finalization-backpressure-test
+            --require-unfinalized-transitions insert,between,to-finalized,legacy-sample
 )
 set_tests_properties(
     test-consensus-simplex2-pq-finality-backpressure
     PROPERTIES ENVIRONMENT
-        "TOS_SIMPLEX_INJECT_TRANSIENT_FINALIZATION_FAILURES=12;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
+        "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1;TOS_SIMPLEX_INJECT_TRANSIENT_FINALIZATION_FAILURES=12;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
 )
 # The same backpressure, held for longer than a skip timeout. A count of injected failures is
 # used up by retries in well under a timeout, so the hold here is time-based. The gate
@@ -401,11 +446,12 @@ add_test(
     COMMAND test-consensus --duration 80 --n-nodes 4 --target-rate-ms 100
             --net-ping 0.005:0.02 --pq-finality-e2e-test
             --finalization-backpressure-test --finalization-hold-stall-test
+            --require-unfinalized-transitions insert,between,to-finalized,legacy-sample
 )
 set_tests_properties(
     test-consensus-simplex2-pq-finality-backlog-stall
     PROPERTIES ENVIRONMENT
-        "TOS_SIMPLEX_INJECT_FINALIZATION_HOLD_MS=10000;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
+        "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1;TOS_SIMPLEX_INJECT_FINALIZATION_HOLD_MS=10000;TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX=1"
 )
 # The other half of the same policy: a failure retrying cannot mend. Nothing before the
 # normal test traffic does not produce one, so it is injected -- and without that, the branch
@@ -418,10 +464,12 @@ add_test(
     NAME test-consensus-simplex2-pq-finality-permanent
     COMMAND test-consensus --duration 40 --n-nodes 4 --target-rate-ms 100
             --net-ping 0.005:0.02 --permanent-finalization-test
+            --require-unfinalized-transitions insert,between
 )
 set_tests_properties(
     test-consensus-simplex2-pq-finality-permanent
-    PROPERTIES ENVIRONMENT "TOS_SIMPLEX_INJECT_PERMANENT_FINALIZATION_FAILURE=1"
+    PROPERTIES ENVIRONMENT
+        "TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED=1;TOS_SIMPLEX_INJECT_PERMANENT_FINALIZATION_FAILURE=1"
 )
 # The same gate, with the adversarial scenarios turned on. Their attack machinery was never
 # the part that needed the carrier -- only their `--min-finalized-blocks` assertion was -- so running

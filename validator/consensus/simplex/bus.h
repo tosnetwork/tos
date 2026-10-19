@@ -356,6 +356,25 @@ struct StateResolver {
   static void register_in(td::actor::Runtime&);
 };
 
+// Test-only. With TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED set in the environment, every
+// state resolver checks its running count of unfinalized finalization entries against a full
+// walk after each change, and aborts on the first mismatch. These are the kinds of change, and
+// unfinalized_crosschecks_for_test() is how many of each this process has checked.
+enum class UnfinalizedTransition : size_t {
+  InsertUnfinalized,
+  InsertFinalized,
+  Lookup,
+  ToFinalized,
+  RepeatFinalized,
+  FromFinalized,
+  BetweenUnfinalized,
+  DbHitOverwrite,
+  Evict,
+  LegacySample,
+  Count,
+};
+size_t unfinalized_crosschecks_for_test(UnfinalizedTransition kind);
+
 struct MetricCollector {
   static void register_in(td::actor::Runtime&);
 };

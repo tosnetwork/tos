@@ -163,6 +163,10 @@ struct HoldStallTimeline {
   std::vector<std::pair<double, td::uint32>> finalized;            // (time, slot), any node
 };
 HoldStallTimeline HOLD_STALL_TIMELINE;
+// Transitions of the state resolver's running count of unfinalized entries that this run
+// deliberately produces and must have cross-checked (with TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED
+// set). Each scenario names only what it is built to cause.
+std::vector<std::pair<std::string, simplex::UnfinalizedTransition>> REQUIRED_UNFINALIZED_TRANSITIONS;
 bool EMPTY_CHAIN_RESTART_TEST = false;
 bool VOTE_JOURNAL_TEST = false;
 bool PQ_FINALITY_E2E_TEST = false;
@@ -2941,6 +2945,17 @@ class TestConsensus : public td::actor::Actor {
         co_return td::Status::Error(*error);
       }
     }
+    // The resolver checked its running count against a full walk on every change and would
+    // have aborted on a mismatch; this requires that the transitions the scenario exists to
+    // produce were among the ones checked.
+    for (const auto& [name, kind] : REQUIRED_UNFINALIZED_TRANSITIONS) {
+      const size_t checked = simplex::unfinalized_crosschecks_for_test(kind);
+      LOG(WARNING) << "Unfinalized count cross-check: " << name << " checked " << checked << " times";
+      if (checked == 0) {
+        co_return td::Status::Error(PSTRING() << "the scenario never produced the " << name
+                                              << " transition its unfinalized-count cross-check requires");
+      }
+    }
     if (C04_HEALTH_TEST) {
       using namespace tos::health;
       auto phase = [&](Action action, Phase phase) {
@@ -4217,6 +4232,31 @@ int main(int argc, char* argv[]) {
   p.add_option('\0', "finalization-backpressure-test",
                "require finalization backlog throttling, recovery, and one accepted block after recovery",
                [&]() { FINALIZATION_BACKPRESSURE_TEST = true; });
+  p.add_checked_option(
+      '\0', "require-unfinalized-transitions",
+      "comma-separated transitions of the resolver's unfinalized count this run must cross-check: "
+      "insert, between, to-finalized, evict, legacy-sample",
+      [&](td::Slice arg) {
+        using simplex::UnfinalizedTransition;
+        const std::map<std::string, UnfinalizedTransition> known = {
+            {"insert", UnfinalizedTransition::InsertUnfinalized},
+            {"between", UnfinalizedTransition::BetweenUnfinalized},
+            {"to-finalized", UnfinalizedTransition::ToFinalized},
+            {"evict", UnfinalizedTransition::Evict},
+            {"legacy-sample", UnfinalizedTransition::LegacySample},
+        };
+        for (auto name : td::full_split(arg, ',')) {
+          auto it = known.find(name.str());
+          if (it == known.end()) {
+            return td::Status::Error(PSTRING() << "unknown unfinalized transition " << name);
+          }
+          REQUIRED_UNFINALIZED_TRANSITIONS.emplace_back(it->first, it->second);
+        }
+        if (std::getenv("TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED") == nullptr) {
+          return td::Status::Error("--require-unfinalized-transitions needs TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED");
+        }
+        return td::Status::OK();
+      });
   p.add_option('\0', "finalization-hold-stall-test",
                "require a skip deadline to expire while finalization is held over its limit, then new finality",
                [&]() { FINALIZATION_HOLD_STALL_TEST = true; });
