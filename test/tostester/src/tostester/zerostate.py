@@ -546,17 +546,17 @@ def fee_schedule_for(config: "NetworkConfig") -> dict[str, str]:
         credit = 20000 if config.quantum_admission_candidate else 10000
         return {
             "gas_prices": f"436907 2 *M 2 *M {credit} 20 *M TM$0.1 TM$1.0 100 667 config.gas_prices!",
-            "mc_gas_prices": "655360000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 1000000"
+            "mc_gas_prices": "32768000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 50000"
             " config.mc_gas_prices!",
             "fwd_prices": "66667 4369067 436906667 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
-            "mc_fwd_prices": "10000000 655360000 65536000000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/"
+            "mc_fwd_prices": "500000 32768000 3276800000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/"
             " config.mc_fwd_prices!",
         }
     return {
-        "gas_prices": "// DEV-SPECIFIC: cheaper gas for tests (deployment: 436907/655360000)\n"
+        "gas_prices": "// DEV-SPECIFIC: cheaper gas for tests (deployment: 436907/32768000)\n"
         "10 sg* 1 *M dup   10000 1000 *M TM$0.1 TM$1.0 100 1000 config.gas_prices!",
         "mc_gas_prices": "10 sg* 1 *M 20 *M 10000 1000 *M TM$0.1 TM$1.0 100 1000 config.mc_gas_prices!",
-        "fwd_prices": "// DEV-SPECIFIC: cheaper forwarding for tests (deployment: 66667/10000000)\n"
+        "fwd_prices": "// DEV-SPECIFIC: cheaper forwarding for tests (deployment: 66667/500000)\n"
         "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.fwd_prices!",
         "mc_fwd_prices": "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!",
     }

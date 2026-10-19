@@ -27,9 +27,9 @@ pub(crate) trait DefaultConfig {
 impl DefaultConfig for MsgForwardPrices {
     fn default_mc() -> Self {
         MsgForwardPrices {
-            lump_price: 10000000,
-            bit_price: 655360000,
-            cell_price: 65536000000,
+            lump_price: 500000,
+            bit_price: 32768000,
+            cell_price: 3276800000,
             ihr_price_factor: 98304,
             first_frac: 21845,
             next_frac: 21845,
@@ -103,16 +103,16 @@ impl DefaultConfig for GasLimitsPrices {
         GasLimitsPrices {
             // ConfigParam 20 from the same zero state, which keeps the
             // masterchain aligned with production.
-            gas_price: 655360000,
+            gas_price: 32768000,
             flat_gas_limit: 100,
-            flat_gas_price: 1000000,
+            flat_gas_price: 50000,
             gas_limit: 1000000,
             special_gas_limit: 70000000,
             gas_credit: 10000,
             block_gas_limit: 2500000,
             freeze_due_limit: 100000000,
             delete_due_limit: 1000000000,
-            max_gas_threshold: 10000000000,
+            max_gas_threshold: 500000000,
         }
     }
 
@@ -395,3 +395,31 @@ impl BlockchainConfig {
 #[cfg(test)]
 #[path = "tests/test_storage_fees.rs"]
 mod tests_storage_fees;
+
+#[cfg(test)]
+mod deployment_price_tests {
+    use super::*;
+
+    #[test]
+    fn default_masterchain_prices_match_serialized_deployment_limits() -> Result<()> {
+        let gas = GasLimitsPrices::default_mc();
+        assert_eq!((gas.gas_price, gas.flat_gas_price), (32_768_000, 50_000));
+        assert_eq!(
+            (gas.gas_limit, gas.special_gas_limit, gas.gas_credit),
+            (1_000_000, 70_000_000, 10_000)
+        );
+        assert_eq!((gas.block_gas_limit, gas.flat_gas_limit), (2_500_000, 100));
+        assert_eq!((gas.freeze_due_limit, gas.delete_due_limit), (100_000_000, 1_000_000_000));
+        assert_eq!(gas.max_gas_threshold, gas.calc_max_gas_threshold(gas.gas_limit));
+        let forward = MsgForwardPrices::default_mc();
+        assert_eq!(
+            (forward.lump_price, forward.bit_price, forward.cell_price),
+            (500_000, 32_768_000, 3_276_800_000)
+        );
+        assert_eq!(
+            (forward.ihr_price_factor, forward.first_frac, forward.next_frac),
+            (98_304, 21_845, 21_845)
+        );
+        Ok(())
+    }
+}

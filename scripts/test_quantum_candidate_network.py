@@ -32,7 +32,7 @@ class CandidateReadbackTests(unittest.TestCase):
     ):
         def gas(mc):
             values = (
-                [655360000, 1000000, 70000000, 10000, 2500000, 100000000, 1000000000]
+                [32768000, 1000000, 70000000, 10000, 2500000, 100000000, 1000000000]
                 if mc
                 else [gas_price, 2000000, 2000000, credit, 20000000, freeze_due, 1000000000]
             )
@@ -40,7 +40,7 @@ class CandidateReadbackTests(unittest.TestCase):
                 Builder()
                 .store_uint(0xD1, 8)
                 .store_uint(100, 64)
-                .store_uint(1000000 if mc else flat_price, 64)
+                .store_uint(50000 if mc else flat_price, 64)
                 .store_uint(0xDE, 8)
             )
             for value in values:
