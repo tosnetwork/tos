@@ -144,17 +144,22 @@ pub struct ProofAttestationSendCmd {
     attested_hash: Option<String>,
     #[arg(
         long,
+        help = "Attestation sequence, for attest; must exceed the recorded one. Defaults to \
+                the recorded sequence plus one"
+    )]
+    sequence: Option<u64>,
+    #[arg(
+        long,
         conflicts_with = "signer_vault_key",
-        help = "Precomputed 64-byte ed25519 \
-                                                              signature over --attested-hash, hex, \
-                                                              for attest"
+        help = "Precomputed 64-byte ed25519 signature over the attestation hash of --sequence \
+                and --attested-hash, hex, for attest"
     )]
     signature: Option<String>,
     #[arg(
         long,
         conflicts_with = "signature",
-        help = "Vault key name to sign --attested-hash \
-                                                       with locally, instead of --signature"
+        help = "Vault key name to sign --sequence and --attested-hash with locally, instead \
+                of --signature"
     )]
     signer_vault_key: Option<String>,
     #[arg(long, conflicts_with = "new_signer_vault_key", help = "New public key for rotate-key")]
@@ -226,6 +231,7 @@ async fn sign_with_vault_key(
     name: &str,
     global_id: i32,
     attestation_address: &MsgAddressInt,
+    sequence: u64,
     attested_hash: &[u8; 32],
     vault: Arc<SecretVault>,
 ) -> anyhow::Result<[u8; 64]> {
@@ -234,6 +240,7 @@ async fn sign_with_vault_key(
     let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
         global_id,
         attestation_address,
+        sequence,
         attested_hash,
     )?;
     let raw = keypair.sign(&hash_to_sign).await?;
@@ -354,6 +361,7 @@ struct ProofAttestationDataView {
     revoked: bool,
     has_attestation: bool,
     attested_at: u64,
+    sequence: u64,
     subject_hash: String,
     attested_hash: String,
 }
@@ -366,6 +374,7 @@ fn data_view(address: &MsgAddressInt, data: ProofAttestationData) -> ProofAttest
         revoked: data.revoked,
         has_attestation: data.has_attestation,
         attested_at: data.attested_at,
+        sequence: data.sequence,
         subject_hash: hex::encode(data.subject_hash),
         attested_hash: hex::encode(data.attested_hash),
     }
@@ -395,6 +404,7 @@ impl ProofAttestationShowCmd {
             println!("Public key: {}", view.public_key);
             println!("Revoked: {}", view.revoked);
             println!("Has attestation: {}", view.has_attestation);
+            println!("Sequence: {}", view.sequence);
             if view.has_attestation {
                 println!("Attested hash: {}", view.attested_hash);
                 println!("Attested at: {}", view.attested_at);
@@ -474,6 +484,24 @@ impl ProofAttestationSendCmd {
         let body = match self.operation {
             ProofAttestationOperation::Attest => {
                 let attested_hash = parse_required_hash("attested-hash", &self.attested_hash)?;
+                let sequence = match self.sequence {
+                    Some(sequence) => sequence,
+                    None => {
+                        // The contract admits only a sequence above the recorded one.
+                        let provider = contracts::contract_provider!(rpc_client.clone());
+                        let stack = provider
+                            .get_method(
+                                destination.to_string(),
+                                "get_proof_attestation_data",
+                                vec![],
+                            )
+                            .await?;
+                        let recorded = ProofAttestationContract::decode_data(&stack)?.sequence;
+                        recorded
+                            .checked_add(1)
+                            .ok_or_else(|| anyhow::anyhow!("attestation sequence is exhausted"))?
+                    }
+                };
                 let signature = match (&self.signature, &self.signer_vault_key) {
                     (Some(hex), None) => parse_signature(hex)?,
                     (None, Some(name)) => {
@@ -482,6 +510,7 @@ impl ProofAttestationSendCmd {
                             name,
                             global_id,
                             &destination,
+                            sequence,
                             &attested_hash,
                             vault.clone(),
                         )
@@ -489,7 +518,13 @@ impl ProofAttestationSendCmd {
                     }
                     _ => anyhow::bail!("provide exactly one of --signature or --signer-vault-key"),
                 };
-                ProofAttestationContract::attest(self.query_id, attested_hash, &signature)?
+                println!("Attestation sequence: {sequence}");
+                ProofAttestationContract::attest(
+                    self.query_id,
+                    sequence,
+                    attested_hash,
+                    &signature,
+                )?
             }
             ProofAttestationOperation::RotateKey => {
                 let new_public_key = resolve_public_key(

@@ -118,6 +118,15 @@ fun test_quorum_met_and_missed(): int {
         thrown = true;
     }
     assert(thrown) throw 143;
+    // A hand-built configuration never passed quorumConfigNew. The bounds are
+    // checked again here, so a zero quorum cannot be met by nobody and an
+    // unreachable one is refused as a configuration error.
+    var invalid = 0;
+    val zeroQuorum = QuorumConfig { verifiers: set123(), verifierCount: 3, quorum: 0 };
+    try { zeroQuorum.requireQuorum(HASH, createEmptyDict()); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 144); invalid += 1; }
+    val unreachable = QuorumConfig { verifiers: set123(), verifierCount: 3, quorum: 4 };
+    try { unreachable.requireQuorum(HASH, s); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 145); invalid += 1; }
+    assert(invalid == 2) throw 146;
     return 5;
 }
 

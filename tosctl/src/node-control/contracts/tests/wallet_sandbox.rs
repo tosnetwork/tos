@@ -12,7 +12,8 @@
 //! the contract before it can spend anything.
 
 use chain_block::{
-    Cell, Deserializable, Message, MsgAddressInt, base64_decode, read_single_root_boc,
+    BuilderData, Cell, Deserializable, IBitstring, Message, MsgAddressInt, Serializable, SliceData,
+    StateInit, base64_decode, read_single_root_boc,
 };
 use common::{WalletVersion, signer::Signer, tvm_stack_parser::TvmStackParser};
 use contracts::wallet::wallet_contract::{V3R2_CODE, V4R2_CODE_B64, V5R1_CODE_B64};
@@ -20,7 +21,8 @@ use contracts::{ContractProvider, SmartContract, Wallet, WalletContract};
 use ed25519_dalek::{Signer as _, SigningKey};
 use std::sync::Arc;
 use tl_api::tos::tvm::StackEntry;
-use tos_sandbox::{Blockchain, Treasury, compile_func_with_stdlib};
+use tos_sandbox::{Blockchain, MessageBuilder, Treasury, compile_func_with_stdlib};
+use tos_vm::stack::StackItem;
 
 const TOS: u64 = 1_000_000_000;
 /// The value the sandbox publishes in ConfigParam 19.
@@ -56,6 +58,93 @@ fn source_compiles_to_the_embedded_wallet_code() {
             "embedded {source} BOC must be regenerated whenever the FunC source changes"
         );
     }
+}
+
+/// The body `prepare_send_message_with_seqno` builds is the one `recv_external`
+/// verifies: the network's global id ahead of the sequence number, mode and
+/// message. A body without the global id, as the getter built it before, is
+/// refused by the contract's own check.
+#[test]
+fn simple_wallet_ext_prepares_the_body_its_verifier_expects() {
+    let code = compile_func_with_stdlib(&[smartcont("simple-wallet-ext-code.fc")])
+        .expect("compile simple-wallet-ext-code.fc");
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(WORKCHAIN as i8);
+    let funder = bc.treasury("funder", 1_000 * TOS).expect("funder");
+    let target = bc.treasury("target", 1_000 * TOS).expect("target");
+    let key = SigningKey::from_bytes(&[0x42; 32]);
+    let mut data = BuilderData::new();
+    data.append_u32(0).expect("seqno");
+    data.append_u256(&key.verifying_key().to_bytes()).expect("public key");
+    let init = StateInit::with_code_and_data(code, data.into_cell().expect("data"));
+    let hash = init.serialize().expect("state init").repr_hash();
+    let wallet = MsgAddressInt::with_params(WORKCHAIN, hash).expect("address");
+    let deploy = MessageBuilder::internal(funder.address(), &wallet, 50 * TOS)
+        .bounce(false)
+        .state_init(init)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+
+    let transfer = MessageBuilder::internal(&wallet, target.address(), TOS).build();
+    let transfer = transfer.serialize().expect("transfer cell");
+    let prepared = bc
+        .run_get_method(
+            &wallet,
+            "prepare_send_message_with_seqno",
+            vec![StackItem::int(3), StackItem::cell(transfer.clone()), StackItem::int(0)],
+        )
+        .expect("prepare_send_message_with_seqno")
+        .expect_success()
+        .stack
+        .clone();
+    let body = prepared[0].as_cell().expect("the prepared body").clone();
+    let mut head = SliceData::load_cell(body.clone()).expect("body slice");
+    assert_eq!(head.get_next_i32().expect("global id"), GLOBAL_ID);
+    assert_eq!(head.get_next_u32().expect("seqno"), 0);
+    assert_eq!(head.get_next_byte().expect("mode"), 3);
+    assert_eq!(head.remaining_bits(), 0);
+    assert_eq!(head.remaining_references(), 1);
+
+    // The verifier hashes everything after the signature, which is this body.
+    let packet = |body: &Cell| {
+        let mut b = BuilderData::new();
+        b.append_raw(&key.sign(body.repr_hash().as_slice()).to_bytes(), 512).expect("signature");
+        let body = SliceData::load_cell(body.clone()).expect("body").as_builder().expect("builder");
+        b.append_builder(&body).expect("body after signature");
+        MessageBuilder::external(&wallet)
+            .body_slice(SliceData::load_cell(b.into_cell().expect("packet")).expect("slice"))
+            .build()
+    };
+    let target_before = bc
+        .get_account(target.address())
+        .and_then(|a| a.balance().and_then(|b| b.coins.as_u64()))
+        .expect("target balance");
+    bc.send_message(packet(&body)).expect("the prepared body is accepted").expect_success();
+    let seqno =
+        bc.run_get_method(&wallet, "seqno", vec![]).expect("seqno").expect_success().int_at(0);
+    assert_eq!(seqno, 1, "the accepted body advances the sequence number");
+    let target_after = bc
+        .get_account(target.address())
+        .and_then(|a| a.balance().and_then(|b| b.coins.as_u64()))
+        .expect("target balance");
+    let delivered = target_after - target_before;
+    assert!(
+        delivered > TOS - TOS / 100 && delivered <= TOS,
+        "the prepared message was sent: delivered {delivered}"
+    );
+
+    // Control: the body as the getter built it before, without the global id.
+    let mut stale = BuilderData::new();
+    stale.append_u32(1).expect("seqno");
+    stale.append_u8(3).expect("mode");
+    stale.checked_append_reference(transfer).expect("message");
+    let stale = stale.into_cell().expect("stale body");
+    let error = match bc.send_message(packet(&stale)) {
+        Ok(_) => panic!("a body without the global id must not execute"),
+        Err(error) => error.to_string(),
+    };
+    assert!(error.contains("exit code: 36"), "expected the global id check to refuse: {error}");
 }
 
 /// Deterministic in-process signer standing in for the vault-backed one.

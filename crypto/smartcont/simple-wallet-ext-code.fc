@@ -60,8 +60,9 @@ cell create_init_state(int public_key) method_id {
   return create_state(0, public_key);
 }
 
+;; The body the verifier expects: global id, sequence number, mode, message.
 cell prepare_send_message_with_seqno(int mode, cell msg, int seqno) method_id {
-  return begin_cell().store_uint(seqno, 32).store_uint(mode, 8).store_ref(msg).end_cell();
+  return begin_cell().store_int(get_global_id(), 32).store_uint(seqno, 32).store_uint(mode, 8).store_ref(msg).end_cell();
 }
 
 cell prepare_send_message(int mode, cell msg) method_id {

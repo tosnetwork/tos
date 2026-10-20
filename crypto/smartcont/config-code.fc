@@ -836,10 +836,6 @@ int register_voting_proposal(slice cs, int msg_value) impure inline_ref {
   return store_data(cfg_dict, vote_dict);
 }
 
-int seqno() method_id {
-  return get_data().begin_parse().preload_uint(32);
-}
-
 _ unpack_proposal(slice pstatus) inline_ref {
   (int expires, cell proposal, int critical?, cell voters, int weight_remaining, int vset_id, slice rest) = unpack_proposal_status(pstatus);
   var voters_list = null();

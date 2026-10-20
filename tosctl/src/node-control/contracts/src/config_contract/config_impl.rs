@@ -56,11 +56,6 @@ impl SmartContract for ConfigContractImpl {
 
 #[async_trait::async_trait]
 impl ConfigContractWrapper for ConfigContractImpl {
-    async fn seqno(&self) -> anyhow::Result<u32> {
-        let stack = self.provider.get_method(self.config_addr.clone(), "seqno", vec![]).await?;
-        Ok(stack.i64(0)? as u32)
-    }
-
     async fn get_proposal(&self, phash: ProposalHash) -> anyhow::Result<Option<ConfigProposal>> {
         match self.read(ProposalRead::One(phash)).await.context("parse proposal")? {
             ProposalAnswer::One(proposal) => Ok(proposal),
@@ -428,49 +423,6 @@ mod tests {
         assert!(format!("{list:#}").contains("proposal reads are unsupported"), "{list:#}");
         let one = config.get_proposal([1; 32]).await.err().expect("refused");
         assert!(format!("{one:#}").contains("proposal reads are unsupported"), "{one:#}");
-    }
-
-    // ===== Tests for seqno() =====
-
-    #[tokio::test]
-    async fn test_seqno_returns_value() {
-        let provider = MockContractProvider::new()
-            .on_method("seqno", |_| Ok(TvmStackParser::new(vec![create_number_entry("42")])));
-
-        let config = ConfigContractImpl::new(Arc::new(provider));
-        let seqno = config.seqno().await.expect("Failed to get seqno");
-        assert_eq!(seqno, 42);
-    }
-
-    #[tokio::test]
-    async fn test_seqno_returns_large_value() {
-        let provider = MockContractProvider::new().on_method("seqno", |_| {
-            Ok(TvmStackParser::new(vec![create_number_entry("4294967295")])) // u32::MAX
-        });
-
-        let config = ConfigContractImpl::new(Arc::new(provider));
-        let seqno = config.seqno().await.expect("Failed to get seqno");
-        assert_eq!(seqno, u32::MAX);
-    }
-
-    #[tokio::test]
-    async fn test_seqno_returns_zero() {
-        let provider = MockContractProvider::new()
-            .on_method("seqno", |_| Ok(TvmStackParser::new(vec![create_number_entry("0")])));
-
-        let config = ConfigContractImpl::new(Arc::new(provider));
-        let seqno = config.seqno().await.expect("Failed to get seqno");
-        assert_eq!(seqno, 0);
-    }
-
-    #[tokio::test]
-    async fn test_seqno_hex_format() {
-        let provider = MockContractProvider::new()
-            .on_method("seqno", |_| Ok(TvmStackParser::new(vec![create_number_entry("0xFF")])));
-
-        let config = ConfigContractImpl::new(Arc::new(provider));
-        let seqno = config.seqno().await.expect("Failed to get seqno");
-        assert_eq!(seqno, 255);
     }
 
     // ===== Tests for get_proposal() =====
@@ -858,17 +810,6 @@ mod tests {
     }
 
     // ===== Error handling tests =====
-
-    #[tokio::test]
-    async fn test_seqno_provider_error() {
-        let provider =
-            MockContractProvider::new().on_method("seqno", |_| anyhow::bail!("Network error"));
-
-        let config = ConfigContractImpl::new(Arc::new(provider));
-        let result = config.seqno().await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Network error"));
-    }
 
     #[tokio::test]
     async fn test_get_proposal_provider_error() {

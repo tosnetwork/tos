@@ -30,12 +30,16 @@ disposable development network; nothing in them is secret.
 
 ## `config-code.boc`
 
-The configuration contract's code as the generated zerostate deploys it and as
-the development network ran it (both representation hash
-`2774a7cc7850cfb8dd1023b725c1e44182a9bae39da547fb8724b2f72562ff7a`; file SHA-256
-`be9df077e55e56f66d5e5b00ffd8a2a77e6c112eb667d2dc545ff21bf281ca36`). The
-stored-state reader interprets storage only under this code;
-`config_list_proposals_sandbox.rs` checks the fixture against the zerostate.
+The configuration contract's code as the generated zerostate deploys it
+(representation hash
+`51ac2ce83a98d99dcb755faf3a04ec4816c1fb00e901aefd91913342ed206731`; file SHA-256
+`40eb213cb8a11688ade5ca4c492743d59b8021f14170f09753a866b085832620`), serialized the
+way an account query returns it. The development network ran the earlier code
+(representation hash
+`2774a7cc7850cfb8dd1023b725c1e44182a9bae39da547fb8724b2f72562ff7a`), whose
+storage has the same layout. The stored-state reader interprets storage only under
+the code hashes it lists; `config_list_proposals_sandbox.rs` checks the fixture
+against the zerostate.
 
 ## Read-path limits and measurements
 

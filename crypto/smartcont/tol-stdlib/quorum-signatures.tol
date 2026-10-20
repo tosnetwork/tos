@@ -181,7 +181,10 @@ fun QuorumConfig.countValidSignatures(self, hash: int, signatures: dict): int {
 }
 
 /// Throws unless `signatures` carries at least `quorum` valid signatures.
+/// A hand-built configuration is held to the same bounds as a constructed
+/// one, so a zero quorum cannot make an empty signature set sufficient.
 fun QuorumConfig.requireQuorum(self, hash: int, signatures: dict): void {
+    quorumRequireValidConfig(self.verifierCount, self.quorum);
     if (self.countValidSignatures(hash, signatures) < self.quorum) {
         throw QUORUM_THROW_INSUFFICIENT_SIGNATURES;
     }

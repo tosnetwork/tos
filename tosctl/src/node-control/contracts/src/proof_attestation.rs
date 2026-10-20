@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const PROOF_ATTESTATION_CODE_B64: &str = "te6cckECCQEAAiAAART/APSkE/S88sgLAQIBYgIDA/jQMtDTAwFxsJFb4PpAMCHHAJFb4AHTH9M/Me1E0PpA0//TANMA0z/UAdDT/9P/0QLRASiCEEFUVAG64wIoghBBVFQCuuMCNAeCEEFUVAO6jiuBCDZRhccFGPL0BNFFQHFVMAHIy//L/8nIUAbPFhTL/xLLAMsAyz/Mye1UBAUGADWgGG/aiaH0gaf/pgGmAaZ/qAOhp/+n/6IFogMBzBNfAzU1gQg0JcAA8vQC0/+DCNcY0YEIOCTbPPLyghBQQVQy+Cj6RPg1A8jLHxPKH8oHy/9SIMv/yfkAgQg1USX5EPL0XiFxQBP4IwIByMv/y//JyFAGzxYUy/8SywDLAMs/zMntVAcBgBNfAzI0gQg2UVLHBRXy9AHT/9GBCDgh2zzy8nBTABBGEDUQNEEwAcjL/8v/ychQBs8WFMv/EssAywDLP8zJ7VQHABDgXwiBCDfy8AHYIKv3gQDsvo4QIKsHhO+whO+6AYB/sMB/sOCDBrEghD+wIIMGvSGCMLE4AohtU/yFvbABgjBOx/13kqwD+r2wkjBw4CCDBrohgukAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAurEhCACSgvAm6JWPwrInsEXD9Iny75jw1d+sBdPGMzmxOAKIbVP8hbqxAYLwxxdqcD1N2E+6PAt2DRBnDyogU/osOczGTsf9d5KsA/q6sVouF5U=";
+pub const PROOF_ATTESTATION_CODE_B64: &str = "te6cckECCQEAAjkAART/APSkE/S88sgLAQIBYgIDA7TQMtDTAwFxsJFb4PpAMCHHAJFb4AHTH9M/Me1E0PpA0//TANMA0z/TP9QB0NP/0//RAtEBKYIQQVRUAbrjAimCEEFUVAK64wI1CIIQQVRUA7rjAl8JgQg38vAEBQYAOaAYb9qJofSBp/+mAaYBpn+mf6gDoaf/p/+iBaIDAe4wODhbgQg0IcAA8vQD0z/T/4MI1xjRIoEIOQm8GPL0gQg4I9s88vKCEFBBVDP4KPpE+DUDyMsfE8ofygfL/1Igyz9SEMv/yfkAgQg1UYT5EBfy9EVAcQP4I1AzAcjL/8v/ychQB88WFcv/E8sAywDLP8s/zMntVAcBgDA1N1uBCDZRY8cFFvL0AtP/0YEIOCHbPPLycFMAEEdeI0QwEgHIy//L/8nIUAfPFhXL/xPLAMsAyz/LP8zJ7VQHAGCBCDZRlscFGfL0BdEQNhAlcQVVIQHIy//L/8nIUAfPFhXL/xPLAMsAyz/LP8zJ7VQB2CCr94EA7L6OECCrB4TvsITvugGAf7DAf7DggwaxIIQ/sCCDBr0hgjCxOAKIbVP8hb2wAYIwTsf9d5KsA/q9sJIwcOAggwa6IYLpAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgLqxIQgAkoLwJuiVj8KyJ7BFw/SJ8u+Y8NXfrAXTxjM5sTgCiG1T/IW6sQGC8McXanA9TdhPujwLdg0QZw8qIFP6LDnMxk7H/XeSrAP6urEOGjZk";
 pub const ATT_ATTEST_OPCODE: u32 = 0x4154_5401;
 pub const ATT_ROTATE_KEY_OPCODE: u32 = 0x4154_5402;
 pub const ATT_REVOKE_OPCODE: u32 = 0x4154_5403;
@@ -40,6 +40,9 @@ pub struct ProofAttestationData {
     pub revoked: bool,
     pub has_attestation: bool,
     pub attested_at: u64,
+    /// The sequence of the last accepted attestation; the next `attest`
+    /// must carry a larger one.
+    pub sequence: u64,
     pub subject_hash: [u8; 32],
     pub attested_hash: [u8; 32],
 }
@@ -56,6 +59,7 @@ impl ProofAttestationContract {
         data.append_bit_zero()?; // revoked = 0
         data.append_bit_zero()?; // has_attestation = 0
         data.append_u64(0)?; // attested_at
+        data.append_u64(0)?; // sequence
         let mut sub = BuilderData::new();
         sub.append_u256(&init.subject_hash)?.append_u256(&[0; 32])?;
         data.checked_append_reference(sub.into_cell()?)?;
@@ -84,41 +88,45 @@ impl ProofAttestationContract {
             revoked: stack.u64(2)? != 0,
             has_attestation: stack.u64(3)? != 0,
             attested_at: stack.u64(4)?,
-            subject_hash: parse_hash(stack, 5)?,
-            attested_hash: parse_hash(stack, 6)?,
+            sequence: stack.u64(5)?,
+            subject_hash: parse_hash(stack, 6)?,
+            attested_hash: parse_hash(stack, 7)?,
         })
     }
 
     /// `signature` must be a valid 64-byte ed25519 signature over
-    /// [`attest_hash_to_sign`]'s output for the target attestation address --
-    /// not over the bare `attested_hash` -- so it cannot be replayed against
-    /// a different Proof Attestation instance sharing the same public key
-    /// and the same attested hash.
+    /// [`attest_hash_to_sign`]'s output for the target attestation address
+    /// and `sequence` -- not over the bare `attested_hash` -- so it cannot be
+    /// replayed against a different Proof Attestation instance sharing the
+    /// same public key and attested hash, nor against this instance once a
+    /// later attestation has superseded it. The contract admits `sequence`
+    /// only above the one it recorded ([`ProofAttestationData::sequence`]).
     pub fn attest(
         query_id: u64,
+        sequence: u64,
         attested_hash: [u8; 32],
         signature: &[u8; 64],
     ) -> anyhow::Result<chain_block::Cell> {
         message(ATT_ATTEST_OPCODE, query_id, |b| {
-            b.append_u256(&attested_hash)?.append_raw(signature, 512).map(|_| ())
+            b.append_u64(sequence)?
+                .append_u256(&attested_hash)?
+                .append_raw(signature, 512)
+                .map(|_| ())
         })
     }
 
     /// The domain-bound hash the attestor key must sign for `attest`,
-    /// binding the signature to `attestation_address` so it cannot be
-    /// replayed against another Proof Attestation instance that happens to
-    /// share the same attestor key and `attested_hash`.
+    /// binding the signature to `attestation_address` and `sequence` so it
+    /// cannot be replayed against another Proof Attestation instance that
+    /// happens to share the same attestor key and `attested_hash`, nor
+    /// replayed here after a later attestation.
     pub fn attest_hash_to_sign(
         global_id: i32,
         attestation_address: &MsgAddressInt,
+        sequence: u64,
         attested_hash: &[u8; 32],
     ) -> anyhow::Result<[u8; 32]> {
-        crate::domain_bound_hash(
-            crate::DOMAIN_PROOF_ATTESTATION,
-            global_id,
-            attestation_address,
-            attested_hash,
-        )
+        crate::attestation_domain_hash(global_id, attestation_address, sequence, attested_hash)
     }
 
     pub fn rotate_key(
@@ -211,10 +219,11 @@ mod tests {
         let attested_hash = [0x55; 32];
         let signature = signing_key.sign(&attested_hash).to_bytes();
 
-        let body = ProofAttestationContract::attest(1, attested_hash, &signature).unwrap();
+        let body = ProofAttestationContract::attest(1, 7, attested_hash, &signature).unwrap();
         let mut slice = SliceData::load_cell(body).unwrap();
         assert_eq!(slice.get_next_u32().unwrap(), ATT_ATTEST_OPCODE);
         assert_eq!(slice.get_next_u64().unwrap(), 1);
+        assert_eq!(slice.get_next_u64().unwrap(), 7);
         assert_eq!(slice.get_next_bytes(32).unwrap(), attested_hash.to_vec());
         assert_eq!(slice.get_next_bytes(64).unwrap(), signature.to_vec());
         assert_eq!(slice.remaining_bits(), 0);
@@ -245,6 +254,7 @@ mod tests {
             number("0"),
             number("1"),
             number("1700000000"),
+            number("3"),
             hash_number(a.subject_hash),
             hash_number([0x77; 32]),
         ]);
@@ -254,6 +264,7 @@ mod tests {
         assert!(!data.revoked);
         assert!(data.has_attestation);
         assert_eq!(data.attested_at, 1_700_000_000);
+        assert_eq!(data.sequence, 3);
         assert_eq!(data.subject_hash, a.subject_hash);
         assert_eq!(data.attested_hash, [0x77; 32]);
     }

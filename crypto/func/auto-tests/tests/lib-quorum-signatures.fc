@@ -117,6 +117,13 @@ int test_quorum_met_and_missed() method_id(105) {
     thrown = true;
   }
   throw_unless(143, thrown);
+  ;; A hand-built configuration never passed quorum::config. The bounds are checked
+  ;; again here, so a zero quorum cannot be met by nobody and an unreachable one is
+  ;; refused as a configuration error rather than as missing signatures.
+  int invalid = 0;
+  try { quorum::require_quorum([set123(), 3, 0], HASH, new_dict()); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 144); invalid += 1; }
+  try { quorum::require_quorum([set123(), 3, 4], HASH, s); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 145); invalid += 1; }
+  throw_unless(146, invalid == 2);
   return 5;
 }
 

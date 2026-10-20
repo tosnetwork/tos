@@ -25,8 +25,13 @@ use chain_block::{Cell, HashmapE, HashmapType, SliceData, read_single_root_boc};
 /// Representation hashes of the configuration-contract code whose storage layout
 /// this module decodes (`config-code.fc`, as the zerostate deploys it). Pinned by a
 /// test against a generated zerostate.
-pub const SUPPORTED_CONFIG_CODE_HASHES: [[u8; 32]; 2] =
-    [CONFIG_CODE_HASH, AUTH_POLICY_CONFIG_CODE_HASH];
+pub const SUPPORTED_CONFIG_CODE_HASHES: [[u8; 32]; 3] =
+    [CONFIG_CODE_HASH, AUTH_POLICY_CONFIG_CODE_HASH, NO_SEQNO_GETTER_CONFIG_CODE_HASH];
+
+// Dropping the `seqno` getter, which read a field the data no longer holds, changes
+// code, not proposal storage.
+const NO_SEQNO_GETTER_CONFIG_CODE_HASH: [u8; 32] =
+    hex_literal("51ac2ce83a98d99dcb755faf3a04ec4816c1fb00e901aefd91913342ed206731");
 
 // ConfigParam 48 monotonic-policy validation changes code, not proposal storage.
 const AUTH_POLICY_CONFIG_CODE_HASH: [u8; 32] =

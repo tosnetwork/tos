@@ -165,6 +165,9 @@ int quorum::count_valid_signatures([cell, int, int] config, int hash, cell signa
 
 ;; Throws unless `signatures` carries at least `quorum` valid signatures.
 () quorum::require_quorum([cell, int, int] config, int hash, cell signatures) impure inline {
-  [_, _, int quorum] = config;
+  [_, int count, int quorum] = config;
+  ;; A hand-built configuration is held to the same bounds as a constructed one,
+  ;; so a zero quorum cannot make an empty signature set sufficient.
+  quorum::require_valid_config(count, quorum);
   throw_if(quorum::error::insufficient_signatures, quorum::count_valid_signatures(config, hash, signatures) < quorum);
 }

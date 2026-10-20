@@ -886,3 +886,14 @@ fn malformed_stored_records_are_refused() {
             .is_err_and(|e| e.to_string().contains("unsupported code"))
     );
 }
+
+/// The contract keeps no sequence number, so it serves no `seqno` getter. A caller asking
+/// for one gets the unknown-method exit, not a number read off the one-bit data root.
+#[test]
+fn the_configuration_contract_serves_no_seqno_getter() {
+    const UNKNOWN_METHOD: i32 = 11;
+    let chain = launch();
+    let result =
+        chain.blockchain.run_get_method(&chain.config, "seqno", vec![]).expect("get method runs");
+    assert_eq!(result.exit_code, UNKNOWN_METHOD, "stack: {:?}", result.stack);
+}

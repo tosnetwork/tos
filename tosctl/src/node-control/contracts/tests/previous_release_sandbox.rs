@@ -26,8 +26,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder};
 
 const TOS: u64 = 1_000_000_000;
-/// Proof Attestation's refusal of a signature that does not verify.
-const ERR_BAD_SIGNATURE: i32 = 2101;
+/// The exit of a body the previous Proof Attestation cannot parse to the end:
+/// the current `attest` carries a sequence ahead of the hash, which the
+/// previous code reads as the hash and then finds the trailing bits unread.
+const ERR_UNPARSED_BODY: i32 = 9;
 
 fn previous_code(name: &str) -> Cell {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -261,16 +263,16 @@ fn a_previous_proof_attestation_is_refused_and_would_reject_a_current_signature(
     };
     let attested = [0xee; 32];
     for (address, accepted) in [(&current, true), (&old, false)] {
-        let hash =
-            ProofAttestationContract::attest_hash_to_sign(global_id, address, &attested).unwrap();
+        let hash = ProofAttestationContract::attest_hash_to_sign(global_id, address, 1, &attested)
+            .unwrap();
         let signature = key.sign(&hash).to_bytes();
-        let body = ProofAttestationContract::attest(1, attested, &signature).unwrap();
+        let body = ProofAttestationContract::attest(1, 1, attested, &signature).unwrap();
         let msg = MessageBuilder::internal(relayer.address(), address, TOS / 10).body(body).build();
         let result = bc.send_message(msg).expect("send");
         if accepted {
             result.expect_success();
         } else {
-            result.expect_exit_code(ERR_BAD_SIGNATURE);
+            result.expect_exit_code(ERR_UNPARSED_BODY);
         }
     }
 }
