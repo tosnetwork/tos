@@ -415,7 +415,9 @@ def scan_file(path: str, content: bytes) -> list[str]:
             failures.append(f"{path}: {message}")
     for code_hash in V1_CODE_HASHES + V2_CODE_HASHES:
         if bytes.fromhex(code_hash) in content:
-            failures.append(f"{path}: contains a removed escrow code hash as raw bytes ({code_hash})")
+            failures.append(
+                f"{path}: contains a removed escrow code hash as raw bytes ({code_hash})"
+            )
 
     file_sha256 = hashlib.sha256(content).hexdigest()
     blob = git_blob_id(content)
@@ -430,7 +432,9 @@ def scan_file(path: str, content: bytes) -> list[str]:
 
     for source in V1_SOURCES + V2_SOURCES:
         if file_sha256 == source["sha256"] or blob == source["git_blob"]:
-            failures.append(f"{path}: is a removed escrow contract source (blob {source['git_blob']})")
+            failures.append(
+                f"{path}: is a removed escrow contract source (blob {source['git_blob']})"
+            )
 
     bocs = embedded_bocs(content)
     if content[:4] == BOC_MAGIC:
