@@ -2724,8 +2724,7 @@ TEST(Smarcont, Channel) {
 #define expect_ok(description, e) expect_code(description, 0, e)
 
   expect_code("Trying to invoke a timeout while channel is empty", no_timeout,
-              channel.write().send_external_message(MsgTimeoutBuilder().finalize(),
-                                                    funded_args().set_now(1000000)));
+              channel.write().send_external_message(MsgTimeoutBuilder().finalize(), funded_args().set_now(1000000)));
 
   expect_code("External init message with no signatures", replay_protection,
               channel.write().send_external_message(MsgInitBuilder().channel_id(config.channel_id).finalize()));
@@ -2761,14 +2760,13 @@ TEST(Smarcont, Channel) {
               channel.write().send_internal_message(
                   MsgInitBuilder().channel_id(config.channel_id).inc_A(100).min_B(5000).with_a_key(&a_pkey).finalize(),
                   funded_args().set_amount(1000)));
-  expect_code(
-      "Trying to invoke a timeout too early", no_timeout,
-      channel.write().send_external_message(MsgTimeoutBuilder().finalize(), funded_args().set_now(0)));
+  expect_code("Trying to invoke a timeout too early", no_timeout,
+              channel.write().send_external_message(MsgTimeoutBuilder().finalize(), funded_args().set_now(0)));
 
   {
     auto channel_copy = channel;
-    expect_ok("Invoke a timeout", channel_copy.write().send_external_message(MsgTimeoutBuilder().finalize(),
-                                                                             funded_args().set_now(21)));
+    expect_ok("Invoke a timeout",
+              channel_copy.write().send_external_message(MsgTimeoutBuilder().finalize(), funded_args().set_now(21)));
     ValidateStatePayout(channel_copy->get_state().data).expect_A(1000).expect_B(0).finish().ensure();
   }
   {
