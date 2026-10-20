@@ -149,10 +149,15 @@ int quorum::verifier?([cell, int, int] config, int public_key) inline {
 ;; member of the set, or that is by a weak member: a config tuple may come from storage
 ;; rather than from `quorum::config`.
 int quorum::count_valid_signatures([cell, int, int] config, int hash, cell signatures) impure inline {
+  [_, int verifier_count, _] = config;
   int count = 0;
   (int public_key, slice signature, int found) = signatures.udict_get_min?(quorum::key_bits);
   while (found) {
     count += 1;
+    ;; A consistent config has no more members than it counts, so a walk past
+    ;; that count proves the config disagrees with its own set; stopping here
+    ;; keeps the work bounded by the declared count even for a hand-built config.
+    throw_if(quorum::error::invalid_config, count > verifier_count);
     throw_unless(quorum::error::unknown_signer, quorum::verifier?(config, public_key));
     quorum::require_strong_verifier(public_key);
     throw_unless(quorum::error::malformed_signature,

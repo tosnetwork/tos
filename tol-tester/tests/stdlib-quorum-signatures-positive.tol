@@ -126,7 +126,11 @@ fun test_quorum_met_and_missed(): int {
     try { zeroQuorum.requireQuorum(HASH, createEmptyDict()); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 144); invalid += 1; }
     val unreachable = QuorumConfig { verifiers: set123(), verifierCount: 3, quorum: 4 };
     try { unreachable.requireQuorum(HASH, s); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 145); invalid += 1; }
-    assert(invalid == 2) throw 146;
+    // A set larger than its declared count cannot make the walk pay for more
+    // than the count: the second member signature is one too many for count 1.
+    val undercounted = QuorumConfig { verifiers: set123(), verifierCount: 1, quorum: 1 };
+    try { undercounted.requireQuorum(HASH, s); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 147); invalid += 1; }
+    assert(invalid == 3) throw 146;
     return 5;
 }
 

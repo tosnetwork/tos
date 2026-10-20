@@ -163,6 +163,12 @@ fun QuorumConfig.countValidSignatures(self, hash: int, signatures: dict): int {
     var (key, value, found) = signatures.uDictGetFirst(QUORUM_KEY_BITS);
     while (found) {
         count += 1;
+        // A consistent config has no more members than it counts, so a walk past
+        // that count proves the config disagrees with its own set; stopping here
+        // keeps the work bounded by the declared count even for a hand-built config.
+        if (count > self.verifierCount) {
+            throw QUORUM_THROW_INVALID_CONFIG;
+        }
         val publicKey = key!;
         if (!self.isVerifier(publicKey)) {
             throw QUORUM_THROW_UNKNOWN_SIGNER;

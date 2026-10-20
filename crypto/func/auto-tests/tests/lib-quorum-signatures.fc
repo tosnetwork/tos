@@ -123,7 +123,10 @@ int test_quorum_met_and_missed() method_id(105) {
   int invalid = 0;
   try { quorum::require_quorum([set123(), 3, 0], HASH, new_dict()); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 144); invalid += 1; }
   try { quorum::require_quorum([set123(), 3, 4], HASH, s); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 145); invalid += 1; }
-  throw_unless(146, invalid == 2);
+  ;; A set larger than its declared count cannot make the walk pay for more than the
+  ;; count: the second member signature is already one too many for count 1.
+  try { quorum::require_quorum([set123(), 1, 1], HASH, s); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 147); invalid += 1; }
+  throw_unless(146, invalid == 3);
   return 5;
 }
 
