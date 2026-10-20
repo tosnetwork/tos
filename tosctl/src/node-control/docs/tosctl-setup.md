@@ -321,6 +321,11 @@ tosctl config node ls
 
 ## Step 8: Add Wallets
 
+This is the validator-staking setup, so its configuration wallets stay in
+workchain `-1`. Generic user wallets and user contracts default to `0`. If you
+create or recover a validator wallet through the generic `wallet` commands,
+pass `--workchain -1` explicitly.
+
 Add a validator wallet for each node. Each wallet needs a unique name and a vault secret name for its private key. The key was created in [Step 5](#step-5-create-secrets-in-vault).
 
 ```bash

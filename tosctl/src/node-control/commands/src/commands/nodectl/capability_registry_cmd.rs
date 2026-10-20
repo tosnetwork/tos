@@ -90,7 +90,7 @@ pub struct CapabilityRegistryDeployCmd {
     from: String,
     #[arg(long, default_value_t = 0.2, help = "Message value funding the deploy, in TOS")]
     amount: f64,
-    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
     #[arg(long)]
     yes: bool,
@@ -201,7 +201,7 @@ pub struct CapabilityRegistryBuildStateCmd {
     bond: f64,
     #[arg(long, help = "Unix registration timestamp; defaults to now")]
     registered_at: Option<u64>,
-    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value = "-1")]
+    #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
     #[arg(short, long, default_value = "table")]
     format: OutputFormat,

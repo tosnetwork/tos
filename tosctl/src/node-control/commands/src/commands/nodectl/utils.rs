@@ -30,6 +30,9 @@ const POLL_INTERVAL: tokio::time::Duration = tokio::time::Duration::from_secs(2)
 pub const SEND_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(15);
 pub const DEPLOY_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(60);
 
+/// Default for new user contracts; validator-staking configuration keeps its own workchain.
+pub(crate) const USER_CONTRACT_WORKCHAIN: i32 = 0;
+
 /// clap value parser for a flag that takes an account address. The flag also allows
 /// hyphen values, because a raw masterchain address starts with `-1:`; this parser
 /// is what keeps a following option (`--to --bounce`) from being taken as the

@@ -140,3 +140,62 @@ fn collator_shard_accepts_a_masterchain_shard_and_refuses_another_option() {
         .map(|e| e.kind());
     assert_eq!(error, Some(clap::error::ErrorKind::ValueValidation));
 }
+
+#[test]
+fn user_contract_workchain_defaults_are_basechain_and_operator_defaults_stay_masterchain() {
+    use clap::Subcommand;
+
+    fn visit(command: &Command, path: &str, checked: &mut usize, inherited: &mut usize) {
+        if let Some(arg) = command.get_arguments().find(|arg| arg.get_long() == Some("workchain")) {
+            if matches!(
+                path,
+                "tosctl agent account build-state"
+                    | "tosctl agent account deploy"
+                    | "tosctl agent account status"
+            ) {
+                assert!(
+                    arg.get_default_values().is_empty(),
+                    "{path}: preserve explicit choice for legacy generations"
+                );
+                *inherited += 1;
+            } else if !arg.get_default_values().is_empty() {
+                let expected = if path == "tosctl config wallet add" { "-1" } else { "0" };
+                let matches = command
+                    .clone()
+                    .ignore_errors(true)
+                    .try_get_matches_from([command.get_name()])
+                    .expect("parse the deployment defaults without executing a command");
+                let actual: Vec<_> = matches
+                    .get_raw(arg.get_id().as_str())
+                    .expect("workchain default was applied")
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .collect();
+                assert_eq!(actual, [expected], "{path}: wrong deployment workchain default");
+                *checked += 1;
+            }
+        }
+        for child in command.get_subcommands() {
+            visit(child, &format!("{path} {}", child.get_name()), checked, inherited);
+        }
+    }
+
+    let mut command =
+        crate::commands::cli_cmd::Commands::augment_subcommands(Command::new("tosctl"));
+    command.build();
+    let mut checked = 0;
+    let mut inherited = 0;
+    visit(&command, "tosctl", &mut checked, &mut inherited);
+    assert_eq!(inherited, 3, "all Agent Account generation selectors were checked");
+    assert!(checked >= 14, "the default inventory did not run: {checked} commands");
+}
+
+#[test]
+fn omitted_wallet_config_workchain_keeps_the_operator_identity() {
+    let wallet: common::app_config::WalletConfig = serde_json::from_value(serde_json::json!({
+        "key": {"name": "operator-key"},
+        "version": "V3R2",
+        "subwallet_id": 42
+    }))
+    .expect("existing operator wallet configuration");
+    assert_eq!(wallet.workchain, -1);
+}
