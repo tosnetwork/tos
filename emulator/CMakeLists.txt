@@ -74,3 +74,9 @@ if (USE_EMSCRIPTEN)
 endif()
 
 install(TARGETS emulator ARCHIVE DESTINATION lib LIBRARY DESTINATION lib)
+
+# A standalone entry point avoids unrelated generated-contract dependencies of test-emulator.
+if (NOT USE_EMSCRIPTEN)
+  add_executable(test-epoch-replay test/epoch-replay.cpp)
+  target_link_libraries(test-epoch-replay PRIVATE emulator_static)
+endif()

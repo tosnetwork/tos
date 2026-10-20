@@ -1,0 +1,89 @@
+name: Epoch codec, state and VM determinism
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: epoch-replay-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  replay:
+    name: Replay (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86-64
+            runner: ubuntu-24.04
+            cpu: x86-64-v2
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            cpu: armv8-a
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Check the comparison failure controls
+        run: python3 test/rel02/test_run.py
+      - name: Install the release toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config autoconf automake libtool libjemalloc-dev libgmp-dev libssl-dev gperf
+          sudo scripts/install-llvm-toolchain.sh 21
+          clang-21 --version
+          clang++-21 --version
+      - uses: ./.github/actions/native-cache
+        with:
+          profile: epoch-replay-release
+          max-size: 1G
+      - name: Configure with the effective epoch release arguments
+        env:
+          CPU: ${{ matrix.cpu }}
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+            -DTOS_ARCH="$CPU" -DPORTABLE="$CPU" -DTOS_USE_JEMALLOC=ON
+      - name: Build the existing execution libraries and replay entry point
+        run: cmake --build build --target test-epoch-replay --parallel 2
+      - name: Replay and check the on-chain oracle
+        run: |
+          mkdir -p result
+          python3 test/rel02/run.py --executable build/emulator/test-epoch-replay \
+            --output result/outputs.jsonl --metrics result/metrics.json --controls
+      - name: Publish canonical outputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: epoch-replay-${{ matrix.arch }}
+          path: result/
+          if-no-files-found: error
+          retention-days: 30
+  compare:
+    name: Compare both architectures with the chain
+    needs: replay
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: epoch-replay-*
+          path: artifacts
+      - name: Require both results and report the first differing field
+        run: |
+          python3 test/rel02/run.py --compare \
+            artifacts/epoch-replay-x86-64/outputs.jsonl \
+            artifacts/epoch-replay-arm64/outputs.jsonl
+          cat artifacts/epoch-replay-x86-64/metrics.json
+          cat artifacts/epoch-replay-arm64/metrics.json
+          test "${{ needs.replay.result }}" = success
