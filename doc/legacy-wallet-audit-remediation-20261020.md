@@ -29,8 +29,9 @@ existing C++ transfer-only QueryBuilder does not build this envelope; the
 native regression shows its complete serialization and signing procedure.
 
 A payment-channel close needs funds for **both** principals plus transaction
-and forwarding fees. A close or timeout that would pay out while the balance is
-below the two principals is refused before acceptance, so it is not accepted
+and forwarding fees. A close or timeout that would pay out while the balance, after the
+message import and storage charges, is below the two principals is refused
+before acceptance, so it is not accepted
 into a block and cannot be replayed against the unchanged state; only the fee
 margin can still fail in the action phase, in which case fund the channel and
 repeat the original close/timeout. After both exact principals, the remainder

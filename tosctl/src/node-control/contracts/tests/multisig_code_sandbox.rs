@@ -980,9 +980,11 @@ fn empty_maintenance_is_refused_before_acceptance_and_stays_usable() {
     let maintenance = signed_root_with(0, &payload);
     let body = query(sign(&keys[0], &maintenance), &maintenance);
 
-    // Nothing pending at all.
+    // Nothing pending at all: refused before acceptance, so the wallet pays nothing.
+    let balance = wallet.balance();
     let error = wallet.refused(body.clone());
     assert!(error.contains("exit code: 46"), "empty wallet: {error}");
+    assert_eq!(wallet.balance(), balance, "a refused maintenance must cost the wallet nothing");
     // Pending proposals that have not expired.
     for n in 0..3u64 {
         let proposal_id = wallet.query_id(n);

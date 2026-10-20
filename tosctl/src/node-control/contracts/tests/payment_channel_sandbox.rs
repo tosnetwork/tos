@@ -605,7 +605,8 @@ fn payout_is_atomic_and_cannot_pay_principals_twice() {
     let b = SigningKey::from_bytes(&[0x43; 32]);
     let code = compile(&source());
     // Below the principals, and then the principals plus a sliver that covers
-    // the storage phase but not the gas and forwarding fees of the payout.
+    // the external message's import fee, charged before compute, but not the
+    // gas and forwarding fees of the payout.
     for available in [3 * TOS, 5 * TOS, CHANNEL_A + CHANNEL_B + TOS / 1_000] {
         let mut channel = Channel::deploy(
             code.clone(),
