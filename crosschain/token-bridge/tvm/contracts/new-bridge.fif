@@ -5,8 +5,8 @@
 // Usage: new-bridge.fif <evm-chain-id> <evm-bridge-address>
 //
 // Includes the code that scripts/build-token-bridge.sh compiles for one network:
-// jetton-bridge.fif, jetton-minter.fif, jetton-wallet.fif, votes-collector.fif.
-// The storage below must match jetton-bridge.fc's load_data field for field;
+// token-bridge.fif, token-minter.fif, token-wallet.fif, votes-collector.fif.
+// The storage below must match token-bridge.fc's load_data field for field;
 // token_bridge_sandbox runs this script and takes its output through a mint.
 //
 // The counterparty namespace is fixed here for the life of the bridge. The
@@ -20,11 +20,11 @@ evm-chain-id 0 < evm-chain-id 1 32 << >= or abort"the EVM chain id must fit 32 b
 evm-bridge-address 0 <= evm-bridge-address 1 160 << >= or abort"the EVM bridge address must be a non-zero 160-bit value"
 
 <{ SETCP0 ACCEPT
-   "jetton-bridge.fif" include PUSHREF SETCODE
+   "token-bridge.fif" include PUSHREF SETCODE
 }>c constant code
 
-"jetton-wallet.fif" include constant jetton_wallet_code
-"jetton-minter.fif" include constant jetton_minter_code
+"token-wallet.fif" include constant token_wallet_code
+"token-minter.fif" include constant token_minter_code
 
 <b
    0 64 u,                     // born_lt: set by the bridge's first transaction
@@ -34,8 +34,8 @@ evm-bridge-address 0 <= evm-bridge-address 1 160 << >= or abort"the EVM bridge a
    0 64 u,                     // generation_start
    0 2 u,                      // generation_state: unset
    0 "votes-collector.fif" include hashu Addr, // collector_address
-   jetton_minter_code ref,
-   jetton_wallet_code ref,
+   token_minter_code ref,
+   token_wallet_code ref,
    <b
       0 64 u,                  // swap_watermark
       b{0} s,                  // swaps

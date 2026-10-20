@@ -1,8 +1,8 @@
 /**
  * @tos/react — useTokenData hook.
  *
- * Fetches general token data via `getTokenData` (supports Jetton masters,
- * NFT collections, NFT items, and Jetton wallets).
+ * Fetches general token data via `getTokenData` (supports Token masters,
+ * NFT collections and NFT items). Per-owner wallet reads use TokenWallet.
  */
 
 import type { Address } from "@tos/core";
@@ -21,7 +21,7 @@ export interface UseTokenDataOptions extends QueryOptions {
  * Fetch token data for a contract address.
  *
  * The returned data type is a discriminated union — check `data["@type"]` to
- * determine whether it is a Jetton master, Jetton wallet, NFT item, or NFT
+ * determine whether it is a Token master, NFT item, or NFT
  * collection.
  *
  * @param address - The token contract address.

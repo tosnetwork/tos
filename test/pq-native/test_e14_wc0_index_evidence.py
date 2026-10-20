@@ -146,7 +146,7 @@ class Wc0EvidenceTests(unittest.TestCase):
             patch.object(e14, "record_jsonl"),
         ):
             with self.assertRaisesRegex(RuntimeError, "RPC failed"):
-                e14.rpc_call("getAccountJettons", address="victim")
+                e14.rpc_call("getAccountTokens", address="victim")
 
     def test_getter_method_is_a_parameter_not_the_rpc_name(self):
         class Response:
@@ -180,7 +180,7 @@ class Wc0EvidenceTests(unittest.TestCase):
                 patch.object(e14.urllib.request, "urlopen", side_effect=error),
             ):
                 with self.assertRaises(urllib.error.HTTPError):
-                    e14.rpc_call("getAccountJettons", address="victim")
+                    e14.rpc_call("getAccountTokens", address="victim")
             row = json.loads(path.read_text().splitlines()[0])
         error.close()
         self.assertEqual(row["status"], 503)
@@ -236,28 +236,28 @@ class Wc0EvidenceTests(unittest.TestCase):
             self.assertEqual(report["exit_code"], 1)
             self.assertEqual(base64.b64decode(report["stderr_base64"]), b"compiler failed")
 
-    def test_indexed_row_requires_live_observed_jetton_wallet(self):
+    def test_indexed_row_requires_live_observed_token_wallet(self):
         valid = {
-            "jetton_master": "0:" + "1" * 64,
-            "jetton_wallet": "0:" + "2" * 64,
+            "token_master": "0:" + "1" * 64,
+            "token_wallet": "0:" + "2" * 64,
             "last_lt": "10",
         }
         with (
-            patch.object(e14, "get_jettons", return_value=[valid]),
+            patch.object(e14, "get_tokens", return_value=[valid]),
             patch.object(e14, "rpc_call", return_value={"result": "active"}),
             patch.object(e14, "verify_indexed_wallet") as verify,
         ):
-            self.assertEqual(e14.indexed_entry("owner", valid["jetton_master"]), valid)
-            verify.assert_called_once_with(valid["jetton_wallet"], "owner", valid["jetton_master"])
-        with patch.object(e14, "get_jettons", return_value=[dict(valid, last_lt="0")]):
+            self.assertEqual(e14.indexed_entry("owner", valid["token_master"]), valid)
+            verify.assert_called_once_with(valid["token_wallet"], "owner", valid["token_master"])
+        with patch.object(e14, "get_tokens", return_value=[dict(valid, last_lt="0")]):
             with self.assertRaisesRegex(RuntimeError, "observed wallet transaction"):
-                e14.indexed_entry("owner", valid["jetton_master"])
+                e14.indexed_entry("owner", valid["token_master"])
         with (
-            patch.object(e14, "get_jettons", return_value=[valid]),
+            patch.object(e14, "get_tokens", return_value=[valid]),
             patch.object(e14, "rpc_call", return_value={"result": "uninit"}),
         ):
             with self.assertRaisesRegex(RuntimeError, "not active"):
-                e14.indexed_entry("owner", valid["jetton_master"])
+                e14.indexed_entry("owner", valid["token_master"])
 
     def test_negative_index_check_has_post_forgery_canary_gate(self):
         tree = ast.parse(SOURCE.read_text())
@@ -284,19 +284,19 @@ class Wc0EvidenceTests(unittest.TestCase):
         )
         with (
             patch.object(e14, "poll", new=AsyncMock(return_value=None)),
-            patch.object(e14, "get_jettons") as victim_query,
+            patch.object(e14, "get_tokens") as victim_query,
         ):
             with self.assertRaisesRegex(RuntimeError, "canary mint was not indexed"):
                 asyncio.run(e14.victim_index_after_canary("victim", "canary", "master"))
             victim_query.assert_not_called()
         with (
-            patch.object(e14, "poll", new=AsyncMock(return_value={"jetton_wallet": "wallet"})),
-            patch.object(e14, "get_jettons", return_value=[]) as victim_query,
+            patch.object(e14, "poll", new=AsyncMock(return_value={"token_wallet": "wallet"})),
+            patch.object(e14, "get_tokens", return_value=[]) as victim_query,
         ):
             canary, victim = asyncio.run(
                 e14.victim_index_after_canary("victim", "canary", "master")
             )
-            self.assertEqual(canary["jetton_wallet"], "wallet")
+            self.assertEqual(canary["token_wallet"], "wallet")
             self.assertEqual(victim, [])
             victim_query.assert_called_once_with("victim")
 
@@ -377,8 +377,8 @@ class Wc0EvidenceTests(unittest.TestCase):
             }
         }
         with (
-            patch.object(e14, "poll", new=AsyncMock(return_value={"jetton_wallet": "canary"})),
-            patch.object(e14, "get_jettons", return_value=[]) as lists,
+            patch.object(e14, "poll", new=AsyncMock(return_value={"token_wallet": "canary"})),
+            patch.object(e14, "get_tokens", return_value=[]) as lists,
             patch.object(
                 e14, "rpc_call", side_effect=RuntimeError("Account event not found")
             ) as rpc,
@@ -387,9 +387,9 @@ class Wc0EvidenceTests(unittest.TestCase):
             canary, victim = asyncio.run(
                 e14.victim_index_after_canary("victim", "canary-owner", "master")
             )
-            self.assertEqual(canary["jetton_wallet"], "canary")
+            self.assertEqual(canary["token_wallet"], "canary")
             self.assertEqual(victim, [])
-            self.assertEqual(e14.get_jettons("attacker"), [])
+            self.assertEqual(e14.get_tokens("attacker"), [])
             with self.assertRaisesRegex(RuntimeError, "Account event not found"):
                 e14.require_forged_block_indexed("victim", forged_tx)
             rpc.assert_called_once_with(
@@ -484,14 +484,14 @@ class Wc0EvidenceTests(unittest.TestCase):
     def test_attacker_self_claim_is_a_failure(self):
         failures = []
         with (
-            patch.object(e14, "get_jettons", return_value=[{"jetton_master": "forged"}]),
+            patch.object(e14, "get_tokens", return_value=[{"token_master": "forged"}]),
             patch.object(e14, "record_jsonl") as record,
         ):
             e14.check_attacker_self_index("attacker", failures)
             self.assertEqual(failures, ["attacker self-claim was indexed"])
-            self.assertEqual(record.call_args.args[1]["jettons"], [{"jetton_master": "forged"}])
+            self.assertEqual(record.call_args.args[1]["tokens"], [{"token_master": "forged"}])
         failures.clear()
-        with patch.object(e14, "get_jettons", return_value=[]), patch.object(e14, "record_jsonl"):
+        with patch.object(e14, "get_tokens", return_value=[]), patch.object(e14, "record_jsonl"):
             e14.check_attacker_self_index("attacker", failures)
             self.assertEqual(failures, [])
 

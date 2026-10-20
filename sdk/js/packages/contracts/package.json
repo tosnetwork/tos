@@ -1,7 +1,7 @@
 {
   "name": "@tos/contracts",
   "version": "0.1.0",
-  "description": "Standard contract wrappers for TOS Blockchain — Jetton, NFT",
+  "description": "Standard contract wrappers for TOS Blockchain — Token, NFT",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

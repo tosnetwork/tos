@@ -112,7 +112,7 @@ function tupleElementsFromEntry(entry: unknown): unknown[] {
  *
  * @example
  * ```typescript
- * const result = await client.runGetMethod(addr, "get_jetton_data");
+ * const result = await client.runGetMethod(addr, "get_token_data");
  * const reader = new StackReaderImpl(result.stack);
  * const supply = reader.readBigNumber();
  * const mintable = reader.readBoolean();

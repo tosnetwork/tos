@@ -2652,7 +2652,7 @@ void ValidatorEngine::start_validator() {
                                                           !state_serializer_disabled_flag_);
   load_collator_options();
 
-  // wc=0 in-process wallet index (jetton/NFT/event aggregate queries). The
+  // wc=0 in-process wallet index (token/NFT/event aggregate queries). The
   // index exists solely to serve the JSON-RPC account endpoints, so it is
   // opened — and the block-apply hook installed — only when the JSON-RPC
   // server is enabled. Nodes without JSON-RPC skip the per-block indexing

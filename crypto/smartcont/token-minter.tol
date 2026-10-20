@@ -1,0 +1,330 @@
+// =============================================================================
+// Slice 2 Stage 8a — token-minter Tol re-migration to high-level syntax.
+//
+// Policy reference: https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-language-syntax-policy.md §3.1, §3.2 (`@unknown_throw`),
+// §3.5 (`get fun`), §3.7 (`require`), §6.1 (wire-bit-identity), §7 (migration path).
+// Inherits Slice 1 Stage 3.1 wire commitments from https://github.com/tosnetwork/doc/blob/main/tos-blockchain/tos-message-policy.md v6
+// §3.1 (standard body layout), §5.2 (OP_ERROR body), §5.3 (error_class), and §8.1
+// (bit-for-bit compatibility for existing TOS Token V1 formats).
+//
+// Bytecode delta captured at Slice 1 Stage 3.1 write time:
+//   FunC cells: 11
+//   Tol cells:  9
+//   ratio:      0.82
+//
+// §5.3 error-class assignment table (preserved from Slice 1 Stage 3.1):
+//   FunC line | FunC throw(N) | ErrorClass    | error_code (wire) | Slice 2 site
+//   65        | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   80        | throw(74)     | Authorization | 74                | require(..., ErrorClass.Authorization, 74)
+//   99        | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   99a       | throw(75)     | Protocol      | 75                | reject addr_none admin to avoid accidental irrecoverable renounce
+//   106       | throw(73)     | Authorization | 73                | require(..., ErrorClass.Authorization, 73)
+//   111       | throw(0xffff) | Protocol      | 65535             | @unknown_throw(0xffff)
+//
+// The 3-arg `require(cond, ErrorClass.X, N)` form (§3.7) preserves bit-identical
+// TVM exit codes (73, 74, 0xffff) so bounce shape and gas-parity vs the FunC
+// reference do not regress (see §6.1 closure). The auto-numbered codes from the
+// 2-arg form would land in 0x30000+ Authorization range and break that closure.
+//
+// Compatibility note: the FunC reference stores several Token fields as
+// MsgAddress slices, not MsgAddressInt. This re-migration keeps those as
+// `any_address` and preserves the original hand-packed outbound layout for
+// mint/excesses sends. Replacing those sends with createMessage() would narrow
+// `response_address` to `address` and alter §8.1 behaviour for non-internal
+// MsgAddress values.
+//
+// `@unknown_throw(0xffff)` matches FunC line 111 (`throw 0xffff`). Per §3.2 v3
+// the short-body (< 32 bits) branch under `@unknown_throw` shares the unknown-
+// opcode tail and throws the same code; this is observably equivalent to the
+// FunC empty-body silent-return only in steady-state gas, since neither path
+// emits an outbound message and the bounce shape on a bounceable inbound is
+// the same compute-phase abort. The 24 test-emulator scenarios (notably the
+// `empty-body` parity fixture in emulator/test/slice-1-stage-4-gas-parity-
+// fixture.cpp) drive this directly and remain green.
+//
+// Slice 3 Stage 3 keeps the old file-scope helper names as compatibility
+// wrappers because the Slice 1/2 tol-tester suites import them directly. Their
+// bodies now delegate to `@stdlib/token` helpers for state-init/address
+// calculation, raw excesses construction, mint sending, and error mapping. The
+// regenerated Tol BoC remains byte-for-byte identical to the Stage 0 baseline.
+// =============================================================================
+
+import "@stdlib/common"
+import "@stdlib/token"
+import "@stdlib/token-fees"
+import "token-wallet-fee-profile"
+
+const OP_MINT = TOKEN_OP_MINT
+const OP_CHANGE_ADMIN = TOKEN_OP_CHANGE_ADMIN
+const OP_CHANGE_CONTENT = TOKEN_OP_CHANGE_CONTENT
+const OP_EXCESSES = TOKEN_OP_EXCESSES
+const OP_BURN_NOTIFICATION = TOKEN_OP_BURN_NOTIFICATION
+
+const FUNC_THROW_ADMIN_REQUIRED = TOKEN_MINTER_FUNC_THROW_ADMIN_REQUIRED
+const FUNC_THROW_BURN_SENDER_NOT_WALLET = TOKEN_MINTER_FUNC_THROW_BURN_SENDER_NOT_WALLET
+const FUNC_THROW_INVALID_ADMIN = TOKEN_MINTER_FUNC_THROW_INVALID_ADMIN
+const FUNC_THROW_INVALID_AMOUNT = TOKEN_MINTER_FUNC_THROW_INVALID_AMOUNT
+const FUNC_THROW_UNKNOWN_OPCODE = TOKEN_FUNC_THROW_UNKNOWN_OPCODE
+
+const TOKEN_ERROR_ADMIN_REQUIRED = TOKEN_STDLIB_ERROR_ADMIN_REQUIRED
+const TOKEN_ERROR_BURN_SENDER_NOT_WALLET = TOKEN_STDLIB_ERROR_BURN_SENDER_NOT_WALLET
+const TOKEN_ERROR_INVALID_ADMIN = TOKEN_STDLIB_ERROR_INVALID_ADMIN
+const TOKEN_ERROR_UNKNOWN_OPCODE = TOKEN_STDLIB_ERROR_UNKNOWN_OPCODE
+
+struct TokenMasterStorage {
+    totalSupply: coins;
+    adminAddress: any_address;
+    content: cell;
+    tokenWalletCode: cell;
+}
+
+/// Adds coins to the minter's balance; carries no tokens.
+struct (0xd372158c) TopUp {
+    queryId: uint64;
+}
+
+struct (0x00000015) MintRequest {
+    queryId: uint64;
+    toAddress: any_address;
+    amount: coins;
+    masterMsg: cell;
+}
+
+@overflow1023_policy("suppress")
+struct (0x7bdd97de) BurnNotification {
+    queryId: uint64;
+    tokenAmount: coins;
+    fromAddress: any_address;
+    responseAddress: any_address;
+}
+
+struct (0x00000003) ChangeAdmin {
+    queryId: uint64;
+    newAdminAddress: any_address;
+}
+
+struct (0x00000004) ChangeContent {
+    queryId: uint64;
+    newContent: cell;
+}
+
+struct (0xd53276db) Excesses {
+    queryId: uint64;
+}
+
+@pure
+fun currentAddress(): address {
+    return tokenCurrentAddress();
+}
+
+@pure
+fun sameInternalAndAnyAddressBits(a: address, b: any_address): bool {
+    return tokenSameInternalAndAnyAddressBits(a, b);
+}
+
+@pure
+fun packTokenWalletData(
+    balance: coins,
+    ownerAddress: any_address,
+    tokenMasterAddress: address,
+    tokenWalletCode: cell
+): cell {
+    return tokenMinterPackWalletData(balance, ownerAddress, tokenMasterAddress, tokenWalletCode);
+}
+
+@pure
+fun calculateTokenWalletStateInit(
+    ownerAddress: any_address,
+    tokenMasterAddress: address,
+    tokenWalletCode: cell
+): cell {
+    return tokenMinterCalculateWalletStateInit(ownerAddress, tokenMasterAddress, tokenWalletCode);
+}
+
+fun calculateTokenWalletAddress(stateInit: cell): address {
+    return tokenCalculateWalletAddress(stateInit);
+}
+
+fun calculateUserTokenWalletAddress(
+    ownerAddress: any_address,
+    tokenMasterAddress: address,
+    tokenWalletCode: cell
+): address {
+    return tokenMinterCalculateUserWalletAddress(ownerAddress, tokenMasterAddress, tokenWalletCode);
+}
+
+@pure
+fun tokenMinterErrorForThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    return tokenMinterErrorForFuncThrow(funcThrow, originalOp, queryId);
+}
+
+fun mintTokens(
+    toAddress: any_address,
+    tokenWalletCode: cell,
+    amount: coins,
+    masterMsg: cell
+): void {
+    tokenMinterMintTokens(toAddress, tokenWalletCode, amount, masterMsg);
+}
+
+@pure
+fun buildExcessesMessage(responseAddress: any_address, queryId: uint64): cell {
+    return tokenBuildMinterExcessesMessage(responseAddress, queryId);
+}
+
+fun sendExcesses(responseAddress: any_address, queryId: uint64): void {
+    sendRawMessage(
+        buildExcessesMessage(responseAddress, queryId),
+        SEND_MODE_IGNORE_ERRORS + SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE
+    );
+}
+
+/// A mint whose internal transfer bounced never credited anyone, so the tokens
+/// it counted are taken back out of the total supply. Kept in its own code cell,
+/// so that messages which are not bounces do not pay to load it.
+@inline_ref
+fun takeBackBouncedMint(bouncedBody: slice) {
+    var body = bouncedBody;
+    body.skipBouncedPrefix();
+    if (body.loadUint(32) != TOKEN_OP_INTERNAL_TRANSFER) {
+        return;
+    }
+    body.skipBits(64);
+    val amount = body.loadCoins();
+    var storage = TokenMasterStorage.fromCell(contract.getData());
+    storage.totalSupply -= amount;
+    contract.setData(storage.toCell());
+}
+
+fun onBouncedMessage(in: InMessageBounced) {
+    takeBackBouncedMint(in.bouncedBody);
+}
+
+contract TokenMaster {
+    storage: TokenMasterStorage
+    @unknown_throw(0xffff);
+
+    @disclaim_query_id
+    receive(msg: TopUp) {
+    }
+
+    @disclaim_query_id
+    receive(msg: MintRequest) {
+        // FunC line 65: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        var masterMsgBody = msg.masterMsg.beginParse();
+        masterMsgBody.skipBits(32 + 64);
+        val tokenAmount = masterMsgBody.loadCoins();
+        var newTotalSupply: coins = 0;
+        try {
+            newTotalSupply = storage.totalSupply + tokenAmount;
+        } catch (_) {
+            require(false, ErrorClass.Permanent, FUNC_THROW_INVALID_AMOUNT);
+        }
+        // The new wallet must be able to process the mint like any transfer: price
+        // it with the wallet's own profile, against the value the mint carries.
+        tokenForceBasechain(msg.toAddress);
+        masterMsgBody.loadAddressAny();
+        masterMsgBody.loadAddressAny();
+        val forwardTosAmount = masterMsgBody.loadCoins();
+        walletFeeProfile().requireTransferValue(msg.amount, forwardTosAmount, in.originalForwardFee);
+        // Only the value this message brought may be spent: keep the balance the
+        // minter held before it. The reserve itself always fits, since the gas
+        // was bought with this message's value; the mint's send then bounces
+        // the request if the rest does not cover it.
+        reserveToscoinsOnBalance(contract.getOriginalBalance() - in.valueCoins, RESERVE_MODE_EXACT_AMOUNT);
+        mintTokens(msg.toAddress, storage.tokenWalletCode, msg.amount, msg.masterMsg);
+        save(TokenMasterStorage {
+            totalSupply: newTotalSupply,
+            adminAddress: storage.adminAddress,
+            content: storage.content,
+            tokenWalletCode: storage.tokenWalletCode,
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: BurnNotification) {
+        // FunC line 80: throw_unless(74, equal_slices(calculate_user_token_wallet_address(...), sender_address));
+        // The auth check happens BEFORE responseAddress is parsed in the FunC
+        // reference; lazy field access here mirrors that order: tokenAmount and
+        // fromAddress are accessed before the require, then save runs, then the
+        // optional responseAddress branch.
+        //
+        // `@disclaim_query_id` per §3.2.1: msg.queryId IS propagated to the
+        // outbound `excesses` body via `sendExcesses(...)`, but that helper is a
+        // raw cell builder (kept verbatim from Slice 1 Stage 3.1 — see §6.1
+        // caveat about `createMessage<TBody>` narrowing `responseAddress` to
+        // `address`). The static pipe-check-query-id-propagation pass only
+        // tracks `createMessage<TBody>` reply emits, so we acknowledge the
+        // propagation here. Wire bytes are unchanged; `Excesses { queryId }`
+        // body still carries the inbound queryId on the §8.1-compatible reply.
+        val tokenAmount = msg.tokenAmount;
+        val fromAddress = msg.fromAddress;
+        val expectedWallet = calculateUserTokenWalletAddress(
+            fromAddress,
+            currentAddress(),
+            storage.tokenWalletCode
+        );
+        require(expectedWallet == in.senderAddress,
+                ErrorClass.Authorization, FUNC_THROW_BURN_SENDER_NOT_WALLET);
+        require(tokenAmount <= storage.totalSupply,
+                ErrorClass.Permanent, FUNC_THROW_INVALID_AMOUNT);
+        save(TokenMasterStorage {
+            totalSupply: storage.totalSupply - tokenAmount,
+            adminAddress: storage.adminAddress,
+            content: storage.content,
+            tokenWalletCode: storage.tokenWalletCode,
+        });
+        val responseAddress = msg.responseAddress;
+        if (!responseAddress.isNone()) {
+            sendExcesses(responseAddress, msg.queryId);
+        }
+    }
+
+    @disclaim_query_id
+    receive(msg: ChangeAdmin) {
+        // FunC line 99: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        require(!msg.newAdminAddress.isNone(),
+                ErrorClass.Protocol, FUNC_THROW_INVALID_ADMIN);
+        save(TokenMasterStorage {
+            totalSupply: storage.totalSupply,
+            adminAddress: msg.newAdminAddress,
+            content: storage.content,
+            tokenWalletCode: storage.tokenWalletCode,
+        });
+    }
+
+    @disclaim_query_id
+    receive(msg: ChangeContent) {
+        // FunC line 106: throw_unless(73, equal_slices(sender_address, admin_address));
+        require(sameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, FUNC_THROW_ADMIN_REQUIRED);
+        save(TokenMasterStorage {
+            totalSupply: storage.totalSupply,
+            adminAddress: storage.adminAddress,
+            content: msg.newContent,
+            tokenWalletCode: storage.tokenWalletCode,
+        });
+    }
+
+    get fun get_token_data(): (coins, int, any_address, cell, cell) {
+        return (
+            storage.totalSupply,
+            -1,
+            storage.adminAddress,
+            storage.content,
+            storage.tokenWalletCode,
+        );
+    }
+
+    get fun get_wallet_address(ownerAddress: any_address): address {
+        return calculateUserTokenWalletAddress(
+            ownerAddress,
+            currentAddress(),
+            storage.tokenWalletCode
+        );
+    }
+}

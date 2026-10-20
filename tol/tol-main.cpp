@@ -76,7 +76,7 @@ static struct option long_options[] = {
 void usage(const char* progname) {
   std::cerr
       << "usage: " << progname << " [options] <filename.tol>\n"
-            "       " << progname << " new --pattern <jetton|nft|wallet|multisig|auction|governance|oracle|payment-channel> [--name <Name>] [--output <dir>] [--force]\n"
+            "       " << progname << " new --pattern <token|nft|wallet|multisig|auction|governance|oracle|payment-channel> [--name <Name>] [--output <dir>] [--force]\n"
             "\tGenerates Fift TVM assembler code from a .tol file\n"
          "new --pattern <name>\n"
             "\tCreate a stdlib scaffold project for a supported pattern\n"
@@ -109,7 +109,7 @@ void usage(const char* progname) {
 
 static bool is_supported_new_pattern(const std::string& pattern) {
   static const std::set<std::string> supported = {
-      "jetton", "nft", "wallet", "multisig",
+      "token", "nft", "wallet", "multisig",
       "auction", "governance", "oracle", "payment-channel"};
   return supported.count(pattern) != 0;
 }
@@ -120,8 +120,8 @@ static bool is_slice5_new_pattern(const std::string& pattern) {
 }
 
 static std::string default_scaffold_name(const std::string& pattern) {
-  if (pattern == "jetton") {
-    return "JettonScaffold";
+  if (pattern == "token") {
+    return "TokenScaffold";
   }
   if (pattern == "nft") {
     return "NftScaffold";
@@ -217,17 +217,17 @@ static bool write_scaffold_file(const std::string& path, const std::string& cont
 }
 
 static std::string scaffold_source_template(const std::string& pattern) {
-  if (pattern == "jetton") {
-    return R"TOL(import "@stdlib/jetton"
+  if (pattern == "token") {
+    return R"TOL(import "@stdlib/token"
 
 struct {{NAME}}Storage {
     totalSupply: coins;
     adminAddress: any_address;
     content: cell;
-    jettonWalletCode: cell;
+    tokenWalletCode: cell;
 }
 
-struct (JETTON_OP_MINT) {{NAME}}Mint {
+struct (TOKEN_OP_MINT) {{NAME}}Mint {
     queryId: uint64;
     toAddress: any_address;
     amount: coins;
@@ -235,7 +235,7 @@ struct (JETTON_OP_MINT) {{NAME}}Mint {
 }
 
 fun scaffoldPatternId(): int {
-    return jettonPatternManifestHeader().patternId;
+    return tokenPatternManifestHeader().patternId;
 }
 
 contract {{NAME}} {
@@ -244,8 +244,8 @@ contract {{NAME}} {
 
     @disclaim_query_id
     receive(msg: {{NAME}}Mint) {
-        require(jettonSameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
-                ErrorClass.Authorization, JETTON_MINTER_FUNC_THROW_ADMIN_REQUIRED);
+        require(tokenSameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, TOKEN_MINTER_FUNC_THROW_ADMIN_REQUIRED);
         msg.masterMsg;
         save(storage);
     }
@@ -900,7 +900,7 @@ tol-tester tests {{PATTERN}}-positive
 }
 
 static int scaffold_pattern_id(const std::string& pattern) {
-  if (pattern == "jetton") return 2;
+  if (pattern == "token") return 2;
   if (pattern == "nft") return 3;
   if (pattern == "wallet") return 4;
   if (pattern == "multisig") return 5;
@@ -912,13 +912,13 @@ static int scaffold_pattern_id(const std::string& pattern) {
 }
 
 static std::string scaffold_opcode_map(const std::string& pattern) {
-  if (pattern == "jetton") {
+  if (pattern == "token") {
     return R"JSON({
   "opcodes": [
-    {"name": "JETTON_OP_MINT", "hex": "0x00000015"},
-    {"name": "JETTON_OP_TRANSFER", "hex": "0x0f8a7ea5"},
-    {"name": "JETTON_OP_INTERNAL_TRANSFER", "hex": "0x178d4519"},
-    {"name": "JETTON_OP_BURN", "hex": "0x595f07bc"}
+    {"name": "TOKEN_OP_MINT", "hex": "0x00000015"},
+    {"name": "TOKEN_OP_TRANSFER", "hex": "0x0f8a7ea5"},
+    {"name": "TOKEN_OP_INTERNAL_TRANSFER", "hex": "0x178d4519"},
+    {"name": "TOKEN_OP_BURN", "hex": "0x595f07bc"}
   ]
 }
 )JSON";
@@ -1072,7 +1072,7 @@ static bool materialize_scaffold(const std::string& output_dir, const std::strin
 }
 
 static int tol_new_usage(const char* progname) {
-  std::cerr << "usage: " << progname << " new --pattern <jetton|nft|wallet|multisig|auction|governance|oracle|payment-channel> [--name <Name>] [--output <dir>] [--force]\n";
+  std::cerr << "usage: " << progname << " new --pattern <token|nft|wallet|multisig|auction|governance|oracle|payment-channel> [--name <Name>] [--output <dir>] [--force]\n";
   return 2;
 }
 
@@ -1112,7 +1112,7 @@ static int run_new_command(int argc, char* const argv[]) {
     }
   }
   if (!is_supported_new_pattern(pattern)) {
-    std::cerr << "tol new: --pattern must be one of jetton, nft, wallet, multisig, auction, governance, oracle, payment-channel\n";
+    std::cerr << "tol new: --pattern must be one of token, nft, wallet, multisig, auction, governance, oracle, payment-channel\n";
     return 2;
   }
   if (name.empty()) {

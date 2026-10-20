@@ -1,0 +1,32 @@
+import "@stdlib/token"
+
+struct Slice4TokenBehaviourStorage {
+    totalSupply: coins;
+    adminAddress: any_address;
+    content: cell;
+    tokenWalletCode: cell;
+}
+
+struct (TOKEN_OP_MINT) Slice4TokenBehaviourMint {
+    queryId: uint64;
+    toAddress: any_address;
+    amount: coins;
+    masterMsg: cell;
+}
+
+fun scaffoldPatternId(): int {
+    return tokenPatternManifestHeader().patternId;
+}
+
+contract Slice4TokenBehaviour {
+    storage: Slice4TokenBehaviourStorage
+    @unknown_throw(65535);
+
+    @disclaim_query_id
+    receive(msg: Slice4TokenBehaviourMint) {
+        require(tokenSameInternalAndAnyAddressBits(in.senderAddress, storage.adminAddress),
+                ErrorClass.Authorization, TOKEN_MINTER_FUNC_THROW_ADMIN_REQUIRED);
+        msg.masterMsg;
+        save(storage);
+    }
+}

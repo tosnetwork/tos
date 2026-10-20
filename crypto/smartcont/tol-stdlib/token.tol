@@ -1,0 +1,328 @@
+// Slice 3 Token package foundation and wire-compatible helpers.
+tol 1.3
+
+import "@stdlib/slice3-common"
+
+const TOKEN_PATTERN_ERROR_BASE = 0x0400
+
+const TOKEN_OP_MINT: uint32 = 0x00000015
+const TOKEN_OP_CHANGE_ADMIN: uint32 = 0x00000003
+const TOKEN_OP_CHANGE_CONTENT: uint32 = 0x00000004
+const TOKEN_OP_TRANSFER: uint32 = 0x0f8a7ea5
+const TOKEN_OP_TRANSFER_NOTIFICATION: uint32 = 0x7362d09c
+const TOKEN_OP_INTERNAL_TRANSFER: uint32 = 0x178d4519
+const TOKEN_OP_EXCESSES: uint32 = 0xd53276db
+const TOKEN_OP_BURN: uint32 = 0x595f07bc
+const TOKEN_OP_BURN_NOTIFICATION: uint32 = 0x7bdd97de
+
+const TOKEN_MINTER_FUNC_THROW_ADMIN_REQUIRED = 73
+const TOKEN_MINTER_FUNC_THROW_BURN_SENDER_NOT_WALLET = 74
+const TOKEN_MINTER_FUNC_THROW_INVALID_ADMIN = 75
+const TOKEN_MINTER_FUNC_THROW_INVALID_AMOUNT = 76
+const TOKEN_FUNC_THROW_UNKNOWN_OPCODE = 0xffff
+
+const TOKEN_WALLET_FUNC_THROW_WRONG_WORKCHAIN = 333
+const TOKEN_WALLET_FUNC_THROW_OWNER_REQUIRED = 705
+const TOKEN_WALLET_FUNC_THROW_INSUFFICIENT_BALANCE = 706
+const TOKEN_WALLET_FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE = 707
+const TOKEN_WALLET_FUNC_THROW_MALFORMED_FORWARD_PAYLOAD = 708
+const TOKEN_WALLET_FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE = 709
+
+const TOKEN_STDLIB_ERROR_ADMIN_REQUIRED = 1097
+const TOKEN_STDLIB_ERROR_BURN_SENDER_NOT_WALLET = 1098
+const TOKEN_STDLIB_ERROR_INVALID_ADMIN = 1099
+const TOKEN_STDLIB_ERROR_INVALID_AMOUNT = 1100
+const TOKEN_STDLIB_ERROR_UNKNOWN_OPCODE = 65535
+
+const TOKEN_STDLIB_WALLET_ERROR_WRONG_WORKCHAIN = 1333
+const TOKEN_STDLIB_WALLET_ERROR_OWNER_REQUIRED = 1705
+const TOKEN_STDLIB_WALLET_ERROR_INSUFFICIENT_BALANCE = 1706
+const TOKEN_STDLIB_WALLET_ERROR_INVALID_TRANSFER_SENDER = 1707
+const TOKEN_STDLIB_WALLET_ERROR_MALFORMED_FORWARD_PAYLOAD = 1708
+const TOKEN_STDLIB_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE = 1709
+const TOKEN_STDLIB_WALLET_ERROR_INSUFFICIENT_BURN_VALUE = 1710
+const TOKEN_STDLIB_WALLET_ERROR_UNEXPECTED_BOUNCE = 1711
+const TOKEN_STDLIB_WALLET_ERROR_UNKNOWN_OPCODE = 65535
+
+const TOKEN_MIN_TOS_FOR_STORAGE = 10000000
+const TOKEN_GAS_CONSUMPTION = 10000000
+
+fun tokenPatternManifestHeader(): Slice3PatternManifestHeader {
+    return Slice3PatternManifestHeader {
+        manifestVersion: SLICE3_PATTERN_MANIFEST_VERSION,
+        patternId: SLICE3_PATTERN_TOKEN,
+        publicErrorBase: TOKEN_PATTERN_ERROR_BASE,
+        flags: 0
+    };
+}
+
+@pure
+fun tokenCurrentAddress(): address
+    asm "MYADDR";
+
+@pure
+fun tokenSameInternalAndAnyAddressBits(a: address, b: any_address): bool {
+    return (a as slice).bitsEqual(b as slice);
+}
+
+fun tokenForceBasechain(addr: any_address): void {
+    if (addr.getWorkchain() != BASECHAIN) {
+        throw TOKEN_WALLET_FUNC_THROW_WRONG_WORKCHAIN;
+    }
+}
+
+@pure
+fun tokenMinterPackWalletData(
+    balance: coins,
+    ownerAddress: any_address,
+    tokenMasterAddress: address,
+    tokenWalletCode: cell
+): cell {
+    return beginCell()
+        .storeCoins(balance)
+        .storeAddressAny(ownerAddress)
+        .storeAddress(tokenMasterAddress)
+        .storeRef(tokenWalletCode)
+        .endCell();
+}
+
+@pure
+fun tokenWalletPackData(
+    balance: coins,
+    ownerAddress: any_address,
+    tokenMasterAddress: any_address,
+    tokenWalletCode: cell
+): cell {
+    return beginCell()
+        .storeCoins(balance)
+        .storeAddressAny(ownerAddress)
+        .storeAddressAny(tokenMasterAddress)
+        .storeRef(tokenWalletCode)
+        .endCell();
+}
+
+@pure
+fun tokenMinterCalculateWalletStateInit(
+    ownerAddress: any_address,
+    tokenMasterAddress: address,
+    tokenWalletCode: cell
+): cell {
+    return beginCell()
+        .storeUint(0, 2)
+        .storeDict(tokenWalletCode)
+        .storeDict(tokenMinterPackWalletData(0, ownerAddress, tokenMasterAddress, tokenWalletCode))
+        .storeUint(0, 1)
+        .endCell();
+}
+
+@pure
+fun tokenWalletCalculateStateInit(
+    ownerAddress: any_address,
+    tokenMasterAddress: any_address,
+    tokenWalletCode: cell
+): cell {
+    return beginCell()
+        .storeUint(0, 2)
+        .storeDict(tokenWalletCode)
+        .storeDict(tokenWalletPackData(0, ownerAddress, tokenMasterAddress, tokenWalletCode))
+        .storeUint(0, 1)
+        .endCell();
+}
+
+fun tokenCalculateWalletAddress(stateInit: cell): address {
+    return address.fromWorkchainAndHash(BASECHAIN, stateInit.hash());
+}
+
+fun tokenMinterCalculateUserWalletAddress(
+    ownerAddress: any_address,
+    tokenMasterAddress: address,
+    tokenWalletCode: cell
+): address {
+    return tokenCalculateWalletAddress(
+        tokenMinterCalculateWalletStateInit(ownerAddress, tokenMasterAddress, tokenWalletCode)
+    );
+}
+
+fun tokenWalletCalculateUserWalletAddress(
+    ownerAddress: any_address,
+    tokenMasterAddress: any_address,
+    tokenWalletCode: cell
+): address {
+    return tokenCalculateWalletAddress(
+        tokenWalletCalculateStateInit(ownerAddress, tokenMasterAddress, tokenWalletCode)
+    );
+}
+
+@pure
+fun tokenMinterErrorForFuncThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    if (funcThrow == TOKEN_MINTER_FUNC_THROW_ADMIN_REQUIRED) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, TOKEN_STDLIB_ERROR_ADMIN_REQUIRED);
+    }
+    if (funcThrow == TOKEN_MINTER_FUNC_THROW_BURN_SENDER_NOT_WALLET) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, TOKEN_STDLIB_ERROR_BURN_SENDER_NOT_WALLET);
+    }
+    if (funcThrow == TOKEN_MINTER_FUNC_THROW_INVALID_ADMIN) {
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, TOKEN_STDLIB_ERROR_INVALID_ADMIN);
+    }
+    if (funcThrow == TOKEN_MINTER_FUNC_THROW_INVALID_AMOUNT) {
+        return slice3Error(queryId, originalOp, ErrorClass.Permanent, TOKEN_STDLIB_ERROR_INVALID_AMOUNT);
+    }
+    return slice3Error(queryId, originalOp, ErrorClass.Protocol, TOKEN_STDLIB_ERROR_UNKNOWN_OPCODE);
+}
+
+@pure
+fun tokenWalletErrorForFuncThrow(funcThrow: int, originalOp: uint32, queryId: uint64): Error {
+    if (funcThrow == TOKEN_WALLET_FUNC_THROW_WRONG_WORKCHAIN) {
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, TOKEN_STDLIB_WALLET_ERROR_WRONG_WORKCHAIN);
+    }
+    if (funcThrow == TOKEN_WALLET_FUNC_THROW_OWNER_REQUIRED) {
+        return slice3Error(queryId, originalOp, ErrorClass.Authorization, TOKEN_STDLIB_WALLET_ERROR_OWNER_REQUIRED);
+    }
+    if (funcThrow == TOKEN_WALLET_FUNC_THROW_INSUFFICIENT_BALANCE) {
+        return slice3Error(queryId, originalOp, ErrorClass.Permanent, TOKEN_STDLIB_WALLET_ERROR_INSUFFICIENT_BALANCE);
+    }
+    if (funcThrow == TOKEN_WALLET_FUNC_THROW_INVALID_SENDER_OR_BURN_VALUE) {
+        if (originalOp == TOKEN_OP_INTERNAL_TRANSFER) {
+            return slice3Error(queryId, originalOp, ErrorClass.Authorization, TOKEN_STDLIB_WALLET_ERROR_INVALID_TRANSFER_SENDER);
+        }
+        return slice3Error(queryId, originalOp, ErrorClass.BackPressure, TOKEN_STDLIB_WALLET_ERROR_INSUFFICIENT_BURN_VALUE);
+    }
+    if (funcThrow == TOKEN_WALLET_FUNC_THROW_MALFORMED_FORWARD_PAYLOAD) {
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, TOKEN_STDLIB_WALLET_ERROR_MALFORMED_FORWARD_PAYLOAD);
+    }
+    if (funcThrow == TOKEN_WALLET_FUNC_THROW_INSUFFICIENT_VALUE_OR_BAD_BOUNCE) {
+        if (originalOp == TOKEN_OP_TRANSFER) {
+            return slice3Error(queryId, originalOp, ErrorClass.BackPressure, TOKEN_STDLIB_WALLET_ERROR_INSUFFICIENT_TRANSFER_VALUE);
+        }
+        return slice3Error(queryId, originalOp, ErrorClass.Protocol, TOKEN_STDLIB_WALLET_ERROR_UNEXPECTED_BOUNCE);
+    }
+    return slice3Error(queryId, originalOp, ErrorClass.Protocol, TOKEN_STDLIB_WALLET_ERROR_UNKNOWN_OPCODE);
+}
+
+@pure
+fun tokenBuildMinterExcessesMessage(responseAddress: any_address, queryId: uint64): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(responseAddress)
+        .storeCoins(0)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(TOKEN_OP_EXCESSES, 32)
+        .storeUint(queryId, 64)
+        .endCell();
+}
+
+fun tokenMinterMintTokens(
+    toAddress: any_address,
+    tokenWalletCode: cell,
+    amount: coins,
+    masterMsg: cell
+): void {
+    val stateInit = tokenMinterCalculateWalletStateInit(
+        toAddress,
+        tokenCurrentAddress(),
+        tokenWalletCode
+    );
+    val toWalletAddress = tokenCalculateWalletAddress(stateInit);
+    val msg = beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(toWalletAddress)
+        .storeCoins(amount)
+        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .storeRef(stateInit)
+        .storeRef(masterMsg)
+        .endCell();
+    // Bounce on action failure: a mint that cannot be sent bounces back to the
+    // admin instead of being counted in the supply without reaching anyone.
+    sendRawMessage(msg, SEND_MODE_PAY_FEES_SEPARATELY + SEND_MODE_BOUNCE_ON_ACTION_FAIL);
+}
+
+@pure
+fun tokenBuildInternalTransferMessage(
+    toWalletAddress: address,
+    stateInit: cell,
+    queryId: uint64,
+    amount: coins,
+    ownerAddress: any_address,
+    responseAddress: any_address,
+    forwardTosAmount: coins,
+    forwardPayload: RemainingBitsAndRefs
+): cell {
+    val msgBody = beginCell()
+        .storeUint(TOKEN_OP_INTERNAL_TRANSFER, 32)
+        .storeUint(queryId, 64)
+        .storeCoins(amount)
+        .storeAddressAny(ownerAddress)
+        .storeAddressAny(responseAddress)
+        .storeCoins(forwardTosAmount)
+        .storeSlice(forwardPayload)
+        .endCell();
+    return beginCell()
+        .storeUint(0x18, 6)
+        .storeAddress(toWalletAddress)
+        .storeCoins(0)
+        .storeUint(4 + 2 + 1, 1 + 4 + 4 + 64 + 32 + 1 + 1 + 1)
+        .storeRef(stateInit)
+        .storeRef(msgBody)
+        .endCell();
+}
+
+@pure
+fun tokenBuildTransferNotificationMessage(
+    ownerAddress: any_address,
+    value: coins,
+    queryId: uint64,
+    amount: coins,
+    fromAddress: any_address,
+    forwardPayload: RemainingBitsAndRefs
+): cell {
+    val msgBody = beginCell()
+        .storeUint(TOKEN_OP_TRANSFER_NOTIFICATION, 32)
+        .storeUint(queryId, 64)
+        .storeCoins(amount)
+        .storeAddressAny(fromAddress)
+        .storeSlice(forwardPayload)
+        .endCell();
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(ownerAddress)
+        .storeCoins(value)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(msgBody)
+        .endCell();
+}
+
+@pure
+fun tokenBuildWalletExcessesMessage(responseAddress: any_address, value: coins, queryId: uint64): cell {
+    return beginCell()
+        .storeUint(0x10, 6)
+        .storeAddressAny(responseAddress)
+        .storeCoins(value)
+        .storeUint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeUint(TOKEN_OP_EXCESSES, 32)
+        .storeUint(queryId, 64)
+        .endCell();
+}
+
+@pure
+fun tokenBuildBurnNotificationMessage(
+    tokenMasterAddress: any_address,
+    queryId: uint64,
+    amount: coins,
+    ownerAddress: any_address,
+    responseAddress: any_address
+): cell {
+    val msgBody = beginCell()
+        .storeUint(TOKEN_OP_BURN_NOTIFICATION, 32)
+        .storeUint(queryId, 64)
+        .storeCoins(amount)
+        .storeAddressAny(ownerAddress)
+        .storeAddressAny(responseAddress)
+        .endCell();
+    return beginCell()
+        .storeUint(0x18, 6)
+        .storeAddressAny(tokenMasterAddress)
+        .storeCoins(0)
+        .storeUint(1, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+        .storeRef(msgBody)
+        .endCell();
+}

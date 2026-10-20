@@ -1165,7 +1165,7 @@ contains, among others:
 @stdlib/exotic-cells
 @stdlib/lisp-lists
 @stdlib/slice3-common
-@stdlib/jetton
+@stdlib/token
 @stdlib/nft
 @stdlib/wallet
 @stdlib/multisig
@@ -1181,7 +1181,7 @@ contains, among others:
 @stdlib/supervision
 @stdlib/capability
 @stdlib/safe-payments
-@stdlib/jetton-fees
+@stdlib/token-fees
 @stdlib/replay-guard
 @stdlib/ordered-delivery
 @stdlib/quorum-signatures
@@ -1199,7 +1199,7 @@ The TOS-specific stdlib is staged:
 \begin{itemize}
 \item Slice 1: envelope, error class, \verb|OP_ERROR|, extra-flags constants,
 and query-id discipline;
-\item Slice 3: first-wave patterns for jetton, NFT, wallet, multisig, and
+\item Slice 3: first-wave patterns for token, NFT, wallet, multisig, and
 ownable contracts;
 \item Slice 4: bounded postponement as explicit contract-owned storage;
 \item Slice 5: auction, governance, oracle, and payment-channel patterns plus
@@ -1216,7 +1216,7 @@ Six packages provide mechanisms that contracts otherwise tend to re-derive
 by hand:
 
 \begin{itemize}
-\item \verb|jetton-fees|: prices a jetton wallet's measured gas and size
+\item \verb|token-fees|: prices a token wallet's measured gas and size
 profile with the live fee configuration instead of fixed nanocoin constants;
 \item \verb|replay-guard|: bounded two-generation query-id bitmap with a
 freshness window for high-volume signed requests;

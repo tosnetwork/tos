@@ -11,7 +11,7 @@
 #include "governor_requests.func";
 #include "halter_requests.func";
 #include "network_config_utils.func";
-#include "jetton_dao/contracts/jetton-utils.func";
+#include "token_dao/contracts/token-utils.func";
 
 
 ;; Whole storage is put to global variables
@@ -32,14 +32,14 @@ global [cell, int, int, int, int, int, int] prev_round_borrowers;
 global [int, int] loan_params_per_validator;
 global int governance_fee; ;; times 2**16
 
-;; Basic jetton that represents share of the pool
-global slice jetton_minter;
+;; Basic token that represents share of the pool
+global slice token_minter;
 global int supply;
 
 global slice deposit_payout;
 global int requested_for_deposit;    ;; in TOS
 global slice withdrawal_payout;
-global int requested_for_withdrawal; ;; in jettons
+global int requested_for_withdrawal; ;; in tokens
 
 ;; ROLES
 global slice sudoer;            ;; hav right to send any message on behalf of any contract
@@ -52,7 +52,7 @@ global slice approver;          ;; approves controllers to ask for credit
 
 ;; CHILD CONTRACT CODES
 global cell controller_code;
-global cell pool_jetton_wallet_code;
+global cell pool_token_wallet_code;
 global cell payout_minter_code;
 
 
@@ -64,7 +64,7 @@ const int state::NORMAL = 0;
 
 
 const int DISBALANCE_TOLERANCE = 30; ;; x/256
-const int JETTONS_WORKCHAIN = 0;
+const int TOKENS_WORKCHAIN = 0;
 const int MAX_LOAN_DICT_DEPTH = 12;
 
 const int ONE_TOS = 1000000000;
@@ -75,7 +75,7 @@ const int SERVICE_NOTIFICATION_AMOUNT = 2 * ONE_TOS / 100;
 ;; finalize fee goes to
 ;;   a) SERVICE_NOTIFICATION_AMOUNT to interest manager
 ;;   b) TRANSFER_NOTIFICATION_AMOUNT for TOS distribution start
-;;   c) TRANSFER_NOTIFICATION_AMOUNT + POOL_JETTON_WALLET_FEE + POOL_JETTON_MINT_FEE for jetton distribution
+;;   c) TRANSFER_NOTIFICATION_AMOUNT + POOL_TOKEN_WALLET_FEE + POOL_TOKEN_MINT_FEE for token distribution
 ;;   d) Gas fees
 const int FINALIZE_ROUND_FEE = ONE_TOS;
 const int DEPOSIT_FEE = ONE_TOS;
@@ -110,14 +110,14 @@ int current_round_index() inline {
     return round_id_from_round_data(current_round_borrowers);
 }
 {-
-    () request_to_mint_pool_jettons(slice destination, int amount, int query_id, int for_user?) impure;
+    () request_to_mint_pool_tokens(slice destination, int amount, int query_id, int for_user?) impure;
     () request_to_mint_deposit(slice destination, int amount, int query_id) impure;
     () request_to_mint_withdrawal(slice destination, int amount, int query_id) impure;
 -}
 #include "pool_mint_helpers.func";
 
 () initiate_distribution_of_tos (int available_balance, int round_id) impure;
-() initiate_distribution_of_pool_jettons (int round_id) impure;
+() initiate_distribution_of_pool_tokens (int round_id) impure;
 
 (int, int) _get_projected_conversion_ratio () inline;
 
@@ -181,19 +181,19 @@ int muldiv_extra(int a, int b, int c) inline {
     if (op == halter::halt) {
         process_halt_request(sender_address);
     } elseif (op == pool::withdraw) {
-        assert_sender!(sender_address, jetton_minter);
-        int jetton_amount = in_msg_body~load_coins();
+        assert_sender!(sender_address, token_minter);
+        int token_amount = in_msg_body~load_coins();
         slice from_address = in_msg_body~load_msg_addr();
         ;; response will be ignored
         slice response_address = in_msg_body~load_msg_addr();
-        ;; after that point we should not revert because jettons should not be lost
+        ;; after that point we should not revert because tokens should not be lost
         try {
             throw_unless(error::not_enough_TOS_to_process, msg_value > WITHDRAWAL_FEE);
             int request_immediate_withdrawal_if_possible = ~ in_msg_body~load_bool();
             int fill_or_kill = in_msg_body~load_bool();
             update_round(pair_first(get_balance()) - msg_value);
             assert_not_halted!(); ;; otherwise mint back
-            int approximate_amount = muldiv(jetton_amount, total_balance, supply);
+            int approximate_amount = muldiv(token_amount, total_balance, supply);
             int available_funds = balance - msg_value - MIN_TOS_FOR_STORAGE - sent_during_rotation;
 
             if(optimistic_deposit_withdrawals &
@@ -202,7 +202,7 @@ int muldiv_extra(int a, int b, int c) inline {
                     (available_funds > approximate_amount)) {
                 throw_unless(error::output_amount_is_zero, approximate_amount > 0);
                 total_balance -= approximate_amount;
-                supply -= jetton_amount;
+                supply -= token_amount;
                 raw_reserve(balance - msg_value - approximate_amount - sent_during_rotation, 0);
                 available_funds -= approximate_amount;
                 var msg = begin_cell()
@@ -214,9 +214,9 @@ int muldiv_extra(int a, int b, int c) inline {
                 send_raw_message(msg.end_cell(), sendmode::CARRY_ALL_BALANCE);
             } else {
                 throw_if(105, fill_or_kill);
-                throw_unless(error::output_amount_is_zero, jetton_amount);
+                throw_unless(error::output_amount_is_zero, token_amount);
                 raw_reserve(balance - msg_value - sent_during_rotation, 0);
-                request_to_mint_withdrawal(from_address, jetton_amount, query_id);
+                request_to_mint_withdrawal(from_address, token_amount, query_id);
             }
             ;;  conservatively use `borrowed` instead of `expected` as amount that will be returned
             var [_, _, _, borrowed, _, _, _] = prev_round_borrowers;
@@ -237,8 +237,8 @@ int muldiv_extra(int a, int b, int c) inline {
             raw_reserve(balance - msg_value, 0);
             ;; request_to_mint automatically increase supply by minted amount
             ;; however there is no extra tokens in this case
-            supply -= jetton_amount;
-            request_to_mint_pool_jettons(from_address, jetton_amount, query_id, true);
+            supply -= token_amount;
+            request_to_mint_pool_tokens(from_address, token_amount, query_id, true);
         }
         
     {- ========== Governance operations ========== -}
@@ -291,12 +291,12 @@ int muldiv_extra(int a, int b, int c) inline {
                 int deposit_amount = msg_value - DEPOSIT_FEE;
                 throw_unless(error::deposit_amount_too_low, deposit_amount > 0);
                 if(optimistic_deposit_withdrawals) {
-                    ;; we convert TOS to Jetton at projected (expected) price at the round end
+                    ;; we convert TOS to Token at projected (expected) price at the round end
                     (int expected_balance, int expected_supply) = _get_projected_conversion_ratio();
 
                     int amount = muldiv_extra(deposit_amount, expected_supply, expected_balance);
                     throw_unless(error::output_amount_is_zero, amount);
-                    request_to_mint_pool_jettons(sender_address, amount, query_id, true);
+                    request_to_mint_pool_tokens(sender_address, amount, query_id, true);
                     total_balance += deposit_amount;
                 } else {
                     request_to_mint_deposit(sender_address, deposit_amount, query_id);
@@ -395,7 +395,7 @@ int muldiv_extra(int a, int b, int c) inline {
                     .store_slice(sender_address)
                     .store_coins(0)
                     .store_msgbody_prefix_slice()
-                    .store_body_header(jetton::excesses, query_id);
+                    .store_body_header(token::excesses, query_id);
             send_raw_message(msg.end_cell(), sendmode::CARRY_ALL_BALANCE);
         } else {
             throw(error::unknown_op);
@@ -547,7 +547,7 @@ int muldiv_extra(int a, int b, int c) inline {
 
 () finalize_deposit_withdrawal_round (int available_balance, int round_id) {
     initiate_distribution_of_tos(available_balance, round_id);
-    initiate_distribution_of_pool_jettons(round_id);
+    initiate_distribution_of_pool_tokens(round_id);
 }
 
 () initiate_distribution_of_tos(available_balance, round_id) impure {
@@ -586,17 +586,17 @@ int muldiv_extra(int a, int b, int c) inline {
     send_raw_message(msg.end_cell(), sendmode::REGULAR);
 }
 
-() initiate_distribution_of_pool_jettons(round_id) impure {
+() initiate_distribution_of_pool_tokens(round_id) impure {
     ;; Distributes pool tokens among those who received
     ;; deposit tokens before the start of the round.
     ifnot(requested_for_deposit) {
         return ();
     }
     ;; if supply == 0 distribute via 1:1 ratio
-    int jetton_mint = supply ? muldiv_extra(requested_for_deposit, supply, total_balance) : requested_for_deposit;
+    int token_mint = supply ? muldiv_extra(requested_for_deposit, supply, total_balance) : requested_for_deposit;
     sent_during_rotation += TRANSFER_NOTIFICATION_AMOUNT + PAYOUT_DISTRIBUTION_AMOUNT;
-    request_to_mint_pool_jettons(deposit_payout,
-                                 jetton_mint,
+    request_to_mint_pool_tokens(deposit_payout,
+                                 token_mint,
                                  cur_lt(),
                                  false
                                 );
@@ -668,7 +668,7 @@ var compose_pool_full_data_internal( int update?) inline_ref {
             ;;min_loan_per_validator, max_loan_per_validator,
             governance_fee,
 
-            jetton_minter, supply,
+            token_minter, supply,
 
             deposit_payout, requested_for_deposit,
             withdrawal_payout, requested_for_withdrawal,
@@ -680,7 +680,7 @@ var compose_pool_full_data_internal( int update?) inline_ref {
             approver,
 
             controller_code,
-            pool_jetton_wallet_code,
+            pool_token_wallet_code,
             payout_minter_code,
 
             (_get_projected_conversion_ratio())

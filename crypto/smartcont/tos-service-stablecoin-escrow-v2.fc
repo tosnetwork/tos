@@ -10,7 +10,7 @@
 const int op::release = 0x4e450001;
 const int op::refund = 0x4e450002;
 const int op::accept = 0x4e450003;
-const int op::jetton_transfer = 0x0f8a7ea5;
+const int op::token_transfer = 0x0f8a7ea5;
 const int op::transfer_notification = 0x7362d09c;
 const int op::excesses = 0xd53276db;
 
@@ -32,13 +32,13 @@ const int status::funded = 2;
 const int status::release_pending = 3;
 const int status::refund_pending = 4;
 
-;; Known limitation: a payout the recipient's jetton wallet refuses (for example,
+;; Known limitation: a payout the recipient's token wallet refuses (for example,
 ;; a wallet the stablecoin admin has locked for incoming transfers) bounces into
 ;; this escrow's own wallet and is re-credited there without telling the escrow,
-;; which stays release_pending / refund_pending with the jettons in its own
-;; wallet. No operation moves them. This is deliberate: with the issuer's jetton
+;; which stays release_pending / refund_pending with the tokens in its own
+;; wallet. No operation moves them. This is deliberate: with the issuer's token
 ;; wallet the escrow cannot tell a refused payout from a delivered one whose
-;; excesses was lost followed by unrelated jettons arriving, so any retry could
+;; excesses was lost followed by unrelated tokens arriving, so any retry could
 ;; pay the recipient with someone else's funds, and an excesses from the
 ;; recipient's wallet can be produced by any transfer naming this escrow and its
 ;; public query id, so it cannot confirm delivery. Resolving such a settlement
@@ -58,9 +58,9 @@ const int err::bad_acceptance = 2409;
 const int err::insufficient_gas = 2410;
 const int err::weak_key = 2411;
 
-;; Fixed native-coin budget attached to a settlement's jetton transfer, sized
+;; Fixed native-coin budget attached to a settlement's token transfer, sized
 ;; (per the vendored third-party DEX reference under crypto/smartcont/reference/)
-;; to cover one external jetton-wallet
+;; to cover one external token-wallet
 ;; hop (~0.07 TOS) plus the recipient wallet's storage (~0.01 TOS) with margin.
 ;; A settlement pays this fixed amount from the escrow's own balance (mode 1),
 ;; so the amount the recipient wallet receives does not depend on the settlement
@@ -90,7 +90,7 @@ const int base_workchain = 0;
 ;; (transfer_bounce reason-code pattern from the vendored reference router contract).
 const int reason::invalid_request = 0xffffffa1;
 ;; Reason code for a notification from a wallet other than the derived own
-;; wallet: those jettons sit in a wallet this escrow owns but never addresses,
+;; wallet: those tokens sit in a wallet this escrow owns but never addresses,
 ;; so they must be sent back through the notifying wallet, never kept or thrown.
 const int reason::wrong_wallet = 0xffffffa2;
 
@@ -324,7 +324,7 @@ slice wallet_address(slice owner, slice master, cell wallet_code) inline_ref {
   ;; than silently mis-quote fees on another workchain and reopen the balance-guard gap.
   (int self_wc, _) = parse_std_addr(my_address());
   throw_unless(err::bad_state, self_wc == base_workchain);
-  cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(query_id, 64)
+  cell body = begin_cell().store_uint(op::token_transfer, 32).store_uint(query_id, 64)
     .store_coins(amount).store_slice(destination_owner).store_slice(my_address())
     .store_uint(0, 1).store_coins(0).store_uint(0, 1).end_cell();
   (int body_cells, int body_bits, _) = compute_data_size(body, 4);
@@ -368,7 +368,7 @@ int settlement_required_balance(int forward_fee) inline {
 ;; code is carried inline in the transfer body's forward payload.
 () return_stablecoin(slice wallet, slice destination_owner, int amount,
     int reason) impure inline_ref {
-  cell body = begin_cell().store_uint(op::jetton_transfer, 32).store_uint(0, 64)
+  cell body = begin_cell().store_uint(op::token_transfer, 32).store_uint(0, 64)
     .store_coins(amount).store_slice(destination_owner).store_slice(my_address())
     .store_uint(0, 1).store_coins(0).store_uint(0, 1).store_uint(reason, 32).end_cell();
   cell message = begin_cell().store_uint(0x18, 6).store_slice(wallet)
@@ -464,7 +464,7 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
   if (flags & 1) {
     throw_unless(err::bad_confirmation, equal_slice_bits(sender, own_wallet));
     body~skip_bits(32);
-    throw_unless(err::bad_confirmation, body~load_uint(32) == op::jetton_transfer);
+    throw_unless(err::bad_confirmation, body~load_uint(32) == op::token_transfer);
     int bounced_query = body~load_uint(64);
     throw_unless(err::bad_confirmation, ((status == status::release_pending) |
       (status == status::refund_pending)) & (bounced_query == pending_query));
@@ -499,12 +499,12 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
     int query_id = body~load_uint(64);
     int amount = body~load_coins();
     slice from = body~load_msg_addr();
-    ;; The jettons are already credited to some wallet the escrow owns before
+    ;; The tokens are already credited to some wallet the escrow owns before
     ;; this runs: a throw cannot un-credit them and would orphan them
-    ;; permanently. Accept a valid funding; on any mismatch return the jettons
+    ;; permanently. Accept a valid funding; on any mismatch return the tokens
     ;; to the funder instead of throwing (refund-with-reason pattern from the
     ;; vendored reference router contract).
-    ;; Return only to a real internal, non-anycast, workchain-0 owner the jetton
+    ;; Return only to a real internal, non-anycast, workchain-0 owner the token
     ;; wallet can actually pay; a malformed previous-owner is left untouched
     ;; rather than emitting a doomed transfer.
     slice from_check = from;
@@ -515,7 +515,7 @@ cell settlement_intent(int query_id, int charged, int quote_hash,
       }
     }
     ifnot (equal_slice_bits(sender, own_wallet)) {
-      ;; A committed jetton whose wallet code uses a different data layout puts
+      ;; A committed token whose wallet code uses a different data layout puts
       ;; the credit in a wallet the escrow owns but never derives an address
       ;; for; no op can move those funds later. Never credit state from such a
       ;; notification, and never throw: ask the notifying wallet (whatever it

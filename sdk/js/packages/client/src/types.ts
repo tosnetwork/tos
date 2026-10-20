@@ -252,44 +252,40 @@ export interface Transaction {
 // Token data (discriminated union)
 // ---------------------------------------------------------------------------
 
-export interface NftItemData {
-  "@type": "nft.itemData";
+type TokenMetadata<Prefix extends string> = Partial<Record<
+  `${Prefix}_${"name" | "symbol" | "decimals" | "image" | "description" | "metadata_uri"}`,
+  string
+>>;
+
+export interface NftItemData extends TokenMetadata<"nft"> {
+  "@type": "ext.tokens.nftItemData";
   init: boolean;
   index: string;
   collection_address: string;
   owner_address: string;
-  content: string;
+  individual_content: string;
 }
 
-export interface NftCollectionData {
-  "@type": "nft.collectionData";
+export interface NftCollectionData extends TokenMetadata<"collection"> {
+  "@type": "ext.tokens.nftCollectionData";
   next_item_index: string;
   collection_content: string;
   owner_address: string;
 }
 
-export interface JettonMasterData {
-  "@type": "jetton.masterData";
+export interface TokenMasterData extends TokenMetadata<"token"> {
+  "@type": "ext.tokens.tokenMasterData";
   total_supply: string;
   mintable: boolean;
   admin_address: string;
-  content: string;
-  jetton_wallet_code: string;
-}
-
-export interface JettonWalletData {
-  "@type": "jetton.walletData";
-  balance: string;
-  owner: string;
-  jetton_master_address: string;
-  jetton_wallet_code: string;
+  token_content: string;
+  token_wallet_code: string;
 }
 
 export type TokenData =
   | NftItemData
   | NftCollectionData
-  | JettonMasterData
-  | JettonWalletData;
+  | TokenMasterData;
 
 // ---------------------------------------------------------------------------
 // Config

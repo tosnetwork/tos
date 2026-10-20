@@ -1,6 +1,6 @@
 ;; Distributor NFT collection smart contract
 ;; Every minted token has its bill value.
-;; When distribution of some asset (TOS or Jetton) started,
+;; When distribution of some asset (TOS or Token) started,
 ;; every burned token gets a share from this asset in proportion
 ;; of its bill value to total.
 
@@ -16,7 +16,7 @@
 slice addr_none() asm " <b 0 2 u, b> <s PUSHSLICE";
 const int ONE_COIN = 1000000000;
 
-const int jetton_transfer_notification_value = ONE_COIN / 100;
+const int token_transfer_notification_value = ONE_COIN / 100;
 const int burn_request_value = ONE_COIN / 100;
 const int start_distribution_gas_usage = ONE_COIN / 100;
 
@@ -157,15 +157,15 @@ slice calculate_nft_item_address(cell state_init) {
     }
 
 
-    if (op == op::transfer_notification) { ;; accept only as jetton distribution start
-        ;; theoretically we should not throw on getting jetton transfer because it may lead
-        ;; to lost jettons. On practice in most cases we can not correctly handle untimely transfers
+    if (op == op::transfer_notification) { ;; accept only as token distribution start
+        ;; theoretically we should not throw on getting token transfer because it may lead
+        ;; to lost tokens. On practice in most cases we can not correctly handle untimely transfers
         throw_if(error::distribution_already_started, distribution_started);
-        int jettons? = distr~load_bool();
-        throw_unless(error::cannot_distribute_jettons, jettons?);
+        int tokens? = distr~load_bool();
+        throw_unless(error::cannot_distribute_tokens, tokens?);
         distr~load_coins(); ;; volume
-        slice my_jetton_wallet = distr~load_msg_addr();
-        throw_unless(error::unknown_jetton_wallet, equal_slice_bits(sender, my_jetton_wallet));
+        slice my_token_wallet = distr~load_msg_addr();
+        throw_unless(error::unknown_token_wallet, equal_slice_bits(sender, my_token_wallet));
         
         int burnt_amount = in_msg_body~load_coins();
         slice from_address = in_msg_body~load_msg_addr();
@@ -176,9 +176,9 @@ slice calculate_nft_item_address(cell state_init) {
                      (from_address.preload_uint(2) == 0)));
         distribution = begin_cell()
                         .store_bool(true) ;; started
-                        .store_bool(true) ;; jettons
+                        .store_bool(true) ;; tokens
                         .store_coins(burnt_amount)
-                        .store_slice(my_jetton_wallet)
+                        .store_slice(my_token_wallet)
                            .end_cell();
         var msg = begin_cell()
                     .store_msg_flags(msgflag::BOUNCEABLE)
@@ -194,12 +194,12 @@ slice calculate_nft_item_address(cell state_init) {
     if (op == op::start_distribution) {
         throw_unless(error::unauthorized_start_request, equal_slice_bits(sender, admin));
         throw_if(error::distribution_already_started, distribution_started);
-        int jettons? = distr~load_bool();
-        throw_if(error::cannot_distribute_tos, jettons?);
+        int tokens? = distr~load_bool();
+        throw_if(error::cannot_distribute_tos, tokens?);
 
         distribution = begin_cell()
                         .store_bool(true) ;; started
-                        .store_bool(false) ;; not jettons
+                        .store_bool(false) ;; not tokens
                         .store_coins(msg_value - start_distribution_gas_usage) ;; volume
                        .end_cell();
         
@@ -226,37 +226,37 @@ slice calculate_nft_item_address(cell state_init) {
         throw_unless(error::unauthorized_burn_notification,
                 equal_slice_bits(expected_address, sender)
         );
-        int jettons? = distr~load_bool();
+        int tokens? = distr~load_bool();
         int volume_to_distribute = distr~load_coins();
 
         int share_amount = muldiv(burnt_amount, volume_to_distribute, issued_bills);
         ;;  ^ The same as
-        ;; share = (jettons_burned / supply) * volume_to_distribute
+        ;; share = (tokens_burned / supply) * volume_to_distribute
 
-        var new_distr = begin_cell().store_bool(true).store_bool(jettons?)
+        var new_distr = begin_cell().store_bool(true).store_bool(tokens?)
                             .store_coins(volume_to_distribute - share_amount);
 
-        if (jettons?) {
-            slice my_jetton_wallet_address = distr~load_msg_addr();
+        if (tokens?) {
+            slice my_token_wallet_address = distr~load_msg_addr();
             var msg = begin_cell()
                     .store_msg_flags(msgflag::BOUNCEABLE)
-                    .store_slice(my_jetton_wallet_address)
+                    .store_slice(my_token_wallet_address)
                     .store_coins(0)
                     .store_msgbody_prefix_ref(
                       begin_cell()
-                      .store_op(op::jetton_transfer)
+                      .store_op(op::token_transfer)
                       .store_query_id(query_id)
                       .store_coins(share_amount)
                       .store_slice(burner_address)
                       .store_slice(burner_address)
                       .store_maybe_ref(null()) ;; custom_payload
-                      .store_coins(jetton_transfer_notification_value)
+                      .store_coins(token_transfer_notification_value)
                       .store_bool(false)
                       .store_op(op::distributed_asset)
                       .end_cell()
                     );
             send_raw_message(msg.end_cell(), sendmode::CARRY_ALL_REMAINING_MESSAGE_VALUE);
-            new_distr = new_distr.store_slice(my_jetton_wallet_address);
+            new_distr = new_distr.store_slice(my_token_wallet_address);
         } else {
 
             var msg = begin_cell()
@@ -314,9 +314,9 @@ cell get_nft_content(int index, cell individual_nft_content) method_id {
 ;; individual_nft_content has only share amount for this token in it.
 ;; This function generates onchain metadata containing (in dict):
 ;; {
-;;  sha256(name): "Bill for {amount} TOS/Pool Jetton in Withdrawal/Deposit Payout #{collection_no}",
-;;  sha256(description): "DO NOT SEND ON CONTRACTS: Automatically converts deposited TOS to Pool Jettons when ready
-;;                   or  "DO NOT SEND ON CONTRACTS: Converts burned Pool Jettons to TOS when ready"
+;;  sha256(name): "Bill for {amount} TOS/Pool Token in Withdrawal/Deposit Payout #{collection_no}",
+;;  sha256(description): "DO NOT SEND ON CONTRACTS: Automatically converts deposited TOS to Pool Tokens when ready
+;;                   or  "DO NOT SEND ON CONTRACTS: Converts burned Pool Tokens to TOS when ready"
 ;; }
 
   var (issued_bills, admin, distribution, collection_content, next_item_index, prev, current, next, next_state_init) = load_data();
@@ -324,7 +324,7 @@ cell get_nft_content(int index, cell individual_nft_content) method_id {
   int amount = cs~load_coins();
   cs = distribution.begin_parse();
   cs~skip_bits(1);
-  int jettons? = cs~load_bool();
+  int tokens? = cs~load_bool();
   cs = collection_content.begin_parse();
   ;;cell onchain_content = begin_cell().store_uint(0, 8).store_dict(content_dict).end_cell();
   cs~skip_bits(8);
@@ -337,16 +337,16 @@ cell get_nft_content(int index, cell individual_nft_content) method_id {
                                  .store_uint(0, 8)
                                  .store_slice("Bill for ")
                                  .store_coins_string(amount);
-  if(jettons?) {
+  if(tokens?) {
       new_name = new_name.store_slice(" TOS in ");
   } else {
-      new_name = new_name.store_slice(" Pool Jetton in ");
+      new_name = new_name.store_slice(" Pool Token in ");
   }
   content~udict_set_ref(256, "name"H, new_name.store_slice(old_name).end_cell());
-  if (jettons?) {
-      content~udict_set_ref(256, "description"H, pack_metadata_value("DO NOT SEND ON CONTRACTS: Automatically converts deposited TOS to Pool Jettons when ready"));
+  if (tokens?) {
+      content~udict_set_ref(256, "description"H, pack_metadata_value("DO NOT SEND ON CONTRACTS: Automatically converts deposited TOS to Pool Tokens when ready"));
   } else {
-      content~udict_set_ref(256, "description"H, pack_metadata_value("DO NOT SEND ON CONTRACTS: Converts burned Pool Jettons to TOS when ready"));
+      content~udict_set_ref(256, "description"H, pack_metadata_value("DO NOT SEND ON CONTRACTS: Converts burned Pool Tokens to TOS when ready"));
   }
   cell onchain_content = begin_cell().store_uint(0, 8).store_dict(content).end_cell();
   return onchain_content;

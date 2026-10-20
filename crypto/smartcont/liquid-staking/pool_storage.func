@@ -28,7 +28,7 @@ builder store_round_data(builder b, [cell, int, int, int, int, int, int] round_d
 
 (slice, ()) ~load_minters_data(slice s) impure inline {
     slice ds = s~load_ref().begin_parse();
-    jetton_minter = ds~load_msg_addr();
+    token_minter = ds~load_msg_addr();
     supply = ds~load_coins();
 
     deposit_payout = null();
@@ -63,7 +63,7 @@ builder store_round_data(builder b, [cell, int, int, int, int, int, int] round_d
 
 builder save_minters_data(builder pb) inline {
     builder b = begin_cell()
-                 .store_slice(jetton_minter)
+                 .store_slice(token_minter)
                  .store_coins(supply);
     if(deposit_payout.null?()) {
       b = b.store_bool(false);
@@ -129,7 +129,7 @@ builder save_roles(builder pb) inline {
 (slice, ()) ~load_codes(slice s) impure inline {
     slice ds = s~load_ref().begin_parse();
     controller_code = ds~load_ref();
-    pool_jetton_wallet_code = ds~load_ref();
+    pool_token_wallet_code = ds~load_ref();
     payout_minter_code = ds~load_ref();
     return (s, ());
 }
@@ -137,7 +137,7 @@ builder save_roles(builder pb) inline {
 builder save_codes(builder pb) inline {
     cell codes = begin_cell()
                  .store_ref(controller_code)
-                 .store_ref(pool_jetton_wallet_code)
+                 .store_ref(pool_token_wallet_code)
                  .store_ref(payout_minter_code)
                  .end_cell();
    return pb.store_ref(codes);

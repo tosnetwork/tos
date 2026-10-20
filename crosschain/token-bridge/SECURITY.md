@@ -9,7 +9,7 @@ This bridge is not trustless. Safety depends on all of the following remaining t
 3. TOS ConfigParams point to the intended bridge, multisig, oracle map, fees, and EVM contract.
 4. The EVM bridge address and EVM chain ID domain-separate every signed action.
 5. The TOS and EVM contracts, compiler versions, deployment BOCs/bytecode, and constructor/config cells match audited artifacts.
-6. Locked ERC-20 balances and wrapped Jetton supply are continuously reconciled.
+6. Locked ERC-20 balances and wrapped Token supply are continuously reconciled.
 7. Every deployment satisfies the hard constraints below. The contracts price every settlement step themselves; the fees configured still decide whether new mints and burns are accepted at all.
 
 A source fork does **not** inherit an upstream deployment's audit, operational controls, or safety record.

@@ -640,9 +640,9 @@ pub enum ConfigParamEnum {
     ConfigParam71(OracleBridgeParams), // Oracle bridge
     ConfigParam72(OracleBridgeParams), // Binance Smart Chain bridge
     ConfigParam73(OracleBridgeParams), // Polygon bridge
-    ConfigParam79(JettonBridgeParams), // ETH->TOS token bridge
-    ConfigParam81(JettonBridgeParams), // BNB->TOS token bridge
-    ConfigParam82(JettonBridgeParams), // Polygon->TOS token bridge
+    ConfigParam79(TokenBridgeParams),  // ETH->TOS token bridge
+    ConfigParam81(TokenBridgeParams),  // BNB->TOS token bridge
+    ConfigParam82(TokenBridgeParams),  // Polygon->TOS token bridge
     ConfigParamAny(u32, Cell),
 }
 
@@ -706,9 +706,9 @@ impl ConfigParamEnum {
             71 => read_config!(ConfigParam71, OracleBridgeParams,           cell),
             72 => read_config!(ConfigParam72, OracleBridgeParams,           cell),
             73 => read_config!(ConfigParam73, OracleBridgeParams,           cell),
-            79 => read_config!(ConfigParam79, JettonBridgeParams,           cell),
-            81 => read_config!(ConfigParam81, JettonBridgeParams,           cell),
-            82 => read_config!(ConfigParam82, JettonBridgeParams,           cell),
+            79 => read_config!(ConfigParam79, TokenBridgeParams,           cell),
+            81 => read_config!(ConfigParam81, TokenBridgeParams,           cell),
+            82 => read_config!(ConfigParam82, TokenBridgeParams,           cell),
             index => Ok(ConfigParamEnum::ConfigParamAny(index, cell)),
         }
     }
@@ -3783,14 +3783,14 @@ impl Deserializable for OracleBridgeParams {
     }
 }
 
-// jetton_bridge_prices#_ bridge_burn_fee:Coins bridge_mint_fee:Coins
+// token_bridge_prices#_ bridge_burn_fee:Coins bridge_mint_fee:Coins
 //                        wallet_min_tos_for_storage:Coins
 //                        wallet_gas_consumption:Coins
 //                        minter_min_tos_for_storage:Coins
-//                        discover_gas_consumption:Coins = JettonBridgePrices;
+//                        discover_gas_consumption:Coins = TokenBridgePrices;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct JettonBridgePrices {
+pub struct TokenBridgePrices {
     pub bridge_burn_fee: Coins,
     pub bridge_mint_fee: Coins,
     pub wallet_min_tos_for_storage: Coins,
@@ -3799,7 +3799,7 @@ pub struct JettonBridgePrices {
     pub discover_gas_consumption: Coins,
 }
 
-impl Serializable for JettonBridgePrices {
+impl Serializable for TokenBridgePrices {
     fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
         self.bridge_burn_fee.write_to(cell)?;
         self.bridge_mint_fee.write_to(cell)?;
@@ -3811,7 +3811,7 @@ impl Serializable for JettonBridgePrices {
     }
 }
 
-impl Deserializable for JettonBridgePrices {
+impl Deserializable for TokenBridgePrices {
     fn construct_from(slice: &mut SliceData) -> Result<Self> {
         let bridge_burn_fee = Coins::construct_from(slice)?;
         let bridge_mint_fee = Coins::construct_from(slice)?;
@@ -3830,16 +3830,16 @@ impl Deserializable for JettonBridgePrices {
     }
 }
 
-// jetton_bridge_params_v0#00 bridge_address:bits256 oracles_address:bits256 oracles:(HashmapE 256 uint256) state_flags:uint8 burn_bridge_fee:Coins = JettonBridgeParams;
-// jetton_bridge_params_v1#01 bridge_address:bits256 oracles_address:bits256 oracles:(HashmapE 256 uint256) state_flags:uint8 prices:^JettonBridgePrices external_chain_address:bits256 = JettonBridgeParams;
+// token_bridge_params_v0#00 bridge_address:bits256 oracles_address:bits256 oracles:(HashmapE 256 uint256) state_flags:uint8 burn_bridge_fee:Coins = TokenBridgeParams;
+// token_bridge_params_v1#01 bridge_address:bits256 oracles_address:bits256 oracles:(HashmapE 256 uint256) state_flags:uint8 prices:^TokenBridgePrices external_chain_address:bits256 = TokenBridgeParams;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct JettonBridgeParams {
+pub struct TokenBridgeParams {
     pub bridge_address: AccountId,
     pub oracles_address: AccountId,
     pub oracles: Oracles,
     pub state_flags: u8,
-    pub prices: JettonBridgePrices,
+    pub prices: TokenBridgePrices,
     pub external_chain_address: AccountId,
 }
 
@@ -4178,10 +4178,10 @@ impl Deserializable for NewConsensusConfigAll {
     }
 }
 
-impl Default for JettonBridgeParams {
+impl Default for TokenBridgeParams {
     fn default() -> Self {
         Self {
-            prices: JettonBridgePrices::default(),
+            prices: TokenBridgePrices::default(),
             oracles: Oracles::default(),
             state_flags: 0,
             bridge_address: [0; 32].into(),
@@ -4191,31 +4191,31 @@ impl Default for JettonBridgeParams {
     }
 }
 
-const JETTON_BRIDGE_PARAMS_TAG_V0: u8 = 0x00;
-const JETTON_BRIDGE_PARAMS_TAG_V1: u8 = 0x01;
+const TOKEN_BRIDGE_PARAMS_TAG_V0: u8 = 0x00;
+const TOKEN_BRIDGE_PARAMS_TAG_V1: u8 = 0x01;
 
-impl Deserializable for JettonBridgeParams {
+impl Deserializable for TokenBridgeParams {
     fn construct_from(slice: &mut SliceData) -> Result<Self> {
         let tag = slice.get_next_byte()?;
-        if tag != JETTON_BRIDGE_PARAMS_TAG_V0 && tag != JETTON_BRIDGE_PARAMS_TAG_V1 {
+        if tag != TOKEN_BRIDGE_PARAMS_TAG_V0 && tag != TOKEN_BRIDGE_PARAMS_TAG_V1 {
             fail!(Self::invalid_tag(tag as u32))
         }
         let bridge_address = AccountId::construct_from(slice)?;
         let oracles_address = AccountId::construct_from(slice)?;
         let oracles = Oracles::construct_from(slice)?;
         let state_flags = slice.get_next_byte()?;
-        if tag == JETTON_BRIDGE_PARAMS_TAG_V0 {
+        if tag == TOKEN_BRIDGE_PARAMS_TAG_V0 {
             let bridge_burn_fee = Coins::construct_from(slice)?;
             return Ok(Self {
                 bridge_address,
                 oracles_address,
                 oracles,
                 state_flags,
-                prices: JettonBridgePrices { bridge_burn_fee, ..Default::default() },
+                prices: TokenBridgePrices { bridge_burn_fee, ..Default::default() },
                 external_chain_address: AccountId::default(),
             });
         }
-        let prices = JettonBridgePrices::construct_from_reference(slice)?;
+        let prices = TokenBridgePrices::construct_from_reference(slice)?;
         let external_chain_address = AccountId::construct_from(slice)?;
         Ok(Self {
             bridge_address,
@@ -4228,9 +4228,9 @@ impl Deserializable for JettonBridgeParams {
     }
 }
 
-impl Serializable for JettonBridgeParams {
+impl Serializable for TokenBridgeParams {
     fn write_to(&self, cell: &mut BuilderData) -> Result<()> {
-        cell.append_u8(JETTON_BRIDGE_PARAMS_TAG_V1)?;
+        cell.append_u8(TOKEN_BRIDGE_PARAMS_TAG_V1)?;
         self.bridge_address.write_to(cell)?;
         self.oracles_address.write_to(cell)?;
         self.oracles.write_to(cell)?;

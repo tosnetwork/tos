@@ -17,7 +17,7 @@ import {
   signUpdateOracleData,
   signNewGeneration,
 } from "./utils/utils";
-import type { Bridge, TestToken, TestWrappedJetton, TestTokenWithoutMetadata } from "../typechain-types";
+import type { Bridge, TestToken, TestWrappedToken, TestTokenWithoutMetadata } from "../typechain-types";
 import {BigNumber} from "ethers";
 
 const web3 = new Web3();
@@ -27,7 +27,7 @@ describe("Bridge contract", () => {
   let bridge: Bridge;
   let token: TestToken;
   let tokenWithoutMetadata: TestTokenWithoutMetadata;
-  let wrappedJetton: TestWrappedJetton;
+  let wrappedToken: TestWrappedToken;
 
   const signer: Account = web3.eth.accounts.create() as unknown as Account;
   const user: Account = web3.eth.accounts.create() as unknown as Account;
@@ -57,9 +57,9 @@ describe("Bridge contract", () => {
     token = await TestToken.deploy(BigNumber.from('2000000').mul(BigNumber.from(10).pow(BigNumber.from(18)))) as TestToken;
     await token.deployed();
 
-    const TestWrappedJetton = await ethers.getContractFactory("TestWrappedJetton");
-    wrappedJetton = await TestWrappedJetton.deploy() as TestWrappedJetton;
-    await wrappedJetton.deployed();
+    const TestWrappedToken = await ethers.getContractFactory("TestWrappedToken");
+    wrappedToken = await TestWrappedToken.deploy() as TestWrappedToken;
+    await wrappedToken.deployed();
 
     const TestTokenWithoutMetadata = await ethers.getContractFactory("TestTokenWithoutMetadata");
     tokenWithoutMetadata = await TestTokenWithoutMetadata.deploy("name", "symbol", BigNumber.from('2000000').mul(BigNumber.from(10).pow(BigNumber.from(18)))) as TestTokenWithoutMetadata;
@@ -182,15 +182,15 @@ describe("Bridge contract", () => {
     ).to.be.reverted;
   });
 
-  it("Cant lock wrapped jetton", async () => {
+  it("Cant lock wrapped token", async () => {
     const bridgeAllowance = parseUnits("5");
-    await wrappedJetton.approve(bridge.address, bridgeAllowance);
+    await wrappedToken.approve(bridge.address, bridgeAllowance);
 
     try {
-      await bridge.lock(wrappedJetton.address, bridgeAllowance, tosAddressHash);
+      await bridge.lock(wrappedToken.address, bridgeAllowance, tosAddressHash);
       expect.fail()
     } catch (err: any) {
-      expect(err.toString()).to.have.string("lock wrapped jetton");
+      expect(err.toString()).to.have.string("lock wrapped token");
     }
   });
 
@@ -209,7 +209,7 @@ describe("Bridge contract", () => {
       );
       expect.fail()
     } catch (err: any) {
-      expect(err.toString()).to.have.string("Max jetton totalSupply 2 ** 120 - 1");
+      expect(err.toString()).to.have.string("Max token totalSupply 2 ** 120 - 1");
     }
   });
 
@@ -228,7 +228,7 @@ describe("Bridge contract", () => {
       );
       expect.fail()
     } catch (err: any) {
-      expect(err.toString()).to.have.string("Max jetton totalSupply 2 ** 120 - 1");
+      expect(err.toString()).to.have.string("Max token totalSupply 2 ** 120 - 1");
     }
   });
 

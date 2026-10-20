@@ -10,14 +10,14 @@
  * ## How it works
  *
  * ```ts
- * class MyJetton implements Contract {
+ * class MyToken implements Contract {
  *   constructor(readonly address: Address) {}
  *   async getBalance(provider: ContractProvider): Promise<bigint> { ... }
  * }
  *
- * const jetton = open(new MyJetton(addr), client);
+ * const token = open(new MyToken(addr), client);
  * // provider is injected automatically:
- * const balance = await jetton.getBalance();
+ * const balance = await token.getBalance();
  * ```
  */
 

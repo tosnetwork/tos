@@ -9,14 +9,14 @@ place — if we adapt any idea, we write a fresh TOS-owned contract under
 
 ## Contents
 
-### `usdt-jetton-master/` — the contract USDT-on-TON is based on
+### `usdt-token-master/` — the contract USDT-on-TON is based on
 - Upstream: `ton-blockchain/stablecoin-contract`
 - Pinned commit: `5a3b500267b0bdfc6505a08e5ac661c805cab8b0` (branch `main`)
-- License: **MIT** (© TON Core) — see `usdt-jetton-master/LICENSE`
-- Primary file: `contracts/jetton-minter.fc` (the jetton master / minter), plus its
-  wallet (`jetton-wallet.fc`) and includes (`jetton-utils.fc`, `op-codes.fc`,
+- License: **MIT** (© TON Core) — see `usdt-token-master/LICENSE`
+- Primary file: `contracts/token-minter.fc` (the token master / minter), plus its
+  wallet (`token-wallet.fc`) and includes (`token-utils.fc`, `op-codes.fc`,
   `gas.fc`, `workchain.fc`, `stdlib.fc`, `helpers/librarian.func`) and the TL-B
-  schema `jetton.tlb`. TEP-74 (jetton) + TEP-89 (discovery) compatible, with the
+  schema `token.tlb`. TOS Token V1 (token) + TEP-89 (discovery) compatible, with the
   centralised-stablecoin admin ops (mint, force-transfer, burn, lock/unlock wallet).
   Tether's live USDT master on TON is a deployment of this code.
 

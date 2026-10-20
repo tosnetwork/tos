@@ -5,8 +5,8 @@
         (int new_lp_fee, int new_protocol_fee, int new_ref_fee, slice new_protocol_fee_address) = (in_msg_body~load_uint(8), in_msg_body~load_uint(8), in_msg_body~load_uint(8), in_msg_body~load_msg_addr());
         cell ref_cs = in_msg_body~load_ref(); 
         slice ref_ds = ref_cs.begin_parse();
-        (slice jetton_wallet0, slice jetton_wallet1) = (ref_ds~load_msg_addr(), ref_ds~load_msg_addr());
-        (_, slice pool_address) = get_pool_state_init_and_address(jetton_wallet0, jetton_wallet1);
+        (slice token_wallet0, slice token_wallet1) = (ref_ds~load_msg_addr(), ref_ds~load_msg_addr());
+        (_, slice pool_address) = get_pool_state_init_and_address(token_wallet0, token_wallet1);
         var body = begin_cell()
             .store_uint(set_fees, 32)
             .store_uint(query_id, 64)
@@ -19,8 +19,8 @@
     }
 
     if (op == collect_fees){ 
-        (slice jetton_wallet0, slice jetton_wallet1) = (in_msg_body~load_msg_addr(), in_msg_body~load_msg_addr());
-        (_, slice pool_address) = get_pool_state_init_and_address(jetton_wallet0, jetton_wallet1);
+        (slice token_wallet0, slice token_wallet1) = (in_msg_body~load_msg_addr(), in_msg_body~load_msg_addr());
+        (_, slice pool_address) = get_pool_state_init_and_address(token_wallet0, token_wallet1);
         var body = begin_cell()
             .store_uint(collect_fees, 32)
             .store_uint(query_id, 64);
@@ -100,8 +100,8 @@
     }
 
     if (op == reset_pool_gas) { 
-        (slice jetton_wallet0, slice jetton_wallet1) = (in_msg_body~load_msg_addr(), in_msg_body~load_msg_addr());
-        (_, slice pool_address) = get_pool_state_init_and_address(jetton_wallet0, jetton_wallet1);
+        (slice token_wallet0, slice token_wallet1) = (in_msg_body~load_msg_addr(), in_msg_body~load_msg_addr());
+        (_, slice pool_address) = get_pool_state_init_and_address(token_wallet0, token_wallet1);
         var body = begin_cell().store_uint(reset_gas, 32).store_uint(query_id, 64);
         send_simple_message(0, pool_address, body.end_cell(), CARRY_REMAINING_GAS);
         return ();

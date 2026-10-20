@@ -6,7 +6,7 @@
  *   2. Generates a test wallet from TEST_MNEMONIC (or generates a new one)
  *   3. Funds the test wallet from the genesis account (-1:000...000)
  *   4. Deploys the WalletV4R2 contract for the test wallet
- *   5. Deploys a test Jetton Minter and mints tokens
+ *   5. Deploys a test Token Minter and mints tokens
  *   6. Prints the env vars to add to .env.test
  *
  * Usage:
@@ -24,7 +24,7 @@ import {
   Address, Cell, beginCell, toNano, hexToBytes, bytesToBase64, contractAddress,
 } from "@tos/core";
 import { WalletV4R2 } from "@tos/wallets";
-import { JETTON_MINTER_CODE_HEX, JETTON_WALLET_CODE_HEX } from "@tos/contracts";
+import { TOKEN_MASTER_CODE_HEX, TOKEN_WALLET_CODE_HEX } from "@tos/contracts";
 
 // ---------------------------------------------------------------------------
 // Config
@@ -33,7 +33,7 @@ import { JETTON_MINTER_CODE_HEX, JETTON_WALLET_CODE_HEX } from "@tos/contracts";
 const GENESIS_PK_PATH = "/data/testnet/state/main-wallet.pk";
 const GENESIS_ADDRESS = "-1:0000000000000000000000000000000000000000000000000000000000000000";
 const FUND_AMOUNT = toNano("10");       // 10 TOS for the test wallet
-const MINT_AMOUNT = toNano("1000");     // 1000 test jettons
+const MINT_AMOUNT = toNano("1000");     // 1000 test tokens
 const CONTENT_URI = "https://example.com/test-jetton.json";
 
 const client = new TosClient({ ...Networks.local, timeout: 10_000 });
@@ -187,10 +187,10 @@ async function main() {
     console.log("      Wallet state:", info2.state);
   }
 
-  // 5. Deploy Jetton Minter + Mint
-  console.log("[5/5] Deploying Jetton Minter and minting tokens...");
-  const minterCode = Cell.fromBoc(hexToBytes(JETTON_MINTER_CODE_HEX))[0]!;
-  const walletCode = Cell.fromBoc(hexToBytes(JETTON_WALLET_CODE_HEX))[0]!;
+  // 5. Deploy Token Minter + Mint
+  console.log("[5/5] Deploying Token Minter and minting tokens...");
+  const minterCode = Cell.fromBoc(hexToBytes(TOKEN_MASTER_CODE_HEX))[0]!;
+  const walletCode = Cell.fromBoc(hexToBytes(TOKEN_WALLET_CODE_HEX))[0]!;
 
   const contentCell = beginCell()
     .storeUint(0x01, 8).storeStringTail(CONTENT_URI).endCell();
@@ -256,9 +256,9 @@ async function main() {
     `# Address: ${walletAddr.toRawString()}`,
     `TEST_MNEMONIC="${mnemonic.join(" ")}"`,
     "",
-    "# Jetton minter address (TEP-74 standard, deployed on local testnet)",
-    `# ${MINT_AMOUNT / 1_000_000_000n} test jettons minted to the wallet above`,
-    `TEST_JETTON_MINTER="${minterAddr.toRawString()}"`,
+    "# Token minter address (TOS Token V1 standard, deployed on local testnet)",
+    `# ${MINT_AMOUNT / 1_000_000_000n} test tokens minted to the wallet above`,
+    `TEST_TOKEN_MINTER="${minterAddr.toRawString()}"`,
     "",
   ].join("\n");
 

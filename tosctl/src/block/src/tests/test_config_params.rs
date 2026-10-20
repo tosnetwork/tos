@@ -614,25 +614,25 @@ fn test_config_params() {
     };
     assert_eq!(oracle_bridge_params, c);
 
-    let jetton_bridge_params = JettonBridgeParams::default();
+    let token_bridge_params = TokenBridgeParams::default();
 
-    cp.set_config(ConfigParamEnum::ConfigParam79(jetton_bridge_params.clone())).unwrap();
+    cp.set_config(ConfigParamEnum::ConfigParam79(token_bridge_params.clone())).unwrap();
     let ConfigParamEnum::ConfigParam79(c) = cp.config(79).unwrap().unwrap() else {
         panic!("Expected ConfigParam79");
     };
-    assert_eq!(jetton_bridge_params, c);
+    assert_eq!(token_bridge_params, c);
 
-    cp.set_config(ConfigParamEnum::ConfigParam81(jetton_bridge_params.clone())).unwrap();
+    cp.set_config(ConfigParamEnum::ConfigParam81(token_bridge_params.clone())).unwrap();
     let ConfigParamEnum::ConfigParam81(c) = cp.config(81).unwrap().unwrap() else {
         panic!("Expected ConfigParam81");
     };
-    assert_eq!(jetton_bridge_params, c);
+    assert_eq!(token_bridge_params, c);
 
-    cp.set_config(ConfigParamEnum::ConfigParam82(jetton_bridge_params.clone())).unwrap();
+    cp.set_config(ConfigParamEnum::ConfigParam82(token_bridge_params.clone())).unwrap();
     let ConfigParamEnum::ConfigParam82(c) = cp.config(82).unwrap().unwrap() else {
         panic!("Expected ConfigParam82");
     };
-    assert_eq!(jetton_bridge_params, c);
+    assert_eq!(token_bridge_params, c);
 
     write_read_and_assert(cp.clone());
 }

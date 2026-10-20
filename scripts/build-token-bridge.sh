@@ -64,7 +64,7 @@ if [[ ! -x "$FUNC_BIN" ]]; then
   exit 2
 fi
 
-contracts=(jetton-bridge jetton-minter jetton-wallet multisig votes-collector)
+contracts=(token-bridge token-minter token-wallet multisig votes-collector)
 networks=(ethereum bsc polygon tron)
 work_root="$(mktemp -d -t tos-token-bridge-build.XXXXXX)"
 trap 'rm -rf "$work_root"' EXIT

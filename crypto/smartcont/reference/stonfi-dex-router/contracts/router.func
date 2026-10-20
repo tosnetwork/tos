@@ -2,7 +2,7 @@
 
 #include "common/stdlib.func";
 #include "common/gas.func";
-#include "common/jetton-utils.func";
+#include "common/token-utils.func";
 #include "common/messages.func";
 #include "router/op.func";
 #include "router/params.func";
@@ -78,19 +78,19 @@
     }
 
     if (op == transfer_notification) {
-        (int jetton_amount, slice from_user) = (in_msg_body~load_coins(), in_msg_body~load_msg_addr());
+        (int token_amount, slice from_user) = (in_msg_body~load_coins(), in_msg_body~load_msg_addr());
         cell ref_cs = in_msg_body~load_ref(); 
         slice ref_ds = ref_cs.begin_parse();
         
-        throw_unless(INVALID_AMOUNT, jetton_amount > 0);
+        throw_unless(INVALID_AMOUNT, token_amount > 0);
         
         (int transferred_op, slice token_wallet1) = (ref_ds~load_uint(32), ref_ds~load_msg_addr());
         force_chain(WORKCHAIN, token_wallet1, WRONG_WORKCHAIN);
 
         ;; check if the call is valid
         if ((fwd_fee * 6 >  msg_value) | equal_slices(sender_address, token_wallet1) | storage::is_locked) {
-            ;; refund jettons
-            var body = create_simple_transfer_body(query_id, 0, jetton_amount, from_user);
+            ;; refund tokens
+            var body = create_simple_transfer_body(query_id, 0, token_amount, from_user);
             if (storage::is_locked) {
                 body = body.store_uint(transfer_bounce_locked, 32);
             } else {
@@ -108,7 +108,7 @@
                     .store_uint(query_id, 64)
                     .store_slice(to_address)
                     .store_slice(sender_address)
-                    .store_coins(jetton_amount)
+                    .store_coins(token_amount)
                     .store_coins(min_out)
                     .store_uint(has_ref, 1);
 
@@ -137,11 +137,11 @@
                     .store_coins(min_lp_out);
 
                 if (slice_hash(sender_address) > slice_hash(token_wallet1)) {
-                    msg_body = msg_body.store_coins(jetton_amount);
+                    msg_body = msg_body.store_coins(token_amount);
                     msg_body = msg_body.store_coins(0);
                 } else {
                     msg_body = msg_body.store_coins(0);
-                    msg_body = msg_body.store_coins(jetton_amount);
+                    msg_body = msg_body.store_coins(token_amount);
                 }
 
                 send_message_with_stateinit(0, pool_address, state_init, msg_body.end_cell(), CARRY_REMAINING_GAS);

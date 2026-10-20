@@ -50,7 +50,7 @@ const ERR_BAD_CONFIRMATION: i32 = 2408;
 const ERR_BAD_ACCEPTANCE: i32 = 2409;
 const ERR_INSUFFICIENT_GAS: i32 = 2410;
 const OP_EXCESSES: u32 = 0xd53276db;
-const OP_JETTON_TRANSFER: u32 = 0x0f8a7ea5;
+const OP_TOKEN_TRANSFER: u32 = 0x0f8a7ea5;
 
 fn frozen_code(file_name: &str) -> Cell {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -660,7 +660,7 @@ impl Fixture {
             .unwrap()
     }
 
-    // Jetton balances tolerate a not-yet-deployed wallet account (== 0 tokens).
+    // Token balances tolerate a not-yet-deployed wallet account (== 0 tokens).
     fn own_wallet_balance(&self) -> u64 {
         self.bc
             .get_account(&self.own_wallet)
@@ -719,7 +719,7 @@ impl Fixture {
         self.bc.set_account(self.escrow.clone(), acc);
     }
 
-    // Credit the escrow's own jetton wallet with `amount` (a mint-style
+    // Credit the escrow's own token wallet with `amount` (a mint-style
     // internal_transfer, no notification) so a rejected funding of that exact
     // amount can be proven to return end-to-end.
     fn credit_own_wallet(&mut self, amount: u64, from: &MsgAddressInt) {
@@ -771,7 +771,7 @@ fn deployment_is_not_acceptance_and_only_the_buyer_can_advance_it() {
 
     let wallet = fixture.own_wallet.clone();
     let funding = fixture.fund_body();
-    // Funding before acceptance is not accepted, but the jettons the wallet
+    // Funding before acceptance is not accepted, but the tokens the wallet
     // already credited must be returned to the funder, never thrown away
     // (throwing would orphan them permanently — BUG-001). The escrow stays in
     // pending_acceptance and the full amount is delivered back to the buyer.
@@ -808,7 +808,7 @@ fn notification_body(query_id: u64, amount: u64, from: &MsgAddressInt) -> Cell {
 #[test]
 fn rejected_funding_is_returned_to_sender_not_orphaned() {
     // BUG-001 (refund-with-reason pattern from the vendored reference router
-    // contract): jettons are
+    // contract): tokens are
     // credited to the escrow's own wallet before the escrow runs, and the
     // notification is non-bounceable, so a throw on a mismatch cannot un-credit
     // them and would orphan them permanently. Every funding the escrow does not
@@ -852,10 +852,10 @@ fn rejected_funding_is_returned_to_sender_not_orphaned() {
 }
 
 #[test]
-fn notification_from_a_foreign_jetton_wallet_returns_the_funds_and_changes_nothing() {
-    // A committed jetton whose wallet code uses a different data layout derives
+fn notification_from_a_foreign_token_wallet_returns_the_funds_and_changes_nothing() {
+    // A committed token whose wallet code uses a different data layout derives
     // a wallet address the escrow never computes. Its real notification used to
-    // throw on the sender check, permanently orphaning jettons already credited
+    // throw on the sender check, permanently orphaning tokens already credited
     // to a wallet the escrow owns but never addresses. The escrow must instead
     // ask the notifying wallet (which it owns, if the credit was real) to send
     // the amount back to the funder, crediting no state and never throwing.
@@ -867,7 +867,8 @@ fn notification_from_a_foreign_jetton_wallet_returns_the_funds_and_changes_nothi
 
     // An address that is provably not the derived own wallet.
     let mut seed = BuilderData::new();
-    seed.append_raw(b"foreign-layout-jetton-wallet", 28 * 8).unwrap();
+    let foreign_layout = b"foreign-layout-token-wallet";
+    seed.append_raw(foreign_layout, foreign_layout.len() * 8).unwrap();
     let foreign_wallet = MsgAddressInt::with_params(0, seed.into_cell().unwrap().hash(0)).unwrap();
     assert_ne!(foreign_wallet, f.own_wallet);
 
@@ -879,7 +880,7 @@ fn notification_from_a_foreign_jetton_wallet_returns_the_funds_and_changes_nothi
     let (st, funded, settled, _, pq, _) = f.runtime();
     assert_eq!((st, funded, settled, pq), (STATUS_AWAITING_FUNDING, 0, 0, 0));
     assert_eq!(f.data_hash(), before);
-    // The one outbound message is a jetton transfer addressed to the notifying
+    // The one outbound message is a token transfer addressed to the notifying
     // wallet, asking it to send the exact amount back to the funder, financed
     // only by the inbound value (nothing of the escrow's own balance attached).
     let tx = result.first_transaction().expect("escrow transaction");
@@ -893,7 +894,7 @@ fn notification_from_a_foreign_jetton_wallet_returns_the_funds_and_changes_nothi
     let ret = &returns[0];
     assert_eq!(ret.dst().expect("internal destination"), foreign_wallet);
     let mut body = ret.body().expect("transfer body").clone();
-    assert_eq!(body.get_next_u32().unwrap(), OP_JETTON_TRANSFER);
+    assert_eq!(body.get_next_u32().unwrap(), OP_TOKEN_TRANSFER);
     assert_eq!(body.get_next_u64().unwrap(), 0); // return query id, never a settlement's
     assert_eq!(Coins::construct_from(&mut body).unwrap().as_u128(), AMOUNT as u128);
     assert_eq!(MsgAddressInt::construct_from(&mut body).unwrap(), buyer);
@@ -1160,8 +1161,8 @@ fn refund_first_valid_transition_wins_and_query_number_is_not_priority() {
 }
 
 #[test]
-fn repeated_replay_bounce_consumes_only_fees_and_preserves_reserve_and_jettons() {
-    // Item 4: replaying the SAME bounced release conserves jettons, pays the
+fn repeated_replay_bounce_consumes_only_fees_and_preserves_reserve_and_tokens() {
+    // Item 4: replaying the SAME bounced release conserves tokens, pays the
     // recipient nothing, returns to funded with fields cleared, consumes native
     // fees (bounded by spendable balance above the reserve), and never spends the
     // storage reserve; a working release then still settles exactly once.
@@ -1238,7 +1239,7 @@ fn buyer_receive_locked_refund_is_funds_safe_but_pending() {
 
 #[test]
 fn unrelated_credits_replays_and_other_queries_never_trigger_another_payout() {
-    // Nothing a third party can arrange moves a pending settlement's jettons
+    // Nothing a third party can arrange moves a pending settlement's tokens
     // again: not an unsolicited credit to the escrow's own wallet (no
     // notification), not an exact replay, not another query or a refund, for a
     // settlement whose payout was delivered or refused at the recipient.
@@ -1284,7 +1285,7 @@ fn excesses_is_non_authoritative_and_cannot_alter_a_pending_settlement() {
     // Item 8: a wallet excesses commits only to a caller-selected query id; it is
     // deliberately ignored and can neither confirm nor corrupt a settlement — not
     // even one whose query id it carries. Tested in BOTH pending states, from the
-    // plausible recipient-wallet sender, asserting the FULL data cell, jetton
+    // plausible recipient-wallet sender, asserting the FULL data cell, token
     // balances, and out-messages are unchanged.
     let mut f = Fixture::new();
     f.fund();
@@ -1315,12 +1316,12 @@ fn excesses_is_non_authoritative_and_cannot_alter_a_pending_settlement() {
     assert_eq!(g.state().0, STATUS_REFUND_PENDING);
 }
 
-// A bounced escrow->wallet jetton_transfer body: 0xffffffff prefix, then the
-// original op::jetton_transfer and query id the handler reads back.
+// A bounced escrow->wallet token_transfer body: 0xffffffff prefix, then the
+// original op::token_transfer and query id the handler reads back.
 fn bounce_body(query: u64) -> Cell {
     let mut b = BuilderData::new();
     b.append_u32(0xffff_ffff).unwrap();
-    b.append_u32(OP_JETTON_TRANSFER).unwrap();
+    b.append_u32(OP_TOKEN_TRANSFER).unwrap();
     b.append_u64(query).unwrap();
     b.into_cell().unwrap()
 }
@@ -1526,8 +1527,8 @@ fn settlement_balance_guard_holds_at_maximum_valid_state() {
 }
 
 #[test]
-fn rejected_funding_return_actually_delivers_jettons_to_the_funder() {
-    // Item 11: the BUG-001 return is proven end-to-end — the funder's real jetton
+fn rejected_funding_return_actually_delivers_tokens_to_the_funder() {
+    // Item 11: the BUG-001 return is proven end-to-end — the funder's real token
     // wallet receives the tokens back and the escrow wallet is debited, rather
     // than only emitting a message.
     let mut f = Fixture::new();

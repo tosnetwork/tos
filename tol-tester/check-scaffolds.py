@@ -19,7 +19,7 @@ ROOT = os.path.dirname(HERE)
 
 # (pattern, contract name, committed example directory)
 SCAFFOLDS = [
-    ("jetton", "Slice4JettonBehaviour", "examples/slice4/jetton-behaviour-scaffold"),
+    ("token", "Slice4TokenBehaviour", "examples/slice4/token-behaviour-scaffold"),
     ("nft", "Slice4NftBehaviour", "examples/slice4/nft-behaviour-scaffold"),
     ("multisig", "Slice4MultisigBehaviour", "examples/slice4/multisig-behaviour-scaffold"),
     ("auction", "AuctionScaffold", "examples/slice5/auction-scaffold"),

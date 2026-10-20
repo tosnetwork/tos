@@ -3,15 +3,15 @@
 ## Origin
 
 - FunC source from the TOS liquid-staking contract suite.
-- Fift deployment scripts from [igroman787/jetton_pool](https://github.com/igroman787/jetton_pool) (used by legacy ops tooling)
+- Fift deployment scripts from [igroman787/token_pool](https://github.com/igroman787/jetton_pool) (used by legacy ops tooling)
 
 ## Purpose
 
-Liquid staking system where validators borrow from a pool to increase their stake. Depositors receive Jetton tokens as receipts (like Lido stETH).
+Liquid staking system where validators borrow from a pool to increase their stake. Depositors receive Token tokens as receipts (like Lido stETH).
 
 ### Architecture
 
-- **Pool contract** (`pool.func`) -- manages the liquidity pool, issues Jetton tokens to depositors
+- **Pool contract** (`pool.func`) -- manages the liquidity pool, issues Token tokens to depositors
 - **Controller contract** (`controller.func`) -- per-validator loan management (2 controllers per validator, even/odd rotation)
 - **Payout NFT** (`payout_nft/`) -- NFT-based payout distribution for reward claims
 - **Supporting modules** -- address calculations, assertions, messages, governance, halting, versioning
@@ -22,7 +22,7 @@ Liquid staking system where validators borrow from a pool to increase their stak
 - **Sudoer** -- emergency admin
 - **Halter** -- can pause the protocol
 - **Validator** -- borrows from pool, stakes via controller
-- **Depositor** -- provides liquidity, receives Jetton tokens
+- **Depositor** -- provides liquidity, receives Token tokens
 
 ### How a stake leaves a controller
 
@@ -46,7 +46,7 @@ and owes nothing.
 | `pool.func` | Main pool contract |
 | `controller.func` | Validator controller contract |
 | `pool_storage.func` | Pool state storage helpers |
-| `pool_mint_helpers.func` | Jetton minting logic |
+| `pool_mint_helpers.func` | Token minting logic |
 | `messages.func` | Message building utilities |
 | `op-codes.func` | Operation code constants |
 | `types.func` | Type definitions |
@@ -90,5 +90,5 @@ Not yet audited. This is the most complex contract suite. Requires:
 1. Recompile all `.func` files with TOS FunC compiler
 2. Verify `load_coins()`/`store_coins()` mapping
 3. Verify elector interface compatibility
-4. Verify Jetton standard compatibility on TOS
+4. Verify Token standard compatibility on TOS
 5. Add TOS-native tests without external npm toolchain dependencies

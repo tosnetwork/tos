@@ -2,7 +2,7 @@
 and the deploy script applies it before it touches a network.
 
 Escrow v2 is deployable only with the non-production acknowledgment, because a
-payout the recipient's jetton wallet refuses can leave funds stranded. Code of
+payout the recipient's token wallet refuses can leave funds stranded. Code of
 any other escrow, including the removed v1, is refused as unknown.
 
 Runs with the standard library only: python3 scripts/test_tos_service_escrow_deploy_policy.py

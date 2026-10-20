@@ -2,8 +2,8 @@
 
 Status: **version 5, implemented** on `fix/bridge-settlement`. Section 19
 records where the implementation departs from the text, and the limits it
-measured. It specifies changes to `jetton-bridge.fc`, `jetton-minter.fc`,
-`jetton-wallet.fc`, `settlement.fc`, the deployment scripts, the EVM
+measured. It specifies changes to `token-bridge.fc`, `token-minter.fc`,
+`token-wallet.fc`, `settlement.fc`, the deployment scripts, the EVM
 `Bridge.sol` lock path and the oracle vote format. Together they make every
 mint and burn a durable, authenticated, idempotent operation at every
 participant, recoverable by permissionless funded retransmission.
@@ -35,15 +35,15 @@ The current protocol (`settlement.fc`, `SECURITY.md` "Completion of mints and
 burns") reports each outcome once and treats a bounce as a failure:
 
 - A failed credit bounces to the minter. The minter's bounce handler reads
-  ConfigParam 79 (`jetton-minter.fc:141`). With the parameter missing the
+  ConfigParam 79 (`token-minter.fc:141`). With the parameter missing the
   handler throws, and a bounce cannot bounce, so the mint stays
   `MINT_IN_FLIGHT` for good. `retry_mint` admits only `MINT_FAILED`
-  (`jetton-bridge.fc:355`).
+  (`token-bridge.fc:355`).
 - Reports to the bridge are sent with mode `64 + 2`
-  (`jetton-minter.fc:125`). An unfundable report is skipped, and nothing can
+  (`token-minter.fc:125`). An unfundable report is skipped, and nothing can
   send it again.
 - A bounced burn notification is refunded on the bounce alone
-  (`jetton-minter.fc:165`). If ConfigParam 79 is missing, the burn stays
+  (`token-minter.fc:165`). If ConfigParam 79 is missing, the burn stays
   `BURN_AWAITING_BRIDGE`, which `retry_refund` does not admit (`:334`).
 - Each operation is budgeted once, at its first leg, at the prices of that
   moment.
@@ -68,7 +68,7 @@ receiver deduplicates it.
 - **Life**: one existence of an account. See section 10.4.
 
 **Settlement effects versus native fees.** A settlement effect is a change
-to jetton balances or holds, supply or reservations, protocol records, swap
+to token balances or holds, supply or reservations, protocol records, swap
 consumption, `LOG_BURN`, `LOG_SWAP_CANCELLED` or a refund. The exactly-once
 properties apply to settlement effects only. Native currency behaves
 differently:
@@ -268,7 +268,7 @@ same leg. No request's effect is therefore applied twice, at any delay.
 - the swap vote and `pay_swap`: oracle address, `state_flags`, mint fee;
 - the wallet's `burn`: `state_flags`, burn fee;
 - `cancel_lock`: oracle address;
-- paths outside settlement: jetton transfers between wallets, wallet-address
+- paths outside settlement: token transfers between wallets, wallet-address
   discovery, and get-methods that report configuration.
 
 No result, completion, sync, open, advance or cancellation handler reads it.
@@ -277,16 +277,16 @@ No result, completion, sync, open, advance or cancellation handler reads it.
 |---|---|---|
 | bridge | its minters | `calculate_minter_address(token_data)`, using the stored codes and `my_address()`; plus the minter life recorded for that channel |
 | minter | its bridge | `bridge:MsgAddressInt` in the minter's initial data (pinned in its StateInit); plus the recorded bridge life |
-| minter | its wallets | `calculate_user_jetton_wallet_address`; plus the holder's recorded wallet life |
-| wallet | its minter | `jetton_master_address` (initial data); plus the recorded minter life |
+| minter | its wallets | `calculate_user_token_wallet_address`; plus the holder's recorded wallet life |
+| wallet | its minter | `token_master_address` (initial data); plus the recorded minter life |
 
 **Hidden reads of ConfigParam 79.** Today every path in the wallet and the
-minter calls `get_jetton_bridge_config()` (`config.fc:237`) before
+minter calls `get_token_bridge_config()` (`config.fc:237`) before
 dispatching:
 
-- the wallet at `jetton-wallet.fc:264`;
-- the minter at `jetton-minter.fc:224`;
-- the minter's bounce handler at `jetton-minter.fc:141`.
+- the wallet at `token-wallet.fc:264`;
+- the minter at `token-minter.fc:224`;
+- the minter's bounce handler at `token-minter.fc:141`.
 
 The implementation dispatches every settlement opcode before any call that
 can reach that helper. Two checks hold this:
@@ -295,7 +295,7 @@ can reach that helper. Two checks hold this:
   syncs and advances, runs in tests with ConfigParam 79 absent and with it
   changed (T-M7, T-B4).
 - **Static.** `scripts/verify-token-bridge.py` refuses the build if any
-  named settlement handler reaches `get_jetton_bridge_config` in the call
+  named settlement handler reaches `get_token_bridge_config` in the call
   graph. Its mutation control inserts such a call.
 
 **Constants instead of ConfigParam 79.** The following live in
@@ -317,7 +317,7 @@ Their values are provisional (Q7) and are set by measurement.
 - Advances, results, syncs, opens and owner cancellations are accepted while
   suspended.
 - Behaviour change: today `retry_mint` is refused while swaps are suspended
-  (`jetton-bridge.fc:347`).
+  (`token-bridge.fc:347`).
 
 **A replaced bridge (ruling Q3).** A minter's address includes its bridge,
 so a bridge replaced through ConfigParam 79 does not inherit any tokens.
@@ -341,7 +341,7 @@ cells so that no cell has more than four references.
 storage#_ born_lt:uint64 evm_chain_id:uint32 evm_bridge:uint160   ;; immutable namespace
           generation:uint32 generation_start:uint64 generation_state:uint2
           ;; generation and its start are pinned by activation; state 0 UNSET, 1 ACTIVE (section 11)
-          collector_address:MsgAddress jetton_minter_code:^Cell jetton_wallet_code:^Cell
+          collector_address:MsgAddress token_minter_code:^Cell token_wallet_code:^Cell
           ^[ swap_watermark:uint64 swaps_above:(HashmapE 64 SwapState)
              channels:(HashmapE 256 ^TokenChannel) channels_count:uint32 ] = BridgeStorage;
 swap_paid#0 payer:MsgAddressInt fee:Coins = SwapState;
@@ -368,7 +368,7 @@ bounded by `SWAP_WINDOW`, the pending mints of each channel by `MINT_WINDOW`
 
 ```
 storage#_ total_supply:int128 in_flight:Coins mint_reserve:Coins burn_reserve:Coins
-          stranded:Coins content:^Cell jetton_wallet_code:^Cell
+          stranded:Coins content:^Cell token_wallet_code:^Cell
           ^[ bridge:MsgAddressInt bridge_life:uint64 born_lt:uint64 state:uint1
              mint_watermark:uint64 mint_compaction_floor:uint64
              mints:(HashmapE 64 MintRecord)
@@ -398,13 +398,13 @@ old_life#_ wallet_life:uint64 credits:(HashmapE 64 uint64)
 `total_supply + in_flight + mint_reserve + burn_reserve + stranded`. It
 never exceeds `MAX_SUPPLY`. `total_supply` is signed: a burn of a landed
 credit whose confirmation is still in flight briefly takes it below zero.
-`get_jetton_data` reports `max(total_supply, 0)`.
+`get_token_data` reports `max(total_supply, 0)`.
 
 ### 5.3 Wallet (basechain)
 
 ```
-storage#_ balance:Coins owner_address:MsgAddressInt jetton_master_address:MsgAddressInt
-          jetton_wallet_code:^Cell
+storage#_ balance:Coins owner_address:MsgAddressInt token_master_address:MsgAddressInt
+          token_wallet_code:^Cell
           ^[ born_lt:uint64 minter_life:uint64 open_attempt:uint32
              credit_watermark:uint64 credit_compaction_floor:uint64
              credits_above:(HashmapE 64 uint256)   ;; k -> descriptor hash, k >= storage floor
@@ -1056,7 +1056,7 @@ The TOS bridge enforces its generation:
 - `lock` stores `locks[n] = (locker, token, amount, status)`, so a refund
   is possible.
 - The swap identity is `(evm_chain_id, evm_bridge, generation, n)`, replacing
-  `cell_hash(ext_chain_hash, internal_index)` (`jetton-bridge.fc:71`).
+  `cell_hash(ext_chain_hash, internal_index)` (`token-bridge.fc:71`).
 - The oracle vote carries `n`, the namespace and the generation.
 
 **Gap policy: source-authenticated terminal cancellation.** A lock that is

@@ -588,12 +588,12 @@ fun Cell<T>.hash(self): uint256
 
 /// `RemainingBitsAndRefs` is a special built-in type to get "all the rest" slice tail on reading.
 /// ```
-/// struct JettonMessage {
+/// struct TokenMessage {
 ///     ... some fields
 ///     forwardPayload: RemainingBitsAndRefs;
 /// }
 /// ```
-/// When you deserialize JettonMessage, forwardPayload contains "everything left after reading fields above".
+/// When you deserialize TokenMessage, forwardPayload contains "everything left after reading fields above".
 type RemainingBitsAndRefs = slice
 
 /// Creates a cell with zero bits and references.
@@ -1638,8 +1638,8 @@ struct AddressShardingOptions {
 ///     dest: {
 ///         workchain: 0,
 ///         stateInit: {
-///             code: jettonWalletCode,
-///             data: jettonWalletEmptyStorage.toCell()
+///             code: tokenWalletCode,
+///             data: tokenWalletEmptyStorage.toCell()
 ///         }
 ///     },
 ///     ...
@@ -1664,23 +1664,23 @@ fun AutoDeployAddress.buildAddress(self): builder
     builtin
 
 /// Constructs an address that a deployed contract will have.
-/// For example, from a jetton minter, you want to calculate an address of a jetton wallet:
+/// For example, from a token minter, you want to calculate an address of a token wallet:
 /// ```
-/// val jwDeployed = calcDeployedJettonWallet(...);
+/// val jwDeployed = calcDeployedTokenWallet(...);
 /// val jwAddress = jwDeployed.calculateAddress();
 /// ```
-/// Just instead of `dest` for [createMessage], you use it is to calculate a jetton/nft address.
+/// Just instead of `dest` for [createMessage], you use it is to calculate a token/nft address.
 @pure
 fun AutoDeployAddress.calculateAddress(self): address
     builtin
 
 /// Checks that an address matches a deployed contract.
-/// For example, from a jetton minter, you're checking whether a message is from a jetton wallet:
+/// For example, from a token minter, you're checking whether a message is from a token wallet:
 /// ```
-/// val jwDeployed = calcDeployedJettonWallet(...);
+/// val jwDeployed = calcDeployedTokenWallet(...);
 /// val fromJW = jwDeployed.addressMatches(senderAddress);
 /// ```
-/// Just instead of `dest` for [createMessage], you use it is to check whether a sender is a jetton/nft.
+/// Just instead of `dest` for [createMessage], you use it is to check whether a sender is a token/nft.
 /// Deprecated since late 2025 (TVM 12 with a cheap "builder-to-slice" instruction), to be removed later.
 @pure
 @deprecated("Use `a == jwDeployed.calculateAddress()` instead of `jwDeployed.addressMatches(a)")
