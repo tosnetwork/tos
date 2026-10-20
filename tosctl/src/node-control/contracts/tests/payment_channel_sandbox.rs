@@ -18,6 +18,8 @@ use chain_block::{
 use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, compile_func_with_stdlib};
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
 mod weak_ed25519;
 
 const TOS: u64 = 1_000_000_000;
@@ -32,7 +34,12 @@ const CHANNEL_A: u64 = 4 * TOS;
 const CHANNEL_B: u64 = 4 * TOS;
 
 fn smartcont(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../crypto/smartcont").join(name)
+    std::env::var_os("TOS_AUDIT_SMARTCONT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../crypto/smartcont")
+        })
+        .join(name)
 }
 
 fn source() -> String {
@@ -212,7 +219,8 @@ impl Channel {
     }
 
     fn deploy_with_state(code: Cell, a_key: &[u8; 32], b_key: &[u8; 32], state: Cell) -> Self {
-        let mut bc = Blockchain::new().expect("blockchain");
+        let mut bc =
+            Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
         let funder = bc.treasury("funder", 1_000 * TOS).expect("funder");
         // The parties live on the masterchain: the default sandbox config has no
         // basechain descriptor, so a payout to a basechain party would be dropped.
@@ -580,4 +588,93 @@ fn the_guards_fit_the_external_gas_credit() {
     // the costliest shapes check two stored keys.
     assert!(worst_overhead <= 2_100, "the guards add {worst_overhead} gas");
     assert!(worst * 10 <= EXTERNAL_GAS_CREDIT * 9, "{worst} leaves under 10% of the credit");
+}
+
+/// An underfunded closing state models storage/fees having consumed its buffer.
+/// Failing either principal action must roll back both outputs and the state;
+/// after funding the same close can succeed, but terminal payout cannot repeat.
+#[test]
+fn payout_is_atomic_and_cannot_pay_principals_twice() {
+    let a = SigningKey::from_bytes(&[0x42; 32]);
+    let b = SigningKey::from_bytes(&[0x43; 32]);
+    let code = compile(&source());
+    for available in [3 * TOS, 5 * TOS] {
+        let mut channel = Channel::deploy(
+            code.clone(),
+            &a.verifying_key().to_bytes(),
+            &b.verifying_key().to_bytes(),
+        );
+        let mut account = channel.bc.get_account(&channel.address).unwrap().clone();
+        account.set_balance(chain_block::CurrencyCollection::with_coins(available));
+        channel.bc.set_account(channel.address.clone(), account);
+        let before = (channel.balance_of(&channel.a), channel.balance_of(&channel.b));
+        let state = channel.data_hash();
+        let close = close_command(None, 0, 0);
+        let body = signed_command(Some(sign(&a, &close)), Some(sign(&b, &close)), &close);
+        let out = channel.send(body.clone()).expect("accepted close");
+        out.expect_exit_code(0).expect_aborted().expect_out_msgs(0);
+        assert_eq!(out.read_primary_description().action.unwrap().result_code, 37);
+        assert_eq!(channel.data_hash(), state, "failed action must not finalize");
+        assert_eq!((channel.balance_of(&channel.a), channel.balance_of(&channel.b)), before);
+        let funder = channel.bc.treasury("top-up", 100 * TOS).unwrap();
+        let topup = MessageBuilder::internal(funder.address(), &channel.address, 10 * TOS)
+            .bounce(false)
+            .build();
+        channel.bc.send_message(topup).unwrap().expect_success();
+        channel.send(body).expect("retry after funding").expect_success().expect_out_msgs(2);
+        for (addr, prior, amount) in
+            [(&channel.a, before.0, CHANNEL_A), (&channel.b, before.1, CHANNEL_B)]
+        {
+            let received = channel.balance_of(addr) - prior;
+            assert!(
+                received <= amount.into() && received + u128::from(TOS / 100) >= amount.into(),
+                "principal: {received}"
+            );
+        }
+        let paid = (channel.balance_of(&channel.a), channel.balance_of(&channel.b));
+        let payout = cell(|m| {
+            m.append_u32(0x37fe_7810).unwrap();
+        });
+        let error = channel
+            .send(signed_command(None, None, &payout))
+            .err()
+            .expect("terminal replay refused");
+        assert!(error.contains("exit code: 34"), "{error}");
+        assert_eq!((channel.balance_of(&channel.a), channel.balance_of(&channel.b)), paid);
+    }
+}
+
+#[test]
+fn completed_payout_refuses_repayment_after_topup() {
+    let a = SigningKey::from_bytes(&[0x42; 32]);
+    let b = SigningKey::from_bytes(&[0x43; 32]);
+    let mut channel = Channel::deploy(
+        compile(&source()),
+        &a.verifying_key().to_bytes(),
+        &b.verifying_key().to_bytes(),
+    );
+    let close = close_command(None, 0, 0);
+    channel
+        .send(signed_command(Some(sign(&a, &close)), Some(sign(&b, &close)), &close))
+        .unwrap()
+        .expect_success();
+    let funder = channel.bc.treasury("post-payout funding", 100 * TOS).unwrap();
+    channel
+        .bc
+        .send_message(
+            MessageBuilder::internal(funder.address(), &channel.address, 20 * TOS)
+                .bounce(false)
+                .build(),
+        )
+        .unwrap()
+        .expect_success();
+    let before = (channel.balance_of(&channel.a), channel.balance_of(&channel.b));
+    let state = channel.data_hash();
+    let payout = cell(|m| {
+        m.append_u32(0x37fe_7810).unwrap();
+    });
+    let err = channel.send(signed_command(None, None, &payout)).err().expect("already paid");
+    assert!(err.contains("exit code: 34"), "{err}");
+    assert_eq!((channel.balance_of(&channel.a), channel.balance_of(&channel.b)), before);
+    assert_eq!(channel.data_hash(), state);
 }

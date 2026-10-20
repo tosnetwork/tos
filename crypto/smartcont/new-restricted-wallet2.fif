@@ -17,15 +17,16 @@ def? $3 { @' $3 } { "rwallet" } cond constant file-base
 ." with nominal amount " amount .TM cr
 
 // D x t -- D'
-{ <b rot Tomi, swap rot 16 b>idict! not abort"cannot add value"
+{ <b rot Tomi, swap rot 32 b>idict! not abort"cannot add value"
 } : rdict-entry
+// Signed 32-bit elapsed seconds; before the start, the full nominal balance stays locked.
 // balance -- dict
 { dictnew
-  over -32768 rdict-entry
-  over 3/4 */ 92 rdict-entry
-  over 1/2 */ 183 rdict-entry
-  swap 1/4 */ 366 rdict-entry
-  0 548 rdict-entry
+  over -2147483648 rdict-entry
+  over 3/4 */ 92 86400 * rdict-entry
+  over 1/2 */ 183 86400 * rdict-entry
+  swap 1/4 */ 366 86400 * rdict-entry
+  0 548 86400 * rdict-entry
 } : make-rdict
 
 // Create new restricted wallet; code taken from `auto/restricted-wallet2-code.fif`

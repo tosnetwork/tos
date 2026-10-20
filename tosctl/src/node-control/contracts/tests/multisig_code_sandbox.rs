@@ -18,6 +18,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder, SendResult, compile_func_with_stdlib};
 use tos_vm::stack::StackItem;
 
+#[path = "fixtures/current_network.rs"]
+mod current_network;
 mod weak_ed25519;
 
 const TOS: u64 = 1_000_000_000;
@@ -25,7 +27,12 @@ const WALLET_ID: u32 = 0x5157_0001;
 const ERR_WEAK_OWNER: i32 = 45;
 
 fn smartcont(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../crypto/smartcont").join(name)
+    std::env::var_os("TOS_AUDIT_SMARTCONT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../crypto/smartcont")
+        })
+        .join(name)
 }
 
 fn cell(build: impl FnOnce(&mut BuilderData)) -> Cell {
@@ -133,7 +140,8 @@ impl Wallet {
     }
 
     fn deploy_with_code(owners: &[[u8; 32]], k: u8, keys: Vec<SigningKey>, code: Cell) -> Self {
-        let mut bc = Blockchain::new().expect("blockchain");
+        let mut bc =
+            Blockchain::with_global_version(current_network::global_version()).expect("blockchain");
         let init = StateInit::with_code_and_data(code, wallet_data(owners, k));
         let hash = init.write_to_new_cell().unwrap().into_cell().unwrap().hash(0);
         let address = MsgAddressInt::with_params(0, hash).unwrap();
@@ -500,11 +508,13 @@ fn strong_key_starting_with(first: u8) -> SigningKey {
 /// added test runs before the throw, so the figure is an over-estimate.
 fn pre_acceptance_probe_code() -> Cell {
     let source = std::fs::read_to_string(smartcont("multisig-code.fc")).expect("source");
-    // The one place the external message is accepted.
-    let accept = "  set_gas_limit(";
+    // The regular proposal admission; maintenance has its own indented branch.
+    let accept = "\n  set_gas_limit(150000);\n";
     assert_eq!(source.matches(accept).count(), 1);
-    let probe =
-        source.replace(accept, "  if (root_i >= 1) { throw(gas_consumed()); }\n  set_gas_limit(");
+    let probe = source.replace(
+        accept,
+        "\n  if (root_i >= 1) { throw(gas_consumed()); }\n  set_gas_limit(150000);\n",
+    );
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join("multisig-code.fc"),
@@ -891,4 +901,63 @@ fn signed_query_cannot_be_replayed_on_a_sibling_network() {
     let error = sibling.refused(packet);
     assert!(error.contains("44"), "wrong network: {error}");
     assert_eq!(sibling.query_state(query_id), (0, 0));
+}
+
+/// Every owner can exhaust its quota with legitimate, subsequently expired proposals.
+/// A fresh owner-signed maintenance query must still reclaim records without quorum.
+#[test]
+fn expired_full_quotas_can_be_reclaimed_without_quorum() {
+    let keys = strong_keys(4);
+    let mut wallet = Wallet::deploy(&public(&keys), 4, keys.clone());
+    for root in 0..4u8 {
+        for n in 0..10u64 {
+            let id = wallet.query_id(u64::from(root) * 10 + n);
+            let signed = signed_root(root, None, id);
+            wallet
+                .send(query(sign(&keys[root as usize], &signed), &signed))
+                .expect("proposal")
+                .expect_success();
+        }
+    }
+    wallet.bc.set_now(wallet.bc.now() + 7_265);
+    let blocked = signed_root(0, None, wallet.query_id(100));
+    assert!(wallet.refused(query(sign(&keys[0], &blocked), &blocked)).contains("exit code: 39"));
+    let maintenance = |id| {
+        let payload = cell(|b| {
+            b.append_u32(WALLET_ID).unwrap();
+            b.append_i32(42).unwrap();
+            b.append_u64(id).unwrap();
+            b.append_u32(0x4d53_4743).unwrap();
+        });
+        signed_root_with(0, &payload)
+    };
+    let first_id = wallet.query_id(101);
+    let first = maintenance(first_id);
+    let body = query(sign(&keys[0], &first), &first);
+    let out = wallet.send(body.clone()).expect("maintenance bypasses full quota");
+    out.expect_success().expect_out_msgs(0);
+    assert!(gas_used(&out) < 150_000);
+    // The first eight expired records are forgotten; the rest need more calls.
+    let old_id = ((u64::from(wallet.bc.now()) - 65) << 32) | 8;
+    assert_eq!(wallet.query_state(old_id), (0, 1));
+    assert!(wallet.refused(body).contains("exit code: 35"), "maintenance cannot replay");
+    for batch in 1..5 {
+        let next = maintenance(wallet.query_id(101 + batch));
+        wallet
+            .send(query(sign(&keys[0], &next), &next))
+            .expect("next batch")
+            .expect_success()
+            .expect_out_msgs(0);
+    }
+    assert_ne!(wallet.query_state(old_id), (0, 1));
+    let id = wallet.query_id(106);
+    let body = query_body(id);
+    let cos =
+        co_signatures(&(1..4u8).map(|i| (i, sign(&keys[i as usize], &body))).collect::<Vec<_>>());
+    let signed = signed_root(0, cos, id);
+    wallet
+        .send(query(sign(&keys[0], &signed), &signed))
+        .expect("quorum works again")
+        .expect_success();
+    assert_eq!(wallet.processed(id), -1);
 }

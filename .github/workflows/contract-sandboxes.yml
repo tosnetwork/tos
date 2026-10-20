@@ -382,6 +382,13 @@ jobs:
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
 
+      - name: Legacy wallet audit red/green controls
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: python3 scripts/test-legacy-wallet-audit-controls.py
+
       - name: Raw account proof response binding guard controls
         env:
           TOS_PROOF_VERIFY: ${{ github.workspace }}/build/lite-client/proof-verify/tos-proof-verify

@@ -190,6 +190,35 @@ int tuple_length(tuple t) asm "TLEN";
   return (cells, bits);
 }
 
+;; A root owner may sign a maintenance-only query whose payload is this opcode.
+;; It consumes no pending-proposal quota, performs no transfers and must reclaim
+;; at least one expired record. Its fresh query id is stored as processed, so the
+;; signature cannot be replayed to charge the wallet for another maintenance run.
+const int cleanup_opcode = 0x4d534743;
+const int cleanup_limit = 8;
+
+(cell, cell, int, int) clean_expired_queries(cell pending_queries, cell owner_infos,
+    int last_cleaned, int bound) impure inline_ref {
+  int cleaned = 0;
+  int more = true;
+  do {
+    var (next_queries, id, query, found) = pending_queries.udict_delete_get_min(64);
+    if (found) {
+      found = id < bound;
+    }
+    if (found) {
+      if (query~load_int(1)) {
+        owner_infos~dec_flood(query~load_uint(8));
+      }
+      pending_queries = next_queries;
+      last_cleaned = id;
+      cleaned += 1;
+    }
+    more = found & (cleaned < cleanup_limit);
+  } until (~ more);
+  return (pending_queries, owner_infos, last_cleaned, cleaned);
+}
+
 () recv_external(slice in_msg) impure {
   ;; empty message triggers init
   if (slice_empty?(in_msg)) {
@@ -226,6 +255,23 @@ int tuple_length(tuple t) asm "TLEN";
   throw_if(40, (cnt > 8) | (bits > 2048));
 
   (slice query, var found?) = pending_queries.udict_get?(64, query_id);
+
+  int cleanup_only = false;
+  if ((in_msg.slice_bits() == 32) & (in_msg.slice_refs() == 0)) {
+    cleanup_only = in_msg.preload_uint(32) == cleanup_opcode;
+  }
+  if (cleanup_only) {
+    throw_if(33, query_id < (now() << 32));
+    throw_if(35, found?);
+    throw_unless(46, cell_null?(signatures));
+    set_gas_limit(150000);
+    (pending_queries, owner_infos, last_cleaned, int cleaned) = clean_expired_queries(
+      pending_queries, owner_infos, last_cleaned, (now() - 64) << 32);
+    throw_unless(46, cleaned > 0);
+    pending_queries~udict_set_builder(64, query_id, begin_cell().store_int(0, 1));
+    set_data(pack_state(pending_queries, owner_infos, last_cleaned, k, n, wallet_id));
+    return ();
+  }
 
   ifnot (found?) {
     flood += 1;
@@ -265,23 +311,9 @@ int tuple_length(tuple t) asm "TLEN";
   }
 
   accept_message();
-  bound -= (64 << 32);   ;; clean up records expired more than 64 seconds ago
-  int old_last_cleaned = last_cleaned;
-  do {
-    var (pending_queries', i, query, f) = pending_queries.udict_delete_get_min(64);
-    f~touch();
-    if (f) {
-      f = (i < bound);
-    }
-    if (f) {
-      if (query~load_int(1)) {
-        owner_infos~dec_flood(query~load_uint(8));
-      }
-      pending_queries = pending_queries';
-      last_cleaned = i;
-      need_save = -1;
-    }
-  } until (~ f);
+  (pending_queries, owner_infos, last_cleaned, int cleaned) = clean_expired_queries(
+    pending_queries, owner_infos, last_cleaned, (now() - 64) << 32);
+  need_save |= cleaned > 0;
 
   if (need_save) {
     set_data(pack_state(pending_queries, owner_infos, last_cleaned, k, n, wallet_id));
