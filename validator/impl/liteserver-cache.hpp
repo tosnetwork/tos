@@ -32,8 +32,8 @@ namespace tos::validator {
 //
 // A cache is a memory budget, so every bound here is on memory the store itself
 // owns:
-//  - each entry keeps a private, exactly sized copy of the answer in a plain
-//    string. An answer arrives as a view into the buffer the serializer or the
+//  - each entry keeps a private copy of the answer in a plain string, sized by
+//    the answer rather than by whoever produced it. An answer arrives as a view into the buffer the serializer or the
 //    network wrote, and a shared view keeps that whole buffer alive; small
 //    answers carved from pooled slabs pinned the slab long after everything
 //    else in it was gone. A hit hands out a fresh buffer copied from the
@@ -146,7 +146,9 @@ class LiteServerQueryCache {
   size_t expire_idle(double now) {
     size_t expired = 0;
     while (!lru_.empty()) {
-      auto *oldest = static_cast<CacheEntry *>(lru_.get());
+      // Peek: `get()` would unlink the entry, and a young entry must stay in
+      // the list or no later sweep or eviction could ever reach it.
+      auto *oldest = static_cast<CacheEntry *>(oldest_node());
       if (!is_idle(*oldest, now)) {
         break;
       }
@@ -186,10 +188,15 @@ class LiteServerQueryCache {
 
   void enforce_bounds() {
     while (total_size_ > MAX_CACHE_SIZE || cache_.size() > MAX_CACHE_ENTRIES) {
-      auto *oldest = static_cast<CacheEntry *>(lru_.get());
-      CHECK(oldest);
-      erase(oldest);
+      CHECK(!lru_.empty());
+      erase(static_cast<CacheEntry *>(oldest_node()));
     }
+  }
+
+  // The least recently used entry, still linked: `put` inserts at the front
+  // and `get` takes from the back, so the oldest is the head's `prev`.
+  td::ListNode *oldest_node() {
+    return lru_.get_prev();
   }
 
   std::map<td::Bits256, std::unique_ptr<CacheEntry>> cache_;

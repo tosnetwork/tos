@@ -246,6 +246,28 @@ TEST(LiteServerCache, idle_entries_expire_from_the_tail_and_are_refused_by_looku
   ASSERT_EQ(0u, cache.total_size());
 }
 
+TEST(LiteServerCache, a_young_tail_survives_a_sweep_and_still_expires_later) {
+  // A sweep that stops at a young entry must leave it in the list: with no
+  // lookup or update in between, a later sweep must still find and drop it,
+  // and the store must come back to nothing.
+  LiteServerQueryCache cache;
+  ASSERT_TRUE(cache.update(key_of(1), value_of(1, 8), kNow));
+  ASSERT_EQ(0u, cache.expire_idle(kNow + 60));
+  ASSERT_EQ(1u, cache.entries());
+  ASSERT_EQ(1u, cache.expire_idle(kNow + LiteServerQueryCache::MAX_ENTRY_IDLE + 1));
+  ASSERT_EQ(0u, cache.entries());
+  ASSERT_EQ(0u, cache.total_size());
+  // The same for capacity eviction after a young sweep: the entry a sweep
+  // peeked at is still the one eviction takes.
+  ASSERT_TRUE(cache.update(key_of(2), value_of(2, 8), kNow));
+  ASSERT_EQ(0u, cache.expire_idle(kNow + 1));
+  for (size_t i = 0; i < LiteServerQueryCache::MAX_CACHE_ENTRIES; i++) {
+    ASSERT_TRUE(cache.update(key_of(1000 + i), value_of(i, 8), kNow + 2));
+  }
+  ASSERT_EQ(LiteServerQueryCache::MAX_CACHE_ENTRIES, cache.entries());
+  ASSERT_TRUE(cache.lookup(key_of(2), kNow + 3).is_error());
+}
+
 TEST(LiteServerCache, a_returned_answer_outlives_eviction_and_expiry) {
   LiteServerQueryCache cache;
   std::string answer = value_of(7, 300);
