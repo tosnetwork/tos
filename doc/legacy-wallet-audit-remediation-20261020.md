@@ -10,7 +10,7 @@ these results describe the changed source and native transactions below.
 | Finding | Changed boundary | Native regression |
 | --- | --- | --- |
 | H-MS-01, P0 | `crypto/smartcont/multisig-code.fc`: an owner-signed, quota-independent maintenance query removes at most eight expired records; ordinary cleanup uses the same bound. A maintenance query with nothing reclaimable is refused before acceptance, so it costs the wallet nothing and keeps its ID. | Four owners each fill all ten proposal slots, let all 40 proposals expire, reclaim them over five calls without quorum, refuse maintenance replay, then complete a quorum query. |
-| M-PC-PAYOUT-01, P1 | `payment-channel-code.fc`: both principals are exact amounts with send mode 1, and what remains after them goes to A (skipped only when too small to carry a message); any action failure rolls back both outputs and closing-state changes. A completing close or timeout whose balance cannot cover both principals is refused before acceptance. Payout-path amount movement is checked. Terminal payout refuses further payout commands. | With only 3 or 5 TOS backing two 4-TOS principals, compute succeeds but action 37 aborts with no recipient credit or state change. Funding and retry succeeds; a completed payout cannot pay again after another top-up. |
+| M-PC-PAYOUT-01, P1 | `payment-channel-code.fc`: both principals are exact amounts with send mode 1, and what remains after them goes to A (skipped only when too small to carry a message); any action failure rolls back both outputs and closing-state changes. A completing close or timeout whose balance cannot cover both principals is refused before acceptance. Payout-path amount movement is checked. Terminal payout refuses further payout commands. | With only 3 or 5 TOS backing two 4-TOS principals the close is refused before acceptance (41) with the channel balance untouched; with the principals plus 0.001 TOS it is accepted and the action phase aborts (37) with no recipient credit or state change. Funding and retry pays each principal exactly on the wire and the remainder to A; a completed payout cannot pay again after another top-up. |
 | M-RW2-01, P1 | `new-restricted-wallet2.fif`: signed 32-bit elapsed-second keys, including the pre-start sentinel, agree with the receiver ABI. | Run the actual constructor, load its emitted StateInit BOC, preserve its code/key/dictionary, and supply only a fixture start time. Verify before/at each 92/183/366/548-day boundary and an actual locked transfer failure followed by success after release. |
 | M-HL2-01, P1 | `highload-wallet-v2-code.fc`: each accepted query deletes at most 32 expired replay records. | Drain 4,096 expired records through 128 native transactions, checking the exact dictionary size each time. Duplicate fresh IDs and forgotten expired IDs remain refused. |
 
@@ -67,7 +67,7 @@ python3 scripts/test-legacy-wallet-audit-controls.py
 Measured locally on macOS/ARM using the current Genesis global version
 (16) for the new transaction regressions:
 
-- Four test targets: **27 passed, 0 failed** (including four current-version
+- Four test targets: **28 passed, 0 failed** (including four current-version
   fixture checks and the existing twelve-family key controls).
 - Five sensitivity controls: fixed-source exit **0** in each; historical-source
   exit **101** at the intended native assertion in each. The runner uses temporary

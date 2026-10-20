@@ -38,9 +38,9 @@
   "gen_fif_results": [
     {
       "name": "multisig-code",
-      "source_sha256": "e3c9aadc8be9cbd3d2001d91105230f720fad8f89eddb6cb6db07cb77d621829",
-      "generated_cpp_sha256": "36252529e073587e40d7c8968e8d76d3f67f53667b45fd350f3e6cfcc54a2e37",
-      "code_cell_hash": "8085f432618f9eee68e8f19913b82d7fc47d5131ae6c65e13db8396d578809a3"
+      "source_sha256": "f4fff9d61bb2318782eaed2f5ab68364de9e46c439a2662d04ac93bea80474ac",
+      "generated_cpp_sha256": "c14738d78ee46a85db6533a6fb70ba0d3c84480eded0c5590ef7f46a14e429fb",
+      "code_cell_hash": "ba003514bda097343c762ab6f203935b879071eaf2591996e4246d12407bb49e"
     },
     {
       "name": "highload-wallet-v2-code",
@@ -50,9 +50,9 @@
     },
     {
       "name": "payment-channel-code",
-      "source_sha256": "b4abe5322587eb2959b68030627b42c4d2640a3f2b9f11207c4932db3f540739",
-      "generated_cpp_sha256": "431f1c104bd25b6e243405b9671aa680f7dd8250026ee1ad339c287146ea3ae9",
-      "code_cell_hash": "836866fc600220c19700648ccf298b12d856e285760ba21808dc35fa7c13a662"
+      "source_sha256": "29b54b71d736b43e6e0d41e631a58b898960a7d20b74a68b66ff74d2b43e2fa3",
+      "generated_cpp_sha256": "ab643f9b7d7f9b9279efb8acb78960d6ef0a412639bffd3c40e55e583fb1850b",
+      "code_cell_hash": "56b0eeeb5aac85febb5c733eda79722220a1aabeb3d5ddb6b5d458993b76fdd3"
     }
   ],
   "full_cpp_build": "not run locally",
@@ -60,5 +60,6 @@
     "exit": 2,
     "reason": "static-analysis: REFUSED: missing tool /usr/lib/llvm-21/bin/clang"
   },
-  "deployment": "not performed"
+  "deployment": "not performed",
+  "gen_fif_regenerated": "2026-10-21 on Linux x86-64 with the branch-built FunC v0.4.6 (CMake GenFif outputs); entries describe the source hashes recorded above"
 }
