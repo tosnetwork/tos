@@ -70,8 +70,9 @@ prefix matches. The final workflow job also requires both matrix jobs to succeed
 ## Provenance and files
 
 Every original block's root and file hash was checked against full block IDs from
-two validators. Existing coordinator captures were reused where available; new
-archive reads used immutable package files only. No live database was opened.
+two validators. [Capture commands and receipts](CAPTURE.md) include the exact
+archive programs, retrieval index and fresh two-validator responses. Existing
+coordinator captures were reused where available; new archive reads used immutable package files only. No live database was opened.
 `files` records each block's source ID and SHA-256. One native multi-root BOC,
 `state-parts.boc`, packs the original supplemental cells, reducing the fixture
 count to 249 inputs. Its file entry records SHA-256 and source block IDs;
@@ -97,6 +98,11 @@ The new files have separate purposes:
 - `test_run.py` exercises failure reporting and refuses incomplete/malformed
   comparison results. It adds no synthetic positive chain fixtures.
 - `corpus/manifest.json` records the oracle and provenance; the BOCs are its inputs.
+- `CAPTURE.md`, `capture-index.json` and `capture-commands.json` retain bounded
+  acquisition commands, exact source locations and independent full-ID replies.
+  They remain auditable after the live archive expires.
+- `VALIDATION.json` records source/data hashes and the execution-control
+  sensitivity receipt; hosted runs repeat the controls on both architectures.
 - `.github/workflows/epoch-replay.yml` provides one bounded two-architecture
   matrix and a dependent artifact comparison. Existing architecture workflows
   do not compare these execution artifacts with each other.
@@ -125,15 +131,14 @@ uploads each architecture's outputs, metrics and mutation receipts.
 `--controls` changes one corpus byte (must refuse its SHA-256), restores and
 replays, then alters an expected new-state hash (must name that field), restores
 and replays again. Each red/green result is written beside the output. The eight
-comparison/provenance self-tests also exercise a semantic difference before a missing tail,
+comparison/provenance self-tests also exercise a semantic difference before a
+missing tail,
 missing fields/records, boolean-versus-number differences and a nonzero native
-exit. A separate implementation control replaced executed contract code with an
-empty cell: actual account/transaction results changed and the gate failed;
-restoring the source restored green. To repeat it in a disposable checkout,
-insert `account.code = vm::CellBuilder{}.finalize();` immediately before the
-`emulate_transaction` call, build and run the command above (must fail on
-`account_hash`), then remove the line, rebuild and run again (must pass). No
-mutation code remains in the harness.
+exit. The automated execution control replaces contract code with an empty cell
+in the same native replay path and requires a changed actual account hash; normal replay
+must then restore the identical baseline outputs. It runs in both hosted jobs.
+`CAPTURE.md` records acquisition and mutation reproduction commands. The
+architecture artifacts retain exact red/green statuses and mismatch values.
 
 With the existing Python test dependencies installed, independently check the
 recorded oracle:

@@ -194,7 +194,7 @@ std::shared_ptr<block::ConfigInfo> context(const block::gen::BlockInfo::Record& 
   return std::shared_ptr<block::ConfigInfo>(std::move(config));
 }
 
-void replay(Cell root, const Cells& cells, const MasterBlocks& masters) {
+void replay(Cell root, const Cells& cells, const MasterBlocks& masters, bool empty_code_control) {
   block::gen::Block::Record block;
   block::gen::BlockInfo::Record info;
   block::gen::BlockExtra::Record extra;
@@ -272,6 +272,9 @@ void replay(Cell root, const Cells& cells, const MasterBlocks& masters) {
         type =
             description.is_tock ? block::transaction::Transaction::tr_tock : block::transaction::Transaction::tr_tick;
       }
+      // The explicit negative operation follows this same execution path.
+      if (empty_code_control)
+        account.code = vm::CellBuilder{}.finalize();
       account.now_ = original_record.now;
       auto result = require(emulator.emulate_transaction(std::move(account), original_record.r1.in_msg->prefetch_ref(),
                                                          original_record.now, original_record.lt, type));
@@ -337,7 +340,8 @@ int main(int argc, char** argv) {
     if (argc == 2)
       inspect(argv[1]);
     else {
-      check(std::string(argv[1]) == "--run", "unknown operation");
+      bool empty_code_control = std::string(argv[1]) == "--run-empty-code-control";
+      check(std::string(argv[1]) == "--run" || empty_code_control, "unknown operation");
       auto blocks = paths(argv[2]);
       auto supplements = paths(argv[3]);
       check(!blocks.empty(), "empty corpus");
@@ -373,7 +377,7 @@ int main(int argc, char** argv) {
       for (const auto& path : blocks) {
         std::cerr << "replay " << path << std::endl;
         inspect(path);
-        replay(load(path), cells, masters);
+        replay(load(path), cells, masters, empty_code_control);
       }
     }
     return 0;

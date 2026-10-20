@@ -89,7 +89,7 @@ def read_lines(path):
     return records
 
 
-def run(args, manifest, files):
+def run(args, manifest, files, operation="--run"):
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="rel02-") as directory:
         root = Path(directory)
@@ -97,13 +97,14 @@ def run(args, manifest, files):
             (root / name).write_text("".join(str(files[p]) + "\n" for p in manifest[name]))
         command = [
             str(args.executable.resolve()),
-            "--run",
+            operation,
             str(root / "blocks"),
             str(root / "supplements"),
         ]
         result = subprocess.run(
             command, stdout=subprocess.PIPE, text=True, timeout=args.timeout, check=False
         )
+        args._native_exit = result.returncode
         observed = [json.loads(line) for line in result.stdout.splitlines()]
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text("\n".join(canonical(record) for record in observed) + "\n")
@@ -182,6 +183,26 @@ def controls(args, baseline):
         if control.output.read_bytes() != baseline:
             raise ValueError("expected-state restoration changed outputs")
         receipts.append({"control": "expected-state-restored", "exit": 0})
+        try:
+            run(control, restored, files, "--run-empty-code-control")
+        except ValueError as error:
+            if "first differing item/field" not in str(error) or "account_hash" not in str(error):
+                raise
+            receipts.append(
+                {
+                    "control": "execution-code",
+                    "operation": "--run-empty-code-control",
+                    "exit": 1,
+                    "native_exit": control._native_exit,
+                    "reason": str(error),
+                }
+            )
+        else:
+            raise ValueError("execution control did not change a consensus result")
+        run(control, restored, files)
+        if control.output.read_bytes() != baseline:
+            raise ValueError("execution-code restoration changed outputs")
+        receipts.append({"control": "execution-code-restored", "exit": 0})
     args.output.with_suffix(".controls.json").write_text(json.dumps(receipts, indent=2) + "\n")
 
 
