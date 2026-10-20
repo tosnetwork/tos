@@ -76,7 +76,7 @@ def validate(cells):
         require(source.remaining_bits == 0 and source.remaining_refs == 0, "gas trailing data")
         require(
             decoded.flat_gas_limit == 100
-            and decoded.flat_gas_price == (1000000 if index == 20 else 667),
+            and decoded.flat_gas_price == (50000 if index == 20 else 667),
             "candidate flat gas tariff mismatch",
         )
         while decoded.other is not None:
@@ -106,7 +106,7 @@ def validate(cells):
         "basechain candidate tariff mismatch",
     )
     require(
-        gas["20"]["gas_price"] == 655360000
+        gas["20"]["gas_price"] == 32768000
         and gas["20"]["gas_limit"] == 1000000
         and gas["20"]["special_gas_limit"] == 70000000
         and gas["20"]["block_gas_limit"] == 2500000,

@@ -1,0 +1,1910 @@
+{
+  "base": "8430f633a5b694b3ee0b31934d92941898474d83",
+  "source_sha256": {
+    "crypto/smartcont/gen-zerostate.fif": "279f56b968f121c7b5ffe861c772faf0750f523317b1cc00849a9d6c2d24893a",
+    "test/tostester/src/tostester/zerostate.py": "502defc481b9d6cae6a47b9800e2f84adb0daa9a97481735194397c9678a2229",
+    "tosctl/src/executor/src/blockchain_config.rs": "25a0bdc744b86b4a9acde5d19d3922d8ed31475c8b055826c45614bb0e25668a",
+    "scripts/check-quantum-candidate-network.py": "4c4532712b866bbbab39277a982f779e163a7b900fa2c59a3e74682c505b99b1",
+    "scripts/test_quantum_candidate_network.py": "89eba25c7210a4773bdc011e306147c9809d229fd75ce40cdaaa1a2f24dc2d64",
+    "test/tostester/tests/tostester/test_zerostate_fee_schedule.py": "b6f660fbc431f2c00e00f09a33d659a4ec33d97487a2c5a696551d811b149de8",
+    "tosctl/src/node-control/contracts/src/validator_controller_tests.rs": "0228545b86822243ee769ebccaf96bc1af8a1f4647f96fea90a3e884a4845844",
+    "tosctl/src/node-control/contracts/tests/agent_account_sandbox.rs": "56ad5ef3e1c144eaed3151a774e84fab4d5df64b341f0386a044eba7b7128f05",
+    "tosctl/src/node-control/contracts/tests/elector_sandbox.rs": "c1d8c1e360d609280de82a6441319972d176598dcd33eb82ffa3a5bd1b686f2e",
+    "tosctl/src/node-control/contracts/tests/elector_security_audit/relay/r3_accounting.rs": "f045237bd7031ab52507ab040f6b8e06dc7276ab05b0477c82090f953d219c13",
+    "tosctl/src/node-control/contracts/tests/task_escrow_sandbox.rs": "ad5585557d48717ad948a33444cc7a55f61d5076dc84d5c3ea6ec4b5ac521346",
+    "test/regression-tests.ans": "2651d3c712f0b16176e79caea438a67dd8c0ed4e01eb7e401feafd7c4ea0f748"
+  },
+  "status": "Owner accepted the price schedule; Task Escrow fixtures use the basechain, with four masterchain exit-126 controls retained. No public-network deployment.",
+  "projection_nanotos": 249572345,
+  "local_cycle_nanotos": 212931058,
+  "local_cycle_components": {
+    "gas_fee": 131869500,
+    "storage_fee": 298058,
+    "import_fee": 19057500,
+    "action_forward_total": 61706000
+  },
+  "local_network": {
+    "election_period_seconds": 600,
+    "genesis_wallet_address": "-1:0000000000000000000000000000000000000000000000000000000000000000",
+    "global_id": 3,
+    "mode": "pq",
+    "operator_wallet_address": "-1:0abcffe6764f2c8f58b459de7eb851e809d6871cd38f8f82d723b60e568f06cf",
+    "scope": "local-development",
+    "zerostate_root": "c6b2cd0584283de4b9776eb13c4b6675e74ee475bb0675b0cbe2eb9e94c12961"
+  },
+  "commands": [
+    [
+      "native build",
+      "cmake --build build -j6",
+      0,
+      "2008 compilation/link steps"
+    ],
+    [
+      "native initial full",
+      "ctest --test-dir build --output-on-failure -j6",
+      8,
+      "402 passed, 4 missing-prerequisite failures, 8 disabled"
+    ],
+    [
+      "native missing prerequisites restored",
+      "TOS_AUTH_NETWORK_TAG=<fixture-tag> ctest --test-dir build --output-on-failure -R \"^(n6-live-finality-overlay|n6-lite-framed-tcp|n6-scale-sweep-minimum-bft|consensus-key-tool)$\"",
+      0,
+      "4 passed; built test-fsync-dir-failure-shim first"
+    ],
+    [
+      "native disabled explicitly run",
+      "python disabled-native.py",
+      0,
+      "8 passed; exact argv retained in native-disabled-results.json"
+    ],
+    [
+      "source guards final",
+      "ctest --test-dir build -L source-guard --output-on-failure -j6",
+      0,
+      "58 passed, subset of native suite"
+    ],
+    [
+      "tostester",
+      "uv run pytest test/tostester/tests -q",
+      0,
+      "339 passed, 1 skipped"
+    ],
+    [
+      "script suite",
+      "uv run pytest scripts -q",
+      0,
+      "571 passed, 861 subtests"
+    ],
+    [
+      "workspace compilation",
+      "cargo test --workspace --no-run --locked",
+      0,
+      "all workspace test targets compiled"
+    ],
+    [
+      "workspace runtime",
+      "cargo test --workspace --locked --no-fail-fast",
+      101,
+      "4952 passed, 31 failed, 48 ignored; one UDP target timed out on head and base"
+    ],
+    [
+      "TCP isolated comparison",
+      "cargo test -p adnl --features client,server --test test_tcp -- --test-threads=1",
+      0,
+      "3 passed on head and base; parallel socket collision is not a price regression"
+    ],
+    [
+      "standalone shielded suites",
+      "cargo test --manifest-path <crate>/Cargo.toml --locked; selected long cases with --ignored",
+      0,
+      "274 passed including all five ignored long cases; per-crate commands in retained receipts"
+    ],
+    [
+      "prepared operations fixture",
+      "uv run pytest local/tests/test_local_pq_funding.py -q",
+      0,
+      "19 passed; separate repository patch not pushed"
+    ],
+    [
+      "strict Clippy head and base",
+      "cargo clippy -p <contracts|tos_executor> --all-targets --no-deps -- -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic -D warnings",
+      101,
+      "128 emitted inherited diagnostics, 124 distinct; same head/base, zero on changed lines"
+    ],
+    [
+      "Clippy comparison",
+      "python compare-clippy.py",
+      0,
+      "zero new diagnostics and zero diagnostics on changed lines"
+    ],
+    [
+      "Python lint",
+      "uv run ruff check <four-changed-Python-files>",
+      0,
+      "all checked"
+    ],
+    [
+      "Python format",
+      "uv run ruff format --check <four-changed-Python-files>",
+      0,
+      "all checked"
+    ],
+    [
+      "Rust format",
+      "cargo fmt --all --check",
+      0,
+      "all checked"
+    ],
+    [
+      "changed C++ format",
+      "git clang-format-21 --binary clang-format-21 --diff <merge-base> -- <hygiene-filtered-paths>",
+      0,
+      "no modified files"
+    ],
+    [
+      "whitespace",
+      "git diff --check <merge-base>",
+      0,
+      "no errors"
+    ]
+  ],
+  "workspace_target_results": [
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_adnl.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_decode.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_dht.rs",
+      "passed": 1,
+      "failed": 7,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_key.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_overlay.rs",
+      "passed": 11,
+      "failed": 6,
+      "ignored": 5
+    },
+    {
+      "target": "Running tests/test_quic.rs",
+      "passed": 24,
+      "failed": 4,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_real_dht_data.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_rldp.rs",
+      "passed": 1,
+      "failed": 1,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_tcp.rs",
+      "passed": 2,
+      "failed": 1,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_telemetry.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_utils.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 29,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 641,
+      "failed": 0,
+      "ignored": 2
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 46,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 216,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 120,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 324,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running tests/agent_account_sandbox.rs",
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/bridge_multisig_sandbox.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/capability_registry_sandbox.rs",
+      "passed": 9,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/chain_gas_envelope_sandbox.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/config_list_proposals_sandbox.rs",
+      "passed": 12,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/config_ownable_params_sandbox.rs",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/control_reads.rs",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/controller_admission_sandbox.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/controller_proof_sandbox.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/dispute_sandbox.rs",
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/dns_manual_sandbox.rs",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/dns_sandbox.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/elector_recovery_upgrade_sandbox.rs",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/elector_sandbox.rs",
+      "passed": 153,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running tests/fee_primitives_sandbox.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/highload_wallet_v3_sandbox.rs",
+      "passed": 14,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/imt_sandbox.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/legacy_wallet_key_sandbox.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/liquid_staking_sandbox.rs",
+      "passed": 9,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/multisig_code_sandbox.rs",
+      "passed": 11,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/multisig_wallet_sandbox.rs",
+      "passed": 17,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/native_registry_sandbox.rs",
+      "passed": 24,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running tests/nominator_pool_sandbox.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/payment_channel_sandbox.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/poseidon2_sandbox.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/pq_elector_state_sandbox.rs",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/pq_primitives_sandbox.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/pq_validator_lib_sandbox.rs",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/pq_vote_carrier.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/prediction_market_sandbox.rs",
+      "passed": 43,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running tests/previous_release_sandbox.rs",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/proof_attestation_sandbox.rs",
+      "passed": 11,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/proposal_read_workers.rs",
+      "passed": 22,
+      "failed": 0,
+      "ignored": 2
+    },
+    {
+      "target": "Running tests/proven_pool_snapshot.rs",
+      "passed": 46,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running tests/service_actor_sandbox.rs",
+      "passed": 35,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_anchors_sandbox.rs",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_auth_sandbox.rs",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_bounce_probe_sandbox.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_groth16_sandbox.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_imt_sandbox.rs",
+      "passed": 13,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_notes_sandbox.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_payout_sandbox.rs",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_pool_deposit_sandbox.rs",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_pool_sandbox.rs",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_pool_transact_sandbox.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_recovery_sandbox.rs",
+      "passed": 8,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_state_sandbox.rs",
+      "passed": 9,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/shielded_transact_sandbox.rs",
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/single_nominator_sandbox.rs",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/task_escrow_sandbox.rs",
+      "passed": 36,
+      "failed": 4,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/token_bridge_sandbox.rs",
+      "passed": 75,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/tos_service_stablecoin_escrow_v2_sandbox.rs",
+      "passed": 25,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/validator_controller_sandbox.rs",
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/wallet_sandbox.rs",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 16,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/engine_operator_reads.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 4
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 59,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 25,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 36,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/peer_input.rs",
+      "passed": 14,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/tdfec_interop.rs",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 237,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running tests/cli_import_secret_input.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 292,
+      "failed": 0,
+      "ignored": 2
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/pq_signature_tl_vectors.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/session_derivation_vectors.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/session_vectors.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/bin/codegen_test.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 7,
+      "failed": 1,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/bin/asm.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/bin/disasm.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 54,
+      "failed": 0,
+      "ignored": 6
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 73,
+      "failed": 7,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_app_specific.rs",
+      "passed": 57,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running tests/test_assembler_executor.rs",
+      "passed": 6,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_binary_operations.rs",
+      "passed": 67,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_bls.rs",
+      "passed": 34,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_cell_deserialization.rs",
+      "passed": 228,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_cell_serialization.rs",
+      "passed": 258,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_compound_stack_manipulation_primitives.rs",
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_config.rs",
+      "passed": 35,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_constant_primitives.rs",
+      "passed": 28,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_cont.rs",
+      "passed": 119,
+      "failed": 0,
+      "ignored": 3
+    },
+    {
+      "target": "Running tests/test_control_flow.rs",
+      "passed": 112,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_control_flow_condition.rs",
+      "passed": 69,
+      "failed": 0,
+      "ignored": 2
+    },
+    {
+      "target": "Running tests/test_currency.rs",
+      "passed": 13,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_dictionary.rs",
+      "passed": 147,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_dictionary_special_get.rs",
+      "passed": 10,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_dump.rs",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_exceptions.rs",
+      "passed": 72,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_exotic_stack_manipulation_primitives.rs",
+      "passed": 94,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_gas.rs",
+      "passed": 62,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running tests/test_integer_arithmetic.rs",
+      "passed": 20,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_integer_arithmetic_division.rs",
+      "passed": 72,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_integer_comparisons.rs",
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_library.rs",
+      "passed": 21,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_null.rs",
+      "passed": 19,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_other_comparison_operations.rs",
+      "passed": 45,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_poseidon2.rs",
+      "passed": 15,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_push_integer_constants.rs",
+      "passed": 18,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_rand.rs",
+      "passed": 3,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_sha256c.rs",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_stack_manipulation.rs",
+      "passed": 31,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_tuple.rs",
+      "passed": 77,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running tests/test_very_long_code.rs",
+      "passed": 4,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 14,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/main.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 11,
+      "failed": 0,
+      "ignored": 1
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 3
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 2
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 7
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 0,
+      "failed": 0,
+      "ignored": 0
+    },
+    {
+      "target": "Running unittests src/lib.rs",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "docker_workflow_steps": [
+    {
+      "job": "python-and-pq-chain",
+      "number": 1,
+      "name": "Check out repository",
+      "exit": 0,
+      "seconds": 0.124,
+      "scope": "local equivalent: already provisioned fresh worktree; no checkout of existing worktrees",
+      "log": "ci-python-and-pq-chain-01-Check-out-repository.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 2,
+      "name": "Set up repository Python",
+      "exit": 0,
+      "seconds": 0.166,
+      "scope": "local equivalent: same requested Python via pinned uv",
+      "log": "ci-python-and-pq-chain-02-Set-up-repository-Python.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 3,
+      "name": "Restore native object cache",
+      "exit": 0,
+      "seconds": 0.716,
+      "scope": "local equivalent: cache available locally; no remote cache restore",
+      "log": "ci-python-and-pq-chain-03-Restore-native-object-cache.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 4,
+      "name": "Verify tool pin tamper rejection",
+      "exit": 0,
+      "seconds": 1.269,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-04-Verify-tool-pin-tamper-rejection.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 5,
+      "name": "Configure the minimal native fixture build",
+      "exit": 0,
+      "seconds": 3.273,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-05-Configure-the-minimal-native-fixture-build.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 6,
+      "name": "Build the chain fixtures and security regression targets",
+      "exit": 0,
+      "seconds": 25.895,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-06-Build-the-chain-fixtures-and-security-regression-targets.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 7,
+      "name": "Verify answered refusals, download deadlines and consensus retries",
+      "exit": 0,
+      "seconds": 69.54,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-07-Verify-answered-refusals-download-deadlines-and-consensus-retries.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 8,
+      "name": "Verify authenticated control-getter queries and transport",
+      "exit": 0,
+      "seconds": 2.671,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-08-Verify-authenticated-control-getter-queries-and-transport.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 9,
+      "name": "Check startup archive catch-up",
+      "exit": 0,
+      "seconds": 39.286,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-09-Check-startup-archive-catch-up.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 10,
+      "name": "Install repository-pinned Rust toolchain for engine integration",
+      "exit": 0,
+      "seconds": 0.717,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-10-Install-repository-pinned-Rust-toolchain-for-engine-integration.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 11,
+      "name": "Verify Rust operator reads against the actual engine",
+      "exit": 0,
+      "seconds": 71.578,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-11-Verify-Rust-operator-reads-against-the-actual-engine.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 12,
+      "name": "Verify bounded control getters and their production-context budgets",
+      "exit": 0,
+      "seconds": 6.829,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-12-Verify-bounded-control-getters-and-their-production-context-budgets.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 13,
+      "name": "Verify the extracted getter context against its independent oracle",
+      "exit": 0,
+      "seconds": 1.416,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-13-Verify-the-extracted-getter-context-against-its-independent-oracle.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 14,
+      "name": "Run the network and wallet-index security regressions",
+      "exit": 0,
+      "seconds": 51.011,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-14-Run-the-network-and-wallet-index-security-regressions.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 15,
+      "name": "Check read-only proof relay and real HTTP ingress",
+      "exit": 0,
+      "seconds": 14.245,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-15-Check-read-only-proof-relay-and-real-HTTP-ingress.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 16,
+      "name": "Remove and restore proof relay route control",
+      "exit": 0,
+      "seconds": 33.095,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-16-Remove-and-restore-proof-relay-route-control.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 17,
+      "name": "Check PQ key-block proof context",
+      "exit": 0,
+      "seconds": 0.366,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-17-Check-PQ-key-block-proof-context.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 18,
+      "name": "Check the anchored proof verifier",
+      "exit": 0,
+      "seconds": 0.415,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-18-Check-the-anchored-proof-verifier.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 19,
+      "name": "Check pending PQ finality proof queue",
+      "exit": 0,
+      "seconds": 1.768,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-19-Check-pending-PQ-finality-proof-queue.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 20,
+      "name": "Check custom overlay relay deduplication",
+      "exit": 0,
+      "seconds": 0.165,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-20-Check-custom-overlay-relay-deduplication.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 21,
+      "name": "Check several PQ consensus keys held for one validator",
+      "exit": 0,
+      "seconds": 2.118,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-21-Check-several-PQ-consensus-keys-held-for-one-validator.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 22,
+      "name": "Check the production PQ signer has no test clock seam",
+      "exit": 0,
+      "seconds": 3.722,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-22-Check-the-production-PQ-signer-has-no-test-clock-seam.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 23,
+      "name": "Check real PQ predecessor and BlockProof fixture",
+      "exit": 0,
+      "seconds": 61.964,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-23-Check-real-PQ-predecessor-and-BlockProof-fixture.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 24,
+      "name": "Check N5 FinalCert journal cold read",
+      "exit": 0,
+      "seconds": 0.566,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-24-Check-N5-FinalCert-journal-cold-read.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 25,
+      "name": "Check N5 PQ AcceptBlock cold read",
+      "exit": 0,
+      "seconds": 0.515,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-25-Check-N5-PQ-AcceptBlock-cold-read.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 26,
+      "name": "Check N5 same-FinalCert actor and cold persistence path",
+      "exit": 0,
+      "seconds": 0.565,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-26-Check-N5-same-FinalCert-actor-and-cold-persistence-path.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 27,
+      "name": "Check N5 FinalCert write-after recovery",
+      "exit": 0,
+      "seconds": 0.666,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-27-Check-N5-FinalCert-write-after-recovery.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 28,
+      "name": "Check N5",
+      "exit": 0,
+      "seconds": 0.667,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-28-Check-N5.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 29,
+      "name": "Check N5 BlockProof write-after recovery",
+      "exit": 0,
+      "seconds": 0.716,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-29-Check-N5-BlockProof-write-after-recovery.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 30,
+      "name": "Check N5 finalized marker cold replay without duplicate acceptance",
+      "exit": 0,
+      "seconds": 1.769,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-30-Check-N5-finalized-marker-cold-replay-without-duplicate-acceptance.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 31,
+      "name": "Check N5 DB/archive-only full-root rebuild",
+      "exit": 0,
+      "seconds": 0.817,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-31-Check-N5-DB-archive-only-full-root-rebuild.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 32,
+      "name": "Check N5 cold persisted PQ CheckProof acceptance and tamper refusal",
+      "exit": 0,
+      "seconds": 1.168,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-32-Check-N5-cold-persisted-PQ-CheckProof-acceptance-and-tamper-refusal.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 33,
+      "name": "Check N5 cold continuation through a second FinalCert",
+      "exit": 0,
+      "seconds": 1.97,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-33-Check-N5-cold-continuation-through-a-second-FinalCert.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 34,
+      "name": "Check Simplex parent-state retry voting",
+      "exit": 0,
+      "seconds": 66.105,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-34-Check-Simplex-parent-state-retry-voting.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 35,
+      "name": "Check Simplex late candidates for finalized slots",
+      "exit": 0,
+      "seconds": 5.628,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-35-Check-Simplex-late-candidates-for-finalized-slots.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 36,
+      "name": "Check Simplex state-resolver teardown",
+      "exit": 0,
+      "seconds": 0.716,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-36-Check-Simplex-state-resolver-teardown.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 37,
+      "name": "Check Simplex restart origin replay",
+      "exit": 0,
+      "seconds": 46.662,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-37-Check-Simplex-restart-origin-replay.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 38,
+      "name": "Prepare generated Python API and dependencies",
+      "exit": 0,
+      "seconds": 1.819,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-38-Prepare-generated-Python-API-and-dependencies.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 39,
+      "name": "Exercise explorer RPCs on candidate and ordinary version-16 networks",
+      "exit": 0,
+      "seconds": 15.903,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-39-Exercise-explorer-RPCs-on-candidate-and-ordinary-version-16-networks.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 40,
+      "name": "Retain public explorer RPC response receipts",
+      "exit": 0,
+      "seconds": 0.003,
+      "scope": "local equivalent: files retained in worktree; index instead of remote artifact upload",
+      "log": "ci-python-and-pq-chain-40-Retain-public-explorer-RPC-response-receipts.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 41,
+      "name": "Run the complete Python suite",
+      "exit": 0,
+      "seconds": 17.807,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-41-Run-the-complete-Python-suite.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 42,
+      "name": "Read back the disposable Quantum admission candidate",
+      "exit": 0,
+      "seconds": 13.29,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-42-Read-back-the-disposable-Quantum-admission-candidate.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 43,
+      "name": "Broadcast disposable Quantum payment and verify execution linkage",
+      "exit": 0,
+      "seconds": 22.111,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-43-Broadcast-disposable-Quantum-payment-and-verify-execution-linkage.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 44,
+      "name": "Retain Quantum candidate configuration and boot evidence",
+      "exit": 0,
+      "seconds": 0.004,
+      "scope": "local equivalent: files retained in worktree; index instead of remote artifact upload",
+      "log": "ci-python-and-pq-chain-44-Retain-Quantum-candidate-configuration-and-boot-evidence.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 45,
+      "name": "Check e2e harness private directories",
+      "exit": 0,
+      "seconds": 0.515,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-45-Check-e2e-harness-private-directories.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 46,
+      "name": "Check X02 Config34 authentication through the anchored verifier",
+      "exit": 0,
+      "seconds": 1.869,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-46-Check-X02-Config34-authentication-through-the-anchored-verifier.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 47,
+      "name": "Check E04 exact cancellation and expiry controls",
+      "exit": 0,
+      "seconds": 1.217,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-47-Check-E04-exact-cancellation-and-expiry-controls.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 48,
+      "name": "Boot a four-validator PQ chain and exercise a transfer",
+      "exit": 0,
+      "seconds": 21.356,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-48-Boot-a-four-validator-PQ-chain-and-exercise-a-transfer.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 49,
+      "name": "Refuse unsafe PQ session rotation before group creation",
+      "exit": 0,
+      "seconds": 8.031,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-49-Refuse-unsafe-PQ-session-rotation-before-group-creation.log"
+    },
+    {
+      "job": "python-and-pq-chain",
+      "number": 50,
+      "name": "Rotate a PQ consensus key with both keys held",
+      "exit": 0,
+      "seconds": 171.794,
+      "scope": "exact run body",
+      "log": "ci-python-and-pq-chain-50-Rotate-a-PQ-consensus-key-with-both-keys-held.log"
+    },
+    {
+      "job": "rust-workspace-tests-compile",
+      "number": 1,
+      "name": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+      "exit": 0,
+      "seconds": 0.115,
+      "scope": "local equivalent: already provisioned fresh worktree; no checkout of existing worktrees",
+      "log": "ci-rust-workspace-tests-compile-01-actions-checkout-3d3c42e5aac5ba805825da76410c181273ba90b1.log"
+    },
+    {
+      "job": "rust-workspace-tests-compile",
+      "number": 2,
+      "name": "Install repository-pinned Rust toolchain",
+      "exit": 0,
+      "seconds": 0.666,
+      "scope": "exact run body",
+      "log": "ci-rust-workspace-tests-compile-02-Install-repository-pinned-Rust-toolchain.log"
+    },
+    {
+      "job": "rust-workspace-tests-compile",
+      "number": 3,
+      "name": "Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6",
+      "exit": 0,
+      "seconds": 0.365,
+      "scope": "local equivalent: cache available locally; no remote cache restore",
+      "log": "ci-rust-workspace-tests-compile-03-Swatinem-rust-cache-6323deb102c322ba6fcbdcafc7e3dddab59af2b6.log"
+    },
+    {
+      "job": "rust-workspace-tests-compile",
+      "number": 4,
+      "name": "Run private file persistence regressions",
+      "exit": 0,
+      "seconds": 17.109,
+      "scope": "exact run body",
+      "log": "ci-rust-workspace-tests-compile-04-Run-private-file-persistence-regressions.log"
+    },
+    {
+      "job": "rust-workspace-tests-compile",
+      "number": 5,
+      "name": "Compile every Rust workspace test target",
+      "exit": 0,
+      "seconds": 53.751,
+      "scope": "exact run body",
+      "log": "ci-rust-workspace-tests-compile-05-Compile-every-Rust-workspace-test-target.log"
+    },
+    {
+      "job": "rust-workspace-tests-compile",
+      "number": 6,
+      "name": "Run command tests including backup, secret input and wallet confirmation",
+      "exit": 0,
+      "seconds": 120.55,
+      "scope": "exact run body",
+      "log": "ci-rust-workspace-tests-compile-06-Run-command-tests-including-backup-secret-input-and-wallet-confirmation.log"
+    },
+    {
+      "job": "rust-workspace-tests-compile",
+      "number": 7,
+      "name": "Exercise the real vault CLI secret import boundary",
+      "exit": 0,
+      "seconds": 4.622,
+      "scope": "exact run body",
+      "log": "ci-rust-workspace-tests-compile-07-Exercise-the-real-vault-CLI-secret-import-boundary.log"
+    }
+  ],
+  "load": {
+    "start": 1792413978.3211362,
+    "end": 1792414698.446935,
+    "offered_duration_seconds": 720.12579870224,
+    "steady_start": 1792413989,
+    "steady_end": 1792414688,
+    "steady_seconds": 699,
+    "blocks": 1665,
+    "blocks_per_second": 2.3819742489270386,
+    "blocks_at_nominal_hard_limit": 1655,
+    "hard_limit_fraction": 0.993993993993994,
+    "ordinary_gas_min": 0,
+    "ordinary_gas_max": 2535092,
+    "ordinary_gas_mean": 2494628.7555555557,
+    "gas_nanotos_per_block": 1247314708.7087088,
+    "gas_nanotos_per_hour": 10695857459227.469,
+    "nominal_gas_nanotos_per_block": 1250000000,
+    "nominal_gas_nanotos_per_hour_at_measured_rate": 10718884120171.674,
+    "full_fee_nanotos_per_block": 1249011193.452853,
+    "full_fee_nanotos_per_hour": 10710404997934.764,
+    "offered": 7120,
+    "admitted": 7120,
+    "included": 5516,
+    "admitted_not_included_by_expiry": 1604,
+    "max_observed_block_time": 1792415165,
+    "last_expiry": 1792414818,
+    "resources": {
+      "node-1": {
+        "idle": {
+          "samples": 50,
+          "mean_cpu_percent": 40.573642080793284,
+          "p95_cpu_percent": 51.937281053415404,
+          "peak_cpu_percent": 55.934787485407924,
+          "peak_rss_bytes": 346251264
+        },
+        "loaded": {
+          "samples": 698,
+          "mean_cpu_percent": 51.001649734611384,
+          "p95_cpu_percent": 65.92962671784977,
+          "peak_cpu_percent": 74.92349211770531,
+          "peak_rss_bytes": 444354560
+        }
+      },
+      "node-2": {
+        "idle": {
+          "samples": 50,
+          "mean_cpu_percent": 39.87444588879426,
+          "p95_cpu_percent": 51.938468396791535,
+          "peak_cpu_percent": 57.95796486637032,
+          "peak_rss_bytes": 350449664
+        },
+        "loaded": {
+          "samples": 698,
+          "mean_cpu_percent": 50.29130923717788,
+          "p95_cpu_percent": 64.92928577008301,
+          "peak_cpu_percent": 74.92973836398468,
+          "peak_rss_bytes": 438800384
+        }
+      },
+      "node-3": {
+        "idle": {
+          "samples": 50,
+          "mean_cpu_percent": 40.55367514856348,
+          "p95_cpu_percent": 51.93987843756334,
+          "peak_cpu_percent": 58.95724012268705,
+          "peak_rss_bytes": 364814336
+        },
+        "loaded": {
+          "samples": 698,
+          "mean_cpu_percent": 50.491704893165775,
+          "p95_cpu_percent": 66.92060734221104,
+          "peak_cpu_percent": 73.94148926666354,
+          "peak_rss_bytes": 444551168
+        }
+      },
+      "node-4": {
+        "idle": {
+          "samples": 50,
+          "mean_cpu_percent": 39.3949663279163,
+          "p95_cpu_percent": 51.93914867006191,
+          "peak_cpu_percent": 56.95868961005358,
+          "peak_rss_bytes": 372510720
+        },
+        "loaded": {
+          "samples": 698,
+          "mean_cpu_percent": 50.87763266001282,
+          "p95_cpu_percent": 66.91979460537881,
+          "peak_cpu_percent": 75.9220922743919,
+          "peak_rss_bytes": 482570240
+        }
+      }
+    },
+    "transfer_and_config_victims": [
+      {
+        "label": "idle2-config-read",
+        "ok": true,
+        "confirmation_seconds": 0.5734484195709229,
+        "transaction_hash": "2cee9940b0a3fbeca803f074d85b5ed840f0ec3664b37685bd94e231eb1e79ed",
+        "chain_time_after_start_floor_seconds": 0,
+        "chain_block_time": 1792413912
+      },
+      {
+        "label": "idle2-ordinary-transfer",
+        "ok": true,
+        "confirmation_seconds": 0.5673723220825195,
+        "transaction_hash": "bbd59f16eed5be0a3a21292648a4eccee9432ce69f405c52a776dd4b0952ae4e",
+        "chain_time_after_start_floor_seconds": 0,
+        "chain_block_time": 1792413912
+      },
+      {
+        "label": "loaded2-ordinary-transfer",
+        "ok": true,
+        "confirmation_seconds": 1.0421881675720215,
+        "transaction_hash": "77ace86e7784a0b4b212031b7750ae4f283a53d7213be4579797f009fd83c80f",
+        "chain_time_after_start_floor_seconds": 1,
+        "chain_block_time": 1792414019
+      },
+      {
+        "label": "loaded2-config-read",
+        "ok": true,
+        "confirmation_seconds": 1.5539648532867432,
+        "transaction_hash": "517add30eccd6853f8678592650e3eef71bf6893e9b7233f623182a21dd46302",
+        "chain_time_after_start_floor_seconds": 1,
+        "chain_block_time": 1792414019
+      },
+      {
+        "label": "idle2-after-config-read",
+        "ok": true,
+        "confirmation_seconds": 0.5619997978210449,
+        "transaction_hash": "9ad8b6ed6f6c25bc9fffef5544ac1309f1b5b945ee1cf7ccad0f83713e51a62b",
+        "chain_time_after_start_floor_seconds": 0,
+        "chain_block_time": 1792414823
+      },
+      {
+        "label": "idle2-after-ordinary-transfer",
+        "ok": true,
+        "confirmation_seconds": 0.5544922351837158,
+        "transaction_hash": "3d42762f02cc05ae73f46161c10d0723a7154fa81a4c6193e77cd5ba376db17f",
+        "chain_time_after_start_floor_seconds": 0,
+        "chain_block_time": 1792414824
+      }
+    ],
+    "stake_recover_inclusion": [
+      {
+        "label": "stake-1792412306-1",
+        "offered_at": 1792412012.648534,
+        "phase": "idle",
+        "external_tx": "783916afbf0a2c7fbecaa2f143036a7ef21b41a86fb86458ff844d26da129743",
+        "external_block_time": 1792412012,
+        "inclusion_after_start_floor_seconds": 0
+      },
+      {
+        "label": "stake-1792412306-2",
+        "offered_at": 1792412014.953543,
+        "phase": "idle",
+        "external_tx": "f38bdfd81b1412a652b1d7b2b7db5c8019e729f1590d3d9b08d5d2b4b9d521e4",
+        "external_block_time": 1792412015,
+        "inclusion_after_start_floor_seconds": 1
+      },
+      {
+        "label": "stake-1792412306-3",
+        "offered_at": 1792412017.2055516,
+        "phase": "idle",
+        "external_tx": "b9b51a738470a67a92aa1a0fe4c34dd612cc6a5c3188ad14b7341cf2bc610d4a",
+        "external_block_time": 1792412017,
+        "inclusion_after_start_floor_seconds": 0
+      },
+      {
+        "label": "stake-1792412306-4",
+        "offered_at": 1792412019.4515603,
+        "phase": "idle",
+        "external_tx": "421588beee90f499a8f475900671478db943eaaa99620730ad5ddd2a46f0f446",
+        "external_block_time": 1792412019,
+        "inclusion_after_start_floor_seconds": 0
+      },
+      {
+        "label": "recover-1-0",
+        "offered_at": 1792413088.1444135,
+        "phase": "idle",
+        "external_tx": "f4200f85fec40259b811d805cde7fbe75e4f67da26f50f9fc666f05cecf6c3e5",
+        "external_block_time": 1792413088,
+        "inclusion_after_start_floor_seconds": 0
+      },
+      {
+        "label": "recover-1-5",
+        "offered_at": 1792414329.52649,
+        "phase": "loaded",
+        "external_tx": "4f4a0b700bfafb8667ea856fe1953a741461d4c255ba06069d20cd9843140856",
+        "external_block_time": 1792414333,
+        "inclusion_after_start_floor_seconds": 4
+      },
+      {
+        "label": "recover-2-6",
+        "offered_at": 1792414334.1525204,
+        "phase": "loaded",
+        "external_tx": "7da5b8d210b12819497797498cb89873135a312d58ea3037b024be4866869618",
+        "external_block_time": 1792414465,
+        "inclusion_after_start_floor_seconds": 131
+      },
+      {
+        "label": "stake-1792414749-1",
+        "offered_at": 1792414466.3033936,
+        "phase": "loaded",
+        "external_tx": "81cb4dada75c78be3d64f6e2bf9c844d3172d14b2296cc6d66b5621ff98a935d",
+        "external_block_time": 1792414466,
+        "inclusion_after_start_floor_seconds": 0
+      },
+      {
+        "label": "stake-1792414749-2",
+        "offered_at": 1792414469.5074148,
+        "phase": "loaded",
+        "external_tx": "f71d07c86fe28e4ba0919bd28eced9feb441f590c063ba60d83f889c1c650a4a",
+        "external_block_time": 1792414477,
+        "inclusion_after_start_floor_seconds": 8
+      },
+      {
+        "label": "stake-1792414749-3",
+        "offered_at": 1792414492.1245644,
+        "phase": "loaded",
+        "external_tx": "132cdcf0751b88b5a66cfa2d13b0c50ffc987faf58dfaa5397b0ca513d78f1a2",
+        "external_block_time": 1792414572,
+        "inclusion_after_start_floor_seconds": 80
+      }
+    ],
+    "idle_blocks_per_second": 2.48,
+    "idle_blocks": 124
+  },
+  "growth": {
+    "accounts": 100,
+    "all_complete_account_exports": 100,
+    "burned_nanotos": 448302183,
+    "retained_account_capital_nanotos": 880550000,
+    "total_outlay_nanotos": 1328852183,
+    "accounts_per_TOS_burned": 223.0638256784933,
+    "accounts_per_TOS_outlay": 75.25291471790433,
+    "whole_state_before_bytes": 76141,
+    "whole_state_after_bytes": 108093,
+    "whole_state_growth_bytes": 31952,
+    "whole_state_bytes_per_TOS_burned": 71273.35358079217,
+    "account_dictionary_before_count": 19,
+    "account_dictionary_after_count": 119,
+    "account_dictionary_before_boc_bytes": 36835,
+    "account_dictionary_after_boc_bytes": 52275,
+    "account_dictionary_growth_bytes": 15440,
+    "account_dictionary_bytes_per_TOS_burned": 34441.054684759365,
+    "account_dictionary_bytes_per_TOS_outlay": 11619.05003244443
+  },
+  "artifact": {
+    "location": "tos-testnet-deploy/mc-price-1-20/mc-price-1-20-receipts.tar.gz",
+    "access": "Coordinator-retained local artifact; not a public download or independent proof. Request the archive from the test lead.",
+    "sha256": "c2402d7105a34b31a94ea87c3fae62c8053e7e58bdcdfb5c652fa08efe704e38",
+    "bytes": 28586921,
+    "retain_until": "2027-01-17",
+    "files": 7957,
+    "exclusions": "Private runtime keys, node databases, wallet key directories and vault startup credentials are excluded."
+  },
+  "basechain_escrow_followup": {
+    "fixture_commit": "2f19912c51ceda1b07fd0f102db8eeeab8967e1f",
+    "genesis_pin_commit": "48546ab52",
+    "whole_file": {
+      "passed": 40,
+      "failed": 0,
+      "exit": 0
+    },
+    "controls": [
+      {
+        "test": "an_unresolved_dispute_falls_back_to_the_accepted_split_at_its_deadline",
+        "exit": 101,
+        "exit_126_seen": true,
+        "green_in_restored_file": true,
+        "assertion_failure_exit_126": true
+      },
+      {
+        "test": "the_fallback_needs_no_attestor_signature",
+        "exit": 101,
+        "exit_126_seen": true,
+        "green_in_restored_file": true,
+        "assertion_failure_exit_126": true
+      },
+      {
+        "test": "the_fallback_caller_pays_its_fees_and_the_principal_is_untouched",
+        "exit": 101,
+        "exit_126_seen": true,
+        "green_in_restored_file": true,
+        "assertion_failure_exit_126": true
+      },
+      {
+        "test": "the_fallback_split_at_zero_and_at_the_whole_budget",
+        "exit": 101,
+        "exit_126_seen": true,
+        "green_in_restored_file": true,
+        "assertion_failure_exit_126": true
+      }
+    ],
+    "reproduction": "Change only ESCROW_WORKCHAIN from 0 to -1 in task_escrow_sandbox.rs; run each named test with cargo test -p contracts --locked --test task_escrow_sandbox NAME -- --exact. Each fails with exit 126 (Cargo 101); restore 0 and run the whole file: 40 pass.",
+    "genesis_control": {
+      "old_prices_old_pin": 0,
+      "new_prices_old_pin": 1,
+      "new_prices_new_pin": 0,
+      "filter": "+GenZerostateFiftRegression",
+      "old_hash": "662621905fc65ff975a827f51ea925838f1efd24c8811d03464eb6018981aaad",
+      "new_hash": "c6234be91d7d2fdfe556965e5348b59770513f01a33265f37f6da973978e2819"
+    },
+    "scope": "No contract code or assertion amounts changed. The exact-default-fee test keeps masterchain recipients and a basechain escrow; its quote includes masterchain forwarding.",
+    "ci_replay": "Final builder-container step receipts are reported in the PR. The original receipts below describe the earlier full-price experiment; historical failures are not rewritten."
+  }
+}

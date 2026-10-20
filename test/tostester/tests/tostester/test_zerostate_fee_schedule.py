@@ -62,3 +62,20 @@ def test_the_test_schedule_is_deliberately_not_the_deployment_one() -> None:
         "the default localnet schedule has become the deployment one; either the option is "
         "no longer doing anything, or every existing test's fee assumptions have just moved"
     )
+
+
+def test_masterchain_prices_are_reduced_without_changing_resource_or_debt_limits() -> None:
+    schedule = fee_schedule_for(NetworkConfig(deployment_fee_schedule=True))
+    assert normalise(schedule["mc_gas_prices"]) == (
+        "32768000 1 *M 70 *M 10000 2500000 TM$0.1 TM$1.0 100 50000 config.mc_gas_prices!"
+    )
+    assert normalise(schedule["mc_fwd_prices"]) == (
+        "500000 32768000 3276800000 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!"
+    )
+    cheap = fee_schedule_for(NetworkConfig())
+    assert normalise(cheap["mc_gas_prices"]) == (
+        "10 sg* 1 *M 20 *M 10000 1000 *M TM$0.1 TM$1.0 100 1000 config.mc_gas_prices!"
+    )
+    assert normalise(cheap["mc_fwd_prices"]) == (
+        "100 10 sg* 10 sg* 3/2 sg*/ 1/3 sg*/ 1/3 sg*/ config.mc_fwd_prices!"
+    )

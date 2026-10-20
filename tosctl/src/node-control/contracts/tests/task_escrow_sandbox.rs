@@ -34,6 +34,15 @@ const STATUS_EXPIRED: i128 = 5;
 const STATUS_REJECTED: i128 = 6;
 const STATUS_DISPUTED: i128 = 7;
 const DEFAULT_FALLBACK_BPS: u16 = TaskEscrowContract::DEFAULT_DISPUTE_FALLBACK_AGENT_BPS;
+const ESCROW_WORKCHAIN: i8 = 0;
+
+fn escrow_blockchain() -> Blockchain {
+    let mut bc =
+        Blockchain::with_global_version_and_base_workchain(current_network::global_version())
+            .expect("blockchain");
+    bc.set_workchain(ESCROW_WORKCHAIN);
+    bc
+}
 
 struct Fixture {
     bc: Blockchain,
@@ -55,15 +64,15 @@ impl Fixture {
     }
 
     fn with_assignment(budget: u64, funding: u64, assigned: bool) -> Self {
-        Self::build(budget, funding, assigned, None, true, DEFAULT_FALLBACK_BPS)
+        Self::build(budget, funding, assigned, None, true, DEFAULT_FALLBACK_BPS, 0)
     }
 
     fn with_attestor(budget: u64, funding: u64, attestor_pubkey: [u8; 32]) -> Self {
-        Self::build(budget, funding, true, Some(attestor_pubkey), true, DEFAULT_FALLBACK_BPS)
+        Self::build(budget, funding, true, Some(attestor_pubkey), true, DEFAULT_FALLBACK_BPS, 0)
     }
 
     fn without_verifier(budget: u64, funding: u64) -> Self {
-        Self::build(budget, funding, true, None, false, DEFAULT_FALLBACK_BPS)
+        Self::build(budget, funding, true, None, false, DEFAULT_FALLBACK_BPS, 0)
     }
 
     fn with_fallback(
@@ -72,7 +81,11 @@ impl Fixture {
         fallback_bps: u16,
         attestor_pubkey: Option<[u8; 32]>,
     ) -> Self {
-        Self::build(budget, funding, true, attestor_pubkey, true, fallback_bps)
+        Self::build(budget, funding, true, attestor_pubkey, true, fallback_bps, 0)
+    }
+
+    fn with_masterchain_participants(budget: u64, funding: u64) -> Self {
+        Self::build(budget, funding, true, None, true, DEFAULT_FALLBACK_BPS, -1)
     }
 
     fn build(
@@ -82,11 +95,10 @@ impl Fixture {
         attestor_pubkey: Option<[u8; 32]>,
         has_verifier: bool,
         fallback_bps: u16,
+        participant_workchain: i8,
     ) -> Self {
-        let mut bc = Blockchain::new().expect("blockchain");
-        // The sandbox config has no basechain workchain descriptor, so run
-        // everything in the masterchain where outbound sends are permitted.
-        bc.set_workchain(-1);
+        let mut bc = escrow_blockchain();
+        bc.set_workchain(participant_workchain);
         let creator = bc.treasury("creator", 1_000 * TOS).expect("creator");
         let agent = bc.treasury("agent", 1_000 * TOS).expect("agent");
         let verifier = bc.treasury("verifier", 1_000 * TOS).expect("verifier");
@@ -104,7 +116,8 @@ impl Fixture {
             attestor_pubkey,
             dispute_fallback_agent_bps: fallback_bps,
         };
-        let escrow = TaskEscrowContract::calculate_address(-1, &init).expect("address");
+        let escrow =
+            TaskEscrowContract::calculate_address(ESCROW_WORKCHAIN.into(), &init).expect("address");
         let state_init = TaskEscrowContract::build_state_init(&init).expect("state init");
         let deploy = MessageBuilder::internal(creator.address(), &escrow, funding)
             .bounce(false)
@@ -243,8 +256,7 @@ fn build_state_init_bypassing_client_side_review_period_check(init: &TaskEscrowI
 #[test]
 fn claim_and_accept_reject_a_too_short_review_period_before_the_agent_does_any_work() {
     const ERR_REVIEW_PERIOD_TOO_SHORT: i32 = 132;
-    let mut bc = Blockchain::new().expect("blockchain");
-    bc.set_workchain(-1);
+    let mut bc = escrow_blockchain();
     let creator = bc.treasury("creator", 1_000 * TOS).expect("creator");
     let agent = bc.treasury("agent", 1_000 * TOS).expect("agent");
     let init = TaskEscrowInit {
@@ -261,7 +273,8 @@ fn claim_and_accept_reject_a_too_short_review_period_before_the_agent_does_any_w
     };
     let state_init = build_state_init_bypassing_client_side_review_period_check(&init);
     let escrow_cell = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
-    let escrow = MsgAddressInt::with_params(-1, escrow_cell.hash(0)).expect("address");
+    let escrow =
+        MsgAddressInt::with_params(ESCROW_WORKCHAIN.into(), escrow_cell.hash(0)).expect("address");
     let deploy = MessageBuilder::internal(creator.address(), &escrow, 2 * TOS + TOS / 10)
         .bounce(false)
         .state_init(state_init)
@@ -285,7 +298,8 @@ fn claim_and_accept_reject_a_too_short_review_period_before_the_agent_does_any_w
     let init2 = TaskEscrowInit { assigned_agent: Some(agent_addr.clone()), ..init };
     let state_init2 = build_state_init_bypassing_client_side_review_period_check(&init2);
     let escrow_cell2 = state_init2.write_to_new_cell().unwrap().into_cell().unwrap();
-    let escrow2 = MsgAddressInt::with_params(-1, escrow_cell2.hash(0)).expect("address");
+    let escrow2 =
+        MsgAddressInt::with_params(ESCROW_WORKCHAIN.into(), escrow_cell2.hash(0)).expect("address");
     let deploy2 = MessageBuilder::internal(creator.address(), &escrow2, 2 * TOS + TOS / 10)
         .bounce(false)
         .state_init(state_init2)
@@ -1491,7 +1505,9 @@ fn the_fallback_needs_no_attestor_signature() {
 /// also holds the contract's `dispute_timeout_gas` equal to `MAX_ACTION_GAS`.
 #[test]
 fn the_fallback_caller_pays_its_fees_and_the_principal_is_untouched() {
-    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    // Masterchain payees make the CLI's conservative forwarding quote exact;
+    // the escrow itself remains in the basechain.
+    let mut f = Fixture::with_masterchain_participants(2 * TOS, 2 * TOS + TOS / 5);
     f.disputed();
     f.bc.set_now(f.dispute_deadline() as u32);
     let outsider = f.outsider.address().clone();
@@ -1513,7 +1529,7 @@ fn the_fallback_caller_pays_its_fees_and_the_principal_is_untouched() {
     assert!(sent[1].1 >= u128::from(TOS), "creator share reduced by fees: {}", sent[1].1);
 
     // Below the budget the fallback refuses rather than short anyone.
-    let mut g = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let mut g = Fixture::with_masterchain_participants(2 * TOS, 2 * TOS + TOS / 5);
     g.disputed();
     g.bc.set_now(g.dispute_deadline() as u32);
     g.drain_escrow_to(2 * TOS - 1);
@@ -1555,8 +1571,7 @@ fn the_fallback_split_at_zero_and_at_the_whole_budget() {
 /// when a hand-built StateInit carries one.
 #[test]
 fn a_fallback_share_above_the_budget_is_refused_before_acceptance() {
-    let mut bc = Blockchain::new().expect("blockchain");
-    bc.set_workchain(-1);
+    let mut bc = escrow_blockchain();
     let creator = bc.treasury("creator", 1_000 * TOS).expect("creator");
     let agent = bc.treasury("agent", 1_000 * TOS).expect("agent");
     let init = TaskEscrowInit {
@@ -1580,7 +1595,8 @@ fn a_fallback_share_above_the_budget_is_refused_before_acceptance() {
         };
         let state_init = build_state_init_bypassing_client_side_review_period_check(&init);
         let escrow_cell = state_init.write_to_new_cell().unwrap().into_cell().unwrap();
-        let escrow = MsgAddressInt::with_params(-1, escrow_cell.hash(0)).expect("address");
+        let escrow = MsgAddressInt::with_params(ESCROW_WORKCHAIN.into(), escrow_cell.hash(0))
+            .expect("address");
         let deploy = MessageBuilder::internal(creator.address(), &escrow, 2 * TOS + TOS / 5)
             .bounce(false)
             .state_init(state_init)

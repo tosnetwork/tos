@@ -756,8 +756,8 @@ fn review_underfunded_wait_retry_is_refused_before_forwarding_and_exact_budget_c
     let caller = f.chain.blockchain.treasury("review-budget-payer", 1_000 * TOS).expect("caller");
     let body = retry(&f, DOMAIN | 1).body().expect("body").clone().into_cell().expect("body cell");
     let budget = wait_budget(&f);
-    assert!(budget > 3 * TOS);
-    for amount in [3 * TOS, budget - 1] {
+    assert!(budget > 3 * TOS / 20);
+    for amount in [3 * TOS / 20, budget - 1] {
         let before = balance_of(&f.chain, &f.validator.address);
         let request = caller.build_message(&f.validator.address, amount, true, Some(body.clone()));
         let (tx, out) = step(&mut f.chain, request);
@@ -877,7 +877,7 @@ fn review_wait_retry_native_compute_and_action_bounces_refund_only_the_bound_cal
             Some(forged.into_cell().expect("body")),
         );
         let (tx, out) = step(&mut f.chain, fake);
-        successful(&tx, "untrusted terminal receipt cannot settle a fee flight");
+        successful(&tx, "only the pinned elector may settle retry fees");
         assert!(out.is_empty(), "only the pinned elector may settle retry fees");
         assert_eq!(retry_flight(&f), flight, "terminal receipt sender binding");
         let protected = balance_of(&f.chain, &f.validator.address);

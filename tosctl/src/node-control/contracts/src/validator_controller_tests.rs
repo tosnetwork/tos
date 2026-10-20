@@ -16,8 +16,8 @@ const RICH: u128 = 1_000_000 * NANO;
 const NO_COSTS: CapitalCosts = CapitalCosts { receive_fee: 0, storage_forecast: 0, margin: 0 };
 
 /// The fee fixture of the local funding helper's tests (`prices()`): a flat prefix of
-/// 100 gas for 1_000_000, then `gas_price` per 2^16 gas; forwarding with lump 10^7, bit
-/// price 655_360_000 and cell price 65_536_000_000 (16.16 fixed point).
+/// 100 gas for 50_000, then `gas_price` per 2^16 gas; forwarding with lump 500_000, bit
+/// price 32_768_000 and cell price 3_276_800_000 (16.16 fixed point).
 fn gas(flat: bool, gas_price: u64) -> GasLimitsPrices {
     GasLimitsPrices {
         gas_price,
@@ -28,16 +28,16 @@ fn gas(flat: bool, gas_price: u64) -> GasLimitsPrices {
         freeze_due_limit: 100_000_000,
         delete_due_limit: 1_000_000_000,
         flat_gas_limit: if flat { 100 } else { 0 },
-        flat_gas_price: if flat { 1_000_000 } else { 0 },
+        flat_gas_price: if flat { 50_000 } else { 0 },
         ..Default::default()
     }
 }
 
 fn forward() -> MsgForwardPrices {
     MsgForwardPrices {
-        lump_price: 10_000_000,
-        bit_price: 655_360_000,
-        cell_price: 65_536_000_000,
+        lump_price: 500_000,
+        bit_price: 32_768_000,
+        cell_price: 3_276_800_000,
         ihr_price_factor: 98_304,
         first_frac: 21_845,
         next_frac: 21_845,
@@ -45,19 +45,19 @@ fn forward() -> MsgForwardPrices {
 }
 
 fn fees() -> RelayFees {
-    RelayFees::from_prices(&gas(true, 10_000 * 65_536), &forward()).unwrap()
+    RelayFees::from_prices(&gas(true, 500 * 65_536), &forward()).unwrap()
 }
 
 /// Values printed by the local network's Python `fee_budget` (the reference
 /// implementation of the same FunC formulas) for the same configurations:
 /// `(flat, gas_price, grant, processing)`.
 const PYTHON_REFERENCE: [(bool, u64, u128, u128); 6] = [
-    (true, 655_360_000, 4_294_800_000, 2_558_960_000),
-    (true, 65_536_000, 699_300_000, 310_760_000),
-    (true, 809_042_697, 5_231_632_239, 3_144_743_963),
-    (false, 655_360_000, 4_294_800_000, 2_558_960_000),
-    (false, 65_536_000, 694_800_000, 308_960_000),
-    (false, 809_042_697, 5_232_804_744, 3_145_212_965),
+    (true, 32_768_000, 214_740_000, 127_948_000),
+    (true, 65_536_000, 414_490_000, 252_848_000),
+    (true, 809_042_697, 4_946_822_239, 3_086_831_963),
+    (false, 32_768_000, 214_740_000, 127_948_000),
+    (false, 65_536_000, 414_740_000, 252_948_000),
+    (false, 809_042_697, 4_952_744_744, 3_089_200_965),
 ];
 
 #[test]
@@ -75,23 +75,23 @@ fn relay_fees_match_the_python_reference_values() {
 #[test]
 fn relay_fees_expand_the_func_formulas() {
     // Independent integer expansion, as in the reference tests.
-    let ff: u128 = 10_000_000 + 4096 * 10_000 + 8 * 1_000_000;
-    let control = 1_000_000 + (50_000 - 100) * 10_000 + ff;
-    let callback = 1_000_000 + (200_000 - 100) * 10_000 + ff;
+    let ff: u128 = 500_000 + 4096 * 500 + 8 * 50_000;
+    let control = 50_000 + (50_000 - 100) * 500 + ff;
+    let callback = 50_000 + (200_000 - 100) * 500 + ff;
     let value = fees();
     assert_eq!(value.control_value, control);
     assert_eq!(value.callback_value, callback);
     assert_eq!(value.grant, 4 * control + callback);
-    assert_eq!(value.funding_processing, 1_000_000 + (200_000 - 100) * 10_000 + control);
+    assert_eq!(value.funding_processing, 50_000 + (200_000 - 100) * 500 + control);
 }
 
 #[test]
 fn gas_fee_rounds_up_and_honours_the_flat_part() {
     let prices = gas(true, 3);
-    assert_eq!(gas_fee(&prices, 0).unwrap(), 1_000_000);
-    assert_eq!(gas_fee(&prices, 100).unwrap(), 1_000_000);
+    assert_eq!(gas_fee(&prices, 0).unwrap(), 50_000);
+    assert_eq!(gas_fee(&prices, 100).unwrap(), 50_000);
     // One metered unit at 3/65536 rounds up to one nano.
-    assert_eq!(gas_fee(&prices, 101).unwrap(), 1_000_001);
+    assert_eq!(gas_fee(&prices, 101).unwrap(), 50_001);
     let fwd = MsgForwardPrices { lump_price: 7, bit_price: 1, cell_price: 0, ..forward() };
     assert_eq!(forward_fee(&fwd, 1, 0).unwrap(), 8);
     assert_eq!(forward_fee(&fwd, 0, 0).unwrap(), 7);
@@ -110,7 +110,7 @@ fn fees_outside_the_coins_range_are_refused() {
 #[test]
 fn live_config_must_be_the_matching_parameters() {
     let ok = RelayFees::from_config(
-        ConfigParamEnum::ConfigParam20(gas(true, 10_000 * 65_536)),
+        ConfigParamEnum::ConfigParam20(gas(true, 500 * 65_536)),
         ConfigParamEnum::ConfigParam24(forward()),
     )
     .unwrap();
@@ -823,7 +823,7 @@ impl ChainProvider for PinnedOnlyChain {
     ) -> anyhow::Result<ConfigParamEnum> {
         self.record("config", checkpoint.seqno);
         Ok(match param_id {
-            20 => ConfigParamEnum::ConfigParam20(gas(true, 10_000 * 65_536)),
+            20 => ConfigParamEnum::ConfigParam20(gas(true, 500 * 65_536)),
             24 => ConfigParamEnum::ConfigParam24(forward()),
             18 => {
                 let mut prices = chain_block::ConfigParam18::default();
@@ -907,7 +907,7 @@ async fn every_planning_input_is_read_at_one_block() {
     assert_eq!(operations.authority.nonce, 4);
     assert_eq!(operations.balance, 2_000_000_000_000);
     assert_eq!(operations.fees, fees());
-    assert_eq!(operations.gas_prices, gas(true, 10_000 * 65_536));
+    assert_eq!(operations.gas_prices, gas(true, 500 * 65_536));
     assert_eq!(operations.storage_prices, vec![storage_prices()]);
     assert_eq!(
         operations.storage,
