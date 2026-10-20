@@ -961,3 +961,43 @@ fn expired_full_quotas_can_be_reclaimed_without_quorum() {
         .expect_success();
     assert_eq!(wallet.processed(id), -1);
 }
+
+/// A maintenance query with nothing to reclaim is refused before acceptance: the
+/// wallet pays no gas, the ID is not consumed, and the same signed query works once
+/// expired records exist.
+#[test]
+fn empty_maintenance_is_refused_before_acceptance_and_stays_usable() {
+    let keys = strong_keys(4);
+    let mut wallet = Wallet::deploy(&public(&keys), 4, keys.clone());
+    // Valid for four hours, so it outlives the proposals it will later reclaim.
+    let id = ((u64::from(wallet.bc.now()) + 4 * 3_600) << 32) | 0x5151;
+    let payload = cell(|b| {
+        b.append_u32(WALLET_ID).unwrap();
+        b.append_i32(42).unwrap();
+        b.append_u64(id).unwrap();
+        b.append_u32(0x4d53_4743).unwrap();
+    });
+    let maintenance = signed_root_with(0, &payload);
+    let body = query(sign(&keys[0], &maintenance), &maintenance);
+
+    // Nothing pending at all.
+    let error = wallet.refused(body.clone());
+    assert!(error.contains("exit code: 46"), "empty wallet: {error}");
+    // Pending proposals that have not expired.
+    for n in 0..3u64 {
+        let proposal_id = wallet.query_id(n);
+        let signed = signed_root(1, None, proposal_id);
+        wallet.send(query(sign(&keys[1], &signed), &signed)).expect("proposal").expect_success();
+    }
+    let error = wallet.refused(body.clone());
+    assert!(error.contains("exit code: 46"), "nothing expired yet: {error}");
+    assert_eq!(wallet.processed(id), 0, "a refused maintenance must not consume its ID");
+
+    // Once the proposals are more than 64 seconds past expiry, the very same query
+    // reclaims them.
+    wallet.bc.set_now(wallet.bc.now() + 7_265);
+    let out = wallet.send(body.clone()).expect("maintenance with expired records");
+    out.expect_success().expect_out_msgs(0);
+    assert_eq!(wallet.processed(id), -1);
+    assert!(wallet.refused(body).contains("exit code: 35"), "maintenance cannot replay");
+}

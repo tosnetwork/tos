@@ -264,6 +264,12 @@ const int cleanup_limit = 8;
     throw_if(33, query_id < (now() << 32));
     throw_if(35, found?);
     throw_unless(46, cell_null?(signatures));
+    ;; Refused before acceptance when nothing is reclaimable: an accepted query that
+    ;; throws afterwards is committed as aborted without recording its ID, and could be
+    ;; resent by anyone until it expires, charging the wallet each time.
+    (int oldest, _, int any_pending?) = pending_queries.udict_get_min?(64);
+    throw_unless(46, any_pending?);
+    throw_unless(46, oldest < ((now() - 64) << 32));
     set_gas_limit(150000);
     (pending_queries, owner_infos, last_cleaned, int cleaned) = clean_expired_queries(
       pending_queries, owner_infos, last_cleaned, (now() - 64) << 32);

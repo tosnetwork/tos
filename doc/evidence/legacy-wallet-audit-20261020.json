@@ -1,12 +1,12 @@
 {
   "date": "2026-10-20",
   "historical_revision": "b56d8dc55cfe5a3203ac8fd22d6689384a768c39",
-  "platform": "macOS ARM",
+  "platform": "macOS ARM (initial); Linux x86-64 re-run 2026-10-20 after the review follow-ups",
   "new_regression_global_version": 16,
   "source_sha256": {
-    "crypto/smartcont/multisig-code.fc": "e3c9aadc8be9cbd3d2001d91105230f720fad8f89eddb6cb6db07cb77d621829",
+    "crypto/smartcont/multisig-code.fc": "f4fff9d61bb2318782eaed2f5ab68364de9e46c439a2662d04ac93bea80474ac",
     "crypto/smartcont/highload-wallet-v2-code.fc": "facc48c9742db9ca79e933af2987164760a5ca05e8b0399ea6607d44e028685d",
-    "crypto/smartcont/payment-channel-code.fc": "b4abe5322587eb2959b68030627b42c4d2640a3f2b9f11207c4932db3f540739",
+    "crypto/smartcont/payment-channel-code.fc": "29b54b71d736b43e6e0d41e631a58b898960a7d20b74a68b66ff74d2b43e2fa3",
     "crypto/smartcont/new-restricted-wallet2.fif": "10a00c1831cceb9db1801eaae749fadcfb97ae8d8dfa69c625ac4ec347aac337"
   },
   "native_suite_results": {
@@ -19,7 +19,7 @@
       "failed": 0
     },
     "multisig_code_sandbox": {
-      "passed": 13,
+      "passed": 14,
       "failed": 0
     },
     "payment_channel_sandbox": {
@@ -29,7 +29,7 @@
   },
   "sensitivity_receipt": [
     "H-MS-01: fixed=0 historical=101; assertion='exit code: 39'; historical_source_sha256=e42e2878996d57b122cc49ab27eb3701bea497338e92f9d2e006e701f8b80e77",
-    "M-PC-PAYOUT-01/atomic: fixed=0 historical=101; assertion='expected first transaction to be aborted, but it succeeded'; historical_source_sha256=a36fbd21dcd66710dfbce43591093b6fcd3cbabf2869d892d8baf2d7823f835f",
+    "M-PC-PAYOUT-01/atomic: fixed=0 historical=101; assertion='underfunded close refused before acceptance'; historical_source_sha256=a36fbd21dcd66710dfbce43591093b6fcd3cbabf2869d892d8baf2d7823f835f",
     "M-PC-PAYOUT-01/replay: fixed=0 historical=101; assertion='already paid'; historical_source_sha256=a36fbd21dcd66710dfbce43591093b6fcd3cbabf2869d892d8baf2d7823f835f",
     "M-RW2-01: fixed=0 historical=101; assertion='elapsed seconds'; historical_source_sha256=a911dc7db6efb89b7297d26bf9b77bcc67e706df32f2ad8f344ccc8efd34b333",
     "M-HL2-01: fixed=0 historical=101; assertion='exit_code: -14'; historical_source_sha256=f059248418c9906f46acd2e2327d48cb84e5f0cfe8eb9eae49d36c93a84d5279",

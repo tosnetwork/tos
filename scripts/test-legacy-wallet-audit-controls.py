@@ -32,7 +32,7 @@ CASES = [
         "payment-channel-code.fc",
         "payment_channel_sandbox",
         "payout_is_atomic_and_cannot_pay_principals_twice",
-        "expected first transaction to be aborted, but it succeeded",
+        "underfunded close refused before acceptance",
     ),
     (
         "M-PC-PAYOUT-01/replay",

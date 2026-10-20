@@ -13,7 +13,7 @@ int err:expected_payout() asm "37 PUSHINT";
 int err:no_promise_signature() asm "38 PUSHINT";
 int err:wrong_channel_id() asm "39 PUSHINT";
 int err:unknown_op() asm "40 PUSHINT";
-int err:not_enough_fee() asm "41 PUSHINT";
+int err:underfunded_payout() asm "41 PUSHINT";
 int err:weak_key() asm "42 PUSHINT";
 int err:amount_range() asm "43 PUSHINT";
 
@@ -193,6 +193,13 @@ _ send_payout(slice s_addr, int amount, int channel_id, int flags) impure {
 
 
 cell do_payout(int promise_A, int promise_B, int A, int B, slice a_addr, slice b_addr, int channel_id) impure {
+  ;; A payout the balance cannot cover is refused before acceptance. An accepted
+  ;; payout whose action phase then fails rolls the state back but still pays gas,
+  ;; and the same close or timeout could be resent against the unchanged state
+  ;; until the channel is funded. Only the fee margin can still fail in the action
+  ;; phase.
+  throw_unless(err:underfunded_payout(),
+    get_balance().pair_first() >= checked_add_amount(A, B));
   accept_message();
 
   if (promise_A >= promise_B) {
@@ -207,9 +214,12 @@ cell do_payout(int promise_A, int promise_B, int A, int B, slice a_addr, slice b
 
   ;; Exact principals, fees separately, with no ignored action errors. If
   ;; either output is unaffordable, the whole action phase and state roll back;
-  ;; no remainder is redirected to the other party. Extra funds remain here.
+  ;; no remainder is redirected to the other party. What is left after both
+  ;; principals and their fees goes to A, as it did before the exact payouts;
+  ;; only that remainder may be skipped, when it is too small to carry a message.
   send_payout(b_addr, B, channel_id, 1);
   send_payout(a_addr, A, channel_id, 1);
+  send_payout(a_addr, 0, channel_id, 128 + 2);
 
   return begin_cell()
     .store_int(state:payout(), 3)
@@ -319,6 +329,13 @@ cell with_close(slice cs, slice msg, int msg_signed_A?, int msg_signed_B?, int a
   (int got_channel_id, int update_promise_A, int update_promise_B) = (msg~load_uint(64), msg~load_tomis(), msg~load_tomis());
   throw_unless(err:wrong_channel_id(), got_channel_id == channel_id);
 
+  ;; A close that completes the channel is refused before acceptance while the
+  ;; balance cannot cover both principals; do_payout repeats the check for the
+  ;; timeout paths, which accept only there.
+  if (signed_A? & signed_B?) {
+    throw_unless(err:underfunded_payout(),
+      get_balance().pair_first() >= checked_add_amount(A, B));
+  }
 
   accept_message();
   update_promise_A += extra_A;

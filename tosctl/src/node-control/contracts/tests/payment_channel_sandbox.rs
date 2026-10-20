@@ -593,12 +593,20 @@ fn the_guards_fit_the_external_gas_credit() {
 /// An underfunded closing state models storage/fees having consumed its buffer.
 /// Failing either principal action must roll back both outputs and the state;
 /// after funding the same close can succeed, but terminal payout cannot repeat.
+/// A close the balance cannot cover is refused before acceptance, so it costs
+/// the channel nothing and leaves nothing to replay. A balance that covers the
+/// principals but not their fees is accepted and then fails as a whole in the
+/// action phase, with no state change and nobody paid. Once funded, the same
+/// close pays each principal exactly, sends what remains to A, and the channel
+/// is terminal.
 #[test]
 fn payout_is_atomic_and_cannot_pay_principals_twice() {
     let a = SigningKey::from_bytes(&[0x42; 32]);
     let b = SigningKey::from_bytes(&[0x43; 32]);
     let code = compile(&source());
-    for available in [3 * TOS, 5 * TOS] {
+    // Below the principals, and then the principals plus a sliver that covers
+    // the storage phase but not the gas and forwarding fees of the payout.
+    for available in [3 * TOS, 5 * TOS, CHANNEL_A + CHANNEL_B + TOS / 1_000] {
         let mut channel = Channel::deploy(
             code.clone(),
             &a.verifying_key().to_bytes(),
@@ -611,26 +619,65 @@ fn payout_is_atomic_and_cannot_pay_principals_twice() {
         let state = channel.data_hash();
         let close = close_command(None, 0, 0);
         let body = signed_command(Some(sign(&a, &close)), Some(sign(&b, &close)), &close);
-        let out = channel.send(body.clone()).expect("accepted close");
-        out.expect_exit_code(0).expect_aborted().expect_out_msgs(0);
-        assert_eq!(out.read_primary_description().action.unwrap().result_code, 37);
-        assert_eq!(channel.data_hash(), state, "failed action must not finalize");
+        if available < CHANNEL_A + CHANNEL_B {
+            // Below the principals: refused before acceptance, nothing charged.
+            let outcome = channel.send(body.clone());
+            let error = match outcome {
+                Err(error) => error,
+                Ok(out) => panic!(
+                    "underfunded close refused before acceptance: accepted instead, exit {}, aborted {}",
+                    exit_code(&out),
+                    out.read_primary_description().aborted
+                ),
+            };
+            assert!(error.contains("exit code: 41"), "{error}");
+            assert_eq!(channel.balance_of(&channel.address), u128::from(available));
+        } else {
+            // The principals but not the fees: accepted, then the fees make the
+            // whole action phase fail, with no output and no state change.
+            let out = channel.send(body.clone()).expect("accepted close");
+            out.expect_exit_code(0).expect_aborted().expect_out_msgs(0);
+            assert_eq!(out.read_primary_description().action.unwrap().result_code, 37);
+        }
+        assert_eq!(channel.data_hash(), state, "a failed close must not finalize");
         assert_eq!((channel.balance_of(&channel.a), channel.balance_of(&channel.b)), before);
         let funder = channel.bc.treasury("top-up", 100 * TOS).unwrap();
         let topup = MessageBuilder::internal(funder.address(), &channel.address, 10 * TOS)
             .bounce(false)
             .build();
         channel.bc.send_message(topup).unwrap().expect_success();
-        channel.send(body).expect("retry after funding").expect_success().expect_out_msgs(2);
-        for (addr, prior, amount) in
-            [(&channel.a, before.0, CHANNEL_A), (&channel.b, before.1, CHANNEL_B)]
-        {
-            let received = channel.balance_of(addr) - prior;
-            assert!(
-                received <= amount.into() && received + u128::from(TOS / 100) >= amount.into(),
-                "principal: {received}"
-            );
-        }
+        let out = channel.send(body).expect("retry after funding");
+        out.expect_success().expect_out_msgs(3);
+        // On the wire: B's principal exactly, A's principal exactly, and the
+        // remainder to A; the channel keeps nothing worth carrying. (Recipient
+        // balances also pay the receiving transaction's gas, so they are checked
+        // with a tolerance.)
+        let mut payouts = Vec::new();
+        let (_, transaction) = out.transactions.first().expect("the close transaction");
+        transaction
+            .iterate_out_msgs(|message| {
+                let value = message.get_value().map(|v| v.coins.as_u128()).unwrap_or(0);
+                payouts.push((message.dst().expect("destination"), value));
+                Ok(true)
+            })
+            .expect("out messages");
+        assert_eq!(payouts[0], (channel.b.clone(), u128::from(CHANNEL_B)), "B's principal");
+        assert_eq!(payouts[1], (channel.a.clone(), u128::from(CHANNEL_A)), "A's principal");
+        assert_eq!(payouts[2].0, channel.a, "the remainder goes to A");
+        assert!(payouts[2].1 > 0, "the remainder carries value");
+        let received_b = channel.balance_of(&channel.b) - before.1;
+        assert!(
+            received_b <= u128::from(CHANNEL_B)
+                && received_b + u128::from(TOS / 100) >= u128::from(CHANNEL_B),
+            "B received {received_b}"
+        );
+        let received_a = channel.balance_of(&channel.a) - before.0;
+        assert!(received_a > u128::from(CHANNEL_A), "A gets the remainder: {received_a}");
+        assert!(
+            channel.balance_of(&channel.address) < u128::from(TOS / 100),
+            "the channel kept {}",
+            channel.balance_of(&channel.address)
+        );
         let paid = (channel.balance_of(&channel.a), channel.balance_of(&channel.b));
         let payout = cell(|m| {
             m.append_u32(0x37fe_7810).unwrap();
@@ -639,7 +686,12 @@ fn payout_is_atomic_and_cannot_pay_principals_twice() {
             .send(signed_command(None, None, &payout))
             .err()
             .expect("terminal replay refused");
-        assert!(error.contains("exit code: 34"), "{error}");
+        // The swept channel usually cannot even pay to import the message; a
+        // funded one refuses it as a replay.
+        assert!(
+            error.contains("exit code: 34") || error.contains("Cannot pay for importing"),
+            "{error}"
+        );
         assert_eq!((channel.balance_of(&channel.a), channel.balance_of(&channel.b)), paid);
     }
 }
