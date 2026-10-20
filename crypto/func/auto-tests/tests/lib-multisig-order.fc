@@ -231,7 +231,7 @@ int test_proposer_authorization() method_id(110) {
   return 10;
 }
 
-;; Same synthetic fee configuration as the jetton-fees suite:
+;; Same synthetic fee configuration as the token-fees suite:
 ;;   gas fee(g)          = 100000 + (g - 100) * 1000          (g > 100)
 ;;   forward fee(b, c)   = 400000 + b + 100 * c
 ;;   storage fee(s,b,c)  = (b + 500 * c) * s                  (basechain)

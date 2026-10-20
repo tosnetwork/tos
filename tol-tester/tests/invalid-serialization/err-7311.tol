@@ -1,10 +1,10 @@
 struct (0x01) AskToTransfer {
-    jettonAmount: coins
+    tokenAmount: coins
     another: uint8
 }
 
 struct (0x02) TransferNotificationForRecipient {
-    jettonAmount: coins
+    tokenAmount: coins
     another: uint8
 }
 
@@ -18,7 +18,7 @@ fun main() {
         AskToTransfer => {
         }
         TransferNotificationForRecipient => {
-            m = AskToTransfer{jettonAmount: tos("0.1"), another: 0};
+            m = AskToTransfer{tokenAmount: tos("0.1"), another: 0};
             m.another = 1;
         }
     }

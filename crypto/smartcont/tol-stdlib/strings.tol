@@ -175,7 +175,7 @@ fun StringBuilder.build(self): string {
 /// By standard, offchain explorers/APIs may treat contents of a string based on 0xXX prefixes:
 /// - 0x00 + "str" — means "this is a regular snake-encoded string"
 /// - 0x01 + "str" — means "this is an off-chain content URL"
-/// Used in jettons and NFTs for responses from GET methods to comply with TEPs (token standards).
+/// Used in tokens and NFTs for responses from GET methods to comply with TEPs (token standards).
 type string_prefixed0x = string
 
 /// Given "str", prefix it with 0x00 byte.

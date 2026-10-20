@@ -1,0 +1,122 @@
+name: Token naming validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/*token*.py
+      - .github/workflows/token-rename-workbench.yml
+      - crypto/func/**
+      - crypto/smartcont/**
+      - sdk/js/**
+      - emulator/**
+      - validator/token-manager.*
+      - validator-engine/json-rpc-server-token.cpp
+      - test/test-wallet-index.cpp
+      - test/fixtures/token-sdk.json
+      - tosctl/src/node-control/contracts/tests/token_sdk_sandbox.rs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: token-naming-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-and-sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 3G
+      TOL_STDLIB: ${{ github.workspace }}/crypto/smartcont/tol-stdlib
+      RUN_LIVE_TESTS: '0'
+    steps:
+      - name: Check out the exact migration commit and native dependencies
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          submodules: recursive
+      - name: Check source migration and its negative controls
+        run: |
+          python3 scripts/test-token-naming.py
+          python3 scripts/migrate-token-naming.py --check
+      - name: Install compiler prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git cmake ninja-build libjemalloc-dev ccache
+          sudo scripts/install-llvm-toolchain.sh 21 all
+      - name: Restore native compilation cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .ccache
+          key: token-migration-ccache-${{ github.sha }}
+          restore-keys: |
+            strict-build-ccache-x86-64-v2-
+      - name: Configure the repository toolchain
+        run: |
+          scripts/install-rust-toolchain.sh
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 \
+            -DCMAKE_BUILD_TYPE=Release -DTOS_USE_JEMALLOC=ON \
+            -DTOS_USE_LLD=On -DTOS_WERROR_BUILD=On \
+            -DTOS_ARCH=x86-64-v2 -DPORTABLE=x86-64-v2 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+      - name: Build native contract compilers
+        run: cmake --build build --target func fift --parallel 4
+      - name: Verify baseline, ABI-only bytecode changes and frozen code
+        run: python3 scripts/token-rename-workbench.py
+      - name: Install pinned SDK package manager
+        run: npm install --global pnpm@9.15.4
+      - name: Build and typecheck the SDK
+        working-directory: sdk/js
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm typecheck
+      - name: Reproduce SDK messages used by the native sandbox
+        run: |
+          node sdk/js/scripts/token-sandbox-fixture.mjs
+          git diff --exit-code -- test/fixtures/token-sdk.json
+      - name: Execute offline SDK unit tests
+        working-directory: sdk/js
+        run: |
+          pnpm exec vitest run --config vitest.config.ts \
+            --reporter=json --outputFile=/tmp/token-sdk-tests.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/token-sdk-tests.json') as stream:
+              result = json.load(stream)
+          fields = ('numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'success')
+          print('SDK_TEST_RESULT', json.dumps({key: result.get(key) for key in fields}))
+          assert result.get('numTotalTests', 0) > 0
+          assert result.get('numPassedTests', 0) > 0
+          assert result.get('numFailedTests', 1) == 0 and result.get('success') is True
+          PY
+      - name: Build native contract and index regressions
+        run: cmake --build build --target test-emulator test-wallet-index --parallel 4
+      - name: Execute native contract and index regressions
+        run: |
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-emulator$'
+          ctest --test-dir build --output-on-failure --no-tests=error -R '^test-wallet-index$'
+      - name: Verify generated code remains reproducible
+        run: python3 scripts/update-token-code.py --check
+      - name: Record cache statistics
+        if: always()
+        run: |
+          if command -v ccache >/dev/null 2>&1; then ccache --show-stats; fi
+      - name: Retain the SDK test result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: token-sdk-tests-${{ github.sha }}
+          path: /tmp/token-sdk-tests.json
+          if-no-files-found: ignore

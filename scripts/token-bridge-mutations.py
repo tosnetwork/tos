@@ -55,7 +55,7 @@ MUTATIONS = [
     M(
         "M01",
         "the wallet ignores its floor and its set",
-        f"{C}/jetton-wallet.fc",
+        f"{C}/token-wallet.fc",
         "} elseif (k >= max(w_credit_wm, w_credit_cf)) {",
         "} elseif (true) {",
         "t_m4_",
@@ -64,7 +64,7 @@ MUTATIONS = [
     M(
         "M02",
         "the minter counts a COUNTED s",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "        if (status == MINT_CREDITING) {\n            m_in_flight -= amount;\n            m_supply += amount;\n"
         "            mint_put(s, MINT_COUNTED, bound_life, k, 0, hash, owner, amount, d);\n"
         "            (h_credits, _) = h_credits.udict_delete?(64, k);\n",
@@ -76,7 +76,7 @@ MUTATIONS = [
     M(
         "M03",
         "the bridge ignores its burn watermark",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "} elseif (m < max(c_burn_wm, c_burn_cf)) {",
         "} elseif (false) {",
         "t_b6_",
@@ -85,7 +85,7 @@ MUTATIONS = [
     M(
         "M04",
         "the bridge honours a second cancellation flag",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "        throw_unless(error::operation_mismatch, e~load_uint(256) == hash);\n        send_burn_result(m, outcome);",
         "        throw_unless(error::operation_mismatch, e~load_uint(256) == hash);\n"
         "        if (cancel) {\n            outcome = OUTCOME_CANCELLED;\n"
@@ -97,7 +97,7 @@ MUTATIONS = [
     M(
         "M05",
         "a bounce triggers a refund",
-        f"{C}/jetton-wallet.fc",
+        f"{C}/token-wallet.fc",
         "  if (op != op::internal_transfer) {\n    return ();\n  }\n  in_msg_body~load_query_id();",
         "  if (op == op::burn_admit) {\n    w_balance += 400;\n    save_data();\n    return ();\n  }\n"
         "  if (op != op::internal_transfer) {\n    return ();\n  }\n  in_msg_body~load_query_id();",
@@ -107,9 +107,9 @@ MUTATIONS = [
     M(
         "M06",
         "a settlement handler reads ConfigParam 79",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "    cell d = body~load_ref();\n    body.end_parse();\n    if (~ bridge_ok?(sender, life, expected, false)) {",
-        "    cell d = body~load_ref();\n    body.end_parse();\n    get_jetton_bridge_config();\n"
+        "    cell d = body~load_ref();\n    body.end_parse();\n    get_token_bridge_config();\n"
         "    if (~ bridge_ok?(sender, life, expected, false)) {",
         "t_m7_",
         "failed",
@@ -117,7 +117,7 @@ MUTATIONS = [
     M(
         "M07",
         "the wallet's descriptor hash comparison is removed",
-        f"{C}/jetton-wallet.fc",
+        f"{C}/token-wallet.fc",
         "        throw_unless(error::operation_mismatch, entry.preload_uint(256) == hash);\n",
         "",
         "t_m6_",
@@ -126,7 +126,7 @@ MUTATIONS = [
     M(
         "M08",
         "the minter's burn descriptor hash comparison is removed",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "        throw_unless(error::operation_mismatch, stored_hash == hash);\n"
         "        if ((status == BURN_AWAITING_BRIDGE) & cancel & (~ stored_cancel)) {",
         "        if ((status == BURN_AWAITING_BRIDGE) & cancel & (~ stored_cancel)) {",
@@ -136,7 +136,7 @@ MUTATIONS = [
     M(
         "M09",
         "burn_reserve is not counted",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "        m_burn_reserve += amount;\n        m_notices~udict_set_builder",
         "        m_notices~udict_set_builder",
         "t_x1_",
@@ -145,7 +145,7 @@ MUTATIONS = [
     M(
         "M10",
         "an exception is dropped without the sender's floor",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "if ((status == MINT_COUNTED) | (m_mint_wm < m_mint_cf)) {",
         "if (true) {",
         "t_x3_a_refusal",
@@ -154,7 +154,7 @@ MUTATIONS = [
     M(
         "M11",
         "ADMIT_REFUSED is not stored",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "        h_burns~udict_set_builder(64, b, burn_record(BURN_ADMIT_REFUSED, cancel, 0, amount, hash, d));\n"
         "        send_burn_answer(op::admit_refused",
         "        send_burn_answer(op::admit_refused",
@@ -164,7 +164,7 @@ MUTATIONS = [
     M(
         "M12",
         "the sender window ignores its acknowledged floor",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "    require_window(s, c_mint_ack, MINT_WINDOW);\n",
         "",
         "t_y4_",
@@ -173,7 +173,7 @@ MUTATIONS = [
     M(
         "M13",
         "the wallet's life check is removed",
-        f"{C}/jetton-wallet.fc",
+        f"{C}/token-wallet.fc",
         "    throw_unless(error::life_mismatch, wallet_life == w_born);\n"
         "    (_, _, int amount, _, _, _, slice minter, slice recipient) = parse_mint_descriptor(descriptor);",
         "    (_, _, int amount, _, _, _, slice minter, slice recipient) = parse_mint_descriptor(descriptor);",
@@ -183,7 +183,7 @@ MUTATIONS = [
     M(
         "M14",
         "a newer hub life is treated as a recreated wallet",
-        f"{C}/jetton-wallet.fc",
+        f"{C}/token-wallet.fc",
         "    if (minter_life > w_minter_life) {\n        w_minter_terminal = 1;\n        save_data();\n        return false;\n    }",
         "    if (minter_life > w_minter_life) {\n        w_minter_life = minter_life;\n        return true;\n    }",
         "t_y6_a_newer",
@@ -192,7 +192,7 @@ MUTATIONS = [
     M(
         "M15",
         "cancel_lock accepts a PREPARING lock",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "        throw_unless(error::not_admissible, e.preload_uint(2) == SWAP_PAID);\n        e~skip_bits(2);\n        slice payer",
         "        throw_unless(error::not_admissible, e.preload_uint(2) <= SWAP_PREPARING);\n        e~skip_bits(2);\n        slice payer",
         "t_y5_",
@@ -201,7 +201,7 @@ MUTATIONS = [
     M(
         "M16",
         "an advance takes a field from its body",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "        int s = body~load_uint(64);\n        body.end_parse();\n        int need = advance_need(kind, s);",
         "        int s = body~load_uint(64);\n        int need = advance_need(kind, s);",
         "t_m9_",
@@ -210,7 +210,7 @@ MUTATIONS = [
     M(
         "M17",
         "admission tests only W, not max(W, C)",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "    if (s < max(m_mint_wm, m_mint_cf)) {\n        ;; counted, the channel's default",
         "    if (s < m_mint_wm) {\n        ;; counted, the channel's default",
         "t_z2_",
@@ -222,7 +222,7 @@ MUTATIONS = [
     M(
         "M18",
         "a reported floor is accepted without validation",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "    throw_unless(error::bad_floor, floor <= entered_high(m_mints, m_mint_wm));\n",
         "",
         "t_z2_",
@@ -231,7 +231,7 @@ MUTATIONS = [
     M(
         "M19",
         "credits are bounded by the global window instead of the holder's k",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "        if ((k > MAX_SEQ) | (k >= h_credit_ack + CREDIT_WINDOW)) {",
         "        if (k > MAX_SEQ) {",
         "t_z3_",
@@ -240,7 +240,7 @@ MUTATIONS = [
     M(
         "M20",
         "RESERVED is not stranded on recreation",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "    if ((status != MINT_RESERVED) & (status != MINT_CREDITING)) {",
         "    if (status != MINT_CREDITING) {",
         "t_z4_a_wallet_deleted",
@@ -249,7 +249,7 @@ MUTATIONS = [
     M(
         "M21",
         "the generation check is removed",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "(b_gen_state == GEN_ACTIVE) & (generation == b_generation)",
         "b_gen_state == GEN_ACTIVE",
         "t_z1_",
@@ -258,7 +258,7 @@ MUTATIONS = [
     M(
         "M22",
         "a sender advances its floor from C instead of S",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "            .store_uint(channel::c1, 8)\n            .store_uint(mint_storage_floor(), 64));",
         "            .store_uint(channel::c1, 8)\n            .store_uint(m_mint_cf, 64));",
         "t_z2_",
@@ -270,7 +270,7 @@ MUTATIONS = [
     M(
         "M23",
         "a waiting mint is promoted past the holder's credit window",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "if ((h_open == HOLDER_OPEN) & (k <= MAX_SEQ) & (k < h_credit_ack + CREDIT_WINDOW)) {",
         "if (h_open == HOLDER_OPEN) {",
         "t_z7_",
@@ -288,7 +288,7 @@ MUTATIONS = [
     M(
         "M25",
         "a record keeps only a hash",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         ".store_uint(hash, 256).store_ref(d));\n}",
         ".store_uint(hash, 256).store_ref(begin_cell().end_cell()));\n}",
         "t_z6_a_mint",
@@ -297,7 +297,7 @@ MUTATIONS = [
     M(
         "M26",
         "cancel_lock below the watermark is evaluated",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "    require_open_swap(n);\n    (slice e, int found) = b_swaps.udict_get?(64, n);\n    if (found) {\n"
         "        throw_unless(error::not_admissible, e.preload_uint(2) == SWAP_PAID);",
         "    throw_unless(error::sequence_exhausted, n <= MAX_SEQ);\n    (slice e, int found) = b_swaps.udict_get?(64, n);\n"
@@ -308,7 +308,7 @@ MUTATIONS = [
     M(
         "M27",
         "atomic send: +2 on the cancellation refund",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "                .store_coins(refund)\n                .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)\n                .end_cell(), 1);",
         "                .store_coins(refund)\n                .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)\n                .end_cell(), 3);",
         "t_x7_",
@@ -317,7 +317,7 @@ MUTATIONS = [
     M(
         "M28",
         "the vote's namespace check is removed",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "    throw_unless(error::wrong_namespace, (evm_chain_id == b_evm_chain) & (evm_bridge == b_evm_bridge) & (b_evm_chain == MY_CHAIN_ID));\n",
         "",
         "t_x8_votes",
@@ -326,7 +326,7 @@ MUTATIONS = [
     M(
         "M29",
         "the zero-destination check is removed",
-        f"{C}/jetton-wallet.fc",
+        f"{C}/token-wallet.fc",
         "  throw_if(error::zero_destination, destination_address == 0);\n",
         "",
         "t_x8_votes",
@@ -335,7 +335,7 @@ MUTATIONS = [
     M(
         "M30",
         "the bridge's capacity check is removed",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "    require_cell_capacity(BRIDGE_WORST_CELLS, true);\n}",
         "}",
         "t_y8_a_lowered",
@@ -344,7 +344,7 @@ MUTATIONS = [
     M(
         "M31",
         "an unpaid cancellation's funding check is removed",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "        throw_unless(error::underfunded, msg_value_of_in() >= get_cancel_cost());\n",
         "",
         "t_y5_",
@@ -353,7 +353,7 @@ MUTATIONS = [
     M(
         "M32",
         "a vote returns all its value, leaving the log to the bridge",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "        if (b_vote_keep > 0) {",
         "        if (false) {",
         "t_y5_",
@@ -362,7 +362,7 @@ MUTATIONS = [
     M(
         "M33",
         "a stranded report rewrites a committed swap",
-        f"{C}/jetton-bridge.fc",
+        f"{C}/token-bridge.fc",
         "            if (status == PENDING_PREPARING) {\n                b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_CONSUMED, 2));\n            }",
         "            b_swaps~udict_set_builder(64, n, begin_cell().store_uint(SWAP_CONSUMED, 2));",
         "t_z4_a_wallet_deleted",
@@ -380,7 +380,7 @@ MUTATIONS = [
     M(
         "M35",
         "stranding exceeds FOLD_LIMIT per transaction",
-        f"{C}/jetton-minter.fc",
+        f"{C}/token-minter.fc",
         "    while (more & (steps < FOLD_LIMIT)) {\n        (int b, slice e, int found) = first ?",
         "    while (more & (steps < FOLD_LIMIT + 4)) {\n        (int b, slice e, int found) = first ?",
         "t_z4_stranding",

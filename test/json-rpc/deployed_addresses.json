@@ -55,10 +55,10 @@
       "address": "0:0337c9b4f8c4b1ed66ab9ac0d66c93b48d9ce9d485b09a252635889b0a1a930a",
       "code_hash": "64bb2d4661b5f2dc1a83bf5cbbe09e92ac0b460a1b879a5519386fca4c348bca"
     },
-    "jetton_master": {
-      "address": "0:eb5c28567e9a851a55b7b3c6a6f25107720f2972594190e7e908a66288e28478",
-      "code_hash": "13f5d7a316c6d76e1053e88ac59b5de65a072a388451371dc5c5becbba13f50e",
-      "last_deploy_error": "Contract 0:d41fdd107eac889b22a5aacf1162fe099263293ba91d2f694bc777faed525691 did not become active within 30s"
+    "token_master": {
+      "address": null,
+      "code_hash": "27d8aa43b121b262350df81416fc775da46ddc97b4b499be0e0eabe7ea4ac2c7",
+      "error": "Token getter ABI and code changed; no account deployed from this code yet. Explicitly redeploy the test fixture before live RPC validation."
     }
   }
 }

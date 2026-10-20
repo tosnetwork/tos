@@ -6,8 +6,8 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "./SignatureChecker.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-interface IWrappedJetton {
-    function isWrappedJetton() external pure returns (bool);
+interface IWrappedToken {
+    function isWrappedToken() external pure returns (bool);
 }
 
 interface IDecimals {
@@ -130,7 +130,7 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
         require(generation != 0, "No active generation");
         require(lockNonce <= MAX_LOCK_NONCE, "Lock nonces exhausted");
         require(!disabledTokens[token], "lock: disabled token");
-        require(!checkTokenIsWrappedJetton(token), "lock wrapped jetton");
+        require(!checkTokenIsWrappedToken(token), "lock wrapped token");
 
         uint256 oldBalance = IERC20(token).balanceOf(address(this));
 
@@ -140,7 +140,7 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
 
         require(newBalance > oldBalance, "newBalance must be greater than oldBalance");
 
-        require(newBalance <= 2 ** 120 - 1, "Max jetton totalSupply 2 ** 120 - 1");
+        require(newBalance <= 2 ** 120 - 1, "Max token totalSupply 2 ** 120 - 1");
 
         uint64 n = lockNonce;
         lockNonce = n + 1;
@@ -279,11 +279,11 @@ contract Bridge is SignatureChecker, ReentrancyGuard {
         return oracleSet;
     }
 
-    function checkTokenIsWrappedJetton(address token) public pure returns (bool) {
-        try IWrappedJetton(token).isWrappedJetton() returns (
-            bool isWrappedJetton
+    function checkTokenIsWrappedToken(address token) public pure returns (bool) {
+        try IWrappedToken(token).isWrappedToken() returns (
+            bool isWrappedToken
         ) {
-            return isWrappedJetton;
+            return isWrappedToken;
         } catch {
             return false;
         }

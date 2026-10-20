@@ -43,7 +43,7 @@ The explorer's node methods are already dispatched: `getMasterchainInfo`,
 `getBlockTransactions`, `getBlockTransactionsExt`, `getTransactions`,
 `getMasterchainBlockSignatures`, `getConfigParam`, `getAddressInformation`,
 `getAccountCapability`, `getAccountAgents`, `getAccountEvents`,
-`getAccountJettons`, `getAccountNfts`, and `getTokenData`.
+`getAccountTokens`, `getAccountNfts`, and `getTokenData`.
 
 The gaps below concern missing result support, decoded metadata and transport
 parity, rather than a missing registration for every explorer feature.

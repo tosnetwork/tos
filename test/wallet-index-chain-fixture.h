@@ -216,9 +216,9 @@ inline td::Ref<vm::Cell> account(const Contract &contract) {
   return cb.finalize();
 }
 
-// A jetton wallet whose get_wallet_data answers (0, owner, master, code),
+// A token wallet whose get_wallet_data answers (0, owner, master, code),
 // whatever it is asked.
-inline Contract jetton_wallet(const td::Bits256 &address, const td::Bits256 &owner, const td::Bits256 &master) {
+inline Contract token_wallet(const td::Bits256 &address, const td::Bits256 &owner, const td::Bits256 &master) {
   vm::CellBuilder code;
   // DROP (the method id), PUSHINT 0, PUSHREFSLICE owner, PUSHREFSLICE master, PUSHREF code
   require(code.store_long_bool(0x30, 8) && code.store_long_bool(0x70, 8) && code.store_long_bool(0x89, 8) &&
@@ -229,8 +229,8 @@ inline Contract jetton_wallet(const td::Bits256 &address, const td::Bits256 &own
   return Contract{address, code.finalize(), vm::CellBuilder{}.store_long(1, 8).finalize()};
 }
 
-// A jetton master whose get_wallet_address answers `wallet` for any owner.
-inline Contract jetton_master(const td::Bits256 &address, const td::Bits256 &wallet) {
+// A token master whose get_wallet_address answers `wallet` for any owner.
+inline Contract token_master(const td::Bits256 &address, const td::Bits256 &wallet) {
   vm::CellBuilder code;
   // DROP (the method id), DROP (the owner), PUSHREFSLICE wallet
   require(code.store_long_bool(0x30, 8) && code.store_long_bool(0x30, 8) && code.store_long_bool(0x89, 8) &&

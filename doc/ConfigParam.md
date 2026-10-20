@@ -290,10 +290,10 @@ These slots select which counterparty chain a bridge contract serves. The contra
 | 71 | `OracleBridgeParams` | Ethereum | `crosschain/coin-bridge/tvm/ethereum` |
 | 72 | `OracleBridgeParams` | BNB Smart Chain | `crosschain/coin-bridge/tvm/bsc` |
 | 73 | `OracleBridgeParams` | Polygon | declared in the schema; no contract tree in this repository |
-| 79 | `JettonBridgeParams` | Ethereum | `crosschain/token-bridge/tvm/params/ethereum.fc` |
-| 81 | `JettonBridgeParams` | BNB Smart Chain | `crosschain/token-bridge/tvm/params/bsc.fc` |
-| 82 | `JettonBridgeParams` | Polygon | `crosschain/token-bridge/tvm/params/polygon.fc` |
-| 83 | `JettonBridgeParams` | Tron | `crosschain/token-bridge/tvm/params/tron.fc` |
+| 79 | `TokenBridgeParams` | Ethereum | `crosschain/token-bridge/tvm/params/ethereum.fc` |
+| 81 | `TokenBridgeParams` | BNB Smart Chain | `crosschain/token-bridge/tvm/params/bsc.fc` |
+| 82 | `TokenBridgeParams` | Polygon | `crosschain/token-bridge/tvm/params/polygon.fc` |
+| 83 | `TokenBridgeParams` | Tron | `crosschain/token-bridge/tvm/params/tron.fc` |
 
 Slot 80 is unallocated. Slot 83 is TOS-specific: it has no counterpart in the base schema this bridge architecture came from, and no counterparty contract has been deployed or exercised on Tron.
 

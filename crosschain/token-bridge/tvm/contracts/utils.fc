@@ -2,7 +2,7 @@
 #include "op-codes.fc";
 
 ;; The settlement half of a wallet's storage when it is created: no life yet, no
-;; minter life, no credits and no burns. jetton-wallet.fc reads and writes the
+;; minter life, no credits and no burns. token-wallet.fc reads and writes the
 ;; same layout; an address is the hash of this initial state.
 ;; born_lt:uint64 minter_life:uint64 minter_terminal:uint1 open_attempt:uint32
 ;; credit_watermark:uint64 credit_compaction:uint64 credit_high:uint64
@@ -18,30 +18,30 @@ cell empty_wallet_settlement() inline {
             .end_cell();
 }
 
-cell pack_jetton_wallet_data(int balance, slice owner_address, slice jetton_master_address, cell jetton_wallet_code) inline {
+cell pack_token_wallet_data(int balance, slice owner_address, slice token_master_address, cell token_wallet_code) inline {
     return  begin_cell()
             .store_coins(balance)
             .store_slice(owner_address)
-            .store_slice(jetton_master_address)
-            .store_ref(jetton_wallet_code)
+            .store_slice(token_master_address)
+            .store_ref(token_wallet_code)
             .store_ref(empty_wallet_settlement())
             .end_cell();
 }
 
-cell calculate_jetton_wallet_state_init(slice owner_address, slice jetton_master_address, cell jetton_wallet_code) inline {
+cell calculate_token_wallet_state_init(slice owner_address, slice token_master_address, cell token_wallet_code) inline {
     return begin_cell()
             .store_uint(0, 2)
-            .store_dict(jetton_wallet_code)
-            .store_dict(pack_jetton_wallet_data(0, owner_address, jetton_master_address, jetton_wallet_code))
+            .store_dict(token_wallet_code)
+            .store_dict(pack_token_wallet_data(0, owner_address, token_master_address, token_wallet_code))
             .store_uint(0, 1)
             .end_cell();
 }
 
 ;; A minter's storage when the bridge creates it: nothing counted, reserved or
-;; recorded, and the bridge that may drive it pinned in. jetton-minter.fc reads
+;; recorded, and the bridge that may drive it pinned in. token-minter.fc reads
 ;; and writes the same layout. Because the bridge is part of the initial state,
 ;; it is part of the minter's address: each bridge has its own minters.
-cell pack_minter_initial_data(cell content, cell jetton_wallet_code, slice bridge_address) inline {
+cell pack_minter_initial_data(cell content, cell token_wallet_code, slice bridge_address) inline {
     return begin_cell()
             .store_int(0, 128)            ;; total_supply
             .store_coins(0)               ;; in_flight
@@ -49,7 +49,7 @@ cell pack_minter_initial_data(cell content, cell jetton_wallet_code, slice bridg
             .store_coins(0)               ;; burn_reserve
             .store_coins(0)               ;; stranded
             .store_ref(content)
-            .store_ref(jetton_wallet_code)
+            .store_ref(token_wallet_code)
             .store_ref(begin_cell()
                 .store_slice(bridge_address)
                 .store_uint(0, 64 + 64 + 1)        ;; bridge_life, born_lt, terminal
@@ -75,8 +75,8 @@ slice calculate_address_by_state_init(cell state_init) inline {
     return create_address(WORKCHAIN, cell_hash(state_init));
 }
 
-slice calculate_user_jetton_wallet_address(slice owner_address, slice jetton_master_address, cell jetton_wallet_code) inline {
-    return calculate_address_by_state_init(calculate_jetton_wallet_state_init(owner_address, jetton_master_address, jetton_wallet_code));
+slice calculate_user_token_wallet_address(slice owner_address, slice token_master_address, cell token_wallet_code) inline {
+    return calculate_address_by_state_init(calculate_token_wallet_state_init(owner_address, token_master_address, token_wallet_code));
 }
 
 () send_receipt_message(addr, ans_tag, query_id, body, coins, mode) impure inline_ref {

@@ -115,7 +115,7 @@ ${makeCell(inMsg.body)} constant in_msg_body${i}
 
 // A complete int_msg_info header. It was previously truncated after the
 // sender, which is all some contracts read — but a contract that reads
-// further, as jetton-wallet does to reach fwd_fee, hit a cell underflow and
+// further, as token-wallet does to reach fwd_fee, hit a cell underflow and
 // failed with exit code 9 rather than with anything about its own logic.
 // A test may set "bounced" to deliver the message with the bounced flag,
 // the way the chain returns a rejected bounceable transfer; on chain only

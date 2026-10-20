@@ -1,10 +1,10 @@
 struct (0x01) AskToTransfer {
-    jettonAmount: coins
+    tokenAmount: coins
     another: uint8
 }
 
 struct (0x02) TransferNotificationForRecipient {
-    jettonAmount: coins
+    tokenAmount: coins
     another: uint8
 }
 
@@ -13,13 +13,13 @@ type AllowedMessageToVault =
     | TransferNotificationForRecipient
 
 @inline
-fun AllowedMessageToVault.setJettonAmount(mutate self, newValue: coins) {
+fun AllowedMessageToVault.setTokenAmount(mutate self, newValue: coins) {
     match (self) {
         AskToTransfer => {
-            self.jettonAmount = newValue;
+            self.tokenAmount = newValue;
         }
         TransferNotificationForRecipient => {
-            self.jettonAmount = newValue;
+            self.tokenAmount = newValue;
         }
     }
 }
@@ -28,10 +28,10 @@ fun main() {
     var m = lazy AllowedMessageToVault.fromSlice(createEmptySlice());
     match (m) {
         AskToTransfer => {
-            return m.setJettonAmount(123);
+            return m.setTokenAmount(123);
         }
         TransferNotificationForRecipient => {
-            return m.setJettonAmount(456);
+            return m.setTokenAmount(456);
         }
     }
 }

@@ -1394,19 +1394,19 @@ function(slice1_func_to_boc OUT_BOC WORKING_DIR)
     )
 endfunction()
 
-set(SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC ${SLICE1_GAS_PARITY_DIR}/jetton-minter-func.boc)
-set(SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC  ${SLICE1_GAS_PARITY_DIR}/jetton-minter-tol.boc)
-set(SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC ${SLICE1_GAS_PARITY_DIR}/jetton-wallet-func.boc)
-set(SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC  ${SLICE1_GAS_PARITY_DIR}/jetton-wallet-tol.boc)
+set(SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC ${SLICE1_GAS_PARITY_DIR}/token-minter-func.boc)
+set(SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC  ${SLICE1_GAS_PARITY_DIR}/token-minter-tol.boc)
+set(SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC ${SLICE1_GAS_PARITY_DIR}/token-wallet-func.boc)
+set(SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC  ${SLICE1_GAS_PARITY_DIR}/token-wallet-tol.boc)
 set(SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC     ${SLICE1_GAS_PARITY_DIR}/wallet-v5-func.boc)
 set(SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC      ${SLICE1_GAS_PARITY_DIR}/wallet-v5-tol.boc)
 set(SLICE5_RECEIVE_CONTEXT_TOL_BOC            ${SLICE1_GAS_PARITY_DIR}/slice5-receive-context-tol.boc)
 set(TOS_REPORT_BOND_ORACLE_BOC                ${SLICE1_GAS_PARITY_DIR}/tos-report-bond-oracle.boc)
 
-slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/jetton-minter.tol
-                  ${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC})
-slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/jetton-wallet.tol
-                  ${SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC})
+slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/token-minter.tol
+                  ${SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC})
+slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/token-wallet.tol
+                  ${SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC})
 slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/wallet-v5.tol
                   ${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC})
 slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/emulator/test/slice-5-receive-context.tol
@@ -1414,26 +1414,26 @@ slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/emulator/test/slice-5-receive-cont
 slice1_tol_to_boc(${CMAKE_CURRENT_SOURCE_DIR}/examples/slice5/tos-report-bond-oracle/src/tos-report-bond-oracle.tol
                   ${TOS_REPORT_BOND_ORACLE_BOC})
 
-slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/jetton-minter.fc
+slice1_func_to_boc(${SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-minter
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-minter/token-minter.fc
                    INCLUDES
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/stdlib.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/params.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/constants.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/jetton-utils.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/op-codes.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-minter/imports/utils.fc)
-slice1_func_to_boc(${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/jetton-wallet.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-minter/imports/stdlib.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-minter/imports/params.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-minter/imports/constants.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-minter/imports/token-utils.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-minter/imports/op-codes.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-minter/imports/utils.fc)
+slice1_func_to_boc(${SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC}
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-wallet
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-wallet/token-wallet.fc
                    INCLUDES
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/stdlib.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/params.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/constants.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/jetton-utils.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/op-codes.fc
-                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/jetton-wallet/imports/utils.fc)
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-wallet/imports/stdlib.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-wallet/imports/params.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-wallet/imports/constants.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-wallet/imports/token-utils.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-wallet/imports/op-codes.fc
+                   ${CMAKE_CURRENT_SOURCE_DIR}/crypto/func/auto-tests/legacy_tests/token-wallet/imports/utils.fc)
 # wallet-v5 lives at crypto/smartcont/wallet-v5-code.fc per the
 # migration playbook (verified via the find search in this slice's
 # closure work). It depends on crypto/smartcont/stdlib.fc, which is
@@ -1487,10 +1487,10 @@ add_custom_target(smartcont_fixture_contracts
 
 add_custom_target(slice1_gas_parity_contracts ALL
     DEPENDS
-        ${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}
-        ${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}
-        ${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}
-        ${SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC}
+        ${SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC}
+        ${SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC}
+        ${SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC}
+        ${SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC}
         ${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}
         ${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC}
 )
@@ -1548,9 +1548,9 @@ add_executable(test-emulator
         # VmState-level test above and the TL-B parse test in
         # tvm-v14-v15-transaction-fixture.cpp.
         emulator/test/config-param-43-transaction-fixture.cpp
-        # Measures the jetton wallet fee profile against this build and checks
+        # Measures the token wallet fee profile against this build and checks
         # the config-priced transfer/burn requirements end to end.
-        emulator/test/jetton-wallet-fee-profile-fixture.cpp
+        emulator/test/token-wallet-fee-profile-fixture.cpp
         # Measures the multisig fee profile against this build of the parent
         # and order contracts.
         emulator/test/multisig-fee-profile-fixture.cpp
@@ -1563,10 +1563,10 @@ target_link_libraries(test-emulator PRIVATE emulator fift-lib validator-engine-j
 add_dependencies(test-emulator slice1_gas_parity_contracts slice5_receive_context_contract tos_report_bond_oracle_contract smartcont_fixture_contracts)
 target_compile_definitions(test-emulator PRIVATE
     TOS_GENESIS_ZEROSTATE_FIF="${CMAKE_CURRENT_SOURCE_DIR}/crypto/smartcont/gen-zerostate.fif"
-    SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_FUNC_BOC}"
-    SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_MINTER_TOL_BOC}"
-    SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC="${SLICE1_GAS_PARITY_JETTON_WALLET_FUNC_BOC}"
-    SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC="${SLICE1_GAS_PARITY_JETTON_WALLET_TOL_BOC}"
+    SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC="${SLICE1_GAS_PARITY_TOKEN_MINTER_FUNC_BOC}"
+    SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC="${SLICE1_GAS_PARITY_TOKEN_MINTER_TOL_BOC}"
+    SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC="${SLICE1_GAS_PARITY_TOKEN_WALLET_FUNC_BOC}"
+    SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC="${SLICE1_GAS_PARITY_TOKEN_WALLET_TOL_BOC}"
     SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC="${SLICE1_GAS_PARITY_WALLET_V5_FUNC_BOC}"
     SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC="${SLICE1_GAS_PARITY_WALLET_V5_TOL_BOC}"
     SLICE5_RECEIVE_CONTEXT_TOL_BOC="${SLICE5_RECEIVE_CONTEXT_TOL_BOC}"

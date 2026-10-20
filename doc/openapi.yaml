@@ -1147,7 +1147,7 @@ paths:
   /getTokenData:
     get:
       operationId: getTokenData_get
-      summary: 'Token contract data (jetton master, NFT collection or item)'
+      summary: 'Token contract data (token master, NFT collection or item)'
       tags: [accounts]
       description: >-
         A contract that is not a recognised token contract answers CONTRACT_KIND_UNSUPPORTED (-32006).
@@ -1177,7 +1177,7 @@ paths:
         '429': {'$ref': '#/components/responses/RateLimited'}
     post:
       operationId: getTokenData
-      summary: 'Token contract data (jetton master, NFT collection or item)'
+      summary: 'Token contract data (token master, NFT collection or item)'
       tags: [accounts]
       description: >-
         A contract that is not a recognised token contract answers CONTRACT_KIND_UNSUPPORTED (-32006).
@@ -1212,10 +1212,10 @@ paths:
         '401': {'$ref': '#/components/responses/Unauthorized'}
         '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
         '429': {'$ref': '#/components/responses/RateLimited'}
-  /getAccountJettons:
+  /getAccountTokens:
     get:
-      operationId: getAccountJettons_get
-      summary: 'Jetton wallets owned by an account (wallet index)'
+      operationId: getAccountTokens_get
+      summary: 'Token wallets owned by an account (wallet index)'
       tags: [accounts]
       description: >-
         Served from the node's basechain wallet index. Without the index the method answers -32601 (disabled)
@@ -1240,13 +1240,13 @@ paths:
                 oneOf:
                   - allOf:
                       - {'$ref': '#/components/schemas/JsonRpcSuccess'}
-                      - {properties: {result: {'$ref': '#/components/schemas/AccountJettons'}}}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountTokens'}}}
                   - {'$ref': '#/components/schemas/JsonRpcError'}
         '401': {'$ref': '#/components/responses/Unauthorized'}
         '429': {'$ref': '#/components/responses/RateLimited'}
     post:
-      operationId: getAccountJettons
-      summary: 'Jetton wallets owned by an account (wallet index)'
+      operationId: getAccountTokens
+      summary: 'Token wallets owned by an account (wallet index)'
       tags: [accounts]
       description: >-
         Served from the node's basechain wallet index. Without the index the method answers -32601 (disabled)
@@ -1280,7 +1280,7 @@ paths:
                 oneOf:
                   - allOf:
                       - {'$ref': '#/components/schemas/JsonRpcSuccess'}
-                      - {properties: {result: {'$ref': '#/components/schemas/AccountJettons'}}}
+                      - {properties: {result: {'$ref': '#/components/schemas/AccountTokens'}}}
                   - {'$ref': '#/components/schemas/JsonRpcError'}
         '401': {'$ref': '#/components/responses/Unauthorized'}
         '415': {'$ref': '#/components/responses/UnsupportedMediaType'}
@@ -3722,7 +3722,7 @@ components:
             - getAccountSessions
             - getAccountAgents
             - getTokenData
-            - getAccountJettons
+            - getAccountTokens
             - getAccountNfts
             - getAccountEvents
             - getAccountEvent
@@ -4042,12 +4042,12 @@ components:
       oneOf:
         - type: object
           properties:
-            '@type': {const: ext.tokens.jettonMasterData}
+            '@type': {const: ext.tokens.tokenMasterData}
             total_supply: {type: string}
             mintable: {type: boolean}
             admin_address: {type: string}
-            jetton_content: {type: string}
-            jetton_wallet_code: {type: string}
+            token_content: {type: string}
+            token_wallet_code: {type: string}
         - type: object
           properties:
             '@type': {const: ext.tokens.nftCollectionData}
@@ -4061,18 +4061,18 @@ components:
             index: {type: string}
             collection_address: {type: string}
             owner_address: {type: string}
-    AccountJettons:
+    AccountTokens:
       type: object
       properties:
-        '@type': {const: wallet.accountJettons}
+        '@type': {const: wallet.accountTokens}
         index_state: {type: object}
-        jettons:
+        tokens:
           type: array
           items:
             type: object
             properties:
-              jetton_master: {type: string}
-              jetton_wallet: {type: string}
+              token_master: {type: string}
+              token_wallet: {type: string}
               last_lt: {'$ref': '#/components/schemas/Lt'}
     AccountNfts:
       type: object

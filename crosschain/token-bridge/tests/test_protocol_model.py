@@ -12,7 +12,7 @@ import hashlib
 import unittest
 from dataclasses import dataclass, field
 
-MAX_JETTON_UNITS = (1 << 120) - 1
+MAX_TOKEN_UNITS = (1 << 120) - 1
 # The last lock nonce the EVM side allocates; 2^64 - 1 is the TOS sentinel.
 MAX_LOCK_NONCE = (1 << 64) - 2
 SWAP_WINDOW = 16
@@ -91,8 +91,8 @@ class EvmBridgeModel:
         if requested <= 0 or actually_received <= 0 or actually_received > requested:
             raise ValueError("invalid transfer")
         new_balance = self.balances.get(token, 0) + actually_received
-        if new_balance > MAX_JETTON_UNITS:
-            raise OverflowError("jetton supply bound")
+        if new_balance > MAX_TOKEN_UNITS:
+            raise OverflowError("token supply bound")
         self.balances[token] = new_balance
         n = self.lock_nonce
         self.lock_nonce = n + 1
@@ -178,8 +178,8 @@ class TosBridgeModel:
         if self.swaps.get(n) != PREPARING:
             raise RuntimeError("not preparing")
         new_supply = self.total_supply.get(token, 0) + amount
-        if new_supply > MAX_JETTON_UNITS:
-            raise OverflowError("jetton supply bound")
+        if new_supply > MAX_TOKEN_UNITS:
+            raise OverflowError("token supply bound")
         self.total_supply[token] = new_supply
         self.swaps[n] = CONSUMED
         self._fold()
@@ -258,7 +258,7 @@ class ProtocolModelTests(unittest.TestCase):
 
     def test_supply_limit_is_enforced(self) -> None:
         self.activate()
-        self.evm.balances["USDT"] = MAX_JETTON_UNITS
+        self.evm.balances["USDT"] = MAX_TOKEN_UNITS
         with self.assertRaises(OverflowError):
             self.evm.lock("a", "USDT", 1, 1)
 

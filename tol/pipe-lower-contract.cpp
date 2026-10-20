@@ -809,7 +809,7 @@ static V<ast_function_declaration> make_on_internal_function(
   //   6. trailing UnknownMode tail (fell through all declared opcodes).
   // The `bits < 32` short-body path uses the SAME UnknownMode tail so wallet-v5-style silent
   // drop is preserved when `@unknown_silent_drop;` is set, and a Protocol throw fires in the
-  // default mode (matching legacy jetton-minter).
+  // default mode (matching legacy token-minter).
   std::vector<AnyV> items;
 
   // Identify @deploy receiver and UnknownOpcode catch-all up-front (parser already enforced

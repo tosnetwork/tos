@@ -1,8 +1,8 @@
-// Jetton (TEP-74)
-export { JettonMinter } from './jetton/JettonMinter';
-export { JettonWallet } from './jetton/JettonWallet';
-export { JETTON_MINTER_CODE_HEX, JETTON_WALLET_CODE_HEX } from './jetton/codes';
-export type { JettonData, JettonContent } from './jetton/types';
+// Token (TOS Token V1)
+export { TokenMaster } from './token/TokenMaster';
+export { TokenWallet } from './token/TokenWallet';
+export { TOKEN_MASTER_CODE_HEX, TOKEN_WALLET_CODE_HEX } from './token/codes';
+export type { FungibleTokenData, TokenContent } from './token/types';
 
 // NFT (TEP-62)
 export { NftCollection } from './nft/NftCollection';

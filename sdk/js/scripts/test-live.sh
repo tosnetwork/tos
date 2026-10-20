@@ -6,7 +6,7 @@
 #
 # Optional env vars:
 #   TEST_MNEMONIC       - 24-word mnemonic for wallet tests (space-separated)
-#   TEST_JETTON_MINTER  - raw address of a deployed JettonMinter contract
+#   TEST_TOKEN_MINTER  - raw address of a deployed TokenMaster contract
 #
 set -euo pipefail
 

@@ -165,11 +165,11 @@ impl ApiClientV2 {
         self.base_client.get(&self.base_url, "unpackAddress", &params).await
     }
 
-    /// Get NFT or Jetton information.
+    /// Get NFT or Token information.
     ///
     /// # Parameters
     ///
-    /// * `address` - Address of NFT collection/item or Jetton master/wallet smart contract.
+    /// * `address` - Address of NFT collection/item or Token master/wallet smart contract.
     pub async fn get_token_data(&self, address: &str) -> Result<TokenData, ToscenterError> {
         let params = [("address", address)];
 

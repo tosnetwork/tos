@@ -1161,9 +1161,9 @@ const std::vector<JsonRpcServer::MethodEntry> &JsonRpcServer::method_table() {
        [](JsonRpcServer &s, td::JsonObject &p, std::string id, const std::string &, P r) {
          s.handle_getTokenData(p, std::move(id), std::move(r));
        }},
-      {"getAccountJettons", G,
+      {"getAccountTokens", G,
        [](JsonRpcServer &s, td::JsonObject &p, std::string id, const std::string &, P r) {
-         s.handle_getAccountJettons(p, std::move(id), std::move(r));
+         s.handle_getAccountTokens(p, std::move(id), std::move(r));
        }},
       {"getAccountNfts", G,
        [](JsonRpcServer &s, td::JsonObject &p, std::string id, const std::string &, P r) {
