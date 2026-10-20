@@ -2669,6 +2669,10 @@ struct ValidateStateClose : public ValidateState<ValidateStateClose> {
 
 // config$_ initTimeout:int exitTimeout:int a_key:int256 b_key:int256 a_addr b_addr channel_id:int256 = Config;
 TEST(Smarcont, Channel) {
+  // The emulator runs the contract with no balance unless told one; the channel
+  // refuses a payout the balance cannot cover before accepting it, so every message
+  // here is run against a funded account.
+  auto funded_args = [] { return tos::SmartContract::Args().set_balance(1'000'000'000); };
   auto code = tos::SmartContractCode::get_code(tos::SmartContractCode::PaymentChannel);
   Config config;
   auto a_pkey = td::Ed25519::generate_private_key().move_as_ok();
@@ -2721,18 +2725,18 @@ TEST(Smarcont, Channel) {
 
   expect_code("Trying to invoke a timeout while channel is empty", no_timeout,
               channel.write().send_external_message(MsgTimeoutBuilder().finalize(),
-                                                    tos::SmartContract::Args().set_now(1000000)));
+                                                    funded_args().set_now(1000000)));
 
   expect_code("External init message with no signatures", replay_protection,
               channel.write().send_external_message(MsgInitBuilder().channel_id(config.channel_id).finalize()));
   expect_code("Internal init message with not enough value", msg_value_too_small,
               channel.write().send_internal_message(
                   MsgInitBuilder().channel_id(config.channel_id).inc_A(1000).min_B(2000).with_a_key(&a_pkey).finalize(),
-                  tos::SmartContract::Args().set_amount(100)));
+                  funded_args().set_amount(100)));
   expect_code(
       "Internal init message with wrong channel_id", wrong_channel_id,
       channel.write().send_internal_message(MsgInitBuilder().inc_A(1000).min_B(2000).with_a_key(&a_pkey).finalize(),
-                                            tos::SmartContract::Args().set_amount(1000)));
+                                            funded_args().set_amount(1000)));
   expect_ok("A init with (inc_A = 1000, min_A = 1, min_B = 2000)",
             channel.write().send_internal_message(MsgInitBuilder()
                                                       .channel_id(config.channel_id)
@@ -2741,7 +2745,7 @@ TEST(Smarcont, Channel) {
                                                       .min_B(2000)
                                                       .with_a_key(&a_pkey)
                                                       .finalize(),
-                                                  tos::SmartContract::Args().set_amount(1000)));
+                                                  funded_args().set_amount(1000)));
   ValidateStateInit(channel->get_state().data)
       .expect_A(1000)
       .expect_B(0)
@@ -2756,15 +2760,15 @@ TEST(Smarcont, Channel) {
   expect_code("Repeated init of A init with (inc_A = 100, min_B = 5000). Must be ignored", replay_protection,
               channel.write().send_internal_message(
                   MsgInitBuilder().channel_id(config.channel_id).inc_A(100).min_B(5000).with_a_key(&a_pkey).finalize(),
-                  tos::SmartContract::Args().set_amount(1000)));
+                  funded_args().set_amount(1000)));
   expect_code(
       "Trying to invoke a timeout too early", no_timeout,
-      channel.write().send_external_message(MsgTimeoutBuilder().finalize(), tos::SmartContract::Args().set_now(0)));
+      channel.write().send_external_message(MsgTimeoutBuilder().finalize(), funded_args().set_now(0)));
 
   {
     auto channel_copy = channel;
     expect_ok("Invoke a timeout", channel_copy.write().send_external_message(MsgTimeoutBuilder().finalize(),
-                                                                             tos::SmartContract::Args().set_now(21)));
+                                                                             funded_args().set_now(21)));
     ValidateStatePayout(channel_copy->get_state().data).expect_A(1000).expect_B(0).finish().ensure();
   }
   {
@@ -2772,14 +2776,14 @@ TEST(Smarcont, Channel) {
     expect_ok("B init with inc_B < min_B. Leads to immediate payout",
               channel_copy.write().send_internal_message(
                   MsgInitBuilder().channel_id(config.channel_id).inc_B(1500).with_b_key(&b_pkey).finalize(),
-                  tos::SmartContract::Args().set_amount(1500)));
+                  funded_args().set_amount(1500)));
     ValidateStatePayout(channel_copy->get_state().data).expect_A(1000).expect_B(1500).finish().ensure();
   }
 
   expect_ok("B init with (inc_B = 2000, min_A = 1, min_A = 1000)",
             channel.write().send_internal_message(
                 MsgInitBuilder().channel_id(config.channel_id).inc_B(2000).min_A(1000).with_b_key(&b_pkey).finalize(),
-                tos::SmartContract::Args().set_amount(2000)));
+                funded_args().set_amount(2000)));
   ValidateStateClose(channel->get_state().data)
       .expect_A(1000)
       .expect_B(2000)
@@ -2803,7 +2807,7 @@ TEST(Smarcont, Channel) {
                                                              .with_a_key(&a_pkey)
                                                              .with_b_key(&b_pkey)
                                                              .finalize(),
-                                                         tos::SmartContract::Args().set_now(21)));
+                                                         funded_args().set_now(21)));
     ValidateStatePayout(channel_copy->get_state().data).expect_A(1000 + 10).expect_B(2000 - 10).finish().ensure();
   }
   {
@@ -2819,7 +2823,7 @@ TEST(Smarcont, Channel) {
                                                              .with_a_key(&a_pkey)
                                                              .with_b_key(&b_pkey)
                                                              .finalize(),
-                                                         tos::SmartContract::Args().set_now(21)));
+                                                         funded_args().set_now(21)));
     ValidateStatePayout(channel_copy->get_state().data).expect_A(1000 + 10).expect_B(2000 - 10).finish().ensure();
   }
 
@@ -2831,7 +2835,7 @@ TEST(Smarcont, Channel) {
                   SignedPromiseBuilder().promise_A(1000000).with_key(&a_pkey).channel_id(config.channel_id).finalize())
               .with_a_key(&a_pkey)
               .finalize(),
-          tos::SmartContract::Args().set_now(21)));
+          funded_args().set_now(21)));
   expect_code(
       "B sends Promise(1000000, 0) signed by B", wrong_a_signature,
       channel.write().send_external_message(
@@ -2840,7 +2844,7 @@ TEST(Smarcont, Channel) {
                   SignedPromiseBuilder().promise_A(1000000).with_key(&b_pkey).channel_id(config.channel_id).finalize())
               .with_b_key(&b_pkey)
               .finalize(),
-          tos::SmartContract::Args().set_now(21)));
+          funded_args().set_now(21)));
   expect_code("B sends Promise(1000000, 0) signed by A with wrong channel_id", wrong_channel_id,
               channel.write().send_external_message(MsgCloseBuilder()
                                                         .signed_promise(SignedPromiseBuilder()
@@ -2850,7 +2854,7 @@ TEST(Smarcont, Channel) {
                                                                             .finalize())
                                                         .with_b_key(&b_pkey)
                                                         .finalize(),
-                                                    tos::SmartContract::Args().set_now(21)));
+                                                    funded_args().set_now(21)));
   expect_code(
       "B sends unsigned Promise(1000000, 0)", no_promise_signature,
       channel.write().send_external_message(
@@ -2858,7 +2862,7 @@ TEST(Smarcont, Channel) {
               .signed_promise(SignedPromiseBuilder().promise_A(1000000).channel_id(config.channel_id).finalize())
               .with_b_key(&b_pkey)
               .finalize(),
-          tos::SmartContract::Args().set_now(21)));
+          funded_args().set_now(21)));
 
   expect_ok(
       "B sends Promise(1000000, 0) signed by A",
@@ -2868,7 +2872,7 @@ TEST(Smarcont, Channel) {
                   SignedPromiseBuilder().promise_A(1000000).with_key(&a_pkey).channel_id(config.channel_id).finalize())
               .with_b_key(&b_pkey)
               .finalize(),
-          tos::SmartContract::Args().set_now(21)));
+          funded_args().set_now(21)));
   ValidateStateClose(channel->get_state().data)
       .expect_A(1000)
       .expect_B(2000)
@@ -2889,7 +2893,7 @@ TEST(Smarcont, Channel) {
                                                                           .finalize())
                                                       .with_a_key(&a_pkey)
                                                       .finalize(),
-                                                  tos::SmartContract::Args().set_now(21)));
+                                                  funded_args().set_now(21)));
   ValidateStatePayout(channel->get_state().data).expect_A(1000 + 10).expect_B(2000 - 10).finish().ensure();
 #undef expect_ok
 #undef expect_code
