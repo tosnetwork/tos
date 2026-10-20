@@ -8632,3 +8632,105 @@ fn the_round_cap_alone_ends_a_proposal_after_its_seventh_round() {
     assert_eq!(touch_round(&mut chain, &validators[0], &p, 0xb080), VOTE_DISCARDED);
     assert_eq!(proposal_counters(&chain, &p), None, "the proposal outlived max_tot_rounds");
 }
+
+// ---------------------------------------------------------------------------
+// Reproduction of audit finding M-EL-ADNL-01 (smartcont audit triage, 2026-10-20).
+//
+// Registration checks only that a transport address is non-zero, every
+// candidate's address is readable through `participant_list`, and a refused
+// set returns every stake in full. So one candidate restating an honest
+// candidate's address is enough to have the configuration refuse the whole
+// elected set, and the refusal costs that candidate nothing but fees.
+// This test asserts the defect as it stands; a fix turns it red.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn one_stake_restating_an_honest_adnl_cancels_the_election_and_is_refunded_in_full() {
+    let (mut chain, _treasury, election) = open_election("adnl-squat-election", 200_000 * TOS);
+    require_post_quantum_version(&mut chain);
+    let mut validators = Vec::new();
+    let mut owners: Vec<([u8; 32], u128)> = Vec::new();
+    let mut honest_adnl = None;
+    // Four honest validators with distinct addresses, then one squatter that
+    // states the first validator's address with the smallest stake the others
+    // use. It needs no cooperation from anyone.
+    for index in 0..5u8 {
+        let mut validator = PqValidator::new(0x70 + index);
+        if index == 0 {
+            honest_adnl = Some(validator.adnl);
+        } else if index == 4 {
+            validator.adnl = honest_adnl.expect("the honest validator has an address");
+        }
+        let account = chain
+            .blockchain
+            .treasury(&format!("adnl-squat-{index}"), 40_000 * TOS)
+            .expect("a funded account");
+        let stake = 11_000 * TOS;
+        let result = pq_stake(&mut chain, &account, &validator, election, 40 + index as u64, stake);
+        assert_eq!(
+            reply(&result),
+            (STAKE_ACCEPTED, 0),
+            "the Elector refused stake {index} at registration (a fix would refuse the squatter here)"
+        );
+        let owner: [u8; 32] =
+            account.address().address().get_bytestring(0).try_into().expect("an address");
+        owners.push((owner, stake as u128));
+        validators.push((validator, account));
+    }
+    for (owner, _) in &owners {
+        assert_eq!(owed(&chain, owner), 0, "nothing is owed while the election stands");
+    }
+
+    chain.blockchain.set_now(election - chain.elect_end_before);
+    let result =
+        chain.blockchain.tick_tock(&chain.elector, TransactionTickTock::Tick).expect("tick runs");
+    result.expect_success();
+    let tags = replies(&result);
+    eprintln!("M-EL-ADNL-01 close: reply tags {tags:08x?}");
+    assert!(
+        tags.contains(&VALIDATOR_SET_REFUSED),
+        "the set with the squatter's duplicate address was not refused: {tags:08x?}"
+    );
+    assert!(!tags.contains(&VALIDATOR_SET_INSTALLED), "the set was installed: {tags:08x?}");
+    assert!(
+        !parameter_present(&configuration_from_contract(&chain), 36),
+        "a ConfigParam 36 was stored"
+    );
+
+    // Every stake, the squatter's included, is credited back less only the
+    // elector's fixed 1 TOS confirmation fee.
+    let confirmation_fee = TOS as u128;
+    for (index, (owner, stake)) in owners.iter().enumerate() {
+        let back = owed(&chain, owner);
+        eprintln!("M-EL-ADNL-01 member {index}: placed {stake}, credited back {back}");
+        assert_eq!(
+            back,
+            *stake - confirmation_fee,
+            "member {index} was not refunded what it placed less the confirmation fee"
+        );
+    }
+    // What cancelling the election cost the squatter: the stake it placed less
+    // what the elector credits back, i.e. the confirmation fee (gas aside).
+    let squatter_cost = owners[4].1 - owed(&chain, &owners[4].0);
+    eprintln!(
+        "M-EL-ADNL-01 squatter's cost for cancelling the election: {squatter_cost} nanoTOS of a {} stake",
+        owners[4].1
+    );
+    assert_eq!(squatter_cost, confirmation_fee, "the squatter lost more than the confirmation fee");
+
+    // The election is gone; the next tick within the term opens a fresh one,
+    // and the squatter is admitted to it again with the same address.
+    assert_eq!(active_election_id(&chain), 0, "the refused election was not cleared");
+    chain.blockchain.set_now(chain.blockchain.now() + 1);
+    tick(&mut chain).expect_success();
+    let fresh = active_election_id(&chain) as u32;
+    assert!(fresh != 0 && fresh != election, "no fresh election opened after the refusal");
+    let (squatter, account) = &validators[4];
+    let result = pq_stake(&mut chain, account, squatter, fresh, 90, 11_000 * TOS);
+    assert_eq!(
+        reply(&result),
+        (STAKE_ACCEPTED, 0),
+        "the squatter was refused when registering the same address into the fresh election"
+    );
+    eprintln!("M-EL-ADNL-01: fresh election {fresh} admits the same duplicate address again");
+}

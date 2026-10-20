@@ -150,17 +150,24 @@ fn signature_set(key: &SigningKey, action: &Cell) -> Cell {
 }
 
 fn purpose_isolated_policy() -> (Cell, Vec<SigningKey>) {
-    let keys = vec![
-        SigningKey::from_bytes(&[0x91; 32]),
-        SigningKey::from_bytes(&[0x92; 32]),
-        SigningKey::from_bytes(&[0x93; 32]),
-    ];
-    let mut controllers = vec![
-        (keys[0].verifying_key().to_bytes(), 0x05_u16, true),
-        (keys[1].verifying_key().to_bytes(), 0x02_u16, false),
-        (keys[2].verifying_key().to_bytes(), 0x08_u16, false),
-    ];
-    controllers.sort_by_key(|entry| entry.0);
+    three_controller_policy([0x05, 0x02, 0x08])
+}
+
+/// Three controllers with the given purpose bits (0x04 marks a recovery key),
+/// threshold 1 for every purpose. Keys are returned in policy (sorted) order so
+/// a possession list signed in that order lines up with the policy.
+fn three_controller_policy(purposes: [u16; 3]) -> (Cell, Vec<SigningKey>) {
+    let mut keyed: Vec<(SigningKey, u16)> = [[0x91u8; 32], [0x92; 32], [0x93; 32]]
+        .iter()
+        .zip(purposes)
+        .map(|(seed, purpose)| (SigningKey::from_bytes(seed), purpose))
+        .collect();
+    keyed.sort_by_key(|(key, _)| key.verifying_key().to_bytes());
+    let controllers: Vec<([u8; 32], u16, bool)> = keyed
+        .iter()
+        .map(|(key, purpose)| (key.verifying_key().to_bytes(), *purpose, purpose & 0x04 != 0))
+        .collect();
+    let keys: Vec<SigningKey> = keyed.into_iter().map(|(key, _)| key).collect();
     let mut next: Option<Cell> = None;
     for (public_key, purposes, recovery) in controllers.into_iter().rev() {
         let mut controller = BuilderData::new();
@@ -2489,4 +2496,37 @@ fn the_client_builder_matches_the_contract_and_refuses_the_same_width() {
         .expect_err("one controller more is refused")
         .to_string();
     assert!(error.contains(&format!("at most {MAX_WIDTH}")), "unexpected error: {error}");
+}
+
+// ---------------------------------------------------------------------------
+// Reproduction of audit finding M-NR-01 (smartcont audit triage, 2026-10-20).
+//
+// Registration makes every controller prove possession, then verifies the same
+// signature list again requiring the agent-control purpose of every key, so a
+// policy that isolates purposes (the spec's least-privilege shape) cannot be
+// registered at all. The control registers the same keys once they all carry
+// agent control, so the refusal is the purpose check, not possession.
+// This test asserts the defect as it stands; a fix turns it red.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn registration_refuses_a_purpose_isolated_policy_although_every_key_signed() {
+    let mut f = Fixture::new();
+    let (isolated, keys) = purpose_isolated_policy();
+    let (result, address) = f.register_with(isolated, [0x7a; 32], |action| all_sign(&keys, action));
+    let gas = gas_at(&result, &address);
+    eprintln!("M-NR-01 purpose-isolated registration: {gas:?}");
+    assert!(
+        gas.aborted && gas.exit == ERR_BAD_SIGNATURE,
+        "registration of a purpose-isolated policy no longer fails with bad_signature: {gas:?}"
+    );
+    assert!(!f.registered(&address), "the purpose-isolated agent must not be registered");
+
+    let (all_agent_control, control_keys) = three_controller_policy([0x05, 0x03, 0x09]);
+    let (result, address) =
+        f.register_with(all_agent_control, [0x7b; 32], |action| all_sign(&control_keys, action));
+    let gas = gas_at(&result, &address);
+    eprintln!("M-NR-01 control (every key has agent control): {gas:?}");
+    assert!(!gas.aborted && gas.exit == 0, "the control policy did not register: {gas:?}");
+    assert!(f.registered(&address), "the control agent must be registered");
 }

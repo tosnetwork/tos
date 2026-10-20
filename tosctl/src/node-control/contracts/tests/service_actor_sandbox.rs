@@ -1757,3 +1757,217 @@ fn a_response_signed_for_another_network_is_refused() {
     f.respond_signed(3, 0, response_hash, &this_network).expect_success();
     assert!(f.request(0).is_none());
 }
+
+// ---------------------------------------------------------------------------
+// Reproductions of audit findings M-SA-01 and M-SA-02 (smartcont audit
+// triage, 2026-10-20). Both assert the defect as it stands; a fix turns them
+// red.
+// ---------------------------------------------------------------------------
+
+/// M-SA-01 probe: the withdrawal cap is `balance - pending - refundable -
+/// reserve` and never subtracts `locked_storage_fees`, while `respond`
+/// credits the gross price and storage fee to revenue although gas already
+/// left the balance. The audit read this as a path that drains the money
+/// backing live entries. Measured natively it is not: every owner message
+/// leaves its own value behind, and even messages carrying only 0.04 TOS
+/// leave more than the gas they cost, so over 120 rounds of
+/// (call, respond, withdraw-max) on a contract funded with the reserve plus
+/// a 0.2 TOS margin the balance stays above `pending + refundable + locked +
+/// reserve` and grows. The probe records the per-round drift and the fact
+/// that a later sweep is still paid without touching the floor. The only
+/// native path below the floor remains storage rent, covered by
+/// `claim_refund_is_rejected_atomically_when_the_contract_cannot_afford_it`.
+#[test]
+fn max_withdrawals_over_120_rounds_keep_locked_storage_fees_backed() {
+    const RESERVE: u64 = TOS; // MINIMUM_OPERATING_RESERVE in the contract
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let owner = bc.treasury("owner", 10_000 * TOS).expect("owner");
+    let caller = bc.treasury("caller", 10_000 * TOS).expect("caller");
+    let client = bc.treasury("client", 10_000 * TOS).expect("client");
+    let outsider = bc.treasury("outsider", 10_000 * TOS).expect("outsider");
+    let init = ServiceActorInit {
+        owner: owner.address().clone(),
+        authorized_caller: None,
+        open_access: true,
+        price_per_call: TOS / 10,
+        storage_fee: MIN_STORAGE_FEE + MIN_CLEANUP_BOUNTY,
+        cleanup_bounty: MIN_CLEANUP_BOUNTY,
+        rate_limit_per_day: 0,
+        response_sla: MIN_RESPONSE_SLA,
+        refund_claim_window: MIN_REFUND_CLAIM_WINDOW,
+        metadata_hash: [0x11; 32],
+        proof_scheme_hash: [0x22; 32],
+        attestor_pubkey: None,
+    };
+    let service = ServiceActorContract::calculate_address(-1, &init).expect("address");
+    let state_init = ServiceActorContract::build_state_init(&init).expect("state init");
+    // Funded with the operating reserve plus a small margin that absorbs the
+    // deploy's own gas: every later inflow is a client's money or a message's
+    // own value.
+    let deploy = MessageBuilder::internal(owner.address(), &service, RESERVE + TOS / 5)
+        .bounce(false)
+        .state_init(state_init)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+    let mut f = Fixture { bc, owner, caller, caller2: client, outsider, service, init };
+    let owner = f.owner.address().clone();
+    let caller = f.caller.address().clone();
+    let client = f.caller2.address().clone();
+    let outsider = f.outsider.address().clone();
+    // The owner's messages carry only their own gas, so what stays in the
+    // contract is clients' money plus the owner's small change.
+    let thin_value = TOS / 25;
+
+    // One client request stays live throughout: its storage fee is locked.
+    let mut q = 1u64;
+    f.call(&client, q, [0xCC; 32]).expect_success();
+    q += 1;
+    let live_id = 0u64;
+
+    let backed = |f: &Fixture| -> (u64, u64, u64, i128) {
+        let d = f.data();
+        let balance = f.balance(&f.service);
+        let floor = d.pending_liability + d.refundable_liability + RESERVE;
+        let locked = d.locked_storage_fees;
+        (balance, floor, locked, balance as i128 - (floor + locked) as i128)
+    };
+    let (balance, floor, locked, mut slack) = backed(&f);
+    eprintln!("M-SA-01 start: balance {balance} floor {floor} locked {locked} slack {slack}");
+    assert!(slack >= 0, "the fixture starts below the floor even with the margin: {slack}");
+
+    let mut min_drift = i128::MAX;
+    for round in 1..=120u32 {
+        let request_id = round as u64; // request 0 is the client's live one
+        f.call(&caller, q, [round as u8; 32]).expect_success();
+        q += 1;
+        f.send_from_with_value(
+            &owner,
+            ServiceActorContract::respond(q, request_id, [0xBB; 32]).unwrap(),
+            thin_value,
+        )
+        .expect_success();
+        q += 1;
+        let d = f.data();
+        let balance = f.balance(&f.service);
+        // Exactly what the contract permits: the cap sees the balance with
+        // the withdraw message's own value already added.
+        let cap = d.withdrawable_revenue.min(
+            (balance + thin_value)
+                .saturating_sub(d.pending_liability + d.refundable_liability + RESERVE),
+        );
+        assert_eq!(
+            cap, d.withdrawable_revenue,
+            "round {round}: the balance, not revenue, capped the withdrawal"
+        );
+        f.send_from_with_value(
+            &owner,
+            ServiceActorContract::withdraw_revenue(q, cap).unwrap(),
+            thin_value,
+        )
+        .expect_success();
+        q += 1;
+        let (balance, floor, locked, now) = backed(&f);
+        let drift = now - slack;
+        min_drift = min_drift.min(drift);
+        slack = now;
+        if round <= 3 || round % 40 == 0 {
+            eprintln!(
+                "M-SA-01 round {round}: withdrew {cap}; balance {balance} floor {floor} locked {locked} slack {slack} (drift {drift})"
+            );
+        }
+        assert!(
+            slack >= 0,
+            "round {round}: the balance fell below pending + refundable + locked + reserve by {}",
+            -slack
+        );
+    }
+    eprintln!(
+        "M-SA-01: 120 rounds, smallest per-round change of the slack: {min_drift} nanoTOS (two owner messages of {thin_value} each)"
+    );
+    assert!(min_drift > 0, "owner message residue did not outpace gas: {min_drift}");
+
+    // The live entry lapses; an outsider sweeps it and is paid the bounty
+    // without the balance dropping below the floor.
+    let request = f.request(live_id).expect("the client's request is still live");
+    f.bc.set_now(request.refund_claim_deadline as u32);
+    let outsider_before = f.balance(&outsider);
+    f.sweep(&outsider, q, live_id).expect_success();
+    let bounty = f.balance(&outsider) - outsider_before;
+    let (balance, floor, locked, slack) = backed(&f);
+    eprintln!(
+        "M-SA-01 after sweep: bounty paid {bounty}; balance {balance} floor {floor} locked {locked} slack {slack}"
+    );
+    assert!(bounty > 0, "the sweeper was not paid");
+    assert!(slack >= 0, "the sweep took the balance below the floor by {}", -slack);
+}
+
+/// M-SA-02: `call` carries only a query id and a request hash. Admission
+/// checks the attached value against whatever policy is current and
+/// snapshots that policy, so a caller who was quoted one price and one
+/// attestor is admitted under a doubled price and no attestor if the owner
+/// changes both before the call lands. The contract already computes a terms
+/// hash for the snapshot; the caller has no way to present the one it agreed
+/// to.
+#[test]
+fn a_call_quoted_under_one_policy_is_admitted_and_charged_under_another() {
+    let attestor = SigningKey::from_bytes(&[0x11; 32]);
+    let mut f = Fixture::with_attestor(attestor.verifying_key().to_bytes());
+    let owner = f.owner.address().clone();
+    let caller = f.caller.address().clone();
+
+    // The quote: a first call snapshots the terms the caller agreed to.
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    let quoted = f.request(0).expect("request 0");
+    assert_eq!(quoted.price, f.init.price_per_call);
+    assert_eq!(quoted.attestor_pubkey, Some(attestor.verifying_key().to_bytes()));
+
+    // Between quote and execution the owner revokes the attestor and doubles
+    // the price.
+    f.send_from(&owner, ServiceActorContract::revoke_attestor(2).unwrap()).expect_success();
+    let doubled = f.init.price_per_call * 2;
+    f.send_from(
+        &owner,
+        ServiceActorContract::update_policy(
+            3,
+            doubled,
+            f.init.storage_fee,
+            f.init.cleanup_bounty,
+            f.init.response_sla,
+            f.init.refund_claim_window,
+            true,
+            f.init.open_access,
+            f.init.authorized_caller.as_ref(),
+            &owner,
+            f.init.rate_limit_per_day,
+            f.init.metadata_hash,
+            f.init.proof_scheme_hash,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+
+    // The caller sends exactly the message it would have sent for the quote
+    // (same body, same value: quoted price + storage fee + gas margin).
+    let liability_before = f.data().pending_liability;
+    let value = quoted.price + quoted.storage_fee + TOS / 2;
+    let result =
+        f.send_from_with_value(&caller, ServiceActorContract::call(4, [0xAB; 32]).unwrap(), value);
+    result.expect_success();
+    let admitted = f.request(1).expect("request 1 was admitted");
+    let paid = f.data().pending_liability - liability_before;
+    eprintln!(
+        "M-SA-02: quoted price {} attestor {:?} terms {} -> admitted price {} attestor {:?} terms {}; the caller now owes {paid}",
+        quoted.price,
+        quoted.attestor_pubkey.map(hex::encode),
+        hex::encode(quoted.terms_hash),
+        admitted.price,
+        admitted.attestor_pubkey.map(hex::encode),
+        hex::encode(admitted.terms_hash),
+    );
+    assert_eq!(admitted.price, doubled, "the call was not charged the doubled price");
+    assert_eq!(admitted.attestor_pubkey, None, "the call kept the revoked attestor");
+    assert_ne!(admitted.terms_hash, quoted.terms_hash, "the terms hash did not change");
+    assert_eq!(paid, doubled, "the caller's principal at stake is not the doubled price: {paid}");
+}
