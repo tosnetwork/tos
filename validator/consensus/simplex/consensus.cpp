@@ -4,6 +4,11 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <algorithm>
+#include <map>
+#include <type_traits>
+#include <variant>
+
 #include "consensus/simplex/state.h"
 #include "consensus/stats.h"
 #include "consensus/utils.h"
@@ -24,6 +29,12 @@ namespace {
 constexpr unsigned MAX_NOTARIZE_STATE_RESOLVE_ATTEMPTS = 16;
 constexpr double NOTARIZE_STATE_RESOLVE_RETRY_DELAY = 0.1;
 constexpr double MAX_NOTARIZE_STATE_RESOLVE_RETRY_DELAY = 1.0;
+
+// Positions of the vote kinds in Vote::vote, which orders refused votes kept for recovery.
+constexpr std::size_t FINAL_KIND = 1;
+constexpr std::size_t SKIP_KIND = 2;
+static_assert(std::is_same_v<std::variant_alternative_t<FINAL_KIND, decltype(Vote::vote)>, FinalizeVote>);
+static_assert(std::is_same_v<std::variant_alternative_t<SKIP_KIND, decltype(Vote::vote)>, SkipVote>);
 
 struct SlotState {
   SlotState(td::Unit) {
@@ -99,7 +110,7 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
         auto slot = state_->slot_at(i);
         if (slot.has_value() && !slot->state->voted_final && !finality_behind_) {
           slot->state->voted_skip = true;
-          owning_bus().publish<BroadcastVote>(SkipVote{i}).start().detach();
+          request_vote(SkipVote{i});
         }
       }
     }
@@ -107,8 +118,13 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
 
   template <>
   void handle(BusHandle, std::shared_ptr<const FinalizationBacklog> event) {
-    // Finality can catch up, and when it does this group produces again.
+    // Finality can catch up, and when it does this group produces again. Only the transition
+    // to clear recovers anything; a repeated event in either direction changes nothing.
+    const bool cleared = finality_behind_ && !event->over_limit;
     finality_behind_ = event->over_limit;
+    if (cleared) {
+      recover_after_backlog();
+    }
   }
 
   template <>
@@ -119,6 +135,20 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   template <>
   void handle(BusHandle, std::shared_ptr<const NoncriticalParamsUpdated> event) {
     params_ = event->params;
+  }
+
+  // Read-only: the size of the state kept for recovery after a finalization backlog.
+  template <>
+  td::actor::Task<QueryConsensusRecoveryState::Result> process(BusHandle,
+                                                               std::shared_ptr<QueryConsensusRecoveryState>) {
+    QueryConsensusRecoveryState::Result result{.deferred_skip_windows = deferred_skips_.size(),
+                                               .deferred_skip_slots = 0,
+                                               .suppressed_votes = suppressed_votes_.size(),
+                                               .current_window = current_window_};
+    for (const auto& [_, range] : deferred_skips_) {
+      result.deferred_skip_slots += range.end > range.begin ? range.end - range.begin : 0;
+    }
+    co_return result;
   }
 
   template <>
@@ -139,6 +169,9 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
       tos::health::consensus_stats.add(tos::health::consensus_stats.leader_windows_observed);
     td::uint32 new_window = event->start_slot / slots_per_leader_window_;
     current_window_ = new_window;
+    // A later window is observed only once every slot before it has a certificate, so the
+    // skips deferred for those windows are no longer needed by anyone.
+    deferred_skips_.erase(deferred_skips_.begin(), deferred_skips_.lower_bound(new_window));
 
     if (previous_window_had_skip_) {
       first_block_timeout_ = std::min<std::chrono::duration<double>>(
@@ -169,15 +202,17 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
 
   void alarm() override {
     td::uint32 range_start = timeout_slot_ - 1;
-    td::uint32 window_start = range_start - range_start % slots_per_leader_window_;
+    td::uint32 window = range_start / slots_per_leader_window_;
+    td::uint32 window_start = window * slots_per_leader_window_;
     td::uint32 window_end = window_start + slots_per_leader_window_;
-    for (td::uint32 i = range_start; i < window_end; ++i) {
-      auto slot = state_->slot_at(i);
-      if (slot && !slot->state->voted_final && !finality_behind_) {
-        owning_bus().publish<BroadcastVote>(SkipVote{i}).start().detach();
-        slot->state->voted_skip = true;
-        previous_window_had_skip_ = true;
-      }
+    if (finality_behind_) {
+      // The deadline has passed, but no vote may be cast while finality is behind. The
+      // expired range is kept rather than dropped: the alarm fires once and nothing else
+      // would ask for these skips again, so dropping them can leave the group with no
+      // certificate it could ever form.
+      defer_skips(window, range_start, window_end);
+    } else {
+      cast_skips(range_start, window_end, /*record_history=*/true);
     }
     timeout_slot_ = window_end;
   }
@@ -349,6 +384,9 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
     }
     slot.state->voted_notar = candidate->id;
 
+    // Deliberately not request_vote(): a notarize vote refused while finality is behind is
+    // neither undone nor asked for again. Its slot recovers through the skip timeout, and
+    // replaying a notarization would need its own candidate and state identity checks.
     owning_bus().publish<BroadcastVote>(NotarizeVote{candidate->id}).start().detach();
     try_vote_final(slot);  // If we've observed NotarCert already, it might be possible to vote final.
     co_return td::Unit{};
@@ -388,8 +426,137 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
 
     if (!slot.state->voted_skip && !slot.state->voted_final && slot.state->voted_notar == slot.state->notar_cert &&
         !finality_behind_) {
-      owning_bus().publish<BroadcastVote>(FinalizeVote{*slot.state->voted_notar}).start().detach();
       slot.state->voted_final = true;
+      request_vote(FinalizeVote{*slot.state->voted_notar});
+    }
+  }
+
+  // Skip every slot of [begin, end) that this node has not voted to finalize. A slot whose
+  // skip is already cast is left alone, so no second request for the same vote is made.
+  // `record_history` is set only when the skip timeout itself fires: the adaptive first-block
+  // timeout of the next window depends on whether this one timed out, and a skip cast later,
+  // on recovery, must not rewrite that for a window that may already have been replaced.
+  void cast_skips(td::uint32 begin, td::uint32 end, bool record_history) {
+    for (td::uint32 i = begin; i < end; ++i) {
+      auto slot = state_->slot_at(i);
+      if (!slot || slot->state->voted_final) {
+        continue;
+      }
+      if (record_history) {
+        previous_window_had_skip_ = true;
+      }
+      if (slot->state->voted_skip) {
+        continue;
+      }
+      slot->state->voted_skip = true;
+      request_vote(SkipVote{i});
+    }
+  }
+
+  // Skip and final votes are requested here. Each slot's decision is recorded before the
+  // request and is never undone, so no other vote can be chosen for that slot whatever Pool
+  // answers. Pool may refuse the request before committing any intent because finality fell
+  // behind meanwhile; that refusal, and only that one, leaves nothing of the vote outside
+  // this actor, so the exact vote is kept and requested again once finality catches up. At
+  // most one request per vote is outstanding: a vote is requested again only after its
+  // refusal has arrived.
+  void request_vote(Vote vote) {
+    submit_vote(std::move(vote)).start().detach();
+  }
+
+  td::actor::Task<> submit_vote(Vote vote) {
+    auto outcome = co_await owning_bus().publish<BroadcastVote>(vote).wrap();
+    if (outcome.is_ok() && outcome.ok() == VoteCastOutcome::SuppressedBeforeIntentFinalityBehind) {
+      vote_suppressed(std::move(vote));
+    }
+    co_return td::Unit{};
+  }
+
+  void vote_suppressed(Vote vote) {
+    if (vote_obsolete(vote)) {
+      return;
+    }
+    if (finality_behind_) {
+      suppressed_votes_.insert_or_assign(SuppressedKey{vote.referenced_slot(), vote.vote.index()}, std::move(vote));
+      return;
+    }
+    // The backlog cleared before this refusal arrived. That recovery has already run and
+    // could not see this vote, so nothing else will ask for it.
+    request_vote(std::move(vote));
+  }
+
+  // Whether a refused vote is no longer needed by anyone: its slot is finalized, or, for a
+  // skip, a later leader window was observed, which needs a certificate for every slot of
+  // the vote's window. The slot's decision is also checked, though nothing undoes it.
+  bool vote_obsolete(const Vote& vote) {
+    auto slot = state_->slot_at(vote.referenced_slot());
+    if (!slot.has_value()) {
+      return true;
+    }
+    if (std::holds_alternative<SkipVote>(vote.vote)) {
+      return vote.referenced_slot() / slots_per_leader_window_ < current_window_ || !slot->state->voted_skip ||
+             slot->state->voted_final;
+    }
+    return !slot->state->voted_final;
+  }
+
+  // Requests again every refused vote of `kind` that is still needed, in slot order.
+  void resubmit_suppressed(std::size_t kind) {
+    for (auto it = suppressed_votes_.begin(); it != suppressed_votes_.end();) {
+      if (it->first.kind != kind) {
+        ++it;
+        continue;
+      }
+      auto vote = std::move(it->second);
+      it = suppressed_votes_.erase(it);
+      if (!vote_obsolete(vote)) {
+        request_vote(std::move(vote));
+      }
+    }
+  }
+
+  // The skip timeout of `window` expired over [range_start, window_end) while finality was
+  // behind. The deadline did pass, so the adaptive timeout records it exactly as a cast skip
+  // would; the votes themselves wait for the backlog to clear. A second expiry in the same
+  // window only widens the range.
+  void defer_skips(td::uint32 window, td::uint32 range_start, td::uint32 window_end) {
+    bool any = false;
+    for (td::uint32 i = range_start; i < window_end; ++i) {
+      auto slot = state_->slot_at(i);
+      any = any || (slot && !slot->state->voted_final);
+    }
+    if (!any) {
+      return;
+    }
+    previous_window_had_skip_ = true;
+    auto [it, inserted] = deferred_skips_.try_emplace(window, DeferredSkips{range_start, window_end});
+    if (!inserted) {
+      it->second.begin = std::min(it->second.begin, range_start);
+    }
+  }
+
+  // Finality caught up. Cast what the backlog held back, in the order normal operation would
+  // have cast it: first the final votes for slots this node notarized and saw notarized, then
+  // the skips whose timeouts expired meanwhile. A slot that just received a final vote is not
+  // skipped. Nothing here touches the timeout itself: an unexpired deadline keeps its time,
+  // and no alarm is armed for state that was never initialized.
+  //
+  // Votes Pool refused before their intent are requested again in the same order: refused
+  // final votes with the final votes, refused skips with the skips.
+  void recover_after_backlog() {
+    resubmit_suppressed(FINAL_KIND);
+    state_->for_each_tracked_slot([&](State::SlotRef slot) {
+      if (slot.state->voted_notar.has_value() && slot.state->notar_cert.has_value()) {
+        try_vote_final(slot);
+      }
+    });
+    resubmit_suppressed(SKIP_KIND);
+    auto deferred = std::move(deferred_skips_);
+    deferred_skips_.clear();
+    for (const auto& [window, range] : deferred) {
+      LOG(INFO) << "Simplex consensus: finality caught up; casting the skips of window " << window
+                << " deferred from slot " << range.begin;
+      cast_skips(range.begin, range.end, /*record_history=*/false);
     }
   }
 
@@ -403,6 +570,22 @@ class ConsensusImpl : public td::actor::SpawnsWith<Bus>, public td::actor::Conne
   // Set while more agreed certificates are waiting to be finalized than the resolver will
   // hold. Producing more would add to a pile nothing is draining.
   bool finality_behind_ = false;
+  // Skip ranges whose timeout expired while finality was behind, by leader window. Each is
+  // cast when the backlog clears, or dropped once a later window is observed.
+  struct DeferredSkips {
+    td::uint32 begin;
+    td::uint32 end;
+  };
+  std::map<td::uint32, DeferredSkips> deferred_skips_;
+  // Skip and final votes Pool refused before committing their intent, kept exactly until
+  // finality catches up. Keyed by slot and vote kind; a key is present only while no request
+  // for that vote is outstanding.
+  struct SuppressedKey {
+    td::uint32 slot;
+    std::size_t kind;
+    auto operator<=>(const SuppressedKey&) const = default;
+  };
+  std::map<SuppressedKey, Vote> suppressed_votes_;
   std::optional<State> state_;
   td::uint32 current_window_ = 0;
   // Finalized slots for which a late candidate is still handed to the candidate resolver.

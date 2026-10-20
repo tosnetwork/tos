@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: LGPL-2.0-or-later
  */
 
+#include <array>
+#include <atomic>
 #include <unordered_set>
 
 #include "consensus/utils.h"
@@ -16,6 +18,7 @@
 
 #include "bus.h"
 #include "completed-lru.h"
+#include "counted-finalizations.h"
 
 namespace tos::validator::consensus::simplex {
 
@@ -91,6 +94,29 @@ size_t injected_permanent_finalization_failures() {
   auto parsed = td::to_integer_safe<size_t>(td::Slice(value));
   return parsed.is_error() ? 0 : parsed.move_as_ok();
 }
+
+// A transient condition that lasts a fixed time rather than a fixed number of attempts: every
+// conversion attempt that starts within this many milliseconds of the first one fails with the
+// transient class of error. A count-based injection is used up by retries in well under a
+// skip timeout; this one holds the backlog over its limit across one. Unset outside tests.
+double injected_finalization_hold_seconds() {
+  const char* value = std::getenv("TOS_SIMPLEX_INJECT_FINALIZATION_HOLD_MS");
+  if (value == nullptr) {
+    return 0.0;
+  }
+  auto parsed = td::to_integer_safe<td::uint32>(td::Slice(value));
+  return parsed.is_error() ? 0.0 : static_cast<double>(parsed.ok()) / 1000.0;
+}
+
+// Test-only: when set, every change to the running count of unfinalized entries is checked
+// against a full walk of the map, and the peak against the old sampling points; a mismatch
+// aborts at once. Unset outside tests, so the count adds no walk of the map.
+bool crosscheck_unfinalized_enabled() {
+  static const bool enabled = std::getenv("TOS_SIMPLEX_TEST_CROSSCHECK_UNFINALIZED") != nullptr;
+  return enabled;
+}
+
+std::array<std::atomic<size_t>, static_cast<size_t>(UnfinalizedTransition::Count)> unfinalized_crosschecks{};
 
 size_t cache_limit_from_env(const char* name, size_t default_value) {
   const char* value = std::getenv(name);
@@ -257,6 +283,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
                                           .finalizations_stalled = finalizations_stalled_,
                                           .pending_finalizations = pending_finalizations_,
                                           .backlog_over_limit = backlog_over_limit_,
+                                          .pending_finalizations_peak = pending_finalizations_peak_,
+                                          .pending_finalizations_max = pending_finalizations_max_,
+                                          .unfinalized_held_peak = finalized_blocks_.unfinalized_peak(),
                                           .finalizations_stalled_permanently = finalizations_stalled_permanently_,
                                           .slot_attempts = 0};
     for (const auto& [id, state] : finalized_blocks_) {
@@ -433,7 +462,13 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     }
 
     ++finalized_db_hits_;
-    finalized_blocks_[id].state = Finalization::Finalized;
+    // Another attempt may have created the entry while the read above was suspended; the
+    // durable marker wins and the entry is finalized either way.
+    auto& entry = finalization_entry(id, Finalization::Finalized);
+    if (entry.state != Finalization::Finalized) {
+      note_crosscheck(UnfinalizedTransition::DbHitOverwrite);
+    }
+    set_finalization_state(entry, Finalization::Finalized);
     touch_finalized_cache(id);
     co_return Finalization::Finalized;
   }
@@ -614,7 +649,11 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     std::vector<td::Promise<td::Unit>> waiters;
   };
 
-  std::map<CandidateId, FinalizedBlock> finalized_blocks_;
+  // Every insertion goes through finalization_entry() and every state change through
+  // set_finalization_state(), which keep the count of unfinalized entries current.
+  CountedFinalizations<CandidateId, FinalizedBlock, Finalization, Finalization::Finalized> finalized_blocks_;
+  // Test-only: the old peak, replayed from a full walk at the points that used to sample it.
+  size_t legacy_sampled_unfinalized_peak_ = 0;
   CompletedLru<CandidateId> finalized_blocks_lru_{
       cache_limit_from_env("TOS_SIMPLEX_FINALIZED_CACHE_MAX_ENTRIES", DEFAULT_FINALIZED_CACHE_MAX_ENTRIES)};
   size_t finalized_cache_evictions_ = 0;
@@ -634,6 +673,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   // Certificates held un-converted right now, and whether the group has been told to stop.
   size_t pending_finalizations_ = 0;
   bool backlog_over_limit_ = false;
+  // Observability only: the most of each held at once since the resolver came up.
+  size_t pending_finalizations_peak_ = 0;
   const size_t pending_finalizations_max_ =
       cache_limit_from_env("TOS_SIMPLEX_PENDING_FINALIZATIONS_MAX", DEFAULT_PENDING_FINALIZATIONS_MAX);
   size_t finalized_db_hits_ = 0;
@@ -641,6 +682,53 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
   size_t finalized_db_skips_ = 0;
   size_t injected_transient_failures_remaining_ = injected_transient_finalization_failures();
   size_t injected_permanent_failures_remaining_ = injected_permanent_finalization_failures();
+  const double injected_hold_seconds_ = injected_finalization_hold_seconds();
+  std::optional<td::Timestamp> injected_hold_until_;
+
+  FinalizedBlock& finalization_entry(const CandidateId& id, Finalization initial) {
+    const bool existed = crosscheck_unfinalized_enabled() && finalized_blocks_.find(id) != finalized_blocks_.end();
+    auto& entry = finalized_blocks_.entry_for(id, initial);
+    note_crosscheck(existed                              ? UnfinalizedTransition::Lookup
+                    : initial == Finalization::Finalized ? UnfinalizedTransition::InsertFinalized
+                                                         : UnfinalizedTransition::InsertUnfinalized);
+    return entry;
+  }
+
+  void set_finalization_state(FinalizedBlock& entry, Finalization next) {
+    const bool was_finalized = entry.state == Finalization::Finalized;
+    finalized_blocks_.set_state(entry, next);
+    const bool is_finalized = next == Finalization::Finalized;
+    note_crosscheck(
+        was_finalized
+            ? (is_finalized ? UnfinalizedTransition::RepeatFinalized : UnfinalizedTransition::FromFinalized)
+            : (is_finalized ? UnfinalizedTransition::ToFinalized : UnfinalizedTransition::BetweenUnfinalized));
+  }
+
+  // Test-only: the running count must equal a full walk after every change.
+  void note_crosscheck(UnfinalizedTransition kind) {
+    if (!crosscheck_unfinalized_enabled()) {
+      return;
+    }
+    unfinalized_crosschecks[static_cast<size_t>(kind)].fetch_add(1, std::memory_order_relaxed);
+    const size_t walked = finalized_blocks_.count_by_walk();
+    LOG_IF(FATAL, walked != finalized_blocks_.unfinalized())
+        << "UNFINALIZED_COUNTER_MISMATCH after transition " << static_cast<int>(kind) << ": running count "
+        << finalized_blocks_.unfinalized() << ", full walk " << walked;
+  }
+
+  // Test-only: replays the peak the old code sampled from a full walk at these exact points,
+  // and requires the running peak to equal it.
+  void crosscheck_legacy_sample() {
+    if (!crosscheck_unfinalized_enabled()) {
+      return;
+    }
+    unfinalized_crosschecks[static_cast<size_t>(UnfinalizedTransition::LegacySample)].fetch_add(
+        1, std::memory_order_relaxed);
+    legacy_sampled_unfinalized_peak_ = std::max(legacy_sampled_unfinalized_peak_, finalized_blocks_.count_by_walk());
+    LOG_IF(FATAL, legacy_sampled_unfinalized_peak_ != finalized_blocks_.unfinalized_peak())
+        << "UNFINALIZED_PEAK_MISMATCH: running peak " << finalized_blocks_.unfinalized_peak()
+        << ", peak sampled the old way " << legacy_sampled_unfinalized_peak_;
+  }
 
   void touch_finalized_cache(const CandidateId& id) {
     auto evicted = finalized_blocks_lru_.touch(id);
@@ -651,7 +739,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     CHECK(it != finalized_blocks_.end());
     CHECK(it->second.state == Finalization::Finalized);
     CHECK(it->second.waiters.empty());
-    finalized_blocks_.erase(it);
+    finalized_blocks_.erase_finalized(it);
+    note_crosscheck(UnfinalizedTransition::Evict);
     ++finalized_cache_evictions_;
     maybe_log_cache_stats(false);
   }
@@ -771,10 +860,11 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
     // consumed, so returning the rejection alone drops the certificate with nothing left to
     // ask for it again. The attempt is counted against an entry and retried, exactly as a
     // failure inside the attempt is.
-    FinalizedBlock& state = finalized_blocks_[id];
+    FinalizedBlock& state = finalization_entry(id, Finalization::Idle);
     if (!finalized_inflight_.try_admit()) {
       ++finalized_admission_rejections_;
       ++state.attempts;
+      crosscheck_legacy_sample();
       auto rejection =
           td::Status::Error(ErrorCode::notready,
                             PSTRING() << "Simplex state-resolver: too many concurrent finalizations ("
@@ -785,8 +875,9 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       retry_finalization(id, final_cert, final_candidate, state.attempts).start().detach();
       co_return std::move(rejection);
     }
-    state.state = Finalization::InFlight;
+    set_finalization_state(state, Finalization::InFlight);
     ++state.attempts;
+    crosscheck_legacy_sample();
     {
       SCOPE_EXIT {
         finalized_inflight_.release();
@@ -794,13 +885,13 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       auto result = co_await finalize_blocks_inner(id, final_cert, final_candidate).wrap();
       auto waiters = std::move(state.waiters);
       if (result.is_ok()) {
-        state.state = Finalization::Finalized;
+        set_finalization_state(state, Finalization::Finalized);
         touch_finalized_cache(id);
       } else {
         switch (classify_failure(result.error())) {
           case FailureKind::Cancelled:
             // The group is going away. Leave the entry as it is; nothing outlives this.
-            state.state = Finalization::Idle;
+            set_finalization_state(state, Finalization::Idle);
             break;
           case FailureKind::Retryable:
             // The entry goes back to Idle rather than being erased, because erasing it
@@ -808,7 +899,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
             // FinalizationObserved that would have said so again was consumed when this
             // attempt started. A retry is scheduled while the certificate is still in hand,
             // and there is no count at which that stops: see the constants above.
-            state.state = Finalization::Idle;
+            set_finalization_state(state, Finalization::Idle);
             ++finalization_retries_;
             report_if_stalled(id, state, result.error().message());
             retry_finalization(id, final_cert, final_candidate, state.attempts).start().detach();
@@ -817,7 +908,7 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
             // Kept, reported, and not retried. The certificate is still evidence a quorum
             // agreed on, so it is not thrown away, and it still counts against the backlog
             // below -- a chain must not run ahead of a finality that is not coming.
-            state.state = Finalization::StalledPermanently;
+            set_finalization_state(state, Finalization::StalledPermanently);
             ++finalizations_stalled_permanently_;
             LOG(ERROR) << "Simplex state-resolver: the certificate for slot " << id.slot
                        << " cannot be finalized and retrying will not change that: " << result.error().message()
@@ -849,6 +940,8 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
       beyond_retrying += entry.state == Finalization::StalledPermanently ? 1 : 0;
     }
     pending_finalizations_ = pending;
+    pending_finalizations_peak_ = std::max(pending_finalizations_peak_, pending);
+    crosscheck_legacy_sample();
     // One certificate that can never be converted is enough on its own, whatever the limit
     // says. The limit exists to bound a queue that is still moving; a finalization beyond
     // retrying is not a queue, it is a chain that cannot pass this slot, and producing more
@@ -900,6 +993,14 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
                                           std::optional<CandidateRef> final_candidate) {
     auto& bus = *owning_bus();
 
+    if (injected_hold_seconds_ > 0.0) {
+      if (!injected_hold_until_.has_value()) {
+        injected_hold_until_ = td::Timestamp::in(injected_hold_seconds_);
+      }
+      if (!injected_hold_until_->is_in_past()) {
+        co_return td::Status::Error(ErrorCode::notready, "Simplex state-resolver: injected finalization hold");
+      }
+    }
     if (injected_transient_failures_remaining_ > 0) {
       --injected_transient_failures_remaining_;
       co_return td::Status::Error(ErrorCode::notready,
@@ -960,6 +1061,10 @@ class StateResolverImpl : public td::actor::SpawnsWith<Bus>, public td::actor::C
 
 void StateResolver::register_in(td::actor::Runtime& runtime) {
   runtime.register_actor<StateResolverImpl>("StateResolver");
+}
+
+size_t unfinalized_crosschecks_for_test(UnfinalizedTransition kind) {
+  return unfinalized_crosschecks[static_cast<size_t>(kind)].load(std::memory_order_relaxed);
 }
 
 }  // namespace tos::validator::consensus::simplex

@@ -549,7 +549,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   // against the local apply and the network send, and that ordering cannot be left to the
   // order in which independent listeners happen to run.
   template <>
-  td::actor::Task<> process(BusHandle, std::shared_ptr<BroadcastVote> event) {
+  td::actor::Task<VoteCastOutcome> process(BusHandle, std::shared_ptr<BroadcastVote> event) {
     co_return co_await cast_our_vote(event->vote);
   }
 
@@ -895,7 +895,11 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
   // signature bytes are durable before they can affect local state or leave the process.
   // Both writes are awaited and a failure of either stops the vote, because a vote this node
   // cannot prove it committed must not be one a peer can hold.
-  td::actor::Task<> cast_our_vote(Vote vote) {
+  //
+  // The outcome says whether anything about the vote can exist outside the requester. Only a
+  // refusal before the intent is reported as such; from the intent on, it is Submitted
+  // whatever happens next.
+  td::actor::Task<VoteCastOutcome> cast_our_vote(Vote vote) {
     auto &bus = *owning_bus();
     CHECK(bus.is_validator());
 
@@ -904,16 +908,24 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
                                                tos::health::consensus_stats, &owning_bus()->health_session.vote_ledger,
                                                &observation_key);
 
+    if (bus.vote_gate_hook_for_test) {
+      co_await bus.vote_gate_hook_for_test(vote, VoteGatePoint::BeforeFinalityGate);
+    }
     if (finality_behind_) {
       // Finality fell behind while this vote was being prepared. Consensus stops producing
-      // new ones, but one already in flight arrives here regardless.
+      // new ones, but one already in flight arrives here regardless. It is refused before
+      // anything is written, and the requester is told so: it is the only party that still
+      // knows about this vote and can ask for it again once finality catches up.
       observation.finish(tos::health::Phase::FinalitySuppressed);
-      co_return td::Unit{};
+      if (bus.vote_gate_hook_for_test) {
+        co_await bus.vote_gate_hook_for_test(vote, VoteGatePoint::AfterFinalitySuppression);
+      }
+      co_return VoteCastOutcome::SuppressedBeforeIntentFinalityBehind;
     }
     if (!vote_journal_failure_.empty()) {
       observation.finish(tos::health::Phase::JournalSuppressed);
       LOG(ERROR) << "consensus: refusing to vote, the vote journal is unusable: " << vote_journal_failure_;
-      co_return td::Unit{};
+      co_return VoteCastOutcome::SuppressedBeforeIntentJournalUnusable;
     }
 
     owning_bus().publish<TraceEvent>(stats::Voted::create(vote));
@@ -924,7 +936,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
                                                                       : tos::health::Phase::IntentFailure);
       LOG(ERROR) << "consensus: the vote intent for " << vote << " was not committed (" << seqno.error()
                  << "); not signing it";
-      co_return td::Unit{};
+      co_return VoteCastOutcome::Submitted;
     }
 
     observation.observe(tos::health::Phase::IntentCommitted);
@@ -933,7 +945,7 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
     if (!signature.has_value()) {
       observation.finish(owning_bus()->pq_signer == nullptr ? tos::health::Phase::MissingSigner
                                                             : tos::health::Phase::SignFailure);
-      co_return td::Unit{};
+      co_return VoteCastOutcome::Submitted;
     }
     observation.observe(tos::health::Phase::Signed);
 
@@ -944,13 +956,13 @@ class PoolImpl : public td::actor::SpawnsWith<Bus>, public td::actor::ConnectsTo
                                                                           : tos::health::Phase::SignedCommitFailure);
       LOG(ERROR) << "consensus: the signed vote for " << vote << " was not committed (" << committed.error()
                  << "); not applying or broadcasting it";
-      co_return td::Unit{};
+      co_return VoteCastOutcome::Submitted;
     }
 
     observation.observe(tos::health::Phase::SignedCommitted);
 
     apply_own_vote(vote, std::move(signature.value()), /*tolerate_conflicts=*/false, /*broadcast=*/true, observation);
-    co_return td::Unit{};
+    co_return VoteCastOutcome::Submitted;
   }
 
   // Restore one of this node's own votes from the journal at startup. Nothing is
