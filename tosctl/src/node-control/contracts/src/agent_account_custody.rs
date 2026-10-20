@@ -165,8 +165,8 @@ pub struct EconomicActionAuthorization {
 }
 
 /// Generic owner-authorized contract effect. This keeps escrow acceptance and
-/// stablecoin funding behind the same writer-generation high-water boundary as
-/// Agreement payments without making custody interpret the Agreement.
+/// funding behind the same writer-generation high-water boundary as Agreement
+/// payments without making custody interpret the Agreement.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EconomicEffectAuthorization {

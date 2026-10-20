@@ -35,6 +35,8 @@ jobs:
         run: cmake --build build --target func fift -j2
       - name: Reproduce the frozen Native Registry release
         run: scripts/test-tos-service-native-registry-v1.sh
+      - name: Deployment entry points pin the released registry hash
+        run: python3 scripts/test_tos_service_native_registry_release.py
       - name: Verify the nominator pool code lock
         run: scripts/check-nominator-pool-code-lock.sh
       - name: Verify the single-nominator code lock

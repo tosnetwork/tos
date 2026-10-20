@@ -403,12 +403,16 @@ fn an_oversized_import_is_refused_before_a_tick_can_spend_its_gas_budget() {
 }
 
 #[test]
-fn a_refused_configuration_returns_each_original_once_even_after_late_confirmation() {
+fn a_candidate_restating_anothers_address_is_refused_and_late_installed_replies_pay_nobody() {
+    // A duplicate transport address no longer reaches the configuration: the elector
+    // refuses the restating candidate at registration (reason 17) and seats the rest. The
+    // configuration's own refusal of such a set stays as a backstop. The late duplicate
+    // installation replies below must move no money.
     let (mut chain, _, election) = open_election("configuration-refund", 400_000 * TOS);
     require_post_quantum_version(&mut chain);
     let mut owners = Vec::new();
     let mut shared_adnl = None;
-    for i in 0..4u8 {
+    for i in 0..5u8 {
         let account =
             chain.blockchain.treasury(&format!("config-refund-{i}"), 40_000 * TOS).expect("owner");
         let mut key = PqValidator::new(0x70 + i);
@@ -420,6 +424,11 @@ fn a_refused_configuration_returns_each_original_once_even_after_late_confirmati
         }
         let result =
             pq_stake(&mut chain, &account, &key, election, 20 + u64::from(i), 11_000 * TOS);
+        if i == 1 {
+            assert_eq!(reply(&result), (STAKE_RETURNED, 17), "the duplicate address was admitted");
+            assert_eq!(pq_member_key_id(&chain, &account), None, "a refused stake was recorded");
+            continue;
+        }
         assert_eq!(reply(&result), (STAKE_ACCEPTED, 0));
         let owner: [u8; 32] =
             account.address().address().get_bytestring(0).try_into().expect("owner");
@@ -429,13 +438,14 @@ fn a_refused_configuration_returns_each_original_once_even_after_late_confirmati
     let result =
         chain.blockchain.tick_tock(&chain.elector, TransactionTickTock::Tick).expect("tick");
     result.expect_success();
-    assert!(replies(&result).contains(&VALIDATOR_SET_REFUSED), "must reach configuration refusal");
-    assert!(!has_past_election(&chain, election));
-    assert_eq!(active_election_id(&chain), 0);
-    for (owner, placed) in &owners {
-        assert_eq!(owed(&chain, owner), *placed);
+    let tags = replies(&result);
+    assert!(tags.contains(&VALIDATOR_SET_INSTALLED), "the set was not installed: {tags:02x?}");
+    assert!(!tags.contains(&VALIDATOR_SET_REFUSED), "the set was refused: {tags:02x?}");
+    for (owner, _) in &owners {
+        assert_eq!(owed(&chain, owner), 0, "a seated stake was credited back");
     }
-    for tag in [0xee764f6f, 0xee764f4b, 0xee764f6f] {
+    // Late duplicates of the installation result: nothing is paid.
+    for tag in [0xee764f4b, 0xee764f4b] {
         let mut body = BuilderData::new();
         body.append_u32(tag).expect("configuration result");
         body.append_u64(u64::from(election)).expect("election id");
@@ -448,13 +458,9 @@ fn a_refused_configuration_returns_each_original_once_even_after_late_confirmati
             )
             .expect("late reply");
         result.expect_success();
-    }
-    for offset in [0, 1, 1000] {
-        tick_at(&mut chain, election + offset, "after refusal");
-    }
-    assert!(!has_past_election(&chain, election));
-    for (owner, placed) in owners {
-        assert_eq!(owed(&chain, &owner), placed, "configuration refusal must not pay twice");
+        for (owner, _) in &owners {
+            assert_eq!(owed(&chain, owner), 0, "a late installation reply paid a seated stake");
+        }
     }
 }
 

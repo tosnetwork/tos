@@ -34,6 +34,10 @@ from pytosiq_core import (  # noqa: E402
     StateInit,
     WalletMessage,
 )
+from tos_service_native_registry_release import (  # noqa: E402
+    release_code_hash,
+    require_code_hash,
+)
 from tos_service_test_identities import load_test_identity  # noqa: E402
 
 MAGIC_DATA = 0x4E564431
@@ -55,7 +59,9 @@ TRANSFER_CAPABILITY = 9
 REVOKE_CAPABILITY = 10
 
 NANO = 1_000_000_000
-CODE_HASH = "bc498a9f6011b34e9fc2e5c49842153866231ff61e450f9c31007c1d9ec2a684"
+# The released code hash comes from the manifest, never from a copy here: the deploy
+# scripts that import this constant refuse any other artifact.
+CODE_HASH = release_code_hash()
 LITE_CLIENT = Path(os.environ.get("TOS_LITE_CLIENT", "/usr/local/bin/tos-lite-client"))
 
 
@@ -443,8 +449,7 @@ def main() -> int:
         validate=True,
     )
     code = Cell.one_from_boc(code_bytes)
-    if code.hash.hex() != CODE_HASH:
-        raise RuntimeError(f"frozen code hash mismatch: {code.hash.hex()}")
+    require_code_hash(code.hash.hex(), CODE_HASH)
     config = registry_config(root, file, network, workchain, code)
     signed_domain = domain_cell(root, file, network, code.hash)
 

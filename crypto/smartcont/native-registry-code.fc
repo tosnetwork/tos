@@ -143,7 +143,8 @@ slice std_address(int workchain, int account) inline {
     slice part = cursor.begin_parse();
     int bits = part.slice_bits();
     int refs = part.slice_refs();
-    throw_unless(err::bad_action, ((bits % 8) == 0) & (refs <= 1));
+    ;; Every cell carries text: an empty tail would give one text two cell trees.
+    throw_unless(err::bad_action, (bits > 0) & ((bits % 8) == 0) & (refs <= 1));
     total_bits += bits;
     throw_unless(err::bad_action, total_bits <= 1024);
     int remaining = bits;
@@ -294,6 +295,34 @@ int required_purpose(int kind) inline {
     if (i < count) { cursor = cs~load_ref(); }
   }
   return (0, 0, 0, 0);
+}
+
+;; Consent to a registration. Every controller of the initial policy has proved possession
+;; by the time this runs, so the weight that consents is the policy's agent-control weight,
+;; held to the agent threshold. validate_policy already guarantees the threshold is met, so
+;; this walk cannot fail today; it states the rule at the one place it applies, so a change
+;; to validate_policy cannot silently remove it. A key without agent control consents to
+;; nothing and refuses nothing: isolating a key to delegation, capability control or
+;; recovery is what the purpose bits are for.
+() verify_registration_consent(cell policy, int threshold) impure inline_ref {
+  slice ps = policy.begin_parse();
+  ps~skip_bits(32 + 16 + 32 + 32 + 64);
+  int count = ps~load_uint(8);
+  cell controllers = ps~load_ref(); ps.end_parse();
+  int total = 0;
+  int i = 0;
+  while (i < count) {
+    slice cs = controllers.begin_parse();
+    cs~skip_bits(256 + 256);
+    int weight = cs~load_uint(32);
+    int purposes = cs~load_uint(16);
+    total += weight * (purposes & purpose::agent_control);
+    i += 1;
+    if (i < count) {
+      controllers = cs~load_ref();
+    }
+  }
+  throw_unless(err::threshold, total >= threshold);
 }
 
 () verify_signatures(cell policy, cell signatures, int required, int recovery_mode,
@@ -599,7 +628,7 @@ cell empty_delegations() inline { return begin_cell().store_uint(0, 16).store_di
     int object_nonce = p~load_uint(256);
     cell policy = p~load_ref(); p.end_parse();
     throw_unless(err::bad_action, object_nonce != 0);
-    validate_policy(policy);
+    (int threshold, _, _) = validate_policy(policy);
     cell identity_domain = begin_cell().store_uint(genesis_root, 256)
       .store_uint(genesis_file, 256).store_uint(network_hash, 256).end_cell();
     cell identity = begin_cell().store_uint(magic::identity, 32).store_uint(1, 8)
@@ -607,7 +636,7 @@ cell empty_delegations() inline { return begin_cell().store_uint(0, 16).store_di
       .store_ref(identity_domain).end_cell();
     throw_unless(err::bad_transition, cell_hash(identity) == object_id);
     verify_policy_possession(policy, authority_signatures, action_hash);
-    verify_signatures(policy, authority_signatures, purpose::agent_control, 0, action_hash);
+    verify_registration_consent(policy, threshold);
     save_object(object_kind, object_id, config, 1, build_agent_state(0, generation,
       sequence, action_hash, policy, empty_delegations(), empty_recovery()));
     return ();

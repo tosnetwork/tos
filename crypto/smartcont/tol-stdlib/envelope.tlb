@@ -32,10 +32,8 @@
 // below describe only the bits that sit INSIDE the message body —
 // the `(opcode, query_id, payload)` triple per policy §3.1.
 //
-// Precedent. This file follows the pattern set by
-// `crypto/smartcont/liquid-staking/interaction.tlb`: an
-// application-specific TL-B reference that lives next to the
-// application code rather than in the protocol-core schema.
+// This file is an application-specific TL-B reference that lives next
+// to the application code rather than in the protocol-core schema.
 
 // === Standard envelope (policy §3.1) =====================================
 //

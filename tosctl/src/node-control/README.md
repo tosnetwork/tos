@@ -56,7 +56,6 @@
 | Automatic Voting for proposals | Done | - |
 | REST API Server | Done | Includes Swagger UI |
 | REST API cli commands | Done | - |
-| Liquid Staking Pools support | Not implemented | - |
 
 ## Architecture
 
