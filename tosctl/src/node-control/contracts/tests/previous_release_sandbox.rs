@@ -237,11 +237,11 @@ fn a_previous_service_actor_is_refused() {
     assert_admitted(VersionedContract::ServiceActor, &bc, &current);
 }
 
-/// Why signing is refused rather than attempted: a signature over this
-/// release's attestation domain is one the previous code does not accept, so
-/// tosctl would hand back a signature that looks usable and is not.
+/// Why signing is refused rather than attempted: a body of this release is one
+/// the previous code does not even parse, so tosctl would hand back a signed
+/// message that looks usable and is not.
 #[test]
-fn a_previous_proof_attestation_is_refused_and_would_reject_a_current_signature() {
+fn a_previous_proof_attestation_is_refused_and_cannot_parse_a_current_body() {
     let mut bc = chain();
     let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");
     let relayer = bc.treasury("relayer", 1_000 * TOS).expect("relayer");
@@ -263,8 +263,9 @@ fn a_previous_proof_attestation_is_refused_and_would_reject_a_current_signature(
     };
     let attested = [0xee; 32];
     for (address, accepted) in [(&current, true), (&old, false)] {
-        let hash = ProofAttestationContract::attest_hash_to_sign(global_id, address, 1, &attested)
-            .unwrap();
+        let hash =
+            ProofAttestationContract::attest_hash_to_sign(global_id, address, 0, 1, &attested)
+                .unwrap();
         let signature = key.sign(&hash).to_bytes();
         let body = ProofAttestationContract::attest(1, 1, attested, &signature).unwrap();
         let msg = MessageBuilder::internal(relayer.address(), address, TOS / 10).body(body).build();

@@ -81,7 +81,7 @@ impl Fixture {
 
     /// An `attest` body claiming `sequence` over `attested_hash`, signed by
     /// `key` the way the CLI signs: over the domain-bound hash that carries
-    /// this contract's address and the sequence.
+    /// this contract's address, its current key epoch and the sequence.
     fn attest_body(
         &self,
         key: &SigningKey,
@@ -89,9 +89,22 @@ impl Fixture {
         sequence: u64,
         attested_hash: [u8; 32],
     ) -> Cell {
+        self.attest_body_in_epoch(key, query_id, self.data().key_epoch, sequence, attested_hash)
+    }
+
+    /// Like [`Fixture::attest_body`], signed for an explicit key epoch.
+    fn attest_body_in_epoch(
+        &self,
+        key: &SigningKey,
+        query_id: u64,
+        key_epoch: u32,
+        sequence: u64,
+        attested_hash: [u8; 32],
+    ) -> Cell {
         let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
             sandbox_global_id(&self.bc),
             &self.attestation,
+            key_epoch,
             sequence,
             &attested_hash,
         )
@@ -160,6 +173,7 @@ fn deploy_records_initial_state() {
     assert!(!data.revoked);
     assert!(!data.has_attestation);
     assert_eq!(data.sequence, 0);
+    assert_eq!(data.key_epoch, 0);
     assert_eq!(data.subject_hash, [0x11; 32]);
 }
 
@@ -196,6 +210,7 @@ fn tampered_hash_or_sequence_invalidates_an_otherwise_valid_signature() {
     let hash_to_sign = ProofAttestationContract::attest_hash_to_sign(
         sandbox_global_id(&f.bc),
         &f.attestation,
+        0,
         1,
         &signed_hash,
     )
@@ -296,20 +311,65 @@ fn owner_can_rotate_key_resetting_attestation_others_rejected() {
     let data = f.data();
     assert_eq!(data.public_key, new_key.verifying_key().to_bytes());
     assert!(!data.has_attestation, "rotating the key must reset any existing attestation");
-    assert_eq!(data.sequence, 1, "rotating the key must keep the sequence");
+    assert_eq!((data.key_epoch, data.sequence), (1, 0), "a rotation starts a fresh epoch");
 
-    // The message the old key signed stays out: its sequence is spent, so the
-    // reset attestation cannot be reinstated by relaying it.
-    f.send_from(&outsider, first).expect_aborted().expect_exit_code(ERR_STALE_SEQUENCE);
+    // The message the old key signed stays out: it was signed in epoch 0.
+    f.send_from(&outsider, first).expect_aborted().expect_exit_code(ERR_BAD_SIGNATURE);
     // A fresh message from the old key fails on the key itself.
-    let from_old_key = f.attest_body(&f.signing_key, 4, 2, attested_hash);
+    let from_old_key = f.attest_body(&f.signing_key, 4, 1, attested_hash);
     f.send_from(&outsider, from_old_key).expect_aborted().expect_exit_code(ERR_BAD_SIGNATURE);
 
-    // A fresh signature from the new key is accepted.
-    let from_new_key = f.attest_body(&new_key, 5, 2, attested_hash);
+    // A fresh signature from the new key is accepted, at sequence 1 of epoch 1.
+    let from_new_key = f.attest_body(&new_key, 5, 1, attested_hash);
     f.send_from(&outsider, from_new_key).expect_success();
     let data = f.data();
-    assert_eq!((data.attested_hash, data.sequence), (attested_hash, 2));
+    assert_eq!((data.attested_hash, data.key_epoch, data.sequence), (attested_hash, 1, 1));
+}
+
+/// A leaked key is what rotation exists for, so nothing the leaked key can do
+/// may outlive the rotation: driving the sequence to its limit is undone by the
+/// new epoch, and the messages it signed stay out even if the owner rotates
+/// back to the very same key.
+#[test]
+fn rotation_undoes_everything_a_leaked_key_did_including_key_reuse() {
+    let mut f = Fixture::new(TOS / 10);
+    let outsider = f.outsider.address().clone();
+    let owner = f.owner.address().clone();
+    let leaked = f.signing_key.clone();
+
+    // The leaked key spends the whole counter.
+    let exhausting = f.attest_body(&leaked, 1, u64::MAX, [0xBA; 32]);
+    f.send_from(&outsider, exhausting.clone()).expect_success();
+    let dead = f.attest_body(&leaked, 2, u64::MAX, [0xBB; 32]);
+    f.send_from(&outsider, dead).expect_aborted().expect_exit_code(ERR_STALE_SEQUENCE);
+
+    // Rotation to a clean key recovers the instance.
+    let clean = SigningKey::from_bytes(&[0x77; 32]);
+    f.send_from(
+        &owner,
+        ProofAttestationContract::rotate_key(3, clean.verifying_key().to_bytes()).unwrap(),
+    )
+    .expect_success();
+    assert_eq!((f.data().key_epoch, f.data().sequence), (1, 0));
+    let recovered = f.attest_body(&clean, 4, 1, [0xC1; 32]);
+    f.send_from(&outsider, recovered).expect_success();
+    assert_eq!((f.data().attested_hash, f.data().sequence), ([0xC1; 32], 1));
+
+    // Rotating back to the leaked key reuses the key, not the epoch: the
+    // message that exhausted epoch 0 cannot be relayed into epoch 2, and the
+    // counter starts over.
+    f.send_from(
+        &owner,
+        ProofAttestationContract::rotate_key(5, leaked.verifying_key().to_bytes()).unwrap(),
+    )
+    .expect_success();
+    assert_eq!((f.data().key_epoch, f.data().sequence), (2, 0));
+    f.send_from(&outsider, exhausting).expect_aborted().expect_exit_code(ERR_BAD_SIGNATURE);
+    let signed_for_epoch_0 = f.attest_body_in_epoch(&leaked, 6, 0, 1, [0xC2; 32]);
+    f.send_from(&outsider, signed_for_epoch_0).expect_aborted().expect_exit_code(ERR_BAD_SIGNATURE);
+    let signed_for_epoch_2 = f.attest_body(&leaked, 7, 1, [0xC2; 32]);
+    f.send_from(&outsider, signed_for_epoch_2).expect_success();
+    assert_eq!((f.data().attested_hash, f.data().key_epoch, f.data().sequence), ([0xC2; 32], 2, 1));
 }
 
 #[test]
@@ -413,6 +473,7 @@ fn an_attestation_signed_for_another_network_is_refused() {
     let elsewhere = ProofAttestationContract::attest_hash_to_sign(
         here.wrapping_add(1),
         &f.attestation,
+        0,
         1,
         &attested_hash,
     )

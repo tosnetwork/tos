@@ -79,18 +79,21 @@ pub fn domain_bound_hash(
 }
 
 /// Compute the domain-bound hash Proof Attestation's `attest` signature must
-/// cover: the sequence this attestation claims and the attested hash. The
-/// contract admits only a sequence above the one it recorded, so a signature
-/// cannot be relayed again once a later attestation has superseded it. Must
-/// match `crypto/smartcont/proof-attestation-code.fc`'s `attest` computation
-/// byte-for-byte.
+/// cover: the key epoch the contract is in, the sequence this attestation
+/// claims and the attested hash. The contract admits only a sequence above the
+/// one it recorded in the current epoch, so a signature cannot be relayed
+/// again once a later attestation has superseded it, nor after the key was
+/// rotated. Must match `crypto/smartcont/proof-attestation-code.fc`'s `attest`
+/// computation byte-for-byte.
 pub fn attestation_domain_hash(
     global_id: i32,
     contract_address: &MsgAddressInt,
+    key_epoch: u32,
     sequence: u64,
     attested_hash: &[u8; 32],
 ) -> anyhow::Result<[u8; 32]> {
     let mut b = signing_domain(DOMAIN_PROOF_ATTESTATION, global_id, contract_address)?;
+    b.append_u32(key_epoch)?;
     b.append_u64(sequence)?;
     b.append_u256(attested_hash)?;
     let cell = b.into_cell()?;

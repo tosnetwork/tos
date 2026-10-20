@@ -24,13 +24,16 @@
 ;;   has_attestation:uint1
 ;;   attested_at:uint64
 ;;   sequence:uint64
+;;   key_epoch:uint32
 ;;   ^[subject_hash:uint256 attested_hash:uint256]
 ;;
-;; `sequence` is the number of the last accepted attestation. Each `attest`
-;; carries the next value under the signature, so a recorded signature cannot
-;; be relayed again to reinstate an attestation the signer has since replaced.
-;; Rotating the key keeps the counter: the new key starts above every value the
-;; old key ever signed.
+;; `sequence` is the number of the last accepted attestation under the current
+;; key. Each `attest` carries the next value under the signature, so a recorded
+;; signature cannot be relayed again to reinstate an attestation the signer has
+;; since replaced. `key_epoch` counts key rotations and is signed as well:
+;; rotating the key starts a new epoch with the sequence at zero, so a leaked
+;; key cannot spend the counter for every later key, and a message signed in an
+;; earlier epoch stays out even if the owner rotates back to the same key.
 ;;
 ;; Internal messages:
 ;;   attest#41545401 query_id:uint64 sequence:uint64 attested_hash:uint256
@@ -51,12 +54,15 @@ const int err::not_owner = 2102;
 const int err::unknown_op = 2103;
 const int err::weak_key = 2104;
 const int err::stale_sequence = 2105;
+const int err::epochs_exhausted = 2106;
 
-;; The attestor signs: tag, network, this attestation contract, the sequence,
-;; the attested hash.
+const int max_key_epoch = 4294967295;
+
+;; The attestor signs: tag, network, this attestation contract, the key epoch,
+;; the sequence, the attested hash.
 const int domain::attestation = 0x50415433; ;; "PAT3"
 
-(slice, int, int, int, int, int, int, int) load_state() inline {
+(slice, int, int, int, int, int, int, int, int) load_state() inline {
   slice ds = get_data().begin_parse();
   slice owner = ds~load_msg_addr();
   int public_key = ds~load_uint(256);
@@ -64,16 +70,17 @@ const int domain::attestation = 0x50415433; ;; "PAT3"
   int has_attestation = ds~load_uint(1);
   int attested_at = ds~load_uint(64);
   int sequence = ds~load_uint(64);
+  int key_epoch = ds~load_uint(32);
   slice sub = ds~load_ref().begin_parse();
   int subject_hash = sub~load_uint(256);
   int attested_hash = sub~load_uint(256);
   sub.end_parse();
   ds.end_parse();
-  return (owner, public_key, revoked, has_attestation, attested_at, sequence, subject_hash, attested_hash);
+  return (owner, public_key, revoked, has_attestation, attested_at, sequence, key_epoch, subject_hash, attested_hash);
 }
 
 () save_state(slice owner, int public_key, int revoked, int has_attestation, int attested_at,
-             int sequence, int subject_hash, int attested_hash) impure inline {
+             int sequence, int key_epoch, int subject_hash, int attested_hash) impure inline {
   set_data(begin_cell()
     .store_slice(owner)
     .store_uint(public_key, 256)
@@ -81,6 +88,7 @@ const int domain::attestation = 0x50415433; ;; "PAT3"
     .store_uint(has_attestation, 1)
     .store_uint(attested_at, 64)
     .store_uint(sequence, 64)
+    .store_uint(key_epoch, 32)
     .store_ref(begin_cell()
       .store_uint(subject_hash, 256)
       .store_uint(attested_hash, 256)
@@ -100,7 +108,7 @@ const int domain::attestation = 0x50415433; ;; "PAT3"
   query_id~impure_touch();
 
   (slice owner, int public_key, int revoked, int has_attestation, int attested_at,
-   int sequence, int subject_hash, int attested_hash) = load_state();
+   int sequence, int key_epoch, int subject_hash, int attested_hash) = load_state();
 
   if (op == op::attest) {
     ;; Permissionless: anyone may relay a valid signature. `sender` is
@@ -121,9 +129,9 @@ const int domain::attestation = 0x50415433; ;; "PAT3"
     ;; and Agent Account's controller signature.
     throw_if(err::weak_key, weak_ed25519_key?(public_key));
     int domain_hash = cell_hash(begin_signing_domain(domain::attestation)
-      .store_uint(new_sequence, 64).store_uint(new_attested_hash, 256).end_cell());
+      .store_uint(key_epoch, 32).store_uint(new_sequence, 64).store_uint(new_attested_hash, 256).end_cell());
     throw_unless(err::bad_signature, check_signature(domain_hash, signature, public_key));
-    save_state(owner, public_key, revoked, 1, now(), new_sequence, subject_hash, new_attested_hash);
+    save_state(owner, public_key, revoked, 1, now(), new_sequence, key_epoch, subject_hash, new_attested_hash);
     return ();
   }
 
@@ -134,21 +142,24 @@ const int domain::attestation = 0x50415433; ;; "PAT3"
     throw_if(err::weak_key, weak_ed25519_key?(new_public_key));
     ;; A rotated key invalidates any existing attestation: it was recorded
     ;; under the authority of the previous key and is no longer meaningful.
-    ;; The sequence stays, so nothing the old key signed is replayable.
-    save_state(owner, new_public_key, revoked, 0, 0, sequence, subject_hash, 0);
+    ;; The new key starts a new epoch with a fresh counter: whatever the old
+    ;; key signed carries the old epoch and cannot be relayed, and a counter
+    ;; the old key drove to its limit does not bind the new key.
+    throw_unless(err::epochs_exhausted, key_epoch < max_key_epoch);
+    save_state(owner, new_public_key, revoked, 0, 0, 0, key_epoch + 1, subject_hash, 0);
     return ();
   }
 
   if (op == op::revoke) {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     in_msg.end_parse();
-    save_state(owner, public_key, 1, has_attestation, attested_at, sequence, subject_hash, attested_hash);
+    save_state(owner, public_key, 1, has_attestation, attested_at, sequence, key_epoch, subject_hash, attested_hash);
     return ();
   }
 
   throw(err::unknown_op);
 }
 
-(slice, int, int, int, int, int, int, int) get_proof_attestation_data() method_id {
+(slice, int, int, int, int, int, int, int, int) get_proof_attestation_data() method_id {
   return load_state();
 }

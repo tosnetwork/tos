@@ -34,12 +34,10 @@ The configuration contract's code as the generated zerostate deploys it
 (representation hash
 `51ac2ce83a98d99dcb755faf3a04ec4816c1fb00e901aefd91913342ed206731`; file SHA-256
 `40eb213cb8a11688ade5ca4c492743d59b8021f14170f09753a866b085832620`), serialized the
-way an account query returns it. The development network ran the earlier code
-(representation hash
-`2774a7cc7850cfb8dd1023b725c1e44182a9bae39da547fb8724b2f72562ff7a`), whose
-storage has the same layout. The stored-state reader interprets storage only under
-the code hashes it lists; `config_list_proposals_sandbox.rs` checks the fixture
-against the zerostate.
+way an account query returns it. The stored-state reader interprets storage only
+under this code; `config_list_proposals_sandbox.rs` checks the fixture against the
+zerostate, so a change to the contract is a change to this file and to the hash the
+reader accepts.
 
 ## Read-path limits and measurements
 
@@ -82,9 +80,8 @@ to it). No state bound exists in the contract, so a dictionary too large for
 both representations is an explicit error. Paginated or incremental state reads
 are the remaining capacity work.
 
-The 2026-10-08 config-code fixture includes ConfigParam 48 monotonic AUTH policy
-validation. Its representation hash is
-`8291930aa0bf0b6939d8086c9ad9b0d63dbc65e4ca85af081eb80da82af82cb8`.
-Proposal storage layout is unchanged. The decoder accepts this exact hash and
-the prior known hash, while refusing unknown code. The genesis-code test checks
-both hash membership and exact BOC bytes; all twelve proposal sandbox tests pass.
+The config-code fixture follows the contract: ConfigParam 48 monotonic AUTH policy
+validation and the removal of the `seqno` getter each changed the code without
+changing the proposal storage layout. The decoder accepts exactly the current code
+hash and refuses any other; the genesis-code test checks both hash membership and
+exact BOC bytes.
