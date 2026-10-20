@@ -134,3 +134,19 @@ read-only, then runs offline SDK tests and freshly built native emulator/index
 tests. Linux CI must finish on the final PR head. Local static analysis refused
 to run because `/usr/lib/llvm-21/bin/clang` is unavailable (exit 2); this is not a
 passing differential analysis result.
+
+## RPC response type review
+
+`getTokenData` returns exactly the node's three discriminants:
+`ext.tokens.tokenMasterData`, `ext.tokens.nftCollectionData`, and
+`ext.tokens.nftItemData`. Their content fields are `token_content`,
+`collection_content`, and `individual_content`; parsed metadata fields retain
+the node's `token_`, `collection_`, and `nft_` prefixes. The SDK union and React
+hook describe those wire results directly. The former wallet-data variant was
+never emitted by this RPC and is removed; per-owner wallet balances and code
+remain available through the `TokenWallet` contract's `get_wallet_data` getter.
+
+The wire regression exercises all three JSON-RPC results, statically narrows
+their exact fields, and compares their discriminants with the node emitter.
+Restoring the previous SDK DTOs fails typechecking, and restoring the previous
+master discriminant in the emitter fails the source/DTO consistency assertion.

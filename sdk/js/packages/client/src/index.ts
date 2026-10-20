@@ -28,7 +28,6 @@ export type {
   NftItemData,
   NftCollectionData,
   TokenMasterData,
-  TokenWalletData,
   TokenData,
   ConfigAll,
   LibraryEntry,

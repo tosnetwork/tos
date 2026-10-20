@@ -252,44 +252,40 @@ export interface Transaction {
 // Token data (discriminated union)
 // ---------------------------------------------------------------------------
 
-export interface NftItemData {
-  "@type": "nft.itemData";
+type TokenMetadata<Prefix extends string> = Partial<Record<
+  `${Prefix}_${"name" | "symbol" | "decimals" | "image" | "description" | "metadata_uri"}`,
+  string
+>>;
+
+export interface NftItemData extends TokenMetadata<"nft"> {
+  "@type": "ext.tokens.nftItemData";
   init: boolean;
   index: string;
   collection_address: string;
   owner_address: string;
-  content: string;
+  individual_content: string;
 }
 
-export interface NftCollectionData {
-  "@type": "nft.collectionData";
+export interface NftCollectionData extends TokenMetadata<"collection"> {
+  "@type": "ext.tokens.nftCollectionData";
   next_item_index: string;
   collection_content: string;
   owner_address: string;
 }
 
-export interface TokenMasterData {
-  "@type": "token.masterData";
+export interface TokenMasterData extends TokenMetadata<"token"> {
+  "@type": "ext.tokens.tokenMasterData";
   total_supply: string;
   mintable: boolean;
   admin_address: string;
-  content: string;
-  token_wallet_code: string;
-}
-
-export interface TokenWalletData {
-  "@type": "token.walletData";
-  balance: string;
-  owner: string;
-  token_master_address: string;
+  token_content: string;
   token_wallet_code: string;
 }
 
 export type TokenData =
   | NftItemData
   | NftCollectionData
-  | TokenMasterData
-  | TokenWalletData;
+  | TokenMasterData;
 
 // ---------------------------------------------------------------------------
 // Config
