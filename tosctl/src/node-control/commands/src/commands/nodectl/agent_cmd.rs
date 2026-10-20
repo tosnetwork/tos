@@ -2224,9 +2224,15 @@ impl AgentTaskSendCmd {
             let stack =
                 provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
             let chain_task = TaskEscrowContract::decode_data(&stack)?;
+            // Every operation the contract gates by time: the task window for
+            // claim, accept and result, the review window for settle and dispute,
+            // and the timeouts.
             let validation_now = if matches!(
                 self.operation,
-                AgentTaskOperation::Settle
+                AgentTaskOperation::Claim
+                    | AgentTaskOperation::Accept
+                    | AgentTaskOperation::Result
+                    | AgentTaskOperation::Settle
                     | AgentTaskOperation::Timeout
                     | AgentTaskOperation::Dispute
                     | AgentTaskOperation::DisputeTimeout
