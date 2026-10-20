@@ -52,3 +52,6 @@ test/pq-falcon512/official/falcon512-KAT.rsp -text whitespace=-blank-at-eof
 
 # Preserve the pinned vendor source bytes, including original whitespace.
 third-party/lms-reference/* -text -whitespace
+
+# Chain fixture bytes must survive every checkout unchanged.
+test/rel02/corpus/**/*.boc binary
