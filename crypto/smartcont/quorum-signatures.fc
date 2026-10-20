@@ -170,9 +170,15 @@ int quorum::count_valid_signatures([cell, int, int] config, int hash, cell signa
 
 ;; Throws unless `signatures` carries at least `quorum` valid signatures.
 () quorum::require_quorum([cell, int, int] config, int hash, cell signatures) impure inline {
-  [_, int count, int quorum] = config;
-  ;; A hand-built configuration is held to the same bounds as a constructed one,
-  ;; so a zero quorum cannot make an empty signature set sufficient.
+  [cell verifiers, int count, int quorum] = config;
+  ;; A hand-built configuration is held to the same invariants as a constructed
+  ;; one: bounds on the integers, and a set that is exactly as large as its count
+  ;; says, so a zero quorum cannot be met by nobody, an understated count cannot
+  ;; hide a set past the size bound, and an overstated one cannot promise an
+  ;; unreachable quorum. The walk stops at the size bound, so it is bounded too.
+  ;; Key strength is judged where a key signs, as before, not here.
   quorum::require_valid_config(count, quorum);
+  throw_unless(quorum::error::invalid_config,
+               quorum::count_keys(verifiers, quorum::max_verifiers, quorum::error::invalid_config) == count);
   throw_if(quorum::error::insufficient_signatures, quorum::count_valid_signatures(config, hash, signatures) < quorum);
 }
