@@ -203,7 +203,7 @@ V1_PATH_NEEDLES = (
     "stablecoin-escrow",
     "stablecoin_escrow",
     "escrow_deploy_policy",
-    "usdt-jetton-master",
+    "usdt-token-master",
     "test-usdt-wallet",
     "tos-service-test-usdt",
 )
