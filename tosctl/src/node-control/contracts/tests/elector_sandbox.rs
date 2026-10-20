@@ -464,12 +464,23 @@ fn a_closed_election_sends_its_set_to_the_configuration_contract() {
 /// The Elector itself can produce a set with two distinct signing identities but one
 /// transport identity: a stake signature binds the claimed ADNL, not ownership of it.
 /// The config contract must reject that elected set before it becomes ConfigParam 36.
+/// `return_stake` reason 17: the transport address is stated by another member of
+/// this election.
+const REASON_ADDRESS_STATED_BY_ANOTHER_CANDIDATE: u32 = 17;
+/// `return_stake` reason 18: the transport address is held by a validator of the
+/// current or next set under another identity.
+const REASON_ADDRESS_HELD_BY_ANOTHER_VALIDATOR: u32 = 18;
+
+/// A transport address names one node. A candidate restating another candidate's
+/// address is refused at registration, with its money, and the election seats the
+/// rest: the refusal that used to happen to the whole set at installation happens
+/// to the one candidate instead. The first candidate keeps the address it stated.
 #[test]
-fn an_elected_set_with_duplicate_adnl_is_refused_before_installation() {
+fn a_stake_restating_another_candidates_address_is_refused_at_registration() {
     let (mut chain, _treasury, election) = open_election("duplicate-adnl-election", 200_000 * TOS);
     require_post_quantum_version(&mut chain);
     let mut first_adnl = None;
-    for index in 0..4u8 {
+    for index in 0..5u8 {
         let mut validator = PqValidator::new(0x60 + index);
         if index == 0 {
             first_adnl = Some(validator.adnl);
@@ -482,11 +493,19 @@ fn an_elected_set_with_duplicate_adnl_is_refused_before_installation() {
             .expect("a funded account");
         let result =
             pq_stake(&mut chain, &account, &validator, election, 30 + index as u64, 11_000 * TOS);
-        assert_eq!(
-            reply(&result),
-            (STAKE_ACCEPTED, 0),
-            "the Elector refused stake {index} before set construction"
-        );
+        if index == 1 {
+            assert_eq!(
+                reply(&result),
+                (STAKE_RETURNED, REASON_ADDRESS_STATED_BY_ANOTHER_CANDIDATE),
+                "the candidate restating validator 0's address was not refused at registration"
+            );
+        } else {
+            assert_eq!(
+                reply(&result),
+                (STAKE_ACCEPTED, 0),
+                "the Elector refused stake {index}, whose address is its own"
+            );
+        }
     }
 
     chain.blockchain.set_now(election - chain.elect_end_before);
@@ -495,17 +514,78 @@ fn an_elected_set_with_duplicate_adnl_is_refused_before_installation() {
     result.expect_success();
     let tags = replies(&result);
     assert!(
-        tags.contains(&VALIDATOR_SET_REFUSED),
-        "the Elector's duplicate-ADNL set was not refused: {tags:02x?}"
+        tags.contains(&VALIDATOR_SET_INSTALLED),
+        "the set of the four distinct addresses was not installed: {tags:02x?}"
     );
+    assert!(!tags.contains(&VALIDATOR_SET_REFUSED), "the set was refused: {tags:02x?}");
     assert!(
-        !tags.contains(&VALIDATOR_SET_INSTALLED),
-        "the Elector's duplicate-ADNL set was installed: {tags:02x?}"
+        parameter_present(&configuration_from_contract(&chain), 36),
+        "no ConfigParam 36 was stored"
     );
-    assert!(
-        !parameter_present(&configuration_from_contract(&chain), 36),
-        "a duplicate-ADNL ConfigParam 36 was stored"
+}
+
+/// A validator keeps its address: a member restating its own address on a top-up
+/// is accepted, and only another identity stating that address is refused.
+#[test]
+fn a_member_may_restate_its_own_address_and_nobody_else_may() {
+    let (mut chain, _treasury, election) = open_election("own-adnl-election", 200_000 * TOS);
+    require_post_quantum_version(&mut chain);
+    let validator = PqValidator::new(0x66);
+    let account =
+        chain.blockchain.treasury("own-adnl-validator", 60_000 * TOS).expect("a funded account");
+    let result = pq_stake(&mut chain, &account, &validator, election, 60, 11_000 * TOS);
+    assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the first stake was refused");
+    let result = pq_stake(&mut chain, &account, &validator, election, 61, 11_000 * TOS);
+    assert_eq!(
+        reply(&result),
+        (STAKE_ACCEPTED, 0),
+        "a top-up restating the own address was refused"
     );
+
+    let mut squatter = PqValidator::new(0x67);
+    squatter.adnl = validator.adnl;
+    let other =
+        chain.blockchain.treasury("own-adnl-squatter", 40_000 * TOS).expect("a funded account");
+    let result = pq_stake(&mut chain, &other, &squatter, election, 62, 11_000 * TOS);
+    assert_eq!(
+        reply(&result),
+        (STAKE_RETURNED, REASON_ADDRESS_STATED_BY_ANOTHER_CANDIDATE),
+        "another identity stating the member's address was admitted"
+    );
+}
+
+/// An address a validator of the current set holds is refused to any other
+/// identity, so a newcomer cannot unseat an incumbent by restating its address.
+#[test]
+fn a_stake_restating_an_incumbents_address_is_refused_at_registration() {
+    let (mut chain, _treasury, election) = open_election("incumbent-adnl-election", 200_000 * TOS);
+    require_post_quantum_version(&mut chain);
+    let incumbent_adnl: [u8; 32] = chain
+        .blockchain
+        .config_params()
+        .validator_set()
+        .expect("a current set")
+        .list()
+        .iter()
+        .find_map(|descr| descr.adnl_addr.clone())
+        .map(|adnl| *adnl.as_slice())
+        .expect("the current set states transport addresses");
+    let mut squatter = PqValidator::new(0x68);
+    squatter.adnl = incumbent_adnl;
+    let account = chain
+        .blockchain
+        .treasury("incumbent-adnl-squatter", 40_000 * TOS)
+        .expect("a funded account");
+    let result = pq_stake(&mut chain, &account, &squatter, election, 70, 11_000 * TOS);
+    assert_eq!(
+        reply(&result),
+        (STAKE_RETURNED, REASON_ADDRESS_HELD_BY_ANOTHER_VALIDATOR),
+        "a newcomer stating an incumbent's address was admitted"
+    );
+    // The same newcomer with an address of its own is admitted.
+    let honest = PqValidator::new(0x69);
+    let result = pq_stake(&mut chain, &account, &honest, election, 71, 11_000 * TOS);
+    assert_eq!(reply(&result), (STAKE_ACCEPTED, 0), "the newcomer's own address was refused");
 }
 
 #[test]
@@ -5692,7 +5772,11 @@ impl PqValidator {
             hex::decode(&run_key_tool(&["public", key_file.to_str().expect("path")])[0])
                 .expect("hex");
         assert_eq!(public_key.len(), MLDSA44_PUBLIC_KEY_BYTES);
-        PqValidator { key_file, public_key, adnl: [0xd0 ^ index; 32] }
+        // Distinct per index, and never a uniform byte pattern: the sandbox genesis set
+        // states uniform addresses, and a candidate restating one of those is refused.
+        let mut adnl = [0xd0 ^ index; 32];
+        adnl[0] = 0xad;
+        PqValidator { key_file, public_key, adnl }
     }
 
     fn sign(&self, message: &[u8]) -> Vec<u8> {

@@ -30,7 +30,7 @@ Agent workflows should be designed so that balances, task state, permissions, an
 
 ## Accepted Risks and Removed Contracts
 
-- The TOS Service Protocol stablecoin escrow v1 has been removed from the repository: no source, artifact or tooling for it remains, and a guard fails if any of it returns. Escrow v2 is supported only for non-production deployments because a payout refused by the recipient's token wallet can leave funds stranded; this is an accepted risk for the current version. See [crypto/smartcont/STABLECOIN-ESCROW.md](crypto/smartcont/STABLECOIN-ESCROW.md).
+- The TOS Service Protocol stablecoin escrow (v1 and v2), the third-party stablecoin reference contracts and the liquid-staking suite have been removed from the repository and are outside the supported scope: no source, artifact or tooling for them remains, and a guard fails if any of the escrow returns. Removal is a scope decision, not a fix of those contracts' protocols; it migrates no existing deployment and recovers no funds held by one.
 - The token bridge must not be activated in production while its pre-mainnet checklist is incomplete, and an operation left in flight follows the incident procedure in [crosschain/token-bridge/SECURITY.md](crosschain/token-bridge/SECURITY.md).
 
 ## Reporting

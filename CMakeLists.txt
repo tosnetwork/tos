@@ -2002,7 +2002,7 @@ add_test(NAME validator-id-key-hash-source
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-validator-id-key-hash.py
           ${CMAKE_CURRENT_SOURCE_DIR})
 set_tests_properties(validator-id-key-hash-source PROPERTIES LABELS "source-guard")
-# Stablecoin escrow v1 was removed outright; nothing would notice its return
+# The stablecoin escrow was removed outright; nothing would notice its return
 # except this guard, which looks for its code hashes, artifacts and paths. The
 # self-test plants each kind of fingerprint and needs full Git history.
 add_test(NAME no-legacy-escrow-source
@@ -2012,10 +2012,6 @@ set_tests_properties(no-legacy-escrow-source PROPERTIES LABELS "source-guard")
 add_test(NAME no-legacy-escrow-self-test
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_check_no_legacy_escrow.py)
 set_tests_properties(no-legacy-escrow-self-test PROPERTIES LABELS "source-guard")
-# Escrow v2 is deployable only with the non-production acknowledgment.
-add_test(NAME escrow-deploy-policy
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_tos_service_escrow_deploy_policy.py)
-set_tests_properties(escrow-deploy-policy PROPERTIES LABELS "source-guard")
 add_test(NAME n6-scale-sweep-cardinality
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/pq-native/n6-scale-sweep-cardinality-test.py)
 set_tests_properties(n6-scale-sweep-cardinality PROPERTIES

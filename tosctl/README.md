@@ -430,7 +430,6 @@ pool import              Import an existing deployed pool
 pool get                 Query on-chain pool data
 pool nominator ...       Nominator pool: create, activate, deposit, withdraw
 pool single ...          Single-nominator pool: create, activate, withdraw
-pool liquid ...          Liquid staking controller operations
 ```
 
 ### `tosctl vote` -- Validator governance

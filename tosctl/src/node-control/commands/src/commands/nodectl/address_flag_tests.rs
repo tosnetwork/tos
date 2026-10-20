@@ -176,30 +176,6 @@ fn every_address_flag_accepts_a_raw_masterchain_address() {
             "pool_cmd::PoolSingleCreateCmd",
             "controller",
         ),
-        check::<super::pool_cmd::PoolLiquidControllerCreateCmd>(
-            "pool_cmd::PoolLiquidControllerCreateCmd",
-            "pool_address",
-        ),
-        check::<super::pool_cmd::PoolLiquidControllerCreateCmd>(
-            "pool_cmd::PoolLiquidControllerCreateCmd",
-            "controller_0_address",
-        ),
-        check::<super::pool_cmd::PoolLiquidControllerCreateCmd>(
-            "pool_cmd::PoolLiquidControllerCreateCmd",
-            "controller_1_address",
-        ),
-        check::<super::pool_cmd::PoolLiquidControllerCreateCmd>(
-            "pool_cmd::PoolLiquidControllerCreateCmd",
-            "validator_controller",
-        ),
-        check::<super::pool_cmd::PoolLiquidControllerAddCmd>(
-            "pool_cmd::PoolLiquidControllerAddCmd",
-            "address",
-        ),
-        check::<super::pool_cmd::PoolLiquidControllerAddCmd>(
-            "pool_cmd::PoolLiquidControllerAddCmd",
-            "controller",
-        ),
         check::<super::proof_attestation_cmd::ProofAttestationDeployCmd>(
             "proof_attestation_cmd::ProofAttestationDeployCmd",
             "owner",
@@ -436,30 +412,6 @@ fn every_address_flag_refuses_an_option_or_a_non_address_as_its_value() {
         ),
         refuses_non_address::<super::pool_cmd::PoolSingleCreateCmd>(
             "pool_cmd::PoolSingleCreateCmd",
-            "controller",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolLiquidControllerCreateCmd>(
-            "pool_cmd::PoolLiquidControllerCreateCmd",
-            "pool_address",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolLiquidControllerCreateCmd>(
-            "pool_cmd::PoolLiquidControllerCreateCmd",
-            "controller_0_address",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolLiquidControllerCreateCmd>(
-            "pool_cmd::PoolLiquidControllerCreateCmd",
-            "controller_1_address",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolLiquidControllerCreateCmd>(
-            "pool_cmd::PoolLiquidControllerCreateCmd",
-            "validator_controller",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolLiquidControllerAddCmd>(
-            "pool_cmd::PoolLiquidControllerAddCmd",
-            "address",
-        ),
-        refuses_non_address::<super::pool_cmd::PoolLiquidControllerAddCmd>(
-            "pool_cmd::PoolLiquidControllerAddCmd",
             "controller",
         ),
         refuses_non_address::<super::proof_attestation_cmd::ProofAttestationDeployCmd>(

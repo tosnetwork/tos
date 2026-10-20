@@ -2779,6 +2779,7 @@ mod tests {
         owner: Treasury,
         caller: Treasury,
         service: MsgAddressInt,
+        init: ServiceActorInit,
         base_now: u64,
         response_sla: u32,
         refund_claim_window: u32,
@@ -2822,6 +2823,7 @@ mod tests {
                 owner,
                 caller,
                 service,
+                init,
                 base_now,
                 response_sla,
                 refund_claim_window,
@@ -2831,6 +2833,16 @@ mod tests {
         fn send(&self, from: &MsgAddressInt, body: chain_block::Cell) {
             let msg = MessageBuilder::internal(from, &self.service, 500_000_000).body(body).build();
             self.provider.bc.lock().unwrap().send_message(msg).unwrap().expect_success();
+        }
+
+        /// A `call` committing to the terms the service was deployed with.
+        fn call_body(&self, query_id: u64, request_hash: [u8; 32]) -> chain_block::Cell {
+            ServiceActorContract::call(
+                query_id,
+                request_hash,
+                ServiceActorContract::terms_hash_of_init(&self.init).unwrap(),
+            )
+            .unwrap()
         }
 
         fn set_now(&self, t: u64) {
@@ -2858,7 +2870,7 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let caller = f.caller.address().clone();
 
-        f.send(&caller, ServiceActorContract::call(1, [0xAA; 32]).unwrap());
+        f.send(&caller, f.call_body(1, [0xAA; 32]));
         f.refresh(&store, f.base_now).await;
         let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
         assert_eq!(record.status, "pending");
@@ -2879,7 +2891,7 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let caller = f.caller.address().clone();
 
-        f.send(&caller, ServiceActorContract::call(1, [0xCC; 32]).unwrap());
+        f.send(&caller, f.call_body(1, [0xCC; 32]));
         f.refresh(&store, f.base_now).await;
 
         let past_response_deadline = f.base_now + f.response_sla as u64 + 1;
@@ -2910,7 +2922,7 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let caller = f.caller.address().clone();
 
-        f.send(&caller, ServiceActorContract::call(1, [0x12; 32]).unwrap());
+        f.send(&caller, f.call_body(1, [0x12; 32]));
         f.refresh(&store, f.base_now).await;
         let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
         assert_eq!(record.status, "pending");
@@ -2937,7 +2949,7 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let caller = f.caller.address().clone();
 
-        f.send(&caller, ServiceActorContract::call(1, [0xDD; 32]).unwrap());
+        f.send(&caller, f.call_body(1, [0xDD; 32]));
         f.refresh(&store, f.base_now).await;
 
         let past_claim_deadline =
@@ -2983,7 +2995,7 @@ mod tests {
         let store = IndexerStore::open_in_memory().unwrap();
         let caller = f.caller.address().clone();
 
-        f.send(&caller, ServiceActorContract::call(1, [0xEE; 32]).unwrap());
+        f.send(&caller, f.call_body(1, [0xEE; 32]));
         f.refresh(&store, f.base_now).await;
         let record = store.service_request(&f.service.to_string(), 0).unwrap().unwrap();
         assert_eq!(record.status, "pending");

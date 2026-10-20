@@ -31,7 +31,6 @@ pub mod contract_version;
 pub mod dispute;
 pub mod dns;
 pub mod elector;
-pub mod liquid_controller;
 #[cfg(unix)]
 pub mod lms_fee_journal;
 pub mod lms_fee_schedule;
@@ -99,9 +98,6 @@ pub use dispute::{
     RULING_SPLIT,
 };
 pub use elector::{ElectionsInfo, ElectorWrapper, ElectorWrapperImpl, Participant};
-pub use liquid_controller::{
-    ControllerData, ControllerWrapper, ControllerWrapperImpl, LoanBalanceRequirement,
-};
 pub use native_registry::{
     NATIVE_REGISTRY_ERR_POLICY_TOO_WIDE, NATIVE_REGISTRY_GAS_CEILING,
     NATIVE_REGISTRY_MAX_POLICY_CONTROLLERS, NativePolicy, NativePolicyController,

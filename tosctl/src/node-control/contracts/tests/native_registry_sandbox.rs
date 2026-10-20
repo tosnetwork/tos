@@ -150,17 +150,24 @@ fn signature_set(key: &SigningKey, action: &Cell) -> Cell {
 }
 
 fn purpose_isolated_policy() -> (Cell, Vec<SigningKey>) {
-    let keys = vec![
-        SigningKey::from_bytes(&[0x91; 32]),
-        SigningKey::from_bytes(&[0x92; 32]),
-        SigningKey::from_bytes(&[0x93; 32]),
-    ];
-    let mut controllers = vec![
-        (keys[0].verifying_key().to_bytes(), 0x05_u16, true),
-        (keys[1].verifying_key().to_bytes(), 0x02_u16, false),
-        (keys[2].verifying_key().to_bytes(), 0x08_u16, false),
-    ];
-    controllers.sort_by_key(|entry| entry.0);
+    three_controller_policy([0x05, 0x02, 0x08])
+}
+
+/// Three controllers with the given purpose bits (0x04 marks a recovery key),
+/// threshold 1 for every purpose. Keys are returned in policy (sorted) order so
+/// a possession list signed in that order lines up with the policy.
+fn three_controller_policy(purposes: [u16; 3]) -> (Cell, Vec<SigningKey>) {
+    let mut keyed: Vec<(SigningKey, u16)> = [[0x91u8; 32], [0x92; 32], [0x93; 32]]
+        .iter()
+        .zip(purposes)
+        .map(|(seed, purpose)| (SigningKey::from_bytes(seed), purpose))
+        .collect();
+    keyed.sort_by_key(|(key, _)| key.verifying_key().to_bytes());
+    let controllers: Vec<([u8; 32], u16, bool)> = keyed
+        .iter()
+        .map(|(key, purpose)| (key.verifying_key().to_bytes(), *purpose, purpose & 0x04 != 0))
+        .collect();
+    let keys: Vec<SigningKey> = keyed.into_iter().map(|(key, _)| key).collect();
     let mut next: Option<Cell> = None;
     for (public_key, purposes, recovery) in controllers.into_iter().rev() {
         let mut controller = BuilderData::new();
@@ -2489,4 +2496,110 @@ fn the_client_builder_matches_the_contract_and_refuses_the_same_width() {
         .expect_err("one controller more is refused")
         .to_string();
     assert!(error.contains(&format!("at most {MAX_WIDTH}")), "unexpected error: {error}");
+}
+
+// ---------------------------------------------------------------------------
+// Registration of purpose-isolated policies, and canonical protocol text.
+// ---------------------------------------------------------------------------
+
+/// Every controller of the initial policy proves possession; consent is the
+/// agent-control weight among them. A policy that isolates purposes (one key
+/// each for agent control, delegation and capability control) therefore
+/// registers, within the gas ceiling, and so does the same set of keys when
+/// every one of them carries agent control.
+#[test]
+fn registration_accepts_a_purpose_isolated_policy_every_key_signed() {
+    let mut f = Fixture::new();
+    let (isolated, keys) = purpose_isolated_policy();
+    let (result, address) = f.register_with(isolated, [0x7a; 32], |action| all_sign(&keys, action));
+    let gas = gas_at(&result, &address);
+    assert!(!gas.aborted && gas.exit == 0, "a purpose-isolated policy did not register: {gas:?}");
+    assert!(f.registered(&address), "the purpose-isolated agent must be registered");
+    assert!(
+        gas.used <= NATIVE_REGISTRY_GAS_CEILING,
+        "registration gas {} above the ceiling",
+        gas.used
+    );
+
+    let (all_agent_control, control_keys) = three_controller_policy([0x05, 0x03, 0x09]);
+    let (result, address) =
+        f.register_with(all_agent_control, [0x7b; 32], |action| all_sign(&control_keys, action));
+    let gas = gas_at(&result, &address);
+    assert!(!gas.aborted && gas.exit == 0, "the control policy did not register: {gas:?}");
+    assert!(f.registered(&address), "the control agent must be registered");
+}
+
+/// Possession still has to be complete: the isolated policy with one
+/// controller's signature missing is refused, so consent without possession
+/// is not a way in.
+#[test]
+fn registration_of_a_purpose_isolated_policy_still_needs_every_key() {
+    let mut f = Fixture::new();
+    let (isolated, keys) = purpose_isolated_policy();
+    let (result, address) =
+        f.register_with(isolated, [0x7c; 32], |action| all_sign(&keys[..2], action));
+    let gas = gas_at(&result, &address);
+    assert!(gas.aborted && gas.exit == ERR_BAD_SIGNATURE, "registration: {gas:?}");
+    assert!(!f.registered(&address));
+}
+
+/// Protocol text is one cell tree per text: a full 127-byte cell followed by
+/// an empty one is refused, while the same text in one cell is accepted.
+#[test]
+fn protocol_text_with_an_empty_tail_cell_is_refused() {
+    let mut f = Fixture::new();
+    let owner_id = f.object_id;
+    let owner_address = f.registry.clone();
+    let owner_key = SigningKey::from_bytes(&f.old_key.to_bytes());
+    let capability = f.register_capability(
+        &owner_id,
+        &owner_address,
+        &owner_key,
+        [0xe3; 32],
+        b"1.0.0",
+        [0xe4; 32],
+    );
+    let text = [b'a'; 127];
+    let version_hash = bytes_hash(&text);
+
+    let add_version = |f: &mut Fixture, version_name: Cell, sequence: u64, nonce: u8| {
+        let mut payload = BuilderData::new();
+        payload
+            .append_u256(&owner_id)
+            .unwrap()
+            .append_u256(&version_hash)
+            .unwrap()
+            .append_u256(&[0xe5; 32])
+            .unwrap()
+            .checked_append_reference(version_name)
+            .unwrap();
+        let add = f.build_capability_action(
+            ADD_CAPABILITY_VERSION,
+            &capability.id,
+            &capability.address,
+            1,
+            sequence,
+            nonce,
+            payload.into_cell().unwrap(),
+        );
+        f.send_to(
+            owner_address.clone(),
+            authorization_body(add.clone(), signature_set(&owner_key, &add), empty_signatures()),
+        )
+    };
+
+    // The same bytes, with an empty tail cell appended.
+    let mut padded = BuilderData::new();
+    padded.append_raw(&text, text.len() * 8).unwrap();
+    padded.checked_append_reference(Cell::default()).unwrap();
+    let result = add_version(&mut f, padded.into_cell().unwrap(), 2, 50);
+    let gas = gas_at(&result, &capability.address);
+    assert!(gas.aborted && gas.exit == ERR_BAD_ACTION, "an empty tail cell was accepted: {gas:?}");
+    assert_eq!(capability_position(&f.state_at(&capability.address)), (1, 1));
+
+    // The canonical single cell is accepted.
+    let result = add_version(&mut f, protocol_text(&text), 2, 51);
+    let gas = gas_at(&result, &capability.address);
+    assert!(!gas.aborted && gas.exit == 0, "the canonical text was refused: {gas:?}");
+    assert_eq!(capability_position(&f.state_at(&capability.address)), (1, 2));
 }
