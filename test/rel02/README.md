@@ -1,8 +1,8 @@
 # Cross-architecture epoch replay (REL-02)
 
-This offline corpus contains 242 original public epoch-4 blocks and the original
+This offline corpus contains 248 original public epoch-4 blocks and the original
 proof/account/state-update cells needed to execute their transactions. There are
-543 transactions. The manifest and all BOCs total about 6.92 MB, below the 20 MB
+564 transactions. The manifest and all BOCs total about 5.30 MB, below the 20 MB
 budget. No network, validator database, private key, or node service is needed to
 run it. The corpus contains no generated positive chain fixtures.
 
@@ -18,15 +18,17 @@ transaction/block BOCs, independently of the native emulator.
 | Masterchain 309465 and 309734 | 2 | 10 | CP20/CP24 adoption, key blocks and configuration messages |
 | Masterchain 317043/317044/317143/317144 | 4 | 28 | Operator, pool, controller and Elector; stake bid and recover/return paths, PQ verification |
 | Masterchain 328605–328607 | 3 | 8 | Successful election result, configuration acknowledgement and subsequent tick |
-| Masterchain 357884 and 387273 | 2 | 4 | October 20 insufficient-participant election attempts (three submitted stakes); no invented elected result or refund |
+| Masterchain 357884 and 387273 | 2 | 4 | October 20 insufficient-participant/postponed election attempts (three submitted stakes) |
+| Masterchain 361394/361395/361424/390905/390906/390929 | 6 | 21 | Actual cancellation, fresh election window, and node-1 refund for both failed rounds |
 | Masterchain 234331 | 1 | 8 | Real aborted transaction, nonzero compute exit and bounced message |
 | Exact modern masterchain contexts | 6 | 12 | Contexts 431391–431396 referenced by the empty shard blocks |
 | Exact load-test masterchain contexts | 8 | 17 | Contexts 356489/356491/356493/356494/356496/356497/356499/356501 |
 | Shard 448307–448314 | 8 | 0 | Empty shard blocks, codec/state updates and exact masterchain binding |
 | Busy shard blocks 363868/363872/363874/363875/363877/363878/363880/363882 | 8 | 27 | Actual wallet/relayer execution and plain internal transfers |
 
-Three selected blocks are key blocks. The insufficient-participant cases are
-postponed election attempts, not completed elections or returned stakes. No real
+Three selected blocks are key blocks. The close-time cases are postponed
+election attempts; the deadline/refund cases cover the later cancellation and
+return, without inventing an elected set for a failed round. No real
 Token/NFT transaction was located in the retained evidence used for this corpus;
 those transaction types are **not covered**. Split/merge blocks are also not
 covered; the harness refuses them rather than guessing a predecessor state.
@@ -70,11 +72,18 @@ prefix matches. The final workflow job also requires both matrix jobs to succeed
 Every original block's root and file hash was checked against full block IDs from
 two validators. Existing coordinator captures were reused where available; new
 archive reads used immutable package files only. No live database was opened.
-`files` records each input's source block and SHA-256. `original_state_update`
-inputs contain the original state-update cell extracted from an acquired block;
-`source_cell_hash` and `source_file_sha256` bind it to that source. Re-encoding its
-BOC container does not create new state values. Other supplements are original
-RPC proof or public account code/data BOCs. Only original cells are retained.
+`files` records each block's source ID and SHA-256. One native multi-root BOC,
+`state-parts.boc`, packs the original supplemental cells, reducing the fixture
+count to 249 inputs. Its file entry records SHA-256 and source block IDs;
+`supplement_roots` records each original root's hashes and provenance. The 1,686
+original roots were independently checked for identical hashes, bits and
+referenced hashes after packing.
+
+An `original_state_update` root is the original cell extracted from an acquired
+block; `source_cell_hash` and `source_file_sha256` bind it to that block. Other
+roots are original RPC proof or public account code/data cells. Re-encoding the
+BOC container creates no new state values. Copied source/unit-test captures are
+excluded; only known actual epoch captures supply account cells.
 
 The new files have separate purposes:
 
@@ -115,12 +124,16 @@ uploads each architecture's outputs, metrics and mutation receipts.
 
 `--controls` changes one corpus byte (must refuse its SHA-256), restores and
 replays, then alters an expected new-state hash (must name that field), restores
-and replays again. Each red/green result is written beside the output. The
-comparison self-tests also exercise a semantic difference before a missing tail,
+and replays again. Each red/green result is written beside the output. The eight
+comparison/provenance self-tests also exercise a semantic difference before a missing tail,
 missing fields/records, boolean-versus-number differences and a nonzero native
 exit. A separate implementation control replaced executed contract code with an
 empty cell: actual account/transaction results changed and the gate failed;
-restoring the source restored green. No mutation code remains in the harness.
+restoring the source restored green. To repeat it in a disposable checkout,
+insert `account.code = vm::CellBuilder{}.finalize();` immediately before the
+`emulate_transaction` call, build and run the command above (must fail on
+`account_hash`), then remove the line, rebuild and run again (must pass). No
+mutation code remains in the harness.
 
 With the existing Python test dependencies installed, independently check the
 recorded oracle:

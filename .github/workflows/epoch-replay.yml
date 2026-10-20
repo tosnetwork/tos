@@ -39,6 +39,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config autoconf automake libtool libjemalloc-dev libgmp-dev libssl-dev gperf
           sudo scripts/install-llvm-toolchain.sh 21
+          uname -m
           clang-21 --version
           clang++-21 --version
       - uses: ./.github/actions/native-cache

@@ -94,6 +94,20 @@ if __name__ == "__main__":
     expected = [
         record for name in manifest["blocks"] for record in block(args.manifest.parent / name)
     ]
+    roots = [
+        cell
+        for name in manifest["supplements"]
+        for cell in Cell.from_boc((args.manifest.parent / name).read_bytes())
+    ]
+    if len(roots) != len(manifest["supplement_roots"]):
+        raise SystemExit("original cell-bank root count differs")
+    for index, (cell, entry) in enumerate(zip(roots, manifest["supplement_roots"])):
+        if (
+            entry["index"] != index
+            or cell.hash.hex().upper() != entry["cell_hash"]
+            or cell.get_hash(0).hex().upper() != entry["virtual_hash"]
+        ):
+            raise SystemExit(f"original cell-bank root {index} differs")
     if expected != manifest["expected"]:
         raise SystemExit("original BOC decode differs from the recorded oracle")
     print(f"PASS: {len(manifest['blocks'])} blocks, {len(expected)} original records")

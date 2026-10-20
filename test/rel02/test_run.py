@@ -1,6 +1,8 @@
 """Controls for strict output comparison; no generated positive chain fixtures."""
 
 import importlib.util
+import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -49,6 +51,28 @@ class ComparisonControls(unittest.TestCase):
 
     def test_does_not_equate_boolean_and_number(self):
         self.assertIsNotNone(runner.difference({"aborted": False}, {"aborted": 0}))
+
+
+class CorpusControls(unittest.TestCase):
+    def assert_missing_provenance_refuses(self, bank):
+        original = Path(__file__).with_name("corpus")
+        with tempfile.TemporaryDirectory() as directory:
+            copied = Path(directory) / "corpus"
+            shutil.copytree(original, copied)
+            manifest = copied / "manifest.json"
+            data = json.loads(manifest.read_text())
+            entry = data["files"][-1] if bank else data["files"][0]
+            entry.pop("source_block", None)
+            entry.pop("source_blocks", None)
+            manifest.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, "missing chain provenance"):
+                runner.read_manifest(manifest)
+
+    def test_block_without_chain_provenance_refuses(self):
+        self.assert_missing_provenance_refuses(False)
+
+    def test_packed_cells_without_chain_provenance_refuse(self):
+        self.assert_missing_provenance_refuses(True)
 
 
 if __name__ == "__main__":

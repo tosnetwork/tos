@@ -5,6 +5,7 @@ import argparse
 import copy
 import hashlib
 import json
+import platform
 import shutil
 import subprocess
 import sys
@@ -61,7 +62,7 @@ def read_manifest(path):
         data = full.read_bytes()
         if len(data) != entry["size"] or hashlib.sha256(data).hexdigest() != entry["sha256"]:
             raise ValueError(f"corpus SHA-256/size mismatch: {relative}")
-        if not entry.get("source_block"):
+        if not (entry.get("source_block") or entry.get("source_blocks")):
             raise ValueError(f"missing chain provenance: {relative}")
         files[relative] = full
     if len(set(manifest["blocks"])) != len(manifest["blocks"]) or len(
@@ -119,7 +120,12 @@ def run(args, manifest, files):
     if args.metrics:
         args.metrics.write_text(
             json.dumps(
-                {"seconds": elapsed, "blocks": len(manifest["blocks"]), "records": len(observed)},
+                {
+                    "architecture": platform.machine(),
+                    "seconds": elapsed,
+                    "blocks": len(manifest["blocks"]),
+                    "records": len(observed),
+                },
                 indent=2,
             )
             + "\n"
