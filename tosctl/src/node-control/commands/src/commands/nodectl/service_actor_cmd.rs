@@ -239,6 +239,12 @@ pub struct ServiceActorSendCmd {
     request_hash: Option<String>,
     #[arg(
         long,
+        help = "Terms hash the call commits to (hex); defaults to the hash of the service's \
+                current terms, so a policy change between quote and call is refused on chain"
+    )]
+    expected_terms_hash: Option<String>,
+    #[arg(
+        long,
         help = "Request ID for respond, expire, claim-refund, sweep-expired-request (see \
                 `agent service request-show`/`refund-show`, or the ID printed by `call`)"
     )]
@@ -1005,25 +1011,33 @@ impl ServiceActorSendCmd {
         let call_request_hash = matches!(self.operation, ServiceActorOperation::Call)
             .then(|| parse_required_hash("request-hash", &self.request_hash))
             .transpose()?;
-        let call_frontier = if call_request_hash.is_some() {
+        let call_service_data = if call_request_hash.is_some() {
             let provider = contracts::contract_provider!(rpc_client.clone());
-            Some(
-                ServiceActorContract::decode_data(
-                    &provider
-                        .get_method(destination_service.to_string(), "get_service_data", vec![])
-                        .await?,
-                )?
-                .next_request_id,
-            )
+            Some(ServiceActorContract::decode_data(
+                &provider
+                    .get_method(destination_service.to_string(), "get_service_data", vec![])
+                    .await?,
+            )?)
         } else {
             None
         };
+        let call_frontier = call_service_data.as_ref().map(|data| data.next_request_id);
 
         let body = match self.operation {
-            ServiceActorOperation::Call => ServiceActorContract::call(
-                self.query_id,
-                call_request_hash.expect("call hash parsed above"),
-            )?,
+            ServiceActorOperation::Call => {
+                let data = call_service_data.as_ref().expect("service data fetched above");
+                let expected_terms_hash = match &self.expected_terms_hash {
+                    Some(_) => {
+                        parse_required_hash("expected-terms-hash", &self.expected_terms_hash)?
+                    }
+                    None => ServiceActorContract::terms_hash_of_data(data)?,
+                };
+                ServiceActorContract::call(
+                    self.query_id,
+                    call_request_hash.expect("call hash parsed above"),
+                    expected_terms_hash,
+                )?
+            }
             ServiceActorOperation::Respond => {
                 let id = request_id()?;
                 let response_hash = parse_required_hash("response-hash", &self.response_hash)?;

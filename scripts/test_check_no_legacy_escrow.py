@@ -1,4 +1,4 @@
-"""The removed-escrow-v1 guard fails for every kind of fingerprint it holds.
+"""The removed stablecoin escrow guard fails for every kind of fingerprint it holds.
 
 Every planted fingerprint is built from the guard's own constants, so this file
 names nothing the guard looks for. The real v1 artifacts are read back from Git
@@ -88,7 +88,7 @@ class SyntheticTree(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.root = Path(self.dir.name)
         (self.root / "scripts").mkdir()
-        (self.root / "scripts/deploy.py").write_text("print('escrow v2 only')\n")
+        (self.root / "scripts/deploy.py").write_text("print('no escrow here')\n")
 
     def tearDown(self):
         self.dir.cleanup()
@@ -199,12 +199,12 @@ class SyntheticTree(unittest.TestCase):
                     self.assertTrue(any("cell with v1 code hash" in f for f in failures), failures)
 
     def test_other_bocs_pass(self):
-        v2 = (ROOT / check.V2_BOC).read_bytes()
-        boc = base64.b64decode(re.sub(rb"\s", b"", v2))
+        control = (ROOT / check.CONTROL_BOC).read_bytes()
+        boc = base64.b64decode(re.sub(rb"\s", b"", control))
         for relative, content in {
-            "v2.boc.base64": v2,
-            "v2.boc": boc,
-            "v2-state-init.boc": wrapped_in_state_init(boc),
+            "control.boc.base64": control,
+            "control.boc": boc,
+            "control-state-init.boc": wrapped_in_state_init(boc),
         }.items():
             with self.subTest(file=relative):
                 self.assertEqual(self.plant(relative, content), [])
@@ -275,18 +275,18 @@ class Fingerprints(unittest.TestCase):
 
 
 class ParserControl(unittest.TestCase):
-    def test_the_parser_reproduces_the_v2_code_hash(self):
+    def test_the_parser_reproduces_the_control_code_hash(self):
         self.assertEqual(check.parser_control(ROOT), [])
 
     def test_the_parser_control_fails_when_the_hash_does_not_reproduce(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
-            for relative in (check.V2_BOC, check.V2_RELEASE):
+            for relative in (check.CONTROL_BOC, check.CONTROL_RELEASE):
                 (repo / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(ROOT / relative, repo / relative)
-            manifest = json.loads((repo / check.V2_RELEASE).read_text())
+            manifest = json.loads((repo / check.CONTROL_RELEASE).read_text())
             manifest["code_hash"] = "tvm-cell-sha256:" + "00" * 32
-            (repo / check.V2_RELEASE).write_text(json.dumps(manifest))
+            (repo / check.CONTROL_RELEASE).write_text(json.dumps(manifest))
             self.assertTrue(check.parser_control(repo))
 
 
@@ -297,7 +297,7 @@ class RepositoryCheck(unittest.TestCase):
     def test_the_command_fails_on_a_planted_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
-            for relative in (check.V2_BOC, check.V2_RELEASE):
+            for relative in (check.CONTROL_BOC, check.CONTROL_RELEASE):
                 (repo / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy(ROOT / relative, repo / relative)
             command = ["python3", str(ROOT / "scripts/check-no-legacy-escrow.py"), str(repo)]

@@ -42,6 +42,8 @@ const MIN_REFUND_CLAIM_WINDOW: u32 = 3_600;
 const MIN_STORAGE_FEE: u64 = 100_000_000;
 const MIN_CLEANUP_BOUNTY: u64 = 100_000_000;
 const MAX_CLEANUP_BOUNTY: u64 = 1_000_000_000;
+const ERR_TERMS_MISMATCH: i32 = 1926;
+const ERR_INSUFFICIENT_REVENUE: i32 = 1922;
 
 const ERR_NOT_OWNER: i32 = 1900;
 const ERR_INACTIVE: i32 = 1901;
@@ -216,13 +218,22 @@ impl Fixture {
             .int_at(0) as u64
     }
 
+    /// A call that commits to the terms the service currently publishes, paying
+    /// the current price and storage fee plus a gas margin.
     fn call(&mut self, from: &MsgAddressInt, query_id: u64, request_hash: [u8; 32]) -> SendResult {
-        let value = self.init.price_per_call + self.init.storage_fee + TOS / 2;
+        let data = self.data();
+        let value = data.price_per_call + data.storage_fee + TOS / 2;
+        let terms = ServiceActorContract::terms_hash_of_data(&data).unwrap();
         self.send_from_with_value(
             from,
-            ServiceActorContract::call(query_id, request_hash).unwrap(),
+            ServiceActorContract::call(query_id, request_hash, terms).unwrap(),
             value,
         )
+    }
+
+    /// The terms hash the service currently publishes.
+    fn terms(&self) -> [u8; 32] {
+        ServiceActorContract::terms_hash_of_data(&self.data()).unwrap()
     }
 
     fn respond(&mut self, query_id: u64, request_id: u64, response_hash: [u8; 32]) -> SendResult {
@@ -446,7 +457,7 @@ fn overpayment_above_price_plus_storage_fee_is_refunded_at_call_time() {
     // Overpay by 1 TOS beyond what's owed.
     f.send_from_with_value(
         &outsider,
-        ServiceActorContract::call(1, [0xAA; 32]).unwrap(),
+        ServiceActorContract::call(1, [0xAA; 32], f.terms()).unwrap(),
         owed + TOS,
     )
     .expect_success();
@@ -465,9 +476,13 @@ fn call_below_price_plus_storage_fee_is_rejected() {
     let mut f = Fixture::new();
     let caller = f.caller.address().clone();
     let owed = f.init.price_per_call + f.init.storage_fee;
-    f.send_from_with_value(&caller, ServiceActorContract::call(1, [0xAA; 32]).unwrap(), owed - 1)
-        .expect_aborted()
-        .expect_exit_code(ERR_INSUFFICIENT_PAYMENT);
+    f.send_from_with_value(
+        &caller,
+        ServiceActorContract::call(1, [0xAA; 32], f.terms()).unwrap(),
+        owed - 1,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_INSUFFICIENT_PAYMENT);
     assert_eq!(f.data().pending_count, 0);
 }
 
@@ -542,7 +557,14 @@ fn deploy_with_out_of_bounds_policy_is_rejected_at_call_time() {
     bc.send_message(deploy).expect("deploy").expect_success();
 
     let msg = MessageBuilder::internal(caller.address(), &service, TOS)
-        .body(ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .body(
+            ServiceActorContract::call(
+                1,
+                [0xAA; 32],
+                ServiceActorContract::terms_hash_of_init(&bad_init).unwrap(),
+            )
+            .unwrap(),
+        )
         .build();
     bc.send_message(msg).unwrap().expect_aborted().expect_exit_code(ERR_INVALID_CLEANUP_BOUNTY);
 
@@ -582,7 +604,14 @@ fn request_id_overflow_is_rejected_without_mutating_state() {
     };
     let service = deploy_with_runtime_counters(&mut bc, &owner, &init, u64::MAX, 0, 0);
     let msg = MessageBuilder::internal(caller.address(), &service, TOS)
-        .body(ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .body(
+            ServiceActorContract::call(
+                1,
+                [0xAA; 32],
+                ServiceActorContract::terms_hash_of_init(&init).unwrap(),
+            )
+            .unwrap(),
+        )
         .build();
     bc.send_message(msg).unwrap().expect_aborted().expect_exit_code(1909);
     let stack = bc
@@ -621,7 +650,14 @@ fn global_live_capacity_is_enforced_by_the_shipped_bytecode() {
     };
     let service = deploy_with_runtime_counters(&mut bc, &owner, &init, 7, 0, 100_000);
     let msg = MessageBuilder::internal(caller.address(), &service, TOS)
-        .body(ServiceActorContract::call(1, [0xBB; 32]).unwrap())
+        .body(
+            ServiceActorContract::call(
+                1,
+                [0xBB; 32],
+                ServiceActorContract::terms_hash_of_init(&init).unwrap(),
+            )
+            .unwrap(),
+        )
         .build();
     bc.send_message(msg).unwrap().expect_aborted().expect_exit_code(ERR_CAPACITY_EXCEEDED_GLOBAL);
     let stack = bc
@@ -1181,7 +1217,14 @@ fn claim_refund_is_rejected_atomically_when_the_contract_cannot_afford_it() {
 
     let owed = init.price_per_call + init.storage_fee;
     let call_msg = MessageBuilder::internal(caller.address(), &service, owed)
-        .body(ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .body(
+            ServiceActorContract::call(
+                1,
+                [0xAA; 32],
+                ServiceActorContract::terms_hash_of_init(&init).unwrap(),
+            )
+            .unwrap(),
+        )
         .build();
     bc.send_message(call_msg).expect("call").expect_success();
 
@@ -1433,7 +1476,14 @@ fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
 
     let owed = init.price_per_call + init.storage_fee;
     let outsider_call = MessageBuilder::internal(outsider.address(), &service, owed)
-        .body(ServiceActorContract::call(1, [0xAA; 32]).unwrap())
+        .body(
+            ServiceActorContract::call(
+                1,
+                [0xAA; 32],
+                ServiceActorContract::terms_hash_of_init(&init).unwrap(),
+            )
+            .unwrap(),
+        )
         .build();
     bc.send_message(outsider_call)
         .expect("outsider call")
@@ -1444,7 +1494,14 @@ fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
     // stay concurrently pending -- this design allows that.
     for (i, hash) in [[0xBBu8; 32], [0xCCu8; 32]].into_iter().enumerate() {
         let msg = MessageBuilder::internal(caller.address(), &service, owed)
-            .body(ServiceActorContract::call(2 + i as u64, hash).unwrap())
+            .body(
+                ServiceActorContract::call(
+                    2 + i as u64,
+                    hash,
+                    ServiceActorContract::terms_hash_of_init(&init).unwrap(),
+                )
+                .unwrap(),
+            )
             .build();
         bc.send_message(msg).expect("authorized call").expect_success();
     }
@@ -1467,7 +1524,14 @@ fn restricted_access_and_daily_rate_limit_match_the_compiled_bytecode() {
 
     // A third call, same day, is rejected -- and must not mutate state.
     let call3 = MessageBuilder::internal(caller.address(), &service, owed)
-        .body(ServiceActorContract::call(4, [0xDD; 32]).unwrap())
+        .body(
+            ServiceActorContract::call(
+                4,
+                [0xDD; 32],
+                ServiceActorContract::terms_hash_of_init(&init).unwrap(),
+            )
+            .unwrap(),
+        )
         .build();
     bc.send_message(call3).expect("call3").expect_aborted().expect_exit_code(ERR_RATE_LIMITED);
 
@@ -1756,4 +1820,194 @@ fn a_response_signed_for_another_network_is_refused() {
         .expect_exit_code(ERR_BAD_RESPONSE_SIGNATURE);
     f.respond_signed(3, 0, response_hash, &this_network).expect_success();
     assert!(f.request(0).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// Terms binding and the liability floor (audit findings M-SA-02 and M-SA-01).
+// ---------------------------------------------------------------------------
+
+/// A call commits to the terms it was quoted. When the owner revokes the
+/// attestor and doubles the price between the quote and the call, the call
+/// built for the quote is refused before any state moves, and a call built
+/// for the new terms is admitted under them.
+#[test]
+fn a_call_quoted_under_one_policy_is_refused_under_another() {
+    let attestor = SigningKey::from_bytes(&[0x11; 32]);
+    let mut f = Fixture::with_attestor(attestor.verifying_key().to_bytes());
+    let owner = f.owner.address().clone();
+    let caller = f.caller.address().clone();
+
+    // The quote: a first call snapshots the terms the caller agreed to.
+    let quoted_terms = f.terms();
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    let quoted = f.request(0).expect("request 0");
+    assert_eq!(quoted.price, f.init.price_per_call);
+    assert_eq!(quoted.attestor_pubkey, Some(attestor.verifying_key().to_bytes()));
+    assert_eq!(quoted.terms_hash, quoted_terms, "the snapshot carries the published terms");
+
+    // Between quote and execution the owner revokes the attestor and doubles
+    // the price.
+    f.send_from(&owner, ServiceActorContract::revoke_attestor(2).unwrap()).expect_success();
+    let doubled = f.init.price_per_call * 2;
+    f.send_from(
+        &owner,
+        ServiceActorContract::update_policy(
+            3,
+            doubled,
+            f.init.storage_fee,
+            f.init.cleanup_bounty,
+            f.init.response_sla,
+            f.init.refund_claim_window,
+            true,
+            f.init.open_access,
+            f.init.authorized_caller.as_ref(),
+            &owner,
+            f.init.rate_limit_per_day,
+            f.init.metadata_hash,
+            f.init.proof_scheme_hash,
+        )
+        .unwrap(),
+    )
+    .expect_success();
+    assert_ne!(f.terms(), quoted_terms, "the published terms changed");
+
+    // The caller sends exactly the message it built for the quote, with
+    // enough value for the new price: refused on the terms, nothing admitted.
+    let liability_before = f.data().pending_liability;
+    let value = doubled + quoted.storage_fee + TOS / 2;
+    f.send_from_with_value(
+        &caller,
+        ServiceActorContract::call(4, [0xAB; 32], quoted_terms).unwrap(),
+        value,
+    )
+    .expect_aborted()
+    .expect_exit_code(ERR_TERMS_MISMATCH);
+    assert!(f.request(1).is_none(), "a call for stale terms was admitted");
+    assert_eq!(f.data().pending_liability, liability_before, "a refused call moved liability");
+
+    // A call built for the new terms is admitted under them.
+    f.call(&caller, 5, [0xAC; 32]).expect_success();
+    let admitted = f.request(1).expect("request 1");
+    assert_eq!(admitted.price, doubled);
+    assert_eq!(admitted.attestor_pubkey, None);
+    assert_eq!(admitted.terms_hash, f.terms());
+}
+
+/// The owner's withdrawal cap keeps the storage fees locked for live entries
+/// in the contract. A message's value always exceeds the gas it pays for, so
+/// the only thing that moves the balance below the counters is storage rent;
+/// the test lets rent accrue until the balance no longer covers pending +
+/// refundable + locked + reserve + revenue, then shows the nominal revenue is
+/// refused while the amount that leaves the locked fees intact is paid.
+#[test]
+fn withdraw_revenue_never_takes_the_storage_fees_locked_for_live_entries() {
+    const RESERVE: u64 = TOS; // MINIMUM_OPERATING_RESERVE in the contract
+    let mut bc = Blockchain::new().expect("blockchain");
+    bc.set_workchain(-1);
+    let owner = bc.treasury("owner", 10_000 * TOS).expect("owner");
+    let caller = bc.treasury("caller", 10_000 * TOS).expect("caller");
+    let client = bc.treasury("client", 10_000 * TOS).expect("client");
+    let outsider = bc.treasury("outsider", 10_000 * TOS).expect("outsider");
+    // A large storage fee makes the locked amount, and so the gap between a
+    // cap that ignores it and one that keeps it, wide enough for rent to land
+    // inside.
+    let init = ServiceActorInit {
+        owner: owner.address().clone(),
+        authorized_caller: None,
+        open_access: true,
+        price_per_call: TOS / 10,
+        storage_fee: 5 * TOS,
+        cleanup_bounty: MIN_CLEANUP_BOUNTY,
+        rate_limit_per_day: 0,
+        response_sla: MIN_RESPONSE_SLA,
+        // The live entry must stay live for the whole accrual, so its rights
+        // window is the maximum.
+        refund_claim_window: 2_592_000,
+        metadata_hash: [0x11; 32],
+        proof_scheme_hash: [0x22; 32],
+        attestor_pubkey: None,
+    };
+    let service = ServiceActorContract::calculate_address(-1, &init).expect("address");
+    let state_init = ServiceActorContract::build_state_init(&init).expect("state init");
+    let deploy = MessageBuilder::internal(owner.address(), &service, RESERVE + TOS / 5)
+        .bounce(false)
+        .state_init(state_init)
+        .body(Cell::default())
+        .build();
+    bc.send_message(deploy).expect("deploy").expect_success();
+    let mut f = Fixture { bc, owner, caller, caller2: client, outsider, service, init };
+    let owner = f.owner.address().clone();
+    let caller = f.caller.address().clone();
+    let client = f.caller2.address().clone();
+
+    // One live client request: its storage fee is locked. One responded
+    // request: nominal revenue.
+    f.call(&client, 1, [0xCC; 32]).expect_success();
+    f.call(&caller, 2, [0xAA; 32]).expect_success();
+    f.respond(3, 1, [0xBB; 32]).expect_success();
+    let revenue = f.data().withdrawable_revenue;
+    assert_eq!(revenue, f.init.price_per_call + f.init.storage_fee);
+    let probe_value = TOS / 20;
+    let floor_with_locked = |f: &Fixture| {
+        let d = f.data();
+        d.pending_liability + d.refundable_liability + d.locked_storage_fees + RESERVE
+    };
+
+    // Let rent accrue, a day at a time, until the balance (with the probe's
+    // own value) no longer covers the floor plus the whole revenue. Each probe
+    // is a withdrawal nobody could ever afford, sent without bounce so its
+    // value stays: it applies the storage phase and changes nothing else.
+    let mut q = 10u64;
+    let mut day = 0u32;
+    loop {
+        day += 1;
+        assert!(day <= 400, "rent never brought the balance below the floor plus revenue");
+        f.bc.set_now(f.bc.now() + 86_400);
+        let probe = MessageBuilder::internal(&owner, &f.service, probe_value)
+            .bounce(false)
+            .body(ServiceActorContract::withdraw_revenue(q, u64::MAX).unwrap())
+            .build();
+        f.bc.send_message(probe).expect("probe").expect_aborted();
+        q += 1;
+        if f.balance(&f.service) + probe_value < floor_with_locked(&f) + revenue {
+            break;
+        }
+    }
+    let balance = f.balance(&f.service);
+    let d = f.data();
+    let floor_without_locked = d.pending_liability + d.refundable_liability + RESERVE;
+    assert!(
+        balance + probe_value >= floor_without_locked + revenue,
+        "rent ran past the window: a cap ignoring locked fees would refuse this too (balance {balance})"
+    );
+    eprintln!("day {day}: balance {balance}, locked {}, revenue {revenue}", d.locked_storage_fees);
+
+    // The nominal revenue is refused: paying it would take locked fees.
+    let withdraw = MessageBuilder::internal(&owner, &f.service, probe_value)
+        .bounce(false)
+        .body(ServiceActorContract::withdraw_revenue(q, revenue).unwrap())
+        .build();
+    f.bc.send_message(withdraw)
+        .expect("withdraw")
+        .expect_aborted()
+        .expect_exit_code(ERR_INSUFFICIENT_REVENUE);
+    q += 1;
+    assert_eq!(f.data().withdrawable_revenue, revenue, "a refused withdrawal touched the counter");
+
+    // What leaves the locked fees intact is paid, and the floor holds after.
+    // (The refused message's own value stayed in the contract, so the cap may
+    // have moved up by it since.)
+    let balance = f.balance(&f.service);
+    let affordable = (balance + probe_value).saturating_sub(floor_with_locked(&f)).min(revenue);
+    assert!(affordable > 0, "nothing affordable at balance {balance}");
+    let withdraw = MessageBuilder::internal(&owner, &f.service, probe_value)
+        .bounce(false)
+        .body(ServiceActorContract::withdraw_revenue(q, affordable).unwrap())
+        .build();
+    f.bc.send_message(withdraw).expect("withdraw").expect_success();
+    assert!(
+        f.balance(&f.service) >= floor_with_locked(&f),
+        "the paid withdrawal took the balance below pending + refundable + locked + reserve"
+    );
+    assert_eq!(f.data().withdrawable_revenue, revenue - affordable);
 }

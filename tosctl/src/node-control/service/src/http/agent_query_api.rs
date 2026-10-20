@@ -1194,7 +1194,14 @@ mod tests {
             let mut bc = self.provider.bc.lock().expect("lock");
             bc.send_message(deploy).unwrap().expect_success();
             let call = MessageBuilder::internal(self.agent.address(), &address, 500_000_000)
-                .body(ServiceActorContract::call(7, [0xAB; 32]).unwrap())
+                .body(
+                    ServiceActorContract::call(
+                        7,
+                        [0xAB; 32],
+                        ServiceActorContract::terms_hash_of_init(&init).unwrap(),
+                    )
+                    .unwrap(),
+                )
                 .build();
             bc.send_message(call).unwrap().expect_success();
             address

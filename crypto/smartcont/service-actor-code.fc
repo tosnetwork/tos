@@ -48,7 +48,8 @@
 ;;   refund_claim_deadline:uint64
 ;;
 ;; Internal messages:
-;;   call#53564301 query_id:uint64 request_hash:uint256 = InternalMsgBody;
+;;   call#53564301 query_id:uint64 request_hash:uint256 expected_terms_hash:uint256
+;;                 = InternalMsgBody;
 ;;   respond#53564302 query_id:uint64 request_id:uint64 response_hash:uint256
 ;;                    signature:(## 512, present iff has_attestor) = InternalMsgBody;
 ;;   expire#53564303 query_id:uint64 request_id:uint64 = InternalMsgBody;
@@ -103,6 +104,7 @@ const int err::insufficient_revenue = 1922;
 const int err::not_authorized = 1923;
 const int err::rate_limited = 1924;
 const int err::weak_attestor = 1925;
+const int err::terms_mismatch = 1926;
 
 ;; The attestor signs: tag, network, this actor, then the request it answers.
 const int domain::respond = 0x53525032; ;; "SRP2"
@@ -477,6 +479,7 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     calls_today += 1;
 
     int request_hash = in_msg~load_uint(256);
+    int expected_terms_hash = in_msg~load_uint(256);
     in_msg.end_parse();
 
     int request_id = next_request_id;
@@ -485,6 +488,10 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     int terms_hash = compute_terms_hash(policy_version, price_per_call, storage_fee,
       cleanup_bounty, response_sla, refund_claim_window, metadata_hash, proof_scheme_hash,
       has_attestor, attestor_pubkey);
+    ;; The caller commits to the terms it was quoted. A policy or attestor change that
+    ;; lands between the quote and the call fails here, before any state moves, instead
+    ;; of admitting the request under terms the caller never saw.
+    throw_unless(err::terms_mismatch, expected_terms_hash == terms_hash);
 
     pending_requests~udict_set_ref(64, request_id,
       pack_pending_request(sender, price_per_call, storage_fee, cleanup_bounty, response_deadline,
@@ -649,7 +656,12 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     ;; afford it. A later destination-side failure does not reopen the
     ;; deleted entry -- sweepers should call from an address that can
     ;; receive value reliably.
-    throw_unless(err::insufficient_balance, req_cleanup_bounty <= get_balance().pair_first());
+    ;; What the bounty leaves behind must still cover every other live entry's price and
+    ;; locked storage fee, plus the operating reserve.
+    throw_unless(err::insufficient_balance,
+      get_balance().pair_first() - req_cleanup_bounty >=
+        pending_liability + refundable_liability - price
+          + locked_storage_fees - req_storage_fee + MINIMUM_OPERATING_RESERVE);
 
     if (came_from_pending) {
       (pending_requests, _) = pending_requests.udict_delete?(64, request_id);
@@ -749,9 +761,11 @@ cell caller_live_decr(cell caller_live_counts, slice caller) inline {
     throw_unless(err::not_owner, equal_slice_bits(sender, owner));
     int amount = in_msg~load_tomis();
     in_msg.end_parse();
+    ;; What live entries still need -- their prices, their locked storage fees and the
+    ;; operating reserve -- is never the owner's to withdraw, whatever the revenue counter says.
     int withdrawable_now = min(withdrawable_revenue,
       get_balance().pair_first() - pending_liability - refundable_liability
-        - MINIMUM_OPERATING_RESERVE);
+        - locked_storage_fees - MINIMUM_OPERATING_RESERVE);
     throw_unless(err::insufficient_revenue, amount <= withdrawable_now);
     if (amount > 0) {
       send_value(owner, amount, 1);

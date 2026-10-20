@@ -436,6 +436,66 @@ _ ~credit_to(credits, addr, amount) inline_ref {
   return (credits, ());
 }
 
+;; The member of an open election that states a transport address, or zero. Members are
+;; bounded by `pq_participant_limit`, so the walk is a bounded cost, paid before the
+;; signature is.
+int election_address_holder(cell members, int adnl_addr) inline_ref {
+  int holder = 0;
+  int id = (1 << 255) + ((1 << 255) - 1);
+  int more = true;
+  do {
+    (id, slice ms, int found) = members.udict_get_prev?(256, id);
+    if (found) {
+      (_, _, _, _, _, _, int stated, _, _) = pq::unpack_member(ms);
+      if (stated == adnl_addr) {
+        holder = id;
+        found = false;
+      }
+    }
+    more = found;
+  } until (~ more);
+  return holder;
+}
+
+;; The validator of a stored set that holds a transport address, or zero. `vset` is a
+;; validator set as the configuration stores it, or null when there is none.
+int set_address_holder(cell vset, int adnl_addr) inline_ref {
+  if (vset.null?()) {
+    return 0;
+  }
+  slice cs = vset.begin_parse();
+  ;; validators_ext#12 utime_since:uint32 utime_until:uint32 total:uint16 main:uint16
+  ;; total_weight:uint64 list:(HashmapE 16 ValidatorDescr)
+  cs~skip_bits(8 + 32 + 32 + 16 + 16 + 64);
+  cell list = cs~load_dict();
+  int holder = 0;
+  int index = -1;
+  int more = true;
+  do {
+    (index, slice descr, int found) = list.udict_get_next?(16, index);
+    if (found) {
+      (int validator_id, _, _, _, _, int stated) = pq::parse_descriptor(descr);
+      if (stated == adnl_addr) {
+        holder = validator_id;
+        found = false;
+      }
+    }
+    more = found;
+  } until (~ more);
+  return holder;
+}
+
+;; Whether a transport address is held, under another validator identity, by a validator
+;; of the current or the next set.
+int address_held_by_another_validator(int validator_id, int adnl_addr) inline {
+  int holder = set_address_holder(config_param(34), adnl_addr);
+  if ((holder != 0) & (holder != validator_id)) {
+    return true;
+  }
+  holder = set_address_holder(config_param(36), adnl_addr);
+  return (holder != 0) & (holder != validator_id);
+}
+
 () process_pq_stake(s_addr, msg_value, cs, query_id) impure inline_ref {
   var (src_wc, src_addr) = parse_std_addr(s_addr);
   var ds = get_data().begin_parse();
@@ -525,6 +585,21 @@ _ ~credit_to(credits, addr, amount) inline_ref {
     if (holder != validator_id) {
       return return_stake(owner_addr, query_id, 4);
     }
+  }
+  ;; A transport address names one node, and a set in which two validators state the same
+  ;; address is refused by the configuration as a whole, which returns every stake. Left
+  ;; to the set, that would let one candidate restating another's address cancel each
+  ;; election for the price of its fee. So the address is settled per candidate, here,
+  ;; after the key and before the signature is paid for: an address another member of this election states,
+  ;; or one a validator of the current or next set holds under another identity, is
+  ;; refused with the money. A validator keeps its own address across elections and
+  ;; top-ups, and may move to a fresh one.
+  int stated_by = election_address_holder(pq_members, adnl_addr);
+  if ((stated_by != 0) & (stated_by != validator_id)) {
+    return return_stake(owner_addr, query_id, 17);
+  }
+  if (address_held_by_another_validator(validator_id, adnl_addr)) {
+    return return_stake(owner_addr, query_id, 18);
   }
   ;; Whether this account may hold validator authority at all. The controller is the
   ;; root of it, and what makes a controller post-quantum is the code it was deployed

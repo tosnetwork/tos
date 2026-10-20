@@ -40,7 +40,7 @@ def main() -> int:
         "--test-identities",
         default=str(SPEC / "test-vectors/tos-service-test-identities-v1.json"),
     )
-    parser.add_argument("--role", default="test-usdt-buyer")
+    parser.add_argument("--role", default="test-packet-buyer")
     args = parser.parse_args()
 
     config_path = Path(args.global_config).resolve()

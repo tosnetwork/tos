@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Fails if any part of the removed stablecoin escrow v1 reappears in the tree.
+"""Fails if any part of the removed stablecoin escrow reappears in the tree.
 
-Escrow v1 was removed outright: its source, frozen BOC, release manifest,
-build/embed/test scripts, CMake wiring, sandbox suite and the rehearsal and
-evidence paths that deployed or read it. Nothing in the remaining tree refers
-to it, so nothing would notice its return. This check does, by fingerprint:
+The stablecoin escrow (v1, then v2) and the third-party stablecoin reference
+contracts were removed outright: source, frozen BOCs, release manifests,
+build/embed/test scripts, CMake wiring, sandbox suites, deploy tooling and the
+rehearsal and evidence paths that deployed or read them. Nothing in the
+remaining tree refers to them, so nothing would notice their return. This
+check does, by fingerprint:
 
 1. Code hashes. Both code hashes v1 ever had, as hex text in any case or as raw
    32 bytes, anywhere in any file.
@@ -15,16 +17,17 @@ to it, so nothing would notice its return. This check does, by fingerprint:
    every cell in it is compared with both code hashes, so v1 code re-serialized
    with other BOC flags, or wrapped in a StateInit, is caught as well.
 3. Source and build paths. Any file whose path, or any file whose content,
-   names the v1 source, artifact, protocol id, build target, sandbox suite,
-   deploy opt-in, or the rehearsal and evidence scripts that deployed or read
-   it; and any file whose content is a v1 contract source ever committed.
+   names the v1 or v2 source, artifact, protocol id, build target, sandbox
+   suite, deploy opt-in, deploy policy, the stablecoin reference contracts, or
+   the rehearsal and evidence scripts that deployed or read them; and any file
+   whose content is a v1 contract source ever committed.
 
 Exempt: this file, which holds the fingerprints, and historical evidence
-directories, which record what was built at the time.
+directories and inventories, which record what was built at the time.
 
 A parser that silently fails would make the cell-hash check pass on anything,
-so every run first parses the frozen escrow v2 BOC and requires its root hash
-to equal the code hash in the v2 release manifest.
+so every run first parses the frozen native registry BOC and requires its root
+hash to equal the code hash in the registry's release manifest.
 """
 
 import base64
@@ -93,20 +96,37 @@ V1_PATH_NEEDLES = (
     "local_paid_rehearsal",
     "software-work-paid-evidence",
     "software_work_paid_evidence",
+    # The v2 escrow, its deploy policy and the stablecoin reference contracts,
+    # removed after v1.
+    "stablecoin-escrow-v2",
+    "stablecoin_escrow_v2",
+    "stablecoin-escrow",
+    "stablecoin_escrow",
+    "escrow_deploy_policy",
+    "usdt-jetton-master",
+    "test-usdt-wallet",
+    "tos-service-test-usdt",
 )
 
 # File names alone are matched more broadly: no file may be named after v1.
 V1_NAME_NEEDLES = V1_PATH_NEEDLES + ("escrow-v1", "escrow_v1")
 
 THIS_FILE = "scripts/check-no-legacy-escrow.py"
-EXEMPT_FILES = {THIS_FILE}
+EXEMPT_FILES = {
+    THIS_FILE,
+    # A build-input inventory of a past run, kept as evidence of what was built.
+    "scripts/x02_four_node_inputs.json",
+}
 EXEMPT_PREFIXES = (
-    # Raw logs of past builds and runs, kept as evidence of what ran at the time.
+    # Raw logs and indexes of past builds and runs, kept as evidence of what ran
+    # at the time.
     "tools/node-health-monitor/evidence/",
+    "doc/evidence/",
 )
 
-V2_BOC = "crypto/smartcont/tos-service-stablecoin-escrow-v2.boc.base64"
-V2_RELEASE = "crypto/smartcont/tos-service-stablecoin-escrow-v2.release.json"
+# The BOC parser proves itself on a frozen artifact that is still in the tree.
+CONTROL_BOC = "crypto/smartcont/tos-service-native-registry-v1.boc.base64"
+CONTROL_RELEASE = "crypto/smartcont/tos-service-native-registry-v1.release.json"
 
 BOC_MAGIC = bytes.fromhex("b5ee9c72")
 BASE64_BOC = re.compile(rb"te6cc[A-Za-z0-9+/]+={0,2}")
@@ -345,15 +365,15 @@ def scan_tree(root: Path) -> list[str]:
 
 def parser_control(root: Path) -> list[str]:
     """The cell-hash check reproduces a known code hash, or it checks nothing."""
-    manifest = json.loads((root / V2_RELEASE).read_text())
+    manifest = json.loads((root / CONTROL_RELEASE).read_text())
     expected = manifest["code_hash"].split(":", 1)[1]
-    encoded = (root / V2_BOC).read_bytes()
+    encoded = (root / CONTROL_BOC).read_bytes()
     try:
         actual = boc_root_hash(base64.b64decode(WHITESPACE.sub(b"", encoded), validate=True)).hex()
     except (BocError, binascii.Error, ValueError) as error:
-        return [f"{V2_BOC}: the BOC parser cannot read the frozen v2 artifact ({error})"]
+        return [f"{CONTROL_BOC}: the BOC parser cannot read the frozen control artifact ({error})"]
     if actual != expected:
-        return [f"{V2_BOC}: the BOC parser computes {actual}, the manifest says {expected}"]
+        return [f"{CONTROL_BOC}: the BOC parser computes {actual}, the manifest says {expected}"]
     return []
 
 
@@ -361,10 +381,10 @@ def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1]).resolve()
     failures = parser_control(root) + scan_tree(root)
     for failure in failures:
-        print(f"removed escrow v1 check failed: {failure}", file=sys.stderr)
+        print(f"removed stablecoin escrow check failed: {failure}", file=sys.stderr)
     if failures:
         return 1
-    print("removed escrow v1: no code hash, artifact or path of it is in the tree")
+    print("removed stablecoin escrow: no code hash, artifact or path of it is in the tree")
     return 0
 
 
