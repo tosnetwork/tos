@@ -163,6 +163,12 @@ fun QuorumConfig.countValidSignatures(self, hash: int, signatures: dict): int {
     var (key, value, found) = signatures.uDictGetFirst(QUORUM_KEY_BITS);
     while (found) {
         count += 1;
+        // A consistent config has no more members than it counts, so a walk past
+        // that count proves the config disagrees with its own set; stopping here
+        // keeps the work bounded by the declared count even for a hand-built config.
+        if (count > self.verifierCount) {
+            throw QUORUM_THROW_INVALID_CONFIG;
+        }
         val publicKey = key!;
         if (!self.isVerifier(publicKey)) {
             throw QUORUM_THROW_UNKNOWN_SIGNER;
@@ -181,7 +187,17 @@ fun QuorumConfig.countValidSignatures(self, hash: int, signatures: dict): int {
 }
 
 /// Throws unless `signatures` carries at least `quorum` valid signatures.
+/// A hand-built configuration is held to the same invariants as a constructed
+/// one: bounds on the integers, and a set exactly as large as its count says,
+/// so a zero quorum cannot be met by nobody, an understated count cannot hide
+/// a set past the size bound, and an overstated one cannot promise an
+/// unreachable quorum. The walk stops at the size bound, so it is bounded too.
+/// Key strength is judged where a key signs, as before, not here.
 fun QuorumConfig.requireQuorum(self, hash: int, signatures: dict): void {
+    quorumRequireValidConfig(self.verifierCount, self.quorum);
+    if (quorumCountKeys(self.verifiers, QUORUM_MAX_VERIFIERS, QUORUM_THROW_INVALID_CONFIG) != self.verifierCount) {
+        throw QUORUM_THROW_INVALID_CONFIG;
+    }
     if (self.countValidSignatures(hash, signatures) < self.quorum) {
         throw QUORUM_THROW_INSUFFICIENT_SIGNATURES;
     }

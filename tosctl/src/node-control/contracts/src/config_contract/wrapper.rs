@@ -13,9 +13,6 @@ pub type ProposalHash = [u8; 32];
 
 #[async_trait::async_trait]
 pub trait ConfigContractWrapper: SmartContract + Send + Sync {
-    /// Get the current sequence number of the config contract
-    async fn seqno(&self) -> anyhow::Result<u32>;
-
     /// Get details of a specific proposal by its hash
     async fn get_proposal(&self, phash: ProposalHash) -> anyhow::Result<Option<ConfigProposal>>;
 

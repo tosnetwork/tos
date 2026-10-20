@@ -212,3 +212,11 @@ const int err::unknown_op = 1807;
 (slice, int, slice, int, int, int, int, int, int, int, int) get_capability_registry_data() method_id {
   return load_state();
 }
+
+;; The tracked bond next to the balance that backs it. `bond` is a record of
+;; what was staked; only the balance can actually be withdrawn, and a reader
+;; that compares the two sees when the record exceeds the backing.
+(int, int) get_bond_backing() method_id {
+  (_, _, _, _, _, int bond, _, _, _, _, _) = load_state();
+  return (bond, get_balance().pair_first());
+}

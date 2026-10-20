@@ -118,6 +118,40 @@ fun test_quorum_met_and_missed(): int {
         thrown = true;
     }
     assert(thrown) throw 143;
+    // A hand-built configuration never passed quorumConfigNew. The bounds are
+    // checked again here, so a zero quorum cannot be met by nobody and an
+    // unreachable one is refused as a configuration error.
+    var invalid = 0;
+    val zeroQuorum = QuorumConfig { verifiers: set123(), verifierCount: 3, quorum: 0 };
+    try { zeroQuorum.requireQuorum(HASH, createEmptyDict()); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 144); invalid += 1; }
+    val unreachable = QuorumConfig { verifiers: set123(), verifierCount: 3, quorum: 4 };
+    try { unreachable.requireQuorum(HASH, s); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 145); invalid += 1; }
+    // The set must be exactly as large as the count says: an understated count
+    // with one signature, and a set past the size bound hidden behind count 1,
+    // are both configuration errors; a full 64-member set built the normal way
+    // still verifies.
+    val undercounted = QuorumConfig { verifiers: set123(), verifierCount: 1, quorum: 1 };
+    try { undercounted.requireQuorum(HASH, single); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 147); invalid += 1; }
+    val overcounted = QuorumConfig { verifiers: set123(), verifierCount: 4, quorum: 2 };
+    try { overcounted.requireQuorum(HASH, s); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 148); invalid += 1; }
+    var many = createEmptyDict();
+    many = quorumAddVerifier(many, K1);
+    var i = 1;
+    while (i <= QUORUM_MAX_VERIFIERS) {
+        many = quorumAddVerifier(many, i);
+        i += 1;
+    }
+    val hidden = QuorumConfig { verifiers: many, verifierCount: 1, quorum: 1 };
+    try { hidden.requireQuorum(HASH, single); } catch (code) { expectThrow(code, QUORUM_THROW_INVALID_CONFIG, 149); invalid += 1; }
+    assert(invalid == 5) throw 146;
+    var full = createEmptyDict();
+    full = quorumAddVerifier(full, K1);
+    i = 1;
+    while (i < QUORUM_MAX_VERIFIERS) {
+        full = quorumAddVerifier(full, i);
+        i += 1;
+    }
+    quorumConfigNew(full, 1).requireQuorum(HASH, withSig(createEmptyDict(), K1, sig1()));
     return 5;
 }
 

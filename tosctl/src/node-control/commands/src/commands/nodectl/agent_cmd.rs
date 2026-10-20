@@ -1750,6 +1750,29 @@ impl AgentTaskCapabilitiesCmd {
         Ok(())
     }
 }
+/// The contract's windows are half-open: the deadline second itself admits only
+/// `timeout`, so the client refuses claim, accept and result from it on rather than
+/// paying for a message the contract aborts.
+fn require_before_task_deadline(
+    task: &TaskEscrowData,
+    context: &ControllerTaskActionContext<'_>,
+) -> anyhow::Result<()> {
+    if context.now >= task.deadline {
+        anyhow::bail!("Task Escrow task deadline has passed");
+    }
+    Ok(())
+}
+
+/// Same rule for settlement and dispute against the review window.
+fn require_before_review_deadline(
+    task: &TaskEscrowData,
+    context: &ControllerTaskActionContext<'_>,
+) -> anyhow::Result<()> {
+    if context.now >= task.review_deadline {
+        anyhow::bail!("Task Escrow review deadline has passed");
+    }
+    Ok(())
+}
 
 /// Resolve the escrow address from an explicit `--address` or a stored `--name` record.
 fn resolve_task_address(
@@ -1788,18 +1811,23 @@ fn validate_controller_task_action(
             if task.assigned_agent.as_ref() != Some(agent_account) {
                 anyhow::bail!("Task Escrow is not assigned to the selected Agent Account");
             }
+            if matches!(operation, AgentTaskOperation::Accept) {
+                require_before_task_deadline(task, context)?;
+            }
         }
         AgentTaskOperation::Claim => {
             require_task_status(task, 0, "open")?;
             if task.assigned_agent.is_some() {
                 anyhow::bail!("Task Escrow is already assigned and cannot be claimed");
             }
+            require_before_task_deadline(task, context)?;
         }
         AgentTaskOperation::Result => {
             require_task_status(task, 1, "accepted")?;
             if task.assigned_agent.as_ref() != Some(agent_account) {
                 anyhow::bail!("Task Escrow is not assigned to the selected Agent Account");
             }
+            require_before_task_deadline(task, context)?;
         }
         AgentTaskOperation::Settle => {
             require_task_status(task, 2, "result_submitted")?;
@@ -1808,9 +1836,7 @@ fn validate_controller_task_action(
                     "Task Escrow settlement requires its creator or designated verifier Agent Account"
                 );
             }
-            if context.now > task.review_deadline {
-                anyhow::bail!("Task Escrow review deadline has passed");
-            }
+            require_before_review_deadline(task, context)?;
             validate_controller_task_payout(task, context)?;
             validate_controller_task_attestation(operation, task, context)?;
         }
@@ -1841,9 +1867,7 @@ fn validate_controller_task_action(
             if task.verifier.is_none() {
                 anyhow::bail!("Task Escrow dispute requires a designated verifier");
             }
-            if context.now > task.review_deadline {
-                anyhow::bail!("Task Escrow review deadline has passed");
-            }
+            require_before_review_deadline(task, context)?;
             let dispute_hash =
                 context.dispute_hash.context("controller Task dispute requires --dispute-hash")?;
             if dispute_hash == [0; 32] {
@@ -2200,9 +2224,15 @@ impl AgentTaskSendCmd {
             let stack =
                 provider.get_method(destination.to_string(), "get_task_data", vec![]).await?;
             let chain_task = TaskEscrowContract::decode_data(&stack)?;
+            // Every operation the contract gates by time: the task window for
+            // claim, accept and result, the review window for settle and dispute,
+            // and the timeouts.
             let validation_now = if matches!(
                 self.operation,
-                AgentTaskOperation::Settle
+                AgentTaskOperation::Claim
+                    | AgentTaskOperation::Accept
+                    | AgentTaskOperation::Result
+                    | AgentTaskOperation::Settle
                     | AgentTaskOperation::Timeout
                     | AgentTaskOperation::Dispute
                     | AgentTaskOperation::DisputeTimeout
@@ -14386,6 +14416,51 @@ mod tests {
         )
         .unwrap_err();
         assert!(assigned_claim.to_string().contains("already assigned"));
+
+        // The task window is half-open: the deadline second admits none of the
+        // three, the second before admits all of them.
+        for (operation, status, assigned) in [
+            (AgentTaskOperation::Accept, 0, true),
+            (AgentTaskOperation::Claim, 0, false),
+            (AgentTaskOperation::Result, 1, true),
+        ] {
+            let mut at_deadline = controller_task(status);
+            at_deadline.deadline = context.now;
+            if !assigned {
+                at_deadline.assigned_agent = None;
+            }
+            let expired = validate_controller_task_action(
+                &operation,
+                &at_deadline,
+                &address(2),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err();
+            assert!(expired.to_string().contains("task deadline has passed"), "{expired}");
+            let mut before_deadline = at_deadline.clone();
+            before_deadline.deadline = context.now + 1;
+            validate_controller_task_action(
+                &operation,
+                &before_deadline,
+                &address(2),
+                permission_hash,
+                &context,
+            )
+            .unwrap();
+        }
+        // Rejecting an expired assignment stays possible; only timeout competes
+        // with it on-chain, and the contract does not gate reject by time.
+        let mut expired_assignment = controller_task(0);
+        expired_assignment.deadline = context.now;
+        validate_controller_task_action(
+            &AgentTaskOperation::Reject,
+            &expired_assignment,
+            &address(2),
+            permission_hash,
+            &context,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -14394,7 +14469,7 @@ mod tests {
         let task_address = address(9);
         let context = controller_task_context(&task_address);
         let mut task = controller_task(2);
-        task.review_deadline = 100;
+        task.review_deadline = 101;
         task.verifier = Some(address(3));
 
         for authorized in [address(1), address(3)] {
@@ -14435,8 +14510,23 @@ mod tests {
             .contains("creator or designated verifier")
         );
 
+        // The review window is half-open: its deadline second is refused.
+        let mut at_review_deadline = task.clone();
+        at_review_deadline.review_deadline = context.now;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Settle,
+                &at_review_deadline,
+                &address(1),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("review deadline has passed")
+        );
         let mut expired = controller_task_context(&task_address);
-        expired.now = 101;
+        expired.now = 102;
         assert!(
             validate_controller_task_action(
                 &AgentTaskOperation::Settle,
@@ -14648,7 +14738,7 @@ mod tests {
         let context = controller_task_context(&task_address);
         let mut task = controller_task(2);
         task.verifier = Some(address(3));
-        task.review_deadline = 100;
+        task.review_deadline = 101;
         validate_controller_task_action(
             &AgentTaskOperation::Dispute,
             &task,
@@ -14706,8 +14796,23 @@ mod tests {
             )
             .is_err()
         );
+        // The review window is half-open: its deadline second is refused.
+        let mut at_review_deadline = task.clone();
+        at_review_deadline.review_deadline = context.now;
+        assert!(
+            validate_controller_task_action(
+                &AgentTaskOperation::Dispute,
+                &at_review_deadline,
+                &address(1),
+                permission_hash,
+                &context,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("review deadline has passed")
+        );
         let mut expired = controller_task_context(&task_address);
-        expired.now = 101;
+        expired.now = 102;
         assert!(
             validate_controller_task_action(
                 &AgentTaskOperation::Dispute,
@@ -14836,7 +14941,7 @@ mod tests {
         let task_address = address(9);
         let signing_key = SigningKey::from_bytes(&[42; 32]);
         let mut task = controller_task(2);
-        task.review_deadline = 100;
+        task.review_deadline = 101;
         task.result_hash = [8; 32];
         task.attestor_pubkey = Some(signing_key.verifying_key().to_bytes());
         let domain = contracts::settle_domain_hash(

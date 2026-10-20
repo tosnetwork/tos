@@ -144,6 +144,11 @@ const int status::disputed = 7;
   if (op == op::claim) {
     throw_unless(115, status == status::open);
     throw_unless(116, has_agent == 0);
+    ;; Deadlines are half-open: a task may be claimed, accepted and have its
+    ;; result submitted strictly before `deadline`; from `deadline` on only
+    ;; timeout applies. The same rule holds for the review window below, so no
+    ;; second admits both an action and the timeout that supersedes it.
+    throw_unless(117, now() < deadline);
     ;; Reject before the agent commits to the task, not after it has already
     ;; done the work: checking only in result() would let a malicious or
     ;; misconfigured creator (bypassing the client-side deploy validation by
@@ -169,6 +174,7 @@ const int status::disputed = 7;
   if (op == op::accept) {
     throw_unless(100, status == status::open);
     throw_unless(101, has_agent & equal_slice_bits(sender, agent));
+    throw_unless(117, now() < deadline);
     ;; Same rationale as claim() above, for both checks.
     throw_unless(err::review_period_too_short, review_period >= min_review_period);
     throw_unless(err::budget_not_escrowed, budget <= get_balance().pair_first() - msg_value);
@@ -182,7 +188,7 @@ const int status::disputed = 7;
   if (op == op::result) {
     throw_unless(102, status == status::accepted);
     throw_unless(103, has_agent & equal_slice_bits(sender, agent));
-    throw_unless(117, now() <= deadline);
+    throw_unless(117, now() < deadline);
     ;; Defensive duplicate of the check in claim()/accept(): status can only
     ;; reach `accepted` through one of those two ops, so this can never
     ;; actually fire in practice, but it keeps the guarantee co-located with
@@ -203,7 +209,7 @@ const int status::disputed = 7;
     ;; Settlement authority: the creator, or the designated verifier when set.
     throw_unless(105, equal_slice_bits(sender, creator) |
       (has_verifier & equal_slice_bits(sender, verifier)));
-    throw_unless(118, now() <= review_deadline);
+    throw_unless(118, now() < review_deadline);
     var payout = in_msg~load_tomis();
     throw_unless(106, payout <= budget);
     throw_unless(112, payout <= get_balance().pair_first());
@@ -289,7 +295,7 @@ const int status::disputed = 7;
     throw_unless(119, status == status::result_submitted);
     throw_unless(120, equal_slice_bits(sender, creator));
     throw_unless(121, has_verifier);
-    throw_unless(122, now() <= review_deadline);
+    throw_unless(122, now() < review_deadline);
     dispute_hash = in_msg~load_uint(256);
     ;; Zero is reserved for "no dispute" and is never a valid commitment.
     throw_unless(127, dispute_hash != 0);

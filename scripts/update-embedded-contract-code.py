@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Rebuild a FunC contract and write its BOC into the Rust constant that embeds it.
 
-tosctl deploys Dispute, Proof Attestation and Service Actor from base64
-constants, and the sandbox suites run those constants, so an edit to the FunC
+tosctl deploys Capability Registry, Dispute, Proof Attestation and Service
+Actor from base64 constants, and the sandbox suites run those constants, so an edit to the FunC
 source reaches neither until the constant is regenerated. With --check the
 script only compares root cell hashes and fails if the constant is stale.
 
@@ -23,6 +23,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = {
+    "capability-registry": (
+        "crypto/smartcont/capability-registry-code.fc",
+        "CAPABILITY_REGISTRY_CODE_B64",
+        "tosctl/src/node-control/contracts/src/capability_registry.rs",
+    ),
     "dispute": (
         "crypto/smartcont/dispute-code.fc",
         "DISPUTE_CODE_B64",

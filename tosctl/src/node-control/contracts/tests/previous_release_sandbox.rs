@@ -26,8 +26,10 @@ use ed25519_dalek::{Signer, SigningKey};
 use tos_sandbox::{Blockchain, MessageBuilder};
 
 const TOS: u64 = 1_000_000_000;
-/// Proof Attestation's refusal of a signature that does not verify.
-const ERR_BAD_SIGNATURE: i32 = 2101;
+/// The exit of a body the previous Proof Attestation cannot parse to the end:
+/// the current `attest` carries a sequence ahead of the hash, which the
+/// previous code reads as the hash and then finds the trailing bits unread.
+const ERR_UNPARSED_BODY: i32 = 9;
 
 fn previous_code(name: &str) -> Cell {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -235,11 +237,29 @@ fn a_previous_service_actor_is_refused() {
     assert_admitted(VersionedContract::ServiceActor, &bc, &current);
 }
 
-/// Why signing is refused rather than attempted: a signature over this
-/// release's attestation domain is one the previous code does not accept, so
-/// tosctl would hand back a signature that looks usable and is not.
+/// The previous release's Proof Attestation storage: no sequence and no key
+/// epoch between `attested_at` and the hash cell.
+fn previous_attestation_data(init: &ProofAttestationInit) -> Cell {
+    let mut data = BuilderData::new();
+    init.owner.write_to(&mut data).unwrap();
+    data.append_u256(&init.public_key).unwrap();
+    data.append_bit_zero().unwrap(); // revoked
+    data.append_bit_zero().unwrap(); // has_attestation
+    data.append_u64(0).unwrap(); // attested_at
+    let mut sub = BuilderData::new();
+    sub.append_u256(&init.subject_hash).unwrap().append_u256(&[0; 32]).unwrap();
+    data.checked_append_reference(sub.into_cell().unwrap()).unwrap();
+    data.into_cell().unwrap()
+}
+
+/// Why signing is refused rather than attempted: a body of this release is one
+/// the previous code does not even parse, so tosctl would hand back a signed
+/// message that looks usable and is not. The previous instance is deployed with
+/// its own storage layout, and an operation whose body did not change still
+/// succeeds on it, so the failure below comes from the body and not from the
+/// deployment.
 #[test]
-fn a_previous_proof_attestation_is_refused_and_would_reject_a_current_signature() {
+fn a_previous_proof_attestation_is_refused_and_cannot_parse_a_current_body() {
     let mut bc = chain();
     let owner = bc.treasury("owner", 1_000 * TOS).expect("owner");
     let relayer = bc.treasury("relayer", 1_000 * TOS).expect("relayer");
@@ -249,9 +269,12 @@ fn a_previous_proof_attestation_is_refused_and_would_reject_a_current_signature(
         public_key: key.verifying_key().to_bytes(),
         subject_hash: [0x11; 32],
     };
-    let data = ProofAttestationContract::build_data(&init).unwrap();
-    let old = deploy(&mut bc, previous_code("proof-attestation"), data.clone());
-    let current = deploy(&mut bc, ProofAttestationContract::code().unwrap(), data);
+    let old = deploy(&mut bc, previous_code("proof-attestation"), previous_attestation_data(&init));
+    let current = deploy(
+        &mut bc,
+        ProofAttestationContract::code().unwrap(),
+        ProofAttestationContract::build_data(&init).unwrap(),
+    );
     assert_refused(VersionedContract::ProofAttestation, &bc, &old);
     assert_admitted(VersionedContract::ProofAttestation, &bc, &current);
 
@@ -262,15 +285,29 @@ fn a_previous_proof_attestation_is_refused_and_would_reject_a_current_signature(
     let attested = [0xee; 32];
     for (address, accepted) in [(&current, true), (&old, false)] {
         let hash =
-            ProofAttestationContract::attest_hash_to_sign(global_id, address, &attested).unwrap();
+            ProofAttestationContract::attest_hash_to_sign(global_id, address, 0, 1, &attested)
+                .unwrap();
         let signature = key.sign(&hash).to_bytes();
-        let body = ProofAttestationContract::attest(1, attested, &signature).unwrap();
+        let body = ProofAttestationContract::attest(1, 1, attested, &signature).unwrap();
         let msg = MessageBuilder::internal(relayer.address(), address, TOS / 10).body(body).build();
         let result = bc.send_message(msg).expect("send");
         if accepted {
             result.expect_success();
         } else {
-            result.expect_exit_code(ERR_BAD_SIGNATURE);
+            result.expect_exit_code(ERR_UNPARSED_BODY);
         }
     }
+
+    // Positive control: the previous instance parses its own state and serves an
+    // operation whose body did not change, so the exit above was the body's.
+    let revoke = MessageBuilder::internal(owner.address(), &old, TOS / 10)
+        .body(ProofAttestationContract::revoke(2).unwrap())
+        .build();
+    bc.send_message(revoke).expect("send").expect_success();
+    let revoked = bc
+        .run_get_method(&old, "get_proof_attestation_data", vec![])
+        .expect("previous getter")
+        .expect_success()
+        .int_at(2);
+    assert_eq!(revoked, 1, "the previous instance recorded the revocation");
 }

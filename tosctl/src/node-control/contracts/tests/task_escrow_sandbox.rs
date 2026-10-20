@@ -1043,38 +1043,104 @@ fn configured_attestor_is_immutable_even_while_task_is_open() {
     assert_eq!(f.status(), STATUS_SETTLED);
 }
 
+/// Deadlines are half-open. The deadline second itself belongs to timeout
+/// alone: no second admits both an action and the timeout that supersedes it.
 #[test]
-fn result_and_settle_deadlines_are_inclusive_boundaries() {
-    // now() <= deadline (result) and now() <= review_deadline (settle) both
-    // allow the exact boundary second, not just strictly-before.
+fn the_deadline_second_belongs_to_timeout_alone() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let agent_addr = f.agent.address().clone();
+    let outsider_addr = f.outsider.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.bc.set_now(f.deadline as u32);
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(117);
+    assert_eq!(f.status(), STATUS_ACCEPTED);
+    f.send_from(&outsider_addr, TaskEscrowContract::timeout(3).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_EXPIRED);
+
+    // The review window closes the same way for settlement and dispute.
     let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
     let agent_addr = f.agent.address().clone();
     let creator_addr = f.creator.address().clone();
+    let outsider_addr = f.outsider.address().clone();
+    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+        .expect_success();
+    f.bc.set_now(f.review_deadline() as u32);
+    f.send_from(&creator_addr, TaskEscrowContract::settle(3, TOS).unwrap())
+        .expect_aborted()
+        .expect_exit_code(118);
+    f.send_from(&creator_addr, TaskEscrowContract::dispute(4, [0xCC; 32]).unwrap())
+        .expect_aborted()
+        .expect_exit_code(122);
+    assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
+    f.send_from(&outsider_addr, TaskEscrowContract::timeout(5).unwrap()).expect_success();
+    assert_eq!(f.status(), STATUS_EXPIRED);
+}
+
+/// The last admitted second of each window is the one before its deadline,
+/// and timeout is refused there.
+#[test]
+fn the_second_before_a_deadline_still_admits_the_action_and_refuses_timeout() {
+    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 5);
+    let agent_addr = f.agent.address().clone();
+    let creator_addr = f.creator.address().clone();
+    let outsider_addr = f.outsider.address().clone();
     f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
 
-    f.bc.set_now(f.deadline as u32);
-    f.send_from(&agent_addr, TaskEscrowContract::result(2, [0xAA; 32], [0xBB; 32]).unwrap())
+    f.bc.set_now((f.deadline - 1) as u32);
+    f.send_from(&outsider_addr, TaskEscrowContract::timeout(2).unwrap())
+        .expect_aborted()
+        .expect_exit_code(109);
+    f.send_from(&agent_addr, TaskEscrowContract::result(3, [0xAA; 32], [0xBB; 32]).unwrap())
         .expect_success();
     assert_eq!(f.status(), STATUS_RESULT_SUBMITTED);
 
     let review_deadline = f.review_deadline();
-    f.bc.set_now(review_deadline as u32);
-    f.send_from(&creator_addr, TaskEscrowContract::settle(3, TOS).unwrap()).expect_success();
+    f.bc.set_now((review_deadline - 1) as u32);
+    f.send_from(&outsider_addr, TaskEscrowContract::timeout(4).unwrap())
+        .expect_aborted()
+        .expect_exit_code(109);
+    f.send_from(&creator_addr, TaskEscrowContract::settle(5, TOS).unwrap()).expect_success();
     assert_eq!(f.status(), STATUS_SETTLED);
 }
 
+/// Nobody takes on a task whose deadline has arrived: claim and accept are
+/// refused from the deadline on, before any work is done, while the second
+/// before still admits them.
 #[test]
-fn timeout_deadlines_are_inclusive_boundaries() {
-    // deadline <= now() (open/accepted) and review_deadline <= now()
-    // (result_submitted) both allow the exact boundary second.
-    let mut f = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
-    let agent_addr = f.agent.address().clone();
-    f.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
-    let deadline = f.deadline;
-    f.bc.set_now(deadline as u32);
-    let outsider_addr = f.outsider.address().clone();
-    f.send_from(&outsider_addr, TaskEscrowContract::timeout(2).unwrap()).expect_success();
-    assert_eq!(f.status(), STATUS_EXPIRED);
+fn claim_and_accept_are_refused_from_the_deadline_on() {
+    let mut open = Fixture::open(2 * TOS, 2 * TOS + TOS / 10);
+    let outsider_addr = open.outsider.address().clone();
+    open.bc.set_now(open.deadline as u32);
+    open.send_from(&outsider_addr, TaskEscrowContract::claim(1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(117);
+    assert_eq!(open.status(), STATUS_OPEN);
+    open.send_from(&outsider_addr, TaskEscrowContract::timeout(2).unwrap()).expect_success();
+    assert_eq!(open.status(), STATUS_EXPIRED);
+
+    let mut assigned = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
+    let agent_addr = assigned.agent.address().clone();
+    assigned.bc.set_now(assigned.deadline as u32);
+    assigned
+        .send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap())
+        .expect_aborted()
+        .expect_exit_code(117);
+    assert_eq!(assigned.status(), STATUS_OPEN);
+
+    let mut open = Fixture::open(2 * TOS, 2 * TOS + TOS / 10);
+    let outsider_addr = open.outsider.address().clone();
+    open.bc.set_now((open.deadline - 1) as u32);
+    open.send_from(&outsider_addr, TaskEscrowContract::claim(1).unwrap()).expect_success();
+    assert_eq!(open.status(), STATUS_ACCEPTED);
+
+    let mut assigned = Fixture::new(2 * TOS, 2 * TOS + TOS / 10);
+    let agent_addr = assigned.agent.address().clone();
+    assigned.bc.set_now((assigned.deadline - 1) as u32);
+    assigned.send_from(&agent_addr, TaskEscrowContract::accept(1).unwrap()).expect_success();
+    assert_eq!(assigned.status(), STATUS_ACCEPTED);
 }
 
 #[test]

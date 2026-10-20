@@ -9,7 +9,7 @@ use chain_block::{
 };
 use common::tvm_stack_parser::TvmStackParser;
 
-pub const CAPABILITY_REGISTRY_CODE_B64: &str = "te6ccgECCwEAAvIAART/APSkE/S88sgLAQIBYgIDBMjQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kDTAPpA0wDTP/oA0h/T/9QB0NP/0//T/wTRA9FYLIIQQ0FQA7rjAj4rghBDQVABuuMCK4IQQ0FQArrjAiuCEENBUAS6BAUGBwBHoCLH2omh9IGmAfSBpgGmf/QBpD+n/6gDoaf/p/+n/gmiB6KxAHw8UcnHBfLnCAnRUCugEGoQWRBIEDdGRUMAAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVACeXwM4OVF0xwXy5wggwAHy5wsE0//T/9P/1AHQ0//RAdEQahBZEEgQVlUgAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVAB+Nzc5UZbHBfLnCAbTAPpA0RBqUJgQN0YTRUUCyMv/y//L/8nIUAnPFhfLAFAFzxYTywDLPwH6Asofy//Mye1UAvSObDtRuMcF8ucICPoA0VMCu/LnDfgnbxBSELvy5w4gwgCOF1NwcXCAEMjLBVAEzxZY+gISy2rJAfsA3hKhEGoQWRBIEDdGFVBCAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVOArghBDQVAFuuMCKwgJAIg7J8AB8ucKUbbHBfLnCQjSH9GgEGoQWRBIEDdGREUVAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVAHoghBDQVAGuo5bNDpRp8cF8ucIA8AB8ucLBtEkcIMGcIAQyMsFUATPFlj6AhLLaskB+wBwIBBqEFkQSEZ1A0QUAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVOALghBDQVAHuuMCXw3yxw8KAIJRuMcF8ucIBMAA8ucMB9EQWRBIEDdxRhdQREUVAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVA==";
+pub const CAPABILITY_REGISTRY_CODE_B64: &str = "te6cckECDQEAAyUAART/APSkE/S88sgLAQIBYgIDBMjQAdDTAwFxsJJfA+D6QDAhxwCSXwPgAdMf0z8x7UTQ+kDTAPpA0wDTP/oA0h/T/9QB0NP/0//T/wTRA9FYLIIQQ0FQA7rjAj4rghBDQVABuuMCK4IQQ0FQArrjAiuCEENBUAS6BAUGBwIBIAsMAHw8UcnHBfLnCAnRUCugEGoQWRBIEDdGRUMAAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVACeXwM4OVF0xwXy5wggwAHy5wsE0//T/9P/1AHQ0//RAdEQahBZEEgQVlUgAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVAB+Nzc5UZbHBfLnCAbTAPpA0RBqUJgQN0YTRUUCyMv/y//L/8nIUAnPFhfLAFAFzxYTywDLPwH6Asofy//Mye1UAvSObDtRuMcF8ucICPoA0VMCu/LnDfgnbxBSELvy5w4gwgCOF1NwcXCAEMjLBVAEzxZY+gISy2rJAfsA3hKhEGoQWRBIEDdGFVBCAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVOArghBDQVAFuuMCKwgJAIg7J8AB8ucKUbbHBfLnCQjSH9GgEGoQWRBIEDdGREUVAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVAHoghBDQVAGuo5bNDpRp8cF8ucIA8AB8ucLBtEkcIMGcIAQyMsFUATPFlj6AhLLaskB+wBwIBBqEFkQSEZ1A0QUAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVOALghBDQVAHuuMCXw3yxw8KAIJRuMcF8ucIBMAA8ucMB9EQWRBIEDdxRhdQREUVAsjL/8v/y//JyFAJzxYXywBQBc8WE8sAyz8B+gLKH8v/zMntVABHvIsfaiaH0gaYB9IGmAaZ/9AGkP6f/qAOhp/+n/6f+CaIHorEAFe95w9qJofSBpgH0gaYBpn/0AaQ/p/+oA6Gn/6f/p/4JogeisCC0vhXwTt4hExq8zk=";
 pub const CAP_UPDATE_METADATA_OPCODE: u32 = 0x4341_5001;
 pub const CAP_UPDATE_VERIFIER_OPCODE: u32 = 0x4341_5002;
 pub const CAP_STAKE_OPCODE: u32 = 0x4341_5003;
@@ -53,6 +53,15 @@ pub struct CapabilityRegistryData {
     pub task_categories_hash: [u8; 32],
     pub pricing_hash: [u8; 32],
     pub metadata_hash: [u8; 32],
+}
+
+/// The result of `get_bond_backing`: the bond the contract records next to the
+/// balance that backs it. Storage fees drain the balance while the record
+/// stands, so the two drift apart over time and only the balance can be paid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BondBacking {
+    pub bond: u64,
+    pub balance: u64,
 }
 
 impl CapabilityRegistryContract {
@@ -118,6 +127,11 @@ impl CapabilityRegistryContract {
             pricing_hash: parse_hash(stack, 9)?,
             metadata_hash: parse_hash(stack, 10)?,
         })
+    }
+
+    /// Decode the result of `get_bond_backing`.
+    pub fn decode_bond_backing(stack: &TvmStackParser) -> anyhow::Result<BondBacking> {
+        Ok(BondBacking { bond: stack.u64(0)?, balance: stack.u64(1)? })
     }
 
     /// `verification_method_hash` is carried in a separate cell reference:
@@ -365,6 +379,13 @@ mod tests {
         assert_eq!(data.task_categories_hash, cap.task_categories_hash);
         assert_eq!(data.pricing_hash, cap.pricing_hash);
         assert_eq!(data.metadata_hash, cap.metadata_hash);
+    }
+
+    #[test]
+    fn decodes_bond_backing_stack() {
+        let stack = TvmStackParser::new(vec![number("5000000000"), number("3200000000")]);
+        let backing = CapabilityRegistryContract::decode_bond_backing(&stack).unwrap();
+        assert_eq!(backing, BondBacking { bond: 5_000_000_000, balance: 3_200_000_000 });
     }
 
     #[test]

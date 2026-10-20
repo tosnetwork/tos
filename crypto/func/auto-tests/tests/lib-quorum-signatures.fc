@@ -117,6 +117,32 @@ int test_quorum_met_and_missed() method_id(105) {
     thrown = true;
   }
   throw_unless(143, thrown);
+  ;; A hand-built configuration never passed quorum::config. The bounds are checked
+  ;; again here, so a zero quorum cannot be met by nobody and an unreachable one is
+  ;; refused as a configuration error rather than as missing signatures.
+  int invalid = 0;
+  try { quorum::require_quorum([set123(), 3, 0], HASH, new_dict()); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 144); invalid += 1; }
+  try { quorum::require_quorum([set123(), 3, 4], HASH, s); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 145); invalid += 1; }
+  ;; The set must be exactly as large as the count says: an understated count with
+  ;; one signature, and a set past the size bound hidden behind count 1, are both
+  ;; configuration errors; a full 64-member set built the normal way still verifies.
+  try { quorum::require_quorum([set123(), 1, 1], HASH, single); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 147); invalid += 1; }
+  try { quorum::require_quorum([set123(), 4, 2], HASH, s); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 148); invalid += 1; }
+  cell many = quorum::add_verifier(new_dict(), K1);
+  int i = 1;
+  while (i <= quorum::max_verifiers) {
+    many = quorum::add_verifier(many, i);
+    i += 1;
+  }
+  try { quorum::require_quorum([many, 1, 1], HASH, single); } catch (_, code) { expect_throw(code, quorum::error::invalid_config, 149); invalid += 1; }
+  throw_unless(146, invalid == 5);
+  cell full = quorum::add_verifier(new_dict(), K1);
+  i = 1;
+  while (i < quorum::max_verifiers) {
+    full = quorum::add_verifier(full, i);
+    i += 1;
+  }
+  quorum::require_quorum(quorum::config(full, 1), HASH, with_sig(new_dict(), K1, sig1()));
   return 5;
 }
 

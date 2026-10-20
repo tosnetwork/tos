@@ -24,6 +24,7 @@ const ERR_NO_VERIFIER: i32 = 1802;
 const ERR_INACTIVE: i32 = 1803;
 const ERR_ALREADY_ACTIVE: i32 = 1804;
 const ERR_INSUFFICIENT_BOND: i32 = 1805;
+const ERR_INSUFFICIENT_BALANCE: i32 = 1806;
 const ERR_UNKNOWN_OP: i32 = 1807;
 
 struct Fixture {
@@ -95,6 +96,25 @@ impl Fixture {
             .get_account(addr)
             .and_then(|acc| acc.balance().and_then(|cc| cc.coins.as_u64()))
             .unwrap_or(0)
+    }
+
+    fn bond_backing(&self) -> contracts::BondBacking {
+        let stack = self
+            .bc
+            .run_get_method(&self.registry, "get_bond_backing", vec![])
+            .expect("get_bond_backing")
+            .expect_success()
+            .stack
+            .clone();
+        let entries = stack
+            .iter()
+            .map(sandbox_stack_item_to_entry)
+            .collect::<anyhow::Result<Vec<_>>>()
+            .expect("stack conversion");
+        CapabilityRegistryContract::decode_bond_backing(
+            &common::tvm_stack_parser::TvmStackParser::new(entries),
+        )
+        .expect("decode_bond_backing")
     }
 }
 
@@ -256,6 +276,42 @@ fn owner_can_withdraw_bond_within_limit_others_and_overdraw_rejected() {
         "unexpected withdrawal delta: {delta}"
     );
     assert_eq!(f.data().bond, 3 * TOS);
+}
+
+/// The recorded bond is a number the contract wrote down; the balance is what
+/// it can pay. Storage fees drain the balance while the record stands, so a
+/// reader of the data getter alone sees a bond the contract can no longer
+/// return. `get_bond_backing` puts the two side by side.
+#[test]
+fn bond_backing_shows_when_the_recorded_bond_exceeds_what_backs_it() {
+    let mut f = Fixture::new(5 * TOS, 5 * TOS + TOS / 5, true);
+    let fresh = f.bond_backing();
+    assert_eq!(fresh.bond, 5 * TOS);
+    assert_eq!(fresh.balance, f.balance(&f.registry));
+    assert!(fresh.balance >= fresh.bond, "a freshly funded bond is backed: {fresh:?}");
+
+    // A month later the storage phase of the next message collects the rent.
+    // The message bounces, so its own value leaves again and only the rent moves
+    // the balance.
+    f.bc.set_now(f.bc.now() + 30 * 86_400);
+    let outsider = f.outsider.address().clone();
+    let poke = MessageBuilder::internal(&outsider, &f.registry, TOS / 10)
+        .bounce(true)
+        .body(CapabilityRegistryContract::withdraw_bond(1, TOS).unwrap())
+        .build();
+    f.bc.send_message(poke).expect("send").expect_aborted().expect_exit_code(ERR_NOT_OWNER);
+
+    let aged = f.bond_backing();
+    assert_eq!(aged.bond, 5 * TOS, "the record does not move");
+    assert_eq!(aged.balance, f.balance(&f.registry));
+    assert!(aged.balance < aged.bond, "storage fees must have drained the backing: {aged:?}");
+    assert_eq!(f.data().bond, 5 * TOS, "the data getter still reports the full bond");
+
+    // The data getter's bond is not withdrawable; the backing getter said so.
+    let owner = f.owner.address().clone();
+    f.send_from(&owner, CapabilityRegistryContract::withdraw_bond(2, 5 * TOS).unwrap())
+        .expect_aborted()
+        .expect_exit_code(ERR_INSUFFICIENT_BALANCE);
 }
 
 #[test]

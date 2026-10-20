@@ -26,7 +26,7 @@ use chain_block::{BuilderData, Coins, IBitstring, MsgAddressInt, Serializable};
 /// Dispute `rule`: the outcome, the split and the ruling hash.
 pub const DOMAIN_DISPUTE_RULING: u32 = 0x4452_5533;
 /// Proof Attestation `attest`: the attested hash.
-pub const DOMAIN_PROOF_ATTESTATION: u32 = 0x5041_5432;
+pub const DOMAIN_PROOF_ATTESTATION: u32 = 0x5041_5433;
 /// Task Escrow `settle`: result hash and payout.
 pub const DOMAIN_TASK_SETTLE: u32 = 0x5453_4532;
 /// Task Escrow `resolve`: result hash, dispute hash and payout.
@@ -62,10 +62,10 @@ fn signing_domain(
 
 /// Compute the domain-bound hash that the attestor key must sign for
 /// `contract_address`, given the contract's on-chain `original_hash`
-/// (`attested_hash`). Used by Proof Attestation's `attest`, which carries no
-/// payout, or second piece of state like a request, that the signature needs
-/// to additionally bind. Agent Account's controller signature does not use
-/// it; that hash is `AgentAccountContract::controller_hash_to_sign`.
+/// (`attested_hash`): the signing domain followed by the hash alone. Proof
+/// Attestation's `attest` adds its sequence and uses
+/// [`attestation_domain_hash`]. Agent Account's controller signature does not
+/// use it; that hash is `AgentAccountContract::controller_hash_to_sign`.
 pub fn domain_bound_hash(
     tag: u32,
     global_id: i32,
@@ -74,6 +74,28 @@ pub fn domain_bound_hash(
 ) -> anyhow::Result<[u8; 32]> {
     let mut b = signing_domain(tag, global_id, contract_address)?;
     b.append_u256(original_hash)?;
+    let cell = b.into_cell()?;
+    Ok(*cell.repr_hash().as_array())
+}
+
+/// Compute the domain-bound hash Proof Attestation's `attest` signature must
+/// cover: the key epoch the contract is in, the sequence this attestation
+/// claims and the attested hash. The contract admits only a sequence above the
+/// one it recorded in the current epoch, so a signature cannot be relayed
+/// again once a later attestation has superseded it, nor after the key was
+/// rotated. Must match `crypto/smartcont/proof-attestation-code.fc`'s `attest`
+/// computation byte-for-byte.
+pub fn attestation_domain_hash(
+    global_id: i32,
+    contract_address: &MsgAddressInt,
+    key_epoch: u32,
+    sequence: u64,
+    attested_hash: &[u8; 32],
+) -> anyhow::Result<[u8; 32]> {
+    let mut b = signing_domain(DOMAIN_PROOF_ATTESTATION, global_id, contract_address)?;
+    b.append_u32(key_epoch)?;
+    b.append_u64(sequence)?;
+    b.append_u256(attested_hash)?;
     let cell = b.into_cell()?;
     Ok(*cell.repr_hash().as_array())
 }
