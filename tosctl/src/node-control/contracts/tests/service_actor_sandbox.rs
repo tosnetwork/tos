@@ -2011,3 +2011,234 @@ fn withdraw_revenue_never_takes_the_storage_fees_locked_for_live_entries() {
     );
     assert_eq!(f.data().withdrawable_revenue, revenue - affordable);
 }
+
+// ---------------------------------------------------------------------------
+// Coin arithmetic: every coin computation is bounded where it happens
+// ---------------------------------------------------------------------------
+
+/// A coin computation left the range a Coins field holds: a sum at or past
+/// 2^120, or a liability going negative. Never a caller's refusal code.
+const ERR_AMOUNT_RANGE: i32 = 1927;
+/// The largest value a Coins field holds.
+const MAX_COINS: u128 = (1u128 << 120) - 1;
+
+/// The accounting cell of a Service Actor's data, in the order `build_data`
+/// writes it. Values beyond u64 are what these tests are about, so the cell is
+/// read and written here rather than through the u64 decoder.
+#[derive(Clone, Copy, Debug)]
+struct Accounting {
+    withdrawable_revenue: u128,
+    locked_storage_fees: u128,
+    pending_liability: u128,
+    refundable_liability: u128,
+    call_day: u32,
+    calls_today: u32,
+}
+
+fn coins(value: u128) -> chain_block::Coins {
+    use std::str::FromStr;
+    chain_block::Coins::from_str(&value.to_string()).expect("coins")
+}
+
+fn read_accounting(cell: &Cell) -> Accounting {
+    let mut s = SliceData::load_cell(cell.clone()).expect("accounting slice");
+    let withdrawable_revenue =
+        chain_block::Coins::construct_from(&mut s).expect("revenue").as_u128();
+    let locked_storage_fees = chain_block::Coins::construct_from(&mut s).expect("locked").as_u128();
+    let pending_liability = chain_block::Coins::construct_from(&mut s).expect("pending").as_u128();
+    let refundable_liability =
+        chain_block::Coins::construct_from(&mut s).expect("refundable").as_u128();
+    let call_day = s.get_next_u32().expect("call_day");
+    let calls_today = s.get_next_u32().expect("calls_today");
+    Accounting {
+        withdrawable_revenue,
+        locked_storage_fees,
+        pending_liability,
+        refundable_liability,
+        call_day,
+        calls_today,
+    }
+}
+
+fn write_accounting(a: &Accounting) -> Cell {
+    let mut b = BuilderData::new();
+    coins(a.withdrawable_revenue).write_to(&mut b).unwrap();
+    coins(a.locked_storage_fees).write_to(&mut b).unwrap();
+    coins(a.pending_liability).write_to(&mut b).unwrap();
+    coins(a.refundable_liability).write_to(&mut b).unwrap();
+    b.append_u32(a.call_day).unwrap();
+    b.append_u32(a.calls_today).unwrap();
+    b.into_cell().unwrap()
+}
+
+/// `data` with its accounting cell replaced by `patch(current)`; every other
+/// field and reference is carried over unchanged.
+fn data_with_accounting(data: Cell, patch: impl FnOnce(Accounting) -> Accounting) -> Cell {
+    let mut slice = SliceData::load_cell(data).expect("data slice");
+    let owner = MsgAddressInt::construct_from(&mut slice).expect("owner");
+    let active = slice.get_next_bit().expect("active");
+    let next_request_id = slice.get_next_u64().expect("next_request_id");
+    let pending_count = slice.get_next_u32().expect("pending_count");
+    let live_count = slice.get_next_u32().expect("live_count");
+    let policy = slice.checked_drain_reference().expect("policy");
+    let accounting = slice.checked_drain_reference().expect("accounting");
+    let dicts = slice.checked_drain_reference().expect("dicts");
+
+    let mut b = BuilderData::new();
+    owner.write_to(&mut b).unwrap();
+    if active {
+        b.append_bit_one().unwrap();
+    } else {
+        b.append_bit_zero().unwrap();
+    }
+    b.append_u64(next_request_id).unwrap();
+    b.append_u32(pending_count).unwrap();
+    b.append_u32(live_count).unwrap();
+    b.checked_append_reference(policy).unwrap();
+    b.checked_append_reference(write_accounting(&patch(read_accounting(&accounting)))).unwrap();
+    b.checked_append_reference(dicts).unwrap();
+    b.into_cell().unwrap()
+}
+
+impl Fixture {
+    /// Rewrites the deployed contract's accounting cell in place, the way a
+    /// state no sequence of messages could reach is put under test.
+    fn patch_accounting(&mut self, patch: impl FnOnce(Accounting) -> Accounting) {
+        let mut account = self.bc.get_account(&self.service).expect("service account").clone();
+        let data = account.get_data().expect("service data");
+        assert!(account.set_data(data_with_accounting(data, patch)), "data replaced");
+        self.bc.set_account(self.service.clone(), account);
+    }
+
+    /// One of the getter's coin counters, read as the full integer the
+    /// contract holds (the typed decoder stops at u64).
+    fn coin_counter(&self, index: usize) -> u128 {
+        let value = self
+            .bc
+            .run_get_method(&self.service, "get_service_data", vec![])
+            .expect("get_service_data")
+            .expect_success()
+            .int_at(index);
+        u128::try_from(value).expect("a coin counter is never negative")
+    }
+
+    /// A call committing to the deploy-time terms, priced from the init rather
+    /// than from the typed getter, whose u64 fields cannot carry the counters
+    /// these tests put near the coin bound.
+    fn call_from_init(
+        &mut self,
+        from: &MsgAddressInt,
+        query_id: u64,
+        request_hash: [u8; 32],
+    ) -> SendResult {
+        let value = self.init.price_per_call + self.init.storage_fee + TOS / 2;
+        let terms = ServiceActorContract::terms_hash_of_init(&self.init).unwrap();
+        self.send_from_with_value(
+            from,
+            ServiceActorContract::call(query_id, request_hash, terms).unwrap(),
+            value,
+        )
+    }
+
+    fn data_hash(&self) -> chain_block::UInt256 {
+        self.bc
+            .get_account(&self.service)
+            .and_then(|account| account.get_data())
+            .expect("service data")
+            .repr_hash()
+    }
+}
+
+const REVENUE_INDEX: usize = 19;
+const PENDING_INDEX: usize = 21;
+
+#[test]
+fn a_call_that_would_push_a_liability_past_the_coin_bound_is_refused_before_any_state_change() {
+    let price = u128::from(Fixture::new().init.price_per_call);
+
+    // Positive control: the sum lands exactly on the largest value a Coins
+    // field holds, so the call is admitted and the counter reads back exactly.
+    let mut f = Fixture::new();
+    let caller = f.caller.address().clone();
+    f.patch_accounting(|a| Accounting { pending_liability: MAX_COINS - price, ..a });
+    f.call_from_init(&caller, 1, [0xAA; 32]).expect_success();
+    assert_eq!(f.coin_counter(PENDING_INDEX), MAX_COINS);
+    assert_eq!(f.pending_count(), 1);
+
+    // One more unit and the sum does not fit: refused with the range code
+    // before the request, the counters or the dictionaries change.
+    let mut f = Fixture::new();
+    let caller = f.caller.address().clone();
+    f.patch_accounting(|a| Accounting { pending_liability: MAX_COINS - price + 1, ..a });
+    let before = f.data_hash();
+    f.call_from_init(&caller, 1, [0xAA; 32]).expect_aborted().expect_exit_code(ERR_AMOUNT_RANGE);
+    assert_eq!(f.data_hash(), before, "a refused call must not touch the state");
+    assert_eq!(f.pending_count(), 0);
+    assert!(f.request(0).is_none());
+}
+
+#[test]
+fn a_liability_that_would_go_negative_is_refused_with_the_range_code() {
+    let mut f = Fixture::new();
+    let caller = f.caller.address().clone();
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    // A pending request whose price the liability counter no longer carries:
+    // responding would subtract more than there is.
+    f.patch_accounting(|a| Accounting { pending_liability: 0, ..a });
+    let before = f.data_hash();
+    f.respond(2, 0, [0xBB; 32]).expect_aborted().expect_exit_code(ERR_AMOUNT_RANGE);
+    assert_eq!(f.data_hash(), before);
+    assert!(f.request(0).is_some(), "the request stays pending");
+}
+
+#[test]
+fn a_sweep_succeeds_when_the_final_revenue_fits_even_though_a_naive_sum_would_not() {
+    let mut f = Fixture::new();
+    let caller = f.caller.address().clone();
+    let outsider = f.outsider.address().clone();
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    let price = u128::from(f.init.price_per_call);
+    let fee = u128::from(f.init.storage_fee);
+    let bounty = u128::from(f.init.cleanup_bounty);
+    let credit = price + fee - bounty;
+    // revenue + price + fee would pass the bound; revenue + (price + fee - bounty) is the maximum.
+    f.patch_accounting(|a| Accounting { withdrawable_revenue: MAX_COINS - credit, ..a });
+    let request = f.request(0).expect("pending request");
+    f.bc.set_now(request.refund_claim_deadline as u32);
+    f.sweep(&outsider, 2, 0).expect_success();
+    assert_eq!(f.coin_counter(REVENUE_INDEX), MAX_COINS);
+    assert!(f.request(0).is_none());
+}
+
+#[test]
+fn an_unaffordable_sweep_is_refused_as_insufficient_balance_not_as_a_range_error() {
+    let mut f = Fixture::new();
+    let caller = f.caller.address().clone();
+    let outsider = f.outsider.address().clone();
+    f.call(&caller, 1, [0xAA; 32]).expect_success();
+    // Other live entries are owed far more than the contract holds.
+    f.patch_accounting(|a| Accounting {
+        pending_liability: a.pending_liability + 1_000 * u128::from(TOS),
+        ..a
+    });
+    let request = f.request(0).expect("pending request");
+    f.bc.set_now(request.refund_claim_deadline as u32);
+    let before = f.data_hash();
+    f.sweep(&outsider, 2, 0).expect_aborted().expect_exit_code(ERR_INSUFFICIENT_BALANCE);
+    assert_eq!(f.data_hash(), before);
+    assert!(f.request(0).is_some(), "the entry stays live");
+}
+
+#[test]
+fn a_zero_withdrawal_is_refused_when_the_balance_does_not_cover_the_obligations() {
+    let mut f = Fixture::new();
+    let owner = f.owner.address().clone();
+    f.patch_accounting(|a| Accounting { pending_liability: 1_000 * u128::from(TOS), ..a });
+    let before = f.data_hash();
+    for amount in [0, 1] {
+        f.send_from(&owner, ServiceActorContract::withdraw_revenue(1, amount).unwrap())
+            .expect_aborted()
+            .expect_exit_code(ERR_INSUFFICIENT_REVENUE);
+    }
+    assert_eq!(f.data_hash(), before);
+}
