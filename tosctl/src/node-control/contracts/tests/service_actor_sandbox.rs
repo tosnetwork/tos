@@ -1894,9 +1894,9 @@ fn a_call_quoted_under_one_policy_is_refused_under_another() {
 }
 
 /// The owner's withdrawal cap keeps the storage fees locked for live entries
-/// in the contract. A message's value always exceeds the gas it pays for, so
-/// the only thing that moves the balance below the counters is storage rent;
-/// the test lets rent accrue until the balance no longer covers pending +
+/// in the contract. Call-path gas, overpayment forwarding fees and storage rent
+/// all erode the balance without being booked anywhere; the test uses rent,
+/// letting it accrue until the balance no longer covers pending +
 /// refundable + locked + reserve + revenue, then shows the nominal revenue is
 /// refused while the amount that leaves the locked fees intact is paid.
 #[test]

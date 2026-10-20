@@ -128,7 +128,7 @@ class SyntheticTree(unittest.TestCase):
             }
             for form, content in forms.items():
                 with self.subTest(code_hash=code_hash, form=form):
-                    self.assert_refused("scripts/vector.json", content, "v1 code hash")
+                    self.assert_refused("scripts/vector.json", content, "removed escrow code hash")
             with self.subTest(code_hash=code_hash, form="raw"):
                 content = b"\x00\x01" + bytes.fromhex(code_hash) + b"\xff"
                 self.assert_refused("fixtures/state.bin", content, "as raw bytes")
@@ -151,14 +151,14 @@ class SyntheticTree(unittest.TestCase):
             }
             for label, (relative, content) in planted.items():
                 with self.subTest(artifact=artifact["code_hash"], form=label):
-                    self.assert_refused(relative, content, "is the v1 artifact")
+                    self.assert_refused(relative, content, "is the removed escrow artifact")
 
     def test_each_historical_source_is_refused_under_any_name(self):
         for source in check.V1_SOURCES:
             with self.subTest(source=source["git_blob"]):
                 content = historical_blob(source["git_blob"])
                 self.assert_refused(
-                    "crypto/smartcont/escrow-next.fc", content, "v1 contract source"
+                    "crypto/smartcont/escrow-next.fc", content, "removed escrow contract source"
                 )
 
     def test_embedded_artifacts_are_refused(self):
@@ -174,7 +174,7 @@ class SyntheticTree(unittest.TestCase):
             }
             for label, content in planted.items():
                 with self.subTest(artifact=artifact["code_hash"], form=label):
-                    self.assert_refused("tests/vector.rs", content.encode(), "embeds a v1 BOC")
+                    self.assert_refused("tests/vector.rs", content.encode(), "embeds a removed escrow BOC")
 
     def test_v1_code_in_another_serialization_is_refused_by_cell_hash(self):
         for artifact in check.V1_ARTIFACTS:
@@ -187,16 +187,16 @@ class SyntheticTree(unittest.TestCase):
                 with self.subTest(artifact=artifact["code_hash"], form=label):
                     self.assertNotEqual(variant, boc)
                     failures = self.plant("vectors/state-init.boc", variant)
-                    self.assertFalse(any("embeds a v1 BOC" in f for f in failures), failures)
+                    self.assertFalse(any("embeds a removed escrow BOC" in f for f in failures), failures)
                     self.assertTrue(
                         any(
-                            f"cell with v1 code hash {artifact['code_hash']}" in f for f in failures
+                            f"cell with removed escrow code hash {artifact['code_hash']}" in f for f in failures
                         ),
                         failures,
                     )
                     text = f'{{"boc": "{base64.b64encode(variant).decode()}"}}\n'.encode()
                     failures = self.plant("vectors/state-init.json", text)
-                    self.assertTrue(any("cell with v1 code hash" in f for f in failures), failures)
+                    self.assertTrue(any("cell with removed escrow code hash" in f for f in failures), failures)
 
     def test_other_bocs_pass(self):
         control = (ROOT / check.CONTROL_BOC).read_bytes()
@@ -216,6 +216,26 @@ class SyntheticTree(unittest.TestCase):
         self.assertEqual(self.plant(check.THIS_FILE, b"NEEDLE = " + needle), [])
         self.assertTrue(self.plant("tools/node-health-monitor/notes.md", b"see " + needle))
         self.assertTrue(self.plant("scripts/check-other.py", b"NEEDLE = " + needle))
+
+
+class RemovedV2(unittest.TestCase):
+    """The v2 escrow's artifacts and sources are refused by content, like v1's."""
+
+    def test_each_historical_v2_artifact_and_source_is_refused(self):
+        tree = SyntheticTree()
+        tree.setUp()
+        try:
+            for artifact in check.V2_ARTIFACTS:
+                committed = historical_artifact(artifact)
+                boc = decoded(artifact)
+                self.assertEqual(check.boc_root_hash(boc).hex(), artifact["code_hash"])
+                tree.assert_refused("crypto/smartcont/innocent.boc.base64", committed, "removed escrow artifact")
+                tree.assert_refused("vectors/state-init.boc", wrapped_in_state_init(boc), "removed escrow code hash")
+            for source in check.V2_SOURCES:
+                content = historical_blob(source["git_blob"])
+                tree.assert_refused("crypto/smartcont/escrow-next.fc", content, "removed escrow contract source")
+        finally:
+            tree.tearDown()
 
 
 class Fingerprints(unittest.TestCase):

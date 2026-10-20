@@ -299,9 +299,11 @@ int required_purpose(int kind) inline {
 
 ;; Consent to a registration. Every controller of the initial policy has proved possession
 ;; by the time this runs, so the weight that consents is the policy's agent-control weight,
-;; held to the agent threshold here rather than taken on trust from validate_policy. A key
-;; without agent control consents to nothing and refuses nothing: isolating a key to
-;; delegation, capability control or recovery is what the purpose bits are for.
+;; held to the agent threshold. validate_policy already guarantees the threshold is met, so
+;; this walk cannot fail today; it states the rule at the one place it applies, so a change
+;; to validate_policy cannot silently remove it. A key without agent control consents to
+;; nothing and refuses nothing: isolating a key to delegation, capability control or
+;; recovery is what the purpose bits are for.
 () verify_registration_consent(cell policy, int threshold) impure inline_ref {
   slice ps = policy.begin_parse();
   ps~skip_bits(32 + 16 + 32 + 32 + 64);

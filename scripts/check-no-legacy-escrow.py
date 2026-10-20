@@ -8,19 +8,19 @@ rehearsal and evidence paths that deployed or read them. Nothing in the
 remaining tree refers to them, so nothing would notice their return. This
 check does, by fingerprint:
 
-1. Code hashes. Both code hashes v1 ever had, as hex text in any case or as raw
-   32 bytes, anywhere in any file.
-2. Bytecode artifacts. Every v1 BOC that was ever committed, recognised by
+1. Code hashes. Every code hash v1 or v2 ever had, as hex text in any case or as
+   raw 32 bytes, anywhere in any file.
+2. Bytecode artifacts. Every v1 or v2 BOC that was ever committed, recognised by
    content: the SHA-256 of the file as committed, of the decoded BOC, and its
    Git blob id. Beyond that, every BOC found in the tree (a raw .boc file, or
    a base64 or hex BOC embedded in any text file) is parsed and the hash of
-   every cell in it is compared with both code hashes, so v1 code re-serialized
+   every cell in it is compared with those code hashes, so escrow code re-serialized
    with other BOC flags, or wrapped in a StateInit, is caught as well.
 3. Source and build paths. Any file whose path, or any file whose content,
    names the v1 or v2 source, artifact, protocol id, build target, sandbox
    suite, deploy opt-in, deploy policy, the stablecoin reference contracts, or
    the rehearsal and evidence scripts that deployed or read them; and any file
-   whose content is a v1 contract source ever committed.
+   whose content is a v1 or v2 contract source ever committed.
 
 Exempt: this file, which holds the fingerprints, and historical evidence
 directories and inventories, which record what was built at the time.
@@ -80,6 +80,106 @@ V1_SOURCES = (
     {
         "git_blob": "6db07b9a54d278d52bf777bc899a6277a8391cd8",
         "sha256": "066339a38d033a93babb39e5e86c3f8bfc9658e5cb35dfd1c0897ff8a24c56bc",
+    },
+)
+
+
+# Every v2 release's code hash, artifact and source, by content, so a renamed re-add of the
+# v2 escrow is caught the same way as v1.
+V2_CODE_HASHES = (
+    "5a2ee6f907a03738d2eef3586ece125ebd6e10b8dbd91408e0fa4a3fd2bf51ba",
+    "889f7254f37c21735a4da33f902f70b08d01b9393e6b5bc4cf78d85406afd9ce",
+    "8a430b5d2b3e0c719aa156b1c60d6a13a9405009b09bc771b14b8167d5e5509b",
+    "8bb0b7c809b9abfc8c3446a6a283f8cf4278c31dadc7f3bbd377d984e7d27544",
+    "b4a6bb10b9771b7a6fecec890c25c5f18e049db0e22997d37ca7c0a434cec4fe",
+    "caaa56fc1e10d967d754e79de52a2a2d601a58f73e1b84fe0bc2976aa605bff3",
+    "d6d53a11bcda151b2e7d6b4b2f275eeadea8eb9b66496c24b0b7c54453d6d209",
+    "e3b74c1284b9cd4b278c2f395a274b9194e4c986b058cf426265cb8c438ea4d6",
+)
+
+V2_ARTIFACTS = (
+    {
+        "code_hash": "e3b74c1284b9cd4b278c2f395a274b9194e4c986b058cf426265cb8c438ea4d6",
+        "git_blob": "00a55af187fd9d50828aab5675b27c30567a33c3",
+        "file_sha256": "7e7a2348a8d54df19cff8edffc58b487f110b6a8626fdc7c4033ffaee94fdbaa",
+        "boc_sha256": "85c00f00498b4666e6163312c09de6518799aaa719e1c45d5eed7894fc8949b2",
+    },
+    {
+        "code_hash": "b4a6bb10b9771b7a6fecec890c25c5f18e049db0e22997d37ca7c0a434cec4fe",
+        "git_blob": "120d40495bea35b7cd6d06ef4ed3838173ee74cf",
+        "file_sha256": "f58a647502e9a87e3f4271dd754d068f412f44465b796b8186a6c36b453e2805",
+        "boc_sha256": "0e04680d011887f6ab4dfd059bd96b2ba647463170473356fccd6b4caab30e5e",
+    },
+    {
+        "code_hash": "8a430b5d2b3e0c719aa156b1c60d6a13a9405009b09bc771b14b8167d5e5509b",
+        "git_blob": "6b2cc81e3210a20c48943a8a8711089c39ebd690",
+        "file_sha256": "c901091553d2da595554b4d4e3803ea08f7fdd150f37f3fd55c041cbb1d94946",
+        "boc_sha256": "10c8adfcbfb4ebe390cfb3da07b7348d630a89726a66d436f5d177a0ae8ab5af",
+    },
+    {
+        "code_hash": "8bb0b7c809b9abfc8c3446a6a283f8cf4278c31dadc7f3bbd377d984e7d27544",
+        "git_blob": "8c7865c872a82d242e64fe42cb9a4e4f665ea3fb",
+        "file_sha256": "3ab16d0f9bd8118d7f6ff5c079dee2c32aef9edf11c8a3ab8cb644a28b708610",
+        "boc_sha256": "cb6ca9b958230c55222d521e29c7222cb24121fdc48e9add1edc696f2860b2f0",
+    },
+    {
+        "code_hash": "caaa56fc1e10d967d754e79de52a2a2d601a58f73e1b84fe0bc2976aa605bff3",
+        "git_blob": "a2798d9edcf0c359b75b843b3741c35296cf2418",
+        "file_sha256": "55fbee88e4aab7e71b98f594d55a753dd5644d6cfff1f27eb04b215359dffc96",
+        "boc_sha256": "db48f74be8a3309040502eb3a857da7f5074e07af2a7e7c6afa719882422c4c8",
+    },
+    {
+        "code_hash": "d6d53a11bcda151b2e7d6b4b2f275eeadea8eb9b66496c24b0b7c54453d6d209",
+        "git_blob": "a78d4fe03ddbbda69cf53156d95694c6cfa13d39",
+        "file_sha256": "65472e49c35de9a7391d3661f1e31fd3a2510dfdd716d55eac3daa1cff15cfbc",
+        "boc_sha256": "eb78f401e41ea292fe51466e2ef49466a8e62d8bd170b13f616f0efba130b113",
+    },
+    {
+        "code_hash": "889f7254f37c21735a4da33f902f70b08d01b9393e6b5bc4cf78d85406afd9ce",
+        "git_blob": "c2ac67305e2768aaa0eac3f72b78ff1cf5deeb04",
+        "file_sha256": "222d46b0a18e6c65534a5b41046af66e1c7ee0b0552b4a4be4136fa0f4ba00bb",
+        "boc_sha256": "63f4fa1cedebcd20c99d340ebe451703001d612109dbaa5050e57f84d695aac7",
+    },
+    {
+        "code_hash": "5a2ee6f907a03738d2eef3586ece125ebd6e10b8dbd91408e0fa4a3fd2bf51ba",
+        "git_blob": "c3bfab2df612d04560462b1c1677b3eaae2dd3e8",
+        "file_sha256": "c3921c8576f2b5a9a6630027ec574488db0ffe00782f17d99a811c352429cbd6",
+        "boc_sha256": "324f7d5fca5edd0a00728daad9e59bf15e158545cc4a39dae17aab2f0f12e9a7",
+    },
+)
+
+V2_SOURCES = (
+    {
+        "git_blob": "3cb069eb265b95bf4f3eabbba4f252190e677be5",
+        "sha256": "8a9a8cb87d102e7702f08a7d1f5e37daa90e071bcfac0f453352fd72805a929c",
+    },
+    {
+        "git_blob": "5a51b39bdb2cd8889214f05ffea293fb395f890a",
+        "sha256": "c12ec9e9181a924567e9847dcc747c5fd96e163d9937be0ef872f2f5e58ec5e9",
+    },
+    {
+        "git_blob": "93e3dd6871da6a7dd0ecc0490b557d9a12b346be",
+        "sha256": "76dd4017f1719224d4dd13b7056de137c080ddd016cfee6d7378fe7bdc0e7c89",
+    },
+    {
+        "git_blob": "d61cb6211b6666e06db5994024258044186e4fe7",
+        "sha256": "16bc3e24876169f578f9f1bb8c738ab94ccb0fba3b3e2e1279a026079aec53eb",
+    },
+    {
+        "git_blob": "d98bcfa42316401c5edb3e10e901ca67f18600da",
+        "sha256": "162b372a1779684b122a3998c9fa66f934f04e9e5d59fb2a27c5ae0957313990",
+    },
+    {
+        "git_blob": "df662bb38ec76757bf106522a4e30e9c4df68af5",
+        "sha256": "5d0493b467192899f2b2c87c11a282d4f8dac15733cfe1216e78e6cb01c5b05f",
+    },
+    {
+        "git_blob": "e1addff6b9cdfb4049d656a3fa0899b38c866c5b",
+        "sha256": "f5ff1c11a3adf0fb98027ed53aa84a02f7563c100d10d14a78cecf0cefd61f7a",
+    },
+    {
+        "git_blob": "ebb5dea512c5b4cabf3c7827789b9d2b3bb4d179",
+        "sha256": "7fe12c0b9317af33aa35222d7d714a68f2623f7934591c11ce6f6f8e6dae7aaf",
     },
 )
 
@@ -288,12 +388,15 @@ def content_needles() -> list[tuple[bytes, str]]:
     needles = [
         (needle.encode(), f"names a removed v1 path ({needle})") for needle in V1_PATH_NEEDLES
     ]
-    for code_hash in V1_CODE_HASHES:
-        needles.append((code_hash.encode(), f"contains a v1 code hash ({code_hash})"))
-    for artifact in V1_ARTIFACTS:
+    for code_hash in V1_CODE_HASHES + V2_CODE_HASHES:
+        needles.append((code_hash.encode(), f"contains a removed escrow code hash ({code_hash})"))
+    for artifact in V1_ARTIFACTS + V2_ARTIFACTS:
         for kind in ("file_sha256", "boc_sha256", "git_blob"):
             needles.append(
-                (artifact[kind].encode(), f"contains a v1 artifact fingerprint ({artifact[kind]})")
+                (
+                    artifact[kind].encode(),
+                    f"contains a removed escrow artifact fingerprint ({artifact[kind]})",
+                )
             )
     return needles
 
@@ -310,37 +413,39 @@ def scan_file(path: str, content: bytes) -> list[str]:
     for needle, message in content_needles():
         if needle in lowered:
             failures.append(f"{path}: {message}")
-    for code_hash in V1_CODE_HASHES:
+    for code_hash in V1_CODE_HASHES + V2_CODE_HASHES:
         if bytes.fromhex(code_hash) in content:
-            failures.append(f"{path}: contains a v1 code hash as raw bytes ({code_hash})")
+            failures.append(f"{path}: contains a removed escrow code hash as raw bytes ({code_hash})")
 
     file_sha256 = hashlib.sha256(content).hexdigest()
     blob = git_blob_id(content)
-    for artifact in V1_ARTIFACTS:
+    for artifact in V1_ARTIFACTS + V2_ARTIFACTS:
         if (
             file_sha256 in (artifact["file_sha256"], artifact["boc_sha256"])
             or blob == artifact["git_blob"]
         ):
-            failures.append(f"{path}: is the v1 artifact with code hash {artifact['code_hash']}")
+            failures.append(
+                f"{path}: is the removed escrow artifact with code hash {artifact['code_hash']}"
+            )
 
-    for source in V1_SOURCES:
+    for source in V1_SOURCES + V2_SOURCES:
         if file_sha256 == source["sha256"] or blob == source["git_blob"]:
-            failures.append(f"{path}: is a v1 contract source (blob {source['git_blob']})")
+            failures.append(f"{path}: is a removed escrow contract source (blob {source['git_blob']})")
 
     bocs = embedded_bocs(content)
     if content[:4] == BOC_MAGIC:
         bocs.append(content)
-    boc_digests = {artifact["boc_sha256"] for artifact in V1_ARTIFACTS}
-    code_hashes = {bytes.fromhex(value) for value in V1_CODE_HASHES}
+    boc_digests = {artifact["boc_sha256"] for artifact in V1_ARTIFACTS + V2_ARTIFACTS}
+    code_hashes = {bytes.fromhex(value) for value in V1_CODE_HASHES + V2_CODE_HASHES}
     for boc in bocs:
         if hashlib.sha256(boc).hexdigest() in boc_digests:
-            failures.append(f"{path}: embeds a v1 BOC artifact")
+            failures.append(f"{path}: embeds a removed escrow BOC artifact")
         try:
             hashes = boc_cell_hashes(boc)
         except BocError:
             continue
         for value in code_hashes.intersection(hashes):
-            failures.append(f"{path}: contains a cell with v1 code hash {value.hex()}")
+            failures.append(f"{path}: contains a cell with removed escrow code hash {value.hex()}")
     return failures
 
 

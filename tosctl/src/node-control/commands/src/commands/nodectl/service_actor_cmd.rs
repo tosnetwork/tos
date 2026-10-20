@@ -551,6 +551,8 @@ struct ServiceActorDataView {
     owner: String,
     active: bool,
     policy_version: u32,
+    /// Hash of the current terms; a `call` must carry it as `expected_terms_hash`.
+    terms_hash: String,
     authorized_caller: Option<String>,
     open_access: bool,
     price_per_call: String,
@@ -579,6 +581,9 @@ fn data_view(address: &MsgAddressInt, data: ServiceActorData) -> ServiceActorDat
         owner: data.owner.to_string(),
         active: data.active,
         policy_version: data.policy_version,
+        terms_hash: ServiceActorContract::terms_hash_of_data(&data)
+            .map(hex::encode)
+            .unwrap_or_default(),
         authorized_caller: data.authorized_caller.map(|v| v.to_string()),
         open_access: data.open_access,
         price_per_call: display_tos(data.price_per_call),
@@ -1032,6 +1037,16 @@ impl ServiceActorSendCmd {
                     }
                     None => ServiceActorContract::terms_hash_of_data(data)?,
                 };
+                // The terms this call commits to, so the user can compare them with the
+                // quote before confirming; the contract refuses the call if they move.
+                println!(
+                    "Terms committed to: hash {} (policy version {}, price {} nanoTOS, storage fee {} nanoTOS, attestor {})",
+                    hex::encode(expected_terms_hash),
+                    data.policy_version,
+                    data.price_per_call,
+                    data.storage_fee,
+                    data.attestor_pubkey.map(hex::encode).unwrap_or_else(|| "none".to_string()),
+                );
                 ServiceActorContract::call(
                     self.query_id,
                     call_request_hash.expect("call hash parsed above"),

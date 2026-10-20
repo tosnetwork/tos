@@ -593,7 +593,9 @@ int address_held_by_another_validator(int validator_id, int adnl_addr) inline {
   ;; after the key and before the signature is paid for: an address another member of this election states,
   ;; or one a validator of the current or next set holds under another identity, is
   ;; refused with the money. A validator keeps its own address across elections and
-  ;; top-ups, and may move to a fresh one.
+  ;; top-ups, and may move to a fresh one. A validator that moves to a new controller
+  ;; while its old controller still stands in the current or next set must state a fresh
+  ;; address as well: to this contract the new controller is another identity.
   int stated_by = election_address_holder(pq_members, adnl_addr);
   if ((stated_by != 0) & (stated_by != validator_id)) {
     return return_stake(owner_addr, query_id, 17);
