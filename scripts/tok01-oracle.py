@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from pytosiq_core import Cell
+from pytosiq_core import Address, Cell
 from pytosiq_core.tlb.transaction import Transaction
 
 # Independent acceptance contract: matching counts alone cannot establish coverage.
@@ -117,18 +117,74 @@ def check_outcome(step):
     )
 
 
-def check_sender_message(step):
-    """The step's message must appear among the sender's own outgoing messages."""
+def account_hex(raw_address):
+    """The 256-bit account part of a raw `workchain:hex` address."""
+    require(
+        isinstance(raw_address, str) and re.match(r"^-?\d+:[0-9a-f]{64}$", raw_address),
+        "address is not a raw account address",
+    )
+    return raw_address.split(":", 1)[1]
+
+
+def decoded_edges(tx):
+    """Account, inbound message hash and outgoing (hash, destination) pairs from the BOC."""
+    parsed = Transaction.deserialize(Cell.one_from_boc(base64.b64decode(tx["data"])).begin_parse())
+    out_msgs = parsed.out_msgs.values() if isinstance(parsed.out_msgs, dict) else parsed.out_msgs
+    outgoing = []
+    for message in out_msgs:
+        destination = getattr(message.info, "dest", None)
+        outgoing.append(
+            (
+                base64.b64encode(message.serialize().hash).decode(),
+                destination.to_str(is_user_friendly=False).lower()
+                if isinstance(destination, Address)
+                else None,
+            )
+        )
+    return {
+        "account": parsed.account_addr.hex(),
+        "in_msg": base64.b64encode(parsed.in_msg.serialize().hash).decode()
+        if parsed.in_msg
+        else None,
+        "out_msgs": outgoing,
+    }
+
+
+def check_message_edges(step):
+    """Both ends of the step's message are read from hash-checked BOCs, never from the rendering."""
+    message_hash = step.get("message_hash")
+    require(message_hash, "step message hash missing")
+    target = step["target"]
+    edges = decoded_edges(target)
+    require(
+        edges["in_msg"] == message_hash,
+        "destination transaction did not consume the step's message",
+    )
+    require(
+        edges["account"] == account_hex(step["destination"]),
+        "target transaction belongs to another account",
+    )
+    require(
+        (target.get("in_msg") or {}).get("hash") == edges["in_msg"],
+        "RPC message rendering disagrees with the decoded transaction",
+    )
     sender = step.get("sender")
     require(sender, "step sender missing")
-    sent = [
-        message
-        for tx in step["transactions"].get(sender, [])
-        for message in tx.get("out_msgs", [])
-        if message.get("hash") == step.get("message_hash")
-    ]
-    require(len(sent) == 1, "step message missing from the sender's outgoing messages")
-    require(sent[0].get("destination"), "step message has no destination")
+    sent = []
+    for tx in step["transactions"].get(sender, []):
+        sender_edges = decoded_edges(tx)
+        require(
+            sorted(m.get("hash") for m in tx.get("out_msgs", []))
+            == sorted(h for h, _ in sender_edges["out_msgs"]),
+            "RPC message rendering disagrees with the decoded transaction",
+        )
+        for sent_hash, destination in sender_edges["out_msgs"]:
+            if sent_hash == message_hash:
+                sent.append((sender_edges["account"], destination))
+    require(sent, "step message missing from the sender's outgoing messages")
+    require(len(sent) == 1, "step message appears more than once in the sender's outgoing messages")
+    require(sent[0][0] == account_hex(sender), "sender transaction belongs to another account")
+    require(sent[0][1] == step["destination"], "step message was sent to another destination")
 
 
 def check_provenance(provenance, summary):
@@ -191,11 +247,7 @@ def verify(directory, records=None, expect_source_head=None, expect_global_id=No
         check_tx(target)
         destination_transactions = step["transactions"].get(step["destination"], [])
         require(target in destination_transactions, "destination transaction missing from step")
-        require(
-            (target.get("in_msg") or {}).get("hash") == step.get("message_hash"),
-            "destination transaction did not consume the step's message",
-        )
-        check_sender_message(step)
+        check_message_edges(step)
         check_outcome(step)
         for transactions in step["transactions"].values():
             for tx in transactions:
@@ -370,8 +422,8 @@ def controls(directory):
         return apply
 
     def swap_target_with(index):
-        # A genuine transaction from another step, consistent in hash and rendering, but
-        # with the wrong decoded outcome for this step.
+        # A genuine transaction from another step, relabelled with this step's message in
+        # the rendering: the decoded inbound message exposes it.
         def apply(data):
             step = data["steps.jsonl"][0]
             donor = data["steps.jsonl"][index]["target"]
@@ -381,6 +433,19 @@ def controls(directory):
                 tx["in_msg"] = {**(tx.get("in_msg") or {}), "hash": step["message_hash"]}
 
         return apply
+
+    def relabel_sender(data):
+        # A rendering that claims the step message among the sender's outgoing messages
+        # while the retained sender transaction, decoded, emitted something else.
+        step = data["steps.jsonl"][0]
+        donor = data["steps.jsonl"][1]["transactions"][data["steps.jsonl"][1]["sender"]]
+        step["transactions"][step["sender"]] = [
+            {
+                **copy.deepcopy(tx),
+                "out_msgs": [{"destination": step["destination"], "hash": step["message_hash"]}],
+            }
+            for tx in donor
+        ]
 
     for label, mutate, reason in (
         (
@@ -436,14 +501,32 @@ def controls(directory):
         (
             "target transaction swapped for a refused one",
             swap_target_with(7),
-            "target compute exit differs",
+            "did not consume the step's message",
         ),
         (
-            "step message absent from the sender's outgoing messages",
+            "target inbound rendering tampered",
+            tamper_target(lambda tx: tx.__setitem__("in_msg", {"hash": "relabelled"})),
+            "RPC message rendering disagrees",
+        ),
+        (
+            "sender transaction relabelled in the rendering",
+            relabel_sender,
+            "RPC message rendering disagrees",
+        ),
+        (
+            "sender outgoing rendering cleared",
             lambda data: [
                 tx.__setitem__("out_msgs", [])
                 for tx in data["steps.jsonl"][0]["transactions"][data["steps.jsonl"][0]["sender"]]
             ],
+            "RPC message rendering disagrees",
+        ),
+        (
+            "sender transactions replaced by the target",
+            lambda data: data["steps.jsonl"][0]["transactions"].__setitem__(
+                data["steps.jsonl"][0]["sender"],
+                [copy.deepcopy(data["steps.jsonl"][0]["target"])],
+            ),
             "missing from the sender's outgoing messages",
         ),
         (

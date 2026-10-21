@@ -1,4 +1,4 @@
-"""Receipt guard tests use synthetic public cells, not a claim of native execution."""
+"""Receipt guard tests use synthetic records and retained public cells, not native evidence."""
 
 import asyncio
 import base64
@@ -15,7 +15,6 @@ from pytosiq_core import Cell, begin_cell
 ROOT = Path(__file__).resolve().parents[3]
 ACCOUNT = "0:" + "11" * 32
 OTHER_ACCOUNT = "0:" + "22" * 32
-SENDER = "sender"
 
 
 def module(name):
@@ -31,10 +30,9 @@ lifecycle = module("tok01-lifecycle")
 fixture_transactions = module("../test/tostester/tests/tok01_fixture_transactions")
 
 
-def transaction(message_hash, exit_code=0, out_msgs=()):
-    # A real transaction BOC with this outcome, so the oracle can decode it; the
-    # rendering fields are what the RPC reports for it.
-    data = fixture_transactions.BY_EXIT[exit_code]
+def rendered(data, exit_code):
+    """A retained transaction as the runner stores it: the BOC plus the RPC rendering of it."""
+    edges = oracle.decoded_edges({"data": data})
     return {
         "data": data,
         "transaction_id": {
@@ -42,35 +40,38 @@ def transaction(message_hash, exit_code=0, out_msgs=()):
             "lt": "10",
         },
         "block_id": dict.fromkeys(("root_hash", "file_hash", "seqno", "workchain", "shard"), 0),
-        "in_msg": {"hash": message_hash, "source": ACCOUNT},
-        "out_msgs": list(out_msgs),
+        "in_msg": {"hash": edges["in_msg"]},
+        "out_msgs": [{"hash": h, "destination": d} for h, d in edges["out_msgs"]],
         "compute": {"exit_code": exit_code},
         "aborted": exit_code != 0,
         "action": {"success": True} if exit_code == 0 else None,
     }
 
 
+def step_record(name):
+    """One lifecycle step built from the retained sender and target pair of its outcome."""
+    exit_code = oracle.EXPECTED_EXIT.get(name, 0)
+    real = fixture_transactions.STEPS[exit_code]
+    target = rendered(real["target_tx"], exit_code)
+    return {
+        "step": name,
+        "target": copy.deepcopy(target),
+        "sender": real["sender"],
+        "message_hash": real["message_hash"],
+        "destination": real["destination"],
+        "expected_exit": exit_code,
+        "transactions": {
+            real["destination"]: [copy.deepcopy(target)],
+            real["sender"]: [rendered(real["sender_tx"], 0)],
+        },
+        "comparisons": [{"getter": 1, "rpc_or_expected": 1, "pass": True, "field": "synthetic"}],
+    }
+
+
 @pytest.fixture
 def records():
     field = {"getter": 1, "rpc_or_expected": 1, "pass": True, "field": "synthetic"}
-    steps = []
-    for index, name in enumerate(oracle.REQUIRED_STEPS):
-        tx = transaction(f"message-{index}", oracle.EXPECTED_EXIT.get(name, 0))
-        sent = transaction(
-            "wallet-external", 0, [{"destination": "account", "hash": f"message-{index}"}]
-        )
-        steps.append(
-            {
-                "step": name,
-                "target": copy.deepcopy(tx),
-                "sender": SENDER,
-                "message_hash": f"message-{index}",
-                "destination": "account",
-                "expected_exit": oracle.EXPECTED_EXIT.get(name, 0),
-                "transactions": {"account": [copy.deepcopy(tx)], SENDER: [sent]},
-                "comparisons": [field],
-            }
-        )
+    steps = [step_record(name) for name in oracle.REQUIRED_STEPS]
     head = "ab" * 20
     return {
         "provenance.json": {
@@ -141,16 +142,15 @@ def test_exact_step_coverage(records, where, change):
 def test_destination_transaction_required(records, change):
     assert oracle.verify(None, records)["pass"]
     step = records["steps.jsonl"][8]
+    retained = step["transactions"][step["destination"]]
     if change == "empty":
-        step["transactions"]["account"] = []
+        retained.clear()
     elif change == "removed":
         step["transactions"] = {}
     elif change == "unrelated":
-        step["transactions"]["account"][0]["transaction_id"]["hash"] = base64.b64encode(
-            bytes(32)
-        ).decode()
+        retained[0]["transaction_id"]["hash"] = base64.b64encode(bytes(32)).decode()
     elif change == "destination":
-        step["destination"] = "another account"
+        step["destination"] = OTHER_ACCOUNT
     else:
         step["target"]["transaction_id"]["hash"] = base64.b64encode(bytes(32)).decode()
     with pytest.raises(AssertionError, match="transaction"):
@@ -169,12 +169,62 @@ def test_target_must_consume_the_step_message(records):
 @pytest.mark.parametrize(
     "change,reason",
     [
+        ("fabricated_sender_edge", "RPC message rendering disagrees"),
+        ("relabelled_target", "consume the step's message"),
+        ("target_of_another_account", "belongs to another account"),
+        ("sender_of_another_account", "sender transaction belongs to another account"),
+    ],
+)
+def test_message_edges_are_decoded_from_the_transactions(records, change, reason):
+    assert oracle.verify(None, records)["pass"]
+    step = records["steps.jsonl"][4]
+    other = records["steps.jsonl"][7]
+    if change == "fabricated_sender_edge":
+        # The rendering claims the step message among the sender's messages while the
+        # retained sender transaction, decoded, emitted nothing of the kind.
+        donor = copy.deepcopy(step["target"])
+        donor["out_msgs"] = [{"destination": step["destination"], "hash": step["message_hash"]}]
+        step["transactions"][step["sender"]] = [donor]
+    elif change == "relabelled_target":
+        # Another real transaction, with the rendering claiming this step's message.
+        donor = copy.deepcopy(other["target"])
+        donor["in_msg"] = {"hash": step["message_hash"]}
+        step["target"] = donor
+        step["transactions"][step["destination"]] = [copy.deepcopy(donor)]
+    elif change == "target_of_another_account":
+        step["transactions"][OTHER_ACCOUNT] = step["transactions"].pop(step["destination"])
+        step["destination"] = OTHER_ACCOUNT
+    else:
+        step["transactions"][OTHER_ACCOUNT] = step["transactions"].pop(step["sender"])
+        step["sender"] = OTHER_ACCOUNT
+    with pytest.raises(AssertionError, match=reason):
+        oracle.verify(None, records)
+
+
+def test_message_sent_to_another_destination_is_refused(records):
+    # With consistent BOCs the message's destination is the target account, so this
+    # requirement can only be reached through decoding; drive it with decoded edges.
+    step = records["steps.jsonl"][0]
+    real = oracle.decoded_edges
+
+    def edges(tx):
+        decoded = real(tx)
+        if tx["data"] == step["transactions"][step["sender"]][0]["data"]:
+            decoded["out_msgs"] = [(h, OTHER_ACCOUNT) for h, _ in decoded["out_msgs"]]
+        return decoded
+
+    with patch.object(oracle, "decoded_edges", edges):
+        with pytest.raises(AssertionError, match="sent to another destination"):
+            oracle.check_message_edges(step)
+
+
+@pytest.mark.parametrize(
+    "change,reason",
+    [
         ("runner_expected", "runner expected outcome"),
         ("rpc_compute_exit", "RPC outcome rendering disagrees"),
         ("rpc_aborted", "RPC outcome rendering disagrees"),
         ("rpc_action", "RPC outcome rendering disagrees"),
-        ("refused_transaction", "compute exit differs"),
-        ("aborted_transaction", "compute exit differs"),
     ],
 )
 def test_outcomes_decoded_from_the_transaction_not_the_summary(records, change, reason):
@@ -188,31 +238,36 @@ def test_outcomes_decoded_from_the_transaction_not_the_summary(records, change, 
         first["target"]["compute"]["exit_code"] = 1
     elif change == "rpc_aborted":
         first["target"]["aborted"] = True
-    elif change == "rpc_action":
-        first["target"]["action"] = {"success": False}
     else:
-        # The summary still says pass while the retained transaction, hash-consistent and
-        # rendered consistently, is a refusal: the decoded BOC decides.
-        donor = transaction("message-0", 706 if change == "refused_transaction" else 401)
-        first["target"] = donor
+        first["target"]["action"] = {"success": False}
     # The runner retains the same transaction under the destination account.
-    first["transactions"]["account"][0] = copy.deepcopy(first["target"])
+    first["transactions"][first["destination"]][0] = copy.deepcopy(first["target"])
     with pytest.raises(AssertionError, match=reason):
         oracle.verify(None, records)
 
 
 def test_decoded_outcome_reads_the_phases_from_the_boc():
-    assert oracle.decoded_outcome(transaction("m", 0)) == {
+    deploy = fixture_transactions.STEPS[0]["target_tx"]
+    refused = fixture_transactions.STEPS[706]["target_tx"]
+    assert oracle.decoded_outcome({"data": deploy}) == {
         "exit_code": 0,
         "aborted": False,
         "action_success": True,
     }
-    assert oracle.decoded_outcome(transaction("m", 706)) == {
+    assert oracle.decoded_outcome({"data": refused}) == {
         "exit_code": 706,
         "aborted": True,
         "action_success": None,
     }
-    assert oracle.decoded_outcome(transaction("m", 401))["exit_code"] == 401
+    assert (
+        oracle.decoded_outcome({"data": fixture_transactions.STEPS[401]["target_tx"]})["exit_code"]
+        == 401
+    )
+    # The summary may say pass; the decoded transaction decides.
+    with pytest.raises(AssertionError, match="compute exit differs"):
+        oracle.check_outcome(
+            {"step": "token deploy", "expected_exit": 0, "target": rendered(refused, 706)}
+        )
 
 
 @pytest.mark.parametrize("change", ["no_sender", "not_sent", "sent_twice"])
@@ -223,11 +278,13 @@ def test_step_message_must_come_from_the_sender(records, change):
         del step["sender"]
         reason = "step sender missing"
     elif change == "not_sent":
-        step["transactions"][SENDER][0]["out_msgs"] = []
+        step["transactions"][step["sender"]] = [copy.deepcopy(step["target"])]
         reason = "missing from the sender's outgoing messages"
     else:
-        step["transactions"][SENDER].append(copy.deepcopy(step["transactions"][SENDER][0]))
-        reason = "missing from the sender's outgoing messages"
+        step["transactions"][step["sender"]].append(
+            copy.deepcopy(step["transactions"][step["sender"]][0])
+        )
+        reason = "more than once"
     with pytest.raises(AssertionError, match=reason):
         oracle.verify(None, records)
 
@@ -341,6 +398,23 @@ def test_endpoint_network_guard():
         lifecycle.decode_global_id(trailing)
 
 
+def test_launcher_reads_the_network_identity_from_the_node():
+    param = base64.b64encode(begin_cell().store_int(3, 32).end_cell().to_boc()).decode()
+    seen = {}
+
+    def rpc_call(endpoint, method, **params):
+        seen.update(endpoint=endpoint, method=method, params=params)
+        return {}, {"result": {"config": {"bytes": param}}}
+
+    with patch.object(lifecycle, "rpc_call", rpc_call):
+        assert lifecycle.read_global_id("http://127.0.0.1:1/jsonRPC") == 3
+    assert seen == {
+        "endpoint": "http://127.0.0.1:1/jsonRPC",
+        "method": "getConfigParam",
+        "params": {"param": 19},
+    }
+
+
 def test_signer_adapter_is_bounded_by_a_deadline():
     killed = []
     spawned = {}
@@ -370,23 +444,6 @@ def test_signer_adapter_is_bounded_by_a_deadline():
     # The adapter runs in its own process group, and the whole group is killed.
     assert spawned.get("start_new_session") is True
     assert killed == [(4242, lifecycle.signal.SIGKILL)]
-
-
-def test_launcher_reads_the_network_identity_from_the_node():
-    param = base64.b64encode(begin_cell().store_int(3, 32).end_cell().to_boc()).decode()
-    seen = {}
-
-    def rpc_call(endpoint, method, **params):
-        seen.update(endpoint=endpoint, method=method, params=params)
-        return {}, {"result": {"config": {"bytes": param}}}
-
-    with patch.object(lifecycle, "rpc_call", rpc_call):
-        assert lifecycle.read_global_id("http://127.0.0.1:1/jsonRPC") == 3
-    assert seen == {
-        "endpoint": "http://127.0.0.1:1/jsonRPC",
-        "method": "getConfigParam",
-        "params": {"param": 19},
-    }
 
 
 def test_snapshot_requires_deployed_contracts_to_stay_active():

@@ -133,9 +133,12 @@ summary and invariant records. Every step records its sender, its destination,
 the hash of the message it sent and the transaction that consumed exactly that
 message: the runner selects the receipt by the sender's outgoing message hash, so
 a bounce or an unrelated inbound message on the destination can never stand in
-for it, and the oracle checks that binding from both ends, requiring the message
-among the sender's retained outgoing messages and as the target's inbound
-message. The oracle holds its own table of expected outcomes (exit 0 everywhere
+for it, and the oracle checks that binding from both ends by decoding the
+retained transaction BOCs themselves: the target's inbound message hash and
+account, and the sender transaction's account and outgoing message hashes with
+their destinations. The RPC rendering of those edges must agree with the decoded
+transactions, so a rendering that relabels an unrelated real transaction as a
+lifecycle step is refused. The oracle holds its own table of expected outcomes (exit 0 everywhere
 except 706 for the insufficient-balance transfer and 401 for the non-owner NFT
 transfer) and decodes each target's compute exit code, aborted flag and action
 result from its hash-checked transaction BOC, so the outcome does not rest on the
@@ -152,17 +155,18 @@ a step has deployed the token master or the collection, or minted the item, ever
 later snapshot requires that contract to be active.
 
 Run `uv run pytest -q test/tostester/tests/test_tok01_review_guards.py` for the
-49 offline guard tests. They use synthetic public cells, mocked RPC responses and
-three retained transaction BOCs from a disposable local network
-(`tok01_fixture_transactions.py`, one per outcome class) so outcome decoding is
-exercised; they are not native lifecycle evidence. Removing each of the step,
-destination transaction, message binding, sender binding, decoded outcome,
-provenance, expectation, network, signer-deadline, clean-source and
-index-completeness guards makes its targeted tests fail; restoring the guards
-passes all 49. `tok01-oracle.py --red-controls` additionally exercises step
-duplication, label replacement, empty transaction sets, wrong destinations,
-tampered renderings, a swapped target transaction, a missing sender message and
-tampered provenance against fresh native receipts; each control must turn red for
-its stated reason, not merely fail. A new native rehearsal is required for
+52 offline guard tests. They use synthetic records, mocked RPC responses and
+three retained sender/target transaction pairs from a disposable local network
+(`tok01_fixture_transactions.py`, one per outcome class) so message-edge and
+outcome decoding are exercised; they are not native lifecycle evidence. Removing
+each of the step, destination transaction, decoded message edge, sender binding,
+decoded outcome, provenance, expectation, network, signer-deadline, clean-source
+and index-completeness guards makes its targeted tests fail; restoring the
+guards passes all 52. `tok01-oracle.py --red-controls` additionally exercises
+step duplication, label replacement, empty transaction sets, wrong destinations,
+tampered renderings of outcomes and message edges, a swapped target transaction,
+a relabelled sender transaction, a missing sender message and tampered
+provenance against fresh native receipts; each control must turn red for its
+stated reason, not merely fail. A new native rehearsal is required for
 acceptance of this revision; previous retained receipts describe their recorded
 source only.
