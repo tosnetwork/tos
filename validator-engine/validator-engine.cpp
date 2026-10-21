@@ -6437,6 +6437,10 @@ void ValidatorEngine::run_control_query(tos::tos_api::engine_validator_setExtMes
     promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::error, "not authorized")));
     return;
   }
+  if (!started_) {
+    promise.set_value(create_control_query_error(td::Status::Error(tos::ErrorCode::notready, "not started")));
+    return;
+  }
   auto r_options = tos::validator::ExtMessagePoolOptions::unpack(*query.config_);
   if (r_options.is_error()) {
     promise.set_value(create_control_query_error(r_options.move_as_error_prefix("failed to unpack options: ")));
