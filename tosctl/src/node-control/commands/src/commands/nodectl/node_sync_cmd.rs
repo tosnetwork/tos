@@ -206,13 +206,13 @@ async fn observe(
     mut emit: impl FnMut(std::result::Result<&SyncStatus, &anyhow::Error>) -> Result<()>,
 ) -> Result<u8> {
     let start = Instant::now();
-    let mut last_catching_up = None;
+    let mut last_successful = None;
     loop {
         let remaining = budget.saturating_sub(start.elapsed());
         if remaining.is_zero() {
-            if let Some(sample) = last_catching_up.as_ref() {
+            if let Some(sample) = last_successful.as_ref() {
                 emit(Ok(sample))?;
-                return Ok(2);
+                return Ok(sample.exit_code);
             }
             emit(Err(&anyhow::anyhow!("sync status observation deadline expired")))?;
             return Ok(4);
@@ -220,9 +220,9 @@ async fn observe(
         let result = match tokio::time::timeout(remaining, sampler.sample()).await {
             Ok(result) => result,
             Err(_) => {
-                if let Some(sample) = last_catching_up.as_ref() {
+                if let Some(sample) = last_successful.as_ref() {
                     emit(Ok(sample))?;
-                    return Ok(2);
+                    return Ok(sample.exit_code);
                 }
                 emit(Err(&anyhow::anyhow!("sync status observation deadline expired")))?;
                 return Ok(4);
@@ -230,15 +230,15 @@ async fn observe(
         };
         let code = match &result {
             Ok(sample) => {
-                if sample.exit_code == 2 {
-                    last_catching_up = Some(sample.clone());
+                if matches!(sample.exit_code, 2 | 3) {
+                    last_successful = Some(sample.clone());
                 }
                 sample.exit_code
             }
             Err(_) => 4,
         };
         emit(result.as_ref())?;
-        if !watch || code == 0 || code == 3 {
+        if !watch || code == 0 {
             return Ok(code);
         }
         tokio::time::sleep(interval.min(budget.saturating_sub(start.elapsed()))).await;
@@ -252,6 +252,7 @@ mod watch_tests {
         calls: usize,
         pending_after_first: bool,
         error_after_first: bool,
+        code: u8,
     }
     impl StatusSampler for Script {
         async fn sample(&mut self) -> Result<SyncStatus> {
@@ -262,19 +263,27 @@ mod watch_tests {
             if self.calls > 1 && self.pending_after_first {
                 std::future::pending::<()>().await;
             }
-            Ok(serde_json::from_value(serde_json::json!({
+            let mut value = serde_json::json!({
                 "state":"catching_up", "exit_code":2, "block_age_seconds":100,
                 "shard_lag_blocks":10,"reference_lag_blocks":10,"common_id":null,
                 "stable_seconds":0,"initial_sync_complete":false,"reason":"still catching up",
                 "evidence":{"sampled_utc":100,"tip":{"workchain":-1,"shard":i64::MIN,"seqno":10,"root_hash":"11".repeat(32),"file_hash":"22".repeat(32)},"tip_utime":0,"coherent_tip":null,"coherent_tip_utime":null,"shard_client_seqno":0,"initial_sync_complete":false}
-            }))?)
+            });
+            value["exit_code"] = serde_json::json!(self.code);
+            value["state"] = serde_json::json!(match self.code {
+                0 => "at_head",
+                2 => "catching_up",
+                3 => "policy_failure",
+                _ => "unknown",
+            });
+            Ok(serde_json::from_value(value)?)
         }
     }
     #[tokio::test(start_paused = true)]
     async fn watch_deadline_keeps_catching_up_without_a_zero_budget_sample() -> Result<()> {
         for interval in [Duration::from_secs(5), Duration::ZERO] {
             let mut script =
-                Script { calls: 0, pending_after_first: true, error_after_first: false };
+                Script { calls: 0, pending_after_first: true, error_after_first: false, code: 2 };
             let mut outputs = Vec::new();
             let code = observe(&mut script, true, Duration::from_secs(1), interval, |s| {
                 outputs.push(s.map(|s| s.exit_code).unwrap_or(4));
@@ -294,7 +303,7 @@ mod watch_tests {
             );
         }
         let mut transient =
-            Script { calls: 0, pending_after_first: false, error_after_first: true };
+            Script { calls: 0, pending_after_first: false, error_after_first: true, code: 2 };
         let mut outputs = Vec::new();
         let code = observe(
             &mut transient,
@@ -312,10 +321,29 @@ mod watch_tests {
             "deadline discarded the last successful observation after a transient error"
         );
         assert_eq!(outputs, vec![2, 4, 2]);
-        let mut script = Script { calls: 0, pending_after_first: false, error_after_first: false };
+        let mut script =
+            Script { calls: 0, pending_after_first: false, error_after_first: false, code: 2 };
         let code = observe(&mut script, true, Duration::ZERO, Duration::ZERO, |_| Ok(())).await?;
         assert_eq!(code, 4);
         assert_eq!(script.calls, 0, "sample started with zero budget");
+        for expected in [0, 3, 4] {
+            let mut script = Script {
+                calls: 0,
+                pending_after_first: true,
+                error_after_first: false,
+                code: expected,
+            };
+            let code =
+                observe(&mut script, true, Duration::from_secs(1), Duration::ZERO, |_| Ok(()))
+                    .await?;
+            assert_eq!(code, expected, "watch changed an existing exit case");
+            assert_eq!(
+                script.calls,
+                if expected == 0 { 1 } else { 2 },
+                "watch changed policy/unknown retry behavior"
+            );
+        }
+
         Ok(())
     }
 }
