@@ -81,7 +81,7 @@ jobs:
           cmake --build build --parallel 4 --target \
             gen_fif create-state toslibjson func fift emulator \
             generate-random-id tos-pq-consensus-key tos-pq-controller \
-            dht-server validator-engine-console validator-engine \
+            dht-server validator-engine-console validator-engine test-node-store-fixture \
             create-hardfork test-tos-collator test-apply-block-readback-latency \
             test-pq-lite-forward-proof test-pending-finality-cache test-c04-real-state-proof \
             tos-proof-verify test-proof-verify proof-verify-fs-shim test-proof-readonly-query test-json-rpc-transport test-json-rpc-explorer \
@@ -126,6 +126,19 @@ jobs:
 
       - name: Install repository-pinned Rust toolchain for engine integration
         run: scripts/install-rust-toolchain.sh
+
+      - name: Verify offline StateDb compatibility on native WAL fixtures
+        shell: bash
+        env:
+          CARGO_BUILD_JOBS: 4
+        run: |
+          set -euo pipefail
+          export NODE_STORE_NATIVE_DIR="$GITHUB_WORKSPACE/build/third-party/rocksdb"
+          export NODE_STORE_FIXTURE="$GITHUB_WORKSPACE/build/test-node-store-fixture"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/build/operator-rust-target"
+          cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --test native_fixture -- --nocapture | tee build/node-store-native-tests.log
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log
+          cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture
 
       - name: Verify Rust operator reads against the actual engine
         # The job runs in a container: the default sh has no pipefail, and the
@@ -312,6 +325,10 @@ jobs:
             build/explorer-rpc-ordinary-v16/*/rpc-evidence.json
           if-no-files-found: error
           retention-days: 14
+
+      - name: Reopen reconstructed StateDb in the production engine
+        timeout-minutes: 10
+        run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture
 
       - name: Run the complete Python suite
         run: uv run pytest

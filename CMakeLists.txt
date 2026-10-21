@@ -1041,6 +1041,11 @@ target_include_directories(test-apply-block-readback-latency PRIVATE ${CMAKE_CUR
 target_link_libraries(test-apply-block-readback-latency PRIVATE validator-disk validator-common validator-db
                       tos_validator smc-envelope tos_db tos_crypto tddb tdutils tdactor adnl overlay tl_api dht)
 
+add_executable(test-node-store-fixture test/test-node-store-fixture.cpp)
+target_include_directories(test-node-store-fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
+                           ${CMAKE_CURRENT_SOURCE_DIR}/crypto)
+target_link_libraries(test-node-store-fixture PRIVATE validator-db tos_db tos_crypto tdutils tdactor adnl overlay tl_api dht)
+
 add_executable(test-validator-cleanup-integration test/test-validator-cleanup-integration.cpp)
 target_include_directories(test-validator-cleanup-integration PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
                            ${CMAKE_CURRENT_SOURCE_DIR}/crypto)

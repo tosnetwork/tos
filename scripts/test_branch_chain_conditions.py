@@ -82,6 +82,20 @@ class BranchConditionTests(unittest.TestCase):
             with self.subTest(index=index), self.assertRaises(RuntimeError):
                 self.guard.validate_unconditional_steps(workflow)
 
+    def test_node_store_proof_cannot_be_omitted(self):
+        self.guard.validate_node_store_proof(self.workflow)
+        controls = (
+            "export NODE_STORE_NATIVE_DIR=",
+            "export NODE_STORE_FIXTURE=",
+            "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store",
+            "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored'",
+            "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store",
+            "run: uv run python test/integration/node_store_native_reopen.py",
+        )
+        for command in controls:
+            with self.subTest(command=command), self.assertRaises(RuntimeError):
+                self.guard.validate_node_store_proof(self.workflow.replace(command, "REMOVED"))
+
     def test_triggers_are_every_pull_request_and_pushes_to_main(self):
         self.guard.validate_triggers(self.workflow)
 

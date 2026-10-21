@@ -2790,6 +2790,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "node-store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "sha2",
+ "tl_api",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

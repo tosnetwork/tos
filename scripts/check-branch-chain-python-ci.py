@@ -9,6 +9,7 @@ from pathlib import Path
 
 REQUIRED_NATIVE_TARGETS = {
     "gen_fif",
+    "test-node-store-fixture",
     "create-state",
     "toslibjson",
     "generate-random-id",
@@ -199,10 +200,27 @@ def validate_triggers(text: str) -> None:
     )
 
 
+def validate_node_store_proof(text: str) -> None:
+    required = (
+        'export NODE_STORE_NATIVE_DIR="$GITHUB_WORKSPACE/build/third-party/rocksdb"',
+        'export NODE_STORE_FIXTURE="$GITHUB_WORKSPACE/build/test-node-store-fixture"',
+        "cargo test --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --test native_fixture -- --nocapture | tee build/node-store-native-tests.log",
+        "grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored' build/node-store-native-tests.log",
+        "cargo build --manifest-path tosctl/src/Cargo.toml --locked -p node-store --features native --example reconstruct_fixture",
+        "run: uv run python test/integration/node_store_native_reopen.py --root build/node-store-native-reopen --build build --reconstruct build/operator-rust-target/debug/examples/reconstruct_fixture",
+    )
+    for command in required:
+        require(
+            re.search(rf"(?m)^ +{re.escape(command)}$", text) is not None,
+            f"native StateDb proof command is absent: {command}",
+        )
+
+
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     workflow = root / ".github/workflows/branch-chain-python.yml"
     text = workflow.read_text(encoding="utf-8")
+    validate_node_store_proof(text)
     validate_triggers(text)
     # This workflow's purpose is to run on every pull request and push to main.
     # Refuse runtime conditions: a job- or step-level `if:` is
