@@ -257,6 +257,7 @@ TEST(ExternalCredit, RawContextAddressValidatedWhateverElseIsSupplied) {
   vm::CellBuilder none;
   // addr_none is not an account. The inherited emulator would run such a context at
   // its fixed credit; an external run here refuses it, as the release notes state.
+  // (A 256-bit addr_var is an account and is accepted; see the test below.)
   none.store_long(0, 2);
   std::vector<vm::StackEntry> malformed{vm::StackEntry(truncated.as_cellslice_ref()),
                                         vm::StackEntry(none.as_cellslice_ref()),
@@ -320,6 +321,29 @@ TEST(ExternalCredit, MalformedRawContextStillRunsGetMethodsAndInternalMessages) 
     ASSERT_TRUE(answer.code != ~static_cast<int>(vm::Excno::fatal));
     ASSERT_TRUE(answer.vm_log.find("Invalid external-message") == std::string::npos);
   }
+}
+
+TEST(ExternalCredit, AcceptedAddressShapesSelectTheWorkchain) {
+  auto config = credit_config(20000, 10000);
+  // addr_var$11 anycast=nothing$0 addr_len=256 workchain=-1: an account, so it is
+  // accepted and its workchain selects the masterchain credit.
+  vm::CellBuilder var_master;
+  var_master.store_long(0xd00, 12).store_long(-1, 32).store_zeroes(256);
+  emulator::TvmEmulator var(delayed_accept(), empty_cell());
+  var.set_c7_raw(raw_context(vm::StackEntry(config->get_root_cell()), vm::StackEntry(var_master.as_cellslice_ref())));
+  expect_credit_exhausted(var.send_external_message(empty_cell()));
+  // An empty slice in the address slot means no address: the Args workchain applies,
+  // here the masterchain.
+  emulator::TvmEmulator empty(delayed_accept(), empty_cell());
+  empty.set_c7(address(-1), 1, 10000000000, td::Bits256::zero(), config);
+  empty.set_c7_raw(
+      raw_context(vm::StackEntry(config->get_root_cell()), vm::StackEntry(vm::CellBuilder().as_cellslice_ref())));
+  expect_credit_exhausted(empty.send_external_message(empty_cell()));
+  // ... and without an Args address the basechain default applies.
+  emulator::TvmEmulator plain(delayed_accept(), empty_cell());
+  plain.set_c7_raw(
+      raw_context(vm::StackEntry(config->get_root_cell()), vm::StackEntry(vm::CellBuilder().as_cellslice_ref())));
+  expect_accepted(plain.send_external_message(empty_cell()));
 }
 
 TEST(ExternalCredit, RawMasterchainAddressOverridesBasechainArgs) {

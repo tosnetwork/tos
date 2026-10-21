@@ -38,10 +38,13 @@ when configuration is supplied; without it, the basechain/masterchain credit
 defaults are 20,000/10,000. Explicit VM limits still override this selection.
 Deriving the limits from CP20/CP21 is a deliberate divergence from the inherited
 emulator, which grants every external message a fixed 1,000,000 gas and 10,000
-credit. Two consequences for callers: a raw c7 whose address slot is not a
-standard internal address (`addr_none`, `addr_var`) is refused for an external
-run, where the inherited emulator would execute it at the fixed credit (no
-in-tree caller supplies such a context); and the emulator's credit is
+credit. Two consequences for callers: a raw c7 whose address slot holds neither
+a null entry, an empty slice nor an internal address with a 256-bit account
+(`addr_std` with or without anycast, or a 256-bit `addr_var`) is refused for an
+external run — `addr_none`, a truncated address or a non-slice entry — where the
+inherited emulator would execute it at the fixed credit (no in-tree caller
+supplies such a context; a null or empty slot means no address and the Args
+workchain applies); and the emulator's credit is
 `min(credit, limit)` without regard to the account balance, whereas a real
 transaction also bounds gas by the balance, so emulator acceptance is necessary
 but not sufficient for on-chain acceptance of a poorly funded account.
