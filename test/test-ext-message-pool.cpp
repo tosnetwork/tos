@@ -42,6 +42,14 @@ td::BufferSlice make_valid_external_message() {
   return vm::std_boc_serialize(std::move(root)).move_as_ok();
 }
 
+TEST(ExtMessagePool, SnapshotExportsStoredStockAndCheckResults) {
+  metrics::ExtMessagePoolSnapshot snapshot{.pending_ext_messages = 42, .check_ok = 7, .check_error = 3};
+  auto text = snapshot.collect().render();
+  EXPECT(text.find("mempool_ext_messages 42") != std::string::npos);
+  EXPECT(text.find("result=\"ok\"") != std::string::npos);
+  EXPECT(text.find("result=\"error\"") != std::string::npos);
+}
+
 TEST(ExtMessagePool, RejectsAdmissionBeforeMasterchainState) {
   td::actor::TestScheduler scheduler;
   scheduler.run([&]() -> td::actor::Task<td::Unit> {

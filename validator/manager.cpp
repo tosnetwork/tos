@@ -4873,6 +4873,29 @@ void ValidatorManagerImpl::prepare_actor_stats(td::Promise<std::string> promise)
   send_closure(actor_stats_, &td::actor::ActorStats::prepare_stats, std::move(promise));
 }
 
+void ValidatorManagerImpl::collect(metrics::MetricsPromise promise) {
+  connect(std::move(promise), collect_pool_metrics());
+}
+
+td::actor::Task<metrics::MetricSet> ValidatorManagerImpl::collect_pool_metrics() {
+  metrics::MetricSet result;
+  if (last_masterchain_block_handle_) {
+    result.families.push_back(metrics::MetricFamily::make_scalar("masterchain_seqno", "gauge",
+        last_masterchain_block_handle_->id().seqno()));
+    result.families.push_back(metrics::MetricFamily::make_scalar("masterchain_block_age_seconds", "gauge",
+        td::Clocks::system() - double(last_masterchain_block_handle_->unix_time())));
+  }
+  if (shard_client_handle_) {
+    result.families.push_back(metrics::MetricFamily::make_scalar("shardclient_seqno", "gauge",
+        shard_client_handle_->id().seqno()));
+  }
+  if (!ext_message_pool_.empty()) {
+    auto snapshot = co_await td::actor::ask(ext_message_pool_.get(), &ExtMessagePool::get_metrics_snapshot);
+    result = std::move(result).join(snapshot.collect());
+  }
+  co_return result;
+}
+
 void ValidatorManagerImpl::prepare_stats(td::Promise<std::vector<std::pair<std::string, std::string>>> promise) {
   auto merger = StatsMerger::create(std::move(promise));
 

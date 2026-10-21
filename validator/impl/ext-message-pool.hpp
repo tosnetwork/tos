@@ -20,6 +20,7 @@
 #include <set>
 
 #include "interfaces/validator-manager.h"
+#include "metrics/ext-message-pool-metrics.h"
 #include "td/actor/coro_utils.h"
 #include "td/utils/PersistentTreap.h"
 #include "td/utils/RateLimiterWindow.h"
@@ -30,7 +31,7 @@
 
 namespace tos::validator {
 
-class ExtMessagePool : public td::actor::Actor {
+class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
  public:
   ExtMessagePool(td::Ref<ValidatorManagerOptions> opts, td::actor::ActorId<ValidatorManager> manager,
                  std::shared_ptr<adnl::AdnlExtByteBudget> admission_budget =
@@ -62,6 +63,15 @@ class ExtMessagePool : public td::actor::Actor {
   void update_options(td::Ref<ValidatorManagerOptions> opts);
   td::Result<td::Unit> configure_work_profile(ExtMessageWorkProfile profile);
   std::vector<std::pair<std::string, std::string>> prepare_stats();
+
+  using MetricsSnapshot = metrics::ExtMessagePoolSnapshot;
+  MetricsSnapshot get_metrics_snapshot();
+  void collect(metrics::MetricsPromise promise) override {
+    promise.set_value(get_metrics_snapshot().collect());
+  }
+  std::optional<metrics::CollectionReservation> reservation() const override {
+    return metrics::labelled_metrics_reservation(2, 3, 1, 64, 128);
+  }
 
   void alarm() override;
   void tear_down() override;

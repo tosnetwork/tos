@@ -2697,6 +2697,10 @@ void ValidatorEngine::start_validator() {
     recover_wc0_index();
   }
 
+  td::actor::send_closure(exporter_.get(),
+      &tos::PrometheusExporter::register_collector<tos::validator::ValidatorManagerInterface>,
+      "validator", validator_manager_.get());
+
   if (json_rpc_addr_) {
     json_rpc_server_ = tos::JsonRpcServer::create(validator_manager_.get(), json_rpc_opts_);
     td::actor::send_closure(json_rpc_server_, &tos::JsonRpcServer::listen, json_rpc_addr_.value());

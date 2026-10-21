@@ -35,6 +35,7 @@
 #include "interfaces/proof.h"
 #include "interfaces/shard.h"
 #include "overlay/overlays.h"
+#include "metrics/metrics-collectors.h"
 #include "td/actor/actor.h"
 #include "td/actor/coro_task.h"
 #include "td/actor/coro_utils.h"
@@ -296,8 +297,12 @@ struct NodeConsensusStatus {
   bool is_validator{false};
 };
 
-class ValidatorManagerInterface : public td::actor::Actor {
+class ValidatorManagerInterface : public td::actor::Actor, public metrics::AsyncCollector {
  public:
+  void collect(metrics::MetricsPromise promise) override {
+    promise.set_error(td::Status::Error("validator metrics unavailable"));
+  }
+
   class Callback {
    public:
     virtual ~Callback() = default;

@@ -98,6 +98,14 @@ class BlockHandleLru : public td::ListNode {
 };
 
 class ValidatorManagerImpl : public ValidatorManager {
+ public:
+  void collect(metrics::MetricsPromise promise) override;
+  std::optional<metrics::CollectionReservation> reservation() const override {
+    return metrics::labelled_metrics_reservation(8, 16, 2, 64, 128);
+  }
+
+ private:
+  td::actor::Task<metrics::MetricSet> collect_pool_metrics();
   friend class PendingFinalityManagerActorProbe;
   friend class N5ManagerDbFixture;
   friend class TwostepManagerProbe;
