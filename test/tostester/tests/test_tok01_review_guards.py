@@ -15,6 +15,7 @@ from pytosiq_core import Cell, begin_cell
 ROOT = Path(__file__).resolve().parents[3]
 ACCOUNT = "0:" + "11" * 32
 OTHER_ACCOUNT = "0:" + "22" * 32
+SENDER = "sender"
 
 
 def module(name):
@@ -27,14 +28,22 @@ def module(name):
 
 oracle = module("tok01-oracle")
 lifecycle = module("tok01-lifecycle")
+fixture_transactions = module("../test/tostester/tests/tok01_fixture_transactions")
 
 
-def transaction(message_hash, exit_code=0):
+def transaction(message_hash, exit_code=0, out_msgs=()):
+    # A real transaction BOC with this outcome, so the oracle can decode it; the
+    # rendering fields are what the RPC reports for it.
+    data = fixture_transactions.BY_EXIT[exit_code]
     return {
-        "data": base64.b64encode(Cell.empty().to_boc()).decode(),
-        "transaction_id": {"hash": base64.b64encode(Cell.empty().hash).decode(), "lt": "10"},
+        "data": data,
+        "transaction_id": {
+            "hash": base64.b64encode(Cell.one_from_boc(base64.b64decode(data)).hash).decode(),
+            "lt": "10",
+        },
         "block_id": dict.fromkeys(("root_hash", "file_hash", "seqno", "workchain", "shard"), 0),
         "in_msg": {"hash": message_hash, "source": ACCOUNT},
+        "out_msgs": list(out_msgs),
         "compute": {"exit_code": exit_code},
         "aborted": exit_code != 0,
         "action": {"success": True} if exit_code == 0 else None,
@@ -47,14 +56,18 @@ def records():
     steps = []
     for index, name in enumerate(oracle.REQUIRED_STEPS):
         tx = transaction(f"message-{index}", oracle.EXPECTED_EXIT.get(name, 0))
+        sent = transaction(
+            "wallet-external", 0, [{"destination": "account", "hash": f"message-{index}"}]
+        )
         steps.append(
             {
                 "step": name,
                 "target": copy.deepcopy(tx),
+                "sender": SENDER,
                 "message_hash": f"message-{index}",
                 "destination": "account",
                 "expected_exit": oracle.EXPECTED_EXIT.get(name, 0),
-                "transactions": {"account": [copy.deepcopy(tx)]},
+                "transactions": {"account": [copy.deepcopy(tx)], SENDER: [sent]},
                 "comparisons": [field],
             }
         )
@@ -157,33 +170,80 @@ def test_target_must_consume_the_step_message(records):
     "change,reason",
     [
         ("runner_expected", "runner expected outcome"),
-        ("compute_exit", "compute exit"),
-        ("aborted", "aborted flag"),
-        ("action", "action phase failed"),
-        ("summary_hides_refusal", "compute exit"),
+        ("rpc_compute_exit", "RPC outcome rendering disagrees"),
+        ("rpc_aborted", "RPC outcome rendering disagrees"),
+        ("rpc_action", "RPC outcome rendering disagrees"),
+        ("refused_transaction", "compute exit differs"),
+        ("aborted_transaction", "compute exit differs"),
     ],
 )
-def test_outcomes_checked_against_the_contract_not_the_summary(records, change, reason):
+def test_outcomes_decoded_from_the_transaction_not_the_summary(records, change, reason):
     assert oracle.verify(None, records)["pass"]
     refused = records["steps.jsonl"][7]
     assert refused["step"] == "insufficient balance"
     first = records["steps.jsonl"][0]
     if change == "runner_expected":
         refused["expected_exit"] = 0
-    elif change == "compute_exit":
+    elif change == "rpc_compute_exit":
         first["target"]["compute"]["exit_code"] = 1
-    elif change == "aborted":
+    elif change == "rpc_aborted":
         first["target"]["aborted"] = True
-    elif change == "action":
+    elif change == "rpc_action":
         first["target"]["action"] = {"success": False}
     else:
-        # The runner's summary still says pass while the chain refused the deploy.
-        first["target"]["compute"]["exit_code"] = 706
-        first["target"]["aborted"] = True
+        # The summary still says pass while the retained transaction, hash-consistent and
+        # rendered consistently, is a refusal: the decoded BOC decides.
+        donor = transaction("message-0", 706 if change == "refused_transaction" else 401)
+        first["target"] = donor
     # The runner retains the same transaction under the destination account.
     first["transactions"]["account"][0] = copy.deepcopy(first["target"])
     with pytest.raises(AssertionError, match=reason):
         oracle.verify(None, records)
+
+
+def test_decoded_outcome_reads_the_phases_from_the_boc():
+    assert oracle.decoded_outcome(transaction("m", 0)) == {
+        "exit_code": 0,
+        "aborted": False,
+        "action_success": True,
+    }
+    assert oracle.decoded_outcome(transaction("m", 706)) == {
+        "exit_code": 706,
+        "aborted": True,
+        "action_success": None,
+    }
+    assert oracle.decoded_outcome(transaction("m", 401))["exit_code"] == 401
+
+
+@pytest.mark.parametrize("change", ["no_sender", "not_sent", "sent_twice"])
+def test_step_message_must_come_from_the_sender(records, change):
+    assert oracle.verify(None, records)["pass"]
+    step = records["steps.jsonl"][2]
+    if change == "no_sender":
+        del step["sender"]
+        reason = "step sender missing"
+    elif change == "not_sent":
+        step["transactions"][SENDER][0]["out_msgs"] = []
+        reason = "missing from the sender's outgoing messages"
+    else:
+        step["transactions"][SENDER].append(copy.deepcopy(step["transactions"][SENDER][0]))
+        reason = "missing from the sender's outgoing messages"
+    with pytest.raises(AssertionError, match=reason):
+        oracle.verify(None, records)
+
+
+def test_oracle_reports_and_checks_what_it_accepted(records):
+    result = oracle.verify(None, records)
+    assert (result["source_head"], result["global_id"], result["run_id"]) == (
+        "ab" * 20,
+        3,
+        "run-1",
+    )
+    assert oracle.verify(None, records, expect_source_head="ab" * 20, expect_global_id=3)["pass"]
+    with pytest.raises(AssertionError, match="sealed at another source head"):
+        oracle.verify(None, records, expect_source_head="cd" * 20)
+    with pytest.raises(AssertionError, match="another network"):
+        oracle.verify(None, records, expect_global_id=1)
 
 
 @pytest.mark.parametrize(
@@ -283,28 +343,50 @@ def test_endpoint_network_guard():
 
 def test_signer_adapter_is_bounded_by_a_deadline():
     killed = []
+    spawned = {}
 
     class Process:
         returncode = None
+        pid = 4242
 
         async def communicate(self, _data):
             await asyncio.Event().wait()
 
-        def kill(self):
-            killed.append(True)
-
         async def wait(self):
             return 0
 
-    async def spawn(*_args, **_kwargs):
+    async def spawn(*_args, **kwargs):
+        spawned.update(kwargs)
         return Process()
 
     message = SimpleNamespace(send_mode=3, message=SimpleNamespace(serialize=Cell.empty))
     send = lifecycle.make_sender("signer-adapter", 0.05)
-    with patch.object(lifecycle.asyncio, "create_subprocess_exec", spawn):
-        with pytest.raises(TimeoutError, match="did not answer"):
+    with (
+        patch.object(lifecycle.asyncio, "create_subprocess_exec", spawn),
+        patch.object(lifecycle.os, "killpg", lambda pid, sig: killed.append((pid, sig))),
+    ):
+        with pytest.raises(TimeoutError, match="submission state unknown"):
             asyncio.run(send(ACCOUNT, message))
-    assert killed == [True]
+    # The adapter runs in its own process group, and the whole group is killed.
+    assert spawned.get("start_new_session") is True
+    assert killed == [(4242, lifecycle.signal.SIGKILL)]
+
+
+def test_launcher_reads_the_network_identity_from_the_node():
+    param = base64.b64encode(begin_cell().store_int(3, 32).end_cell().to_boc()).decode()
+    seen = {}
+
+    def rpc_call(endpoint, method, **params):
+        seen.update(endpoint=endpoint, method=method, params=params)
+        return {}, {"result": {"config": {"bytes": param}}}
+
+    with patch.object(lifecycle, "rpc_call", rpc_call):
+        assert lifecycle.read_global_id("http://127.0.0.1:1/jsonRPC") == 3
+    assert seen == {
+        "endpoint": "http://127.0.0.1:1/jsonRPC",
+        "method": "getConfigParam",
+        "params": {"param": 19},
+    }
 
 
 def test_snapshot_requires_deployed_contracts_to_stay_active():

@@ -5,9 +5,11 @@ import argparse
 import asyncio
 import base64
 import json
+import os
 import re
 import secrets
 import shlex
+import signal
 import subprocess
 import time
 import urllib.request
@@ -346,6 +348,7 @@ class Harness:
                 "step": label,
                 "transactions": transactions,
                 "target": target,
+                "sender": raw(sender),
                 "message_hash": sent,
                 "destination": raw(destination),
                 "expected_exit": expected_exit,
@@ -870,20 +873,28 @@ def make_sender(command, timeout):
             "message_boc": boc(message.message.serialize()),
             "send_mode": message.send_mode,
         }
+        # The adapter runs in its own process group so a deadline kills whatever it spawned.
         process = await asyncio.create_subprocess_exec(
             *shlex.split(command),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
         try:
             stdout, _ = await asyncio.wait_for(
                 process.communicate(json.dumps(request).encode()), timeout
             )
         except asyncio.TimeoutError:
-            process.kill()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             await process.wait()
-            raise TimeoutError(f"Signer adapter did not answer within {timeout}s") from None
+            # The adapter may already have submitted: the submission state is unknown.
+            raise TimeoutError(
+                f"Signer adapter did not answer within {timeout}s; submission state unknown"
+            ) from None
         if process.returncode != 0:
             raise RuntimeError(f"Signer adapter failed with exit {process.returncode}")
         result = json.loads(stdout)
@@ -892,13 +903,16 @@ def make_sender(command, timeout):
     return send
 
 
+def read_global_id(endpoint):
+    """The network identity the endpoint actually serves, from its ConfigParam 19."""
+    _, response = rpc_call(endpoint, "getConfigParam", param=19)
+    return decode_global_id(response["result"]["config"]["bytes"])
+
+
 async def endpoint_run(args):
     owners = [Address(a) for a in args.owners]
     # An endpoint alone does not authorize a run: the network it serves must be listed.
-    _, response = rpc_call(args.endpoint, "getConfigParam", param=19)
-    global_id = check_global_id(
-        decode_global_id(response["result"]["config"]["bytes"]), set(args.allow_global_id)
-    )
+    global_id = check_global_id(read_global_id(args.endpoint), set(args.allow_global_id))
     harness = Harness(
         args.endpoint,
         args.output,

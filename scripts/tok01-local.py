@@ -145,14 +145,17 @@ async def run(args):
                 wallet = next(w for w in wallets if tok01.raw(w.address) == tok01.raw(sender))
                 await wallet.send(message)
 
+            endpoint = f"http://127.0.0.1:{args.rpc_port}/jsonRPC"
+            # The node, not the launcher's configuration, states which network it serves.
+            global_id = tok01.check_global_id(tok01.read_global_id(endpoint), {3})
             harness = tok01.Harness(
-                f"http://127.0.0.1:{args.rpc_port}/jsonRPC",
+                endpoint,
                 args.output,
                 send,
                 [bp.address for bp in blueprints],
                 {
                     "mode": "local",
-                    "global_id": 3,
+                    "global_id": global_id,
                     "limits": {"cpus": 8, "ram_gib": 12, "disk_gib": TASK_DISK_BUDGET_GIB},
                     "auth_network_tag": os.environ["TOS_AUTH_NETWORK_TAG"],
                     "node_sha256": hashlib.sha256(

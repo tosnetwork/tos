@@ -51,17 +51,21 @@ uv run python scripts/tok01-lifecycle.py \
 Before any transaction the runner reads the network identity (ConfigParam 19)
 from the endpoint and refuses unless it is listed: only the local id 3 is allowed
 by default, and any other network needs an explicit `--allow-global-id` for that
-exact value. The identity is recorded in the provenance. The adapter receives a
-JSON object on stdin with `sender`, `message_boc` (an unsigned internal message
+exact value. The local launcher reads the identity from its own node the same
+way. The identity is recorded in the provenance. The adapter receives a JSON
+object on stdin with `sender`, `message_boc` (an unsigned internal message
 including optional StateInit), and `send_mode`. It must sign and submit using
 the selected sender's supported wallet path and return `{"submitted":true}` on
 stdout only after successful submission, with exit code zero, within
-`--signer-timeout` seconds (120 by default); a slower adapter is killed and the
-run fails. It must keep signing material out of stdout and evidence. Submission
-is subsequently checked through real destination transactions. The harness owns
-no external keys and does not bootstrap or fund an external network. Supplying
-an endpoint does not by itself authorize a public run: the network must be
-allowed explicitly and the separate live-run authorization still applies.
+`--signer-timeout` seconds (120 by default). The adapter runs in its own process
+group; on the deadline the whole group is killed and the run fails, and because
+the adapter may already have submitted, the state of that submission is unknown
+and must be checked on chain before any retry. It must keep signing material out
+of stdout and evidence. Submission is subsequently checked through real
+destination transactions. The harness owns no external keys and does not
+bootstrap or fund an external network. Supplying an endpoint does not by itself
+authorize a public run: the network must be allowed explicitly and the separate
+live-run authorization still applies.
 
 The contract code comes directly from the release SDK's generated Token
 constants and NFT constants. These match the SDK wrapper layouts; the native
@@ -103,9 +107,15 @@ lifecycle runner does not claim that replay qualification.
 Independently verify retained evidence and exercise the oracle with mutations:
 
 ```sh
-uv run python scripts/tok01-oracle.py ../tok01-evidence
+uv run python scripts/tok01-oracle.py ../tok01-evidence \
+  --expect-source-head <commit> --expect-global-id 3
 uv run python scripts/tok01-oracle.py ../tok01-evidence --red-controls
 ```
+
+The verifier reports the source head, network identity and run id it accepted,
+and the two expectations make it refuse evidence sealed at another commit or
+taken from another network, so a clean run at an older head or on an explicitly
+allowed public network is never reported the same way as the intended one.
 
 The verifier requires all 13 lifecycle steps, their comparison tables, supply
 invariants, transaction hashes/full block IDs, both bounce receipts and the
@@ -119,19 +129,22 @@ bounce accounting/receipt completeness, transaction identity and block identity.
 ## Receipt acceptance guards
 
 The independent oracle requires the exact ordered lifecycle labels in the step,
-summary and invariant records. Every step records its destination, the hash of the
-message it sent and the transaction that consumed exactly that message: the
-runner selects the receipt by the sender's outgoing message hash, so a bounce or
-an unrelated inbound message on the destination can never stand in for it, and
-the oracle checks that binding again. The oracle holds its own table of expected
-outcomes (exit 0 everywhere except 706 for the insufficient-balance transfer and
-401 for the non-owner NFT transfer) and checks each target transaction's compute
-exit code, aborted flag and action result against it, independently of the
-runner's own summary. It requires `provenance.json` to be marked complete, to
-carry the same commit before and after the run, to name the network identity and
-to belong to the run that wrote the summary. Older receipts without these fields
-need a fresh rehearsal; they must not be edited to simulate evidence the runner
-did not collect.
+summary and invariant records. Every step records its sender, its destination,
+the hash of the message it sent and the transaction that consumed exactly that
+message: the runner selects the receipt by the sender's outgoing message hash, so
+a bounce or an unrelated inbound message on the destination can never stand in
+for it, and the oracle checks that binding from both ends, requiring the message
+among the sender's retained outgoing messages and as the target's inbound
+message. The oracle holds its own table of expected outcomes (exit 0 everywhere
+except 706 for the insufficient-balance transfer and 401 for the non-owner NFT
+transfer) and decodes each target's compute exit code, aborted flag and action
+result from its hash-checked transaction BOC, so the outcome does not rest on the
+RPC rendering or on the runner's summary; the rendering the runner compared
+against must agree with the decoded transaction. It requires `provenance.json`
+to be marked complete, to carry the same commit before and after the run, to
+name the network identity and to belong to the run that wrote the summary. Older
+receipts without these fields need a fresh rehearsal; they must not be edited to
+simulate evidence the runner did not collect.
 
 Token and NFT membership checks wait for `index_state.complete == true`, including
 absence checks. Missing or false completeness eventually fails the rehearsal. Once
@@ -139,13 +152,17 @@ a step has deployed the token master or the collection, or minted the item, ever
 later snapshot requires that contract to be active.
 
 Run `uv run pytest -q test/tostester/tests/test_tok01_review_guards.py` for the
-42 offline guard tests. They use synthetic public cells and mocked RPC responses,
-not native lifecycle evidence. Removing each of the step, destination transaction,
-message binding, outcome, provenance, network, signer-deadline, clean-source and
+49 offline guard tests. They use synthetic public cells, mocked RPC responses and
+three retained transaction BOCs from a disposable local network
+(`tok01_fixture_transactions.py`, one per outcome class) so outcome decoding is
+exercised; they are not native lifecycle evidence. Removing each of the step,
+destination transaction, message binding, sender binding, decoded outcome,
+provenance, expectation, network, signer-deadline, clean-source and
 index-completeness guards makes its targeted tests fail; restoring the guards
-passes all 42. `tok01-oracle.py --red-controls` additionally exercises step
+passes all 49. `tok01-oracle.py --red-controls` additionally exercises step
 duplication, label replacement, empty transaction sets, wrong destinations,
-tampered outcomes and provenance against fresh native receipts; each control must
-turn red for its stated reason, not merely fail. A new native rehearsal is
-required for acceptance of this revision; previous retained receipts describe
-their recorded source only.
+tampered renderings, a swapped target transaction, a missing sender message and
+tampered provenance against fresh native receipts; each control must turn red for
+its stated reason, not merely fail. A new native rehearsal is required for
+acceptance of this revision; previous retained receipts describe their recorded
+source only.

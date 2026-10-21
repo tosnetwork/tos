@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 from pytosiq_core import Cell
+from pytosiq_core.tlb.transaction import Transaction
 
 # Independent acceptance contract: matching counts alone cannot establish coverage.
 REQUIRED_STEPS = [
@@ -77,6 +78,20 @@ def check_tx(tx):
     )
 
 
+def decoded_outcome(tx):
+    """Compute exit, aborted flag and action result read from the hash-checked BOC itself."""
+    parsed = Transaction.deserialize(Cell.one_from_boc(base64.b64decode(tx["data"])).begin_parse())
+    description = parsed.description
+    compute = getattr(description, "compute_ph", None)
+    require(getattr(compute, "exit_code", None) is not None, "target has no compute phase")
+    action = getattr(description, "action", None)
+    return {
+        "exit_code": compute.exit_code,
+        "aborted": bool(description.aborted),
+        "action_success": None if action is None else bool(action.success),
+    }
+
+
 def check_outcome(step):
     """The target transaction's own phases decide the outcome, not the runner's summary."""
     expected = EXPECTED_EXIT.get(step["step"], 0)
@@ -85,13 +100,35 @@ def check_outcome(step):
         "runner expected outcome differs from the lifecycle contract",
     )
     target = step["target"]
+    decoded = decoded_outcome(target)
     require(
-        target["compute"]["exit_code"] == expected,
+        decoded["exit_code"] == expected,
         "target compute exit differs from the expected outcome",
     )
-    require(target["aborted"] is (expected != 0), "target aborted flag differs from the outcome")
-    if expected == 0 and target.get("action") is not None:
-        require(target["action"]["success"] is True, "target action phase failed")
+    require(decoded["aborted"] is (expected != 0), "target aborted flag differs from the outcome")
+    if expected == 0 and decoded["action_success"] is not None:
+        require(decoded["action_success"] is True, "target action phase failed")
+    # The RPC rendering the runner compared against must agree with the decoded BOC.
+    require(
+        target["compute"]["exit_code"] == decoded["exit_code"]
+        and bool(target["aborted"]) is decoded["aborted"]
+        and (target.get("action") or {}).get("success") == decoded["action_success"],
+        "RPC outcome rendering disagrees with the decoded transaction",
+    )
+
+
+def check_sender_message(step):
+    """The step's message must appear among the sender's own outgoing messages."""
+    sender = step.get("sender")
+    require(sender, "step sender missing")
+    sent = [
+        message
+        for tx in step["transactions"].get(sender, [])
+        for message in tx.get("out_msgs", [])
+        if message.get("hash") == step.get("message_hash")
+    ]
+    require(len(sent) == 1, "step message missing from the sender's outgoing messages")
+    require(sent[0].get("destination"), "step message has no destination")
 
 
 def check_provenance(provenance, summary):
@@ -117,7 +154,7 @@ def load_object(directory, name):
     return json.loads(path.read_text()) if path.exists() else None
 
 
-def verify(directory, records=None):
+def verify(directory, records=None, expect_source_head=None, expect_global_id=None):
     def read(name):
         return load(directory, name) if records is None else records[name]
 
@@ -125,7 +162,15 @@ def verify(directory, records=None):
         return load_object(directory, name) if records is None else records.get(name)
 
     (summary,) = read("summary.jsonl")
-    check_provenance(read_object("provenance.json"), summary)
+    provenance = read_object("provenance.json")
+    check_provenance(provenance, summary)
+    if expect_source_head is not None:
+        require(
+            provenance["source_head"] == expect_source_head,
+            "evidence was sealed at another source head",
+        )
+    if expect_global_id is not None:
+        require(provenance["global_id"] == expect_global_id, "evidence comes from another network")
     require(summary["pass"] and not summary["failures"], "lifecycle reported failures")
     steps = read("steps.jsonl")
     require([step["step"] for step in steps] == REQUIRED_STEPS, "incorrect lifecycle steps")
@@ -150,13 +195,21 @@ def verify(directory, records=None):
             (target.get("in_msg") or {}).get("hash") == step.get("message_hash"),
             "destination transaction did not consume the step's message",
         )
+        check_sender_message(step)
         check_outcome(step)
         for transactions in step["transactions"].values():
             for tx in transactions:
                 check_tx(tx)
     (notifications,) = read("notifications.jsonl")
     require(len(notifications["transactions"]) == 1, "notification absent")
-    return {"pass": True, "steps": len(steps), "invariants": len(invariants)}
+    return {
+        "pass": True,
+        "steps": len(steps),
+        "invariants": len(invariants),
+        "source_head": provenance["source_head"],
+        "global_id": provenance["global_id"],
+        "run_id": provenance["run_id"],
+    }
 
 
 def exercise(receipts, name, original, validate, mutate, reason):
@@ -316,6 +369,19 @@ def controls(directory):
 
         return apply
 
+    def swap_target_with(index):
+        # A genuine transaction from another step, consistent in hash and rendering, but
+        # with the wrong decoded outcome for this step.
+        def apply(data):
+            step = data["steps.jsonl"][0]
+            donor = data["steps.jsonl"][index]["target"]
+            for tx in [step["target"], *step["transactions"][step["destination"]]]:
+                for key in ("data", "transaction_id", "compute", "aborted", "action"):
+                    tx[key] = copy.deepcopy(donor.get(key))
+                tx["in_msg"] = {**(tx.get("in_msg") or {}), "hash": step["message_hash"]}
+
+        return apply
+
     for label, mutate, reason in (
         (
             "failed lifecycle summary",
@@ -353,19 +419,32 @@ def controls(directory):
             "runner expected outcome differs",
         ),
         (
-            "target compute exit tampered",
+            "RPC compute exit tampered",
             tamper_target(lambda tx: tx["compute"].__setitem__("exit_code", 1)),
+            "RPC outcome rendering disagrees",
+        ),
+        (
+            "RPC aborted flag tampered",
+            tamper_target(lambda tx: tx.__setitem__("aborted", True)),
+            "RPC outcome rendering disagrees",
+        ),
+        (
+            "RPC action result tampered",
+            tamper_target(lambda tx: tx.__setitem__("action", {"success": False})),
+            "RPC outcome rendering disagrees",
+        ),
+        (
+            "target transaction swapped for a refused one",
+            swap_target_with(7),
             "target compute exit differs",
         ),
         (
-            "target aborted flag tampered",
-            tamper_target(lambda tx: tx.__setitem__("aborted", True)),
-            "target aborted flag differs",
-        ),
-        (
-            "target action phase failed",
-            tamper_target(lambda tx: tx.__setitem__("action", {"success": False})),
-            "target action phase failed",
+            "step message absent from the sender's outgoing messages",
+            lambda data: [
+                tx.__setitem__("out_msgs", [])
+                for tx in data["steps.jsonl"][0]["transactions"][data["steps.jsonl"][0]["sender"]]
+            ],
+            "missing from the sender's outgoing messages",
         ),
         (
             "provenance missing",
@@ -426,8 +505,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence", type=Path)
     parser.add_argument("--red-controls", action="store_true")
+    parser.add_argument("--expect-source-head", help="Commit the evidence must have been sealed at")
+    parser.add_argument(
+        "--expect-global-id", type=int, help="Network identity the evidence must come from"
+    )
     args = parser.parse_args()
-    result = controls(args.evidence) if args.red_controls else verify(args.evidence)
+    result = (
+        controls(args.evidence)
+        if args.red_controls
+        else verify(
+            args.evidence,
+            expect_source_head=args.expect_source_head,
+            expect_global_id=args.expect_global_id,
+        )
+    )
     print(json.dumps(result, indent=2))
 
 
