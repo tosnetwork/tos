@@ -599,7 +599,7 @@ void BroadcastsPlumtree::Impl::remove_inactive_eager_peers(OverlayImpl *overlay,
   bool mtu_peers_changed = false;
   auto now = td::Timestamp::now();
   for (auto it = slot.eager.begin(); it != slot.eager.end();) {
-    if (!is_inactive_eager_peer(*it, now, overlay->peer_receives_broadcasts(*it))) {
+    if (!is_inactive_eager_peer(*it, now, overlay->peer_receives_plumtree_broadcasts(*it))) {
       ++it;
       continue;
     }
