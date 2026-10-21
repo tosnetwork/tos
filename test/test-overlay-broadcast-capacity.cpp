@@ -276,8 +276,8 @@ TEST(OverlayBroadcastCapacity, FecShortPartSeqnoIsBounded) {
     ASSERT_TRUE(bound > 4);
     auto short_part = [&](td::int32 seqno) {
       return tos::create_tl_object<tos::tos_api::overlay_broadcastFecShort>(
-          tos::PublicKey{tos::pubkeys::Ed25519{td::Bits256::zero()}}.tl(),
-          tos::overlay::Certificate::empty_tl(), hash, td::Bits256::zero(), seqno, td::BufferSlice());
+          tos::PublicKey{tos::pubkeys::Ed25519{td::Bits256::zero()}}.tl(), tos::overlay::Certificate::empty_tl(), hash,
+          td::Bits256::zero(), seqno, td::BufferSlice());
     };
     td::Bits256 peer_bits;
     peer_bits.as_slice().fill('p');
