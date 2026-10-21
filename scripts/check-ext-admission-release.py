@@ -19,9 +19,11 @@ PRODUCER_PASS = "            .processed_external_messages = processed_external_m
 PRODUCER_ADOPT = (
     "        processed_external_messages = generated_candidate->processed_external_messages;\n"
 )
+PRODUCER_USED = "      if (generated_candidate.has_value()) {\n"
+BRIDGE_GENERATED = "run_collate_query_generated(std::move(params), manager_,"
 
 
-def validate_collator(collator: str, producer: str) -> None:
+def validate_collator(collator: str, producer: str, bridge: str) -> None:
     """The pool removes every entry under a refused normalized hash, so a message already taken in
     this leader window must be skipped, unreported, by every later collation of the window."""
     loop = collator.split("td::actor::Task<bool> Collator::process_inbound_external_messages()", 1)[
@@ -45,6 +47,19 @@ def validate_collator(collator: str, producer: str) -> None:
     assert producer.count(PRODUCER_PASS) == 1, "each slot's collation must receive the window's set"
     assert producer.count(PRODUCER_ADOPT) == 1, (
         "the producer must keep the set of the candidate it uses"
+    )
+    # Only a candidate the producer actually uses may contribute its set: not an empty block, a
+    # timed-out collation or a failed one.
+    used = producer.find(PRODUCER_USED)
+    assert used >= 0, "the producer's used-candidate branch was not found"
+    branch_end = producer.find("\n      } else {\n", used)
+    adopt = producer.find(PRODUCER_ADOPT)
+    assert used < adopt < branch_end, (
+        "the set must be adopted only inside the used-candidate branch"
+    )
+    # The leader's collations must return the set; the BlockCandidate form drops it.
+    assert BRIDGE_GENERATED in bridge, (
+        "the consensus bridge must collate with the set-returning form"
     )
 
 
@@ -81,24 +96,36 @@ def main() -> None:
     validate(engine, manager, role)
     collator = (ROOT / "validator/impl/collator.cpp").read_text()
     producer = (ROOT / "validator/consensus/block-producer.cpp").read_text()
-    validate_collator(collator, producer)
+    bridge = (ROOT / "validator/consensus/bridge.cpp").read_text()
+    validate_collator(collator, producer, bridge)
     for target, text in [
         (SKIP, "collator"),
         (CARRY_IN, "collator"),
         (CARRY_OUT, "collator"),
         (PRODUCER_PASS, "producer"),
         (PRODUCER_ADOPT, "producer"),
+        (PRODUCER_USED, "producer"),
+        (BRIDGE_GENERATED, "bridge"),
     ]:
-        source = collator if text == "collator" else producer
+        source = {"collator": collator, "producer": producer, "bridge": bridge}[text]
         assert source.count(target) == 1, f"collator guard mutation target not found: {target!r}"
+    adopt_before_use = producer.replace(PRODUCER_ADOPT, "").replace(
+        PRODUCER_USED, PRODUCER_ADOPT + PRODUCER_USED
+    )
     collator_mutants = [
-        (collator.replace(SKIP, ""), producer),
-        (collator.replace(SKIP, SKIP.replace("if (processed", "if (!processed")), producer),
-        (collator.replace(SKIP, SKIP.replace("      continue;\n", "")), producer),
-        (collator.replace(CARRY_IN, ""), producer),
-        (collator.replace(CARRY_OUT, ""), producer),
-        (collator, producer.replace(PRODUCER_PASS, "")),
-        (collator, producer.replace(PRODUCER_ADOPT, "")),
+        (collator.replace(SKIP, ""), producer, bridge),
+        (collator.replace(SKIP, SKIP.replace("if (processed", "if (!processed")), producer, bridge),
+        (collator.replace(SKIP, SKIP.replace("      continue;\n", "")), producer, bridge),
+        (collator.replace(CARRY_IN, ""), producer, bridge),
+        (collator.replace(CARRY_OUT, ""), producer, bridge),
+        (collator, producer.replace(PRODUCER_PASS, ""), bridge),
+        (collator, producer.replace(PRODUCER_ADOPT, ""), bridge),
+        (collator, adopt_before_use, bridge),
+        (
+            collator,
+            producer,
+            bridge.replace(BRIDGE_GENERATED, "run_collate_query(std::move(params), manager_,"),
+        ),
     ]
     for index, inputs in enumerate(collator_mutants):
         try:
@@ -117,7 +144,7 @@ def main() -> None:
         except AssertionError:
             continue
         raise AssertionError(f"source guard mutation {index} did not fail")
-    print("External admission release source guards and 10 red controls passed")
+    print("External admission release source guards and 12 red controls passed")
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ REQUIRED_SOURCE_GUARDS = frozenset(
         "consensus-no-fallback",
         "dns-pq-vote-source",
         "docker-validator-role",
+        "ext-admission-release-source",
         "finality-evidence-admission-marker-mutations",
         "finality-evidence-admission-source",
         "frozen-boc-toolchain-resolution",

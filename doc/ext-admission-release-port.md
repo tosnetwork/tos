@@ -141,6 +141,13 @@ local admission policy and do not alter consensus or full transaction execution.
   (`GeneratedCandidate`); callers that collate outside a leader window keep the
   `BlockCandidate` form of `run_collate_query` and start from an empty set. As
   upstream, the backpressure skip now precedes message validation.
+- **Known limits, as upstream.** The set covers one leader window of one node. A
+  later window of the same node, or another leader, that builds on a candidate
+  which is not yet final can still take an included message again and refuse
+  it, removing it from that node's pool; if that chain is abandoned the sender
+  must resubmit. Collations requested through the collator-node path also start
+  from an empty set. Duplicates skipped this way are not counted separately: the
+  `skipped_duplicate` statistic of the release is not ported.
 - **Collation retry statistics** follow `8b5fa7d5`. The release later replaced
   that external-only retry report with a full failed-attempt report
   (`932b7c89`), which is not ported; the counters here are local statistics only.
