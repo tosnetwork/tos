@@ -133,10 +133,11 @@ def main():
     required_tests.extend(
         [
             "LocalPriorityAdmittedWhileRegularLaneIsSaturated",
+            "OldCompletionsDoNotConsumeReplacementCheckerSlots",
             "AdmissionAcceptsComputeButExecutionRejectsInvalidAction",
         ]
     )
-    if "8 test(s) passed" not in baseline or any(name not in baseline for name in required_tests):
+    if "9 test(s) passed" not in baseline or any(name not in baseline for name in required_tests):
         raise RuntimeError("baseline did not execute all required checker cases")
     measurements = [
         {
@@ -169,12 +170,42 @@ def main():
                 str(build),
                 "--target",
                 "test-ext-message-generated-checker",
+                "test-ext-message-pool",
+                "test-ext-message-expiry",
                 "-j2",
             ],
         )
 
     if args.controls:
         controls = [
+            (
+                "ignore-checker-generation",
+                "validator/impl/ext-message-pool.cpp",
+                b"if (current_generation == checkers_generation_) {",
+                b"if (true) {",
+                ["OldCompletionsDoNotConsumeReplacementCheckerSlots"],
+                "priority.await_ready()",
+            ),
+            (
+                "disable-local-priority",
+                "validator/manager.cpp",
+                b"opts_->get_ext_message_pool_options()->local_ls_message_priority,",
+                b"0,",
+                ["LocalPriorityAdmittedWhileRegularLaneIsSaturated"],
+                "priority.await_ready()",
+            ),
+            (
+                "restore-admission-action-phase",
+                "validator/impl/external-message.cpp",
+                b"if (!trans->compute_phase->accepted) {",
+                b"if (trans->compute_phase->accepted && "
+                b"(!trans->prepare_action_phase(exec_config.action_phase_cfg) || "
+                b"!trans->action_phase->success)) { "
+                b'return td::Status::Error("action refused by mutation"); }\n'
+                b"  if (!trans->compute_phase->accepted) {",
+                ["AdmissionAcceptsComputeButExecutionRejectsInvalidAction"],
+                "admitted.is_ok()",
+            ),
             (
                 "disable-stop",
                 "validator/impl/external-message.cpp",
@@ -216,6 +247,22 @@ def main():
                 "result.is_ok() == accepted",
             ),
         ]
+        for field, condition in (
+            ("num_regular_checkers", "> 128"),
+            ("num_priority_checkers", "> 128"),
+            ("max_ext_msg_per_addr", "== 0"),
+            ("max_ext_msg_per_addr_time_window", "== 0.0"),
+        ):
+            controls.append(
+                (
+                    "disable-limit-" + field,
+                    "validator/validator-options.cpp",
+                    ("if (f." + field + "_ " + condition + ") {").encode(),
+                    b"if (false) {",
+                    ["OptionsPreserveReleaseDefaultsAndRefuseInvalidLimits"],
+                    "ExtMessagePoolOptions::unpack(config).is_error()",
+                )
+            )
         for label, relative, anchor, replacement, test_names, assertion in controls:
             guarded = root / relative
             original = guarded.read_bytes()
@@ -226,7 +273,12 @@ def main():
                 rebuild(label + "-build")
                 for test_name in test_names:
                     name = label + "-" + test_name
-                    if run(name, [str(binary), "--filter", test_name]) == 0:
+                    test_binary = (
+                        build / "test-ext-message-pool"
+                        if test_name == "OptionsPreserveReleaseDefaultsAndRefuseInvalidLimits"
+                        else binary
+                    )
+                    if run(name, [str(test_binary), "--filter", test_name]) == 0:
                         raise RuntimeError(name + " unexpectedly passed")
                     failure = (output / (name + ".log")).read_text(errors="replace")
                     if (
@@ -250,10 +302,12 @@ def main():
                 guarded.write_bytes(original)
                 rebuild(label + "-restore-build")
                 require_success(label + "-restored", [str(binary)])
+                require_success(label + "-pool-restored", [str(build / "test-ext-message-pool")])
 
     sources = [
         "crypto/smartcont/gen-zerostate.fif",
         "test/wallet-quantum/checker-gas-probe.fc",
+        "test/wallet-quantum/admission-action-probe.fc",
         "test/test-ext-message-generated-checker.cpp",
         "scripts/check-ext-message-generated.py",
         "validator/impl/ext-message-checker.cpp",
@@ -264,7 +318,13 @@ def main():
     artifacts = {}
     evidence_files = [output / (name + ".log") for name in runs]
     evidence_files.extend(
-        fixtures / name for name in ("zerostate.boc", "basestate0.boc", "checker-gas-probe.boc")
+        fixtures / name
+        for name in (
+            "zerostate.boc",
+            "basestate0.boc",
+            "checker-gas-probe.boc",
+            "admission-action-probe.boc",
+        )
     )
     for path in sorted(evidence_files):
         raw = path.read_bytes()

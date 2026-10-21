@@ -195,6 +195,15 @@ class ExtMessagePriorityTestHarness final : public ValidatorManagerImpl {
   td::actor::Task<ExtMessagePool::MetricsSnapshot> pool_snapshot() {
     co_return co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::get_metrics_snapshot);
   }
+  td::actor::Task<> replace_checkers() {
+    td::Ref<ExtMessagePoolOptions> pool_options{true};
+    pool_options.write().num_regular_checkers = 0;
+    pool_options.write().num_priority_checkers = 1;
+    pool_options.write().local_ls_message_priority = 1;
+    opts_.write().set_ext_message_pool_options(pool_options);
+    co_await td::actor::ask(ext_message_pool_, &ExtMessagePool::update_options, opts_);
+    co_return td::Unit{};
+  }
   void release_regular() {
     hold_ = false;
     for (auto& promise : held_) {
@@ -274,6 +283,43 @@ TEST(GeneratedExternalChecker, LocalPriorityAdmittedWhileRegularLaneIsSaturated)
   });
 }
 
+TEST(GeneratedExternalChecker, OldCompletionsDoNotConsumeReplacementCheckerSlots) {
+  ASSERT_TRUE(vm::init_vm().is_ok());
+  auto states = generated_states();
+  auto options = ValidatorManagerOptions::create(BlockIdExt{}, BlockIdExt{});
+  td::Ref<ExtMessagePoolOptions> pool_options{true};
+  pool_options.write().num_regular_checkers = 1;
+  options.write().set_ext_message_pool_options(pool_options);
+  td::actor::TestScheduler scheduler;
+  scheduler.run([&]() -> td::actor::Task<> {
+    auto manager = td::actor::create_actor<ExtMessagePriorityTestHarness>("replacement-manager", options);
+    co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::initialize, states.masterchain, states.basechain);
+    std::vector<td::actor::StartedTask<td::Result<ExtMessagePool::CheckResult>>> regular;
+    for (unsigned i = 0; i < 8; ++i) {
+      regular.push_back(wrap_started(td::actor::ask(manager, &ExtMessagePriorityTestHarness::regular,
+                                                    generated_message(basechainId, states.destination)))
+                            .start());
+    }
+    co_await scheduler.wait_sync_work();
+    ASSERT_EQ(co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::held), 8u);
+    co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::replace_checkers);
+    co_await td::actor::ask(manager, &ExtMessagePriorityTestHarness::release_regular);
+    for (auto& pending : regular) {
+      auto result = co_await std::move(pending);
+      EXPECT(result.is_error());
+    }
+    auto priority = wrap_started(td::actor::ask(manager, &ValidatorManager::new_external_message_query,
+                                                generated_message(masterchainId, states.destination),
+                                                td::optional<PublicKeyHash>{}))
+                        .start();
+    co_await scheduler.wait_sync_work();
+    ASSERT_TRUE(priority.await_ready());
+    auto result = co_await std::move(priority);
+    ASSERT_TRUE(result.is_ok());
+    co_return td::Unit{};
+  });
+}
+
 TEST(GeneratedExternalChecker, AdmissionAcceptsComputeButExecutionRejectsInvalidAction) {
   ASSERT_TRUE(vm::init_vm().is_ok());
   auto states = generated_states("admission-action-probe.boc");
@@ -310,7 +356,7 @@ TEST(GeneratedExternalChecker, AdmissionAcceptsComputeButExecutionRejectsInvalid
   EXPECT(transaction.ok()->compute_phase->success);
   ASSERT_TRUE(transaction.ok()->action_phase != nullptr);
   EXPECT(!transaction.ok()->action_phase->success);
-  EXPECT_EQ(transaction.ok()->action_phase->result_code, 32);
+  EXPECT_EQ(transaction.ok()->action_phase->result_code, 34);
 }
 
 class GeneratedCheckerManager final : public ValidatorManagerImpl {
@@ -396,7 +442,8 @@ void exercise_generated_checker(WorkchainId workchain, unsigned operation, bool 
     }
     EXPECT(result.is_ok() == accepted);
     if (!accepted && result.is_error()) {
-      EXPECT(result.error().message().str().find("External message was not accepted") != std::string::npos);
+      EXPECT_EQ(result.error().code(), -701);
+      EXPECT(result.error().message().str().find("inbound external message rejected") != std::string::npos);
       EXPECT(result.error().message().str().find("gas_used=0") != std::string::npos);
       EXPECT(result.error().message().str().find("steps=0,") == std::string::npos);
     }
