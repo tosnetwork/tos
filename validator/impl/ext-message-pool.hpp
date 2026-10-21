@@ -60,7 +60,7 @@ class ExtMessagePool : public td::actor::Actor, public metrics::AsyncCollector {
   void install_collator_queue(ShardIdFull shard, std::unique_ptr<ExtMsgCallback> callback);
   void cleanup_external_messages(ShardIdFull shard);
   void cleanup_expired_messages_all_workchains();
-  void complete_external_messages(std::vector<ExtMessage::Hash> to_delay, std::vector<ExtMessage::Hash> to_delete);
+  void complete_external_messages(std::vector<ExtMessage::Hash> to_delete);
   void erase_external_messages(BlockIdExt block_id, td::uint64 applied_count, std::vector<ExtMessage::Hash> to_delete);
 
   void update_last_masterchain_state(td::Ref<MasterchainState> state);

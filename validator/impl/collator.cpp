@@ -4413,7 +4413,7 @@ td::actor::Task<bool> Collator::process_inbound_external_messages() {
     ++stats_.ext_msgs_total;
     if (register_external_message(ext_msg_ref, priority).is_error()) {
       ++stats_.ext_msgs_filtered;
-      bad_ext_msgs_.emplace_back(ext_msg_ref->hash());
+      bad_ext_msgs_.emplace_back(ext_msg_ref->hash_norm());
       continue;
     }
     if (out_msg_queue_size_ > SKIP_EXTERNALS_QUEUE_SIZE && priority < HIGH_PRIORITY_EXTERNAL) {
@@ -4428,11 +4428,11 @@ td::actor::Task<bool> Collator::process_inbound_external_messages() {
       ++stats_.ext_msgs_rejected;
     }
     if (r < 0) {
-      bad_ext_msgs_.emplace_back(ext_msg_ref->hash());
+      bad_ext_msgs_.emplace_back(ext_msg_ref->hash_norm());
       co_return false;
     }
     if (r == 0) {
-      delay_ext_msgs_.emplace_back(ext_msg_ref->hash());
+      bad_ext_msgs_.emplace_back(ext_msg_ref->hash_norm());
     }
     if (r > 0) {
       full = !block_limit_status_->fits(block::ParamLimits::cl_soft);
@@ -6644,10 +6644,9 @@ bool Collator::create_block_candidate() {
                                   });
   }
   // 5. communicate about bad and delayed external messages
-  if (!bad_ext_msgs_.empty() || !delay_ext_msgs_.empty()) {
+  if (!bad_ext_msgs_.empty()) {
     LOG(INFO) << "sending complete_external_messages() to Manager";
-    td::actor::send_closure_later(manager, &ValidatorManager::complete_external_messages, std::move(delay_ext_msgs_),
-                                  std::move(bad_ext_msgs_));
+    td::actor::send_closure_later(manager, &ValidatorManager::complete_external_messages, std::move(bad_ext_msgs_));
   }
   if (!storage_stat_cache_update_.empty()) {
     td::actor::send_closure(manager, &ValidatorManager::update_storage_stat_cache,
