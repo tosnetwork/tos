@@ -45,7 +45,11 @@ class SystemdBackend(ProcessBackend):
             f"{self.prefix}.slice",
             "--working-directory",
             str(cwd),
-            *[f"--setenv={key}={value}" for key, value in env.items()],
+            *[
+                f"--setenv={key}={env[key]}"
+                for key in ("PATH", "LD_LIBRARY_PATH", "TOS_AUTH_NETWORK_TAG")
+                if key in env
+            ],
             str(executable),
             *map(str, args),
             stdout=asyncio.subprocess.PIPE if capture_stdout else None,

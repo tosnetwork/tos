@@ -10,6 +10,8 @@ Both destinations must be new. Build the production Release targets in the build
 image first: `gen_fif create-state fift func toslibjson validator-engine
 validator-engine-console generate-random-id dht-server lite-client
 tos-pq-consensus-key`. Pass `--build` when using another build directory.
+Generate the existing Python protocol bindings once with
+`uv run python test/tostester/generate_tl.py` before importing the local launcher.
 
 The local launcher reuses `tostester.Network`, its genesis faucet and wallet
 implementations. It uses global id 3, the deployment fee schedule, a fresh public
