@@ -29,6 +29,7 @@ on:
       - 'rldp-http-proxy/**'
       - 'tdactor/**'
       - 'test/test-adnl-peer-pair-cap.cpp'
+      - 'test/test-adnl-peer-pair-hardening.cpp'
       - 'test/test-overlay-broadcast-capacity.cpp'
       - 'test/net/test-quic-sender.cpp'
       - 'test/test-http-server-limits.cpp'
@@ -91,6 +92,7 @@ jobs:
         ninja -C build-asan \
           test-quic-sender \
           test-adnl-peer-pair-cap \
+          test-adnl-peer-pair-hardening \
           test-overlay-broadcast-capacity \
           test-http-server-limits \
           test-json-rpc-transport \
@@ -115,6 +117,7 @@ jobs:
             "quic-transport-budget",
             "quic-source-share",
             "test-adnl-peer-pair-cap",
+            "test-adnl-peer-pair-hardening",
             "test-overlay-broadcast-capacity",
             "test-http-server-limits",
             "test-json-rpc-transport",

@@ -685,6 +685,8 @@ add_executable(test-adnl test/test-adnl.cpp)
 target_link_libraries(test-adnl adnl adnltest dht tl_api)
 add_executable(test-adnl-peer-pair-cap test/test-adnl-peer-pair-cap.cpp)
 target_link_libraries(test-adnl-peer-pair-cap adnl adnltest dht tl_api)
+add_executable(test-adnl-peer-pair-hardening test/test-td-main.cpp test/test-adnl-peer-pair-hardening.cpp)
+target_link_libraries(test-adnl-peer-pair-hardening adnl dht tl_api tdutils)
 add_executable(test-dht test/test-dht.cpp)
 target_link_libraries(test-dht adnl adnltest dht tl_api)
 add_executable(test-rldp2 test/test-rldp2.cpp)
@@ -1724,6 +1726,7 @@ endif()
 if (NOT TOS_ONLY_TOSLIB)
 tos_test(test-adnl)
 tos_test(test-adnl-peer-pair-cap)
+tos_test(test-adnl-peer-pair-hardening)
 tos_test(test-dht)
 tos_test(test-rldp2)
 tos_test(test-rldp2-connection-cap)
@@ -2345,6 +2348,7 @@ set_tests_properties(
   quic-sender-response-timeouts
   quic-sender-restart
   test-adnl-peer-pair-cap
+  test-adnl-peer-pair-hardening
   test-overlay-broadcast-capacity
   test-http-server-limits
   test-json-rpc-transport

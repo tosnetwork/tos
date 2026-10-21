@@ -734,14 +734,13 @@ void OverlayImpl::send_broadcast_fec(PublicKeyHash send_as, td::uint32 flags, td
                           << peer_list_.local_cert_is_valid_until_.at_unix();
     return;
   }
-  if (!has_valid_broadcast_certificate(send_as, data.size(), true,
-                                       flags & Overlays::BroadcastFlagAnySender())) {
+  if (!can_send_broadcast_fec(send_as, data.size(), flags)) {
     VLOG(OVERLAY_WARNING) << "broadcast source certificate is invalid";
     return;
   }
-  bool no_twostep = flags & Overlays::BroadcastFlagNoTwostep();
+  bool twostep = opts_.send_twostep_broadcast_ && !(flags & Overlays::BroadcastFlagNoTwostep());
   flags &= ~Overlays::BroadcastFlagNoTwostep();
-  if (opts_.send_twostep_broadcast_ && !no_twostep) {
+  if (twostep) {
     broadcasts_twostep_.send(this, send_as, std::move(data), std::move(extra), flags);
   } else {
     if (!extra.empty()) {
@@ -749,6 +748,16 @@ void OverlayImpl::send_broadcast_fec(PublicKeyHash send_as, td::uint32 flags, td
     }
     broadcasts_fec_.send(this, send_as, std::move(data), flags, opts_.broadcast_speed_multiplier_);
   }
+}
+
+bool OverlayImpl::fec_source_checked_as_any_sender(bool send_twostep, td::uint32 flags) {
+  bool twostep = send_twostep && !(flags & Overlays::BroadcastFlagNoTwostep());
+  return (flags & Overlays::BroadcastFlagAnySender()) && !twostep;
+}
+
+bool OverlayImpl::can_send_broadcast_fec(PublicKeyHash send_as, size_t data_size, td::uint32 flags) {
+  return has_valid_broadcast_certificate(send_as, data_size, /* is_fec = */ true,
+                                         fec_source_checked_as_any_sender(opts_.send_twostep_broadcast_, flags));
 }
 
 bool OverlayImpl::can_send_broadcast_plumtree(PublicKeyHash send_as, size_t data_size, td::uint32 flags) {

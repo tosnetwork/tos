@@ -37,7 +37,9 @@ td::Result<td::actor::ActorOwn<AdnlChannel>> AdnlChannel::create(privkeys::Ed255
 
   TRY_RESULT_PREFIX(shared_secret, td::Ed25519::compute_shared_secret(pub_k, priv_k),
                     "failed to compute channel shared secret: ");
-  CHECK(shared_secret.length() == 32);
+  if (shared_secret.length() != 32) {
+    return td::Status::Error("channel shared secret must be 32 bytes");
+  }
 
   td::SecureString rev_secret{32};
   for (td::uint32 i = 0; i < 32; i++) {

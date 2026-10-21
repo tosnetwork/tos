@@ -305,7 +305,7 @@ td::Status BroadcastFecPart::run_checks(OverlayImpl *overlay, BroadcastFec *bcas
       overlay->check_source_eligible(source_, cert_.get(), broadcast_size_, /* is_fec = */ true,
                                      /* is_any_sender = */ flags_ & Overlays::BroadcastFlagAnySender(), src_peer_id_);
   if (r == BroadcastCheckResult::Forbidden) {
-    return td::Status::Error(ErrorCode::error, "broadcast is forbidden");
+    return td::Status::Error(ErrorCode::notready, "broadcast is forbidden");
   }
 
   if (r == BroadcastCheckResult::NeedCheck) {
@@ -509,13 +509,17 @@ td::Status BroadcastsFec::process_broadcast(OverlayImpl *overlay, adnl::AdnlNode
     return td::Status::Error(ErrorCode::protoviolation, "short part of not finished broadcast");
   }
   TRY_STATUS(overlay->check_date(bcast.date_));
+  // Same bound as a full part: get_part() would otherwise encode any symbol the peer names.
+  auto seqno = static_cast<td::uint32>(broadcast->seqno_);
+  if (seqno >= bcast.fec_type_.symbols_count() * 2 + 4) {
+    return td::Status::Error("too big seqno");
+  }
 
   auto source = PublicKey{broadcast->src_};
   auto part_data_hash = broadcast->part_data_hash_;
   auto broadcast_hash = bcast.hash_;
   auto part_hash = compute_broadcast_part_id(broadcast_hash, part_data_hash, broadcast->seqno_);
   TRY_RESULT(cert, Certificate::create(std::move(broadcast->certificate_)));
-  auto seqno = static_cast<td::uint32>(broadcast->seqno_);
   TRY_RESULT(part_data, bcast.get_part(seqno));
   if (part_data_hash != td::sha256_bits256(part_data)) {
     return td::Status::Error(ErrorCode::protoviolation, "wrong part data hash");
@@ -560,6 +564,25 @@ void BroadcastsFec::inject_in_flight_for_test(Overlay::BroadcastHash hash, td::u
                                               /*certificate=*/nullptr, fec::FecType{});
   by_date_.emplace(date, hash);
   broadcasts_.emplace(hash, std::move(bcast));
+}
+
+void BroadcastsFec::inject_ready_for_test(Overlay::BroadcastHash hash, td::uint32 date, td::BufferSlice data) {
+  // create_encoder() replaces the requested parameters with the encoder's actual ones.
+  fec::FecType fec_type = td::fec::RaptorQEncoder::Parameters{data.size(), 768, 0};
+  auto data_hash = td::sha256_bits256(data);
+  auto encoder = fec_type.create_encoder(std::move(data));
+  encoder.ensure();
+  auto bcast = std::make_unique<BroadcastFec>(hash, data_hash, /*flags=*/0, date, PublicKey{},
+                                              /*certificate=*/nullptr, fec_type);
+  bcast->encoder_ = encoder.move_as_ok();
+  bcast->encoder_->prepare_more_symbols();
+  bcast->ready_ = true;
+  by_date_.emplace(date, hash);
+  broadcasts_.emplace(hash, std::move(bcast));
+}
+
+td::uint32 BroadcastsFec::symbols_count_for_test(Overlay::BroadcastHash hash) const {
+  return broadcasts_.at(hash)->fec_type_.symbols_count();
 }
 
 size_t BroadcastsFec::in_flight_count_for_test() const {
