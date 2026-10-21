@@ -101,7 +101,7 @@ class ValidatorManagerImpl : public ValidatorManager {
  public:
   void collect(metrics::MetricsPromise promise) override;
   std::optional<metrics::CollectionReservation> reservation() const override {
-    return metrics::labelled_metrics_reservation(10, 32, 2, 64, 128);
+    return metrics::labelled_metrics_reservation(16, 128, 2, 64, 192);
   }
 
  private:

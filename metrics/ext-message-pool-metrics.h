@@ -1,6 +1,8 @@
 #pragma once
 
 #include <array>
+#include <algorithm>
+#include <cstdio>
 #include <string_view>
 
 #include "metrics-collectors.h"
@@ -73,6 +75,44 @@ enum class ExtMessageAdmissionOutcome : size_t {
 
 enum class ExtMessageRemovalReason : size_t { applied, expired, rejected_final, filtered, pool_pressure, count };
 
+// How long an entry sat in the pool before this node saw it applied. An idle chain includes within
+// one block, so the low end has to stay sub-second; an entry can never be stored longer than the
+// 600 s TTL, which is therefore the natural last bound.
+inline constexpr std::array<double, 12> kExtInclusionBuckets = {0.25, 0.5, 1, 2, 4, 8, 15, 30, 60, 120, 300, 600};
+
+class ExtMessageInclusionHistogram {
+ public:
+  void observe(double value) {
+    ++buckets_[std::lower_bound(kExtInclusionBuckets.begin(), kExtInclusionBuckets.end(), value) - kExtInclusionBuckets.begin()];
+    sum_ += value;
+    ++count_;
+  }
+  td::uint64 count() const { return count_; }
+  double sum() const { return sum_; }
+  MetricFamily collect() const {
+    MetricFamily result{.name = "mempool_ext_inclusion_seconds", .type = "histogram", .help = std::nullopt, .metrics = {}};
+    td::uint64 cumulative = 0;
+    for (size_t i = 0; i <= kExtInclusionBuckets.size(); ++i) {
+      cumulative += buckets_[i];
+      char bound[32];
+      if (i < kExtInclusionBuckets.size()) {
+        std::snprintf(bound, sizeof(bound), "%.17g", kExtInclusionBuckets[i]);
+      } else {
+        std::snprintf(bound, sizeof(bound), "+Inf");
+      }
+      result.metrics.push_back(Metric{.suffix = "bucket", .label_set = {{{"le", bound}}},
+          .samples = {{.label_set = {}, .value = static_cast<double>(cumulative)}}});
+    }
+    result.metrics.push_back(Metric{.suffix = "sum", .label_set = {}, .samples = {{.label_set = {}, .value = sum_}}});
+    result.metrics.push_back(Metric{.suffix = "count", .label_set = {}, .samples = {{.label_set = {}, .value = static_cast<double>(count_)}}});
+    return result;
+  }
+ private:
+  std::array<td::uint64, kExtInclusionBuckets.size() + 1> buckets_{};
+  double sum_ = 0;
+  td::uint64 count_ = 0;
+};
+
 struct ExtMessagePoolSnapshot {
   ExtMessageStateCounts ext_messages;
   double oldest_ext_message_age_seconds{0.0};
@@ -80,6 +120,7 @@ struct ExtMessagePoolSnapshot {
   td::uint64 check_error{0};
   std::array<td::uint64, static_cast<size_t>(ExtMessageAdmissionOutcome::count)> admission{};
   std::array<td::uint64, static_cast<size_t>(ExtMessageRemovalReason::count)> removed{};
+  ExtMessageInclusionHistogram ext_inclusion_seconds;
   td::uint64 applied_master{0};
   td::uint64 applied_shard{0};
 
@@ -104,6 +145,7 @@ struct ExtMessagePoolSnapshot {
     add_counter("mempool_ext_admission", "outcome", admission, admission_outcome_names_);
     add_counter("mempool_ext_removed", "reason", removed, removal_reason_names_);
     add_counter("applied_ext_messages", "chain", std::array{applied_master, applied_shard}, std::array{"master", "shard"});
+    result.families.push_back(ext_inclusion_seconds.collect());
     return result;
   }
 
