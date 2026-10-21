@@ -29,6 +29,14 @@ class OverlayImplPeerCleanupTest {
   static bool has_plumtree_peer_state(const OverlayImpl &overlay, adnl::AdnlNodeIdShort peer_id) {
     return overlay.broadcasts_plumtree_.has_peer_state_for_test(peer_id);
   }
+
+  static void add_eager_peer(OverlayImpl &overlay, adnl::AdnlNodeIdShort peer_id, td::uint32 flags) {
+    overlay.peer_list_.peers_.insert(peer_id, OverlayPeer{OverlayNode{peer_id, overlay.overlay_id_, flags}});
+    overlay.broadcasts_plumtree_.add_peer_state_for_test(peer_id);
+  }
+  static bool stays_eager_after_inactivity(OverlayImpl &overlay, adnl::AdnlNodeIdShort peer_id, double seconds) {
+    return overlay.broadcasts_plumtree_.prune_inactive_eager_for_test(&overlay, peer_id, seconds);
+  }
 };
 
 }  // namespace tos::overlay
@@ -43,6 +51,40 @@ TEST(Overlay, PlumtreePeerCleanup) {
   ASSERT_TRUE(plumtree.has_peer_state_for_test(peer));
   plumtree.remove_peer_state_for_test(peer);
   ASSERT_TRUE(!plumtree.has_peer_state_for_test(peer));
+}
+
+// A peer that refuses only Plumtree broadcasts is never sent anything over Plumtree, so the
+// sent-without-activity count never prunes it. The inactivity check must use the same predicate as
+// the send paths, or such a peer keeps its eager slot forever.
+TEST(Overlay, InactiveEagerPeerThatRefusesPlumtreeIsPruned) {
+  using Access = tos::overlay::OverlayImplPeerCleanupTest;
+  using tos::overlay::OverlayMemberFlags;
+  td::Bits256 local_bits;
+  local_bits.as_slice().fill('l');
+  tos::overlay::OverlayOptions options;
+  options.max_neighbours_ = 0;
+  options.enable_plumtree_broadcast_ = false;
+  // Not public: a public overlay also requires a fresh node version, which these bare peers lack.
+  tos::overlay::OverlayImpl overlay(
+      {}, {}, {}, {}, tos::adnl::AdnlNodeIdShort{local_bits},
+      tos::overlay::OverlayIdFull{td::BufferSlice{"eager-prune-test"}}, tos::overlay::OverlayType::FixedMemberList,
+      {}, {}, {}, std::make_unique<tos::overlay::Overlays::Callback>(), tos::overlay::OverlayPrivacyRules{},
+      "eager-prune-test", std::move(options));
+  td::Bits256 refusing_bits;
+  refusing_bits.as_slice().fill('r');
+  auto refusing = tos::adnl::AdnlNodeIdShort{refusing_bits};
+  td::Bits256 receiving_bits;
+  receiving_bits.as_slice().fill('v');
+  auto receiving = tos::adnl::AdnlNodeIdShort{receiving_bits};
+  Access::add_eager_peer(overlay, refusing, OverlayMemberFlags::DoNotReceivePlumtreeBroadcasts);
+  Access::add_eager_peer(overlay, receiving, 0);
+
+  // Recently active: both stay.
+  ASSERT_TRUE(Access::stays_eager_after_inactivity(overlay, refusing, 1.0));
+  ASSERT_TRUE(Access::stays_eager_after_inactivity(overlay, receiving, 1.0));
+  // Past the inactivity window: the receiving peer, never sent to, stays; the refusing one goes.
+  ASSERT_TRUE(Access::stays_eager_after_inactivity(overlay, receiving, 60.0));
+  ASSERT_TRUE(!Access::stays_eager_after_inactivity(overlay, refusing, 60.0));
 }
 
 TEST(Overlay, DelPeerCleansPlumtreeState) {
