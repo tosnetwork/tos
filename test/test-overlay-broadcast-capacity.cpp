@@ -56,6 +56,11 @@ class OverlayImplBroadcastCapacityTest {
   static BroadcastsTwostep &twostep(OverlayImpl &overlay) {
     return overlay.broadcasts_twostep_;
   }
+  // The constructor turns two-step sending off without a two-step sender actor; the source check
+  // only reads the option, so the test sets it directly.
+  static void set_send_twostep(OverlayImpl &overlay, bool value) {
+    overlay.opts_.send_twostep_broadcast_ = value;
+  }
 };
 
 class BroadcastsFecTestAccess {
@@ -327,6 +332,11 @@ TEST(OverlayBroadcastCapacity, FecSenderCheckFollowsTheSelectedPath) {
   tos::PublicKeyHash source{source_bits};
   ASSERT_TRUE(overlay.can_send_broadcast_fec(source, 1000, 0));
   ASSERT_TRUE(!overlay.can_send_broadcast_fec(source, 1000, any));
+  // With two-step sending, the same AnySender broadcast passes, as the receivers will accept it;
+  // NoTwostep keeps the plain FEC rule.
+  tos::overlay::OverlayImplBroadcastCapacityTest::set_send_twostep(overlay, true);
+  ASSERT_TRUE(overlay.can_send_broadcast_fec(source, 1000, any));
+  ASSERT_TRUE(!overlay.can_send_broadcast_fec(source, 1000, any | no_twostep));
 }
 
 TEST(OverlayBroadcastCapacity, TwostepRefusesNewBroadcastWhenFull) {
