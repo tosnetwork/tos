@@ -457,7 +457,8 @@ tos::tl_object_ptr<tos::tos_api::engine_validator_config> Config::tl() const {
           tos::create_tl_object<tos::tos_api::engine_validator_extMessagePoolConfig>(
               ext_message_pool_config->max_mempool_messages_, ext_message_pool_config->num_checkers_,
               ext_message_pool_config->max_admission_waiters_, ext_message_pool_config->max_ext_msg_per_addr_,
-              ext_message_pool_config->max_ext_msg_per_addr_time_window_);
+              ext_message_pool_config->max_ext_msg_per_addr_time_window_,
+              ext_message_pool_config->local_ls_message_priority_);
     }
   }
 

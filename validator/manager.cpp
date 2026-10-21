@@ -617,7 +617,7 @@ td::actor::Task<> ValidatorManagerImpl::new_external_message_broadcast(td::Buffe
 td::actor::Task<> ValidatorManagerImpl::new_external_message_query(td::BufferSlice data,
                                                                    td::optional<PublicKeyHash> source_peer) {
   auto [message, wait_allow_broadcast] = co_await td::actor::ask(
-      ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), 0,
+      ext_message_pool_, &ExtMessagePool::check_add_external_message, std::move(data), opts_->get_ext_message_pool_options()->local_ls_message_priority,
       /* add_to_mempool = */ has_local_validator_keys() || !collator_nodes_.empty(), std::move(source_peer));
   new_external_message_query_cont(std::move(message), std::move(wait_allow_broadcast)).start().detach();
   co_return td::Unit{};

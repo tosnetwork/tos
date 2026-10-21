@@ -715,7 +715,8 @@ engine.validator.fastSyncOverlayClient adnl_id:int256 slot:int = engine.validato
 engine.validator.collatorNodeWhitelist enabled:Bool adnl_ids:(vector int256) = engine.validator.CollatorNodeWhitelist;
 engine.validator.extMessagePoolConfig max_mempool_messages:int
     num_checkers:int max_admission_waiters:int
-    max_ext_msg_per_addr:int max_ext_msg_per_addr_time_window:double = engine.validator.ExtMessagePoolConfig;
+    max_ext_msg_per_addr:int max_ext_msg_per_addr_time_window:double
+    local_ls_message_priority:int = engine.validator.ExtMessagePoolConfig;
 // One more post-quantum consensus key for the same validator, held alongside the others
 // so the consensus key can rotate without a moment at which the node holds only the
 // wrong one. valid_from is the first election date (unix time) the key may sign a stake
