@@ -50,6 +50,15 @@ block::StdAddress address(int workchain) {
   return block::StdAddress(workchain, td::Bits256::zero());
 }
 
+td::Ref<vm::Tuple> raw_context(vm::StackEntry config) {
+  vm::CellBuilder address_cell;
+  address_cell.store_long(4, 3).store_long(0, 8).store_zeroes(256);
+  std::vector<vm::StackEntry> info(18);
+  info[8] = address_cell.as_cellslice_ref();
+  info[9] = std::move(config);
+  return vm::make_tuple_ref(td::make_cnt_ref<std::vector<vm::StackEntry>>(std::move(info)));
+}
+
 void expect_accepted(const tos::SmartContract::Answer& answer) {
   ASSERT_TRUE(answer.accepted);
   ASSERT_TRUE(answer.success);
@@ -132,4 +141,58 @@ TEST(ExternalCredit, MissingConfigDoesNotFallBack) {
   ASSERT_TRUE(!answer.success);
   ASSERT_EQ(answer.gas_used, 0);
   ASSERT_TRUE(answer.vm_log.find("gas prices is absent") != std::string::npos);
+}
+
+TEST(ExternalCredit, RawContextWithoutConfig) {
+  emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+  emulator.set_c7_raw(raw_context(vm::StackEntry{}));
+  expect_accepted(emulator.send_external_message(empty_cell()));
+}
+
+TEST(ExternalCredit, MalformedRawConfigDoesNotFallBack) {
+  auto valid = credit_config(20000, 10000);
+  std::vector<vm::StackEntry> invalid_configs{vm::StackEntry(empty_cell()), vm::StackEntry(td::make_refint(1))};
+  // Exercise dictionary parsing, address validation and Config::unpack failures.
+  for (int fault : {0, 1, 2}) {
+    vm::Dictionary dict(valid->get_root_cell(), 32);
+    td::BitArray<32> key;
+    key.store_long(fault == 2 ? 8 : 0);
+    if (fault == 0) {
+      CHECK(dict.lookup_delete_ref(key).not_null());
+    } else {
+      CHECK(dict.set_ref(key, empty_cell()));
+    }
+    invalid_configs.emplace_back(dict.get_root_cell());
+  }
+  for (const auto& config : invalid_configs) {
+    // An explicit gas envelope must not turn a parse failure into valid context.
+    for (bool explicit_limits : {false, true}) {
+      tos::SmartContract contract({delayed_accept(), empty_cell()});
+      auto args = tos::SmartContract::Args().set_c7(raw_context(config));
+      if (explicit_limits) {
+        args.set_limits(vm::GasLimits(0, 1000000, 20000));
+      }
+      auto answer = contract.send_external_message(empty_cell(), std::move(args));
+      ASSERT_TRUE(!answer.accepted);
+      ASSERT_TRUE(!answer.success);
+      ASSERT_EQ(answer.gas_used, 0);
+      ASSERT_EQ(answer.code, ~static_cast<int>(vm::Excno::fatal));
+      ASSERT_TRUE(answer.vm_log.find("Invalid external-message c7 configuration") != std::string::npos);
+    }
+  }
+}
+
+TEST(ExternalCredit, MalformedRawContextDoesNotFallBack) {
+  std::vector<td::Ref<vm::Tuple>> contexts{{},
+                                           vm::make_tuple_ref(),
+                                           vm::make_tuple_ref(td::make_refint(1)),
+                                           vm::make_tuple_ref(td::make_cnt_ref<std::vector<vm::StackEntry>>(9))};
+  for (const auto& c7 : contexts) {
+    emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+    emulator.set_c7_raw(c7);
+    auto answer = emulator.send_external_message(empty_cell());
+    ASSERT_TRUE(!answer.accepted);
+    ASSERT_EQ(answer.gas_used, 0);
+    ASSERT_TRUE(answer.vm_log.find("Invalid external-message c7 configuration") != std::string::npos);
+  }
 }

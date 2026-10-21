@@ -530,6 +530,26 @@ td::Ref<vm::Cell> SmartContract::get_init_state() const {
 
 namespace {
 
+td::Result<std::shared_ptr<const block::Config>> external_config_from_c7(td::Ref<vm::Tuple> c7) {
+  if (c7.is_null() || c7->empty()) {
+    return td::Status::Error("Invalid external-message c7 configuration");
+  }
+  auto info = c7->at(0).as_tuple();
+  if (info.is_null() || info->size() < 10) {
+    return td::Status::Error("Invalid external-message c7 configuration");
+  }
+  // Only an explicit null slot means no configuration. A failed parse must not
+  // silently select the default gas profile, even with explicit VM limits.
+  if (info->at(9).is_null()) {
+    return std::shared_ptr<const block::Config>{};
+  }
+  auto config = try_fetch_config_from_c7(std::move(c7));
+  if (!config) {
+    return td::Status::Error("Invalid external-message c7 configuration");
+  }
+  return config;
+}
+
 td::Result<vm::GasLimits> external_message_limits(const SmartContract::Args& args) try {
   auto workchain = args.address ? args.address.value().workchain : basechainId;
   // Raw c7 is the VM's effective execution context, even when Args also has an address.
@@ -567,19 +587,26 @@ td::Result<vm::GasLimits> external_message_limits(const SmartContract::Args& arg
 }  // namespace
 
 SmartContract::Answer SmartContract::run_method(Args args) {
+  auto r_method_id = args.get_method_id();
+  if (r_method_id.is_error()) {
+    return make_error_answer(get_state(), ~static_cast<td::int32>(vm::Excno::fatal), r_method_id.error().message());
+  }
+  bool is_internal = r_method_id.ok() == 0;
   if (args.c7 && !args.config) {
-    args.config = try_fetch_config_from_c7(args.c7.value());
+    if (is_internal) {
+      args.config = try_fetch_config_from_c7(args.c7.value());
+    } else {
+      auto config = external_config_from_c7(args.c7.value());
+      if (config.is_error()) {
+        return make_error_answer(get_state(), ~static_cast<td::int32>(vm::Excno::fatal), config.error().message());
+      }
+      args.config = config.move_as_ok();
+    }
   }
   if (!args.c7) {
     args.c7 = prepare_vm_c7(args, state_.code);
   }
   if (!args.limits) {
-    auto r_method_id = args.get_method_id();
-    if (r_method_id.is_error()) {
-      return make_error_answer(get_state(), ~static_cast<td::int32>(vm::Excno::fatal), r_method_id.error().message());
-    }
-    bool is_internal = r_method_id.ok() == 0;
-
     if (is_internal) {
       args.limits = vm::GasLimits{(long long)args.amount * 1000, 1000000, 0};
     } else {
