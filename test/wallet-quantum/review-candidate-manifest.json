@@ -28,11 +28,11 @@
   "compiler_binaries": {
     "FIFT_PATH": {
       "bytes": 7484008,
-      "sha256": "e8f83ea7e1a44341f2473edf4842f299ab0459cd3e41a7f248974ef2c42e5ba0"
+      "sha256": "276b62834a8d8aee4ba8ab40601e7cc4ad6b3637d98b0cf30ff7f395291131a6"
     },
     "FUNC_PATH": {
       "bytes": 1717352,
-      "sha256": "c2e9bc585e7f42e160fbbe8f5b23dffd32979ed587a7b9f0669844e1a10368b0"
+      "sha256": "063e5c2fc8f576ff863bda7ebc69ac4cafa4833e9d283c59ecf34d2f77792997"
     }
   },
   "config": {
@@ -140,8 +140,8 @@
       "sha256": "ca50b51836496b1400c759f69c8e0871ace565bf28b5de6a77aa4c6206b97fda"
     },
     "repository/crypto/smartcont/wallet-quantum-fee-vault.fc": {
-      "bytes": 7240,
-      "sha256": "01c8cad555fe8c8d672f2d9a5f5ef617b2e6908ea976d41b8e77fd6398832d78"
+      "bytes": 7250,
+      "sha256": "5ffb0432c20f225099a7b2fbee3909bc584c1102f815a30ab42b4b9a57253458"
     },
     "repository/crypto/smartcont/wallet-quantum-identity.fc": {
       "bytes": 2601,
@@ -156,8 +156,8 @@
       "sha256": "baafa17be77a84719d9cb9274323abf03a17e6ff2259f5d7310b9e2917cd4071"
     },
     "repository/crypto/smartcont/wallet-quantum-rescue.tlb": {
-      "bytes": 12124,
-      "sha256": "9e712ba8712cb5c7c6cd0a7aaa20073f6461a41a54edefca314f1d0162cebeb2"
+      "bytes": 12135,
+      "sha256": "a3ac7cc5e30743c65ed664d79bbd06c184aae2e6640297a49deaf38535e0cc6a"
     },
     "repository/crypto/smartcont/wallet-quantum-state.fc": {
       "bytes": 3386,
@@ -365,7 +365,7 @@
     "final-head CI and activation approval"
   ],
   "scope": "Build or reproduce a reviewable Quantum candidate from an explicit chain config.\n\nThe bundle contains ordinary, self-contained code, its exact source and public\nwire/crypto/KDF vectors. It is not a reviewed release, a wallet enrollment, a\ncustody backup, or authorization to activate the candidate configuration.\n",
-  "source_revision": "97e7259c7e43abcc6a50d9ad0cdabc7de68ffbc0",
+  "source_revision": "e952feb325a969ebd2c2d000c9627e60b6a369b7",
   "status": "unapproved-review-candidate",
-  "tracked_working_tree_changes": true
+  "tracked_working_tree_changes": false
 }

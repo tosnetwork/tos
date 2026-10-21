@@ -8,7 +8,7 @@ The experiments below validate individual boundaries and do not replace that gat
 Prototype of the wallet rescue design: an ML-DSA-44 daily root, an SLH-DSA-SHA2-128s rescue
 root, and a per-wallet fee vault that admits an external message only after a native one-level
 HSS/LMS signature over the complete fee intent verifies, inside the external gas credit (10,000
-gas, as in genesis). All prototypes, including the contextual admission candidate below, run
+gas in this historical prototype; new basechain genesis uses 20,000). All prototypes, including the contextual admission candidate below, run
 at genesis global version **16**.
 **Not for production merge.**
 

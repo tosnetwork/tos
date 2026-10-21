@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check generated candidate config loading and a Rust default-fallback mutation."""
+"""Check generated config loading and a historical-credit fallback mutation."""
 
 import argparse
 import hashlib
@@ -55,7 +55,10 @@ def main():
         raise RuntimeError("baseline failed; no mutation applied")
     try:
         source.write_bytes(
-            original.replace(anchor, b"gas_prices_wc: GasLimitsPrices::default_wc(),")
+            original.replace(
+                anchor,
+                b"gas_prices_wc: GasLimitsPrices { gas_credit: 10000, ..GasLimitsPrices::default_wc() },",
+            )
         )
         if run("fallback-default", filtered=True) == 0:
             raise RuntimeError("default fallback unexpectedly passed")

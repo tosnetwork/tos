@@ -117,15 +117,13 @@ impl DefaultConfig for GasLimitsPrices {
 
     fn default_wc() -> Self {
         let mut prices = GasLimitsPrices {
-            // Existing canonical basechain gas profile. Admission candidates
-            // load their generated ConfigParams through with_config; changing
-            // only the VM version must not activate a candidate gas profile.
+            // ConfigParam 21 mirrors the basechain deployment zero state.
             gas_price: 436907,
             flat_gas_limit: 100,
             flat_gas_price: 667,
             gas_limit: 2000000,
             special_gas_limit: 2000000,
-            gas_credit: 10000,
+            gas_credit: 20000,
             block_gas_limit: 20000000,
             freeze_due_limit: 100000000,
             delete_due_limit: 1000000000,

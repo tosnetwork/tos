@@ -28,18 +28,34 @@ at their own source boundaries.
 
 | Selection | Version | Basechain credit | Masterchain credit | Meaning |
 | --- | --- | --- | --- | --- |
-| Existing canonical genesis and Rust defaults | 16 | 10,000 | 10,000 | Existing default profile |
-| Explicit generated admission candidate | 16 | 20,000 | 10,000 | Candidate selected with an explicit namespace; basechain transaction/block gas limits are 30,000,000/60,000,000 |
+| New canonical genesis and Rust defaults | 16 | 20,000 | 10,000 | Default profile for newly generated configurations |
+| Explicit generated admission candidate | 16 | 20,000 | 10,000 | Same credit; requires the frozen AUTH namespace; basechain transaction/block gas limits are 2,000,000/20,000,000 |
 
 `BlockchainConfig::with_config` loads the actual generated cells.
-`default_with_global_version(16)` selects the unified instruction baseline while
-keeping the existing default gas profile. The continuation repairs the default
-basechain price cache's derived `max_gas_threshold`: it now matches the value
-decoded from the serialized fields. The new comparison first failed on the old
-cache value and passes after the repair. This does not activate 20,000 credit.
-Six gas-envelope tests compare the generated and cached configurations. Replacing
-the actual-config loader with default prices fails the candidate credit assertion;
-restored code passes all six tests.
+`default_with_global_version(16)` selects the unified instruction baseline and
+20,000 basechain credit. The native external-message emulator uses CP20/CP21
+when configuration is supplied; without it, the basechain/masterchain credit
+defaults are 20,000/10,000. Explicit VM limits still override this selection.
+Deriving the limits from CP20/CP21 is a deliberate divergence from the inherited
+emulator, which grants every external message a fixed 1,000,000 gas and 10,000
+credit. Two consequences for callers: a raw c7 whose address slot holds neither
+a null entry, an empty slice nor an internal address with a 256-bit account
+(`addr_std` with or without anycast, or a 256-bit `addr_var`) is refused for an
+external run — `addr_none`, a truncated address or a non-slice entry — where the
+inherited emulator would execute it at the fixed credit (no in-tree caller
+supplies such a context; a null or empty slot means no address and the Args
+workchain applies); and the emulator's credit is
+`min(credit, limit)` without regard to the account balance, whereas a real
+transaction also bounds gas by the balance, so emulator acceptance is necessary
+but not sufficient for on-chain acceptance of a poorly funded account.
+The generated-configuration tests also compare the cached price threshold;
+the loading control injects a historical 10,000-credit fallback so it still
+fails at the candidate credit assertion after the default change.
+
+Existing chains retain their installed configuration. Historical receipts and
+BOCs retain their measured profiles. These defaults do not authorize a public
+network launch: admission work protections, release acceptance and activation
+approval remain prerequisites.
 
 G01's configuration-selection semantics are explicit. Its publication and
 activation condition remains open: approved release configuration and published

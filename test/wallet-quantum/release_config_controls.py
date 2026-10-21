@@ -117,8 +117,8 @@ def main():
                 raise RuntimeError("mutation did not reach the intended assertion")
             if label == "rust-fallback":
                 first = (out / label / "rust.tsv").read_text().splitlines()[0].split("\t")
-                if first[:2] != ["s1-valid", "904"]:
-                    raise RuntimeError("Rust fallback did not fail the contract's credit check")
+                if first[:2] != ["s1-valid", "906"]:
+                    raise RuntimeError("Rust fallback did not fail the contract's network-ID check")
         finally:
             path.write_text(original)
             if label == "rust-fallback":

@@ -34,9 +34,7 @@ def normalise(line: str) -> str:
 def fif_line(source: str, name: str) -> str:
     pattern = re.compile(rf"^(?!//)(.*\bconfig\.{name}!)\s*$", re.MULTILINE)
     matches = pattern.findall(source)
-    # The explicit admission candidate overrides only the basechain credit.
-    # This test compares the ordinary default; real BOC tests cover the override.
-    expected = 2 if name == "gas_prices" else 1
+    expected = 1
     if len(matches) != expected:
         raise AssertionError(f"{name}: {len(matches)} definitions in gen-zerostate.fif")
     return normalise(matches[0])

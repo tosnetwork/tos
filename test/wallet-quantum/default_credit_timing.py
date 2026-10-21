@@ -1,7 +1,7 @@
-"""Replay recorded inputs at default credit with independent Rust expectations.
+"""Replay recorded inputs at historical 10,000 credit with independent Rust expectations.
 
 Internal messages retain their recorded prestates. This is a collection of isolated
-transaction probes, not a successful recovery sequence at default credit.
+transaction probes, not a successful recovery sequence at historical credit.
 """
 
 import argparse
@@ -15,6 +15,7 @@ from fee_tx_parity import Cell, credit, from_boc, read_dict
 
 
 def default_configuration(root):
+    # Explicit historical boundary control, independent of the current CP21 default.
     entries = read_dict(root.refs[0], 32)
     prices = entries[21].refs[0]
     tag = int(prices.bits[:8], 2)

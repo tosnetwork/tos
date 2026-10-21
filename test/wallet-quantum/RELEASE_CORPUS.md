@@ -7,12 +7,17 @@ indexes certify only their recorded source and fixtures.
 
 ## G01: candidate construction and publication are separate
 
+New basechain genesis and executor defaults grant 20,000 external gas credit;
+masterchain remains at 10,000. This changes no existing network. Public-network
+creation remains gated on node admission work protections and release acceptance.
+The dated JSON receipts retain the historical configuration and source hashes.
+
 The repository currently has two deliberately distinct configuration paths:
 
 | Path | Version and gas profile | Selection |
 | --- | --- | --- |
-| Existing canonical genesis and Rust sandbox defaults | Existing genesis version 16; basechain credit 10,000, masterchain credit 10,000 | Existing default behavior |
-| Generated Quantum admission candidate | Version 18; basechain credit 20,000, masterchain credit 10,000; basechain transaction/block limits 30,000,000/60,000,000 | Explicit `quantum-admission-candidate` plus a public `quantum-network-tag`, or the corresponding validated localnet option |
+| Canonical genesis and Rust sandbox defaults | Genesis version 16; basechain credit 20,000, masterchain credit 10,000 | Default for newly generated networks |
+| Isolated Quantum fixture profile | Version 16; basechain credit 20,000, masterchain credit 10,000; basechain transaction/block limits 2,000,000/20,000,000 | Explicit `quantum-admission-candidate` plus a public `quantum-network-tag`, or the corresponding validated localnet option |
 
 `BlockchainConfig::with_config` loads the generated ConfigParams without
 substituting fallback prices. `default_with_global_version(18)` changes the VM
@@ -100,7 +105,7 @@ revision and relevant CI before they can support a release decision.
 
 | Requirement | Existing or added check | Remaining acceptance boundary |
 | --- | --- | --- |
-| G01 | Generated canonical/localnet candidate, actual Rust loading, full gas-field comparison and explicit version/default distinction | Published defaults and release configuration must be switched together only at the required gates; no default activation here |
+| G01 | Generated canonical/localnet candidate, actual Rust loading, full gas-field comparison and explicit version/default distinction | Generated defaults agree; public activation still requires node admission protections |
 | G02 | Generated-config PQ transaction probe plus dedicated/generic Falcon version controls | Relevant final-head VM/architecture CI and final frozen release profile |
 | G03 | Selected AUTH execute/lock/migration, both POP roles and preparation; PRIMARY/SLH module delivery | Every required AUTH operation and legal maximum payload under the final profile, including full fee-funded configure coverage |
 | G04 | Exact G−1/G in both VMs for every successful selected fee external | Extend the same check to the complete legal maximum-input corpus |
