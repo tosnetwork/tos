@@ -2307,7 +2307,9 @@ add_test(NAME quic-transport-error-names COMMAND test-quic-sender
   -p 59500 -d tmp-dir-test-quic-error-names -f BlockedOpenReportsTransportErrorName)
 # Connection-setup regressions on the path the bounded connection wait rewrote: plain queries,
 # handshake failure, response deadlines, and restarts of either side. Each entry keeps its ports
-# (and their QUIC offset) away from every other entry's range.
+# (and their QUIC offset) away from every other entry's range. All of them also run under
+# AddressSanitizer in the network-safety job. The restart cases take about two minutes in a release
+# build and longer there.
 add_test(NAME quic-sender-basic COMMAND test-quic-sender
   -p 3000 -d tmp-dir-test-quic-basic -f Test_QuicSender_BasicQuery)
 add_test(NAME quic-sender-wrong-public-key COMMAND test-quic-sender
@@ -2337,6 +2339,7 @@ set_tests_properties(
   quic-sender-wrong-public-key
   quic-sender-tls-key-mismatch
   quic-sender-response-timeouts
+  quic-sender-restart
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
   test-http-server-limits
