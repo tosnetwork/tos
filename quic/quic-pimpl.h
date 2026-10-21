@@ -25,6 +25,11 @@
 
 namespace tos::quic {
 
+// "-206 (ERR_STREAM_ID_BLOCKED)" — the numeric code alone is opaque in logs.
+inline std::string ngtcp2_err_str(ngtcp2_ssize rv) {
+  return std::to_string(rv) + " (" + ngtcp2_strerror(static_cast<int>(rv)) + ")";
+}
+
 struct ServerIdentities : td::CntObject {
   std::map<std::string, ServerIdentity> by_sni;
   std::string default_sni;
@@ -45,6 +50,10 @@ struct QuicConnectionOptions {
   static constexpr size_t DEFAULT_MAX_STREAMS_BIDI = 4096;
   static constexpr ngtcp2_duration DEFAULT_IDLE_TIMEOUT = 15 * NGTCP2_SECONDS;
   static constexpr ngtcp2_duration DEFAULT_KEEP_ALIVE_TIMEOUT = 5 * NGTCP2_SECONDS;
+  // Two round trips of handshake (stateless retry adds one) plus room for a lost packet at the transport
+  // library's 333ms assumed initial RTT. Long enough not to abandon a slow peer, short enough that queued
+  // application messages fail while they still matter.
+  static constexpr ngtcp2_duration DEFAULT_HANDSHAKE_TIMEOUT = 5 * NGTCP2_SECONDS;
 
   size_t initial_max_data = DEFAULT_INITIAL_MAX_DATA;
   size_t max_window = DEFAULT_MAX_WINDOW;
@@ -54,6 +63,7 @@ struct QuicConnectionOptions {
   size_t max_streams_bidi = DEFAULT_MAX_STREAMS_BIDI;
   ngtcp2_duration idle_timeout = DEFAULT_IDLE_TIMEOUT;
   ngtcp2_duration keep_alive_timeout = DEFAULT_KEEP_ALIVE_TIMEOUT;
+  ngtcp2_duration handshake_timeout = DEFAULT_HANDSHAKE_TIMEOUT;
   CongestionControlAlgo cc_algo = CongestionControlAlgo::Bbr;
   // Every transport allocation of the connection is reserved here first.
   // Unset means the process-wide default.
@@ -170,6 +180,7 @@ struct QuicConnectionPImpl {
     None,
     ScheduleWrite,
     IdleClose,
+    HandshakeTimeout,
     Close,
   };
   struct InitialCidState {

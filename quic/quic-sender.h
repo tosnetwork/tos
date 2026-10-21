@@ -1,12 +1,17 @@
 #pragma once
 
+#include <list>
 #include <string>
+#include <utility>
 
 #include "adnl/adnl-peer-table.h"
 #include "adnl/adnl-sender-ex.h"
 #include "keyring/keyring.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/coro_task.h"
+#include "td/utils/HashMap.h"
+#include "td/utils/Heap.h"
+#include "td/utils/Timer.h"
 #include "td/utils/memory-tracker.h"
 
 #include "quic-server.h"
@@ -67,6 +72,19 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
                       td::optional<adnl::AdnlNodeIdShort> peer_id) override;
 
  private:
+  friend struct QuicSenderTest;
+
+  struct Waiter : td::HeapNode {
+    using Queue = std::list<Waiter>;
+
+    Waiter(Queue& queue, td::Promise<td::Unit> promise) : queue(queue), promise(std::move(promise)) {
+    }
+
+    Queue& queue;
+    Queue::iterator position;
+    td::Promise<td::Unit> promise;
+  };
+
   struct Connection {
     bool init_started = false;
     bool is_ready = false;
@@ -75,7 +93,9 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
     QuicConnectionId cid{};
     AdnlPath path{};
     td::actor::ActorId<QuicServer> server;
-    std::vector<td::Promise<td::Unit>> waiting_ready{};
+    // Live callers only; overflow evicts the oldest.
+    static constexpr size_t MAX_WAITERS = 1024;
+    Waiter::Queue waiting_ready;
     std::optional<td::Status> init_error{};
     std::unordered_map<QuicStreamID, td::Promise<td::BufferSlice>> responses{};
 
@@ -92,7 +112,10 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
 
   std::map<AdnlPath, std::shared_ptr<Connection>> outbound_;
   std::map<AdnlPath, std::shared_ptr<Connection>> inbound_;
-  std::map<QuicConnectionId, std::shared_ptr<Connection>> by_cid_;
+  td::HashMap<QuicConnectionId, std::shared_ptr<Connection>> by_cid_;
+  // Destroy raw heap pointers before their owning connections.
+  td::KHeap<td::Timestamp> waiter_timeouts_;
+  td::Timestamp next_memory_diagnostics_;
 
   std::map<int, td::actor::ActorOwn<QuicServer>> servers_by_port_;
   std::map<adnl::AdnlNodeIdShort, td::actor::ActorId<QuicServer>> servers_by_id_;
@@ -112,7 +135,11 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
   td::actor::Task<std::string> get_conn_ip_str_coro(adnl::AdnlNodeIdShort l_id, adnl::AdnlNodeIdShort p_id);
   td::actor::Task<> add_local_id_coro(adnl::AdnlNodeIdShort local_id);
 
-  td::actor::Task<std::shared_ptr<Connection>> find_or_create_connection(AdnlPath path);
+  std::shared_ptr<Connection> get_or_create_connection(AdnlPath path);
+  td::actor::Task<std::shared_ptr<Connection>> wait_connection_ready(std::shared_ptr<Connection> connection,
+                                                                     td::Timestamp timeout = {});
+  td::Promise<td::Unit> take_waiter(Waiter& waiter);
+  void update_alarm();
   td::actor::Task<td::Unit> init_connection(AdnlPath path, std::shared_ptr<Connection> connection);
   td::actor::Task<td::Unit> init_connection_inner(AdnlPath path, std::shared_ptr<Connection> conn);
   void finish_connection_init(const std::shared_ptr<Connection>& connection, td::Result<td::Unit> result);

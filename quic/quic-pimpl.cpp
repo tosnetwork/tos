@@ -386,6 +386,10 @@ void QuicConnectionPImpl::setup_settings_and_params(ngtcp2_settings& settings, n
   CHECK(cc_alg_id < std::size(CC_ALGO_MAP));
   settings.cc_algo = CC_ALGO_MAP[cc_alg_id];
   apply_platform_pmtu_policy(settings);
+  // Without this the transport library never gives up on a handshake (its default is UINT64_MAX), so a dial to an
+  // unreachable peer retransmits Initial packets until the idle timeout and everything queued behind it
+  // waits with it. On expiry handle_expiry() closes the connection, which fails those waiters.
+  settings.handshake_timeout = options.handshake_timeout;
 
   ngtcp2_transport_params_default(&params);
   params.max_idle_timeout = options.idle_timeout;
@@ -484,7 +488,7 @@ td::Status QuicConnectionPImpl::init_quic_server(const ServerInitialInfo& initia
   int rv = ngtcp2_conn_server_new(&new_conn, &client_scid, &server_scid_raw, &path, initial.packet.version, &callbacks,
                                   &settings, &params, allocator_->mem(), this);
   if (rv != 0) {
-    return td::Status::Error(PSTRING() << "ngtcp2_conn_server_new failed: " << rv);
+    return td::Status::Error(PSTRING() << "ngtcp2_conn_server_new failed: " << ngtcp2_err_str(rv));
   }
   conn_.reset(new_conn);
   finish_quic_init(server_scid);
@@ -701,8 +705,8 @@ td::Status QuicConnectionPImpl::produce_egress(UdpMessageBuffer& msg_out, bool u
   finish_batch();
 
   if (n_write < 0) {
-    return td::Status::Error(static_cast<int>(n_write), PSTRING()
-                                                            << "ngtcp2_conn_write_aggregate_pkt2 failed: " << n_write);
+    return td::Status::Error(static_cast<int>(n_write),
+                             PSTRING() << "ngtcp2_conn_write_aggregate_pkt2 failed: " << ngtcp2_err_str(n_write));
   }
 
   ngtcp2_conn_update_pkt_tx_time(conn(), ts);
@@ -745,8 +749,8 @@ td::Status QuicConnectionPImpl::handle_ingress(const UdpMessageBuffer& msg_in, U
   } else {
     write_connection_close(close_out, rv);
   }
-  return td::Status::Error(rv, PSTRING() << "ngtcp2_conn_read_pkt failed: " << rv
-                                          << " tls_alert=" << (int)ngtcp2_conn_get_tls_alert(conn()));
+  return td::Status::Error(rv, PSTRING() << "ngtcp2_conn_read_pkt failed: " << ngtcp2_err_str(rv)
+                                         << " tls_alert=" << (int)ngtcp2_conn_get_tls_alert(conn()));
 }
 
 ngtcp2_conn_info QuicConnectionPImpl::get_conn_info() const {
@@ -799,7 +803,8 @@ td::Result<QuicStreamID> QuicConnectionPImpl::open_stream() {
 
   int rv = ngtcp2_conn_open_bidi_stream(conn(), &sid, nullptr);
   if (rv != 0) {
-    return td::Status::Error(PSTRING() << "ngtcp2_conn_open_bidi_stream failed: " << rv);
+    // Carry rv as the status code so callers can classify (e.g. STREAM_ID_BLOCKED = flow control).
+    return td::Status::Error(rv, PSTRING() << "ngtcp2_conn_open_bidi_stream failed: " << ngtcp2_err_str(rv));
   }
 
   CHECK(streams_.emplace(sid, OutboundStreamState{}).second);
@@ -867,6 +872,10 @@ td::Result<QuicConnectionPImpl::ExpiryAction> QuicConnectionPImpl::handle_expiry
 
   if (rv == NGTCP2_ERR_IDLE_CLOSE) {
     return ExpiryAction::IdleClose;
+  }
+
+  if (rv == NGTCP2_ERR_HANDSHAKE_TIMEOUT) {
+    return ExpiryAction::HandshakeTimeout;
   }
 
   return ExpiryAction::Close;
