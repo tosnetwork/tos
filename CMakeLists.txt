@@ -2305,6 +2305,20 @@ add_test(NAME quic-connection-id-keyed-hash COMMAND test-quic-sender
   -p 59000 -d tmp-dir-test-quic-cid-hash -f KeyedHashSpreadsIds)
 add_test(NAME quic-ngtcp2-error-names COMMAND test-quic-sender
   -p 59500 -d tmp-dir-test-quic-error-names -f Ngtcp2ErrorsAreNamed)
+# Connection-setup regressions on the path the bounded connection wait rewrote: plain queries,
+# handshake failure, response deadlines, and restarts of either side. Each entry keeps its ports
+# (and their QUIC offset) away from every other entry's range.
+add_test(NAME quic-sender-basic COMMAND test-quic-sender
+  -p 3000 -d tmp-dir-test-quic-basic -f Test_QuicSender_BasicQuery)
+add_test(NAME quic-sender-wrong-public-key COMMAND test-quic-sender
+  -p 5000 -d tmp-dir-test-quic-wrong-key -f WrongPublicKey)
+add_test(NAME quic-sender-tls-key-mismatch COMMAND test-quic-sender
+  -p 7000 -d tmp-dir-test-quic-tls-mismatch -f TlsKeyMismatchDoesNotPoisonOutboundPath)
+add_test(NAME quic-sender-response-timeouts COMMAND test-quic-sender
+  -p 9000 -d tmp-dir-test-quic-response-timeouts -f ResponseTimeout)
+add_test(NAME quic-sender-restart COMMAND test-quic-sender
+  -p 11000 -d tmp-dir-test-quic-restart -f Test_QuicSender_Restart)
+set_tests_properties(quic-sender-restart PROPERTIES TIMEOUT 600)
 set_tests_properties(
   quic-inbound-stream-timeout
   quic-outbound-query-deadline
@@ -2319,6 +2333,10 @@ set_tests_properties(
   quic-connection-waiter-limits
   quic-connection-id-keyed-hash
   quic-ngtcp2-error-names
+  quic-sender-basic
+  quic-sender-wrong-public-key
+  quic-sender-tls-key-mismatch
+  quic-sender-response-timeouts
   test-adnl-peer-pair-cap
   test-overlay-broadcast-capacity
   test-http-server-limits
