@@ -159,10 +159,15 @@ TEST(LiteServerCache, byte_bound_holds_for_large_answers) {
 
 TEST(LiteServerCache, an_oversized_answer_is_not_cached_and_evicts_nothing) {
   LiteServerQueryCache cache;
-  for (size_t i = 0; i < 100; i++) {
+  for (size_t i = 0; i < 99; i++) {
     ASSERT_TRUE(cache.update(key_of(i), value_of(i, 64), kNow));
   }
+  // The last entry's charge is measured, not assumed: a string's capacity after
+  // shrink_to_fit is the library's choice (64 on libstdc++, 71 on libc++).
+  size_t size_without_last = cache.total_size();
+  ASSERT_TRUE(cache.update(key_of(99), value_of(99, 64), kNow));
   size_t size_before = cache.total_size();
+  ASSERT_TRUE(size_before >= size_without_last + LiteServerQueryCache::charge(64));
   std::string oversized(LiteServerQueryCache::MAX_ENTRY_VALUE_SIZE + 1, 'x');
   ASSERT_TRUE(!cache.update(key_of(1000), oversized, kNow));
   ASSERT_EQ(100u, cache.entries());
@@ -171,11 +176,11 @@ TEST(LiteServerCache, an_oversized_answer_is_not_cached_and_evicts_nothing) {
   ASSERT_TRUE(cache.lookup(key_of(1000), kNow).is_error());
   // An oversized update of a cached key drops the older answer: the caller has
   // a newer one than the store could keep.
-  ASSERT_TRUE(cache.lookup(key_of(1), kNow).is_ok());
-  ASSERT_TRUE(!cache.update(key_of(1), oversized, kNow));
-  ASSERT_TRUE(cache.lookup(key_of(1), kNow).is_error());
+  ASSERT_TRUE(cache.lookup(key_of(99), kNow).is_ok());
+  ASSERT_TRUE(!cache.update(key_of(99), oversized, kNow));
+  ASSERT_TRUE(cache.lookup(key_of(99), kNow).is_error());
   ASSERT_EQ(99u, cache.entries());
-  ASSERT_EQ(size_before - LiteServerQueryCache::charge(64), cache.total_size());
+  ASSERT_EQ(size_without_last, cache.total_size());
   // The largest admissible answer is cached.
   std::string largest(LiteServerQueryCache::MAX_ENTRY_VALUE_SIZE, 'y');
   ASSERT_TRUE(cache.update(key_of(1001), largest, kNow));
