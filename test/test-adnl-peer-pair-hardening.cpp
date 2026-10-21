@@ -16,7 +16,11 @@
 
 // A peer pair records each received packet seqno once. Recording the same seqno again used to
 // abort the node; it is now ignored and leaves the replay window unchanged.
+//
+// The transport socket is IPv4-only. An IPv6 address used to get a connection actor whose first
+// send aborted the process inside the IPv4 socket; it is now refused before any actor exists.
 
+#include "adnl/adnl-address-list.hpp"
 #include "adnl/adnl-peer.hpp"
 #include "td/utils/tests.h"
 
@@ -54,4 +58,11 @@ TEST(AdnlPeerPair, RepeatedReceivedSeqnoIsIgnored) {
   ASSERT_TRUE(Access::received(pair, 3));
   ASSERT_TRUE(!Access::received(pair, 4));
   ASSERT_TRUE(!Access::received(pair, 6));
+}
+
+TEST(AdnlAddressList, Udp6AddressIsRefusedBeforeAnyConnection) {
+  tos::adnl::AdnlAddressUdp6 address{td::Bits128{}, 3000};
+  auto connection = address.create_connection({}, {}, nullptr);
+  ASSERT_TRUE(connection.is_error());
+  ASSERT_EQ(connection.error().message().str(), "ipv6 is not supported");
 }
