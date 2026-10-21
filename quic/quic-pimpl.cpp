@@ -488,7 +488,7 @@ td::Status QuicConnectionPImpl::init_quic_server(const ServerInitialInfo& initia
   int rv = ngtcp2_conn_server_new(&new_conn, &client_scid, &server_scid_raw, &path, initial.packet.version, &callbacks,
                                   &settings, &params, allocator_->mem(), this);
   if (rv != 0) {
-    return td::Status::Error(PSTRING() << "ngtcp2_conn_server_new failed: " << rv);
+    return td::Status::Error(PSTRING() << "ngtcp2_conn_server_new failed: " << ngtcp2_err_str(rv));
   }
   conn_.reset(new_conn);
   finish_quic_init(server_scid);
@@ -706,7 +706,7 @@ td::Status QuicConnectionPImpl::produce_egress(UdpMessageBuffer& msg_out, bool u
 
   if (n_write < 0) {
     return td::Status::Error(static_cast<int>(n_write), PSTRING()
-                                                            << "ngtcp2_conn_write_aggregate_pkt2 failed: " << n_write);
+                                                            << "ngtcp2_conn_write_aggregate_pkt2 failed: " << ngtcp2_err_str(n_write));
   }
 
   ngtcp2_conn_update_pkt_tx_time(conn(), ts);
@@ -749,7 +749,7 @@ td::Status QuicConnectionPImpl::handle_ingress(const UdpMessageBuffer& msg_in, U
   } else {
     write_connection_close(close_out, rv);
   }
-  return td::Status::Error(rv, PSTRING() << "ngtcp2_conn_read_pkt failed: " << rv
+  return td::Status::Error(rv, PSTRING() << "ngtcp2_conn_read_pkt failed: " << ngtcp2_err_str(rv)
                                           << " tls_alert=" << (int)ngtcp2_conn_get_tls_alert(conn()));
 }
 
@@ -803,7 +803,8 @@ td::Result<QuicStreamID> QuicConnectionPImpl::open_stream() {
 
   int rv = ngtcp2_conn_open_bidi_stream(conn(), &sid, nullptr);
   if (rv != 0) {
-    return td::Status::Error(PSTRING() << "ngtcp2_conn_open_bidi_stream failed: " << rv);
+    // Carry rv as the status code so callers can classify (e.g. STREAM_ID_BLOCKED = flow control).
+    return td::Status::Error(rv, PSTRING() << "ngtcp2_conn_open_bidi_stream failed: " << ngtcp2_err_str(rv));
   }
 
   CHECK(streams_.emplace(sid, OutboundStreamState{}).second);
