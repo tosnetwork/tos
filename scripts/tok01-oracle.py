@@ -58,18 +58,21 @@ def load(directory, name):
     return [json.loads(line) for line in (directory / name).read_text().splitlines()]
 
 
-def verify(directory):
-    (summary,) = load(directory, "summary.jsonl")
+def verify(directory, records=None):
+    def read(name):
+        return load(directory, name) if records is None else records[name]
+
+    (summary,) = read("summary.jsonl")
     require(summary["pass"] and not summary["failures"], "lifecycle reported failures")
-    steps = load(directory, "steps.jsonl")
+    steps = read("steps.jsonl")
     require(len(steps) == 13 and len(summary["steps"]) == 13, "incomplete lifecycle")
-    for row in load(directory, "checks.jsonl"):
+    for row in read("checks.jsonl"):
         check_field(row)
-    invariants = load(directory, "invariants.jsonl")
+    invariants = read("invariants.jsonl")
     require(len(invariants) == 13, "missing per-step invariant")
     for row in invariants:
         check_supply(row)
-    bounces = load(directory, "bounce.jsonl")
+    bounces = read("bounce.jsonl")
     require(len(bounces) == 2, "missing refused-operation bounce")
     for row in bounces:
         check_bounce(row)
@@ -78,7 +81,7 @@ def verify(directory):
         for transactions in step["transactions"].values():
             for tx in transactions:
                 check_tx(tx)
-    (notifications,) = load(directory, "notifications.jsonl")
+    (notifications,) = read("notifications.jsonl")
     require(len(notifications["transactions"]) == 1, "notification absent")
     return {"pass": True, "steps": len(steps), "invariants": len(invariants)}
 
@@ -174,6 +177,40 @@ def controls(directory):
         lambda row: row["transaction_id"].update(hash=base64.b64encode(bytes(32)).decode()),
     )
     exercise("incomplete block ID", tx, check_tx, lambda row: row["block_id"].pop("file_hash"))
+    records = {
+        name: load(directory, name)
+        for name in (
+            "summary.jsonl",
+            "steps.jsonl",
+            "checks.jsonl",
+            "invariants.jsonl",
+            "bounce.jsonl",
+            "notifications.jsonl",
+        )
+    }
+
+    def full(data):
+        return verify(directory, data)
+
+    for label, mutate in (
+        (
+            "failed lifecycle summary",
+            lambda data: data["summary.jsonl"][0].__setitem__("pass", False),
+        ),
+        ("missing lifecycle step", lambda data: data["steps.jsonl"].pop()),
+        ("missing summary step", lambda data: data["summary.jsonl"][0]["steps"].pop()),
+        ("missing invariant receipt", lambda data: data["invariants.jsonl"].pop()),
+        ("missing bounce receipt", lambda data: data["bounce.jsonl"].pop()),
+        (
+            "missing comparison table",
+            lambda data: data["steps.jsonl"][0].__setitem__("comparisons", []),
+        ),
+        (
+            "missing notification receipt",
+            lambda data: data["notifications.jsonl"][0]["transactions"].clear(),
+        ),
+    ):
+        exercise(label, records, full, mutate)
     return receipts
 
 
