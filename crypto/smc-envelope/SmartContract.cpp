@@ -586,8 +586,7 @@ td::Result<ExternalContext> external_context(const SmartContract::Args& args) tr
   return td::Status::Error(td::Slice(error.get_msg()));
 }
 
-td::Result<vm::GasLimits> external_message_limits(int workchain,
-                                                  const std::shared_ptr<const block::Config>& config) {
+td::Result<vm::GasLimits> external_message_limits(int workchain, const std::shared_ptr<const block::Config>& config) {
   td::uint64 limit = 1000000;
   td::uint64 credit = workchain == masterchainId ? 10000 : 20000;
   if (config) {

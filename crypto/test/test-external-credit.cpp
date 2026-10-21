@@ -255,7 +255,9 @@ TEST(ExternalCredit, RawContextAddressValidatedWhateverElseIsSupplied) {
   vm::CellBuilder truncated;
   truncated.store_long(4, 3).store_long(0, 8).store_zeroes(100);  // addr_std cut short
   vm::CellBuilder none;
-  none.store_long(0, 2);  // addr_none is not an account
+  // addr_none is not an account. The inherited emulator would run such a context at
+  // its fixed credit; an external run here refuses it, as the release notes state.
+  none.store_long(0, 2);
   std::vector<vm::StackEntry> malformed{vm::StackEntry(truncated.as_cellslice_ref()),
                                         vm::StackEntry(none.as_cellslice_ref()),
                                         vm::StackEntry(td::make_refint(7)),  // not a slice at all
@@ -297,6 +299,57 @@ TEST(ExternalCredit, RawContextAddressValidatedWhateverElseIsSupplied) {
   emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
   emulator.set_c7_raw(raw_context(vm::StackEntry(config->get_root_cell()), vm::StackEntry{}));
   expect_accepted(emulator.send_external_message(empty_cell()));
+}
+
+TEST(ExternalCredit, MalformedRawContextStillRunsGetMethodsAndInternalMessages) {
+  // Strict context validation is an external-message rule. The same malformed raw c7
+  // must not stop a get method or an internal message, or the rule would over-reject.
+  for (const auto& c7 : {vm::make_tuple_ref(td::make_cnt_ref<std::vector<vm::StackEntry>>(9)),
+                         raw_context(vm::StackEntry(empty_cell()))}) {
+    emulator::TvmEmulator get_method(delayed_accept(), empty_cell());
+    get_method.set_c7_raw(c7);
+    auto answer = get_method.run_get_method(1, td::make_ref<vm::Stack>());
+    ASSERT_TRUE(answer.success);
+    ASSERT_TRUE(answer.code != ~static_cast<int>(vm::Excno::fatal));
+    ASSERT_TRUE(answer.vm_log.find("Invalid external-message") == std::string::npos);
+
+    emulator::TvmEmulator internal(delayed_accept(), empty_cell());
+    internal.set_c7_raw(c7);
+    answer = internal.send_internal_message(empty_cell(), 10000000);
+    ASSERT_TRUE(answer.success);
+    ASSERT_TRUE(answer.code != ~static_cast<int>(vm::Excno::fatal));
+    ASSERT_TRUE(answer.vm_log.find("Invalid external-message") == std::string::npos);
+  }
+}
+
+TEST(ExternalCredit, RawMasterchainAddressOverridesBasechainArgs) {
+  // Raw c7 is the effective execution context: its masterchain address selects the
+  // masterchain credit although Args carries a basechain address.
+  auto config = credit_config(20000, 10000);
+  vm::CellBuilder master;
+  master.store_long(4, 3).store_long(-1, 8).store_zeroes(256);
+  emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+  emulator.set_c7(address(0), 1, 10000000000, td::Bits256::zero(), config);
+  emulator.set_c7_raw(raw_context(vm::StackEntry(config->get_root_cell()), vm::StackEntry(master.as_cellslice_ref())));
+  expect_credit_exhausted(emulator.send_external_message(empty_cell()));
+}
+
+TEST(ExternalCredit, ExplicitConfigKeepsPrecedenceOverRawContextConfig) {
+  // set_c7 (a parsed configuration) followed by set_c7_raw (another one inside c7):
+  // the explicitly supplied configuration decides the credit either way.
+  for (bool explicit_grants : {true, false}) {
+    auto explicit_config = credit_config(explicit_grants ? 20000 : 10000, 10000);
+    auto raw_config = credit_config(explicit_grants ? 10000 : 20000, 10000);
+    emulator::TvmEmulator emulator(delayed_accept(), empty_cell());
+    emulator.set_c7(address(0), 1, 10000000000, td::Bits256::zero(), explicit_config);
+    emulator.set_c7_raw(raw_context(vm::StackEntry(raw_config->get_root_cell())));
+    auto answer = emulator.send_external_message(empty_cell());
+    if (explicit_grants) {
+      expect_accepted(answer);
+    } else {
+      expect_credit_exhausted(answer);
+    }
+  }
 }
 
 TEST(ExternalCredit, ExplicitConfigBeforeRawContextStillValidates) {

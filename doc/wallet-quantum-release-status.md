@@ -36,6 +36,15 @@ at their own source boundaries.
 20,000 basechain credit. The native external-message emulator uses CP20/CP21
 when configuration is supplied; without it, the basechain/masterchain credit
 defaults are 20,000/10,000. Explicit VM limits still override this selection.
+Deriving the limits from CP20/CP21 is a deliberate divergence from the inherited
+emulator, which grants every external message a fixed 1,000,000 gas and 10,000
+credit. Two consequences for callers: a raw c7 whose address slot is not a
+standard internal address (`addr_none`, `addr_var`) is refused for an external
+run, where the inherited emulator would execute it at the fixed credit (no
+in-tree caller supplies such a context); and the emulator's credit is
+`min(credit, limit)` without regard to the account balance, whereas a real
+transaction also bounds gas by the balance, so emulator acceptance is necessary
+but not sufficient for on-chain acceptance of a poorly funded account.
 The generated-configuration tests also compare the cached price threshold;
 the loading control injects a historical 10,000-credit fallback so it still
 fails at the candidate credit assertion after the default change.
