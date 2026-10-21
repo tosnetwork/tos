@@ -2131,7 +2131,12 @@ impl Fixture {
         query_id: u64,
         request_hash: [u8; 32],
     ) -> SendResult {
-        let value = self.init.price_per_call + self.init.storage_fee + TOS / 2;
+        let value = self
+            .init
+            .price_per_call
+            .checked_add(self.init.storage_fee)
+            .and_then(|owed| owed.checked_add(TOS / 2))
+            .expect("call value fits u64");
         let terms = ServiceActorContract::terms_hash_of_init(&self.init).unwrap();
         self.send_from_with_value(
             from,
@@ -2152,6 +2157,14 @@ impl Fixture {
 const REVENUE_INDEX: usize = 19;
 const PENDING_INDEX: usize = 21;
 
+fn coins_below_max(by: u128) -> u128 {
+    MAX_COINS.checked_sub(by).expect("below the coin bound")
+}
+
+fn tos(amount: u128) -> u128 {
+    amount.checked_mul(u128::from(TOS)).expect("a test amount fits u128")
+}
+
 #[test]
 fn a_call_that_would_push_a_liability_past_the_coin_bound_is_refused_before_any_state_change() {
     let price = u128::from(Fixture::new().init.price_per_call);
@@ -2160,7 +2173,7 @@ fn a_call_that_would_push_a_liability_past_the_coin_bound_is_refused_before_any_
     // field holds, so the call is admitted and the counter reads back exactly.
     let mut f = Fixture::new();
     let caller = f.caller.address().clone();
-    f.patch_accounting(|a| Accounting { pending_liability: MAX_COINS - price, ..a });
+    f.patch_accounting(|a| Accounting { pending_liability: coins_below_max(price), ..a });
     f.call_from_init(&caller, 1, [0xAA; 32]).expect_success();
     assert_eq!(f.coin_counter(PENDING_INDEX), MAX_COINS);
     assert_eq!(f.pending_count(), 1);
@@ -2169,7 +2182,8 @@ fn a_call_that_would_push_a_liability_past_the_coin_bound_is_refused_before_any_
     // before the request, the counters or the dictionaries change.
     let mut f = Fixture::new();
     let caller = f.caller.address().clone();
-    f.patch_accounting(|a| Accounting { pending_liability: MAX_COINS - price + 1, ..a });
+    let one_past = coins_below_max(price).checked_add(1).expect("one unit past the bound");
+    f.patch_accounting(|a| Accounting { pending_liability: one_past, ..a });
     let before = f.data_hash();
     f.call_from_init(&caller, 1, [0xAA; 32]).expect_aborted().expect_exit_code(ERR_AMOUNT_RANGE);
     assert_eq!(f.data_hash(), before, "a refused call must not touch the state");
@@ -2200,9 +2214,12 @@ fn a_sweep_succeeds_when_the_final_revenue_fits_even_though_a_naive_sum_would_no
     let price = u128::from(f.init.price_per_call);
     let fee = u128::from(f.init.storage_fee);
     let bounty = u128::from(f.init.cleanup_bounty);
-    let credit = price + fee - bounty;
+    let credit = price
+        .checked_add(fee)
+        .and_then(|gross| gross.checked_sub(bounty))
+        .expect("the storage fee covers the bounty");
     // revenue + price + fee would pass the bound; revenue + (price + fee - bounty) is the maximum.
-    f.patch_accounting(|a| Accounting { withdrawable_revenue: MAX_COINS - credit, ..a });
+    f.patch_accounting(|a| Accounting { withdrawable_revenue: coins_below_max(credit), ..a });
     let request = f.request(0).expect("pending request");
     f.bc.set_now(request.refund_claim_deadline as u32);
     f.sweep(&outsider, 2, 0).expect_success();
@@ -2218,7 +2235,7 @@ fn an_unaffordable_sweep_is_refused_as_insufficient_balance_not_as_a_range_error
     f.call(&caller, 1, [0xAA; 32]).expect_success();
     // Other live entries are owed far more than the contract holds.
     f.patch_accounting(|a| Accounting {
-        pending_liability: a.pending_liability + 1_000 * u128::from(TOS),
+        pending_liability: a.pending_liability.checked_add(tos(1_000)).expect("liability fits"),
         ..a
     });
     let request = f.request(0).expect("pending request");
@@ -2233,7 +2250,7 @@ fn an_unaffordable_sweep_is_refused_as_insufficient_balance_not_as_a_range_error
 fn a_zero_withdrawal_is_refused_when_the_balance_does_not_cover_the_obligations() {
     let mut f = Fixture::new();
     let owner = f.owner.address().clone();
-    f.patch_accounting(|a| Accounting { pending_liability: 1_000 * u128::from(TOS), ..a });
+    f.patch_accounting(|a| Accounting { pending_liability: tos(1_000), ..a });
     let before = f.data_hash();
     for amount in [0, 1] {
         f.send_from(&owner, ServiceActorContract::withdraw_revenue(1, amount).unwrap())
