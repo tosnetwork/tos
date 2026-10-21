@@ -567,6 +567,43 @@ through the generic `wallet create` or import/mnemonic commands, pass
 `--workchain -1` explicitly. The operator setup guide's configuration-wallet
 default remains unchanged.
 
+### Deploying and funding a Service Actor
+
+`tosctl agent service deploy --amount` defaults to **1.2 TOS**: the protocol's
+1 TOS operating reserve plus a 0.2 TOS deployment fee margin. Lower funding is
+refused before accessing the wallet. Storage rent can reduce the backing over
+time; operators must keep their reserve and all outstanding customer liabilities
+funded. Changing the compiled contract changes newly calculated addresses and
+does not upgrade an existing deployment.
+
+For `tosctl agent service send`, omit `--amount` to fund the operation from its
+current protocol requirements:
+
+| Operation | Default attached value | Value returned on success |
+|---|---|---|
+| `call` | Quoted price + storage fee + 0.2 TOS execution allowance | Unused execution funding returns to the caller |
+| `claim-refund` | 0.2 TOS execution allowance | Exact price to `--destination`; unused execution funding separately to the caller |
+| `sweep-expired-request` | 0.2 TOS execution allowance | Exact cleanup bounty and separate unused execution funding to the sweeper |
+| `withdraw-revenue` | 0.2 TOS execution allowance | Exact `--withdraw-amount` and separate unused execution funding to the owner |
+| Other lifecycle operations | 0.01 TOS | No change transfer |
+
+Explicit `--amount` values for calls and payouts must cover the corresponding
+minimum. The CLI derives the call's
+price and storage fee from the quoted on-chain policy and checks additions for
+overflow. The execution allowance funds the receiver's computation and outbound
+messages; unused value is returned rather than counted as service revenue.
+
+A refund protects other callers' remaining prices and locked storage fees, but
+does not require the operator's 1 TOS reserve to stay funded. A service below that
+reserve refuses new work and withdrawals until separately topped up. If rent has
+also consumed customer backing, the refund remains live on a failed attempt;
+its deadline still runs, and an unclaimed price becomes owner revenue after the
+claim window expires. Payouts either deliver their full principal or roll back
+the state and all outgoing messages; fees cannot silently reduce an entitlement.
+
+See [Service Actor funding and settlement](../docs/service-actor-funding.md) for
+the accounting rules, action-phase guarantees, and reproducible verification.
+
 ### Managing wallets
 
 ```bash

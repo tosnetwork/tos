@@ -34,6 +34,10 @@ on:
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
+      - "scripts/service-actor-solvency-mutations.py"
+      - "scripts/check-service-actor-bytecode.py"
+      - "scripts/service-actor-e2e.py"
+      - "test/pq-native/test_e13_service*.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -81,6 +85,10 @@ on:
       - "scripts/test_replay_token_bridge_trace.py"
       - "crosschain/token-bridge/tests/**"
       - "scripts/token-bridge-mutations.py"
+      - "scripts/service-actor-solvency-mutations.py"
+      - "scripts/check-service-actor-bytecode.py"
+      - "scripts/service-actor-e2e.py"
+      - "test/pq-native/test_e13_service*.py"
       - "test/pq-native/validator-set-cases.txt"
       - "test/pq-native/validator-set-cases-gen.cpp"
       - "scripts/update-*-code.py"
@@ -360,13 +368,9 @@ jobs:
       # BOC still matches, so this covers artifact staleness as well as
       # behaviour. That check already existed in the tests; it had simply
       # never been executed.
-      # TOS_ROOT is load-bearing and easy to omit. tos_sandbox resolves
-      # stdlib.fc through find_tos_root(), which checks TOS_ROOT, then ~/tos,
-      # then only three directories up from the test binary's cwd -- and the
-      # repository root sits four levels above contracts/. A developer whose
-      # checkout happens to live at ~/tos passes locally through the second
-      # branch and learns nothing about CI, which is exactly what happened
-      # when this workflow was written.
+      # Select this checkout explicitly for the whole suite. Local runs also
+      # discover the enclosing worktree without requiring TOS_ROOT or a build/
+      # directory when compiler binaries are supplied through their overrides.
       - name: Contract sandbox suites
         env:
           TOS_ROOT: ${{ github.workspace }}
@@ -381,6 +385,19 @@ jobs:
         # that broke four deploy sandbox tests showed up here as three stale
         # hash assertions and nothing else.
         run: cargo test --manifest-path tosctl/src/Cargo.toml -p contracts --locked --no-fail-fast
+
+      - name: Service Actor solvency guard controls
+        env:
+          TOS_ROOT: ${{ github.workspace }}
+          FUNC_PATH: ${{ github.workspace }}/build/crypto/func
+          FIFT_PATH: ${{ github.workspace }}/build/crypto/fift
+        run: python3 scripts/service-actor-solvency-mutations.py
+
+      - name: Sandbox source-root discovery
+        run: cargo test --manifest-path tosctl/src/Cargo.toml --locked -p tos_sandbox --lib paths::tests
+
+      - name: Service Actor E2E evidence controls
+        run: python3 -m unittest discover -s test/pq-native -p 'test_e13_service*py'
 
       - name: Legacy wallet audit red/green controls
         env:

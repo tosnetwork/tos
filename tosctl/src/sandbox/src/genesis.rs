@@ -17,30 +17,10 @@ use std::process::Command;
 use chain_block::{read_single_root_boc, CurrencyCollection, Deserializable, ShardStateUnsplit};
 
 use crate::error::{SandboxError, SandboxResult};
+use crate::find_tos_root;
 
 /// 2026-09-15 10:00:00 JST (2026-09-15 01:00:00 UTC).
 const MAINNET_GENESIS_UNIX: &str = "1789434000";
-
-/// Locate the TOS repository root by checking common paths.
-///
-/// The root is returned absolute. The tools found under it are run from a temporary
-/// working directory, so a root relative to the caller's would resolve to nothing there.
-fn find_tos_root() -> Option<PathBuf> {
-    fn rooted(p: PathBuf) -> Option<PathBuf> {
-        p.join("build/crypto/create-state").exists().then(|| p.canonicalize().ok()).flatten()
-    }
-    if let Some(root) = env::var("TOS_ROOT").ok().map(PathBuf::from).and_then(rooted) {
-        return Some(root);
-    }
-    // The enclosing tree wins over any well-known checkout: a test run from a second
-    // worktree must exercise the contracts of that worktree, not the ones next door.
-    for candidate in [".", "..", "../..", "../../..", "../../../.."] {
-        if let Some(root) = rooted(PathBuf::from(candidate)) {
-            return Some(root);
-        }
-    }
-    env::var("HOME").ok().map(|home| PathBuf::from(home).join("tos")).and_then(rooted)
-}
 
 /// Run `create-state` against a zero-state Fift template and return the
 /// resulting masterchain state's total balance (the sum of every account
@@ -48,8 +28,7 @@ fn find_tos_root() -> Option<PathBuf> {
 ///
 /// # Environment
 /// * `TOS_ROOT` -- if set, used to locate `build/crypto/create-state` and
-///   `crypto/fift/lib` / `crypto/smartcont`. Falls back to `~/tos` or
-///   relative paths.
+///   `crypto/fift/lib` / `crypto/smartcont`. Falls back to the enclosing checkout, then `~/tos`.
 /// * `CREATE_STATE_PATH` -- override the path to the `create-state` binary.
 pub fn generate_zerostate_state(fif_path: impl AsRef<Path>) -> SandboxResult<ShardStateUnsplit> {
     let tos_root = find_tos_root();

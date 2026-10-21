@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Rebuild Service Actor and fail unless its BOC equals the Rust constant."""
+"""Rebuild Service Actor; check or explicitly update the SDK's frozen bytecode."""
 
+import argparse
 import base64
 import os
 import re
@@ -8,22 +9,25 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
-FUNC = Path(os.environ.get("FUNC", ROOT / "build-remove-workchains-full/crypto/func"))
-FIFT = Path(os.environ.get("FIFT", ROOT / "build-remove-workchains-full/crypto/fift"))
+FUNC = Path(os.environ.get("FUNC_PATH", ROOT / "build/crypto/func"))
+FIFT = Path(os.environ.get("FIFT_PATH", ROOT / "build/crypto/fift"))
 SOURCE = ROOT / "crypto/smartcont/service-actor-code.fc"
 STDLIB = ROOT / "crypto/smartcont/stdlib.fc"
 RUST = ROOT / "tosctl/src/node-control/contracts/src/service_actor.rs"
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--write", action="store_true", help="replace the embedded SDK bytecode")
+    args = parser.parse_args()
     for tool in (FUNC, FIFT):
         if not tool.is_file():
-            raise SystemExit(f"missing compiler tool: {tool} (set FUNC/FIFT to override)")
+            raise SystemExit(f"missing compiler tool: {tool} (set FUNC_PATH/FIFT_PATH to override)")
+    rust_source = RUST.read_text()
     match = re.search(
         r'pub const SERVICE_ACTOR_CODE_B64: &str = "([A-Za-z0-9+/=]+)";',
-        RUST.read_text(),
+        rust_source,
     )
     if not match:
         raise SystemExit("SERVICE_ACTOR_CODE_B64 was not found in Rust source")
@@ -34,7 +38,7 @@ def main() -> None:
         fift_source = tmp / "service-actor.fif"
         boc = tmp / "service-actor.boc"
         subprocess.run(
-            [str(FUNC), "-APS", str(STDLIB), str(SOURCE), "-W", str(boc), "-o", str(fift_source)],
+            [str(FUNC), "-APS", "-W", str(boc), "-o", str(fift_source), str(STDLIB), str(SOURCE)],
             cwd=ROOT,
             check=True,
         )
@@ -46,13 +50,22 @@ def main() -> None:
         embedded_boc.write_bytes(embedded)
         hash_script = tmp / "hashes.fif"
         hash_script.write_text(
-            f'"{boc}" file>B B>boc hashu . cr '
-            f'"{embedded_boc}" file>B B>boc hashu . cr\n'
+            f'"{boc}" file>B B>boc hashu . cr "{embedded_boc}" file>B B>boc hashu . cr\n'
         )
         hashes = subprocess.run(
-            [str(FIFT), str(hash_script)], cwd=ROOT, env=env, check=True,
-            capture_output=True, text=True,
+            [str(FIFT), str(hash_script)],
+            cwd=ROOT,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
         ).stdout.split()
+
+    if args.write:
+        encoded = base64.b64encode(generated).decode("ascii")
+        RUST.write_text(rust_source[: match.start(1)] + encoded + rust_source[match.end(1) :])
+        print(f"Service Actor bytecode updated (repr_hash={hashes[0]})")
+        return
 
     # BOC containers may legitimately differ in index/CRC flags; the root
     # cell representation hash is the bytecode identity used on chain.

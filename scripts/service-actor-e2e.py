@@ -13,7 +13,7 @@ validator:
 
   deploy (restricted to `caller`, price 0.05 TOS, rate limit 2/day)
     -> local record persisted -> on-chain state matches
-  call: access and payment gating (outsider rejected, underpayment rejected)
+  call: on-chain access gating and CLI underpayment preflight before submission
   concurrent requests: two outstanding calls from different callers before
     either is responded to, resolved independently and out of order --
     the headline feature this upgrade adds over the single-slot V1 contract
@@ -46,7 +46,7 @@ routine e2e run, so this script does not exercise the *success* side of
 those deadlines) live. That exact behavior -- including the precise boundary
 instants and the cleanup_bounty payout -- is already proven against the real
 compiled bytecode by
-`tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs`'s 43
+`tosctl/src/node-control/contracts/tests/service_actor_sandbox.rs`'s
 tests, which fast-forward `now()` deterministically; that is a strictly
 stronger check of the boundary logic than a live wall-clock wait would be.
 What this script proves instead is that the real CLI commands, RPC
@@ -125,8 +125,8 @@ def write_provenance() -> None:
     if subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=REPO).returncode:
         raise RuntimeError("Service Actor E2E requires a clean tracked source tree")
     compiler_env = dict(os.environ)
-    compiler_env.setdefault("FUNC", str(BUILD_DIR / "crypto/func"))
-    compiler_env.setdefault("FIFT", str(BUILD_DIR / "crypto/fift"))
+    compiler_env.setdefault("FUNC_PATH", str(BUILD_DIR / "crypto/func"))
+    compiler_env.setdefault("FIFT_PATH", str(BUILD_DIR / "crypto/fift"))
     bytecode_check = subprocess.run(
         [sys.executable, str(REPO / "scripts/check-service-actor-bytecode.py")],
         cwd=REPO, env=compiler_env, check=True, capture_output=True, text=True,
@@ -144,8 +144,8 @@ def write_provenance() -> None:
         "bytecode_checker": REPO / "scripts/check-service-actor-bytecode.py",
         "service_contract_source": REPO / "crypto/smartcont/service-actor-code.fc",
         "service_contract_cli_source": REPO / "tosctl/src/node-control/contracts/src/service_actor.rs",
-        "func": Path(os.environ.get("FUNC", BUILD_DIR / "crypto/func")),
-        "fift": Path(os.environ.get("FIFT", BUILD_DIR / "crypto/fift")),
+        "func": Path(compiler_env["FUNC_PATH"]),
+        "fift": Path(compiler_env["FIFT_PATH"]),
         "validator_engine": BUILD_DIR / "validator-engine/validator-engine",
         "dht_server": BUILD_DIR / "dht-server/dht-server",
         "tosctl": Path(TOSCTL),
@@ -170,6 +170,8 @@ CLEANUP_BOUNTY = 0.1
 STORAGE_FEE = 0.2
 RESPONSE_SLA = 3600
 REFUND_CLAIM_WINDOW = 3600
+ADMISSION_GAS_ALLOWANCE = 200_000_000
+PAYOUT_GAS_ALLOWANCE = 200_000_000
 
 failures: list[str] = []
 
@@ -458,6 +460,29 @@ async def send_op(operation: str, name: str, frm: str, *extra: str) -> str:
     )
 
 
+async def rejected_cli_funding(label: str, address: str, payer: str,
+                               name: str, frm: str, operation: str, *extra: str) -> None:
+    before_state = await service_show(name)
+    wallet_lt, contract_lt = last_lt(payer), last_lt(address)
+    try:
+        await send_op(operation, name, frm, *extra)
+    except RuntimeError as error:
+        receipt = str(error)
+        if "Service Actor message requires at least" not in receipt or "message submitted" in receipt:
+            raise
+    else:
+        raise RuntimeError(f"{label}: underfunded command was not refused")
+    if (last_lt(payer) != wallet_lt or last_lt(address) != contract_lt
+            or await service_show(name) != before_state):
+        raise RuntimeError(f"{label}: preflight refusal changed a wallet or Service Actor")
+    record_jsonl(NEGATIVE_EVIDENCE, {
+        "label": label, "boundary": "cli-preflight", "receipt": receipt,
+        "wallet_baseline_lt": wallet_lt, "service_baseline_lt": contract_lt,
+        "state": before_state,
+    })
+    check(label, True)
+
+
 async def rejected_operation(label: str, address: str, payer: str, expected_exit: int,
                              name: str, frm: str, operation: str, *extra: str) -> None:
     """Require exact wallet submission, Service Actor VM refusal, and final state."""
@@ -561,13 +586,54 @@ def atomic_tos(value: str) -> int:
     return int(amount)
 
 
+def execution_fees(row: dict) -> int:
+    """Read gas and full forwarding fees from the receipt's bound raw transaction."""
+    from pytosiq_core.tlb.transaction import Transaction
+
+    raw = Cell.one_from_boc(base64.b64decode(row["data"], validate=True))
+    tx = Transaction.deserialize(raw.begin_parse())
+    if (raw.hash != base64.b64decode(row["transaction_id"]["hash"], validate=True)
+            or str(tx.lt) != str(row["transaction_id"]["lt"])
+            or tx.in_msg is None
+            or tx.in_msg.cell.hash != base64.b64decode(row["in_msg"]["hash"], validate=True)
+            or tx.in_msg.info.value_coins != int(row["in_msg"]["value"])):
+        raise RuntimeError("Service Actor fee receipt is not bound to its transaction and inbound")
+    raw_payments = [(base64.b64encode(msg.cell.hash).decode(), msg.info.value_coins)
+                    for msg in tx.out_msgs]
+    summary_payments = [(msg["hash"], int(msg["value"])) for msg in row.get("out_msgs") or []]
+    if raw_payments != summary_payments:
+        raise RuntimeError("Service Actor raw payments differ from their receipt")
+    description = tx.description
+    if (description.type_ != "ordinary" or description.aborted
+            or description.compute_ph.type_ != "vm" or not description.compute_ph.success
+            or description.action is None or not description.action.success):
+        raise RuntimeError("Service Actor raw execution did not succeed")
+    gas = description.compute_ph.gas_fees
+    forward = description.action.total_fwd_fees
+    if gas is None or forward is None or gas < 0 or forward < 0:
+        raise RuntimeError("Service Actor execution fees are missing or negative")
+    # Storage rent is paid before the bounceable input is credited and is already
+    # excluded from the preexisting backing the contract protects. The caller's
+    # execution budget pays gas and full outbound forwarding fees, including the
+    # action fee component; adding total_action_fees again would double-count it.
+    return gas + forward
+
+
 async def observe_successful_edge(label: str, address: str, payer: str,
                                   wallet_lt: int, contract_lt: int, before_head: dict,
                                   receipt, expected_payout: int = 0,
-                                  expected_inbound: int | None = None) -> None:
-    """Bind one wallet send, successful Service Actor execution, and any exact payment."""
+                                  expected_inbound: int | None = None, *,
+                                  retained: int | None = None,
+                                  principal_destination: str | None = None,
+                                  principal_baseline_lt: int | None = None) -> None:
+    """Bind wallet submission, exact principal, fee-derived change and recipient credits."""
     deadline = time.monotonic() + 60
-    wallet_tx = contract_tx = recipient_tx = None
+    wallet_tx = contract_tx = None
+    recipient_txs = []
+    expected_change = None
+    principal_destination = principal_destination or payer
+    if not same_addr(principal_destination, payer) and principal_baseline_lt is None:
+        raise RuntimeError(f"{label}: missing principal recipient baseline")
     while time.monotonic() < deadline:
         wallet_rows = transactions_after(payer, wallet_lt)
         sends = [row for row in wallet_rows if any(
@@ -597,21 +663,36 @@ async def observe_successful_edge(label: str, address: str, payer: str,
                     or (contract_tx.get("compute") or {}).get("success") is not True
                     or (contract_tx.get("action") or {}).get("success") is not True):
                 raise RuntimeError(f"{label}: Service Actor execution did not succeed")
-            payments = contract_tx.get("out_msgs") or []
-            if len(payments) != (1 if expected_payout else 0):
-                raise RuntimeError(f"{label}: unexpected Service Actor payment count")
+            expected_payments = []
             if expected_payout:
-                payment = payments[0]
-                if (not payment.get("hash") or int(payment.get("value", -1)) != expected_payout
-                        or not same_addr(payment.get("destination"), payer)):
+                expected_payments.append((principal_destination, expected_payout))
+            if retained is not None:
+                expected_change = service_value - retained - execution_fees(contract_tx)
+                if expected_change < 0:
+                    raise RuntimeError(f"{label}: execution fees consumed principal or existing backing")
+                expected_payments.append((payer, expected_change))
+            payments = contract_tx.get("out_msgs") or []
+            if len(payments) != len(expected_payments):
+                raise RuntimeError(f"{label}: unexpected Service Actor payment count")
+            expected_hashes = {msg.get("hash") for msg in payments}
+            if None in expected_hashes or len(expected_hashes) != len(payments):
+                raise RuntimeError(f"{label}: missing or duplicated payment hash")
+            recipient_txs = []
+            missing_credit = False
+            for payment, (recipient, expected_value) in zip(payments, expected_payments):
+                if (not payment.get("hash") or int(payment.get("value", -1)) != expected_value
+                        or not same_addr(payment.get("destination"), recipient)):
                     raise RuntimeError(f"{label}: Service Actor payment amount or recipient differs")
-                matches = [row for row in wallet_rows
+                recipient_rows = wallet_rows if same_addr(recipient, payer) else transactions_after(
+                    recipient, principal_baseline_lt)
+                matches = [row for row in recipient_rows
                            if (row.get("in_msg") or {}).get("hash") == payment["hash"]]
                 if not matches:
                     if any(same_addr((row.get("in_msg") or {}).get("source"), address)
-                           for row in wallet_rows):
+                           and (row.get("in_msg") or {}).get("hash") not in expected_hashes
+                           for row in recipient_rows):
                         raise RuntimeError(f"{label}: recipient inbound hash differs from Service Actor outbound")
-                    await asyncio.sleep(1)
+                    missing_credit = True
                     continue
                 if len(matches) != 1:
                     raise RuntimeError(f"{label}: ambiguous recipient payment transactions")
@@ -619,11 +700,15 @@ async def observe_successful_edge(label: str, address: str, payer: str,
                 credited = recipient_tx.get("in_msg") or {}
                 if (recipient_tx.get("aborted") is not False
                         or not same_addr(credited.get("source"), address)
-                        or int(credited.get("value", -1)) != expected_payout):
+                        or int(credited.get("value", -1)) != expected_value):
                     raise RuntimeError(f"{label}: recipient inbound amount or source differs")
-            break
+                recipient_txs.append(recipient_tx)
+            if not missing_credit:
+                break
         await asyncio.sleep(1)
-    if wallet_tx is None or contract_tx is None or (expected_payout and recipient_tx is None):
+    else:
+        raise RuntimeError(f"{label}: exact successful transaction edge not observed")
+    if wallet_tx is None or contract_tx is None:
         raise RuntimeError(f"{label}: exact successful transaction edge not observed")
     heads = []
     last_seqno = int(before_head["id"]["seqno"])
@@ -642,7 +727,11 @@ async def observe_successful_edge(label: str, address: str, payer: str,
         "before_head": before_head, "wallet_tx": wallet_tx, "service_tx": contract_tx,
         "expected_inbound_atomic": expected_inbound,
         "observed_inbound_atomic": service_value,
-        "expected_payout_atomic": expected_payout, "recipient_tx": recipient_tx,
+        "expected_payout_atomic": expected_payout,
+        "expected_change_atomic": expected_change,
+        "retained_inbound_atomic": retained,
+        "recipient_tx": recipient_txs[0] if len(recipient_txs) == 1 else None,
+        "recipient_txs": recipient_txs,
         "final_heads": heads,
     })
 
@@ -653,19 +742,40 @@ async def successful_operation(operation: str, name: str, frm: str, *extra: str)
     payer = await wallet_address(frm)
     expected_payout = 0
     expected_inbound = None
+    retained = None
+    principal_destination = payer
+    principal_baseline_lt = None
     if operation == "call":
-        amount = atomic_tos(extra[extra.index("--amount") + 1])
         due = atomic_tos(str(before["price_per_call"])) + atomic_tos(str(before["storage_fee"]))
-        expected_payout = max(0, amount - due)
-        expected_inbound = amount
-    elif operation == "withdraw-revenue":
-        expected_payout = atomic_tos(extra[extra.index("--withdraw-amount") + 1])
+        expected_inbound = (atomic_tos(extra[extra.index("--amount") + 1])
+                            if "--amount" in extra else due + ADMISSION_GAS_ALLOWANCE)
+        retained = due
+    elif operation in ("withdraw-revenue", "claim-refund", "sweep-expired-request"):
+        expected_inbound = (atomic_tos(extra[extra.index("--amount") + 1])
+                            if "--amount" in extra else PAYOUT_GAS_ALLOWANCE)
+        retained = 0
+        if operation == "withdraw-revenue":
+            expected_payout = atomic_tos(extra[extra.index("--withdraw-amount") + 1])
+        else:
+            request_id = int(extra[extra.index("--request-id") + 1])
+            if operation == "claim-refund":
+                entry = await refund_show(name, request_id)
+                expected_payout = atomic_tos(str(entry["price"]))
+                principal_destination = extra[extra.index("--destination") + 1]
+                if not same_addr(principal_destination, payer):
+                    principal_baseline_lt = last_lt(principal_destination)
+            else:
+                entry = await request_show(name, request_id)
+                if not entry.get("found"):
+                    entry = await refund_show(name, request_id)
+                expected_payout = atomic_tos(str(entry["cleanup_bounty"]))
     before_head = finalized_mc_header()
     wallet_lt, contract_lt = last_lt(payer), last_lt(address)
     receipt = await send_op(operation, name, frm, *extra)
     await observe_successful_edge(
         f"{name}:{operation}", address, payer, wallet_lt, contract_lt,
-        before_head, receipt, expected_payout, expected_inbound,
+        before_head, receipt, expected_payout, expected_inbound, retained=retained,
+        principal_destination=principal_destination, principal_baseline_lt=principal_baseline_lt,
     )
     return receipt
 
@@ -763,7 +873,7 @@ async def run_checks(faucet) -> None:
           str(data))
     check("no withdrawable revenue at deploy", float(data["withdrawable_revenue"]) == 0.0, str(data))
 
-    call_amount = 0.05 + STORAGE_FEE + 0.05  # price + storage_fee + real-fee headroom
+    call_amount = Decimal("0.05") + Decimal(str(STORAGE_FEE)) + Decimal(ADMISSION_GAS_ALLOWANCE) / NANO
 
     print("\n=== start tosctld HTTP daemon (real query API + indexer, not the sandbox suite) ===")
     deployment_mc_seqno = finalized_mc_header()["id"]["seqno"]
@@ -808,9 +918,9 @@ async def run_checks(faucet) -> None:
                                  outsider, 1923, "svc-1", "outsider", "call",
                                  "--request-hash", "aa" * 32, "--amount", str(call_amount))
 
-        await rejected_operation("underpaid call rejected", address, caller, 1902,
-                                 "svc-1", "caller", "call", "--request-hash", "bb" * 32,
-                                 "--amount", "0.01")
+        await rejected_cli_funding("underpaid call rejected before wallet submission",
+                                   address, caller, "svc-1", "caller", "call",
+                                   "--request-hash", "bb" * 32, "--amount", "0.01")
 
         print("\n=== concurrent requests: two outstanding calls, resolved independently ===")
         # This is the headline feature the upgrade adds: unlike the single-slot
@@ -818,7 +928,7 @@ async def run_checks(faucet) -> None:
         # unanswered, and each resolves on its own schedule and in any order.
         predicted_a = await next_request_id("svc-1")
         call_a_output = await successful_operation(
-            "call", "svc-1", "caller", "--request-hash", "cc" * 32, "--amount", str(call_amount))
+            "call", "svc-1", "caller", "--request-hash", "cc" * 32)
         request_a = assigned_request_id(call_a_output)
         check("CLI reports the exact assigned request ID", request_a == predicted_a, call_a_output)
         data = await service_show("svc-1")
@@ -827,7 +937,7 @@ async def run_checks(faucet) -> None:
 
         predicted_b = await next_request_id("svc-1")
         call_b_output = await successful_operation(
-            "call", "svc-1", "caller", "--request-hash", "dd" * 32, "--amount", str(call_amount))
+            "call", "svc-1", "caller", "--request-hash", "dd" * 32)
         request_b = assigned_request_id(call_b_output)
         check("second request gets a distinct ID", request_b != request_a, f"a={request_a} b={request_b}")
         check("second CLI request ID matches chain allocation", request_b == predicted_b, call_b_output)
@@ -989,7 +1099,7 @@ async def run_checks(faucet) -> None:
 
     # claim-refund requires a refund entry to exist at all (never expired).
     fresh_id = await next_request_id("svc-1")
-    await successful_operation("call", "svc-1", "outsider", "--request-hash", "05" * 32, "--amount", str(new_call_min + 0.05))
+    await successful_operation("call", "svc-1", "outsider", "--request-hash", "05" * 32)
     await rejected_operation("claim-refund rejected: request never expired, no refund entry",
                              address, outsider, 1917, "svc-1", "outsider", "claim-refund",
                              "--request-id", str(fresh_id), "--destination", outsider)
@@ -1033,8 +1143,7 @@ async def run_checks(faucet) -> None:
     check("attestor pubkey recorded on-chain", bool(data.get("attestor_pubkey")), str(data))
 
     req_id2 = await next_request_id("svc-2")
-    await successful_operation("call", "svc-2", "outsider", "--request-hash", "cc" * 32,
-                  "--amount", str(0.01 + STORAGE_FEE + 0.05))
+    await successful_operation("call", "svc-2", "outsider", "--request-hash", "cc" * 32)
 
     await rejected_operation("respond without attestation rejected", address2, owner, 9,
                              "svc-2", "owner", "respond", "--request-id", str(req_id2),
@@ -1053,8 +1162,7 @@ async def run_checks(faucet) -> None:
     print("\n=== snapshot behavior: rotating the attestor key does not affect an already-pending request ===")
     await tosctl("key", "add", "--name", "rotated-service-attestor-key")
     req_id3 = await next_request_id("svc-2")
-    await successful_operation("call", "svc-2", "outsider", "--request-hash", "06" * 32,
-                  "--amount", str(0.01 + STORAGE_FEE + 0.05))
+    await successful_operation("call", "svc-2", "outsider", "--request-hash", "06" * 32)
     req3_before_rotate = await request_show("svc-2", req_id3)
     check("request snapshotted the attestor pubkey in force at call time", req3_before_rotate["found"],
           str(req3_before_rotate))
@@ -1082,8 +1190,7 @@ async def run_checks(faucet) -> None:
 
     # New requests require the new key.
     req_id4 = await next_request_id("svc-2")
-    await successful_operation("call", "svc-2", "outsider", "--request-hash", "08" * 32,
-                  "--amount", str(0.01 + STORAGE_FEE + 0.05))
+    await successful_operation("call", "svc-2", "outsider", "--request-hash", "08" * 32)
     await rejected_operation("old key rejected for a request accepted after rotation",
                              address2, owner, 1911, "svc-2", "owner", "respond",
                              "--request-id", str(req_id4), "--response-hash", "09" * 32,
@@ -1100,8 +1207,7 @@ async def run_checks(faucet) -> None:
     print("\n=== snapshot behavior: update-policy does not change an already-pending request's terms ===")
     address4 = await deploy_service("svc-4", owner, price_per_call=0.01, open_access=True)
     req_id5 = await next_request_id("svc-4")
-    await successful_operation("call", "svc-4", "outsider", "--request-hash", "0a" * 32,
-                  "--amount", str(0.01 + STORAGE_FEE + 0.05))
+    await successful_operation("call", "svc-4", "outsider", "--request-hash", "0a" * 32)
     req5_before = await request_show("svc-4", req_id5)
     check("pending request snapshotted price 0.01", abs(float(req5_before["price"]) - 0.01) < 1e-9,
           str(req5_before))

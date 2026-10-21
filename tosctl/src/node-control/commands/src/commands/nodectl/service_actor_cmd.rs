@@ -25,6 +25,9 @@ use common::{
     chain_utils::{display_tos, tos_to_nanotos},
     time_format,
 };
+use contracts::service_actor::protocol_constants::{
+    ADMISSION_GAS_ALLOWANCE, MINIMUM_OPERATING_RESERVE, PAYOUT_GAS_ALLOWANCE,
+};
 use contracts::{
     PendingRequestData, RefundData, ServiceActorContract, ServiceActorData, ServiceActorInit,
 };
@@ -131,7 +134,11 @@ pub struct ServiceActorDeployCmd {
     signer_vault_key: Option<String>,
     #[arg(long, help = "Funding wallet name or master_wallet")]
     from: String,
-    #[arg(long, default_value_t = 0.2, help = "Message value funding the deploy, in TOS")]
+    #[arg(
+        long,
+        default_value_t = default_deploy_amount(),
+        help = deploy_funding_help()
+    )]
     amount: f64,
     #[arg(short = 'w', long = "workchain", allow_negative_numbers = true, default_value_t = super::utils::USER_CONTRACT_WORKCHAIN)]
     workchain: i32,
@@ -308,11 +315,9 @@ pub struct ServiceActorSendCmd {
     new_attestor_pubkey: Option<String>,
     #[arg(
         long,
-        default_value_t = 0.01,
-        help = "Message value in TOS; for call this is the payment (must cover price_per_call + \
-                storage_fee)"
+        help = send_funding_help()
     )]
-    amount: f64,
+    amount: Option<f64>,
     #[arg(long)]
     yes: bool,
 }
@@ -415,9 +420,112 @@ fn build_init(
     })
 }
 
+const DEPLOY_FEE_MARGIN: u64 = 200_000_000;
+const NANOTOS_PER_TOS: u64 = 1_000_000_000;
+const DEFAULT_NON_PAYOUT_VALUE: u64 = 10_000_000;
+const MINIMUM_DEPLOY_FUNDING: u64 = MINIMUM_OPERATING_RESERVE
+    .checked_add(DEPLOY_FEE_MARGIN)
+    .expect("Service Actor deploy funding constants must fit u64");
+
+fn default_deploy_amount() -> f64 {
+    MINIMUM_DEPLOY_FUNDING as f64 / NANOTOS_PER_TOS as f64
+}
+
+fn deploy_funding_help() -> String {
+    format!(
+        "Deploy funding in TOS; minimum {} ({} TOS reserve plus {} TOS fee margin)",
+        default_deploy_amount(),
+        MINIMUM_OPERATING_RESERVE as f64 / NANOTOS_PER_TOS as f64,
+        DEPLOY_FEE_MARGIN as f64 / NANOTOS_PER_TOS as f64
+    )
+}
+
+fn validate_deploy_amount(amount: f64) -> anyhow::Result<u64> {
+    validate_tos_amount("amount", amount)?;
+    let amount_nanotos = tos_to_nanotos(amount);
+    anyhow::ensure!(
+        amount_nanotos >= MINIMUM_DEPLOY_FUNDING,
+        "Service Actor deploy requires at least {} TOS",
+        default_deploy_amount()
+    );
+    Ok(amount_nanotos)
+}
+
+fn send_funding_help() -> String {
+    format!(
+        "Message value in TOS. Defaults to quoted price + storage fee + {} for call; \
+         {} for claim-refund, sweep-expired-request and withdraw-revenue; {} otherwise. \
+         Calls and payouts return unused execution funding to the sender. Explicit call and payout \
+         values must cover their funding minimum",
+        ADMISSION_GAS_ALLOWANCE as f64 / NANOTOS_PER_TOS as f64,
+        PAYOUT_GAS_ALLOWANCE as f64 / NANOTOS_PER_TOS as f64,
+        DEFAULT_NON_PAYOUT_VALUE as f64 / NANOTOS_PER_TOS as f64,
+    )
+}
+
+impl ServiceActorOperation {
+    fn execution_allowance(&self) -> u64 {
+        match self {
+            Self::Call => ADMISSION_GAS_ALLOWANCE,
+            Self::ClaimRefund | Self::SweepExpiredRequest | Self::WithdrawRevenue => {
+                PAYOUT_GAS_ALLOWANCE
+            }
+            _ => 0,
+        }
+    }
+}
+
+/// Reject a known funding shortfall before opening the wallet or contacting RPC.
+/// The call's quoted price and storage fee are checked after fetching its policy.
+fn validate_send_amount(
+    operation: &ServiceActorOperation,
+    amount: Option<f64>,
+) -> anyhow::Result<Option<u64>> {
+    amount
+        .map(|amount| {
+            validate_tos_amount("amount", amount)?;
+            let amount_nanotos = tos_to_nanotos(amount);
+            anyhow::ensure!(
+                amount_nanotos >= operation.execution_allowance(),
+                "Service Actor message requires at least {} TOS for execution, in addition \
+                 to the price and storage fee for a call",
+                operation.execution_allowance() as f64 / NANOTOS_PER_TOS as f64,
+            );
+            Ok(amount_nanotos)
+        })
+        .transpose()
+}
+
+fn send_amount_nanotos(
+    operation: &ServiceActorOperation,
+    explicit: Option<u64>,
+    call_terms: Option<(u64, u64)>,
+) -> anyhow::Result<u64> {
+    let minimum = match operation {
+        ServiceActorOperation::Call => {
+            let (price, storage_fee) =
+                call_terms.context("Service Actor call policy is unavailable")?;
+            ServiceActorContract::minimum_call_payment(price, storage_fee)?
+        }
+        ServiceActorOperation::ClaimRefund
+        | ServiceActorOperation::SweepExpiredRequest
+        | ServiceActorOperation::WithdrawRevenue => PAYOUT_GAS_ALLOWANCE,
+        _ => 0,
+    };
+    let amount =
+        explicit.unwrap_or_else(|| if minimum == 0 { DEFAULT_NON_PAYOUT_VALUE } else { minimum });
+    anyhow::ensure!(
+        amount >= minimum,
+        "Service Actor message requires at least {} nanoTOS ({} TOS), including execution funding",
+        minimum,
+        minimum as f64 / NANOTOS_PER_TOS as f64,
+    );
+    Ok(amount)
+}
+
 impl ServiceActorDeployCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        validate_tos_amount("amount", self.amount)?;
+        let amount_nanotos = validate_deploy_amount(self.amount)?;
         let owner = self.owner.parse::<MsgAddressInt>().context("invalid owner address")?;
         let authorized_caller = self
             .authorized_caller
@@ -481,10 +589,10 @@ impl ServiceActorDeployCmd {
         if payer_info.account_state != AccountState::Active {
             anyhow::bail!("funding wallet is not active");
         }
-        let amount_nanotos = tos_to_nanotos(self.amount);
-        if amount_nanotos == 0
-            || payer_info.balance < amount_nanotos.saturating_add(SERVICE_ACTOR_DEPLOY_GAS)
-        {
+        let required_balance = amount_nanotos
+            .checked_add(SERVICE_ACTOR_DEPLOY_GAS)
+            .context("Service Actor deploy funding overflow")?;
+        if payer_info.balance < required_balance {
             anyhow::bail!("funding wallet has insufficient balance");
         }
         if !self.yes && !confirm("Confirm Service Actor deployment?")? {
@@ -987,7 +1095,7 @@ impl ServiceActorLsCmd {
 
 impl ServiceActorSendCmd {
     async fn run(&self, config_path: &str) -> anyhow::Result<()> {
-        validate_tos_amount("amount", self.amount)?;
+        let explicit_amount = validate_send_amount(&self.operation, self.amount)?;
         let path = Path::new(config_path);
         let (config, vault, rpc_client) = load_config_vault_rpc_client(path).await?;
         let destination_service = resolve_service_address(&config, &self.address, &self.name)?;
@@ -1027,6 +1135,11 @@ impl ServiceActorSendCmd {
             None
         };
         let call_frontier = call_service_data.as_ref().map(|data| data.next_request_id);
+        let amount_nanotos = send_amount_nanotos(
+            &self.operation,
+            explicit_amount,
+            call_service_data.as_ref().map(|data| (data.price_per_call, data.storage_fee)),
+        )?;
 
         let body = match self.operation {
             ServiceActorOperation::Call => {
@@ -1191,10 +1304,13 @@ impl ServiceActorSendCmd {
             }
         };
 
-        let amount_nanotos = tos_to_nanotos(self.amount);
-        if owner_info.balance < amount_nanotos.saturating_add(SERVICE_ACTOR_ACTION_GAS) {
+        let required_balance = amount_nanotos
+            .checked_add(SERVICE_ACTOR_ACTION_GAS)
+            .context("Service Actor message funding exceeds the wallet amount range")?;
+        if owner_info.balance < required_balance {
             anyhow::bail!("signing wallet has insufficient balance");
         }
+        println!("Message funding: {} TOS", display_tos(amount_nanotos));
         if !self.yes && !confirm("Confirm Service Actor message?")? {
             return Ok(());
         }
@@ -1298,5 +1414,151 @@ impl ServiceActorBuildStateCmd {
             println!("Service Actor address: {}", address);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod solvency_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct DeployArgs {
+        #[command(flatten)]
+        deploy: ServiceActorDeployCmd,
+    }
+
+    #[derive(Parser)]
+    struct SendArgs {
+        #[command(flatten)]
+        send: ServiceActorSendCmd,
+    }
+
+    fn send_args(operation: &str) -> ServiceActorSendCmd {
+        SendArgs::try_parse_from([
+            "send",
+            "--operation",
+            operation,
+            "--name",
+            "service",
+            "--from",
+            "master_wallet",
+        ])
+        .expect("send arguments")
+        .send
+    }
+
+    fn deploy_args() -> ServiceActorDeployCmd {
+        DeployArgs::try_parse_from([
+            "deploy",
+            "--owner",
+            &format!("0:{}", "11".repeat(32)),
+            "--open-access",
+            "--price-per-call",
+            "0.1",
+            "--storage-fee",
+            "0.2",
+            "--cleanup-bounty",
+            "0.1",
+            "--response-sla",
+            "3600",
+            "--refund-claim-window",
+            "3600",
+            "--metadata-hash",
+            &"11".repeat(32),
+            "--proof-scheme-hash",
+            &"22".repeat(32),
+            "--from",
+            "master_wallet",
+        ])
+        .expect("deploy arguments")
+        .deploy
+    }
+
+    #[test]
+    fn service_deploy_default_funds_reserve_and_margin() {
+        let minimum = contracts::service_actor::protocol_constants::MINIMUM_OPERATING_RESERVE
+            .checked_add(DEPLOY_FEE_MARGIN)
+            .unwrap();
+        assert_eq!(validate_deploy_amount(deploy_args().amount).unwrap(), minimum);
+        assert!(
+            validate_deploy_amount(minimum.checked_sub(1).unwrap() as f64 / NANOTOS_PER_TOS as f64)
+                .is_err()
+        );
+        assert!(validate_deploy_amount(1.0).is_err());
+        assert!(validate_deploy_amount(0.2).is_err());
+        assert!(validate_deploy_amount(f64::NAN).is_err());
+    }
+
+    #[tokio::test]
+    async fn service_deploy_rejects_underfunding_before_loading_wallet() {
+        let mut cmd = deploy_args();
+        cmd.amount = 0.2;
+        let error = cmd.run("/nonexistent/service-solvency-config.json").await.unwrap_err();
+        assert!(
+            error.to_string().contains(&format!("at least {} TOS", default_deploy_amount())),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn service_call_default_and_explicit_funding_include_execution_allowance() {
+        let cmd = send_args("call");
+        assert!(cmd.amount.is_none(), "call funding must follow the quoted policy");
+        let price: u64 = 123_456_789;
+        let storage_fee: u64 = 200_000_000;
+        let expected =
+            price.checked_add(storage_fee).unwrap().checked_add(ADMISSION_GAS_ALLOWANCE).unwrap();
+        assert_eq!(
+            send_amount_nanotos(&cmd.operation, None, Some((price, storage_fee))).unwrap(),
+            expected
+        );
+        assert_eq!(
+            send_amount_nanotos(&cmd.operation, Some(expected), Some((price, storage_fee)))
+                .unwrap(),
+            expected
+        );
+        assert!(
+            send_amount_nanotos(&cmd.operation, Some(expected - 1), Some((price, storage_fee)))
+                .is_err()
+        );
+        assert!(send_amount_nanotos(&cmd.operation, None, None).is_err());
+        assert!(send_amount_nanotos(&cmd.operation, None, Some((u64::MAX, storage_fee))).is_err());
+    }
+
+    #[test]
+    fn service_payout_defaults_cover_execution_and_do_not_change_other_operations() {
+        for operation in ["claim-refund", "sweep-expired-request", "withdraw-revenue"] {
+            let cmd = send_args(operation);
+            assert_eq!(
+                send_amount_nanotos(&cmd.operation, None, None).unwrap(),
+                PAYOUT_GAS_ALLOWANCE
+            );
+            assert!(
+                send_amount_nanotos(&cmd.operation, Some(PAYOUT_GAS_ALLOWANCE - 1), None).is_err()
+            );
+            assert_eq!(
+                send_amount_nanotos(&cmd.operation, Some(PAYOUT_GAS_ALLOWANCE), None).unwrap(),
+                PAYOUT_GAS_ALLOWANCE
+            );
+        }
+        let respond = send_args("respond");
+        assert_eq!(
+            send_amount_nanotos(&respond.operation, None, None).unwrap(),
+            DEFAULT_NON_PAYOUT_VALUE
+        );
+    }
+
+    #[tokio::test]
+    async fn service_send_rejects_insufficient_execution_funding_before_loading_wallet() {
+        for operation in ["call", "claim-refund", "sweep-expired-request", "withdraw-revenue"] {
+            let mut cmd = send_args(operation);
+            cmd.amount = Some(0.01);
+            let error = cmd.run("/nonexistent/service-solvency-config.json").await.unwrap_err();
+            assert!(error.to_string().contains("for execution"), "{operation}: {error:#}");
+            cmd.amount = Some(f64::NAN);
+            let error = cmd.run("/nonexistent/service-solvency-config.json").await.unwrap_err();
+            assert!(error.to_string().contains("amount"), "{operation}: {error:#}");
+        }
     }
 }

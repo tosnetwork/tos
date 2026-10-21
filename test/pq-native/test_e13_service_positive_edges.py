@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import base64
 import hashlib
 import importlib.util
 import json
@@ -202,6 +203,8 @@ class ServicePositiveEdgesTests(unittest.TestCase):
         expected=50_000_000,
         expected_inbound=None,
         heads=None,
+        retained=None,
+        fees=20_000_000,
     ):
         usual = rows()
         wallet = wallet or usual[0]
@@ -210,13 +213,18 @@ class ServicePositiveEdgesTests(unittest.TestCase):
 
         def transactions(address, baseline):
             self.assertEqual(baseline, 10 if address == PAYER else 20)
-            return [wallet, receiver] if address == PAYER else [service]
+            return (
+                [wallet, *(receiver if isinstance(receiver, list) else [receiver])]
+                if address == PAYER
+                else [service]
+            )
 
         with (
             patch.object(e13, "transactions_after", side_effect=transactions),
             patch.object(e13, "same_addr", side_effect=lambda actual, want: actual == want),
             patch.object(e13, "finalized_mc_header", side_effect=heads or [head(11), head(12)]),
             patch.object(e13, "record_jsonl") as record,
+            patch.object(e13, "execution_fees", return_value=fees),
         ):
             asyncio.run(
                 e13.observe_successful_edge(
@@ -229,6 +237,7 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                     "submitted",
                     expected,
                     expected_inbound,
+                    retained=retained,
                 )
             )
             return record
@@ -301,7 +310,8 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                 )
             )
             self.assertEqual(observe.await_args.args[-2], 150_000_000)
-            self.assertIsNone(observe.await_args.args[-1])
+            self.assertEqual(observe.await_args.args[-1], e13.PAYOUT_GAS_ALLOWANCE)
+            self.assertEqual(observe.await_args.kwargs["retained"], 0)
             asyncio.run(
                 e13.successful_operation(
                     "call",
@@ -311,8 +321,112 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                     "0.5",
                 )
             )
-            self.assertEqual(observe.await_args.args[-2], 280_000_000)
+            self.assertEqual(observe.await_args.args[-2], 0)
+            self.assertEqual(observe.await_args.kwargs["retained"], 220_000_000)
             self.assertEqual(observe.await_args.args[-1], 500_000_000)
+
+    def test_call_change_is_derived_from_actual_fees(self):
+        record = self.run_edge(expected=0, retained=200_000_000)
+        self.assertEqual(record.call_args.args[1]["expected_change_atomic"], 50_000_000)
+        with self.assertRaisesRegex(RuntimeError, "payment amount or recipient"):
+            self.run_edge(expected=0, retained=200_000_000, fees=21_000_000)
+        with self.assertRaisesRegex(RuntimeError, "consumed principal or existing backing"):
+            self.run_edge(expected=0, retained=200_000_000, fees=71_000_000)
+
+    def test_exact_principal_and_separate_change_both_require_recipient_credit(self):
+        wallet, service, principal = rows(payout_value=100_000_000, received_value=100_000_000)
+        change = {
+            "aborted": False,
+            "in_msg": {"source": SERVICE, "hash": "change-hash", "value": "250000000"},
+            "out_msgs": [],
+        }
+        service["out_msgs"].append(
+            {
+                "destination": PAYER,
+                "hash": "change-hash",
+                "value": "250000000",
+            }
+        )
+        record = self.run_edge(
+            wallet=wallet,
+            service=service,
+            receiver=[principal, change],
+            expected=100_000_000,
+            retained=0,
+        )
+        evidence = record.call_args.args[1]
+        self.assertEqual(len(evidence["recipient_txs"]), 2)
+        self.assertEqual(evidence["expected_payout_atomic"], 100_000_000)
+        self.assertEqual(evidence["expected_change_atomic"], 250_000_000)
+        service["out_msgs"][0]["value"] = "99999999"
+        with self.assertRaisesRegex(RuntimeError, "payment amount or recipient"):
+            self.run_edge(
+                wallet=wallet,
+                service=service,
+                receiver=[principal, change],
+                expected=100_000_000,
+                retained=0,
+            )
+        service["out_msgs"][0]["value"] = "100000000"
+        change["in_msg"]["value"] = "249999999"
+        with self.assertRaisesRegex(RuntimeError, "recipient inbound amount or source"):
+            self.run_edge(
+                wallet=wallet,
+                service=service,
+                receiver=[principal, change],
+                expected=100_000_000,
+                retained=0,
+            )
+
+    def test_execution_fees_bind_raw_receipt_and_do_not_double_count_action_fees(self):
+        tx_hash, in_hash, out_hash = b"t" * 32, b"i" * 32, b"o" * 32
+        raw = Mock(hash=tx_hash)
+        tx = types.SimpleNamespace(
+            lt=21,
+            in_msg=types.SimpleNamespace(
+                cell=types.SimpleNamespace(hash=in_hash),
+                info=types.SimpleNamespace(value_coins=270_000_000),
+            ),
+            out_msgs=[
+                types.SimpleNamespace(
+                    cell=types.SimpleNamespace(hash=out_hash),
+                    info=types.SimpleNamespace(value_coins=50_000_000),
+                )
+            ],
+            description=types.SimpleNamespace(
+                type_="ordinary",
+                aborted=False,
+                compute_ph=types.SimpleNamespace(type_="vm", success=True, gas_fees=10_000_000),
+                action=types.SimpleNamespace(
+                    success=True, total_fwd_fees=10_000_000, total_action_fees=3_333_333
+                ),
+            ),
+        )
+        module = types.ModuleType("pytosiq_core.tlb.transaction")
+        module.Transaction = Mock()
+        module.Transaction.deserialize.return_value = tx
+        row = {
+            "data": base64.b64encode(b"boc").decode(),
+            "transaction_id": {"lt": "21", "hash": base64.b64encode(tx_hash).decode()},
+            "in_msg": {"hash": base64.b64encode(in_hash).decode(), "value": "270000000"},
+            "out_msgs": [{"hash": base64.b64encode(out_hash).decode(), "value": "50000000"}],
+        }
+        with (
+            patch.dict(sys.modules, {"pytosiq_core.tlb.transaction": module}),
+            patch.object(e13, "Cell", Mock(one_from_boc=Mock(return_value=raw))),
+        ):
+            self.assertEqual(e13.execution_fees(row), 20_000_000)
+            row["transaction_id"]["lt"] = "22"
+            with self.assertRaisesRegex(RuntimeError, "not bound"):
+                e13.execution_fees(row)
+            row["transaction_id"]["lt"] = "21"
+            row["out_msgs"][0]["value"] = "49999999"
+            with self.assertRaisesRegex(RuntimeError, "raw payments differ"):
+                e13.execution_fees(row)
+            row["out_msgs"][0]["value"] = "50000000"
+            tx.description.action.total_fwd_fees = None
+            with self.assertRaisesRegex(RuntimeError, "fees are missing"):
+                e13.execution_fees(row)
 
     def test_all_positive_sends_and_deploy_use_exact_edge(self):
         tree = ast.parse(SOURCE.read_text())
@@ -348,25 +462,47 @@ class ServicePositiveEdgesTests(unittest.TestCase):
             for index, path in enumerate(paths):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(bytes([index + 1]))
+            override_tools = [root / "other-tools/func", root / "other-tools/fift"]
+            for index, path in enumerate(override_tools):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(bytes([index + 20]))
             manifest = root / "provenance.json"
             bytecode = "Service Actor bytecode synchronized (repr_hash=" + str(2**255) + ")"
-            run = [Mock(returncode=0), Mock(stdout=bytecode + "\n")] * 2
-            with (
-                patch.object(e13, "REPO", root),
-                patch.object(e13, "BUILD_DIR", build),
-                patch.object(e13, "TOSCTL", str(paths[-1])),
-                patch.object(e13, "PROVENANCE", manifest),
-                patch.object(e13.subprocess, "check_output", return_value="a" * 40),
-                patch.object(e13.subprocess, "run", side_effect=run),
+            run = [Mock(returncode=0), Mock(stdout=bytecode + "\n")]
+            for tool_paths, env in (
+                (paths[3:5], {}),
+                (override_tools, dict(zip(("FUNC_PATH", "FIFT_PATH"), map(str, override_tools)))),
             ):
-                e13.write_provenance()
-            report = json.loads(manifest.read_text())
-            self.assertEqual(report["source_commit"], "a" * 40)
-            self.assertEqual(report["service_bytecode_check"], bytecode)
-            self.assertEqual(
-                report["artifacts"]["tosctl"]["sha256"],
-                hashlib.sha256(paths[-1].read_bytes()).hexdigest(),
-            )
+                with (
+                    self.subTest(compiler_env=env),
+                    patch.dict(e13.os.environ, env, clear=True),
+                    patch.object(e13, "REPO", root),
+                    patch.object(e13, "BUILD_DIR", build),
+                    patch.object(e13, "TOSCTL", str(paths[-1])),
+                    patch.object(e13, "PROVENANCE", manifest),
+                    patch.object(e13.subprocess, "check_output", return_value="a" * 40),
+                    patch.object(e13.subprocess, "run", side_effect=run) as subprocess_run,
+                ):
+                    e13.write_provenance()
+                report = json.loads(manifest.read_text())
+                self.assertEqual(report["source_commit"], "a" * 40)
+                self.assertEqual(report["service_bytecode_check"], bytecode)
+                self.assertEqual(
+                    report["artifacts"]["tosctl"]["sha256"],
+                    hashlib.sha256(paths[-1].read_bytes()).hexdigest(),
+                )
+                checker_env = subprocess_run.call_args.kwargs["env"]
+                for name, env_name, path in zip(
+                    ("func", "fift"), ("FUNC_PATH", "FIFT_PATH"), tool_paths
+                ):
+                    self.assertEqual(checker_env[env_name], str(path))
+                    self.assertEqual(
+                        report["artifacts"][name],
+                        {
+                            "path": str(path.resolve()),
+                            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                        },
+                    )
             with (
                 patch.object(e13, "REPO", root),
                 patch.object(e13.subprocess, "check_output", return_value="a" * 40),
@@ -394,6 +530,7 @@ class ServicePositiveEdgesTests(unittest.TestCase):
                     e13.write_provenance()
             paths[-1].unlink()
             with (
+                patch.dict(e13.os.environ, {}, clear=True),
                 patch.object(e13, "REPO", root),
                 patch.object(e13, "BUILD_DIR", build),
                 patch.object(e13, "TOSCTL", str(paths[-1])),
