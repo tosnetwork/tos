@@ -9,6 +9,7 @@
 #include "keyring/keyring.h"
 #include "metrics/metrics-collectors.h"
 #include "td/actor/coro_task.h"
+#include "td/utils/HashMap.h"
 #include "td/utils/Heap.h"
 #include "td/utils/Timer.h"
 #include "td/utils/memory-tracker.h"
@@ -111,7 +112,7 @@ class QuicSender : public adnl::AdnlSenderEx, public virtual metrics::AsyncColle
 
   std::map<AdnlPath, std::shared_ptr<Connection>> outbound_;
   std::map<AdnlPath, std::shared_ptr<Connection>> inbound_;
-  std::map<QuicConnectionId, std::shared_ptr<Connection>> by_cid_;
+  td::HashMap<QuicConnectionId, std::shared_ptr<Connection>> by_cid_;
   // Destroy raw heap pointers before their owning connections.
   td::KHeap<td::Timestamp> waiter_timeouts_;
   td::Timestamp next_memory_diagnostics_;
