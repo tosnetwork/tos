@@ -295,6 +295,40 @@ TEST(OverlayBroadcastCapacity, FecShortPartSeqnoIsBounded) {
   });
 }
 
+// A two-step broadcast is checked by its receivers as coming from a named sender, even when the
+// AnySender flag is set. The local source check before sending must use the same rule, or a source
+// that the receivers accept is refused locally.
+TEST(OverlayBroadcastCapacity, FecSenderCheckFollowsTheSelectedPath) {
+  using tos::overlay::OverlayImpl;
+  using tos::overlay::Overlays;
+  auto any = Overlays::BroadcastFlagAnySender();
+  auto no_twostep = Overlays::BroadcastFlagNoTwostep();
+  ASSERT_TRUE(!OverlayImpl::fec_source_checked_as_any_sender(true, any));
+  ASSERT_TRUE(OverlayImpl::fec_source_checked_as_any_sender(true, any | no_twostep));
+  ASSERT_TRUE(OverlayImpl::fec_source_checked_as_any_sender(false, any));
+  ASSERT_TRUE(!OverlayImpl::fec_source_checked_as_any_sender(true, 0));
+  ASSERT_TRUE(!OverlayImpl::fec_source_checked_as_any_sender(false, 0));
+
+  // The rule decides real eligibility: with no authorized keys, a source may send FEC broadcasts
+  // up to 1 MiB as a named sender and none with AnySender.
+  td::Bits256 local_bits;
+  local_bits.as_slice().fill('l');
+  tos::overlay::OverlayOptions options;
+  options.max_neighbours_ = 0;
+  options.enable_plumtree_broadcast_ = false;
+  OverlayImpl overlay({}, {}, {}, {}, tos::adnl::AdnlNodeIdShort{local_bits},
+                      tos::overlay::OverlayIdFull{td::BufferSlice{"fec-sender-check-test"}},
+                      tos::overlay::OverlayType::Public, {}, {}, {},
+                      std::make_unique<tos::overlay::Overlays::Callback>(),
+                      tos::overlay::OverlayPrivacyRules{1 << 20, tos::overlay::CertificateFlags::AllowFec, {}},
+                      "fec-sender-check-test", std::move(options));
+  td::Bits256 source_bits;
+  source_bits.as_slice().fill('s');
+  tos::PublicKeyHash source{source_bits};
+  ASSERT_TRUE(overlay.can_send_broadcast_fec(source, 1000, 0));
+  ASSERT_TRUE(!overlay.can_send_broadcast_fec(source, 1000, any));
+}
+
 TEST(OverlayBroadcastCapacity, TwostepRefusesNewBroadcastWhenFull) {
   using Access = tos::overlay::BroadcastsTwostepTestAccess;
   with_overlay([](tos::overlay::OverlayImpl &overlay) {

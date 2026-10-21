@@ -401,6 +401,12 @@ class OverlayImpl : public Overlay {
                                        adnl::AdnlNodeIdShort message_from = adnl::AdnlNodeIdShort::zero());
 
   bool can_send_broadcast_plumtree(PublicKeyHash send_as, size_t data_size, td::uint32 flags);
+  // Whether a FEC broadcast from send_as passes the local source check, given the path
+  // (two-step or plain FEC) that the flags and options select for it.
+  bool can_send_broadcast_fec(PublicKeyHash send_as, size_t data_size, td::uint32 flags);
+  // Two-step receivers check the source as a named sender, so AnySender applies to the local
+  // check only when the broadcast goes out as a plain FEC broadcast.
+  static bool fec_source_checked_as_any_sender(bool send_twostep, td::uint32 flags);
   BroadcastsLimiter &get_broadcasts_limiter(PublicKeyHash source, const Certificate *certificate);
   void relax_plumtree_alarm(td::Timestamp at) {
     alarm_timestamp().relax(at);
