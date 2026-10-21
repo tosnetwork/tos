@@ -91,13 +91,16 @@ acceptance remain separate gates.
 
 ## Explicit genesis candidate
 
-A wrapper may define both `quantum-network-tag` (the chosen public 256-bit AUTH
-namespace) and `quantum-admission-candidate` before including
-`crypto/smartcont/gen-zerostate.fif`. This generates version 18 and basechain
-ConfigParam 21 credit 20,000. Masterchain ConfigParam 20 stays at credit 10,000;
-all other gas-price fields are unchanged. Omitting the candidate flag retains
-the existing version-16 default or version-17 AUTH-only profile. The candidate
-requires the namespace before any wallet key generation.
+New canonical and localnet genesis grant basechain ConfigParam 21 credit 20,000;
+masterchain ConfigParam 20 remains at 10,000. The Rust executor defaults agree.
+This does not update existing chains. Public networks must not use the new
+genesis before node admission work protections and release acceptance ship.
+
+`quantum-admission-candidate` no longer changes gas credit. It still pins the
+frozen 0x42 AUTH namespace and isolates funded basechain fixtures; the localnet
+option additionally refuses saved-network reuse. These safeguards remain useful
+independently of the credit default. The fixture profile uses version 16 and
+the deployment fee schedule.
 
 The [genesis evidence](admission-genesis-20261006.json) reads actual generated
 BOCs and includes version/credit mutations and an early-namespace-guard deletion.
@@ -110,13 +113,13 @@ controls are recorded in [localnet evidence](localnet-admission-20261006.json).
 This remains a configuration candidate. The selected 138-transaction full-wallet
 corpus and 19-transaction PRIMARY corpus now pass both executors with the
 unchanged generated configuration; see [release coverage](RELEASE_CORPUS.md).
-Published Rust defaults, the complete legal-input corpus, calibrated node rates
-and public-network activation remain pending.
+Rust defaults now agree with genesis. The complete legal-input corpus, calibrated
+node rates and public-network activation remain pending.
 
 The [Rust loading controls](rust-admission-config-20261006.json) generate the
 canonical candidate and pass its `ConfigParams` directly into
 `BlockchainConfig::with_config`. Version and every gas field match the generated
-configuration. Replacing basechain loading with the old default table fails at
+configuration. Replacing basechain loading with an explicit historical 10,000-credit table fails at
 credit 20,000 versus 10,000. The runner retains the public ConfigParams BOC for
 transaction testing; this loading check does not execute wallet transactions.
 

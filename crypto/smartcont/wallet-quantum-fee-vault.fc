@@ -1,4 +1,4 @@
-;; NOT RELEASE READY: the measured SUB3 path exceeds 10,000 external gas credit.
+;; NOT RELEASE READY: public admission work limits and release acceptance remain required.
 ;; Complete Quantum paired-vault candidate. Immutable parties/metadata, mutable leaf.
 ;; No wallet authority. RESCUE SUB3, non-authorizing PPS3 and bounded FPR3 preparation.
 ;; Complete funded handoff and production admission still require validation.

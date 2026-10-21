@@ -602,7 +602,7 @@ def parse_args(argv=None):
     p.add_argument(
         "--quantum-admission-candidate",
         action="store_true",
-        help="fresh test-only v18/global-ID-1/0x42 candidate with deployment fees and basechain credit 20000",
+        help="fresh test-only v16/global-ID-1/0x42 fixture with deployment fees",
     )
     p.add_argument(
         "--auth-network-tag",

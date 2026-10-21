@@ -36,7 +36,7 @@ These come from `doc/tvm-mldsa44.md` and the C++ executor.
   throws 9; an invalid signature returns 0.
 - **Gas.** 50,000 per call before decoding, plus 1 per decoded byte, plus cell loads. One
   verification with a 32-byte message therefore costs on the order of 57,000 gas.
-  - That exceeds the 10,000-gas external admission credit, so neither deliverable may
+  - That exceeds both the 20,000-gas basechain and 10,000-gas masterchain external admission credit, so neither deliverable may
     verify before ACCEPT in an external message.
 - **Gas limit of an internal message without ACCEPT.** It is the smaller of what the
   inbound value buys and what the account's balance buys, capped by the configured limit
