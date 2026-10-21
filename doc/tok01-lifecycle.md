@@ -81,3 +81,19 @@ and obtain the separate live-run authorization. Rebuild/rehearse on that exact
 release: this main snapshot precedes the pending basechain gas-credit change.
 Preserve the resulting blocks for the separate cross-architecture replay case;
 the local lifecycle runner does not claim that replay qualification.
+
+Independently verify retained evidence and exercise the oracle with mutations:
+
+```sh
+uv run python scripts/tok01-oracle.py ../tok01-evidence
+uv run python scripts/tok01-oracle.py ../tok01-evidence --red-controls
+```
+
+The verifier requires all 13 lifecycle steps, their comparison tables, supply
+invariants, transaction hashes/full block IDs, both bounce receipts and the
+notification receipt. The red controls use copies of measured receipts, first
+validate each baseline, deliberately corrupt one property, require failure and
+then revalidate the original. They never modify retained evidence. Controls
+cover expected supply, wallet sum, a negative balance that still conserves the
+sum, comparison fields and flags, notification payload, refused-state equality,
+bounce accounting/receipt completeness, transaction identity and block identity.
